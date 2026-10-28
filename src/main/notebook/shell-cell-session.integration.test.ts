@@ -11,7 +11,7 @@ import {
   symlink,
   writeFile
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildShellEnv, NotebookShellProcessAdapter } from './shell-process'
@@ -246,6 +246,13 @@ describe('persistent platform shell cells', () => {
       // same case with its native prerequisites; retain ordinary Shell coverage in portable CI.
       if (sandboxed && process.platform === 'linux' && process.env.VITEST_PORTABLE_CI === '1') {
         context.skip('Real sandbox execution runs in the Linux Notebook isolation job.')
+      }
+      if (!windows) {
+        // Select the test runner's physical Node bin before host-specific Homebrew/nvm aliases.
+        vi.stubEnv(
+          'PATH',
+          [dirname(process.execPath), process.env.PATH].filter(Boolean).join(delimiter)
+        )
       }
       if (sandboxed) {
         vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)

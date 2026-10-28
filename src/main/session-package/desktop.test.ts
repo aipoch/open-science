@@ -2569,6 +2569,11 @@ it.each(['valid', 'invalid'] as const)(
       getClient: async () => fixture.client
     })
     const inspect = vi.spyOn(service, 'inspect')
+    const destinationReady = Promise.withResolvers<void>()
+    const previewReady = Promise.withResolvers<void>()
+    const operationFinished = Promise.withResolvers<void>()
+    const sourceCleaned = Promise.withResolvers<void>()
+    let sourceConsumed = false
     const importProgress: number[] = []
     const desktop = new SessionPackageDesktop({
       service,
@@ -2576,6 +2581,14 @@ it.each(['valid', 'invalid'] as const)(
       withDataRootWrite: async (work) => work(),
       afterImport: async () => undefined,
       onOperationChanged: (snapshot) => {
+        if (snapshot.state === 'awaiting-selection') {
+          destinationReady.resolve()
+          if (snapshot.importPreview) previewReady.resolve()
+        } else if (['succeeded', 'failed', 'cancelled'].includes(snapshot.state)) {
+          destinationReady.resolve()
+          previewReady.resolve()
+          operationFinished.resolve()
+        }
         if (snapshot.progress.overallPercent !== undefined)
           importProgress.push(snapshot.progress.overallPercent)
       }
@@ -2584,9 +2597,19 @@ it.each(['valid', 'invalid'] as const)(
     const staging = join(fixture.storageRoot, 'browser-staging')
     const bridge = new BrowserPackageImport({
       root: staging,
-      receive: (path, consumed) => desktop.enqueueFile(path, consumed, true),
+      receive: (path, consumed) =>
+        desktop.enqueueFile(
+          path,
+          () => {
+            sourceConsumed = true
+            consumed()
+          },
+          true
+        ),
       onChanged: (transfers) => {
         if (transfers[0]) progress.push(transfers[0].completedBytes)
+        // After consumption, the bridge publishes completion of its asynchronous source cleanup.
+        if (sourceConsumed) sourceCleaned.resolve()
       }
     })
     const fetch = globalThis.fetch
@@ -2603,10 +2626,10 @@ it.each(['valid', 'invalid'] as const)(
       await bridge.begin(transfer.url)
       await expect(transfer.send()).resolves.toEqual({ received: true })
       expect(progress.at(-1)).toBe(contents.length)
-      await vi.waitFor(() =>
-        expect(desktop.operations.snapshot?.state).toBe(
-          kind === 'valid' ? 'awaiting-selection' : 'failed'
-        )
+      // Receipt means queue admission, not completion of real archive and database work.
+      await destinationReady.promise
+      expect(desktop.operations.snapshot?.state).toBe(
+        kind === 'valid' ? 'awaiting-selection' : 'failed'
       )
       expect(inspect).toHaveBeenCalledWith(
         expect.stringContaining(await realpath(staging)),
@@ -2622,22 +2645,23 @@ it.each(['valid', 'invalid'] as const)(
           operationId: desktop.operations.snapshot!.id,
           target: { projectName: 'Browser import' }
         })
-        await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
+        await previewReady.promise
+        expect(desktop.operations.snapshot?.importPreview).toBeDefined()
         expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
         expect(await fixture.client.session.count()).toBe(0)
         expect(desktop.operations.snapshot?.progress.overallPercent).toBe(46)
         desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'), {
-          timeout: 10000
-        })
+        await operationFinished.promise
+        expect(desktop.operations.snapshot?.state).toBe('succeeded')
         expect(await fixture.client.session.count()).toBe(1)
+        await sourceCleaned.promise
+        expect(await readdir(staging)).toEqual([])
         expect(importProgress.length).toBeGreaterThan(3)
         expect(
           importProgress.every(
             (value, index) => value < 100 && (index === 0 || value >= importProgress[index - 1])
           )
         ).toBe(true)
-        await vi.waitFor(async () => expect(await readdir(staging)).toEqual([]))
       }
     } finally {
       await desktop.close()

@@ -1,4 +1,4 @@
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox, validateLocalService } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, type Stats } from 'node:fs'
@@ -15,7 +15,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
@@ -439,6 +439,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   async wrap(invocation: NotebookSandboxInvocation): Promise<NotebookSandboxedSpawn> {
+    if (invocation.localService) {
+      invocation = {
+        ...invocation,
+        localService: validateLocalService(
+          invocation.localService,
+          this.platform,
+          invocation.target?.kind
+        )
+      }
+    }
+    if (
+      invocation.localService &&
+      invocation.localService.executionId !== invocation.executionReference
+    ) {
+      throw new Error('Notebook local service does not belong to this execution.')
+    }
+    if (
+      invocation.localService &&
+      !invocation.filesystem.readWriteRoots.includes(dirname(invocation.localService.socketPath))
+    ) {
+      throw new Error('Notebook local service directory requires an explicit write grant.')
+    }
     if (
       this.platform === 'win32' &&
       invocation.target?.kind !== 'wsl2' &&
@@ -502,9 +524,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const windowsProtectionRequired = nativeWindows
       ? invocation.windowsProtectionRequired
       : undefined
-    const restrictFolders = nativeWindows
-      ? windowsProtectionRequired
-      : (await this.options.getFolderRestrictionEnabled?.()) !== false
+    const restrictFolders =
+      invocation.confinement !== undefined ||
+      (nativeWindows
+        ? windowsProtectionRequired
+        : (await this.options.getFolderRestrictionEnabled?.()) !== false)
     if (
       invocation.windowsProtectionRequired === true &&
       this.platform === 'win32' &&
@@ -521,10 +545,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const target = invocation.target ?? { kind: 'native' as const }
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
-    const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
-    const skillReadRoots = this.options.configRoot
-      ? await managedSkillReadRoots(this.options.configRoot)
-      : []
+    const grantedRoots = invocation.confinement
+      ? []
+      : ((await this.options.getGrantedLocalRoots?.()) ?? [])
+    const skillReadRoots =
+      !invocation.confinement && this.options.configRoot
+        ? await managedSkillReadRoots(this.options.configRoot)
+        : []
     const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
@@ -564,6 +591,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let wrapped: Awaited<ReturnType<NotebookNetworkSandbox['wrap']>> | undefined
     try {
       wrapped = await this.sandbox!.wrap({
+        ...(invocation.confinement ? { confinement: invocation.confinement } : {}),
+        ...(invocation.localService ? { localService: invocation.localService } : {}),
         target,
         command: commandLine(
           invocation,
@@ -594,7 +623,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
             ...skillReadRoots,
-            ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
+            ...(invocation.confinement ||
+            invocation.target?.kind === 'wsl2' ||
+            this.platform === 'win32'
               ? []
               : environmentPathRoots(env, this.platform)),
             ...grantedRoots.map((root) => root.path),
@@ -604,7 +635,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ? {
                 optionalReadOnlyRoots: [
                   ...(invocation.filesystem.optionalReadOnlyRoots ?? []),
-                  ...environmentPathRoots(env, this.platform)
+                  ...(invocation.confinement ? [] : environmentPathRoots(env, this.platform))
                 ]
               }
             : {}),
@@ -627,6 +658,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
           if (activeSignal?.aborted) return false
+          const confinement = invocation.confinement
+          if (
+            confinement &&
+            (confinement.mode === 'offline-demo' ||
+              !confinement.allowedNetworkHosts?.includes(
+                request.host.toLowerCase().replace(/\.$/, '')
+              ))
+          )
+            return false
           if (
             await this.isCommandGrantAllowed(
               invocation.sessionId,
@@ -634,7 +674,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               activeCommandText,
               executionActive,
               activeExecutionGrants,
-              allowedNetworkHosts,
+              confinement ? new Set() : allowedNetworkHosts,
               request
             )
           )
@@ -976,8 +1016,24 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           invocation.runtime,
           activeCommandText
         )
-        activeExecutionGrants = this.nextExecutionGrants.get(grantKey) ?? new Set()
-        this.nextExecutionGrants.delete(grantKey)
+        const pendingGrants = this.nextExecutionGrants.get(grantKey) ?? new Set<string>()
+        if (invocation.confinement) {
+          activeExecutionGrants = new Set(
+            [...pendingGrants].filter(
+              (host) =>
+                invocation.confinement!.mode === 'research' &&
+                invocation.confinement!.allowedNetworkHosts?.includes(host)
+            )
+          )
+          const remaining = new Set(
+            [...pendingGrants].filter((host) => !activeExecutionGrants.has(host))
+          )
+          if (remaining.size) this.nextExecutionGrants.set(grantKey, remaining)
+          else this.nextExecutionGrants.delete(grantKey)
+        } else {
+          activeExecutionGrants = pendingGrants
+          this.nextExecutionGrants.delete(grantKey)
+        }
         let ended = false
         return () => {
           if (ended) return

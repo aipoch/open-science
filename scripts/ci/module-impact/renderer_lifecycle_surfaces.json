@@ -236,7 +236,20 @@
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/src/stores/locale-preference-recovery.render.test.tsx",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts",
+      "src/main/replay-viewer/assets.test.ts",
+      "src/renderer/replay-viewer/browser-recording-transport.integration.test.ts",
+      "src/renderer/replay-viewer/browser-recording.integration.test.ts",
+      "src/renderer/replay-viewer/browser.integration.test.ts",
+      "src/renderer/replay-viewer/research-browser.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/runtime-view/tuanzi.macos.integration.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/node-entry.test.ts"
     ]
   },
   "capabilityOverlays": [],

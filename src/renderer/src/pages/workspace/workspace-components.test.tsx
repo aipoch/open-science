@@ -376,7 +376,7 @@ describe('conversation message scroller integration', () => {
       "import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'"
     )
     expect(conversationPanelSource).toContain('<WorkspaceMessageScroller')
-    expect(conversationPanelSource).toContain('activeSession={activeSession}')
+    expect(conversationPanelSource).toContain('activeSession={displayedSession}')
     expect(conversationPanelSource).not.toContain('@/components/ui/scroll-area')
     expect(conversationPanelSource).not.toContain('<ScrollArea')
   })
@@ -736,8 +736,21 @@ describe('notebook preview integration', () => {
     expect(notebookPreviewSource).toContain('notebookState?.runs')
     expect(notebookPreviewSource).toContain("source: 'user'")
     expect(notebookPreviewSource).toContain("inputKind: 'terminal'")
-    expect(notebookPreviewSource).toContain(
-      "import {\n  resolveRunErrorLine,\n  environmentLabel,\n  isProblemRunStatus,\n  kernelKindLabel,\n  kernelOriginLabel,\n  notebookRunStatusLabel,\n  resolveRunEnvironment,\n  resolveRunKernelKind\n} from './notebook-cell-utils'"
+    const cellUtilsImports = notebookPreviewSource
+      .match(/import\s*\{([^}]*)\}\s*from\s*['"]\.\/notebook-cell-utils['"]/)?.[1]
+      .split(',')
+      .map((name) => name.trim())
+    expect(cellUtilsImports).toEqual(
+      expect.arrayContaining([
+        'resolveRunErrorLine',
+        'environmentLabel',
+        'isProblemRunStatus',
+        'kernelKindLabel',
+        'kernelOriginLabel',
+        'notebookRunStatusLabel',
+        'resolveRunEnvironment',
+        'resolveRunKernelKind'
+      ])
     )
     expect(notebookPreviewSource).toContain('[{index}]')
     expect(notebookPreviewSource).toContain('resolveRunKernelKind(run)')

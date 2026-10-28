@@ -32,7 +32,11 @@ it('upgrades the prior schema with empty unified tables and is idempotent', asyn
     omit: { readingStatus: true }
   })
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: ['0050_literature_translation', '0051_literature_reading_status']
+    applied: [
+      '0050_literature_translation',
+      '0051_literature_reading_status',
+      '0052_session_research_membership'
+    ]
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual({
     ...item,

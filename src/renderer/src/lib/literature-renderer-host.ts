@@ -1,3 +1,4 @@
+import { openProjectWorkspace } from '@/pages/workspace/project-workspace-entry'
 import { FileTypeIcon } from '@/pages/workspace/file-type-icon'
 import { getPreviewFormatForFile } from '@/pages/workspace/preview-support'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
@@ -39,6 +40,7 @@ function LiteratureFilePreview(
 }
 
 export const literatureRendererHost: LiteratureRendererHost = {
+  openProjectWorkspace,
   FileTypeIcon,
   getPreviewFormatForFile,
   get api() {

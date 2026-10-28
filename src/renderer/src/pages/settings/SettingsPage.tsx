@@ -1,3 +1,4 @@
+import { openProjectWorkspace } from '../workspace/project-workspace-entry'
 import { type SettingsEditorLeaveState, SettingsFormFooter } from './SettingsLayout'
 import { dismissSettingsManualUpdateGuide } from './settings-manual-update-guide'
 import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-reveal'
@@ -417,6 +418,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 ): React.JSX.Element {
   const { t } = useTranslation()
   const [tagAnnotationError, setTagAnnotationError] = useState<string>()
+  const [projectEntryFailed, setProjectEntryFailed] = useState(false)
   const [openingTagAnnotation, setOpeningTagAnnotation] = useState(false)
   const [tagAnnotationPreview, setTagAnnotationPreview] = useState<{
     annotation: PdfAnnotation
@@ -1977,15 +1979,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         />
                       </>
                     ) : activePanel === 'memory' ? (
-                      <MemoryPanel
-                        key={`memory-${resourceDraftGeneration}`}
-                        view={memoryView}
-                        onNavigate={navigateMemory}
-                        onLeaveStateChange={onResourceEditorLeaveStateChange}
-                        onOpenProject={(projectId) => {
-                          useNavigationStore.getState().openProject(projectId, 'user', onClose)
-                        }}
-                      />
+                      <>
+                        {projectEntryFailed ? (
+                          <ErrorNotice
+                            tone="amber"
+                            description={t('Could not open this project. Please retry.')}
+                          />
+                        ) : null}
+                        <MemoryPanel
+                          key={`memory-${resourceDraftGeneration}`}
+                          onLeaveStateChange={onResourceEditorLeaveStateChange}
+                          view={memoryView}
+                          onNavigate={navigateMemory}
+                          onOpenProject={(projectId) => {
+                            setProjectEntryFailed(false)
+                            void openProjectWorkspace(projectId, onClose).catch(() =>
+                              setProjectEntryFailed(true)
+                            )
+                          }}
+                        />
+                      </>
                     ) : activePanel === 'connectors' ? (
                       connectorsView.kind === 'detail' ? (
                         <div>

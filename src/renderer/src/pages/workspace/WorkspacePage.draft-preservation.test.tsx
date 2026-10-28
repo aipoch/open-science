@@ -29,11 +29,29 @@ import { useSpecialistStore } from '@/stores/specialist-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
 import type {
   LiteratureReference,
+  ResearchMembership,
   PersistedChatSession
 } from '../../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
-import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
+import { researchDraftKey } from './research-draft-identity'
+import {
+  configureComposerDraftStorage,
+  flushComposerDrafts,
+  readComposerDraft,
+  revokeComposerDraftStorage,
+  writeComposerDraft
+} from './composer-draft-storage'
+import { useSessionReplayStore } from '@/stores/session-replay-store'
+import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
+import {
+  createSessionDiscussionAnnotation,
+  replayAnnotationTarget
+} from './session-discussion-annotation'
+import {
+  readResearchProjectDestination,
+  resolveResearchProjectDestination
+} from '@/lib/research-project-entry'
 import {
   markWorkspaceReviewHistoryLoaded,
   setDefaultWorkspaceAgentSettings
@@ -67,6 +85,11 @@ const runtime = vi.hoisted(() => ({
   respondToPermission: vi.fn()
 }))
 const deleteSession = vi.hoisted(() => vi.fn())
+const loadDiscussionContext = vi.hoisted(() => vi.fn())
+vi.mock('./workspace-session-actions', async (original) => ({
+  ...(await original<typeof import('./workspace-session-actions')>()),
+  loadSessionDiscussionContext: loadDiscussionContext
+}))
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -228,6 +251,13 @@ describe('WorkspacePage draft preservation', () => {
   let originalFileReader: typeof FileReader
 
   beforeEach(() => {
+    useSessionReplayStore.setState({
+      pendingDiscussion: undefined,
+      discussionDestination: undefined,
+      draftDiscussion: undefined
+    })
+    useResearchWorkspaceStore.setState({ draftResearchByProject: {}, lastDiscussionByResearch: {} })
+    loadDiscussionContext.mockReset().mockResolvedValue(undefined)
     setDefaultWorkspaceAgentSettings()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useProjectStore.setState({
@@ -281,6 +311,7 @@ describe('WorkspacePage draft preservation', () => {
     globalThis.FileReader = MockFileReader as never
 
     window.api = {
+      sessionReplay: { saveSelectionSnapshot: vi.fn().mockResolvedValue(undefined) },
       acp: { getPlanProjection: vi.fn(() => Promise.resolve(null)) },
       sessions: { deleteSession },
       notebook: {
@@ -319,6 +350,7 @@ describe('WorkspacePage draft preservation', () => {
     await act(async () => {
       root.unmount()
     })
+    revokeComposerDraftStorage()
     globalThis.FileReader = originalFileReader
     vi.restoreAllMocks()
     container.remove()
@@ -355,6 +387,326 @@ describe('WorkspacePage draft preservation', () => {
       sidebarProps.onOpenSession(id)
     })
   }
+
+  const makeImported = (id = 'sess-a'): ChatSession => ({
+    ...createSession(id, 'proj-1'),
+    title: 'Imported research',
+    packageOrigin: {
+      importId: `import-${id}`,
+      sourceProjectId: 'author',
+      sourceSessionId: 'author-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  })
+  const membershipFor = (source: ChatSession): ResearchMembership => ({
+    sourceProjectId: source.projectId,
+    sourceSessionId: source.id,
+    sourceTitle: source.title,
+    sourceImportId: source.packageOrigin!.importId
+  })
+
+  it('renders original research with an isolated question draft and never sends to the imported Session', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source, createSession('sess-b', 'proj-1')] })
+    const before = structuredClone(source)
+    loadDiscussionContext.mockResolvedValue({
+      projectId: source.projectId,
+      sourceSessionId: source.id,
+      sourceTitle: source.title,
+      scope: 'session',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'first',
+      stepOffsetMs: 0,
+      evidence: [
+        {
+          kind: 'message',
+          id: 'original-message',
+          projectId: source.projectId,
+          sessionId: source.id,
+          part: 'record'
+        }
+      ],
+      excerpt: 'Original result'
+    })
+    await renderPage()
+    expect(conversationProps.view.researchSourceSession).toEqual(source)
+    expect(conversationProps.view.activeSession).toBeUndefined()
+    expect(conversationProps.view.canEditDraft).toBe(true)
+    expect(conversationProps.view.composerFocusKey).toBe(researchDraftKey(membershipFor(source)))
+    await act(async () =>
+      conversationProps.composer.actions.changeDoc(textDoc('Question for research'))
+    )
+    await openSession('sess-b')
+    await act(async () =>
+      conversationProps.composer.actions.changeDoc(textDoc('Ordinary question'))
+    )
+    await openSession('sess-a')
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('Question for research'))
+    expect(useSessionStore.getState().sessions).toHaveLength(2)
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(conversationProps.composer.view.annotations).toHaveLength(1)
+    runtime.sendMessage.mockImplementationOnce(async (input) => {
+      const pending = {
+        ...createSession('new-discussion', source.projectId),
+        isPending: true,
+        researchMembership: input.researchMembership,
+        messages: [userMessage('first-question', input.text)]
+      }
+      useSessionStore.setState((state) => ({
+        sessions: [...state.sessions, pending],
+        selectedSessionId: pending.id
+      }))
+      input.onMessageAppended?.({ sessionId: pending.id, messageId: 'first-question' })
+      return { sessionId: pending.id, messageId: 'first-question' }
+    })
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        projectId: source.projectId,
+        text: 'Question for research',
+        researchMembership: membershipFor(source)
+      })
+    )
+    expect(useSessionStore.getState().sessions.find((row) => row.id === source.id)).toEqual(before)
+    expect(conversationProps.view.activeSession?.id).toBe('new-discussion')
+    expect(conversationProps.view.researchSourceSession).toBeUndefined()
+    expect(useSessionStore.getState().sessions).toHaveLength(3)
+    await act(async () =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) =>
+          session.id === 'new-discussion'
+            ? { ...session, id: 'saved-discussion', isPending: false }
+            : session
+        ),
+        selectedSessionId: 'saved-discussion'
+      }))
+    )
+    expect(readResearchProjectDestination(source.projectId)).toEqual({
+      kind: 'session',
+      sessionId: 'saved-discussion'
+    })
+    expect(
+      resolveResearchProjectDestination(
+        source.projectId,
+        useSessionStore.getState().sessions,
+        readResearchProjectDestination(source.projectId)
+      )
+    ).toEqual({ kind: 'session', sessionId: 'saved-discussion' })
+  })
+
+  it('blocks first Send until original research context is ready and retains typed text across retry', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source] })
+    const loading = createDeferred<undefined>()
+    loadDiscussionContext.mockReturnValue(loading.promise)
+    await renderPage()
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep my question')))
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    loadDiscussionContext.mockRejectedValue(new Error('Source unavailable'))
+    await act(async () => {
+      loading.resolve(undefined)
+    })
+    // Re-enter with a different import identity to exercise a fresh failed preparation.
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          { ...source, packageOrigin: { ...source.packageOrigin!, importId: 'new-import' } }
+        ]
+      })
+    )
+    expect(conversationProps.view.researchSourceContextError).toBe('Source unavailable')
+    await act(async () =>
+      conversationProps.composer.actions.changeDoc(textDoc('Keep retry question'))
+    )
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    loadDiscussionContext.mockResolvedValue(undefined)
+    await act(async () => conversationProps.view.retryResearchSourceContext?.())
+    expect(conversationProps.view.researchSourceContextError).toBeUndefined()
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('Keep retry question'))
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: undefined, text: 'Keep retry question' })
+    )
+  })
+
+  it('keeps Send blocked when the source snapshot cannot be saved and retries without losing the question', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source] })
+    loadDiscussionContext.mockResolvedValue({
+      projectId: source.projectId,
+      sourceSessionId: source.id,
+      sourceTitle: source.title,
+      scope: 'session',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'first',
+      stepOffsetMs: 0,
+      evidence: [
+        {
+          kind: 'message',
+          id: 'original-message',
+          projectId: source.projectId,
+          sessionId: source.id,
+          part: 'record'
+        }
+      ],
+      excerpt: 'Original result'
+    })
+    vi.mocked(window.api.sessionReplay.saveSelectionSnapshot).mockRejectedValue(
+      new Error('Snapshot unavailable')
+    )
+    await renderPage()
+    expect(conversationProps.view.researchSourceContextError).toBe('Snapshot unavailable')
+    await act(async () =>
+      conversationProps.composer.actions.changeDoc(textDoc('Retain snapshot question'))
+    )
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    vi.mocked(window.api.sessionReplay.saveSelectionSnapshot).mockResolvedValue(undefined)
+    await act(async () => conversationProps.view.retryResearchSourceContext?.())
+    expect(conversationProps.view.researchSourceContextError).toBeUndefined()
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('Retain snapshot question'))
+    expect(conversationProps.composer.view.annotations).toHaveLength(1)
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: undefined,
+        text: 'Retain snapshot question',
+        annotations: [expect.anything()]
+      })
+    )
+  })
+
+  it('retains source Notebook access and adds Library references to the visible question draft', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source] })
+    await renderPage()
+    expect(window.api.notebook.getReference).toHaveBeenCalledWith({
+      sessionId: source.id,
+      projectId: source.projectId,
+      workspaceCwd: source.cwd
+    })
+    expect(libraryActions!.currentSessionId).toBeUndefined()
+    expect(libraryActions!.canAddToCurrent).toBe(true)
+    const reference = libraryReference()
+    await act(async () => libraryActions!.add([reference], null))
+    expect(useSessionStore.getState().selectedSessionId).toBe(source.id)
+    expect(conversationProps.view.composerFocusKey).toBe(researchDraftKey(membershipFor(source)))
+    expect(conversationProps.composer.view.doc.nodes).toContainEqual(reference)
+    expect(useSessionStore.getState().sessions).toHaveLength(1)
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('waits for a newly selected step even when the source draft already references the research', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source] })
+    const context = {
+      projectId: source.projectId,
+      sourceSessionId: source.id,
+      sourceTitle: source.title,
+      scope: 'session' as const,
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'first',
+      stepOffsetMs: 0,
+      evidence: [
+        {
+          kind: 'message' as const,
+          id: 'original-message',
+          projectId: source.projectId,
+          sessionId: source.id,
+          part: 'record' as const
+        }
+      ],
+      excerpt: 'Original result'
+    }
+    loadDiscussionContext.mockResolvedValue(context)
+    await renderPage()
+    expect(conversationProps.composer.view.annotations).toHaveLength(1)
+    const snapshot = createDeferred<void>()
+    vi.mocked(window.api.sessionReplay.saveSelectionSnapshot).mockReturnValue(snapshot.promise)
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('Ask about this exact step'))
+      useSessionReplayStore.getState().ask(
+        { ...context, scope: 'step', stepId: 'second' },
+        {
+          projectId: source.projectId,
+          draftKey: researchDraftKey(membershipFor(source)),
+          navigationRevision: useNavigationStore.getState().explicitNavigationRevision
+        }
+      )
+    })
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).not.toHaveBeenCalled()
+    await act(async () => snapshot.resolve())
+    expect(conversationProps.composer.view.annotations).toHaveLength(1)
+    expect(replayAnnotationTarget(conversationProps.composer.view.annotations[0])?.stepId).toBe(
+      'second'
+    )
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    expect(runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: undefined, text: 'Ask about this exact step' })
+    )
+  })
+
+  it('does not admit a context-free send when the same source is reopened during initial snapshot storage', async () => {
+    const source = makeImported()
+    useSessionStore.setState({ sessions: [source] })
+    loadDiscussionContext.mockResolvedValue({
+      projectId: source.projectId,
+      sourceSessionId: source.id,
+      sourceTitle: source.title,
+      scope: 'session',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'first',
+      stepOffsetMs: 0,
+      evidence: [
+        {
+          kind: 'message',
+          id: 'original-message',
+          projectId: source.projectId,
+          sessionId: source.id,
+          part: 'record'
+        }
+      ],
+      excerpt: 'Original result'
+    })
+    const saving = createDeferred<void>()
+    vi.mocked(window.api.sessionReplay.saveSelectionSnapshot).mockReturnValueOnce(saving.promise)
+    await renderPage()
+    await act(async () => {
+      conversationProps.composer.actions.changeDoc(textDoc('Question during reentry'))
+      useNavigationStore.getState().recordUserNavigation()
+    })
+    await act(async () => saving.resolve())
+    await act(async () =>
+      conversationProps.conversation.actions.submit.draft({ forcedSkillIds: [] })
+    )
+    for (const [input] of runtime.sendMessage.mock.calls) expect(input.annotations).toHaveLength(1)
+  })
 
   it('starts desktop drafts with application settings despite automation Project defaults', async () => {
     useProjectStore.setState({
@@ -473,7 +825,13 @@ describe('WorkspacePage draft preservation', () => {
       )
       if (imported) {
         expect(useSessionStore.getState().selectedSessionId).toBe('sess-a')
-        expect(conversationProps.composer.view.doc).toEqual(textDoc('Draft A'))
+        if (sessionId === 'sess-a') {
+          // Hydration reveals an imported record: its question draft is separate from the
+          // prior unidentified Session draft and never admits a Library write to the source.
+          expect(conversationProps.view.researchSourceSession?.id).toBe('sess-a')
+          expect(conversationProps.view.activeSession).toBeUndefined()
+          expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+        } else expect(conversationProps.composer.view.doc).toEqual(textDoc('Draft A'))
         expect(conversationProps.composer.view.error).toBe(
           'This conversation cannot accept references right now.'
         )
@@ -1609,6 +1967,190 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+  })
+
+  it.each([
+    ['foreground', 'deleted'],
+    ['background', 'deleted'],
+    ['foreground', 'failed'],
+    ['background', 'failed']
+  ] as const)(
+    'settles the %s research draft only when deletion is %s',
+    async (visibility, outcome) => {
+      const source = makeImported()
+      const membership = membershipFor(source)
+      const key = researchDraftKey(membership)
+      useSessionStore.setState({ sessions: [source, createSession('sess-b', 'proj-1')] })
+      useResearchWorkspaceStore.getState().openDraft(membership)
+      configureComposerDraftStorage('research-deletion-test')
+      await renderPage()
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('research question'))
+      )
+      const attachment = createAttachment('research-delete')
+      await stageAttachment(attachment)
+      // Keep the attachment in both the live draft and a text-edit undo snapshot.
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('research question with attachment'))
+      )
+      if (visibility === 'background') {
+        await openSession('sess-b')
+        await act(async () =>
+          conversationProps.composer.actions.changeDoc(textDoc('keep other draft'))
+        )
+      }
+      if (outcome === 'failed')
+        deleteSession.mockResolvedValueOnce({
+          status: 'failed',
+          reason: 'runtime',
+          runtimeDetached: false
+        })
+      await act(async () => sidebarProps.onDeleteSession(source))
+      await act(async () => deleteDialogProps.onConfirmDelete())
+      act(() => {
+        flushComposerDrafts()
+      })
+      if (outcome === 'deleted') {
+        expect(deleteUpload).toHaveBeenCalledTimes(1)
+        expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+        expect(
+          useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']
+        ).toBeUndefined()
+        // A later flush must not resurrect a parked or still-active source draft.
+        act(() => flushComposerDrafts())
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+      } else {
+        expect(deleteUpload).not.toHaveBeenCalled()
+        expect(readComposerDraft('proj-1', key, 'retry')?.doc).toEqual(
+          textDoc('research question with attachment')
+        )
+        expect(useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']).toEqual(
+          membership
+        )
+      }
+      if (visibility === 'background')
+        expect(conversationProps.composer.view.doc).toEqual(textDoc('keep other draft'))
+    }
+  )
+
+  it.each([
+    ['foreground', 'deleted'],
+    ['background', 'deleted'],
+    ['foreground', 'failed'],
+    ['background', 'failed']
+  ] as const)(
+    'keeps the %s research upload lifecycle with its draft when deletion is %s',
+    async (visibility, outcome) => {
+      const source = makeImported()
+      const membership = membershipFor(source)
+      const key = researchDraftKey(membership)
+      useSessionStore.setState({ sessions: [source, createSession('sess-b', 'proj-1')] })
+      useResearchWorkspaceStore.getState().openDraft(membership)
+      configureComposerDraftStorage('research-transfer-deletion-test')
+      await renderPage()
+      const upload = createDeferred<UploadedAttachment>()
+      stageLocalFile.mockReturnValueOnce(upload.promise)
+      await act(async () => {
+        conversationProps.composer.actions.changeDoc(textDoc('pending research upload'))
+        conversationProps.composer.actions.stageFiles([
+          new File(['data'], 'research-pending.txt', { type: 'text/plain' })
+        ])
+      })
+      expect(conversationProps.composer.view.transfers).toHaveLength(1)
+      const transferId = conversationProps.composer.view.transfers[0].transferId
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('pending upload with undo snapshot'))
+      )
+      if (visibility === 'background') await openSession('sess-b')
+      if (outcome === 'failed')
+        deleteSession.mockResolvedValueOnce({
+          status: 'failed',
+          reason: 'runtime',
+          runtimeDetached: false
+        })
+      await act(async () => sidebarProps.onDeleteSession(source))
+      await act(async () => deleteDialogProps.onConfirmDelete())
+      // Shared undo snapshots must not issue a second cancellation during deletion.
+      expect(abortTransfer).toHaveBeenCalledTimes(outcome === 'deleted' ? 1 : 0)
+      if (outcome === 'deleted') expect(abortTransfer).toHaveBeenCalledWith({ transferId })
+      const attachment = createAttachment('late-research-upload')
+      await act(async () => upload.resolve(attachment))
+      act(() => flushComposerDrafts())
+      if (outcome === 'deleted') {
+        expect(deleteUpload).toHaveBeenCalledTimes(1)
+        expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+        expect(conversationProps.composer.view.attachments).toEqual([])
+        expect(conversationProps.view.composerFocusKey).toBe('sess-b')
+      } else {
+        expect(abortTransfer).not.toHaveBeenCalled()
+        expect(deleteUpload).not.toHaveBeenCalled()
+        if (visibility === 'background')
+          await act(async () => useSessionStore.setState({ selectedSessionId: undefined }))
+        expect(conversationProps.composer.view.attachments).toEqual([attachment])
+        expect(readComposerDraft('proj-1', key, 'retry')?.doc).toEqual(
+          textDoc('pending upload with undo snapshot')
+        )
+      }
+    }
+  )
+
+  it('does not clear a replacement research draft when the frozen source deletion finishes', async () => {
+    const source = makeImported()
+    const replacement = makeImported('sess-b')
+    useSessionStore.setState({ sessions: [source, replacement] })
+    useResearchWorkspaceStore.getState().openDraft(membershipFor(source))
+    await renderPage()
+    const deletion = createDeferred<{ status: 'deleted'; runtimeDetached: true }>()
+    deleteSession.mockImplementationOnce(async ({ sessionId }: { sessionId: string }) => {
+      const result = await deletion.promise
+      useSessionStore.getState().deleteSession(sessionId)
+      return result
+    })
+    await act(async () => sidebarProps.onDeleteSession(source))
+    await act(async () => deleteDialogProps.onConfirmDelete())
+    await openSession(replacement.id)
+    await act(async () => {
+      useResearchWorkspaceStore.getState().openDraft(membershipFor(replacement))
+      conversationProps.composer.actions.changeDoc(textDoc('replacement question'))
+    })
+    await act(async () => deletion.resolve({ status: 'deleted', runtimeDetached: true }))
+    expect(useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']).toEqual(
+      membershipFor(replacement)
+    )
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('replacement question'))
+  })
+
+  it('deletes an unrestored persisted research draft from its owning project', async () => {
+    const source = makeImported()
+    const membership = membershipFor(source)
+    const key = researchDraftKey(membership)
+    useProjectStore.setState((state) => ({
+      projects: [...state.projects, { ...state.projects[0], id: 'proj-2' }]
+    }))
+    useSessionStore.setState({
+      sessions: [source, createSession('other', 'proj-2')],
+      selectedSessionId: 'other'
+    })
+    useNavigationStore.setState({ activeProjectId: 'proj-2' })
+    useResearchWorkspaceStore.getState().openDraft(membership)
+    configureComposerDraftStorage('unrestored-research-deletion-test')
+    writeComposerDraft('proj-1', key, {
+      doc: textDoc('saved on the previous launch'),
+      annotations: [],
+      attachments: [],
+      attachmentTransfers: [],
+      automaticReadingEnabled: true
+    })
+    await renderPage()
+    expect(readComposerDraft('proj-1', key, 'retry')).toBeDefined()
+    await act(async () => sidebarProps.onDeleteSession(source))
+    await act(async () => deleteDialogProps.onConfirmDelete())
+    act(() => flushComposerDrafts())
+    expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBe('other')
+    expect(useNavigationStore.getState().activeProjectId).toBe('proj-2')
   })
 
   it('keeps project Literature accessible while session persistence is recovering', async () => {

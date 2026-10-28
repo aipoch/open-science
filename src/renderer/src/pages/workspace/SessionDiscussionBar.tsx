@@ -41,7 +41,7 @@ export const SessionDiscussionBar = ({
   if (!latest) return null
   const selectionLabel =
     scope === 'session'
-      ? undefined
+      ? t('Entire research')
       : steps.length > 1
         ? t('{{count}} steps', { count: steps.length })
         : latest.stepNumber
@@ -49,7 +49,7 @@ export const SessionDiscussionBar = ({
           : undefined
   return (
     <div
-      className="flex min-w-0 items-center gap-1.5"
+      className="flex min-w-0 flex-wrap items-center gap-1.5 py-1"
       data-testid="session-discussion-bar"
       aria-busy={pending}
     >
@@ -65,11 +65,13 @@ export const SessionDiscussionBar = ({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 shrink-0 gap-1 px-1.5 text-xs font-medium disabled:opacity-100"
+                className="h-auto min-h-7 max-w-full shrink-0 gap-1 whitespace-normal px-1.5 text-left text-xs font-medium disabled:opacity-100"
                 disabled={disabled}
               >
                 <MessageSquare className="size-4 text-primary" aria-hidden="true" />
-                {t('Discuss')}
+                <span className="min-w-0 [overflow-wrap:anywhere]">
+                  {t('View referenced evidence')}
+                </span>
                 <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
               </Button>
             </PopoverTrigger>
@@ -109,7 +111,7 @@ export const SessionDiscussionBar = ({
         </PopoverContent>
       </Popover>
       <span
-        className="inline-flex min-w-0 max-w-56 items-center rounded-lg bg-bg-200"
+        className="inline-flex min-w-0 max-w-[min(14rem,100%)] items-center rounded-lg bg-bg-200"
         data-session-discussion-source="true"
       >
         <Tooltip>

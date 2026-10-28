@@ -49,6 +49,8 @@ commands. There is no separate search parser restricting them to the session dir
 expansions, pipelines, and working-directory changes are evaluated by the selected shell.
 Code-risk approval still applies. On enforced platforms, managed-runtime write protection also
 applies; removing the search preflight does not grant a directory or disable OS sandbox enforcement.
+Managed research executions retain their additional bounded search preflight and immutable
+runtime-variable admission; ordinary Notebook commands do not use that managed-only preflight.
 
 - On macOS, Seatbelt enforces declared filesystem and network rules.
 - On Linux, bubblewrap enforces declared filesystem and network rules.

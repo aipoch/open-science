@@ -28,6 +28,11 @@ import {
   registerBookmarkApplicationCommands,
   type BookmarkCommandOwner
 } from './bookmarks/application-commands'
+import type { BrowserRecordingExternalPort } from './browser-recordings/external-port'
+import {
+  browserRecordingCommandGroup,
+  registerBrowserRecordingCommands
+} from './browser-recordings/ipc'
 import {
   computeApplicationCommandGroup,
   registerComputeApplicationCommands,
@@ -81,6 +86,17 @@ import {
   permissionGrantApplicationCommandGroup,
   registerPermissionGrantApplicationCommands
 } from './permission-grants/application-commands'
+import { registerResearchDemoCommands, researchDemoCommandGroup } from './research-demos/ipc'
+import type { ResearchDemoOwner } from './research-demos/owner'
+import {
+  registerResearchExecutionProfileCommands,
+  researchExecutionProfileCommandGroup,
+  type ResearchExecutionProfileCommands
+} from './research-execution-profiles/ipc'
+import type { ResearchRunInspectionPort } from './research-runs/inspection'
+import { registerResearchRunCommands, researchRunCommandGroup } from './research-runs/ipc'
+import type { RunObservationExternalPort } from './run-observation-external-port'
+import { registerRunObservationCommands, runObservationCommandGroup } from './run-observation/ipc'
 import {
   registerSessionReplayCommands,
   sessionReplayCommandGroup,
@@ -141,6 +157,11 @@ type ApplicationCommandModuleDescriptor = Readonly<{
 }>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
+  runObservation: RunObservationExternalPort
+  browserRecording: BrowserRecordingExternalPort
+  researchRuns: ResearchRunInspectionPort
+  researchDemos: ResearchDemoOwner
+  researchExecutionProfiles: ResearchExecutionProfileCommands
   pdfTranslation: PdfTranslationOwner
   sideChat: SideChatCommandOwner
   acp: AcpApplicationCommandDependencies
@@ -164,6 +185,11 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  ...runObservationCommandGroup.commands.map(({ name }) => name),
+  ...browserRecordingCommandGroup.commands.map(({ name }) => name),
+  ...researchRunCommandGroup.commands.map(({ name }) => name),
+  ...researchDemoCommandGroup.commands.map(({ name }) => name),
+  ...researchExecutionProfileCommandGroup.commands.map(({ name }) => name),
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
   'office-preview:attach-frame',
@@ -327,6 +353,21 @@ const createApplicationCommandModules = (
   remoteAccess: RemoteAccessOwner
 ): readonly ApplicationCommandModuleDescriptor[] =>
   Object.freeze([
+    defineApplicationCommandModule([runObservationCommandGroup], (registrar) =>
+      registerRunObservationCommands(registrar, dependencies.runObservation)
+    ),
+    defineApplicationCommandModule([browserRecordingCommandGroup], (registrar) =>
+      registerBrowserRecordingCommands(registrar, dependencies.browserRecording)
+    ),
+    defineApplicationCommandModule([researchRunCommandGroup], (registrar) =>
+      registerResearchRunCommands(registrar, dependencies.researchRuns)
+    ),
+    defineApplicationCommandModule([researchDemoCommandGroup], (registrar) =>
+      registerResearchDemoCommands(registrar, dependencies.researchDemos)
+    ),
+    defineApplicationCommandModule([researchExecutionProfileCommandGroup], (registrar) =>
+      registerResearchExecutionProfileCommands(registrar, dependencies.researchExecutionProfiles)
+    ),
     defineApplicationCommandModule([pdfTranslationApplicationCommandGroup], (registrar) =>
       registerPdfTranslationApplicationCommands(registrar, dependencies.pdfTranslation)
     ),

@@ -30,9 +30,105 @@ const fixture = (): { configRoot: string; profilePath: string } => {
   return { configRoot, profilePath }
 }
 const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64')}`
+const researchDocument = (credentialRefs: Record<string, string>): unknown => ({
+  version: 1,
+  profiles: [
+    {
+      profileId: '11111111-1111-4111-8111-111111111111',
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceIdentity: 'native-source',
+      descriptorVersionId: 'descriptor',
+      descriptorSha256: 'a'.repeat(64),
+      planKey: 'baseline',
+      displayName: 'enc:public-label',
+      variables: { MODEL: 'enc:public-variable' },
+      allowedNetworkHosts: [],
+      conditionChanges: [],
+      credentialRefs,
+      updatedAt: 1
+    }
+  ]
+})
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it('finds only encrypted slots when research profiles are the sole credential document and preserves bytes', () => {
+    const paths = fixture()
+    const path = join(paths.configRoot, 'research-execution-profiles.json')
+    const contents = JSON.stringify(
+      researchDocument({ provider: ref('research-provider'), solver: ref('research-solver') })
+    )
+    writeFileSync(path, contents)
+    const ciphertexts = readCredentialCiphertexts(paths)
+    expect(ciphertexts.map((value) => value.value.toString())).toEqual([
+      'research-provider',
+      'research-solver'
+    ])
+    const decrypt = vi.fn(() => 'private-plaintext-is-not-returned')
+    expect(verifyCredentialCiphertexts(ciphertexts, { decryptString: decrypt })).toBeUndefined()
+    expect(decrypt).toHaveBeenCalledTimes(2)
+    expect(readFileSync(path, 'utf8')).toBe(contents)
+    expect(readdirSync(paths.configRoot)).toEqual(['research-execution-profiles.json'])
+  })
+
+  it.each([
+    [null, 'invalid-document'],
+    [{}, 'invalid-document'],
+    [{ version: 2, profiles: [] }, 'invalid-document'],
+    [{ version: 1, profiles: [{}] }, 'invalid-document'],
+    [researchDocument({ provider: 'enc:invalid-base64-private-value' }), 'invalid-ciphertext']
+  ])(
+    'fails closed on malformed research credential documents without exposing values: %j',
+    (value, reason) => {
+      const paths = fixture()
+      const path = join(paths.configRoot, 'research-execution-profiles.json')
+      const contents = JSON.stringify(value)
+      writeFileSync(path, contents)
+      let failure: unknown
+      try {
+        readCredentialCiphertexts(paths)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({
+        name: 'CredentialIdentityError',
+        reason: 'ciphertext-inventory-unavailable',
+        diagnostic: {
+          code: 'inventory-failed',
+          source: 'configuration',
+          stage: 'parse-document',
+          reason
+        }
+      })
+      expect(String(failure)).not.toContain('private-value')
+      expect(String(failure)).not.toContain(path)
+      expect(JSON.stringify(failure)).not.toContain('private-value')
+      expect(JSON.stringify(failure)).not.toContain(path)
+      expect(readFileSync(path, 'utf8')).toBe(contents)
+    }
+  )
+
+  it('does not promote a pending research profile during startup inventory', () => {
+    const paths = fixture()
+    const name = 'research-execution-profiles.json.123.tmp'
+    const contents = JSON.stringify(researchDocument({ provider: ref('pending-research') }))
+    writeFileSync(join(paths.configRoot, name), contents)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(
+      expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          code: 'inventory-failed',
+          source: 'configuration',
+          stage: 'read-files',
+          reason: 'pending-document'
+        })
+      })
+    )
+    expect(readdirSync(paths.configRoot)).toEqual([name])
+    expect(readFileSync(join(paths.configRoot, name), 'utf8')).toBe(contents)
+  })
+
   it('includes the Semantic Scholar credential in startup key validation', () => {
     const paths = fixture()
     writeFileSync(
@@ -42,7 +138,7 @@ describe('read-only ciphertext inventory', () => {
         connectors: { semanticScholarApiKeyRef: ref('semantic-scholar-ciphertext') }
       })
     )
-    expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toContain(
+    expect(readCredentialCiphertexts(paths).map((value) => value.value.toString())).toContain(
       'semantic-scholar-ciphertext'
     )
   })
@@ -83,8 +179,10 @@ describe('read-only ciphertext inventory', () => {
         const { DatabaseSync } = require('node:sqlite')
         const db = new DatabaseSync(process.argv[1])
         db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=5; PRAGMA cache_spill=${spill ? 'ON' : 'OFF'}')
-        db.exec('CREATE TABLE ${table}(${column} BLOB, padding BLOB)')
-        db.prepare('INSERT INTO ${table} VALUES (?, zeroblob(65536))').run(Buffer.from('committed-ciphertext'))
+        if (${store === 'cookies'})
+          db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES ('version', '23')")
+        db.exec("CREATE TABLE ${table}(${column} BLOB, padding BLOB${store === 'cookies' ? ", host_key TEXT DEFAULT 'fixture.example'" : ''})")
+        db.prepare('INSERT INTO ${table}(${column}, padding) VALUES (?, zeroblob(65536))').run(Buffer.from('committed-ciphertext'))
         db.exec('BEGIN IMMEDIATE')
         db.prepare('UPDATE ${table} SET ${column}=?, padding=randomblob(65536)').run(Buffer.from('uncommitted-ciphertext'))
         require('node:fs').writeSync(1, 'journal-written')
@@ -123,7 +221,7 @@ describe('read-only ciphertext inventory', () => {
 
     const inspect = (): string[] | string => {
       try {
-        return readCredentialCiphertexts(paths).map((value) => value.toString())
+        return readCredentialCiphertexts(paths).map((value) => value.value.toString())
       } catch (error) {
         if (!(error instanceof CredentialIdentityError)) throw error
         return error.reason
@@ -215,8 +313,12 @@ describe('read-only ciphertext inventory', () => {
       mkdirSync(directory)
       const path = join(directory, 'Cookies')
       const db = new DatabaseSync(path)
-      db.exec(`PRAGMA journal_mode=${mode}; CREATE TABLE cookies(encrypted_value BLOB)`)
-      db.prepare('INSERT INTO cookies VALUES (?)').run(Buffer.from('legacy-cookie'))
+      db.exec(
+        `PRAGMA journal_mode=${mode}; CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES ('version', '23'); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)`
+      )
+      db.prepare("INSERT INTO cookies VALUES ('fixture.example', ?)").run(
+        Buffer.from('legacy-cookie')
+      )
       db.close()
       const before = Object.fromEntries(
         readdirSync(directory).map((name) => [name, readFileSync(join(directory, name))])
@@ -225,7 +327,7 @@ describe('read-only ciphertext inventory', () => {
         expect(before['Cookies-journal'].length).toBeGreaterThan(512)
         expect(before['Cookies-journal'].subarray(0, 28)).toEqual(Buffer.alloc(28))
       }
-      expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual([
+      expect(readCredentialCiphertexts(paths).map((value) => value.value.toString())).toEqual([
         'legacy-cookie'
       ])
       expect(
@@ -262,7 +364,7 @@ describe('read-only ciphertext inventory', () => {
     })
     writeFileSync(join(paths.configRoot, 'settings.json'), settings)
     writeFileSync(join(paths.configRoot, 'credentials.json'), credentials)
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'old-provider',
       'classification-key',
       'old-env',
@@ -278,11 +380,15 @@ describe('read-only ciphertext inventory', () => {
       const directory = join(paths.profilePath, relative)
       mkdirSync(directory, { recursive: true })
       const db = new DatabaseSync(join(directory, 'Cookies'))
-      db.exec('CREATE TABLE cookies(encrypted_value BLOB)')
-      db.prepare('INSERT INTO cookies VALUES (?)').run(Buffer.from(`v10:${relative}`))
+      db.exec(
+        "CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); INSERT INTO meta VALUES ('version', '23'); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)"
+      )
+      db.prepare("INSERT INTO cookies VALUES ('fixture.example', ?)").run(
+        Buffer.from(`v10:${relative}`)
+      )
       db.close()
     }
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'v10:Network',
       'v10:Partitions/accounts/Network'
     ])
@@ -302,7 +408,7 @@ describe('read-only ciphertext inventory', () => {
       JSON.stringify([1, Buffer.from('fingerprint-key').toString('base64'), 'digest'])
     )
     db.close()
-    expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+    expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
       'compute-password',
       'command',
       'fingerprint-key'
@@ -329,13 +435,17 @@ describe('read-only ciphertext inventory', () => {
   it('preserves a classified native key failure through the complete ciphertext validation boundary', () => {
     const failure = new CredentialIdentityError('native-secret-operation-failed')
     expect(() =>
-      verifyCredentialCiphertexts([Buffer.from('v10fixture')], () => {
-        throw failure
+      verifyCredentialCiphertexts([{ kind: 'application', value: Buffer.from('v10fixture') }], {
+        decryptString: () => {
+          throw failure
+        }
       })
     ).toThrow(failure)
     try {
-      verifyCredentialCiphertexts([Buffer.from('v10fixture')], () => {
-        throw failure
+      verifyCredentialCiphertexts([{ kind: 'application', value: Buffer.from('v10fixture') }], {
+        decryptString: () => {
+          throw failure
+        }
       })
     } catch (error) {
       expect(error).toBe(failure)
@@ -347,7 +457,11 @@ describe('read-only ciphertext inventory', () => {
     const decrypt = vi.fn(() => {
       throw new Error('wrong key')
     })
-    expect(() => verifyCredentialCiphertexts([ciphertext], decrypt)).toThrow(/recovery/i)
+    expect(() =>
+      verifyCredentialCiphertexts([{ kind: 'application', value: ciphertext }], {
+        decryptString: decrypt
+      })
+    ).toThrow(/recovery/i)
     expect(decrypt).toHaveBeenCalledTimes(1)
     expect(ciphertext.toString()).toBe('old-ciphertext')
   })
@@ -417,7 +531,7 @@ it('does not interpret ordinary names, prompts, command output, or legacy opaque
   )
   db.prepare('INSERT INTO ComputeAuthOperation VALUES (?)').run('legacy-opaque-fingerprint')
   db.close()
-  expect(readCredentialCiphertexts(paths).map((b) => b.toString())).toEqual([
+  expect(readCredentialCiphertexts(paths).map((b) => b.value.toString())).toEqual([
     'real-key',
     'classification-key',
     'real-device-key'
@@ -463,6 +577,120 @@ it('accepts historical settings version 1 without migration or rewriting', () =>
   const path = join(paths.configRoot, 'settings.json')
   const contents = JSON.stringify({ version: 1, providers: [{ keyRef: ref('legacy') }] })
   writeFileSync(path, contents)
-  expect(readCredentialCiphertexts(paths).map((value) => value.toString())).toEqual(['legacy'])
+  expect(readCredentialCiphertexts(paths).map((value) => value.value.toString())).toEqual([
+    'legacy'
+  ])
   expect(readFileSync(path, 'utf8')).toBe(contents)
+})
+
+describe('typed Chromium cookie inventory', () => {
+  const cookieDatabase = (
+    paths: ReturnType<typeof fixture>,
+    version: string | null = '24'
+  ): string => {
+    const path = join(paths.profilePath, 'Cookies')
+    const db = new DatabaseSync(path)
+    db.exec(
+      'CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)'
+    )
+    if (version !== null) db.prepare("INSERT INTO meta VALUES ('version', ?)").run(version)
+    db.prepare('INSERT INTO cookies VALUES (?, ?)').run(
+      'synthetic.example',
+      Buffer.from('encrypted-cookie')
+    )
+    db.close()
+    return path
+  }
+  it('keeps the host and schema with every cookie and never validates it as application text', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    writeFileSync(
+      join(paths.configRoot, 'settings.json'),
+      JSON.stringify({ version: 2, providers: [{ keyRef: ref('application') }] })
+    )
+    const before = readFileSync(path)
+    const inventory = readCredentialCiphertexts(paths)
+    expect(inventory).toEqual([
+      { kind: 'application', value: Buffer.from('application') },
+      {
+        kind: 'cookie',
+        value: Buffer.from('encrypted-cookie'),
+        hostKey: 'synthetic.example',
+        databaseVersion: 24
+      }
+    ])
+    const cipher = { decryptString: vi.fn(() => 'secret'), validateEncryptedCookie: vi.fn() }
+    verifyCredentialCiphertexts(inventory, cipher)
+    expect(cipher.decryptString).toHaveBeenCalledExactlyOnceWith(Buffer.from('application'))
+    expect(cipher.validateEncryptedCookie).toHaveBeenCalledExactlyOnceWith(
+      Buffer.from('encrypted-cookie'),
+      inventory[1]
+    )
+    expect(readFileSync(path)).toEqual(before)
+    expect(() =>
+      verifyCredentialCiphertexts(inventory, { decryptString: cipher.decryptString })
+    ).toThrow(/recovery/i)
+    cipher.validateEncryptedCookie.mockImplementation(() => {
+      throw new Error('private-host-or-cookie')
+    })
+    expect(() => verifyCredentialCiphertexts(inventory, cipher)).toThrow(/recovery/i)
+    expect(() => verifyCredentialCiphertexts(inventory, cipher)).not.toThrow(
+      /private-host-or-cookie/
+    )
+  })
+  it.each([null, '', '0', '-1', '24suffix', '24.5', '9007199254740992'])(
+    'rejects encrypted cookies with unverifiable schema %s',
+    (version) => {
+      const paths = fixture(),
+        path = cookieDatabase(paths, version),
+        before = readFileSync(path)
+      expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+      expect(() => readCredentialCiphertexts(paths)).toThrow(
+        expect.objectContaining({
+          diagnostic: expect.objectContaining({
+            code: 'inventory-failed',
+            source: 'cookies',
+            stage: 'read-database',
+            reason: 'invalid-document'
+          })
+        })
+      )
+      expect(readFileSync(path)).toEqual(before)
+    }
+  )
+  it('rejects ambiguous cookie metadata instead of selecting a weaker schema', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    const db = new DatabaseSync(path)
+    db.exec(
+      "DROP TABLE meta; CREATE TABLE meta(key TEXT, value TEXT); INSERT INTO meta VALUES ('version', '23'), ('version', '24')"
+    )
+    db.close()
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+  })
+  it('rejects a missing cookie host rather than falling back to string decryption', () => {
+    const paths = fixture(),
+      path = cookieDatabase(paths)
+    const db = new DatabaseSync(path)
+    db.exec('UPDATE cookies SET host_key = NULL')
+    db.close()
+    expect(() => readCredentialCiphertexts(paths)).toThrow(/recovery/i)
+    expect(() => readCredentialCiphertexts(paths)).toThrow(
+      expect.objectContaining({
+        diagnostic: expect.objectContaining({
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-database',
+          reason: 'invalid-ciphertext'
+        })
+      })
+    )
+  })
+  it('does not require cookie metadata when there is no encrypted value', () => {
+    const paths = fixture(),
+      db = new DatabaseSync(join(paths.profilePath, 'Cookies'))
+    db.exec("CREATE TABLE cookies(encrypted_value BLOB); INSERT INTO cookies VALUES (X'')")
+    db.close()
+    expect(readCredentialCiphertexts(paths)).toEqual([])
+  })
 })

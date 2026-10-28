@@ -27,6 +27,12 @@ signing or general request-body inspection. The public HTTPS read channel does t
 using a per-command local CA to inspect GET/HEAD requests; ordinary approved tunnels retain
 their separate routing behavior.
 
+The public `@aipoch/notebook-network-sandbox/execution-confinement` subpath exposes only the pure
+execution-ceiling normalizer and host-membership predicate. CommonJS recovery processes and ESM
+callers share one implementation without loading the sandbox owner. Membership never grants network
+access: the ordinary destination policy must still approve a request, and offline execution denies
+every host. Runtime wrapping and lifecycle operations remain behind the process adapter.
+
 ## Architecture
 
 See [safety and integration](#safety-and-integration) for the limits of these controls.

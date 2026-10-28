@@ -90,6 +90,7 @@ import {
   prepareCredentialValidation
 } from './credential-identity/bootstrap'
 import { readCredentialCiphertexts } from './credential-identity/ciphertext-inventory'
+import type { CredentialCiphertext } from './credential-identity/cipher-contract'
 import { initializeNodeWindowsProfileKey } from './credential-identity/node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from './storage/electron-profile'
 import {
@@ -101,6 +102,7 @@ import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runt
 import { installDesktopRuntimeElectronAdapter } from './desktop-runtime-electron-adapter'
 import { createDesktopNativeHandler } from './desktop-native-electron'
 import { parseWebModeOptions } from './web-service/options'
+import { createDesktopObservationNativeHandler } from './observation-desktop/electron'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
 import { desktopQuitImpactChanged, type DesktopShutdownWork } from './desktop-runtime-lifecycle'
 import { PackageFileOpenRelay, packagePathsFromArgv } from './session-package/file-open'
@@ -259,7 +261,7 @@ async function startDesktop(): Promise<void> {
     })
   ]
   let initialRecoveryError: DesktopRuntimeStartupError | undefined
-  let startupCredentialCiphertexts: Buffer[] | undefined
+  let startupCredentialCiphertexts: CredentialCiphertext[] | undefined
   let startupCredentialInventoryCapturedAt: number | undefined
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
@@ -676,6 +678,9 @@ async function startDesktop(): Promise<void> {
     | undefined
   const recoveryEvents = createDesktopRecoveryEventBuffer()
   const native = createDesktopNativeHandler((id) => relay?.documentFor(id), isApplicationWindow)
+  let observationNative = createDesktopObservationNativeHandler({
+    documentFor: (id) => relay?.documentFor(id)
+  })
   let state: DatabaseStartupState = { phase: 'checking' }
   let ready = false
   let acceptStartupEvents = false
@@ -1063,6 +1068,11 @@ async function startDesktop(): Promise<void> {
       },
       onNativeRequest: async (request, signal) => {
         signal.throwIfAborted()
+        if (request.request.operation === 'observation')
+          return observationNative.handle(
+            { clientId: request.clientId, request: request.request.request },
+            signal
+          )
         if (request.request.operation === 'runtime-relaunch') {
           if (
             attached !== client ||
@@ -1120,6 +1130,7 @@ async function startDesktop(): Promise<void> {
       },
       onDisconnect: () => {
         if (attached !== client || !attached) return
+        void observationNative.close()
         if (!ready)
           reportError(
             new DesktopRuntimeDisconnectedError('Desktop connection was lost during startup.')
@@ -1281,10 +1292,15 @@ async function startDesktop(): Promise<void> {
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
         signal.throwIfAborted()
+        await observationNative.close()
+        signal.throwIfAborted()
         preview?.dispose()
         notifications.dispose()
         client = candidate
         notifications = makeNotifications()
+        observationNative = createDesktopObservationNativeHandler({
+          documentFor: (id) => relay?.documentFor(id)
+        })
         const candidatePreview = await createDesktopPreviewProxy(configRoot, candidate.processId())
         if (signal.aborted) {
           candidatePreview.dispose()
@@ -1365,6 +1381,7 @@ async function startDesktop(): Promise<void> {
       },
       discard: (candidate) => {
         if (client !== candidate) return
+        void observationNative.close()
         preview?.dispose()
         notifications.dispose()
         relay?.uninstall()
@@ -1649,6 +1666,7 @@ async function startDesktop(): Promise<void> {
       shutdownLease?.release()
       shutdownLease = undefined
       client?.close()
+      await observationNative.close()
       preview?.dispose()
       notifications.dispose()
       relay?.uninstall()
@@ -1668,6 +1686,9 @@ async function startDesktop(): Promise<void> {
       startedBackend = launch.startedProcess
       client = await attach()
       notifications = makeNotifications()
+      observationNative = createDesktopObservationNativeHandler({
+        documentFor: (id) => relay?.documentFor(id)
+      })
       await verifyDesktopRecoveryReadiness(client, config)
       runtimeStopped = false
       updateCommitted = false
@@ -1899,6 +1920,7 @@ async function startDesktop(): Promise<void> {
       if (!runtimeStopped && recovery.state().phase === 'connected')
         retainShutdownLease(await client!.quit({ deadlineAt }))
       else client?.close()
+      await observationNative.close()
       preview?.dispose()
       notifications.dispose()
       visibility.dispose()

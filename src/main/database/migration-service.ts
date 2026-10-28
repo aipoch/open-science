@@ -1,3 +1,4 @@
+import { sessionResearchMembershipMigration } from './migrations/0052-session-research-membership'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -222,6 +223,9 @@ const serializeMigrationVerifier = (verifier: MigrationVerifierDescriptor): stri
 }
 
 const BASELINE_ID = runtimeSchemaBaselineMigration.id
+const LEGACY_RESEARCH_MEMBERSHIP_ID = '0051_session_research_membership'
+const LEGACY_RESEARCH_MEMBERSHIP_CHECKSUM =
+  'fbba1e83ef4fb800b7713330a1c1f34e1a758017236ec8fac9bf5cd7eac746db'
 
 const checksumMigrationPayload = (
   id: string,
@@ -945,6 +949,17 @@ const MIGRATION_MANIFEST = [
       literatureReadingStatusMigration.statements,
       literatureReadingStatusMigration.verifiers,
       literatureReadingStatusMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...sessionResearchMembershipMigration,
+    checksum: checksumMigrationPayload(
+      sessionResearchMembershipMigration.id,
+      sessionResearchMembershipMigration.statements,
+      sessionResearchMembershipMigration.verifiers,
+      sessionResearchMembershipMigration.operations
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
@@ -1704,6 +1719,64 @@ const validateLedger = (
   return ledger.length
 }
 
+const normalizeLegacyResearchLedger = async (
+  client: PrismaClient,
+  ledger: readonly LedgerRow[],
+  manifest: readonly MigrationManifestEntry[]
+): Promise<readonly LedgerRow[]> => {
+  const legacy = ledger.filter(({ id }) => id === LEGACY_RESEARCH_MEMBERSHIP_ID)
+  if (legacy.length === 0) return ledger
+  const research = manifest.find(({ id }) => id === sessionResearchMembershipMigration.id)
+  const canonicalResearchIndex = MIGRATION_MANIFEST.findIndex(
+    ({ id }) => id === sessionResearchMembershipMigration.id
+  )
+  const canonicalResearch = MIGRATION_MANIFEST[canonicalResearchIndex]!
+  const reading = manifest.find(({ id }) => id === literatureReadingStatusMigration.id)
+  const hasReading = ledger.some(({ id }) => id === literatureReadingStatusMigration.id)
+  const knownPrefix = MIGRATION_MANIFEST.slice(0, canonicalResearchIndex + 1)
+  if (
+    legacy.length !== 1 ||
+    legacy[0]!.checksum !== LEGACY_RESEARCH_MEMBERSHIP_CHECKSUM ||
+    ledger.some(({ id }) => id === sessionResearchMembershipMigration.id) ||
+    research?.checksum !== canonicalResearch.checksum ||
+    reading?.checksum !==
+      MIGRATION_MANIFEST.find(({ id }) => id === literatureReadingStatusMigration.id)?.checksum ||
+    (!hasReading &&
+      (ledger.length !== knownPrefix.length - 1 ||
+        ledger.at(-1)?.id !== LEGACY_RESEARCH_MEMBERSHIP_ID))
+  ) {
+    throw new DatabaseMigrationError(
+      'database_history_invalid',
+      'The legacy research migration history does not match its released compatibility contract.',
+      false,
+      LEGACY_RESEARCH_MEMBERSHIP_ID
+    )
+  }
+  // Keep the original row, checksum and appliedAt on disk. This one exact released
+  // payload is equivalent to 0052; do not sort away holes or accept both identities.
+  const normalized = ledger.map((row) =>
+    row.id === LEGACY_RESEARCH_MEMBERSHIP_ID
+      ? { id: canonicalResearch.id, checksum: canonicalResearch.checksum }
+      : row
+  )
+  validateLedger(
+    hasReading ? normalized.slice(0, knownPrefix.length) : normalized,
+    hasReading
+      ? knownPrefix
+      : knownPrefix.filter(({ id }) => id !== literatureReadingStatusMigration.id)
+  )
+  validateLedger(
+    normalized,
+    hasReading ? manifest : manifest.filter(({ id }) => id !== literatureReadingStatusMigration.id)
+  )
+  try {
+    await runMigrationVerifiers(client, sessionResearchMembershipMigration.verifiers)
+  } catch (error) {
+    throw classifyDatabaseFailure(error, 'validation', LEGACY_RESEARCH_MEMBERSHIP_ID)
+  }
+  return normalized
+}
+
 const readForeignKeyState = async (client: PrismaClient): Promise<number> => {
   const rows = await migrationSqlExecutor.query<SqliteForeignKeyStateRow[]>(
     client,
@@ -2153,7 +2226,7 @@ const migrateApplicationDatabaseWithManifest = async (
   options: SchemaMigrationOptions = {}
 ): Promise<SchemaMigrationResult> => {
   options.onProgress?.({ phase: 'checking' })
-  let ledger: LedgerRow[]
+  let ledger: readonly LedgerRow[]
   try {
     ledger = await readLedger(client)
   } catch (error) {
@@ -2230,6 +2303,19 @@ const migrateApplicationDatabaseWithManifest = async (
   }
 
   const applied: string[] = []
+  // Only the released legacy fork may lack the independently published reading-status
+  // predecessor. A canonical 0052 ledger with that hole remains invalid.
+  const bridgesLegacyReadingStatus =
+    ledger.some(({ id }) => id === LEGACY_RESEARCH_MEMBERSHIP_ID) &&
+    !ledger.some(({ id }) => id === literatureReadingStatusMigration.id)
+  ledger = await normalizeLegacyResearchLedger(client, ledger, manifest)
+  if (bridgesLegacyReadingStatus) {
+    const readingStatus = manifest.find(({ id }) => id === literatureReadingStatusMigration.id)!
+    await ensureBackupBeforeMigration(readingStatus)
+    await applyManifestMigration(client, readingStatus)
+    applied.push(readingStatus.id)
+    ledger = await normalizeLegacyResearchLedger(client, await readLedger(client), manifest)
+  }
   const appliedCount = validateLedger(ledger, manifest)
   if (appliedCount === manifest.length) {
     return complete({ adoptedLegacy: false, applied, from, to: latest.id })

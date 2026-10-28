@@ -4,10 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Open-Science</title>
-    <!-- Bundled Office/PDF renderers need local workers and generated font/blob resources. -->
+    <!-- Main's frame navigation registry additionally binds localhost viewers to this window and
+         their exact parent frames. Remote sources stay explicitly HTTPS-only: the global upgrade
+         directive would rewrite a local viewer's HTTP bootstrap redirect to unsupported HTTPS. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob: open-science-preview:; font-src 'self' data: blob:; media-src 'self' https: blob:; frame-src open-science-preview: open-science-office-preview: https:; connect-src 'self' open-science-preview:; worker-src 'self' blob:; upgrade-insecure-requests"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob: open-science-preview:; font-src 'self' data: blob:; media-src 'self' https: blob:; frame-src open-science-preview: open-science-office-preview: https: http://*.localhost:*; connect-src 'self' open-science-preview:; worker-src 'self' blob:"
     />
   </head>
 

@@ -3,9 +3,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, realpathSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
 import type { ReplayRunIndex } from '../../shared/replay'
 import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata, runtimeMetadataIfConfigured } from '../runtime-metadata'
+import { isImportedResearchSession } from '../storage/session-package-state'
 import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { installEnvironmentPackages, verifyExecutable } from './environment-process'
 import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
@@ -14,6 +17,12 @@ import type {
   NotebookExecutionResult,
   NotebookExecutor
 } from './execution-contract'
+import {
+  resolveManagedShellExecutionCapability,
+  type ManagedShellCleanupResult,
+  type ManagedShellExecutionCapability,
+  type ManagedShellExecutionScope
+} from './managed-shell-execution'
 
 import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -32,11 +41,7 @@ import {
   resolveEnvName,
   type EnvironmentCaptureTarget
 } from '@aipoch/environment'
-import type {
-  DiscoveredInterpreter,
-  NotebookEnvironmentLock,
-  ProvisionProgress
-} from '@aipoch/environment/contracts'
+import type { DiscoveredInterpreter, ProvisionProgress } from '@aipoch/environment/contracts'
 import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
 import {
   analyzeNotebookCodeRisk,
@@ -103,7 +108,6 @@ import type {
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import type { NotebookRuntimeSettings } from '../settings/capabilities'
-import { isImportedResearchSession } from '../storage/session-package-state'
 import { publishUserFile } from '../user-file-publisher'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
 import {
@@ -136,7 +140,10 @@ import {
 } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { readTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
+import {
+  readTrustedNotebookBindingPermissionPrompts,
+  type NotebookRuntimeBindingDecisionRequest
+} from './runtime-binding-admission'
 import { NotebookRuntimeRepairOwner, type ExplicitRuntimeRepairTarget } from './runtime-repair'
 import { saveIpynbAll } from './save-ipynb-all'
 import {
@@ -272,6 +279,9 @@ type NotebookRuntimeServiceOptions = ProjectIdScope & {
   // Stateless shell child-process port. The production adapter owns platform invocation, encoding,
   // environment projection, and timeout teardown; tests inject a fake without crossing IPC/shared.
   shellProcess?: NotebookShellProcess
+  // Main-owned execution policy for bounded engineering runs; never accepted from tool arguments.
+  // Ordinary Notebook Sessions retain their persistent Shell interpreter by default.
+  shellExecutionMode?: 'persistent' | 'bounded'
   shellConcurrencyLimit?: number
   // Callback to fetch currently granted external folder roots. Production wires the
   // GrantedLocalRootsRepository; tests can inject an in-memory list or omit for empty-list default.
@@ -447,7 +457,7 @@ class NotebookRuntimeService {
   // Read-only classification for authenticated outer-tool admission. The binding boundary repeats
   // this decision; a correlated handoff requires it still to be valid when the actual call arrives.
   async canOwnRuntimeBindingDecision(
-    request: NotebookSessionRequest & { language: NotebookLanguage; runtimeId: string }
+    request: NotebookRuntimeBindingDecisionRequest
   ): Promise<boolean> {
     if (!this.runtimeBindingApproval) return false
     try {
@@ -776,6 +786,8 @@ class NotebookRuntimeService {
   private environmentStartupBarrier: Promise<void> = Promise.resolve()
   private runLifecycleRecovery: Promise<void> | undefined
   private runLifecycleRecoveryFailed = false
+  private startupProcessRecoveryVerified = false
+  private readonly managedShellCalls = new Map<string, { active: number; runIds: Set<string> }>()
   private readonly backgroundRuns = new Map<
     string,
     {
@@ -1089,7 +1101,8 @@ class NotebookRuntimeService {
         new NotebookShellProcessAdapter(
           options.platform,
           options.processSandbox,
-          this.shellProcessOwnership
+          this.shellProcessOwnership,
+          options.shellExecutionMode
         ),
       shellConcurrencyLimit: options.shellConcurrencyLimit,
       getGrantedLocalRoots: options.getGrantedLocalRoots
@@ -2014,6 +2027,26 @@ class NotebookRuntimeService {
     request: ExecuteShellRequest,
     signal?: AbortSignal
   ): Promise<NotebookShellResult> {
+    return this.executeShellWithPolicy(request, signal)
+  }
+
+  /** Main-process port. Public Notebook/MCP requests cannot carry this opaque authority. */
+  async executeManagedShell(
+    request: ExecuteShellRequest,
+    capability: ManagedShellExecutionCapability,
+    signal?: AbortSignal,
+    nestedExecution?: { parentControlInvocationId: string }
+  ): Promise<NotebookShellResult> {
+    this.assertManagedExecutionCapability(request, capability)
+    return this.executeShellWithPolicy(request, signal, capability, nestedExecution)
+  }
+
+  private async executeShellWithPolicy(
+    request: ExecuteShellRequest,
+    signal?: AbortSignal,
+    capability?: ManagedShellExecutionCapability,
+    nestedExecution?: { parentControlInvocationId: string }
+  ): Promise<NotebookShellResult> {
     this.assertManagedShellCommand(request)
     if (request.background) {
       throw new NotebookBackgroundRunError(
@@ -2026,20 +2059,176 @@ class NotebookRuntimeService {
         'Background execution must use the background admission path.'
       )
     }
-    return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
-      assertNotebookCodeWithinLimit(request.command)
-      const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeShell(
-        session,
-        request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
-      )
-    })
+    const managedCall = capability ? this.beginManagedShellCall(request) : undefined
+    try {
+      return await this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
+        assertNotebookCodeWithinLimit(request.command)
+        const session = await this.sessionLifecycle.ensure(request)
+        return this.executionOwner.executeShell(
+          session,
+          request,
+          signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal,
+          (run) => managedCall?.admitted(run.runId),
+          capability,
+          nestedExecution
+        )
+      })
+    } finally {
+      managedCall?.finished()
+    }
   }
 
   async executeShellBackground(
     request: ExecuteShellRequest,
     transportSignal?: AbortSignal
+  ): Promise<NotebookBackgroundRunReceipt> {
+    return this.executeShellBackgroundWithPolicy(request, transportSignal)
+  }
+
+  async executeManagedShellBackground(
+    request: ExecuteShellRequest,
+    capability: ManagedShellExecutionCapability,
+    transportSignal?: AbortSignal
+  ): Promise<NotebookBackgroundRunReceipt> {
+    this.assertManagedExecutionCapability(request, capability)
+    return this.executeShellBackgroundWithPolicy(request, transportSignal, capability)
+  }
+
+  private assertManagedExecutionCapability(
+    request: ExecuteShellRequest,
+    capability: ManagedShellExecutionCapability
+  ): void {
+    resolveManagedShellExecutionCapability(capability, {
+      projectId: resolveProjectId(request, this.options.projectId),
+      sessionId: request.sessionId,
+      executionInvocationId: request.executionInvocationId
+    })
+    if (
+      !this.options.processSandbox ||
+      (
+        request.shellRuntime ??
+        this.options.shellRuntimeBinding ??
+        defaultShellRuntimeBinding(this.options.platform)
+      ).kind !== 'native-posix'
+    ) {
+      throw new Error('Managed Shell execution requires the native process sandbox.')
+    }
+  }
+
+  private beginManagedShellCall(request: ExecuteShellRequest): {
+    admitted(runId: string): void
+    finished(): void
+  } {
+    const scope = {
+      projectId: resolveProjectId(request, this.options.projectId),
+      sessionId: request.sessionId,
+      executionInvocationId: request.executionInvocationId!
+    }
+    this.executionOwner.assertShellInvocationAvailable(scope)
+    const key = JSON.stringify([scope.projectId, scope.sessionId, scope.executionInvocationId])
+    const call = this.managedShellCalls.get(key) ?? { active: 0, runIds: new Set<string>() }
+    call.active += 1
+    this.managedShellCalls.set(key, call)
+    return {
+      admitted: (runId) => {
+        call.runIds.add(runId)
+      },
+      finished: () => {
+        call.active -= 1
+      }
+    }
+  }
+
+  /** Main-only cancellation for an exact admitted managed Run. No Session-wide fallback. */
+  async cancelManagedShellRun(
+    scope: ManagedShellExecutionScope & { runId: string }
+  ): Promise<void> {
+    const call = this.managedShellCalls.get(
+      JSON.stringify([scope.projectId, scope.sessionId, scope.executionInvocationId])
+    )
+    if (!call?.runIds.has(scope.runId)) throw new Error('The managed Run is unavailable.')
+    const result = await this.executionOwner.cancelShellRuns(
+      { projectId: scope.projectId, sessionId: scope.sessionId, runId: scope.runId },
+      new Error('Managed Run cancelled explicitly from Replay.')
+    )
+    if (!result.reaped) throw new Error('The managed Run has not confirmed process cleanup.')
+  }
+
+  /** Retires this invocation before checking proof. Never shuts down another Run or interpreter. */
+  async confirmManagedShellCleanup(
+    scope: ManagedShellExecutionScope,
+    options: { retry?: boolean } = {}
+  ): Promise<ManagedShellCleanupResult> {
+    scope = {
+      projectId: scope.projectId,
+      sessionId: scope.sessionId,
+      executionInvocationId: scope.executionInvocationId
+    }
+    if (Object.values(scope).some((value) => typeof value !== 'string' || !value.trim())) {
+      throw new Error('Managed Shell cleanup requires a complete execution identity.')
+    }
+    this.executionOwner.retireManagedShellInvocation(scope)
+    const call = this.managedShellCalls.get(
+      JSON.stringify([scope.projectId, scope.sessionId, scope.executionInvocationId])
+    )
+    if (call?.active || this.executionOwner.hasLiveShellSubmission(scope)) {
+      return { scope, state: 'running', reaped: false }
+    }
+    if (call?.runIds.size === 1) {
+      const [runId] = call.runIds
+      const result = await this.executionOwner.confirmManagedShellRunCleanup(
+        { ...scope, runId },
+        options.retry
+      )
+      if (result.state !== 'unknown')
+        return {
+          scope,
+          runId,
+          ...result,
+          ...(result.reaped ? { proof: 'process-owner' as const } : {})
+        }
+    }
+    // No history/status inference can substitute for the original startup process recovery.
+    if (!this.startupProcessRecoveryVerified || this.runLifecycleRecoveryFailed) {
+      return { scope, state: 'unknown', reaped: false }
+    }
+    try {
+      const documents = await this.repository.readSessionDocuments(
+        scope.projectId,
+        scope.sessionId,
+        { strict: true }
+      )
+      const runs = documents
+        .flatMap((document) => document.runs)
+        .filter((run) => run.submissionIdentity === scope.executionInvocationId)
+      if (this.executionOwner.hasLiveShellSubmission(scope) || call?.active) {
+        return { scope, state: 'running', reaped: false }
+      }
+      if (runs.length === 0)
+        return { scope, state: 'verified', reaped: true, proof: 'never-dispatched' }
+      if (
+        runs.length === 1 &&
+        runs[0].kernelKind === 'bash' &&
+        !this.executionOwner.isCurrentShellRun(runs[0].runId)
+      ) {
+        return {
+          scope,
+          runId: runs[0].runId,
+          state: 'verified',
+          reaped: true,
+          proof: 'startup-recovery'
+        }
+      }
+    } catch {
+      // Missing evidence in an unreadable/corrupt history is never proof that no Run was admitted.
+    }
+    return { scope, state: 'unknown', reaped: false }
+  }
+
+  private async executeShellBackgroundWithPolicy(
+    request: ExecuteShellRequest,
+    transportSignal?: AbortSignal,
+    capability?: ManagedShellExecutionCapability
   ): Promise<NotebookBackgroundRunReceipt> {
     if (!this.shellBackgroundExecutionEnabled) {
       throw new NotebookBackgroundRunError(
@@ -2067,6 +2256,7 @@ class NotebookRuntimeService {
     })
     const projectId = resolveProjectId(backgroundRequest, this.options.projectId)
     let admittedRunId: string | undefined
+    const managedCall = capability ? this.beginManagedShellCall(backgroundRequest) : undefined
     const completion = this.sessionLifecycle
       .runProjectOperation(backgroundRequest, async (deletionSignal) => {
         const session = await this.sessionLifecycle.ensure(backgroundRequest)
@@ -2076,6 +2266,7 @@ class NotebookRuntimeService {
           AbortSignal.any([controller.signal, deletionSignal]),
           (admitted) => {
             admittedRunId = admitted.runId
+            managedCall?.admitted(admitted.runId)
             this.observeBackgroundAdmission(projectId, backgroundRequest.sessionId, admitted)
             transportSignal?.removeEventListener('abort', cancelBeforeReceipt)
             if (!this.backgroundRuns.has(admitted.runId)) {
@@ -2090,10 +2281,14 @@ class NotebookRuntimeService {
               })
             }
             resolveReceipt(this.backgroundReceipt(projectId, backgroundRequest.sessionId, admitted))
-          }
+          },
+          capability
         )
       })
-      .finally(() => transportSignal?.removeEventListener('abort', cancelBeforeReceipt))
+      .finally(() => {
+        transportSignal?.removeEventListener('abort', cancelBeforeReceipt)
+        managedCall?.finished()
+      })
     completion.catch((error) => {
       if (!admittedRunId) {
         rejectReceipt(
@@ -2607,6 +2802,7 @@ class NotebookRuntimeService {
       throw error
     })
     await this.runLifecycleRecovery
+    this.startupProcessRecoveryVerified = true
   }
 
   // Awaited by materialize/install before they touch a prefix, so startup recovery has finished

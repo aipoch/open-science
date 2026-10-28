@@ -1,4 +1,8 @@
-import { expectModuleBoundary } from '../../../test/module-boundary-assertions'
+import {
+  expectModuleBoundary,
+  expectBoundaryPaths,
+  expectBoundaryOwnerTests
+} from '../../../test/module-boundary-assertions'
 import { dirname, extname, relative, resolve, sep } from 'node:path'
 
 import {
@@ -408,6 +412,39 @@ describe('Reviewer orchestrator architecture', () => {
   it('routes interface changes through every cross-surface and downstream certification suite', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
 
+    expectBoundaryPaths(manifest, 'reviewer_evidence', [
+      'src/main/reviewer/scope.ts',
+      'src/main/reviewer/artifact-digest.test.ts',
+      'src/main/reviewer/artifact-digest.ts',
+      'src/main/reviewer/artifact-version-review.test.ts',
+      'src/main/reviewer/artifact-version-review.ts',
+      'src/main/reviewer/bounded-artifact-content.ts',
+      'src/main/reviewer/host-sdk.test.ts',
+      'src/main/reviewer/host-sdk.ts',
+      'src/main/reviewer/scope-snapshot.test.ts',
+      'src/main/reviewer/scope-snapshot.ts',
+      'src/main/reviewer/scope.test.ts',
+      'src/main/reviewer/stale-reviews.ts'
+    ])
+    expectBoundaryPaths(manifest, 'reviewer_tool_contracts', ['src/main/reviewer/bridge-tools.ts'])
+    expectBoundaryPaths(manifest, 'reviewer_repository', [
+      'src/main/reviewer/repository.test.ts',
+      'src/main/reviewer/repository.ts',
+      'src/main/reviewer/review-json.test.ts',
+      'src/main/reviewer/review-json.ts',
+      'src/main/reviewer/review-submission-read-model.ts',
+      'src/main/reviewer/submission-limits.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'reviewer_evidence', [
+      'src/main/reviewer/scope.test.ts',
+      'src/main/reviewer/artifact-digest.test.ts',
+      'src/main/reviewer/artifact-version-review.test.ts',
+      'src/main/reviewer/scope-snapshot.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'reviewer_repository', [
+      'src/main/reviewer/repository.test.ts',
+      'src/main/reviewer/review-json.test.ts'
+    ])
     expectModuleBoundary(manifest, 'reviewer_orchestrator', {
       ownerPaths: [
         'src/main/reviewer/acp-runtime.ts',
@@ -418,13 +455,6 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/reviewer-session-driver.ts',
         'src/main/reviewer/paged-preview-electron.ts',
         'src/main/reviewer/correction.ts',
-        'src/main/reviewer/scope.ts',
-        'src/main/reviewer/artifact-digest.test.ts',
-        'src/main/reviewer/artifact-digest.ts',
-        'src/main/reviewer/artifact-version-review.test.ts',
-        'src/main/reviewer/artifact-version-review.ts',
-        'src/main/reviewer/bounded-artifact-content.ts',
-        'src/main/reviewer/bridge-tools.ts',
         'src/main/reviewer/correction-context.test.ts',
         'src/main/reviewer/correction-context.ts',
         'src/main/reviewer/correction-resume.ts',
@@ -434,8 +464,6 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/fix-loop.test.ts',
         'src/main/reviewer/flag-stale-reviews.test.ts',
         'src/main/reviewer/host-sdk-tabular.test.ts',
-        'src/main/reviewer/host-sdk.test.ts',
-        'src/main/reviewer/host-sdk.ts',
         'src/main/reviewer/image-content.integration.test.ts',
         'src/main/reviewer/image-generation-trace.integration.test.ts',
         'src/main/reviewer/ipc.test.ts',
@@ -456,12 +484,7 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/paged-preview-resolver.ts',
         'src/main/reviewer/project-runtime-owner.test.ts',
         'src/main/reviewer/project-runtime-owner.ts',
-        'src/main/reviewer/repository.test.ts',
-        'src/main/reviewer/repository.ts',
         'src/main/reviewer/review-assessment-owner.test.ts',
-        'src/main/reviewer/review-json.test.ts',
-        'src/main/reviewer/review-json.ts',
-        'src/main/reviewer/review-submission-read-model.ts',
         'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
         'src/main/reviewer/reviewer-mcp-test-client.ts',
         'src/main/reviewer/reviewer-orchestrator.architecture.test.ts',
@@ -469,11 +492,6 @@ describe('Reviewer orchestrator architecture', () => {
         'src/main/reviewer/reviewer-resilience.test.ts',
         'src/main/reviewer/rubric.test.ts',
         'src/main/reviewer/rubric.ts',
-        'src/main/reviewer/scope-snapshot.test.ts',
-        'src/main/reviewer/scope-snapshot.ts',
-        'src/main/reviewer/scope.test.ts',
-        'src/main/reviewer/stale-reviews.ts',
-        'src/main/reviewer/submission-limits.ts',
         'src/main/reviewer/turn-evidence.test.ts',
         'src/main/reviewer/turn-evidence.ts',
         'src/main/reviewer/paged-preview-host.ts',
@@ -523,20 +541,14 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/reviewer/correction.test.ts',
           'src/main/reviewer/correction-owner.test.ts',
           'src/main/reviewer/paged-preview-electron.test.ts',
-          'src/main/reviewer/scope.test.ts',
-          'src/main/reviewer/artifact-digest.test.ts',
-          'src/main/reviewer/artifact-version-review.test.ts',
           'src/main/reviewer/flag-stale-reviews.test.ts',
           'src/main/reviewer/host-sdk-tabular.test.ts',
           'src/main/reviewer/image-content.integration.test.ts',
           'src/main/reviewer/image-generation-trace.integration.test.ts',
           'src/main/reviewer/project-runtime-owner.test.ts',
-          'src/main/reviewer/repository.test.ts',
-          'src/main/reviewer/review-json.test.ts',
           'src/main/reviewer/reviewer-regression-gate.integration.test.ts',
           'src/main/reviewer/reviewer-resilience.test.ts',
           'src/main/reviewer/rubric.test.ts',
-          'src/main/reviewer/scope-snapshot.test.ts',
           'src/main/reviewer/turn-evidence.test.ts',
           'src/main/reviewer/paged-preview-host.test.ts'
         ],
@@ -559,10 +571,66 @@ describe('Reviewer orchestrator architecture', () => {
           'src/main/office-preview/office-preview-runtime-protocol.test.ts',
           'src/main/uploads/attachment-media.pdf-preview.test.ts'
         ],
-        // Source dependencies are derived centrally; executable dynamic contracts are pinned below.
-        consumer: []
+        // Preserve research contracts while source dependencies remain centrally derived.
+        consumer: [
+          'src/main/composition/session-packages.lifecycle.test.ts',
+          'src/main/session-package/research-reproduction.integration.test.ts',
+          'src/main/composition/artifact-surfaces.test.ts',
+          'src/main/composition/handoff.test.ts',
+          'src/main/composition/managed-execution.integration.test.ts',
+          'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+          'src/main/notebook/managed-auxiliary-output.test.ts',
+          'src/main/notebook/managed-execution-collection.integration.test.ts',
+          'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+          'src/main/notebook/managed-execution-output.test.ts',
+          'src/main/notebook/managed-execution-service.test.ts',
+          'src/main/notebook/managed-nested-generation.integration.test.ts',
+          'src/main/notebook/managed-output-publication.integration.test.ts',
+          'src/main/notebook/research-material-authority.test.ts',
+          'src/main/notebook/screened-auxiliary-output.test.ts',
+          'src/main/notebook/session-operation-owner.integration.test.ts',
+          'src/main/research-execution-profiles/ipc.test.ts',
+          'src/main/session-package/headless.test.ts',
+          'src/main/run-observation/capture-package.integration.test.ts',
+          'src/main/run-observation/recorded-reader.test.ts',
+          'src/main/run-observation/managed-coordinator.test.ts',
+          'src/main/run-observation/managed-port.test.ts',
+          'src/main/project-recordings/managed-adapter.test.ts',
+          'src/main/run-observation-external-port.test.ts',
+          'src/main/browser-recordings/external-port.test.ts',
+          'src/main/runtime-view/browser-host.integration.test.ts',
+          'src/main/replay-viewer/http-host.integration.test.ts',
+          'src/main/browser-recordings/owner.test.ts',
+          'src/main/run-observation/media-collector.test.ts',
+          'src/main/project-recordings/recorder.test.ts',
+          'src/main/run-observation/managed-status.test.ts',
+          'src/main/managed-runtime-views.integration.test.ts',
+          'src/main/observation-desktop/bridge.test.ts',
+          'src/main/research-demos/owner.macos.integration.test.ts',
+          'src/main/research-demos/owner.test.ts',
+          'src/main/research-runs/inspection.test.ts',
+          'src/main/research-runs/ipc.test.ts',
+          'src/main/research-demos/ipc.test.ts',
+          'src/renderer/replay-viewer/research-browser.integration.test.ts',
+          'src/main/research-replay/http-host.integration.test.ts',
+          'src/main/research-replay/observation-association.test.ts',
+          'src/main/research-replay/observation-selection.test.ts',
+          'src/main/research-replay/service-timing.test.ts',
+          'src/main/research-replay/service.test.ts',
+          'src/main/notebook/offline-plan-admission.test.ts',
+          'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+          'src/renderer/replay-viewer/browser.integration.test.ts',
+          'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+          'src/main/research-demos/inspection.test.ts',
+          'src/main/replay-viewer/desktop-embed.integration.test.ts',
+          'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+          'src/main/runtime-view/tuanzi.macos.integration.test.ts',
+          'src/main/notebook/managed-research-acceptance.macos.integration.test.ts'
+        ]
       },
       capabilityOverlays: ['windows_sensitive', 'e2e_regressions', 'e2e_delegation'],
+      fullTestReason:
+        'The reviewer_orchestrator owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including research-material-authority.test.ts, run-observation-external-port.test.ts, inspection.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.',
       fallbackCapability: 'main_runtime'
     })
   })

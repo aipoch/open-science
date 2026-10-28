@@ -15,7 +15,9 @@
     "src/renderer/src/pages/workspace/workspace-agent-control-availability.ts",
     "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
     "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
-    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts"
+    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/AgentControlMenuItemTooltip.tsx",
@@ -24,7 +26,8 @@
     "src/renderer/src/pages/workspace/agent-control-tooltip-side.ts",
     "src/renderer/src/pages/workspace/session-action-menu.ts",
     "src/renderer/src/pages/workspace/workspace-agent-control-availability.ts",
-    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts"
+    "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts",
+    "src/renderer/src/pages/workspace/ResearchMembershipDialog.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -37,7 +40,8 @@
       "src/renderer/src/pages/workspace/session-dialogs.render.test.tsx",
       "src/renderer/src/pages/workspace/workspace-agent-control-availability.test.ts",
       "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.availability.test.ts",
-      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx"
+      "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
+      "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -172,9 +176,11 @@
       "src/renderer/src/pages/workspace/workspace-tool-activity-style.test.ts",
       "src/renderer/src/pages/workspace/workspace-web-search-details.test.ts",
       "src/renderer/web/bootstrap.test.ts",
-      "src/renderer/web/renderer-argument-shape-characterization.test.ts"
+      "src/renderer/web/renderer-argument-shape-characterization.test.ts",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Research membership controls extend session mutation across renderer state, project routing and host persistence; validate the expanded session-control lifecycle in full."
 }

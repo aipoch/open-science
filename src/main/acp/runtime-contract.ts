@@ -38,6 +38,10 @@ import type {
 } from '../literature/library-mcp-server'
 import type { LiteratureReadDocumentRequest } from '../literature/mcp-server'
 import type { NotebookRpcConnection } from '../notebook/mcp-server'
+import type {
+  AuthorizeNotebookRuntimeBindingAdmission,
+  CanOwnNotebookRuntimeBindingDecision
+} from '../notebook/runtime-binding-admission'
 import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import type {
@@ -348,8 +352,8 @@ export type AcpRuntimeUploadOptions = {
 }
 
 export type AcpRuntimeNotebookOptions = {
-  authorizeRuntimeBindingAdmission?: import('../notebook/local-rpc-server').NotebookLocalRpcServer['authorizeRuntimeBindingAdmission']
-  canOwnRuntimeBindingDecision?: import('../notebook/runtime-service').NotebookRuntimeService['canOwnRuntimeBindingDecision']
+  authorizeRuntimeBindingAdmission?: AuthorizeNotebookRuntimeBindingAdmission
+  canOwnRuntimeBindingDecision?: CanOwnNotebookRuntimeBindingDecision
   projectId: string
   mcpEntryPath: string
   mcpCommand?: string

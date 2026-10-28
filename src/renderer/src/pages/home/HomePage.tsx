@@ -1,3 +1,5 @@
+import { openProjectWorkspace } from '../workspace/project-workspace-entry'
+
 import { UseCaseCarousel } from './UseCaseCarousel'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { ErrorNotice } from '@/components/error-notice'
@@ -45,6 +47,7 @@ import { useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import type { ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
+import { useResearchDemoCarriers } from '@/stores/research-demo-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -271,15 +274,20 @@ const HomePage = ({
   }
 
   // Non-pending sessions only; pending ones have no durable project yet.
+  const demoCarriers = useResearchDemoCarriers(
+    [...activeProjectIds],
+    sessions.map((session) => session.id).join(',')
+  )
   const persistedSessions = useMemo(
     () =>
       sessions.filter(
         (session) =>
           !session.isPending &&
           session.archivedAt === undefined &&
-          activeProjectIds.has(session.projectId)
+          activeProjectIds.has(session.projectId) &&
+          !demoCarriers[session.projectId]?.some((carrier) => carrier.sessionId === session.id)
       ),
-    [activeProjectIds, sessions]
+    [activeProjectIds, sessions, demoCarriers]
   )
 
   const unreadCompletedBySession = useMemo(() => {
@@ -1011,7 +1019,14 @@ const HomePage = ({
                           <button
                             type="button"
                             className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left after:absolute after:inset-0 after:rounded-[inherit]"
-                            onClick={() => openProject(project.id, 'user')}
+                            onClick={() => {
+                              setProjectActionError(undefined)
+                              void openProjectWorkspace(project.id).catch(() => {
+                                setProjectActionError(
+                                  t('Could not open this project. Please retry.')
+                                )
+                              })
+                            }}
                           >
                             <span className="min-w-0 truncate font-semibold text-text-000">
                               {project.name}

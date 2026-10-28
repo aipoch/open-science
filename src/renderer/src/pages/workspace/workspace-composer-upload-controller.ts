@@ -1402,12 +1402,16 @@ export const useWorkspaceComposerUploadController = ({
   const settleSessionDeletion = useCallback(
     (draftKey: string, deleted: boolean): void => {
       const cleanup = deletionCleanupRef.current[draftKey]
-      delete deletionCleanupRef.current[draftKey]
-      if (!deleted || !cleanup) return
+      if (!deleted || !cleanup) {
+        delete deletionCleanupRef.current[draftKey]
+        return
+      }
       delete draftsRef.current[draftKey]
       clearHistory(draftKey)
       clearPastedTextUndo(draftKey)
       clearUndo(draftKey)
+      // Retain the deletion owner while history releases shared draft resources.
+      delete deletionCleanupRef.current[draftKey]
       if (activeDraftKeyRef.current === draftKey) {
         setActiveAttachments([])
         setActiveTransfers([])

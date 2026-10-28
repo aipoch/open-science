@@ -44,6 +44,43 @@ describe('EmptyConversationBanner', () => {
     expect(html).toContain('accept=".science"')
   })
 
+  it('identifies an original record with no messages without a loading-like decoration', () => {
+    vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
+
+    const html = renderToStaticMarkup(
+      <EmptyConversationBanner
+        researchTitle="Tuanzi research"
+        researchRecord
+        onStartResearch={vi.fn()}
+        sessionImport={{ projectId: 'project-1', canImport: true }}
+      />
+    )
+
+    expect(html).toContain('No conversation history')
+    expect(html).toContain('Review the research materials or ask a question below.')
+    expect(html).not.toContain('Tuanzi research')
+    expect(html).not.toContain('Discussing')
+    expect(html).not.toContain('original research stays unchanged')
+    expect(html).not.toContain('<svg')
+    expect(html).toContain('overflow-y-auto')
+    expect(html).not.toContain('top-[42%]')
+    expect(html).toContain('Summarize research')
+    expect(html).toContain('Examine the evidence')
+    expect(html).toContain('Identify limitations')
+    expect(html).not.toContain('Analyze data')
+    expect(html).not.toContain('Compare papers')
+    expect(html).not.toContain('data-testid="session-package-entry"')
+  })
+
+  it('invites a question for a new research discussion without claiming history is missing', () => {
+    const html = renderToStaticMarkup(<EmptyConversationBanner researchTitle="Research" />)
+    expect(html).toContain('Ask about this research')
+    expect(html).toContain('Review the research materials or ask a question below.')
+    expect(html).not.toContain('No conversation history')
+    expect(html).not.toContain('Discussing')
+    expect(html).not.toContain('<svg')
+  })
+
   it('omits the entry row without import props or when the Project cannot import', () => {
     vi.stubGlobal('api', { sessions: { importPackage: vi.fn() } })
 

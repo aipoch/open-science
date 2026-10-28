@@ -1,3 +1,4 @@
+import type { CredentialCiphertext } from './credential-identity/cipher-contract'
 import {
   readServiceLifetime,
   serviceLifetimeRecordSchema,
@@ -560,7 +561,7 @@ export async function startOrAttachDesktopBackend(options: {
   entry: string
   packaged: boolean
   args?: readonly string[]
-  credentialInventory?: readonly Buffer[]
+  credentialInventory?: readonly CredentialCiphertext[]
   credentialInventoryCapturedAt?: number
   timeoutMs?: number
   // Bounds for waiting out a stopping runtime or a lock still held after exit 75.

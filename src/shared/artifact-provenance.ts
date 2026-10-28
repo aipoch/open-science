@@ -88,6 +88,7 @@ export type ArtifactWriteSourceScope = {
   workspaceCwd?: string
   notebookDataDir?: string
   notebookSessionRoot?: string
+  expectedContent?: { checksum: string; sizeBytes: number }
 }
 
 export type SaveArtifactVersionRequest = Omit<

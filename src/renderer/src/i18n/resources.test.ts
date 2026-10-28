@@ -3881,6 +3881,7 @@ const SRC_ROOT = join(__dirname, '../../..')
 const SCAN_ROOTS = [
   join(SRC_ROOT, 'renderer', 'src'),
   join(SRC_ROOT, 'renderer', 'web'),
+  join(SRC_ROOT, 'renderer', 'replay-viewer'),
   join(SRC_ROOT, 'shared'),
   join(SRC_ROOT, 'main'),
   // Translation helpers supply English labels that host UI translates at the boundary.

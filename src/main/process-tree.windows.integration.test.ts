@@ -14,7 +14,9 @@ let root: string | undefined
 const children: ChildProcessWithoutNullStreams[] = []
 afterEach(async () => {
   await Promise.all(children.splice(0).map((child) => terminateProcessTree(child)))
-  if (root) await rm(root, { recursive: true, force: true })
+  // Windows can briefly retain the .cmd file handle after confirmed tree teardown.
+  // Retry fixture removal within a bounded budget; a persistent lock still fails cleanup.
+  if (root) await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   root = undefined
 })
 const scope = {

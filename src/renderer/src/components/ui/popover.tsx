@@ -1,3 +1,4 @@
+import { useOverlayPortalContainer } from './overlay-portal-container'
 import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Popover as PopoverPrimitive } from 'radix-ui'
@@ -21,10 +22,11 @@ function PopoverContent({
 }: React.ComponentProps<typeof PopoverPrimitive.Content> &
   Pick<React.ComponentProps<typeof PopoverPrimitive.Portal>, 'container'>): React.JSX.Element {
   const layer = useOverlayLayer()
+  const portalContainer = useOverlayPortalContainer()
   const { setContentRef, onInteractOutside: guardChildDismissal } = useChildLayerDismissalGuard(ref)
 
   return (
-    <PopoverPrimitive.Portal container={container}>
+    <PopoverPrimitive.Portal container={container === undefined ? portalContainer : container}>
       <PopoverPrimitive.Content
         ref={setContentRef}
         sideOffset={sideOffset}

@@ -86,9 +86,15 @@
       "src/main/session-persistence/ipc.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/composition/reviewer.test.ts",
-      "src/main/ipc-surfaces/settings.test.ts"
+      "src/main/ipc-surfaces/settings.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Research replay and observation extend the HTTP server with authenticated dynamic resource routes and embedded replay ownership outside its reviewed runtime imports; validate the expanded desktop, browser and package transport boundary in full."
 }

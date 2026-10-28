@@ -51,10 +51,16 @@ import type { composeSettingsEffects } from './settings-effects'
 import type { composeStorageStartup } from './storage-startup'
 
 export function composeCommandDependencies({
+  runObservation,
+  browserRecording,
+  researchRuns,
+  researchDemos,
+  researchExecutionProfiles,
   localeOwner,
   reportUploadProgress,
   sideChatCommands,
   applicationEvents,
+  readObservationBindings,
   settingsBootstrap,
   storageStartup,
   managedFileVersionService,
@@ -93,10 +99,16 @@ export function composeCommandDependencies({
   reviewerCommandOwner,
   listAppIconPreviews
 }: {
+  researchExecutionProfiles: ApplicationCommandCompositionDependencies['researchExecutionProfiles']
+  runObservation: ApplicationCommandCompositionDependencies['runObservation']
+  browserRecording: ApplicationCommandCompositionDependencies['browserRecording']
+  researchRuns: ApplicationCommandCompositionDependencies['researchRuns']
+  researchDemos: ApplicationCommandCompositionDependencies['researchDemos']
   reportUploadProgress: ((clientId: string, progress: UploadTransferProgress) => void) | undefined
   localeOwner: LocalePreferenceOwner
   sideChatCommands: SideChatCommandOwner
   applicationEvents: ApplicationEvents
+  readObservationBindings?: import('./managed-execution').ManagedExecutionComposition['readObservationBindings']
   settingsBootstrap: Awaited<ReturnType<typeof composeSettingsBootstrap>>
   storageStartup: Awaited<ReturnType<typeof composeStorageStartup>>
   managedFileVersionService: ManagedFileVersionService
@@ -144,16 +156,27 @@ export function composeCommandDependencies({
         sessionFoundation.sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
           mode: 'read-only',
           preserveRuntimeState: true
-        })
+        }),
+      list: () => sessionFoundation.sessionRepository.loadSessionSummaries(),
+      setResearchMembership: (request) =>
+        sessionAuthority.sessionPersistenceCoordinator.setResearchMembership(request),
+      readCurrent: (projectId, sessionId) =>
+        sessionAuthority.sessionPersistenceCoordinator.readSessionSnapshot(projectId, sessionId)
     },
     withDataRootWrite,
     new SessionReadingOwner(
       new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
       sessionAuthority.sessionPersistenceCoordinator
-    )
+    ),
+    readObservationBindings
   )
   const openRecoveryFolder = createSessionRecoveryFolderCommand(sessionFoundation.sessionRepository)
   const applicationCommandDependencies: ApplicationCommandCompositionDependencies = {
+    runObservation,
+    browserRecording,
+    researchRuns,
+    researchDemos,
+    researchExecutionProfiles,
     sideChat: sideChatCommands,
     pdfTranslation: documentReading.pdfTranslationOwner,
     sessionReplay,

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 import { createHash } from 'node:crypto'
-import { createServer } from 'node:http'
+import { createServer, request } from 'node:http'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises'
@@ -93,6 +93,8 @@ const realCacheFixture = async (
       onQuit: vi.fn()
     })
     const executor = new NodeHttpExecutor()
+    // This fixture serves only loopback HTTP; inherited proxy settings must not reroute it.
+    executor.createRequest = request
     executor.download = ElectronHttpExecutor.prototype.download
     updater.httpExecutor = executor
     updater._testOnlyOptions = { platform: 'linux' }

@@ -383,6 +383,68 @@ describe('NotebookNetworkSandboxOwner', () => {
     }
   )
 
+  it.each([
+    ['darwin', 'offline-demo'],
+    ['darwin', 'research'],
+    ['linux', 'offline-demo'],
+    ['linux', 'research']
+  ] as const)(
+    'keeps %s %s execution confined when ordinary folder restrictions are disabled',
+    async (platform, mode) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'os-managed-folder-policy-')))
+      fixtureDirectories.push(root)
+      const unrelatedRoot = join(root, 'ordinary-grant')
+      const outputRoot = join(root, 'managed-output')
+      const configRoot = join(root, 'config')
+      const skills = join(configRoot, 'codex', 'skills')
+      await mkdir(skills, { recursive: true })
+      const owner = new NotebookNetworkSandboxOwner({
+        configRoot,
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => false,
+        getGrantedLocalRoots: async () => [
+          { id: 'ordinary', name: 'Ordinary grant', path: unrelatedRoot, access: 'rw' }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: outputRoot,
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        runtime: 'bash',
+        confinement: { mode },
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [outputRoot],
+          deniedReadRoots: [join(root, 'secret')],
+          deniedWriteRoots: []
+        }
+      })
+      try {
+        const request = backend.wrap.mock.calls.at(-1)![0]
+        expect(request.confinement).toEqual({ mode })
+        expect(request.filesystem.restrictFolders).toBe(true)
+        expect(request.filesystem.readWriteRoots).toContain(outputRoot)
+        expect(request.filesystem.readWriteRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readOnlyRoots).not.toContain(unrelatedRoot)
+        expect(request.filesystem.readOnlyRoots).not.toContain(skills)
+        expect(request.filesystem.readWriteRoots).not.toContain(skills)
+        expect(request.filesystem.deniedReadRoots).toEqual([join(root, 'secret')])
+      } finally {
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+      }
+    }
+  )
+
   it.each(
     [false, true].flatMap((configured) =>
       [false, true].flatMap((restrictFolders) =>
@@ -438,6 +500,73 @@ describe('NotebookNetworkSandboxOwner', () => {
         expect(backend.installWindows).not.toHaveBeenCalled()
         await wrapped.cleanup('exit', { processesTerminated: true })
       } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it.each(
+    (['offline-demo', 'research'] as const).flatMap((mode) =>
+      [false, true].map((fullAccess) => ({ mode, fullAccess }))
+    )
+  )(
+    'keeps destination approvals within the $mode network ceiling (full access: $fullAccess)',
+    async ({ mode, fullAccess }) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-managed-network-approval-'))
+      fixtureDirectories.push(root)
+      const requestDecision = vi.fn().mockResolvedValue('allowOnce')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: 'darwin',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        hasFullAccess: () => fullAccess,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: root,
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        executionReference: 'managed-run',
+        runtime: 'bash',
+        allowedNetworkHosts: ['outside.example.test'],
+        confinement: {
+          mode,
+          allowedNetworkHosts: mode === 'research' ? ['service.example.test'] : []
+        },
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const end = wrapped.beginExecution!()
+      try {
+        await expect(
+          backend.request!({ host: 'outside.example.test', purpose: 'block' })
+        ).resolves.toBe(false)
+        expect(requestDecision).not.toHaveBeenCalled()
+        await expect(
+          backend.request!({ host: 'service.example.test', purpose: 'block' })
+        ).resolves.toBe(mode === 'research')
+        expect(requestDecision).toHaveBeenCalledTimes(mode === 'research' && !fullAccess ? 1 : 0)
+        if (mode === 'research' && !fullAccess)
+          expect(requestDecision).toHaveBeenCalledWith(
+            expect.objectContaining({
+              hostname: 'service.example.test',
+              executionId: 'managed-run',
+              allowOnce: true
+            })
+          )
+      } finally {
+        end()
+        await wrapped.cleanup('exit', { processesTerminated: true })
         await owner.dispose()
       }
     }

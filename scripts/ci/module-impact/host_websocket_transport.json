@@ -981,7 +981,8 @@
       "src/renderer/src/stores/runtime-settings-store.test.ts",
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/renderer/src/stores/specialist-store.test.ts",
-      "test/config/electron.vite.config.test.ts"
+      "test/config/electron.vite.config.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts"
     ]
   },
   "consumerModules": ["main_web_service"],

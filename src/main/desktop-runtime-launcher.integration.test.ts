@@ -66,16 +66,18 @@ ${fixtureSource}`
       command: process.execPath,
       entry,
       packaged: true,
-      credentialInventory: [Buffer.from('snapshot-ciphertext')],
+      credentialInventory: [{ kind: 'application', value: Buffer.from('snapshot-ciphertext') }],
       timeoutMs: 10000
     })
     const observed = JSON.parse(await readFile(join(root, 'inventory-observed.json'), 'utf8'))
     expect(observed).toMatchObject({
       inventory: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         configRoot: root,
         profilePath,
-        ciphertexts: [Buffer.from('snapshot-ciphertext').toString('base64')]
+        ciphertexts: [
+          { kind: 'application', value: Buffer.from('snapshot-ciphertext').toString('base64') }
+        ]
       },
       existsDuringStartup: true
     })
@@ -162,7 +164,7 @@ process.exitCode=23;`
         command: process.execPath,
         entry,
         packaged: true,
-        credentialInventory: [Buffer.from('failed-startup')],
+        credentialInventory: [{ kind: 'application', value: Buffer.from('failed-startup') }],
         timeoutMs: 2000
       })
     ).rejects.toThrow('exited during startup (23)')

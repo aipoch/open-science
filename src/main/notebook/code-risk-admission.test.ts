@@ -16,6 +16,28 @@ import * as powerShellParser from './powershell-search-parser'
 import { NotebookRuntimeService, type NotebookExecutionRequest } from './runtime-service'
 import * as windowsRuntime from './windows-notebook-runtime'
 
+vi.mock('./working-file-observer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./working-file-observer')>()
+  return {
+    ...actual,
+    // These cases verify execution admission with real analysis and existing executor fixtures.
+    // Use bounded snapshots to isolate native watcher shutdown latency and retain evidence writes.
+    // working-file-observer.analysis-contract.integration.test.ts retains native watcher coverage.
+    startWorkingFileObservation: (
+      request: Parameters<typeof actual.startWorkingFileObservation>[0],
+      dependencies: Parameters<typeof actual.startWorkingFileObservation>[1]
+    ) =>
+      actual.startWorkingFileObservation(request, {
+        ...dependencies,
+        watchDirectory: () => {
+          throw Object.assign(new Error('Native watcher unavailable in this fixture.'), {
+            code: 'ENOSYS'
+          })
+        }
+      })
+  }
+})
+
 const roots: string[] = []
 const services: NotebookRuntimeService[] = []
 const pythonNativeFlagPrelude =

@@ -62,6 +62,8 @@ files:
 asarUnpack:
   - node_modules/@aipoch/notebook-syntax/assets/**
   - node_modules/@aipoch/literature-citations/resources/**
+  # The scoped Replay server reads bounded real file descriptors, independent of asar's virtual FS.
+  - out/replay-viewer/**
   - resources/**
   - '!resources/bin{,/**/*}'
   # The desktop credential bridge still launches these helpers from the Electron host.

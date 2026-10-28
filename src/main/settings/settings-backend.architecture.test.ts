@@ -624,6 +624,7 @@ describe('Settings backend ownership architecture', () => {
     expect(stringSetValues(settingsPaths.notebookLocalRpcServer, 'CONTROL_RPC_METHODS')).toEqual([
       'capabilitiesCall',
       'artifactsCall',
+      'managedExecutionCall',
       'lineageCall',
       'framesCall',
       'sessionsCall',
@@ -883,7 +884,6 @@ describe('Settings backend ownership architecture', () => {
       [
         'src/main/settings/repository.ts',
         'src/main/settings/record-codec.ts',
-        'src/main/settings/provider-token-limits.ts',
         'src/main/settings/document-codec.ts',
         'src/main/settings/document-store.ts',
         'src/main/settings/compute-grant-port.ts',
@@ -894,13 +894,25 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/document-codec.test.ts',
         'src/main/settings/document-store.test.ts',
         'src/main/settings/mirror-settings.test.ts',
-        'src/main/settings/provider-token-limits.test.ts',
         'src/main/settings/record-codec.test.ts',
         'src/main/settings/repository.test.ts',
-        'src/main/settings/document-read-error.ts',
-        'src/main/settings/document-shape.ts',
         'src/main/settings/classification-config.ts'
       ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'settings_token_policy',
+      [
+        'src/main/settings/provider-token-limits.ts',
+        'src/main/settings/provider-token-limits.test.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'settings_record_contracts',
+      ['src/main/settings/document-read-error.ts', 'src/main/settings/document-shape.ts'].filter(
+        (path) => !movedPaths.has(path)
+      )
     )
     expect(manifest.modules.settings_repository.interfacePaths).toEqual(
       expect.arrayContaining(
@@ -961,7 +973,6 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/provider-auth-lifecycle.ts',
         'src/main/settings/provider-draft-projection.ts',
         'src/main/settings/provider-model-catalog-owner.ts',
-        'src/main/settings/provider-resource-limits.ts',
         'src/main/settings/provider-runtime-projection.ts',
         'src/main/settings/xai-oauth.ts',
         'src/main/settings/xai-provider-account-owner.ts',
@@ -980,6 +991,11 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/xai-oauth.test.ts',
         'src/main/settings/xai-provider-account-owner.test.ts'
       ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'settings_provider_limits',
+      ['src/main/settings/provider-resource-limits.ts'].filter((path) => !movedPaths.has(path))
     )
     expectBoundaryPaths(manifest, 'provider_credentials', [
       'src/main/settings/codex-auth.ts',
@@ -1004,29 +1020,31 @@ describe('Settings backend ownership architecture', () => {
     )
     expectBoundaryPaths(
       manifest,
-      'settings_backend_resolution',
+      'settings_provider_resolution',
       [
         'src/main/settings/backend-resolver.ts',
+        'src/main/settings/backend-resolver.test.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'settings_backend_resolution',
+      [
         'src/main/settings/backend-selection-owner.ts',
         'src/main/settings/backend-route-planner.ts',
         'src/main/settings/codex-bridge-tools.ts',
         'src/main/settings/codex-bridge-tools.test.ts',
-        'src/main/settings/network-proxy-runtime.ts',
         'src/main/settings/environment-check.ts',
-        'src/main/settings/system-proxy.ts',
         'src/main/settings/native-responses-compatibility.ts',
         'src/main/settings/messages-bridge.ts',
         'src/main/settings/protocol-forwarding-bridge.ts',
         'src/main/settings/xai-oauth-provider-bridge.ts',
         'src/main/settings/provider-error-replay.ts',
-        'src/main/settings/provider-loopback-http-host.ts',
         'src/main/settings/provider-transport-owner.ts',
-        'src/main/settings/provider-failure-observation.ts',
         'src/main/settings/provider-runtime-health-owner.ts',
         'src/main/settings/responses-to-chat-completions-bridge.ts',
         'src/main/settings/responses-to-chat-completions-bridge.plan-tools.test.ts',
         'src/main/settings/messages-bridge.test.ts',
-        'src/main/settings/backend-resolver.test.ts',
         'src/main/settings/backend-route-planner.architecture.test.ts',
         'src/main/settings/backend-route-planner.test.ts',
         'src/main/settings/backend-selection-owner.architecture.test.ts',
@@ -1034,11 +1052,8 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/environment-check-proxy.test.ts',
         'src/main/settings/environment-check.test.ts',
         'src/main/settings/native-responses-compatibility.test.ts',
-        'src/main/settings/network-proxy-runtime.test.ts',
         'src/main/settings/protocol-forwarding-bridge.test.ts',
         'src/main/settings/provider-error-replay.test.ts',
-        'src/main/settings/provider-loopback-http-host.architecture.test.ts',
-        'src/main/settings/provider-loopback-http-host.test.ts',
         'src/main/settings/provider-transport-owner.architecture.test.ts',
         'src/main/settings/provider-transport-owner.test.ts',
         'src/main/settings/provider-runtime-health-owner.test.ts',
@@ -1047,9 +1062,28 @@ describe('Settings backend ownership architecture', () => {
         'src/main/settings/responses-reasoning-replay.test.ts',
         'src/main/settings/responses-request-adapter.architecture.test.ts',
         'src/main/settings/responses-response-adapter.architecture.test.ts',
-        'src/main/settings/system-proxy.test.ts',
         'src/main/settings/xai-oauth-provider-bridge.test.ts',
         'src/main/settings/backend-target.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'settings_proxy_runtime',
+      [
+        'src/main/settings/network-proxy-runtime.ts',
+        'src/main/settings/system-proxy.ts',
+        'src/main/settings/network-proxy-runtime.test.ts',
+        'src/main/settings/system-proxy.test.ts'
+      ].filter((path) => !movedPaths.has(path))
+    )
+    expectBoundaryPaths(
+      manifest,
+      'provider_transport',
+      [
+        'src/main/settings/provider-loopback-http-host.ts',
+        'src/main/settings/provider-failure-observation.ts',
+        'src/main/settings/provider-loopback-http-host.architecture.test.ts',
+        'src/main/settings/provider-loopback-http-host.test.ts'
       ].filter((path) => !movedPaths.has(path))
     )
     expect(manifest.modules.settings_backend_resolution.interfacePaths).toEqual(
@@ -1077,9 +1111,6 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/service.ts',
       'src/main/settings/network-proxy-settings-owner.ts',
       'src/main/settings/settings-snapshot-commit-owner.ts',
-      'src/main/settings/reviewer-model-owner.ts',
-      'src/main/settings/subagent-model-owner.ts',
-      'src/main/settings/vision-model-owner.ts',
       'src/main/settings/application-commands.test.ts',
       'src/main/settings/application-commands.ts',
       'src/main/settings/integration-application-commands.test.ts',
@@ -1098,6 +1129,11 @@ describe('Settings backend ownership architecture', () => {
       'src/main/settings/classification-usage.test.ts',
       'src/main/settings/file-commands.ts',
       'src/main/settings/file-commands.test.ts'
+    ])
+    expectBoundaryPaths(manifest, 'settings_model_owners', [
+      'src/main/settings/reviewer-model-owner.ts',
+      'src/main/settings/subagent-model-owner.ts',
+      'src/main/settings/vision-model-owner.ts'
     ])
     expect(manifest.modules.settings_service_facade.interfacePaths).toEqual(
       expect.arrayContaining([
@@ -1150,6 +1186,73 @@ describe('Settings backend ownership architecture', () => {
         'src/preload/electron-renderer-contract-adapter.test.ts',
         'src/renderer/web/api-installer.test.ts',
         'src/preload/index.test.ts'
+      ])
+    )
+    expect(manifest.modules.settings_service_facade.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'src/main/composition/session-packages.lifecycle.test.ts',
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/composition/handoff.test.ts',
+        'src/main/research-demos/owner.macos.integration.test.ts',
+        'src/main/notebook/managed-research-acceptance.macos.integration.test.ts'
+      ])
+    )
+    expect(manifest.modules.settings_backend_resolution.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'src/main/composition/session-packages.lifecycle.test.ts',
+        'src/main/session-package/research-reproduction.integration.test.ts',
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/handoff.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+        'src/main/notebook/managed-auxiliary-output.test.ts',
+        'src/main/notebook/managed-execution-collection.integration.test.ts',
+        'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+        'src/main/notebook/managed-execution-output.test.ts',
+        'src/main/notebook/managed-execution-service.test.ts',
+        'src/main/notebook/managed-nested-generation.integration.test.ts',
+        'src/main/notebook/managed-output-publication.integration.test.ts',
+        'src/main/notebook/research-material-authority.test.ts',
+        'src/main/notebook/screened-auxiliary-output.test.ts',
+        'src/main/notebook/session-operation-owner.integration.test.ts',
+        'src/main/research-execution-profiles/ipc.test.ts',
+        'src/main/session-package/headless.test.ts',
+        'src/main/run-observation/capture-package.integration.test.ts',
+        'src/main/run-observation/recorded-reader.test.ts',
+        'src/main/browser-recordings/external-port.test.ts',
+        'src/main/run-observation/managed-coordinator.test.ts',
+        'src/main/run-observation/managed-port.test.ts',
+        'src/main/project-recordings/managed-adapter.test.ts',
+        'src/main/run-observation-external-port.test.ts',
+        'src/main/runtime-view/browser-host.integration.test.ts',
+        'src/main/replay-viewer/http-host.integration.test.ts',
+        'src/main/browser-recordings/owner.test.ts',
+        'src/main/run-observation/media-collector.test.ts',
+        'src/main/project-recordings/recorder.test.ts',
+        'src/main/run-observation/managed-status.test.ts',
+        'src/main/managed-runtime-views.integration.test.ts',
+        'src/main/observation-desktop/bridge.test.ts',
+        'src/main/research-demos/owner.macos.integration.test.ts',
+        'src/renderer/replay-viewer/research-browser.integration.test.ts',
+        'src/main/research-replay/http-host.integration.test.ts',
+        'src/main/research-replay/observation-association.test.ts',
+        'src/main/research-replay/observation-selection.test.ts',
+        'src/main/research-replay/service-timing.test.ts',
+        'src/main/research-replay/service.test.ts',
+        'src/main/research-demos/owner.test.ts',
+        'src/main/research-runs/inspection.test.ts',
+        'src/main/research-runs/ipc.test.ts',
+        'src/main/research-demos/ipc.test.ts',
+        'src/main/notebook/offline-plan-admission.test.ts',
+        'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+        'src/renderer/replay-viewer/browser.integration.test.ts',
+        'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+        'src/main/research-demos/inspection.test.ts',
+        'src/main/replay-viewer/desktop-embed.integration.test.ts',
+        'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+        'src/main/notebook/managed-research-acceptance.macos.integration.test.ts',
+        'src/main/runtime-view/tuanzi.macos.integration.test.ts'
       ])
     )
     expect(

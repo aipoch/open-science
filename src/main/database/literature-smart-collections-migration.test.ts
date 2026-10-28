@@ -59,7 +59,8 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
         '0050_literature_translation',
-        '0051_literature_reading_status'
+        '0051_literature_reading_status',
+        '0052_session_research_membership'
       ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)

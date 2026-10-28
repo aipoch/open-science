@@ -37,13 +37,15 @@ export const VITEST_DATABASE_TEST_GLOBS = [
   // out of the parallel unit pool instead of extending the tests' timeout budget.
   'src/main/session-package/service.test.ts',
   'src/main/session-package/literature.test.ts',
-  'src/main/session-package/fork.test.ts'
+  'src/main/session-package/fork.test.ts',
+  'src/main/session-package/deletion.test.ts'
 ] as const
 
 export const VITEST_PROCESS_TEST_GLOBS = [
   '**/*.integration.test.ts',
   '**/*.certification.test.ts',
   'src/main/notebook/kernel-executor.test.ts',
+  'src/main/notebook/runtime-service.test.ts',
   'src/main/notebook/full-stack.smoke.test.ts',
   'src/main/local-rpc-transport.test.ts',
   'src/main/session-plan/plan-mcp-server.test.ts',

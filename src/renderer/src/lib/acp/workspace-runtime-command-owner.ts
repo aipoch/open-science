@@ -1,3 +1,4 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import * as annotationProtocol from '../../../../shared/annotations'
 import type { FileReference } from '../../../../shared/artifacts'
@@ -110,6 +111,7 @@ type SendWorkspaceMessageIntent = {
   discussionFocus?: SessionDiscussionCapture
   cwd?: string
   projectId?: string
+  researchMembership?: ResearchMembership
   permissionProfile?: PermissionProfileId
   forcedSkillIds?: string[]
   referencedArtifacts?: FileReference[]
@@ -128,6 +130,8 @@ type SendWorkspaceMessageIntent = {
   autoReviewEnabled?: boolean
   delegationPolicy?: DelegationPolicy
   preserveSelection?: boolean
+  // Async preparation may finish after the user has opened another composer.
+  isOriginCurrent?: () => boolean
   setupSessionToken?: string
 }
 type SendWorkspaceMessageCommand = SendWorkspaceMessageIntent & {
@@ -1314,7 +1318,10 @@ const performSendWorkspaceMessage = async (
         agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration,
         agentTarget: resolveSendAgentTarget(input),
-        preserveSelection: input.preserveSelection || attempt?.selectionChanged
+        preserveSelection:
+          input.preserveSelection ||
+          attempt?.selectionChanged ||
+          input.isOriginCurrent?.() === false
       })
       if (!appended) return undefined
       // This submission now owns the retry; a concurrent send must not also bypass admission.
@@ -1463,6 +1470,7 @@ const performSendWorkspaceMessage = async (
         agentBackendId: input.agentBackendId,
         agentConfiguration: input.agentConfiguration,
         memoryEnabled: input.memoryEnabled,
+        researchMembership: input.researchMembership,
         autoReviewEnabled: input.autoReviewEnabled
       })
       try {
@@ -1541,7 +1549,8 @@ const performSendWorkspaceMessage = async (
         agentConfiguration: input.agentConfiguration
       }),
       // Preparing a send must not undo navigation that happened while it was awaiting I/O.
-      preserveSelection: input.preserveSelection || attempt?.selectionChanged
+      preserveSelection:
+        input.preserveSelection || attempt?.selectionChanged || input.isOriginCurrent?.() === false
     })
     if (!appended) return undefined
     input.onMessageAppended?.(appended)
@@ -1666,7 +1675,10 @@ const performSendWorkspaceMessage = async (
     specialistId: input.specialistId ?? undefined,
     delegationPolicy: input.delegationPolicy,
     enabledComputeHosts: input.enabledComputeHosts,
-    selectedComputeHosts: input.selectedComputeHosts
+    selectedComputeHosts: input.selectedComputeHosts,
+    researchMembership: input.researchMembership,
+    preserveSelection:
+      input.preserveSelection || attempt?.selectionChanged || input.isOriginCurrent?.() === false
   })
   if (!pending) return undefined
   input.onMessageAppended?.(pending)

@@ -30,6 +30,11 @@
     "packages/open-science/browser-import.d.ts",
     "packages/open-science/browser-import.test.ts",
     "packages/open-science/BROWSER_IMPORT.md",
+    "cli/managed-execution-contract.test.ts",
+    "cli/run-observation-contract.test.ts",
+    "packages/open-science/run-observations.test.ts",
+    "packages/open-science/project-recordings.test.ts",
+    "packages/open-science/research-replays.test.ts",
     "packages/open-science/mcp.mjs",
     "packages/open-science/mcp.test.ts",
     "packages/open-science/mcp.integration.test.ts",
@@ -64,6 +69,11 @@
       "packages/open-science/appimage-launcher.test.ts",
       "packages/open-science/locate-backend.test.ts",
       "packages/open-science/browser-import.test.ts",
+      "cli/managed-execution-contract.test.ts",
+      "cli/run-observation-contract.test.ts",
+      "packages/open-science/run-observations.test.ts",
+      "packages/open-science/project-recordings.test.ts",
+      "packages/open-science/research-replays.test.ts",
       "packages/open-science/runtime-control.test.ts"
     ],
     "contract": [
@@ -102,7 +112,8 @@
       "src/main/update/installation-formats.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/session-package/browser-import-sdk.integration.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

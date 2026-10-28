@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
+  assertStagedBackendImports,
   backendDependencyIncludes,
   createDesktopDependencyFilter,
   desktopBackendDependencies,
@@ -37,6 +38,7 @@ await cp(backend, join(stage, 'out/backend'), {
   filter: (path) => !values.desktop || path !== join(backend, 'dependencies.json')
 })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
+await cp(join(root, 'out/replay-viewer'), join(stage, 'out/replay-viewer'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
   filter: (path) => !relative(join(root, 'resources'), path).split(sep).includes('bin')
@@ -175,7 +177,7 @@ async function copyDependency(name, from, destinationParent = stage) {
 const dependencies = {}
 for (const name of dependencyRoots) {
   if (localTranslation && name === '@huggingface/transformers') continue
-  if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
+  if (forbidden(name)) continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
 }
@@ -243,7 +245,14 @@ if (
   (!localTranslation || installed.has(join(stage, 'node_modules/onnxruntime-node')))
 )
   nativeRequire('onnxruntime-node')
-for (const name of ['@aipoch/process-tree-native', '@aipoch/safe-file-publisher-native'])
+assertStagedBackendImports(stage, metadata)
+// The sandbox root is compiled into the backend, but its pure CJS policy is a runtime package
+// export used by managed execution. Keep that public export and its relative files intact.
+for (const name of [
+  '@aipoch/process-tree-native',
+  '@aipoch/safe-file-publisher-native',
+  '@aipoch/notebook-network-sandbox/execution-confinement'
+])
   nativeRequire(name)
 for (const path of Object.values(nativeRequire('@aipoch/credential-identity-probe-native')))
   await stat(path)

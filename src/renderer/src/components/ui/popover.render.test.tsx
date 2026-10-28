@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger
 } from './dropdown-menu'
 import { Popover, PopoverContent, PopoverTrigger } from './popover'
+import { OverlayPortalContainer } from './overlay-portal-container'
 import { Select, SelectContent, SelectItem, SelectTrigger } from './select'
 
 if (!Element.prototype.hasPointerCapture) {
@@ -20,20 +21,48 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = (): vo
 
 afterEach(cleanup)
 
-it('mounts content in an explicit portal container', () => {
+it.each([false, true])('mounts an explicit portal outside a fullscreen scope: %s', (scoped) => {
   const host = document.createElement('div')
-  document.body.append(host)
+  const fullscreen = document.createElement('div')
+  document.body.append(host, fullscreen)
   const { unmount } = render(
-    <Popover defaultOpen>
-      <PopoverTrigger>Filters</PopoverTrigger>
-      <PopoverContent container={host} aria-label="Filters">
-        <input aria-label="Year" />
-      </PopoverContent>
-    </Popover>
+    <OverlayPortalContainer.Provider value={scoped ? fullscreen : null}>
+      <Popover defaultOpen>
+        <PopoverTrigger>Filters</PopoverTrigger>
+        <PopoverContent container={host} aria-label="Filters">
+          <input aria-label="Year" />
+        </PopoverContent>
+      </Popover>
+    </OverlayPortalContainer.Provider>,
+    { container: fullscreen }
   )
-  expect(host.contains(screen.getByRole('dialog', { name: 'Filters' }))).toBe(true)
+  const content = screen.getByRole('dialog', { name: 'Filters' })
+  expect(host.contains(content)).toBe(true)
+  expect(fullscreen.contains(content)).toBe(false)
   unmount()
   host.remove()
+  fullscreen.remove()
+})
+
+it('allows an explicit null container to use the body outside a fullscreen scope', () => {
+  const fullscreen = document.createElement('div')
+  document.body.append(fullscreen)
+  const { unmount } = render(
+    <OverlayPortalContainer.Provider value={fullscreen}>
+      <Popover defaultOpen>
+        <PopoverTrigger>Filters</PopoverTrigger>
+        <PopoverContent container={null} aria-label="Filters">
+          <input aria-label="Year" />
+        </PopoverContent>
+      </Popover>
+    </OverlayPortalContainer.Provider>,
+    { container: fullscreen }
+  )
+  const content = screen.getByRole('dialog', { name: 'Filters' })
+  expect(document.body.contains(content)).toBe(true)
+  expect(fullscreen.contains(content)).toBe(false)
+  unmount()
+  fullscreen.remove()
 })
 
 const renderPopover = (menu = false): void => {

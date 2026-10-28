@@ -15,6 +15,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0051_literature_reading_status'
+const currentMigrationId = '0052_session_research_membership'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -54,8 +55,8 @@ it('upgrades the 0050 schema with unread defaults while preserving items, relati
 
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0050_literature_translation',
-    to: migrationId,
-    applied: [migrationId]
+    to: currentMigrationId,
+    applied: [migrationId, currentMigrationId]
   })
   expect(await client.$queryRaw`SELECT * FROM "LiteratureItem" WHERE id = 'paper'`).toEqual([
     { ...item, readingStatus: 'unread' }
@@ -90,8 +91,8 @@ it('persists read status after reconnecting and leaves it unchanged on repeated 
 
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual(item)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    from: migrationId,
-    to: migrationId,
+    from: currentMigrationId,
+    to: currentMigrationId,
     applied: []
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual(item)
@@ -132,7 +133,9 @@ it('rolls back the added column and ledger entry if migration verification fails
     ledger
   )
   expect(await client.$queryRaw`PRAGMA foreign_key_check`).toEqual([])
-  expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [migrationId] })
+  expect(await migrateApplicationDatabase(client)).toMatchObject({
+    applied: [migrationId, currentMigrationId]
+  })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toMatchObject({
     readingStatus: 'unread',
     title: 'Existing paper',

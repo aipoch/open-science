@@ -1,3 +1,4 @@
+import { useOverlayPortalContainer } from './overlay-portal-container'
 import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Select as SelectPrimitive } from 'radix-ui'
@@ -49,6 +50,7 @@ function SelectContent({
   scrollToTopOnOpen?: boolean
 }): React.JSX.Element {
   const layer = useOverlayLayer()
+  const portalContainer = useOverlayPortalContainer()
   const viewportRef = React.useRef<HTMLDivElement>(null)
 
   // The content mounts fresh on every open. Radix scrolls the selected item into view once the
@@ -91,7 +93,7 @@ function SelectContent({
   }, [])
 
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Content
         data-slot="select-content"
         position={position}

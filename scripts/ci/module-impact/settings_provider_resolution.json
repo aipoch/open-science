@@ -749,7 +749,12 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/composition/handoff.test.ts"
     ]
   },
   "consumerModules": ["artifact_provenance", "reviewer_orchestrator", "settings_service_facade"],

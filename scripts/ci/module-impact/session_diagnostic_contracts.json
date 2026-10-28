@@ -103,7 +103,13 @@
       "src/main/session-diagnostics/environment.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
       "src/main/session-diagnostics/projection.test.ts",
-      "src/renderer/src/pages/workspace/session-action-menu.test.ts"
+      "src/renderer/src/pages/workspace/session-action-menu.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
+      "src/main/notebook/managed-research-acceptance.macos.integration.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts"
     ]
   },
   "consumerModules": [],

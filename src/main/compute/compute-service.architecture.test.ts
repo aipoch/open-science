@@ -538,10 +538,6 @@ describe('Compute service architecture', () => {
       'src/main/compute/connection-adapters.ts',
       'src/main/compute/credential-vault.ts',
       'src/main/compute/compute-service.ts',
-      'src/renderer/src/lib/compute/job-analysis-trigger.ts',
-      'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
-      'src/renderer/src/lib/compute/useSessionJobHydration.ts',
-      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.tsx',
       'resources/skills/remote-compute-ssh/SKILL.md',
       'src/main/compute/agent-compute-service.test.ts',
       'src/main/compute/agent-no-list-jobs.test.ts',
@@ -600,25 +596,37 @@ describe('Compute service architecture', () => {
       'src/main/compute/session-cache-owner.test.ts',
       'src/main/compute/session-catalog-hydration.integration.test.ts',
       'src/main/compute/session-catalog-hydration.ts',
-      'src/main/compute/session-compute-host-access.test.ts',
-      'src/main/compute/session-compute-host-access.ts',
       'src/main/compute/session-enabled-hosts-owner.test.ts',
-      'src/main/compute/skill-doc.test.ts',
-      'src/main/compute/skill-doc.ts',
       'src/main/compute/skill-provisioning.test.ts',
       'src/main/compute/slurm.real-ssh.integration.test.ts',
       'src/main/compute/ssh-config.test.ts',
       'src/main/compute/ssh-config.ts',
       'src/main/compute/workspace-path.ts',
-      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx',
-      'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
-      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
-      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx',
       'src/main/compute/compute-submission-evidence-recovery.integration.test.ts',
       'resources/compute-askpass-win.cjs',
       'resources/compute-askpass.cjs',
       'resources/compute-askpass.sh',
       'src/main/compute/dispatch-evidence.ts'
+    ])
+    expectBoundaryPaths(manifest, 'renderer_compute_recovery', [
+      'src/renderer/src/lib/compute/job-analysis-trigger.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
+      'src/renderer/src/lib/compute/useSessionJobHydration.ts',
+      'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
+      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx'
+    ])
+    expectBoundaryPaths(manifest, 'workspace_compute_recovery', [
+      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.tsx',
+      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx'
+    ])
+    expectBoundaryPaths(manifest, 'compute_session_access', [
+      'src/main/compute/session-compute-host-access.test.ts',
+      'src/main/compute/session-compute-host-access.ts'
+    ])
+    expectBoundaryPaths(manifest, 'compute_skill_contract', [
+      'src/main/compute/skill-doc.test.ts',
+      'src/main/compute/skill-doc.ts'
     ])
     expect(computeService.interfacePaths).toEqual(
       expect.arrayContaining([
@@ -684,10 +692,6 @@ describe('Compute service architecture', () => {
       'src/main/compute/harvest-engine.test.ts',
       'src/main/compute/job-notifier.test.ts',
       'src/main/compute/remote-compute-skill.test.ts',
-      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx',
-      'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
-      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
-      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx',
       'src/main/compute/authentication-runtime.test.ts',
       'src/main/compute/compute-host-profile-concurrency.test.ts',
       'src/main/compute/compute-password-auth.real-ssh.integration.test.ts',
@@ -695,12 +699,24 @@ describe('Compute service architecture', () => {
       'src/main/compute/compute-probe-script.test.ts',
       'src/main/compute/prisma-client.test.ts',
       'src/main/compute/session-catalog-hydration.integration.test.ts',
-      'src/main/compute/session-compute-host-access.test.ts',
-      'src/main/compute/skill-doc.test.ts',
       'src/main/compute/skill-provisioning.test.ts',
       'src/main/compute/slurm.real-ssh.integration.test.ts',
       'src/main/compute/ssh-config.test.ts',
       'src/main/compute/compute-submission-evidence-recovery.integration.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'workspace_compute_recovery', [
+      'src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx'
+    ])
+    expectBoundaryOwnerTests(manifest, 'renderer_compute_recovery', [
+      'src/renderer/src/lib/compute/job-analysis-trigger.test.ts',
+      'src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx',
+      'src/renderer/src/lib/compute/useSessionJobHydration.render.test.tsx'
+    ])
+    expectBoundaryOwnerTests(manifest, 'compute_session_access', [
+      'src/main/compute/session-compute-host-access.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'compute_skill_contract', [
+      'src/main/compute/skill-doc.test.ts'
     ])
     expect(computeService.testFiles.contract).toEqual(
       expect.arrayContaining([
@@ -716,6 +732,63 @@ describe('Compute service architecture', () => {
         'src/preload/index.test.ts',
         'src/renderer/web/api-installer.test.ts',
         'src/shared/renderer-contract-catalog.test.ts'
+      ])
+    )
+    expect(computeService.testFiles.consumer).toEqual(
+      expect.arrayContaining([
+        'src/main/composition/session-packages.lifecycle.test.ts',
+        'src/main/session-package/research-reproduction.integration.test.ts',
+        'src/main/composition/artifact-surfaces.test.ts',
+        'src/main/composition/handoff.test.ts',
+        'src/main/composition/managed-execution.integration.test.ts',
+        'src/main/notebook/local-rpc-server.managed-execution.test.ts',
+        'src/main/notebook/managed-auxiliary-output.test.ts',
+        'src/main/notebook/managed-execution-collection.integration.test.ts',
+        'src/main/notebook/managed-execution-entrypoints.integration.test.ts',
+        'src/main/notebook/managed-execution-output.test.ts',
+        'src/main/notebook/managed-execution-service.test.ts',
+        'src/main/notebook/managed-nested-generation.integration.test.ts',
+        'src/main/notebook/managed-output-publication.integration.test.ts',
+        'src/main/notebook/research-material-authority.test.ts',
+        'src/main/notebook/screened-auxiliary-output.test.ts',
+        'src/main/notebook/session-operation-owner.integration.test.ts',
+        'src/main/research-execution-profiles/ipc.test.ts',
+        'src/main/session-package/headless.test.ts',
+        'src/main/run-observation/capture-package.integration.test.ts',
+        'src/main/run-observation/recorded-reader.test.ts',
+        'src/main/browser-recordings/external-port.test.ts',
+        'src/main/run-observation/managed-coordinator.test.ts',
+        'src/main/run-observation/managed-port.test.ts',
+        'src/main/project-recordings/managed-adapter.test.ts',
+        'src/main/run-observation-external-port.test.ts',
+        'src/main/runtime-view/browser-host.integration.test.ts',
+        'src/main/replay-viewer/http-host.integration.test.ts',
+        'src/main/browser-recordings/owner.test.ts',
+        'src/main/run-observation/media-collector.test.ts',
+        'src/main/project-recordings/recorder.test.ts',
+        'src/main/run-observation/managed-status.test.ts',
+        'src/main/managed-runtime-views.integration.test.ts',
+        'src/main/observation-desktop/bridge.test.ts',
+        'src/main/research-demos/owner.macos.integration.test.ts',
+        'src/renderer/replay-viewer/research-browser.integration.test.ts',
+        'src/main/research-replay/http-host.integration.test.ts',
+        'src/main/research-replay/observation-association.test.ts',
+        'src/main/research-replay/observation-selection.test.ts',
+        'src/main/research-replay/service-timing.test.ts',
+        'src/main/research-replay/service.test.ts',
+        'src/main/research-demos/owner.test.ts',
+        'src/main/research-runs/inspection.test.ts',
+        'src/main/research-runs/ipc.test.ts',
+        'src/main/research-demos/ipc.test.ts',
+        'src/main/notebook/offline-plan-admission.test.ts',
+        'src/renderer/replay-viewer/browser-recording.integration.test.ts',
+        'src/renderer/replay-viewer/browser.integration.test.ts',
+        'src/renderer/replay-viewer/browser-recording-transport.integration.test.ts',
+        'src/main/research-demos/inspection.test.ts',
+        'src/main/replay-viewer/desktop-embed.integration.test.ts',
+        'src/main/notebook/managed-execution-service.macos.integration.test.ts',
+        'src/main/notebook/managed-research-acceptance.macos.integration.test.ts',
+        'src/main/runtime-view/tuanzi.macos.integration.test.ts'
       ])
     )
   })

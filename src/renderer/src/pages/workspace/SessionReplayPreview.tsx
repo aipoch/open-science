@@ -1,21 +1,29 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ErrorNotice } from '@/components/error-notice'
+import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore } from '@/stores/session-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import type { PreviewToolItem } from '@/stores/preview-workbench-contract'
 import { sessionReplayKey, useSessionReplayStore } from '@/stores/session-replay-store'
-import { loadReplayDocument } from '@/lib/replay'
+import { loadReplayDocument, projectReplayScene } from '@/lib/replay'
 import type { ReplayDocument, ReplayResource, ReplayStep } from '../../../../shared/replay'
 import type { ReplayViewState } from '../../../../shared/session-replay'
-import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
-import { createUploadVersionReference } from '../../../../shared/uploads'
 import { ReplayPanel } from './replay/ReplayPanel'
-import type { SessionDiscussionCapture } from './replay/replay-context'
-import { createPreviewFileItem } from './preview-file-item'
+import { ReplaySourceBar } from './replay/ReplaySourceBar'
+import { captureDiscussionStep, type SessionDiscussionCapture } from './replay/replay-context'
+import ReplayFilePreview from './replay/ReplayFilePreview'
+import { fixedReplayResource } from './replay/results/recorded-resource-reader'
 import { SessionReplayProgressWriter } from './session-replay-progress-writer'
 import { SessionReplayEvidence } from './SessionReplayEvidence'
 import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import { openResearchDiscussion } from './workspace-discussion-navigation'
+import { ResearchMaterialsPanel } from './ResearchMaterialsPanel'
+import { Button } from '@/components/ui/button'
+import { RunRecordingsPanel } from './replay/RunRecordingsPanel'
+import { useRecordingDiscovery } from './replay/use-recording-discovery'
+import { useRecordedMaterials } from './replay/use-recorded-materials'
+import { exitResearchReplayFullscreen } from './replay/exit-research-fullscreen'
 
 type Props = { item: PreviewToolItem; isActive?: boolean }
 type LoadedReplay = {
@@ -25,12 +33,31 @@ type LoadedReplay = {
   attempt: number
 }
 
+const discussionNavigationGuard = (signal: AbortSignal): (() => boolean) => {
+  const navigation = useNavigationStore.getState()
+  const selectedSessionId = useSessionStore.getState().selectedSessionId
+  return () => {
+    const current = useNavigationStore.getState()
+    return (
+      !signal.aborted &&
+      current.view === navigation.view &&
+      current.activeProjectId === navigation.activeProjectId &&
+      current.explicitNavigationRevision === navigation.explicitNavigationRevision &&
+      useSessionStore.getState().selectedSessionId === selectedSessionId
+    )
+  }
+}
+
 const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Element => {
   const { t } = useTranslation()
   // Restored background tabs should not read entire archives before their first activation.
   const [activated, setActivated] = useState(isActive)
   if (isActive && !activated) setActivated(true)
   const projectId = item.replaySourceProjectId ?? item.projectId ?? ''
+  const discussionRequest = useRef<AbortController | undefined>(undefined)
+  const [discussionError, setDiscussionError] = useState<string>()
+  const [discussionPending, setDiscussionPending] = useState(false)
+  useEffect(() => () => discussionRequest.current?.abort(), [])
   const [discussionCapture, setDiscussionCapture] = useState<SessionDiscussionCapture>()
   const sourceSessionId = item.replaySourceSessionId ?? item.sessionId
   const expanded = usePreviewWorkbenchStore((state) => state.expandedToolItemId === item.id)
@@ -39,21 +66,51 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
   const [checkpointFailed, setCheckpointFailed] = useState(false)
   const [saveError, setSaveError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
+  const [evidenceFile, setEvidenceFile] = useState<ReplayResource>()
   const [evidenceStep, setEvidenceStep] = useState<ReplayStep>()
+  const [materialsMode, setMaterialsMode] = useState<'replay' | 'runs' | 'records' | 'files'>(
+    item.replayRevealMode ?? 'replay'
+  )
+  const materialsChosen = useRef(item.replayRevealRequest !== undefined)
+  // Discovery may finish after the viewer starts playing, seeking, reading or opening evidence.
+  // Any deliberate interaction owns the current view; timer checkpoints and programmatic
+  // focus/scroll updates do not. Capture also covers controls inside evidence and player rows.
+  const keepCurrentMaterials = (): void => {
+    materialsChosen.current = true
+  }
   const surface = useRef<HTMLDivElement>(null)
+  const lastRecordId = useRef<string | undefined>(undefined)
   const returningFromEvidence = useRef(false)
+  const lastRevealRequest = useRef(item.replayRevealRequest)
   useEffect(() => {
+    if (
+      item.replayRevealRequest !== undefined &&
+      item.replayRevealRequest !== lastRevealRequest.current
+    ) {
+      lastRevealRequest.current = item.replayRevealRequest
+      // Navigation from the conversation reveals the existing player without moving keyboard
+      // focus into the evidence pane or resetting the playhead, speed, or discussion draft.
+      returningFromEvidence.current = false
+      setEvidenceStep(undefined)
+      setEvidenceFile(undefined)
+      materialsChosen.current = true
+      setMaterialsMode(item.replayRevealMode ?? 'replay')
+      return
+    }
     if (!isActive || (!evidenceStep && !returningFromEvidence.current)) return
     returningFromEvidence.current = Boolean(evidenceStep)
     const frame = requestAnimationFrame(() => {
-      surface.current
-        ?.querySelector<HTMLElement>(
-          evidenceStep ? '[data-replay-evidence-back]' : '[data-replay-browse-steps]'
-        )
-        ?.focus({ preventScroll: true })
+      const target = evidenceStep
+        ? surface.current?.querySelector<HTMLElement>('[data-replay-evidence-back]')
+        : materialsMode === 'records'
+          ? [
+              ...(surface.current?.querySelectorAll<HTMLElement>('[data-research-record]') ?? [])
+            ].find((element) => element.dataset.researchRecord === lastRecordId.current)
+          : surface.current?.querySelector<HTMLElement>('[data-replay-browse-steps]')
+      target?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(frame)
-  }, [evidenceStep, isActive])
+  }, [evidenceStep, isActive, materialsMode, item.replayRevealRequest, item.replayRevealMode])
   const loadAbort = useRef<AbortController | undefined>(undefined)
   const activeWriter = useRef<SessionReplayProgressWriter | undefined>(undefined)
   const sourceStatus = useSessionReplayStore(
@@ -64,12 +121,114 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
       (session) => session.projectId === projectId && session.id === sourceSessionId
     )
   )
+  const sourceImportId = useSessionStore((state) => {
+    const session = state.sessions.find(
+      (candidate) => candidate.projectId === projectId && candidate.id === sourceSessionId
+    )
+    return session?.packageOrigin?.importId ?? session?.importedResearch?.importId
+  })
+  const demoSource = useMemo(
+    () => (sourceImportId ? { projectId, sourceSessionId, sourceImportId } : undefined),
+    [projectId, sourceSessionId, sourceImportId]
+  )
   const [sourceObserved, setSourceObserved] = useState(sourcePresent)
   if (sourcePresent && !sourceObserved) setSourceObserved(true)
   const sourceUnavailable =
     (sourceObserved && !sourcePresent) ||
     sourceStatus === 'missing' ||
     sourceStatus === 'unreadable'
+  const askStep = (context: SessionDiscussionCapture): void => {
+    if (sourceUnavailable) return
+    if (discussionRequest.current) return
+    const abort = new AbortController()
+    discussionRequest.current = abort
+    setDiscussionPending(true)
+    setDiscussionError(undefined)
+    const captured = structuredClone(context)
+    // Fullscreen exit is asynchronous too: a newer conversation navigation supersedes this Ask
+    // even when the same source preview remains mounted in the workspace.
+    const current = discussionNavigationGuard(abort.signal)
+    const open = async (): Promise<boolean> => {
+      const exiting = exitResearchReplayFullscreen()
+      if (exiting) await exiting
+      if (!current()) return true
+      return openResearchDiscussion(captured, abort.signal)
+    }
+    void open()
+      .then((accepted) => {
+        if (!accepted) throw new Error('Discussion unavailable')
+      })
+      .catch(() => {
+        if (current())
+          setDiscussionError(t('Could not open the research discussion. Please retry.'))
+      })
+      .finally(() => {
+        if (!abort.signal.aborted) {
+          discussionRequest.current = undefined
+          setDiscussionPending(false)
+        }
+      })
+  }
+
+  const chooseConversation = (context: SessionDiscussionCapture): void => {
+    if (sourceUnavailable || discussionRequest.current) return
+    const captured = structuredClone(context)
+    const abort = new AbortController()
+    discussionRequest.current = abort
+    const current = discussionNavigationGuard(abort.signal)
+    const open = async (): Promise<void> => {
+      const exiting = exitResearchReplayFullscreen()
+      if (exiting) await exiting
+      if (current()) setDiscussionCapture(captured)
+    }
+    void open()
+      .catch(() => {
+        if (current())
+          setDiscussionError(t('Could not open the research discussion. Please retry.'))
+      })
+      .finally(() => {
+        if (discussionRequest.current === abort) discussionRequest.current = undefined
+      })
+  }
+
+  const discovery = useRecordingDiscovery(sourceUnavailable ? undefined : loaded?.document)
+  const recordedMaterials = useRecordedMaterials(
+    sourceUnavailable ? undefined : loaded?.document,
+    discovery,
+    demoSource,
+    (resource) => {
+      if (!loaded || sourceUnavailable) return
+      const branch = loaded.document.branches.find((branch) =>
+        branch.steps.some((step) => step.resourceIds.includes(resource.id))
+      )
+      const step = branch?.steps.find((step) => step.resourceIds.includes(resource.id))
+      if (!branch || !step || !resource.versionId) throw new Error('Recorded evidence unavailable')
+      const context = captureDiscussionStep(
+        loaded.document,
+        projectReplayScene(loaded.document, branch.id, Math.max(step.startMs, step.endMs - 1))
+      )
+      askStep({
+        ...context,
+        stepTitle: resource.name,
+        excerpt: resource.name,
+        evidence: [
+          {
+            kind: resource.source === 'upload' ? 'upload-version' : 'artifact-version',
+            id: resource.versionId,
+            projectId: resource.projectId,
+            sessionId: resource.sessionId,
+            branchId: branch.id,
+            artifactId: resource.artifactId,
+            fileId: resource.fileId,
+            versionId: resource.versionId,
+            part: 'record'
+          }
+        ],
+        records: undefined
+      })
+    },
+    'research'
+  )
 
   useEffect(() => {
     if (!activated) return
@@ -139,14 +298,10 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
     setAttempt((value) => value + 1)
   }
 
-  const askStep = (context: SessionDiscussionCapture): void => {
-    if (sourceUnavailable) return
-    setDiscussionCapture(context)
-  }
-
-  const openEvidence = (resource: ReplayResource | undefined, step: ReplayStep): void => {
+  const openEvidence = (resource: ReplayResource | undefined, step?: ReplayStep): void => {
     if (sourceUnavailable) return
     if (!resource) {
+      setEvidenceFile(undefined)
       setEvidenceStep(step)
       return
     }
@@ -177,34 +332,7 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
       setSaveError(t('The recorded evidence is unavailable.'))
       return
     }
-    usePreviewWorkbenchStore.getState().upsertAndActivateItem(
-      createPreviewFileItem({
-        id: `replay-evidence:${projectId}:${sourceSessionId}:${source}:${fileId}:${recorded.versionId}`,
-        projectId,
-        sessionId: recorded.sessionId,
-        path:
-          source === 'upload'
-            ? createUploadVersionReference(recorded.versionId, {
-                projectId,
-                sessionId: recorded.sessionId,
-                fileId
-              })
-            : createArtifactVersionLocator({
-                projectId,
-                appSessionId: recorded.sessionId,
-                artifactId: fileId,
-                versionId: recorded.versionId
-              }),
-        name: recorded.name,
-        mimeType: recorded.mimeType,
-        artifactId: source === 'artifact' ? fileId : undefined,
-        managedFileId: fileId,
-        selectedVersionId: recorded.versionId,
-        versionNumber: recorded.versionNumber,
-        size: recorded.size,
-        source
-      })
-    )
+    setEvidenceFile(fixedReplayResource({ ...recorded, locator: undefined }))
   }
 
   if (error || sourceUnavailable)
@@ -224,8 +352,55 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
   const notebookUnavailable = loaded.document.issues.some(
     (issue) => issue.code === 'notebook-unavailable'
   )
+  const materialNavigation = (
+    <div className="shrink-0 border-b border-border-200 px-3 py-2">
+      {materialsMode !== 'replay' ? (
+        <p
+          className="truncate text-xs font-medium text-text-300"
+          title={loaded.document.source.title}
+        >
+          {loaded.document.source.title}
+        </p>
+      ) : null}
+      <div role="group" aria-label={t('Research materials')} className="flex flex-wrap gap-1">
+        {(['replay', 'runs', 'records', 'files'] as const).map((mode) => (
+          <Button
+            key={mode}
+            variant={materialsMode === mode ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-7 px-2 text-xs"
+            aria-pressed={materialsMode === mode}
+            onClick={() => {
+              materialsChosen.current = true
+              setEvidenceStep(undefined)
+              setEvidenceFile(undefined)
+              setMaterialsMode(mode)
+            }}
+          >
+            {mode === 'replay'
+              ? t('Session process')
+              : mode === 'runs'
+                ? t('Run recordings')
+                : mode === 'records'
+                  ? t('Original records')
+                  : t('Source files')}
+          </Button>
+        ))}
+      </div>
+    </div>
+  )
   return (
-    <div ref={surface} className="flex h-full min-h-0 flex-col">
+    <div
+      ref={surface}
+      className="flex h-full min-h-0 flex-col"
+      onPointerDownCapture={keepCurrentMaterials}
+      onClickCapture={keepCurrentMaterials}
+      onKeyDownCapture={keepCurrentMaterials}
+      onWheelCapture={keepCurrentMaterials}
+    >
+      {materialsMode !== 'replay' || recordedMaterials.timingReady === false
+        ? materialNavigation
+        : null}
       {notebookUnavailable ? (
         <ErrorNotice
           inline
@@ -240,6 +415,7 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
           onClose={() => setDiscussionCapture(undefined)}
         />
       ) : null}
+      {discussionError ? <ErrorNotice inline tone="amber" description={discussionError} /> : null}
       {saveError ? (
         <ErrorNotice
           tone="amber"
@@ -249,26 +425,89 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
           }
         />
       ) : null}
-      <div className={evidenceStep ? 'hidden' : 'min-h-0 flex-1'}>
-        <ReplayPanel
-          expanded={expanded}
-          onToggleExpanded={() =>
-            usePreviewWorkbenchStore.getState().setToolItemExpanded(expanded ? null : item.id)
-          }
-          document={loaded.document}
-          initialView={loaded.view}
-          active={isActive && !evidenceStep}
-          onViewChange={notebookUnavailable ? undefined : loaded.writer.enqueue}
-          onAskStep={askStep}
-          onOpenEvidence={openEvidence}
-        />
+      <div
+        className={
+          evidenceFile || evidenceStep || materialsMode !== 'replay' ? 'hidden' : 'min-h-0 flex-1'
+        }
+      >
+        {recordedMaterials.timingReady === false ? (
+          <p role="status" className="p-4 text-sm text-text-300">
+            {t('Preparing recorded material…')}
+          </p>
+        ) : (
+          <ReplayPanel
+            presentationMode="research"
+            info={
+              <>
+                <ReplaySourceBar item={item} variant="details" />
+                {materialNavigation}
+              </>
+            }
+            recordedCoverage={recordedMaterials.timelineCoverage}
+            executionTracks={recordedMaterials.executionTracks}
+            executionNotice={recordedMaterials.executionNotice}
+            onAskObservation={recordedMaterials.askObservation}
+            recordedTimeOrigins={recordedMaterials.recordedTimeOrigins}
+            expanded={expanded}
+            onToggleExpanded={() =>
+              usePreviewWorkbenchStore.getState().setToolItemExpanded(expanded ? null : item.id)
+            }
+            materialViews={recordedMaterials.views}
+            materialViewRequest={recordedMaterials.request}
+            document={recordedMaterials.playbackDocument ?? loaded.document}
+            initialView={loaded.view}
+            active={isActive && !evidenceFile && !evidenceStep && materialsMode === 'replay'}
+            onViewChange={notebookUnavailable ? undefined : loaded.writer.enqueue}
+            onAskStep={askStep}
+            discussionPending={discussionPending}
+            onChooseConversation={chooseConversation}
+            onOpenEvidence={openEvidence}
+          />
+        )}
       </div>
-      {evidenceStep ? (
+      {materialsMode === 'runs' ? (
+        <RunRecordingsPanel
+          discovery={discovery}
+          onChoose={(candidate) => {
+            recordedMaterials.choose(candidate)
+            setMaterialsMode('replay')
+          }}
+        />
+      ) : null}
+      {materialsMode === 'records' || materialsMode === 'files' ? (
+        <div className={evidenceStep || evidenceFile ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+          <ResearchMaterialsPanel
+            key={materialsMode}
+            document={loaded.document}
+            mode={materialsMode}
+            onOpenRecord={(step) => {
+              lastRecordId.current = step.id
+              setEvidenceStep(step)
+            }}
+            onOpenFile={(resource) => openEvidence(resource)}
+          />
+        </div>
+      ) : null}
+      {evidenceFile ? (
+        <section className="flex min-h-0 flex-1 flex-col" aria-label={t('Recorded file version')}>
+          <div className="flex items-center gap-2 border-b border-border-200 p-2">
+            <Button size="sm" variant="outline" onClick={() => setEvidenceFile(undefined)}>
+              {t('Back to recording')}
+            </Button>
+            <span className="truncate text-sm">{evidenceFile.name}</span>
+          </div>
+          <div className="min-h-0 flex-1">
+            <ReplayFilePreview resource={evidenceFile} onClose={() => setEvidenceFile(undefined)} />
+          </div>
+        </section>
+      ) : null}
+      {evidenceStep && !evidenceFile ? (
         <SessionReplayEvidence
           source={loaded.document.source}
           step={evidenceStep}
           resources={loaded.document.resources}
           onBack={() => setEvidenceStep(undefined)}
+          backLabel={materialsMode === 'records' ? t('Back to original records') : undefined}
           onOpenResource={(resource) => openEvidence(resource, evidenceStep)}
         />
       ) : null}

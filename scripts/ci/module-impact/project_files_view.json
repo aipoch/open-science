@@ -62,7 +62,8 @@
       "src/renderer/src/pages/workspace/FilePreviewDialog.focus.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.lifecycle.test.tsx",
       "src/renderer/src/pages/workspace/FilePreviewDialog.versioning.test.tsx",
-      "src/renderer/src/pages/workspace/PreviewFileSurface.freshness.test.tsx"
+      "src/renderer/src/pages/workspace/PreviewFileSurface.freshness.test.tsx",
+      "src/main/replay-viewer/desktop-embed.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["renderer_state"],

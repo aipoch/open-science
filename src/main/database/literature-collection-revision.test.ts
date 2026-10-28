@@ -44,7 +44,8 @@ it('backfills collection revisions without changing existing values or hierarchy
       '0048_pdf_annotation_sharing',
       '0049_pascalcase_table_names',
       '0050_literature_translation',
-      '0051_literature_reading_status'
+      '0051_literature_reading_status',
+      '0052_session_research_membership'
     ]
   })
   expect(await client.$queryRawUnsafe(sql)).toEqual(before)

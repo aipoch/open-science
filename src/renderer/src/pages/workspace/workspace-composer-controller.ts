@@ -1,3 +1,4 @@
+import type { ResearchMembership } from '../../../../shared/session-persistence'
 import type { ProviderValidationSnapshot } from '@/lib/provider-validation-snapshot'
 import {
   useCallback,
@@ -19,7 +20,6 @@ import {
   removeComposerDrafts,
   writeComposerDraft
 } from './composer-draft-storage'
-import { captureDiscussionSendContext } from './discussion-send-context'
 export { type ComposerSendSnapshot } from './composer-contract'
 export { useWorkspaceComposerController, type WorkspaceComposerController }
 
@@ -255,6 +255,7 @@ const samePdfContextSources = (
 
 type WorkspaceComposerControllerInput = {
   currentDraftKey: string
+  researchMembership?: ResearchMembership
   newConversationDraftKey: string
   activeProjectId: string | undefined
   pendingCustomizePrefill: CustomizePrefillIntent | undefined
@@ -306,6 +307,7 @@ type WorkspaceComposerController = {
     cancelQueuedEdit?: () => void
     discardWslSetupDraft: () => boolean
     appendLiterature: (draftKey: string, references: readonly LiteratureReference[]) => boolean
+    appendText: (draftKey: string, text: string) => boolean
     changeDoc: (doc: ComposerDoc, caret?: ComposerCaretPosition) => void
     addAnnotation: (annotation: Annotation) => AnnotationValidationError | undefined
     updateAnnotationNote: (id: string, note: string) => AnnotationValidationError | undefined
@@ -347,7 +349,7 @@ type WorkspaceComposerController = {
     ) => boolean
     discardSnapshot: (snapshot: ComposerSendSnapshot) => void
     hasUnfinishedTransfers: (draftKey: string) => boolean
-    beginSessionDeletion: (draftKey: string) => boolean
+    beginSessionDeletion: (draftKey: string, projectId?: string) => boolean
     settleSessionDeletion: (draftKey: string, deleted: boolean) => void
   }
 }
@@ -384,6 +386,7 @@ const blank = (): ComposerDraft => ({
 
 const useWorkspaceComposerController = ({
   currentDraftKey,
+  researchMembership,
   newConversationDraftKey,
   activeProjectId,
   pendingCustomizePrefill,
@@ -1519,17 +1522,11 @@ const useWorkspaceComposerController = ({
       const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
+        ...(researchMembership ? { researchMembership: { ...researchMembership } } : {}),
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
         annotations: [...annotationsRef.current],
-        discussionFocus: captureDiscussionSendContext(
-          annotationsRef.current,
-          includeReadingContext
-            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
-            : undefined,
-          activeSession?.id
-        ),
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1575,7 +1572,7 @@ const useWorkspaceComposerController = ({
     },
     [
       attachments,
-      activeSession,
+      researchMembership,
       activeReadingBinding,
       activePendingReading,
       automaticStagedReadingContexts,
@@ -1951,6 +1948,13 @@ const useWorkspaceComposerController = ({
         return clearDraft(activeDraftKeyRef.current)
       },
       changeDoc,
+      appendText: (draftKey, text): boolean => {
+        if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
+        // A navigation layout effect can restore this draft before callers re-render. Read
+        // its current owner snapshot instead of appending to the previous render's document.
+        changeDoc({ nodes: [...docRef.current.nodes, { type: 'text', text }] })
+        return true
+      },
       appendLiterature: (draftKey, references): boolean => {
         if (activeDraftKeyRef.current !== draftKey || !canStageAttachments) return false
         const next = appendLiteratureMentions(docRef.current, references)
@@ -2011,7 +2015,14 @@ const useWorkspaceComposerController = ({
       discardSnapshot: (snapshot) =>
         releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }]),
       hasUnfinishedTransfers,
-      beginSessionDeletion,
+      beginSessionDeletion: (draftKey, projectId): boolean => {
+        if (!beginSessionDeletion(draftKey)) return false
+        // Deletion can target a persisted draft that this composer has never restored.
+        // Keep its project identity with the existing owner across navigation and settlement.
+        draftProjectsRef.current[draftKey] =
+          projectId ?? draftProjectsRef.current[draftKey] ?? projectIdRef.current
+        return true
+      },
       settleSessionDeletion: (draftKey, deleted): void => {
         settleSessionDeletion(draftKey, deleted)
         if (!deleted) return

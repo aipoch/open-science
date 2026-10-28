@@ -44,7 +44,12 @@
       "src/main/runtime-electron-wiring.test.ts",
       "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/composition/session-packages.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/composition/handoff.test.ts",
+      "src/main/composition/artifact-surfaces.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

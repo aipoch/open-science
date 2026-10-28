@@ -72,10 +72,50 @@ test('drops native packages into Workspace and Home using the existing import fl
   await expect(
     importing.getByRole('status').filter({ hasText: /^Session imported$/ })
   ).toBeVisible()
+  const sessionsBeforeOpen = await page.evaluate(async () =>
+    (await window.api.sessions.loadAll()).sessions.map((session) => ({
+      id: session.id,
+      imported: Boolean(session.packageOrigin)
+    }))
+  )
+  const importedSource = sessionsBeforeOpen.find((session) => session.imported)!
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(prompt)
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
+  const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+  await expect(editor).toBeEditable()
+  await expect(editor).toBeEmpty()
+  await expect(page.getByTestId('session-discussion-draft')).toContainText(prompt)
+  await editor.fill('What can I learn from this imported research?')
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await expect(page.locator('#right-panel').getByTestId('replay-panel')).toBeVisible()
+  expect(
+    await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions.map((s) => s.id))
+  ).toEqual(sessionsBeforeOpen.map((session) => session.id))
   await expect(page.getByRole('button', { name: 'Research exchange', exact: true })).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('project-package-drop-completed.png') })
+
+  await page
+    .locator(`[data-research-id="${importedSource.id}"]`)
+    .getByRole('button', { name: `Open actions for ${prompt}`, exact: true })
+    .click()
+  await page.getByRole('menuitem', { name: 'View original record', exact: true }).click()
+  await expect(page.getByTestId('research-question-context')).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
+  await expect(editor).toBeEditable()
+  await expect(editor).toContainText('What can I learn from this imported research?')
+  await page.getByTestId('replay-panel').getByRole('slider', { name: 'Replay progress' }).focus()
+  await page.keyboard.press('End')
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('project-package-drop-original-record.png') })
 
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   const home = page.getByRole('main')
@@ -132,7 +172,11 @@ test('drops native packages into Workspace and Home using the existing import fl
     importing.getByRole('status').filter({ hasText: /^Session imported$/ })
   ).toBeVisible()
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('research-question-context')).toBeVisible()
+  await expect(page.getByTestId('research-workspace-header')).toContainText(
+    'Original record · Read-only'
+  )
+  await expect(editor).toBeEditable()
   await page.screenshot({ path: testInfo.outputPath('home-package-drop-completed.png') })
 })
 

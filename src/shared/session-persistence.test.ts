@@ -5631,6 +5631,36 @@ describe('Side chat reasoning effort compatibility', () => {
   )
 })
 
+it('round-trips stable local research membership and rejects malformed identities', () => {
+  const session: PersistedChatSession = {
+    id: 'discussion',
+    projectId: 'project',
+    title: 'Discussion',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const researchMembership = {
+    sourceProjectId: 'project',
+    sourceSessionId: 'source',
+    sourceImportId: 'import',
+    sourceTitle: 'Research'
+  }
+  const encoded = createSessionFile({ ...session, researchMembership })
+  expect(normalizeSessionFile(encoded)?.researchMembership).toEqual(researchMembership)
+  expect(
+    normalizeSessionFile({
+      ...encoded,
+      session: {
+        ...encoded.session,
+        researchMembership: { ...researchMembership, sourceImportId: '../foreign' }
+      }
+    })
+  ).toBeUndefined()
+})
+
 describe('PDF prose send identity', () => {
   const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
   const binding: MessagePdfContextSnapshot['bindings'][number] = {

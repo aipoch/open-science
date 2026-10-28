@@ -1,4 +1,4 @@
-import type { SecureStorageCipher } from './cipher-contract'
+import type { CredentialCiphertext, SecureStorageCipher } from './cipher-contract'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
 import { selectLinuxCredentialBackend } from './linux-backend'
 import { probeLinuxKWalletIdentity } from './linux-kwallet'
@@ -37,7 +37,7 @@ export const selectStartupCredentialIdentity = (
 export const prepareCredentialValidation = (
   identity: CredentialIdentity,
   paths: { configRoot: string; profilePath: string },
-  preloadedCiphertexts?: readonly Buffer[]
+  preloadedCiphertexts?: readonly CredentialCiphertext[]
 ): ((cipher: SecureStorageCipher, recover: (error: CredentialIdentityError) => void) => void) => {
   const ciphertexts =
     identity.backend === 'file'
@@ -77,8 +77,6 @@ export const prepareCredentialValidation = (
     })
     if (identity.backend === 'linux-secret-service' || identity.backend === 'linux-kwallet')
       credentialCipher(cipher).isEncryptionAvailable()
-    verifyCredentialCiphertexts(ciphertexts, (value) =>
-      credentialCipher(cipher).decryptString(value)
-    )
+    verifyCredentialCiphertexts(ciphertexts, credentialCipher(cipher))
   }
 }

@@ -1,4 +1,5 @@
 import { configureTestElectronHost } from '../../../test/runtime-host'
+import { createHash } from 'node:crypto'
 import {
   chmod,
   mkdir,
@@ -52,6 +53,16 @@ import { operationJournalPath, RuntimeOperationJournal } from '@aipoch/environme
 import { exportRuntimeLocks as exportRuntimeLockBundle } from '@aipoch/environment'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { DataRootCleanupJournal } from './data-root-cleanup'
+import { RunObservationRecorder } from '../run-observation/recorder'
+import { ManagedRunObservationCoordinator } from '../run-observation/managed-coordinator'
+import {
+  BrowserRecordingOwner,
+  type BrowserRecordingDriverInput
+} from '../browser-recordings/owner'
+import { createElectronCallerContext } from '../caller-context'
+import type { AuxiliaryOutput, AuxiliaryOutputResult } from '../notebook/managed-auxiliary-output'
+import { parseBrowserRecording } from '../../shared/browser-recording'
+import type { RunObservationSnapshot } from '../../shared/run-observation'
 
 // Writes a verified staging marker for `<parent>/Open-Science`, as a completed copy phase would have.
 const seedVerifiedMarker = async (
@@ -97,6 +108,242 @@ afterEach(async () => {
 })
 
 describe('migration reference safety', () => {
+  it.each(['managed-run-observations', 'managed-observation-publications', 'browser-recordings'])(
+    'rejects an older staged copy that omitted %s',
+    async (directory) => {
+      const file = join(currentDataRoot, directory, 'retained.json')
+      await mkdir(dirname(file), { recursive: true })
+      await writeFile(file, 'retained')
+      await seedVerifiedMarker(emptyParent, currentDataRoot, {
+        migratedDirs: MIGRATED_DIRS.filter((entry) => entry !== directory)
+      })
+      const deps = {
+        ...fakeDeps(),
+        expectedToken: 'tok-test',
+        validateProvenanceState: async () => {}
+      }
+      expect(await commitDataRootSwitch(deps, emptyParent)).toMatchObject({
+        ok: false,
+        error: 'The staged copy does not include all current data. Run the move again.'
+      })
+      expect(deps.setDataRoot).not.toHaveBeenCalled()
+      expect(await readFile(file, 'utf8')).toBe('retained')
+    }
+  )
+
+  it('retains recording evidence when a data-root pointer commit fails', async () => {
+    const directories = [
+      'managed-run-observations',
+      'managed-observation-publications',
+      'browser-recordings'
+    ]
+    for (const directory of directories) {
+      await mkdir(join(currentDataRoot, directory))
+      await writeFile(join(currentDataRoot, directory, 'retained.json'), 'retained')
+    }
+    const deps = { ...fakeDeps(), validateProvenanceState: async () => {} }
+    expect(await runDataRootMigration(deps, emptyParent, runOpts())).toEqual({ ok: true })
+    const marker = await readMigrationMarker(dataRootFor(emptyParent))
+    deps.setDataRoot.mockRejectedValue(
+      Object.assign(new Error('settings write failed'), { code: 'EIO' })
+    )
+    expect(
+      await commitDataRootSwitch({ ...deps, expectedToken: marker!.token }, emptyParent)
+    ).toMatchObject({ ok: false, switchoverFailed: true })
+    for (const directory of directories)
+      expect(await readFile(join(currentDataRoot, directory, 'retained.json'), 'utf8')).toBe(
+        'retained'
+      )
+  })
+
+  it('restores captured observations and pending publication after a verified data-root move', async () => {
+    const target = {
+      projectId: 'project',
+      sessionId: 'session',
+      operationId: 'operation',
+      executionInvocationId: 'execution'
+    }
+    const snapshot: RunObservationSnapshot = {
+      identity: { ...target, runId: 'run' },
+      cursor: { epoch: 'epoch', sequence: 0 },
+      observedAt: 200,
+      stepId: 'run:run',
+      phase: 'running',
+      artifacts: [],
+      artifactsTruncated: false,
+      run: {
+        runId: 'run',
+        executionInvocationId: target.executionInvocationId,
+        kernelKind: 'bash',
+        status: 'running',
+        startedAt: 100,
+        logs: {
+          stdout: { text: 'retained output', redacted: false, truncated: false },
+          stderr: { text: '', redacted: false, truncated: false },
+          traceback: { text: '', redacted: false, truncated: false }
+        }
+      }
+    }
+    const recorder = new RunObservationRecorder({
+      dataRoot: currentDataRoot,
+      intervalMs: 60_000,
+      read: async () => snapshot
+    })
+    const artifacts = { resolveVersionDescriptors: vi.fn(async () => []) }
+    const coordinator = new ManagedRunObservationCoordinator({
+      dataRoot: currentDataRoot,
+      recorder: () => recorder,
+      artifacts
+    })
+    const save = vi.fn(async (): Promise<AuxiliaryOutputResult> => ({
+      status: 'failed',
+      code: 'artifact-save-failed'
+    }))
+    const context = {
+      projectId: target.projectId,
+      sessionId: target.sessionId,
+      provenanceContext: {
+        rootFrameId: 'root',
+        agentFrameId: 'root',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'prompt'
+      },
+      saveAuxiliaryOutput: save
+    }
+    try {
+      const begun = await coordinator.begin(target, context)
+      expect(begun.result.status).toBe('recording')
+      await begun.handle!.sample()
+    } finally {
+      await recorder.close()
+    }
+    const deps = { ...fakeDeps(), validateProvenanceState: async () => {} }
+    expect(await runDataRootMigration(deps, emptyParent, runOpts())).toEqual({ ok: true })
+    const newRoot = dataRootFor(emptyParent)
+    const marker = await readMigrationMarker(newRoot)
+    expect(
+      await commitDataRootSwitch({ ...deps, expectedToken: marker!.token }, emptyParent)
+    ).toMatchObject({ ok: true })
+    const read = vi.fn(async () => undefined)
+    const restartedRecorder = new RunObservationRecorder({ dataRoot: newRoot, read })
+    try {
+      const restored = await restartedRecorder.load(target)
+      expect(restored?.status).toBe('interrupted')
+      expect(restored?.history.snapshots).toEqual([snapshot])
+      const restartedCoordinator = new ManagedRunObservationCoordinator({
+        dataRoot: newRoot,
+        recorder: () => restartedRecorder,
+        artifacts
+      })
+      expect(await restartedCoordinator.status(target)).toMatchObject({ status: 'recording' })
+      expect(await restartedCoordinator.publish({ target, context, recovery: true })).toMatchObject(
+        {
+          result: { status: 'pending', warning: 'archive-recovery-pending' }
+        }
+      )
+      expect(save).toHaveBeenCalledOnce()
+      expect(read).not.toHaveBeenCalled()
+      for (const directory of ['managed-run-observations', 'managed-observation-publications'])
+        expect(existsSync(join(currentDataRoot, directory))).toBe(false)
+    } finally {
+      await restartedRecorder.close()
+    }
+  })
+
+  it('retains native browser media attestations after a verified data-root move and restart', async () => {
+    let driverInput!: BrowserRecordingDriverInput
+    const saved: AuxiliaryOutput[] = []
+    const startDriver = vi.fn(async (input: BrowserRecordingDriverInput) => {
+      driverInput = input
+      return {
+        pause: async () => undefined,
+        resume: async () => undefined,
+        stop: async () => undefined
+      }
+    })
+    const owner = new BrowserRecordingOwner({ dataRoot: currentDataRoot, startDriver })
+    const target = {
+      projectId: 'project',
+      sessionId: 'session',
+      operationId: 'operation',
+      executionInvocationId: 'execution'
+    }
+    const registration = owner.register({
+      target,
+      signal: new AbortController().signal,
+      assertCurrent: () => undefined,
+      save: async (output): Promise<AuxiliaryOutputResult> => {
+        saved.push(output)
+        return {
+          status: 'saved',
+          artifact: {
+            artifactId: `artifact-${saved.length}`,
+            versionId: `version-${saved.length}`
+          }
+        } as AuxiliaryOutputResult
+      }
+    })
+    try {
+      await owner.start({
+        target,
+        viewerId: 'viewer',
+        host: {
+          caller: createElectronCallerContext(1),
+          viewerOrigin: 'http://viewer-test.localhost:1234',
+          projectOrigin: 'http://rv-test.localhost:1234'
+        },
+        request: { requestId: 'recording-request' },
+        assertAuthorized: () => undefined
+      })
+      for (const startMs of [0, 1000])
+        await driverInput.onSegment({
+          bytes: new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+          startMs,
+          endMs: startMs + 1000,
+          width: 1280,
+          height: 720,
+          codec: 'vp8',
+          frameRate: 10
+        })
+      await registration.close('finished')
+      const publishedTarget = owner.status('viewer').target!
+      const content = saved.at(-1)!.source.content
+      const recording = parseBrowserRecording(content)
+      expect(recording.media).toHaveLength(2)
+      expect(recording.media[0].checksum).toBe(recording.media[1].checksum)
+      expect(recording.media[0].sourceVersionId).not.toBe(recording.media[1].sourceVersionId)
+      await owner.close()
+
+      const deps = { ...fakeDeps(), validateProvenanceState: async () => {} }
+      expect(await runDataRootMigration(deps, emptyParent, runOpts())).toEqual({ ok: true })
+      const newRoot = dataRootFor(emptyParent)
+      const marker = await readMigrationMarker(newRoot)
+      expect(
+        await commitDataRootSwitch({ ...deps, expectedToken: marker!.token }, emptyParent)
+      ).toMatchObject({ ok: true })
+      const restarted = new BrowserRecordingOwner({ dataRoot: newRoot, startDriver })
+      try {
+        expect(
+          await restarted.readNativeSourceVersionMapping(publishedTarget, {
+            checksum: createHash('sha256').update(content).digest('hex'),
+            sizeBytes: Buffer.byteLength(content)
+          })
+        ).toEqual(
+          Object.fromEntries(
+            recording.media.map((media) => [media.sourceVersionId, media.sourceVersionId])
+          )
+        )
+        expect(startDriver).toHaveBeenCalledOnce()
+        expect(existsSync(join(currentDataRoot, 'browser-recordings'))).toBe(false)
+      } finally {
+        await restarted.close()
+      }
+    } finally {
+      await owner.close()
+    }
+  })
+
   it('preserves global npm packages and command shims through a verified data-root move', async () => {
     const relativePackage = join(RUNTIME_NPM_DIR, 'win32-x64', 'node_modules', 'fixture', 'cli.js')
     const relativeCommand = join(RUNTIME_NPM_DIR, 'win32-x64', 'fixture.cmd')

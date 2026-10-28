@@ -70,6 +70,7 @@ export async function composeNotebookBridge({
   visionEvidenceRepository,
   notebookService,
   notebookLocalRpc,
+  managedExecution,
   grantedRootsRepository,
   specialistService,
   memoryService,
@@ -103,6 +104,7 @@ export async function composeNotebookBridge({
   notebookService: NotebookRuntimeService
   grantedRootsRepository: GrantedLocalRootsRepository
   notebookLocalRpc: ReturnType<typeof createNotebookApplicationModule>['capability']['localRpc']
+  managedExecution?: import('../notebook/managed-execution-port').ManagedExecutionPort
   specialistService: SpecialistService
   memoryService: MemoryService
   removeResourceTags: (resources: Parameters<TagService['removeResources']>[0]) => Promise<void>
@@ -209,6 +211,7 @@ export async function composeNotebookBridge({
   bindNotebookApprovals(notebookService, () => runtimeRef.current)
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
+      managedExecution,
       authorizedDirectories: () => grantedRootsRepository.authorizedSnapshot(),
       // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
       // Keep its privileged Host SDK channel on an explicitly shared local socket instead.

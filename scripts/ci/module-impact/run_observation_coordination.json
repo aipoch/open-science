@@ -1,0 +1,25 @@
+{
+  "ownerPaths": [
+    "src/main/run-observation/managed-coordinator.ts",
+    "src/main/run-observation/managed-coordinator.test.ts"
+  ],
+  "interfacePaths": ["src/main/run-observation/managed-coordinator.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": ["src/main/run-observation/managed-coordinator.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/main/run-observation/managed-port.test.ts",
+      "src/main/run-observation/recorded-reader.test.ts",
+      "src/main/run-observation/managed-status.test.ts",
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/managed-execution.integration.test.ts",
+      "src/main/research-demos/owner.macos.integration.test.ts",
+      "src/main/runtime-electron-wiring.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/composition/handoff.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

@@ -125,6 +125,7 @@ type SelectorStore<State> = {
 }
 
 export type LiteratureRendererHost = {
+  openProjectWorkspace(projectId: string): Promise<boolean>
   FileTypeIcon: ComponentType<{ name: string; mimeType?: string; className?: string }>
   getPreviewFormatForFile(file: { name: string; mimeType?: string }): LiteraturePreviewFormat
   readonly api: LiteratureRendererApi
