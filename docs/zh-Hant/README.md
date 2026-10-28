@@ -225,8 +225,6 @@ arXiv 預印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交於 2026 �
 
 以下為 2026 年 8—10 月報告的歷史成績，並非針對目前發佈版本進行的新評測。
 
-來源報告: [9 月 29 日](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10 月 12 日](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (可能需要存取權限).
-
 ### 🏆 AstaBench LitQA2-FullText-Search：10/10全部命中
 
 AIPOCH Open-Science 使用 **DeepSeek v4-flash（max）**，結合文獻檢索專家與技能，在官方10題驗證集上取得 **100% recall@30**：每道題所需的目標論文均出現在回傳結果的前30篇中。該成績高於報告所列的3筆公開驗證集成績，較其中最高的 **80%高20個百分點**。本次報告記錄了3次本機重複測試，呈現系統在這組科研問題中的文獻定位能力。

@@ -225,8 +225,6 @@ Si vous utilisez AIPOCH Open-Science dans vos recherches, vous pouvez citer la p
 
 Il s’agit de résultats historiques rapportés d’août à octobre 2026, et non d’une nouvelle évaluation de la version actuelle.
 
-Rapports sources: [29 septembre](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [12 octobre](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (une autorisation d’accès peut être nécessaire).
-
 ### 🏆 AstaBench LitQA2-FullText-Search — 10/10 articles cibles retrouvés
 
 AIPOCH Open-Science a obtenu **100% de recall@30** sur les dix requêtes de validation officielles avec **DeepSeek v4-flash (max)**, des spécialistes de la recherche bibliographique et des compétences. Chaque article cible figurait parmi les 30 premiers résultats. Ce score dépasse les trois résultats publics de validation cités dans le rapport, de **20 points de pourcentage** par rapport au meilleur résultat de référence de **80%**. Trois répétitions locales ont été rapportées, montrant la localisation des articles pour cet ensemble de questions scientifiques.

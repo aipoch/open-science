@@ -225,8 +225,6 @@ arXiv プレプリント · [v1](https://arxiv.org/abs/2610.17110v1) · 2026 年
 
 以下は 2026 年 8～10 月に報告された過去の結果であり、現行リリースを対象とした新しい評価ではありません。
 
-出典レポート: [9 月 29 日](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10 月 12 日](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (アクセス権限が必要な場合があります).
-
 ### 🏆 AstaBench LitQA2-FullText-Search — 10問すべてで対象論文を発見
 
 AIPOCH Open-Science は **DeepSeek v4-flash（max）**、文献検索スペシャリスト、スキルを組み合わせ、公式検証セット10問で **recall@30が100%** を記録しました。すべての対象論文が検索結果の上位30件に含まれました。報告に掲載された公開検証結果3件を上回り、その最高値 **80%より20パーセントポイント高い** 値です。ローカルで3回の反復テストが報告され、この科学的な質問群での論文検索性能を示しています。

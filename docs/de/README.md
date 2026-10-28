@@ -226,8 +226,6 @@ Wenn Sie AIPOCH Open-Science in Ihrer Forschung verwenden, können Sie den Prepr
 
 Dies sind historische Ergebnisse aus Berichten von August bis Oktober 2026, keine neue Auswertung der aktuellen Version.
 
-Quellberichte: [29. September](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [12. Oktober](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (Zugriffsberechtigung kann erforderlich sein).
-
 ### 🏆 AstaBench LitQA2-FullText-Search — 10/10 Zielpublikationen gefunden
 
 AIPOCH Open-Science erreichte mit **DeepSeek v4-flash (max)**, Spezialisten für Literaturrecherche und Skills **100% recall@30** auf den zehn offiziellen Validierungsfragen: Jede gesuchte Publikation erschien unter den ersten 30 Ergebnissen. Der Wert liegt über den drei im Bericht aufgeführten öffentlichen Validierungsergebnissen und **20 Prozentpunkte** über dem höchsten Vergleichswert von **80%**. Der Bericht dokumentiert drei lokale Wiederholungen und damit die Publikationssuche für diese wissenschaftlichen Fragen.
