@@ -5022,6 +5022,7 @@ const NOT_TRANSLATABLE = new Set([
   'Claude',
   'Codex',
   'opencode',
+  'Pi',
   'Nvidia',
   'TencentCloud',
   // A literal DOI example; translating its suffix would change the identifier.
