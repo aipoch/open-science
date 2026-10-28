@@ -308,7 +308,9 @@ it('reuses matching immutable objects and refuses an existing object with differ
 })
 it('routes normal builds and installation to staging, preserving component signatures', async () => {
   const pkg = JSON.parse(await readFile('package.json', 'utf8'))
-  expect(pkg.scripts['build:backend-native']).toBe('node scripts/native-components.mjs')
+  expect(pkg.scripts['build:backend-native']).toBe(
+    'node --disable-warning=UNDICI-EHPA scripts/native-components.mjs'
+  )
   expect(pkg.scripts.postinstall).toContain('node scripts/install-native-components.mjs')
   expect(pkg.scripts.postinstall).not.toContain('install-app-deps')
   for (const name of Object.keys(spec.packages)) {

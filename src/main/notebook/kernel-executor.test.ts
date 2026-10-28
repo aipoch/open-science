@@ -524,6 +524,65 @@ afterEach(async () => {
   }
 })
 
+it.skipIf(!python3).each([
+  { kind: 'python' as const, owned: true },
+  { kind: 'repl' as const, owned: false },
+  { kind: 'repl' as const, owned: true }
+])(
+  'suppresses only the proxy advisory for $kind with ownership $owned',
+  async ({ kind, owned }) => {
+    cwdDir = await makeDefaultEnvCwd('os-kernel-proxy-warning-', process.platform)
+    const preload = join(cwdDir, 'warnings.cjs')
+    // Emit the same advisory on newer Node versions where EnvHttpProxyAgent is already stable.
+    await writeFile(
+      preload,
+      `process.emitWarning('EnvHttpProxyAgent is experimental', { code: 'UNDICI-EHPA' })
+process.emitWarning('keep this diagnostic', { code: 'OTHER_WARNING' })`
+    )
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: cwdDir })
+    await owner.ensureReady()
+    const executor = new NotebookKernelExecutor({
+      pythonLoopPath: FIXTURE,
+      replLoopPath: REPL_LOOP,
+      platform: process.platform,
+      processLifecycle: owned ? owner : undefined,
+      laneKey: owned ? '["project","session","root",null,null]' : undefined,
+      processSandbox: {
+        wrap: async (invocation) => ({
+          ...invocation,
+          env: {
+            ...invocation.env,
+            NODE_USE_ENV_PROXY: '1',
+            HTTP_PROXY: 'http://127.0.0.1:9',
+            NODE_OPTIONS: `--require ${JSON.stringify(preload)}`
+          },
+          annotateStderr: (stderr) => stderr,
+          cleanup: async (_reason, outcome) => ({
+            processesTerminated: outcome.processesTerminated,
+            networkClosed: true,
+            temporaryResourcesRemoved: true
+          })
+        })
+      }
+    })
+    try {
+      const result = await executor.execute({
+        ...baseRequest(cwdDir),
+        kind: kind === 'repl' ? 'repl' : undefined,
+        sessionId: 'session',
+        projectId: 'project',
+        code: kind === 'repl' ? 'console.log("saved")' : 'saved'
+      })
+      expect(result.status, result.stderr || result.traceback).toBe('completed')
+      expect(result.stdout).toContain('saved')
+      expect(result.stderr).toContain('OTHER_WARNING')
+      expect(result.stderr).not.toContain('UNDICI-EHPA')
+    } finally {
+      await executor.shutdown()
+    }
+  }
+)
+
 it.each([false, true])(
   'hides Windows kernel consoles with durable ownership %s while preserving execution and cleanup',
   async (owned) => {
@@ -5704,7 +5763,7 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
         expect(wrap).toHaveBeenCalledWith(
           expect.objectContaining({
             executable: process.execPath,
-            args: ['--preserve-symlinks-main', REPL_LOOP],
+            args: ['--disable-warning=UNDICI-EHPA', '--preserve-symlinks-main', REPL_LOOP],
             env: expect.objectContaining({
               NODE_OPTIONS: '--preserve-symlinks --preserve-symlinks-main'
             })
