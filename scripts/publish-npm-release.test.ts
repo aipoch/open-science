@@ -396,6 +396,27 @@ describe('parallel platform publication', () => {
       )
     ).rejects.toThrow('registry unavailable')
     expect(delay).not.toHaveBeenCalled()
+    // An exhausted deadline stops polling immediately instead of running into the job timeout.
+    await expect(
+      waitForPublished(packages[0], lookup, delay, Date.now() - 1)
+    ).rejects.toMatchObject({ code: 'ERR_NPM_VISIBILITY' })
+  })
+
+  it('keeps integrity mismatches fatal instead of reporting them as pending', async () => {
+    // A conflicting version surfaces mid-batch: preflight passes (registry empty), then the
+    // first visibility poll sees mismatched bytes after a concurrent publish landed.
+    let conflicting = false
+    const lookup = async (name: string) =>
+      conflicting && name === packages[0].manifest.name
+        ? { versions: { '1.2.3': { dist: { integrity: 'wrong-bytes' } } } }
+        : null
+    const publish = vi.fn(async (pkg: (typeof packages)[number]) => {
+      if (pkg.manifest.name === packages[0].manifest.name) conflicting = true
+    })
+    await expect(publishPackages(packages, lookup, publish, async () => {})).rejects.toThrow(
+      'Published bytes differ'
+    )
+    expect(publish).toHaveBeenCalledTimes(5)
   })
 
   it('converges when a concurrent rerun landed the same immutable version during publish', async () => {
