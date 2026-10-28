@@ -1010,10 +1010,20 @@ describe('installPackages', () => {
     }
   )
 
-  it('keeps Windows Bioconductor permission failures separate from installer guidance', async () => {
-    const { spawn, calls } = scriptedSpawn([
-      { code: 1, stdout: JSON.stringify({ error: 'Access denied', success: false }), stderr: '' }
-    ])
+  it('retains Windows Bioconductor guidance when the solver response exceeds the log limit', async () => {
+    const solverFailure = await defaultSpawn(
+      process.execPath,
+      [
+        '-e',
+        `process.stdout.write(JSON.stringify({ solver_problems: ['unsupported request'], success: false, padding: 'x'.repeat(${INSTALLER_STREAM_LOG_LIMIT_BYTES}) })); process.exitCode = 1`
+      ],
+      undefined,
+      undefined,
+      undefined,
+      true
+    )
+    expect(solverFailure.stdoutDroppedBytes).toBeGreaterThan(0)
+    const { spawn, calls } = scriptedSpawn([safeRPlan, solverFailure])
     const result = await installPackages(
       { language: 'r', packages: ['bioconductor-gsva'] },
       {
@@ -1027,11 +1037,48 @@ describe('installPackages', () => {
       }
     )
 
-    expect(result).toMatchObject({ ok: false, error: 'conda install failed.', fallbackUsed: false })
-    expect(result.log).toContain('Access denied')
-    expect(result.attempts).toEqual([expect.objectContaining({ reason: 'permission' })])
-    expect(calls).toHaveLength(1)
+    expect(result.error).toContain('installer="biocmanager"')
+    expect(result.fallbackUsed).toBe(false)
+    expect(calls).toHaveLength(2)
   })
+
+  it.each([
+    ['Access denied', 'permission'],
+    ['HTTP 503 while fetching repodata', 'network'],
+    ['unsatisfiable dependency constraints', 'solver-failed']
+  ])(
+    'keeps unrelated Windows Bioconductor failures separate from installer guidance: %s',
+    async (diagnostic, reason) => {
+      const { spawn, calls } = scriptedSpawn([
+        {
+          code: 1,
+          stdout: JSON.stringify({ solver_problems: [diagnostic], success: false }),
+          stderr: ''
+        }
+      ])
+      const result = await installPackages(
+        { language: 'r', packages: ['bioconductor-gsva'] },
+        {
+          ...base,
+          spawn,
+          micromambaEnv: {
+            platform: 'win32',
+            env: { PATH: 'C:\\Windows' },
+            selectCache: () => ({ path: 'C:\\runtime\\pkgs', lockKey: 'c:\\runtime\\pkgs' })
+          }
+        }
+      )
+
+      expect(result).toMatchObject({
+        ok: false,
+        error: 'conda install failed.',
+        fallbackUsed: false
+      })
+      expect(result.log).toContain(diagnostic)
+      expect(result.attempts).toEqual([expect.objectContaining({ reason })])
+      expect(calls).toHaveLength(1)
+    }
+  )
 
   it('does not suggest another installer after a possibly partial Windows Bioconductor transaction', async () => {
     const { spawn, calls } = scriptedSpawn([
