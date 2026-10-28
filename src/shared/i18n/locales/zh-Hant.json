@@ -6899,7 +6899,6 @@
     "Session was interrupted before the app closed.": "應用程式關閉前，工作階段已中斷。",
     "The run failed with no error message.": "執行失敗，未提供錯誤訊息。",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "未傳送的訊息無法還原（{{failure}}）。請重新傳送，或停止執行後再試。",
-    "The unsent Session could not be removed ({{failure}}).": "未傳送的工作階段無法移除（{{failure}}）。",
     "Agent Session cleanup did not complete.": "智能體工作階段清理未完成。",
     "Add to list": "加入清單",
     "Add to trusted services": "加入受信任服務",

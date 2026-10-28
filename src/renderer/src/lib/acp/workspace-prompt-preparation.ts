@@ -103,22 +103,75 @@ export const rollbackWorkspacePrompt = async (
   return !admitted
 }
 
-// A rollback whose write failed leaves Main's preparation marker and the renderer's optimistic
-// prompt in place. Retaining that exact preparation lets the next user action replay only its
-// conditional rollback; nothing outside the preparation is ever touched. Main allows one marker
-// per Session, so one record per Session is sufficient.
+// Withdraw only this receipt's optimistic intents while its conditional durable rollback settles.
+export const withdrawWorkspacePrompt = (preparation: WorkspacePromptPreparation): void => {
+  if (!ownsWorkspacePromptPreparation(preparation)) return
+  discardPreparedSessionConversationIntents(preparation.sessionId, preparation.id)
+  const createdPrompt = !preparation.authority.messages.some(
+    ({ id }) => id === preparation.promptMessageId
+  )
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((source) => {
+      if (source.id !== preparation.sessionId || !ownsWorkspacePromptPreparation(preparation))
+        return source
+      const graph = source.conversationGraph
+      const prompt = graph?.messages.find(({ id }) => id === preparation.promptMessageId)
+      return {
+        ...source,
+        status: preparation.authority.status,
+        error: preparation.authority.error,
+        errorReportable: preparation.authority.errorReportable,
+        activeRun: undefined,
+        activeRunRuntimeSegmentId: undefined,
+        agentStatus: undefined,
+        agentPromptInFlight: undefined,
+        awaitingFirstAgentOutput: undefined,
+        messages: createdPrompt
+          ? source.messages.filter(({ id }) => id !== preparation.promptMessageId)
+          : source.messages,
+        ...(graph && createdPrompt
+          ? {
+              conversationGraph: {
+                ...graph,
+                messages: graph.messages.filter(({ id }) => id !== preparation.promptMessageId),
+                branches: graph.branches.map((branch) =>
+                  branch.headMessageId === preparation.promptMessageId
+                    ? { ...branch, headMessageId: prompt?.parentMessageId }
+                    : branch
+                )
+              }
+            }
+          : {})
+      }
+    })
+  }))
+}
+
+// A failed rollback leaves Main's marker in place even if the optimistic row was already withdrawn.
+// Retaining the exact preparation lets the next user action replay only its conditional rollback;
+// nothing outside the preparation is touched. Main allows one marker per Session.
 const failedPromptRollbacks = new Map<
   string,
   { preparation: WorkspacePromptPreparation; failure: string }
+>()
+const pendingPromptRollbacks = new Map<
+  string,
+  {
+    preparation: WorkspacePromptPreparation
+    result: Promise<{ rolledBack: boolean; failure?: string }>
+  }
 >()
 
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-export const resetWorkspacePromptRollbacksForTests = (): void => failedPromptRollbacks.clear()
+export const resetWorkspacePromptRollbacksForTests = (): void => {
+  failedPromptRollbacks.clear()
+  pendingPromptRollbacks.clear()
+}
 
 export const hasPendingWorkspacePromptRollback = (sessionId: string): boolean =>
-  failedPromptRollbacks.has(sessionId)
+  failedPromptRollbacks.has(sessionId) || pendingPromptRollbacks.has(sessionId)
 
 export const describeWorkspacePromptRollbackFailure = (
   original: string | undefined,
@@ -133,23 +186,34 @@ export const describeWorkspacePromptRollbackFailure = (
 
 // Rolls back one preparation. A failed write is retained for retry and returned instead of thrown,
 // so the caller's original failure can still be reported alongside it.
-export const attemptWorkspacePromptRollback = async (
+export const attemptWorkspacePromptRollback = (
   preparation: WorkspacePromptPreparation
 ): Promise<{ rolledBack: boolean; failure?: string }> => {
-  try {
-    const rolledBack = await rollbackWorkspacePrompt(preparation)
-    if (failedPromptRollbacks.get(preparation.sessionId)?.preparation.id === preparation.id) {
-      failedPromptRollbacks.delete(preparation.sessionId)
+  const pending = pendingPromptRollbacks.get(preparation.sessionId)
+  if (pending) return pending.result
+  const result = (async (): Promise<{ rolledBack: boolean; failure?: string }> => {
+    try {
+      const rolledBack = await rollbackWorkspacePrompt(preparation)
+      if (failedPromptRollbacks.get(preparation.sessionId)?.preparation.id === preparation.id) {
+        failedPromptRollbacks.delete(preparation.sessionId)
+      }
+      return { rolledBack }
+    } catch (error) {
+      const failure = errorText(error)
+      const retained = failedPromptRollbacks.get(preparation.sessionId)
+      if (!retained || retained.preparation.id === preparation.id) {
+        failedPromptRollbacks.set(preparation.sessionId, { preparation, failure })
+      }
+      return { rolledBack: false, failure }
     }
-    return { rolledBack }
-  } catch (error) {
-    const failure = errorText(error)
-    const retained = failedPromptRollbacks.get(preparation.sessionId)
-    if (!retained || retained.preparation.id === preparation.id) {
-      failedPromptRollbacks.set(preparation.sessionId, { preparation, failure })
-    }
-    return { rolledBack: false, failure }
-  }
+  })()
+  const entry = { preparation, result }
+  pendingPromptRollbacks.set(preparation.sessionId, entry)
+  void result.then(() => {
+    if (pendingPromptRollbacks.get(preparation.sessionId) === entry)
+      pendingPromptRollbacks.delete(preparation.sessionId)
+  })
+  return result
 }
 
 // Replays a retained rollback before any new preparation. `rolledBack` is true only when a retained
@@ -158,6 +222,8 @@ export const attemptWorkspacePromptRollback = async (
 export const retryPendingWorkspacePromptRollback = async (
   sessionId: string
 ): Promise<{ rolledBack: boolean; failure?: string }> => {
+  const pending = pendingPromptRollbacks.get(sessionId)
+  if (pending) return pending.result
   const preparation = failedPromptRollbacks.get(sessionId)?.preparation
   if (!preparation) return { rolledBack: false }
   if (!useSessionStore.getState().sessions.some(({ id }) => id === sessionId)) {

@@ -44,6 +44,10 @@ import type { RootDelegatedWorkControl } from '../delegation/production-composit
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import { AcpRuntime } from './runtime'
+import {
+  retainSessionCreationCleanup,
+  waitForSessionCreationCleanup
+} from './session-creation-cleanup'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
@@ -645,7 +649,15 @@ class AcpRuntimeCoordinator {
       response = await runtime.createSession(request)
     } catch (error) {
       this.pendingSessionCreations.delete(pending)
-      await this.retireUnusedTargetedRuntime(runtime)
+      const capabilityCleanup = waitForSessionCreationCleanup(error)
+      const cleanup = (
+        capabilityCleanup
+          ? capabilityCleanup.then(() => this.retireUnusedTargetedRuntime(runtime))
+          : this.retireUnusedTargetedRuntime(runtime)
+      ).catch((cleanupError) => {
+        console.warn('Agent runtime cleanup after creation failure failed', cleanupError)
+      })
+      retainSessionCreationCleanup(error, cleanup)
       throw error
     } finally {
       this.pendingSessionCreations.delete(pending)

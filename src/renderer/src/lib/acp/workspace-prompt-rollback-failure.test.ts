@@ -168,17 +168,18 @@ describe('failed prompt rollback after a rejected dispatch', () => {
     agent.sendPrompt.mockRejectedValueOnce(new Error('Provider rejected the prompt'))
     main.failRollbacks(true)
     await send(agent, 'Rejected question', rejected)
+    // Error delivery precedes cleanup; these cases exercise retry after cleanup has failed.
+    for (let i = 0; i < 50; i++) await Promise.resolve()
     return rejected
   }
 
-  it('reports the original failure together with the rollback failure and keeps the draft', async () => {
+  it('reports the original failure once and retains failed cleanup for retry', async () => {
     const main = mainWithFailingRollback()
     const agent = runtime()
     const rejected = await failDispatchAndRollback(main, agent)
     const reported = useWorkspaceOperationErrors.getState().errors[SESSION_ID]
     expect(reported).toContain('Provider rejected the prompt')
-    expect(reported).toContain('No space left on device')
-    expect(reported).toMatch(/rolled back/i)
+    expect(reported).toBe('Provider rejected the prompt')
     expect(rejected).toHaveBeenCalledOnce()
     expect(rejected.mock.calls[0][0]).toBe(reported)
     expect(hasPendingWorkspacePromptRollback(SESSION_ID)).toBe(true)
@@ -188,7 +189,7 @@ describe('failed prompt rollback after a rejected dispatch', () => {
     )
   })
 
-  it('localizes the rollback failure sentence while keeping both underlying failures verbatim', async () => {
+  it('preserves the original provider error in a translated locale', async () => {
     await prepareI18nLocale('zh-Hans')
     initI18n('zh-Hans')
     try {
@@ -196,7 +197,7 @@ describe('failed prompt rollback after a rejected dispatch', () => {
       await failDispatchAndRollback(main, runtime())
       const reported = useWorkspaceOperationErrors.getState().errors[SESSION_ID]
       expect(reported).toContain('Provider rejected the prompt')
-      expect(reported).toContain('未发送的消息无法回滚（No space left on device）')
+      expect(reported).toBe('Provider rejected the prompt')
       expect(reported).not.toMatch(/rolled back/i)
     } finally {
       initI18n('en')
@@ -207,7 +208,7 @@ describe('failed prompt rollback after a rejected dispatch', () => {
     const main = mainWithFailingRollback()
     const agent = runtime()
     await failDispatchAndRollback(main, agent)
-    expect(useSessionStore.getState().sessions[0].activeRun).toBeDefined()
+    expect(useSessionStore.getState().sessions[0].activeRun).toBeUndefined()
     main.failRollbacks(false)
     await cancelWorkspaceRun(agent as never, SESSION_ID)
     const session = useSessionStore.getState().sessions[0]

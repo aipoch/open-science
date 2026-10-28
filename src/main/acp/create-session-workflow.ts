@@ -5,6 +5,8 @@ import type {
 } from '../../shared/acp'
 import { DEFAULT_ARTIFACT_PROJECT_ID } from '../../shared/artifacts'
 import { withDataRootWrite } from '../storage/migration-state'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import { waitForSessionCreationCleanup } from './session-creation-cleanup'
 import {
   createManagedSessionWorkspaceCapability,
   type ManagedSessionWorkspaceCapability
@@ -14,6 +16,7 @@ type AcpSessionCreator = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   deleteSession(request: AcpDeleteSessionRequest): Promise<unknown>
 }
+const log = createLogger('acp')
 
 type DataRootWrite = <Result>(write: () => Promise<Result>) => Promise<Result>
 
@@ -42,6 +45,12 @@ const createAcpCreateSessionWorkflow = (
 
   return {
     async create(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse> {
+      let resolveResult!: (response: AcpCreateSessionResponse) => void
+      let rejectResult!: (error: unknown) => void
+      const result = new Promise<AcpCreateSessionResponse>((resolve, reject) => {
+        resolveResult = resolve
+        rejectResult = reject
+      })
       const requestedProjectId = request.projectId?.trim() || undefined
       const normalizedRequest =
         requestedProjectId === request.projectId
@@ -50,7 +59,13 @@ const createAcpCreateSessionWorkflow = (
       const createAvailableSession = async (): Promise<AcpCreateSessionResponse> => {
         const explicitCwd = request.cwd?.trim()
         if (explicitCwd) {
-          return sessions.createSession({ ...normalizedRequest, cwd: explicitCwd })
+          try {
+            return await sessions.createSession({ ...normalizedRequest, cwd: explicitCwd })
+          } catch (error) {
+            rejectResult(error)
+            await waitForSessionCreationCleanup(error)
+            throw error
+          }
         }
 
         return runDataRootWrite(async () => {
@@ -66,26 +81,40 @@ const createAcpCreateSessionWorkflow = (
             try {
               await workspace.commit(response.sessionId)
             } catch (publicationError) {
+              rejectResult(publicationError)
               try {
                 await sessions.deleteSession({ sessionId: response.sessionId })
               } catch (cleanupError) {
                 releaseWorkspace = false
-                throw new AggregateError(
-                  [publicationError, cleanupError],
-                  'Managed workspace publication and Session rollback failed.'
+                log.warn(
+                  'Managed workspace Session rollback failed',
+                  diagnosticErrorFields(cleanupError)
                 )
               }
               throw publicationError
             }
             return response
+          } catch (error) {
+            // Report before cleanup, but retain the Project and relocation guards below.
+            rejectResult(error)
+            await waitForSessionCreationCleanup(error)
+            throw error
           } finally {
-            if (releaseWorkspace) await workspace.release()
+            if (releaseWorkspace) {
+              try {
+                await workspace.release()
+              } catch (error) {
+                log.warn('Managed workspace release failed', diagnosticErrorFields(error))
+              }
+            }
           }
         })
       }
-      return dependencies.withProjectAvailable
+      const operation = dependencies.withProjectAvailable
         ? dependencies.withProjectAvailable(requestedProjectId, createAvailableSession)
         : createAvailableSession()
+      void operation.then(resolveResult, rejectResult)
+      return result
     }
   }
 }

@@ -333,7 +333,7 @@ describe('AcpProviderSessionCreator', () => {
     expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
   })
 
-  it('waits for prepared setup authority cleanup when configuration fails', async () => {
+  it('returns the original error while retaining identity until setup cleanup settles', async () => {
     const failure = new Error('Configuration failed after setup preparation.')
     let finishCleanup!: () => void
     const release = vi.fn(
@@ -354,10 +354,16 @@ describe('AcpProviderSessionCreator', () => {
     })
 
     await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
-    expect(settled).toBe(false)
+    expect(settled).toBe(true)
+    expect(harness.registry.reserve({ sessionIds: ['provider-session'] }).collision).toBeDefined()
     expect(harness.registry.lookup('provider-session')).toBeUndefined()
     finishCleanup()
     expect(await creation).toBe(failure)
+    await vi.waitFor(() => {
+      const reserved = harness.registry.reserve({ sessionIds: ['provider-session'] })
+      expect(reserved.collision).toBeUndefined()
+      reserved.reservation?.release()
+    })
   })
 
   it('disposes the provisional Session and releases capabilities when configuration fails', async () => {

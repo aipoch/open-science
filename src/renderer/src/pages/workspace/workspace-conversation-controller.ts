@@ -20,7 +20,7 @@ import {
 } from '../../../../shared/session-persistence'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import { imageAttachmentMimeType } from '../../../../shared/uploads'
+import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 
 import {
   docIsEmpty,
@@ -574,6 +574,44 @@ const useWorkspaceConversationController = (
         if (sessionId && optimisticMessage) {
           setOptimisticMessages((current) => ({ ...current, [sessionId]: optimisticMessage }))
         }
+        const restorePreparation = (
+          rejectedSessionId?: string,
+          finalizedAttachments?: UploadedAttachment[],
+          message?: string
+        ): void => {
+          preparationRejected = true
+          clearOptimisticMessage()
+          // Rejection is asynchronous: act on the composer as it is now, not as it was at submit.
+          const latest = optionsRef.current
+          const targetDraftKey =
+            wasNewConversation || branchInNewSession
+              ? (rejectedSessionId ?? snapshot.draftKey)
+              : snapshot.draftKey
+          if (message && latest.currentDraftKey === targetDraftKey)
+            latest.composer.actions.setError(message)
+          const rejectedOwner = rejectedSessionId ? latest.getSession(rejectedSessionId) : undefined
+          const retrySessionOwner =
+            rejectedOwner && !rejectedOwner.isPending
+              ? { sessionId: rejectedOwner.id, projectId: rejectedOwner.projectId }
+              : snapshot.retrySessionOwner
+          const byId = new Map(
+            finalizedAttachments?.map((attachment) => [attachment.id, attachment])
+          )
+          latest.composer.lifecycle.restoreFailedSend(
+            {
+              ...snapshot,
+              retrySessionOwner,
+              // Native setup authority has already been bound to the retry Session.
+              ...(retrySessionOwner ? { setupSessionToken: undefined } : {}),
+              attachments: snapshot.attachments.map(
+                (attachment) => byId.get(attachment.id) ?? attachment
+              )
+            },
+            true,
+            wasNewConversation || branchInNewSession ? rejectedSessionId : undefined,
+            true
+          )
+        }
         void runtime
           .sendMessage({
             sessionId,
@@ -585,42 +623,10 @@ const useWorkspaceConversationController = (
                 current.onNewSessionAppended?.(message)
               }
             },
-            onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
-              preparationRejected = true
-              clearOptimisticMessage()
-              // Rejection is asynchronous: act on the composer as it is now, not as it was at submit.
-              const latest = optionsRef.current
-              const targetDraftKey =
-                wasNewConversation || branchInNewSession
-                  ? (rejectedSessionId ?? snapshot.draftKey)
-                  : snapshot.draftKey
-              if (latest.currentDraftKey === targetDraftKey)
-                latest.composer.actions.setError(message)
-              const rejectedOwner = rejectedSessionId
-                ? latest.getSession(rejectedSessionId)
-                : undefined
-              const retrySessionOwner =
-                rejectedOwner && !rejectedOwner.isPending
-                  ? { sessionId: rejectedOwner.id, projectId: rejectedOwner.projectId }
-                  : snapshot.retrySessionOwner
-              const byId = new Map(
-                finalizedAttachments?.map((attachment) => [attachment.id, attachment])
-              )
-              latest.composer.lifecycle.restoreFailedSend(
-                {
-                  ...snapshot,
-                  retrySessionOwner,
-                  // Native setup authority has already been bound to the retry Session.
-                  ...(retrySessionOwner ? { setupSessionToken: undefined } : {}),
-                  attachments: snapshot.attachments.map(
-                    (attachment) => byId.get(attachment.id) ?? attachment
-                  )
-                },
-                true,
-                wasNewConversation || branchInNewSession ? rejectedSessionId : undefined,
-                true
-              )
-            },
+            onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) =>
+              restorePreparation(rejectedSessionId, finalizedAttachments, message),
+            onPreparationCancelled: (cancelledSessionId, finalizedAttachments) =>
+              restorePreparation(cancelledSessionId, finalizedAttachments),
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
               : {}),

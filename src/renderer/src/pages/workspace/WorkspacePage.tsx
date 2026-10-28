@@ -1780,6 +1780,7 @@ const WorkspacePage = ({
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
                   canEditLocalDraft,
+                  sendPreparing: activeSessionHasSendPreparation,
                   persistenceBlocked: persistenceBlockedSessionIds.includes(
                     activeSession?.id ?? ''
                   ),

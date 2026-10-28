@@ -6897,7 +6897,6 @@
     "Session was interrupted before the app closed.": "앱이 종료되기 전에 세션이 중단되었습니다.",
     "The run failed with no error message.": "실행이 오류 메시지 없이 실패했습니다.",
     "The unsent message could not be rolled back ({{failure}}). Send again or stop the run to retry.": "전송되지 않은 메시지를 롤백하지 못했습니다({{failure}}). 다시 보내거나 실행을 중지한 후 다시 시도하세요.",
-    "The unsent Session could not be removed ({{failure}}).": "전송되지 않은 세션을 제거하지 못했습니다({{failure}}).",
     "Agent Session cleanup did not complete.": "에이전트 세션 정리가 완료되지 않았습니다.",
     "Add to list": "목록에 추가",
     "Add to trusted services": "신뢰하는 서비스에 추가",
