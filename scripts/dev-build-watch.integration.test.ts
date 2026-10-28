@@ -68,7 +68,9 @@ it('watches real package edits, refreshes optimized CJS only after success and c
       customLogger: logger,
       plugins: [devBuildWatch(root)],
       optimizeDeps: { include: ['fixture-core'] },
-      server: { middlewareMode: true, ws: false }
+      // Exercise real disk watching, compilation, reload and close with Chokidar's polling backend.
+      // Native FSEvents delivery/teardown for this temporary tree is outside the build contract.
+      server: { middlewareMode: true, ws: false, watch: { usePolling: true } }
     })
     const optimizerCode = async (): Promise<string> => {
       const optimizer = server!.environments.client.depsOptimizer!
