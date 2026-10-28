@@ -149,6 +149,10 @@ beforeEach(() => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
+const settleCleanup = async (): Promise<void> => {
+  for (let index = 0; index < 150; index += 1) await Promise.resolve()
+}
+
 describe('prompt admission across Main preparation and pending binding', () => {
   it('deduplicates a Main seed push before binding and dispatches the exact tagged prompt', async () => {
     const main = mainBoundary()
@@ -185,13 +189,26 @@ describe('prompt admission across Main preparation and pending binding', () => {
       await cancelWorkspaceRun(agent, pending.id)
       main.waiting.resolve()
       expect(await sending).toBeUndefined()
+      await settleCleanup()
       expect(agent.sendPrompt).not.toHaveBeenCalled()
-      expect(main.read()?.messages).toEqual([])
-      expect(main.read()?.conversationGraph?.messages).toEqual([])
-      expect(main.read()?.activeRun).toBeUndefined()
-      expect(
-        useSessionStore.getState().sessions.find(({ id }) => id === 'bound-session')?.messages
-      ).toEqual([])
+      expect(main.read()).toBeUndefined()
+      expect(main.deleteSession).toHaveBeenCalledExactlyOnceWith({
+        projectId: 'project',
+        sessionId: 'bound-session'
+      })
+      // This boundary fake does not broadcast native deletion; any cached seed must stay idle.
+      const cachedSeed = useSessionStore
+        .getState()
+        .sessions.find(({ id }) => id === 'bound-session')
+      expect(cachedSeed?.messages ?? []).toEqual([])
+      expect(cachedSeed?.activeRun).toBeUndefined()
+      expect(useSessionStore.getState().sessions.find(({ id }) => id === pending.id)).toMatchObject(
+        {
+          messages: [],
+          status: 'idle',
+          activeRun: undefined
+        }
+      )
     }
   )
 
@@ -272,7 +289,7 @@ describe('prompt admission across Main preparation and pending binding', () => {
     )
   })
 
-  it('reports an Operation Error that includes a failed seed cleanup', async () => {
+  it('reports the original Operation Error independently of failed seed cleanup', async () => {
     const main = mainBoundary(undefined, true, true)
     main.deleteSession.mockResolvedValueOnce({
       status: 'failed',
@@ -288,12 +305,12 @@ describe('prompt admission across Main preparation and pending binding', () => {
     const reported = Object.values(useWorkspaceOperationErrors.getState().errors)
     expect(reported).toHaveLength(1)
     expect(reported[0]).toContain('Preparation write failed')
-    expect(reported[0]).toMatch(/could not be removed/i)
+    expect(reported[0]).toBe('Preparation write failed')
     expect(main.deleteSession).toHaveBeenCalledTimes(1)
     expect(main.deleteSession.mock.calls[0][0].sessionId).toBe('bound-session')
   })
 
-  it('localizes the failed seed cleanup sentence and its Session cleanup fragment', async () => {
+  it('preserves the original preparation failure in a translated locale when cleanup fails', async () => {
     await prepareI18nLocale('zh-Hans')
     initI18n('zh-Hans')
     try {
@@ -311,7 +328,7 @@ describe('prompt admission across Main preparation and pending binding', () => {
       const reported = Object.values(useWorkspaceOperationErrors.getState().errors)
       expect(reported).toHaveLength(1)
       expect(reported[0]).toContain('Preparation write failed')
-      expect(reported[0]).toContain('未发送的会话无法移除（智能体会话清理未完成。）')
+      expect(reported[0]).toBe('Preparation write failed')
       expect(reported[0]).not.toMatch(/could not be removed/i)
     } finally {
       initI18n('en')
@@ -474,6 +491,7 @@ describe('Stop before an existing Session prompt reaches Main', () => {
       waiting.resolve()
       await stopping
       expect(await sending).toBeUndefined()
+      await settleCleanup()
       expect(agent.sendPrompt).not.toHaveBeenCalled()
       expect(agent.cancel).not.toHaveBeenCalled()
       expect(main.read()?.messages).toEqual([])
@@ -539,9 +557,10 @@ describe('Stop before an existing Session prompt reaches Main', () => {
       }
     })
     await vi.waitFor(() => expect(useSessionStore.getState().sessions[0].activeRun).toBeDefined())
-    const stopped = expect(cancelWorkspaceRun(agent, input.sessionId)).rejects.toThrow('Disk full')
+    const stopped = expect(cancelWorkspaceRun(agent, input.sessionId)).resolves.toBeUndefined()
     waiting.resolve()
     await Promise.all([sending, stopped])
+    await settleCleanup()
     expect(hasPendingWorkspacePromptRollback(input.sessionId)).toBe(true)
     expect(agent.sendPrompt).not.toHaveBeenCalled()
     expect(agent.cancel).not.toHaveBeenCalled()
@@ -569,6 +588,7 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     const stopping = cancelWorkspaceRun(agent, input.sessionId)
     waiting.resolve()
     await Promise.all([sending, stopping])
+    await settleCleanup()
     expect(main.read()?.messages).toEqual([])
     expect(main.read()?.promptPreparation).toBeUndefined()
     expect(agent.sendPrompt).not.toHaveBeenCalled()
@@ -588,6 +608,7 @@ describe('Stop before an existing Session prompt reaches Main', () => {
     const stopping = cancelWorkspaceRun(agent, input.sessionId)
     waiting.resolve()
     await Promise.all([sending, stopping])
+    await settleCleanup()
     const next = await sendWorkspaceMessage(
       agent,
       { ...input, text: 'Later question' },
