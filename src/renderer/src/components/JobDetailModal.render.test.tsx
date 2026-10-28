@@ -189,6 +189,83 @@ it('does not tick an empty Session list or one with only another Session running
 })
 
 describe('JobDetailModal — detail view', () => {
+  it('shows a failed cancellation without hiding execution and permits retry, then adopts natural completion', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      cancellation_status: 'failed',
+      cancellation_error: {
+        code: 'cancel_request_rejected',
+        message: 'Scheduler permission denied'
+      }
+    })
+    const jobsCancel = vi.fn(async () => undefined)
+    const jobsList = vi.fn(async () => [{ ...job, cancellation_status: 'cancelling' as const }])
+    Object.assign(window, { api: { compute: { jobsCancel, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Running')
+    expect(container.textContent).toContain('Cancellation failed')
+    expect(
+      (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
+    ).toBe(false)
+    const retry = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Retry'
+    )!
+    await act(async () => retry.click())
+    expect(jobsCancel).toHaveBeenCalledOnce()
+    act(() =>
+      useSessionJobStore
+        .getState()
+        .applyUpdate({ ...job, status: 'success', harvested_at: Date.now() })
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Done')
+    expect(container.querySelector('[data-testid="job-cancellation-failed"]')).toBeNull()
+  })
+
+  it('explains unavailable status without promising a stopped remote process or continued polling', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      status: 'error',
+      error_code: 'job_status_unavailable',
+      error_message: 'Queue and controller have no record; accounting is disabled.',
+      last_poll_error: 'no scheduler result'
+    })
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.textContent).toContain('Unable to get job status')
+    expect(container.textContent).toContain('remote process may still be running')
+    expect(container.textContent).toContain('Not collected')
+    expect(container.textContent).toContain(job.job_id)
+    expect(container.textContent).not.toContain('Open-Science will check again')
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+  })
+
+  it('projects an external scheduler cancellation consistently in detail, list, and row', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const { RemoteJobRow } = await import('./RemoteJobRow')
+    const job = makeJob({ status: 'failed', error_code: 'job_cancelled' })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
+      'Cancelled'
+    )
+    expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+    act(() =>
+      (container.querySelector('[data-testid="job-detail-back"]') as HTMLButtonElement).click()
+    )
+    expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe(
+      'Cancelled'
+    )
+    act(() => root.render(<RemoteJobRow job={job} onOpen={vi.fn()} />))
+    expect(container.textContent).toContain('Cancelled')
+    expect(container.textContent).not.toContain('failed')
+  })
+
   it('explains a queued policy blocker and clears it on a recovered job update', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')
     const job = makeJob({ status: 'queued', queue_blocked_reason: 'session_policy_unavailable' })

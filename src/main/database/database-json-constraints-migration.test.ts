@@ -191,10 +191,11 @@ describe('database JSON constraints migration', () => {
           '0049_pascalcase_table_names',
           '0050_literature_translation',
           '0051_literature_reading_status',
-          '0052_literature_personal_note_search'
+          '0052_literature_personal_note_search',
+          '0053_slurm_job_reliability'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0052_literature_personal_note_search'
+        to: '0053_slurm_job_reliability'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

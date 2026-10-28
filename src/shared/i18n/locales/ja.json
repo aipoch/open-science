@@ -7654,6 +7654,16 @@
     "Verifying download…": "ダウンロードを検証中…",
     "Example download progress": "事例のダウンロード進捗",
     "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
-    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。"
+    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。",
+    "Slurm controller query": "Slurm コントローラー照会",
+    "Slurm accounting query": "Slurm アカウンティング照会",
+    "Slurm accounting is unavailable. Jobs can still use the queue and controller for status updates.": "Slurm アカウンティングを利用できません。ジョブの状態はキューとコントローラーから引き続き更新できます。",
+    "Not collected": "未収集",
+    "Not scheduled": "予定なし",
+    "Unable to confirm cancellation": "キャンセル結果を確認できません",
+    "Cancellation failed": "キャンセルに失敗しました",
+    "The cancellation attempt ended. The job is still being tracked.": "今回のキャンセル処理は終了しました。ジョブの追跡は継続しています。",
+    "Unable to get job status": "ジョブの状態を取得できません",
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "スケジューラーにこのジョブの利用可能な結果がありません。リモートプロセスはまだ実行中の可能性があります。次の操作を決める前に、スケジューラーとリモートファイルを確認してください。"
   }
 }

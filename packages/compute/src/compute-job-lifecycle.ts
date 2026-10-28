@@ -16,6 +16,7 @@ type PolledJobFinish = PollTails & {
   status: Extract<ComputeJobStatus, 'success' | 'failed' | 'timeout'>
   exitCode?: number
   errorCode: string | null
+  diagnostic?: string
 }
 
 export class ComputeJobLifecycle {
@@ -143,10 +144,26 @@ export class ComputeJobLifecycle {
       stdoutTail: result.stdoutTail,
       stderrTail: result.stderrTail,
       errorCode: result.errorCode,
+      lastPollError: result.diagnostic ?? null,
+      retryAfterUserAction: false,
+      finishedAt: new Date()
+    })
+  }
+
+  async failJobStatus(jobId: string, message: string): Promise<ComputeJobTransitionResult> {
+    return this.apply(jobId, ['submitted', 'running'], {
+      status: 'error',
+      errorCode: 'job_status_unavailable',
+      errorMessage: message,
+      stderrTail: message,
       lastPollError: null,
       retryAfterUserAction: false,
       finishedAt: new Date()
     })
+  }
+
+  async observePending(jobId: string): Promise<ComputeJobTransitionResult> {
+    return this.apply(jobId, ['submitted'], { lastPollError: null, retryAfterUserAction: false })
   }
 
   async observeRunning(

@@ -387,6 +387,172 @@ describe('JobPoller', () => {
     )
   })
 
+  it('applies Slurm observations independently and delivers an unavailable result without harvest', async () => {
+    const jobs = ['1', '2'].map((id) =>
+      makeJob({
+        job_id: `job-${id}`,
+        status: 'submitted',
+        execution_mode: 'slurm',
+        remote_workdir: `~/.openscience/jobs/job-${id}`,
+        remote_handle: JSON.stringify({
+          driver: 'slurm',
+          version: 1,
+          scheduler_job_id: id,
+          workdir: `~/.openscience/jobs/job-${id}`,
+          stdout_path: `~/.openscience/jobs/job-${id}/stdout`,
+          stderr_path: `~/.openscience/jobs/job-${id}/stderr`
+        })
+      })
+    )
+    const updateIfStatus = vi.fn(
+      async (id: string, _statuses: unknown, updates: Record<string, unknown>) =>
+        ({
+          ...jobs.find((job) => job.job_id === id)!,
+          status: updates.status ?? 'submitted'
+        }) as ComputeJob
+    )
+    const notifyJob = vi.fn(async () => undefined)
+    const harvestFn = vi.fn(async () => undefined)
+    const runner: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: command.startsWith('scontrol ') || command.startsWith('sacct ') ? 1 : 0,
+        stdout: command.startsWith('squeue ') ? '1|RUNNING|None\n' : '',
+        stderr: command.startsWith('scontrol ')
+          ? 'Invalid job id specified'
+          : command.startsWith('sacct ')
+            ? 'Accounting storage is disabled'
+            : '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const poller = new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: {
+        findNonTerminal: async () => jobs,
+        findTerminalUnharvested: async () => [],
+        findNotificationReadyUnnotified: async () => [],
+        updateIfStatus
+      } as unknown as ComputeJobRepository,
+      notifyJob,
+      harvestFn
+    })
+    await poller.tick()
+    expect(updateIfStatus).toHaveBeenCalledWith(
+      'job-1',
+      ['submitted'],
+      expect.objectContaining({ status: 'running' })
+    )
+    expect(updateIfStatus).toHaveBeenCalledWith(
+      'job-2',
+      ['submitted', 'running'],
+      expect.objectContaining({
+        status: 'error',
+        errorCode: 'job_status_unavailable',
+        stderrTail: expect.stringContaining('may still be running')
+      })
+    )
+    expect(notifyJob).toHaveBeenCalledWith(
+      expect.objectContaining({ job_id: 'job-2', status: 'error' })
+    )
+    expect(harvestFn).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['0:15', 143],
+    ['124:0', 124]
+  ] as const)(
+    'classifies external Slurm cancellation with exit code %s without creating a local operation',
+    async (schedulerExitCode, expectedExitCode) => {
+      const notifyJob = vi.fn(async () => undefined)
+      const job = makeJob({
+        execution_mode: 'slurm',
+        remote_handle: JSON.stringify({
+          driver: 'slurm',
+          version: 1,
+          scheduler_job_id: '321',
+          workdir: '~/.openscience/jobs/job-1',
+          stdout_path: '~/.openscience/jobs/job-1/stdout',
+          stderr_path: '~/.openscience/jobs/job-1/stderr'
+        })
+      })
+      const updateIfStatus = vi.fn(
+        async (_id: string, _statuses: unknown, updates: Record<string, unknown>) =>
+          ({ ...job, ...updates }) as ComputeJob
+      )
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => ({
+          exitCode: 0,
+          stdout: command.startsWith('squeue ')
+            ? '321|CANCELLED|None\n'
+            : command.startsWith('scontrol ')
+              ? `JobId=321 JobState=CANCELLED ExitCode=${schedulerExitCode}\n`
+              : '',
+          stderr: '',
+          truncated: false,
+          timedOut: false
+        }))
+      }
+      await new JobPoller({
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {
+          findNonTerminal: async () => [job],
+          findNotificationReadyUnnotified: async () => [],
+          updateIfStatus
+        } as unknown as ComputeJobRepository,
+        notifyJob
+      }).tick()
+      expect(updateIfStatus).toHaveBeenCalledWith(
+        'job-1',
+        ['submitted', 'running'],
+        expect.objectContaining({
+          status: 'failed',
+          errorCode: 'job_cancelled',
+          exitCode: expectedExitCode
+        })
+      )
+      expect(notifyJob).toHaveBeenCalledWith(expect.objectContaining({ job_id: 'job-1' }))
+    }
+  )
+
+  it('clears a recovered query error while a Slurm task remains pending', async () => {
+    const job = makeJob({
+      status: 'submitted',
+      execution_mode: 'slurm',
+      last_poll_error: 'temporary',
+      remote_handle: JSON.stringify({
+        driver: 'slurm',
+        version: 1,
+        scheduler_job_id: '321',
+        workdir: '~/.openscience/jobs/job-1',
+        stdout_path: '~/.openscience/jobs/job-1/stdout',
+        stderr_path: '~/.openscience/jobs/job-1/stderr'
+      })
+    })
+    const updateIfStatus = vi.fn(async () => job)
+    const runner = makeSshRunner({
+      exitCode: 0,
+      stdout: '321|PENDING|Resources\n',
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    await new JobPoller({
+      connectionBroker: brokerFromRunner(runner),
+      hostRepository: {} as ComputeHostRepository,
+      jobRepository: {
+        findNonTerminal: async () => [job],
+        updateIfStatus
+      } as unknown as ComputeJobRepository
+    }).tick()
+    expect(updateIfStatus).toHaveBeenCalledWith('job-1', ['submitted'], {
+      lastPollError: null,
+      retryAfterUserAction: false
+    })
+  })
+
   it('keeps lifecycle unchanged and records an automatic retry for truncated output', async () => {
     const job = makeJob()
     const update = vi.fn((_id: string, updates: unknown) =>

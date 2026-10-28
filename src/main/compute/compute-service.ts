@@ -264,11 +264,7 @@ export class ComputeService {
     }
     const result = await this.jobCancellation.request(jobId, scope)
     const job = await this.jobWorkflow.getJob(jobId, scope)
-    if (
-      result.cancellation_status === 'cancelled' &&
-      job.submitted_at === undefined &&
-      this.storageRoot
-    ) {
+    if (result.status === 'cancelled' && job.submitted_at === undefined && this.storageRoot) {
       await cleanupComputeJobFileEvidence({
         storageRoot: this.storageRoot,
         projectId: job.project_id,
@@ -282,7 +278,7 @@ export class ComputeService {
       )
     }
     this.handleJobUpdated(job)
-    if (result.cancellation_status === 'cancelled') {
+    if (result.status === 'cancelled') {
       await this.concurrencyManager?.onJobCompleted()
     }
     return result

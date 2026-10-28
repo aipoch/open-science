@@ -222,6 +222,34 @@ describe('useSessionBackgroundTasks', () => {
     expect(latest?.summary.oldestActiveStartedAt).toBe(runStart)
   })
 
+  it('does not treat a cancellation-operation delivery as a Local Run with the same ID', async () => {
+    stubApi({
+      backgroundResultDelivery: {
+        getSessionActivity: vi.fn().mockResolvedValue({
+          active: [],
+          awaitingAgent: [
+            jobDelivery({
+              sourceKind: 'compute-cancellation',
+              sourceId: 'run-1'
+            })
+          ]
+        }),
+        onChanged: vi.fn(() => () => undefined)
+      },
+      notebook: {
+        state: vi.fn().mockResolvedValue({ runs: [run({ status: 'completed' })] }),
+        onChanged: vi.fn(() => () => undefined)
+      },
+      compute: {
+        jobsList: vi.fn().mockResolvedValue([]),
+        onJobUpdated: vi.fn(() => () => undefined)
+      }
+    })
+    await mount('session-1', 'project-1', notebook)
+    expect(latest?.runs).toHaveLength(0)
+    expect(latest?.summary.totalTasks).toBe(0)
+  })
+
   it('keeps observing Compute Jobs and their deliveries without a Notebook', async () => {
     const state = vi.fn().mockResolvedValue({ runs: [] })
     stubApi({

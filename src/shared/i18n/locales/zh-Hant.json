@@ -7654,6 +7654,16 @@
     "Verifying download…": "正在驗證下載檔案…",
     "Example download progress": "案例下載進度",
     "Could not cancel download. Try again.": "無法取消下載，請重試。",
-    "Could not download this example. Try again.": "無法下載此案例，請重試。"
+    "Could not download this example. Try again.": "無法下載此案例，請重試。",
+    "Slurm controller query": "Slurm 控制器查詢",
+    "Slurm accounting query": "Slurm 記帳查詢",
+    "Slurm accounting is unavailable. Jobs can still use the queue and controller for status updates.": "Slurm 記帳服務無法使用。任務仍可透過佇列和控制器更新狀態。",
+    "Not collected": "未收集",
+    "Not scheduled": "未安排",
+    "Unable to confirm cancellation": "無法確認取消結果",
+    "Cancellation failed": "取消失敗",
+    "The cancellation attempt ended. The job is still being tracked.": "本次取消作業已結束。系統仍在追蹤任務。",
+    "Unable to get job status": "無法取得任務狀態",
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "排程器沒有此任務的可用結果。遠端程序可能仍在執行。請先檢查排程器和遠端檔案，再決定下一步操作。"
   }
 }

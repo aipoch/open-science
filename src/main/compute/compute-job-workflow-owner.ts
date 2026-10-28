@@ -26,8 +26,6 @@ import {
   GLOB_CHARS,
   hashCommand,
   hasLeadingSlurmDirective,
-  isComputeJobResultFinal,
-  parseSlurmSchedulerJobId,
   projectJobStatus,
   SHELL_UNSAFE_CHARS,
   SlurmDriverError,
@@ -664,17 +662,8 @@ const jobResultWithFiles = (
   leftOnRemote: Array<{ uri: string; size_mb: number; reason: string }>
 ): JobResult => ({
   ...(job.queue_blocked_reason ? { queue_blocked_reason: job.queue_blocked_reason } : {}),
-  job_id: job.job_id,
   ...(job.producer_run_id ? { producer_run_id: job.producer_run_id } : {}),
-  ...(parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
-    ? { scheduler_job_id: parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir) }
-    : {}),
-  status: job.status,
-  ...(job.error_code ? { error_code: job.error_code } : {}),
-  ...(job.last_poll_error ? { last_poll_error: job.last_poll_error } : {}),
-  result_final: isComputeJobResultFinal(job),
-  cancellation_status: job.cancellation_status,
-  exit_code: job.exit_code,
+  ...projectJobStatus(job),
   ...(localOutputRoot ? { local_output_root: localOutputRoot } : {}),
   featured_files: featuredFiles,
   hidden_files: hiddenFiles,

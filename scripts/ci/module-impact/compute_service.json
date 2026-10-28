@@ -89,7 +89,9 @@
     "resources/compute-askpass.cjs",
     "resources/compute-askpass.sh",
     "src/main/compute/dispatch-evidence.ts",
-    "src/main/compute/handler-contract.ts"
+    "src/main/compute/handler-contract.ts",
+    "src/main/compute/slurm-cancellation-reliability.integration.test.ts",
+    "src/main/compute/slurm-record-retention.real-ssh.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/compute/connection-broker.ts",
@@ -164,7 +166,9 @@
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
       "src/main/compute/ssh-config.test.ts",
-      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts"
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+      "src/main/compute/slurm-cancellation-reliability.integration.test.ts",
+      "src/main/compute/slurm-record-retention.real-ssh.integration.test.ts"
     ],
     "contract": [
       "src/main/application-command-composition.test.ts",

@@ -1,8 +1,10 @@
 import { applyComputeEnvironment } from './compute-environment'
 import {
   classifyConnectionFailure,
+  ComputeConnectionError,
   isConnectionStdoutTruncated,
-  type ComputeConnectionLease
+  type ComputeConnectionLease,
+  type ConnectionRunResult
 } from './connection'
 import type { ComputeJob } from './model'
 import { toBase64, type SlurmRemoteHandle } from './remote-job-contract'
@@ -16,8 +18,34 @@ const SUBMISSION_ERROR_MAX_BYTES = 4096
 
 export type SlurmObservation =
   | { kind: 'active'; state: string; reason?: string }
-  | { kind: 'terminal'; state: string; exitCode: number; stdout: string; stderr: string }
-  | { kind: 'unknown'; diagnostic: string }
+  | {
+      kind: 'terminal'
+      state: string
+      exitCode?: number
+      stdout: string
+      stderr: string
+      diagnostic?: string
+    }
+  | { kind: 'unknown'; diagnostic: string; state?: string }
+  | { kind: 'unavailable'; diagnostic: string }
+
+export type SlurmCancellationResult =
+  | { kind: 'cancelled'; diagnostic?: string }
+  | {
+      kind: 'completed'
+      state: string
+      exitCode?: number
+      stdoutTail?: string
+      stderrTail?: string
+      diagnostic?: string
+    }
+  | { kind: 'rejected'; message: string }
+  | {
+      kind: 'unavailable'
+      message: string
+      cancellationError?: { code: 'cancel_request_rejected'; message: string }
+    }
+  | { kind: 'unconfirmed'; message?: string }
 
 export class SlurmDriverError extends Error {
   constructor(
@@ -328,112 +356,340 @@ export const recoverSlurmJob = async (
   return handleFor(workdir, [...ids][0])
 }
 
+const activeStates = new Set([
+  'PENDING',
+  'RUNNING',
+  'CONFIGURING',
+  'COMPLETING',
+  'SUSPENDED',
+  'RESIZING',
+  'REQUEUED',
+  'REQUEUE_FED',
+  'REQUEUE_HOLD',
+  'SIGNALING',
+  'STAGE_OUT',
+  'STOPPED'
+])
+const knownState = (state: string): boolean => activeStates.has(state) || terminalStates.has(state)
+const noSuchJob = (text: string): boolean =>
+  /invalid job id|no jobs? in the system|job [^\r\n]*not found/i.test(text)
+const accountingDisabled = (result: ConnectionRunResult): boolean =>
+  (result.exitCode === 127 && /sacct.*(?:not found|no such file)/i.test(result.stderr)) ||
+  /accounting (?:storage )?(?:is )?(?:disabled|not enabled)|accountingstorage(?:type)?(?:=|\s+)(?:none|accounting_storage\/none)|slurm accounting storage is disabled/i.test(
+    result.stderr
+  )
+
+type SchedulerRow = { state: string; exitCode?: number; reason?: string }
+type SlurmEntry = { job: ComputeJob; handle: SlurmRemoteHandle }
+type Query =
+  | { result: ConnectionRunResult; diagnostic?: never; disconnected?: never }
+  | { result?: never; diagnostic: string; disconnected: boolean }
+const query = async (
+  connection: ComputeConnectionLease,
+  command: string,
+  maxOutputBytes: number
+): Promise<Query> => {
+  try {
+    const result = await connection.run(command, {
+      timeoutMs: SLURM_POLL_TIMEOUT_MS,
+      loginShell: false,
+      preserveRemoteCommandErrors: true,
+      maxOutputBytes
+    })
+    const failure =
+      result.timedOut || result.exitCode === 255 || result.exitCode === null
+        ? classifyConnectionFailure(result, false)
+        : undefined
+    if (failure)
+      return {
+        diagnostic: `${command.split(' ')[0]}: ${result.stderr.trim() || failure.message}`,
+        disconnected:
+          result.exitCode === 255 ||
+          ['authentication_failed', 'host_key_unknown', 'host_key_changed'].includes(failure.code)
+      }
+    if (isConnectionStdoutTruncated(result))
+      return {
+        diagnostic: `${command.split(' ')[0]} output exceeded the polling protocol limit.`,
+        disconnected: false
+      }
+    return { result }
+  } catch (error) {
+    return {
+      diagnostic: error instanceof Error ? error.message : 'Slurm query failed.',
+      disconnected: error instanceof ComputeConnectionError && error.code !== 'timeout'
+    }
+  }
+}
+const parseExitCode = (text: string | undefined): number | undefined => {
+  const match = text?.match(/^(\d+):(\d+)$/)
+  if (!match) return undefined
+  const code = Number(match[1])
+  const signal = Number(match[2])
+  return Number.isSafeInteger(code) && Number.isSafeInteger(signal)
+    ? signal > 0
+      ? 128 + signal
+      : code
+    : undefined
+}
+const usableRow = (row: SchedulerRow): boolean =>
+  row.state !== 'COMPLETED' || row.exitCode !== undefined
+
+type JobQueryEvidence = {
+  row?: SchedulerRow
+  queueMissing: boolean
+  controllerMissing: boolean
+  diagnostics: string[]
+}
+const mergeSchedulerRow = (item: JobQueryEvidence, row: SchedulerRow): void => {
+  if (item.row && isTerminalSlurmState(item.row.state)) {
+    if (!isTerminalSlurmState(row.state)) return
+    // Natural completion already obtained takes priority over a conflicting cancellation record.
+    if (item.row.state !== 'CANCELLED' && row.state === 'CANCELLED') return
+    if (
+      item.row.state === row.state &&
+      row.exitCode === undefined &&
+      item.row.exitCode !== undefined
+    )
+      return
+  }
+  item.row = row
+}
+
+// Keep source evidence separate from the observation. Only successful/recognized absence from
+// both live sources plus disabled accounting proves that this query path has no remaining result.
+const querySlurmJobs = async (
+  jobs: SlurmEntry[],
+  connection: ComputeConnectionLease
+): Promise<{
+  observations: Map<string, SlurmObservation>
+  evidence: Map<string, JobQueryEvidence>
+  disconnectedDiagnostic?: string
+}> => {
+  const observations = new Map<string, SlurmObservation>()
+  const evidence = new Map<string, JobQueryEvidence>()
+  if (jobs.length === 0) return { observations, evidence }
+  const ids = jobs.map(({ handle }) => handle.scheduler_job_id)
+  for (const id of ids)
+    evidence.set(id, { queueMissing: false, controllerMissing: false, diagnostics: [] })
+  const queue = await query(
+    connection,
+    `squeue --noheader --states=all -j ${ids.join(',')} --format='%i|%T|%r'`,
+    jobs.length * 1024
+  )
+  if (!queue.result && queue.disconnected) {
+    // A dead connection should cost one timeout for this host, not one for every Job.
+    for (const id of ids) observations.set(id, { kind: 'unknown', diagnostic: queue.diagnostic })
+    return { observations, evidence, disconnectedDiagnostic: queue.diagnostic }
+  }
+  let queueMalformed = false
+  const malformedQueueIds = new Set<string>()
+  if (queue.result) {
+    for (const line of queue.result.stdout.split(/\r?\n/).filter((line) => line.trim())) {
+      const [id, rawState, reason] = line.trim().split('|')
+      const item = id ? evidence.get(id) : undefined
+      const state = normalizeState(rawState ?? '')
+      if (!item || !knownState(state)) {
+        queueMalformed = true
+        if (item && id) malformedQueueIds.add(id)
+        continue
+      }
+      item.row = { state, reason: reason || undefined }
+    }
+  }
+  const queueSucceeded = queue.result?.exitCode === 0 && !queueMalformed
+  const queueRejectedId = queue.result !== undefined && noSuchJob(queue.result.stderr)
+  const candidates: SlurmEntry[] = []
+  let disconnectedDiagnostic: string | undefined
+  for (const entry of jobs) {
+    const id = entry.handle.scheduler_job_id
+    const item = evidence.get(id)!
+    item.queueMissing =
+      !item.row &&
+      !malformedQueueIds.has(id) &&
+      (queueSucceeded || (queueRejectedId && jobs.length === 1))
+    if (item.row && activeStates.has(item.row.state)) {
+      observations.set(id, { kind: 'active', ...item.row })
+      continue
+    }
+    if (!queueSucceeded && !item.row)
+      item.diagnostics.push(
+        queue.diagnostic ??
+          queue.result?.stderr.trim() ??
+          'squeue returned an unrecognized response.'
+      )
+    candidates.push(entry)
+    if (disconnectedDiagnostic) {
+      item.diagnostics.push(disconnectedDiagnostic)
+      continue
+    }
+    const control = await query(connection, `scontrol show job ${id} --oneliner`, 16 * 1024)
+    if (!control.result) {
+      item.diagnostics.push(control.diagnostic)
+      if (control.disconnected) disconnectedDiagnostic = control.diagnostic
+      continue
+    }
+    const result = control.result
+    if (noSuchJob(result.stderr) || /^\s*No jobs? in the system\s*$/i.test(result.stdout)) {
+      item.controllerMissing = true
+      // A batch containing an expired ID can fail before looking up its siblings. Confirm this
+      // missing Job individually instead of treating every omitted row as an empty queue.
+      if (queueRejectedId && jobs.length > 1 && !item.row && !malformedQueueIds.has(id)) {
+        const single = await query(
+          connection,
+          `squeue --noheader --states=all -j ${id} --format='%i|%T|%r'`,
+          1024
+        )
+        if (single.disconnected) disconnectedDiagnostic = single.diagnostic
+        item.queueMissing =
+          single.result !== undefined &&
+          ((single.result.exitCode === 0 && !single.result.stdout.trim()) ||
+            (!single.result.stdout.trim() && noSuchJob(single.result.stderr)))
+        if (!item.queueMissing)
+          item.diagnostics.push(
+            single.diagnostic ?? single.result?.stderr ?? 'squeue absence was not confirmed.'
+          )
+      }
+      continue
+    }
+    const state = result.stdout.match(/(?:^|\s)JobState=(\S+)/)?.[1]
+    const returnedId = result.stdout.match(/(?:^|\s)JobId=(\S+)/)?.[1]
+    if (
+      result.exitCode !== 0 ||
+      returnedId !== id ||
+      !state ||
+      !knownState(normalizeState(state))
+    ) {
+      item.diagnostics.push(result.stderr.trim() || 'scontrol returned an unrecognized response.')
+      continue
+    }
+    const row = {
+      state: normalizeState(state),
+      exitCode: parseExitCode(result.stdout.match(/(?:^|\s)ExitCode=(\S+)/)?.[1])
+    }
+    // An already observed terminal state cannot be replaced by a stale active record.
+    mergeSchedulerRow(item, row)
+    if (item.row && activeStates.has(item.row.state))
+      observations.set(id, { kind: 'active', ...item.row })
+  }
+  const accountingCandidates = candidates.filter(({ handle }) => {
+    const row = evidence.get(handle.scheduler_job_id)!.row
+    return !row || (isTerminalSlurmState(row.state) && row.exitCode === undefined)
+  })
+  let accounting: Query | undefined
+  if (accountingCandidates.length > 0 && !disconnectedDiagnostic) {
+    accounting = await query(
+      connection,
+      `sacct --parsable2 --noheader -j ${accountingCandidates.map(({ handle }) => handle.scheduler_job_id).join(',')} --format=JobIDRaw,State,ExitCode`,
+      accountingCandidates.length * 2048
+    )
+    if (accounting.disconnected) disconnectedDiagnostic = accounting.diagnostic
+    if (accounting.result?.exitCode === 0) {
+      for (const line of accounting.result.stdout.split(/\r?\n/).filter((line) => line.trim())) {
+        const [id, rawState, rawExit] = line.trim().split('|')
+        if (!id || id.includes('.')) continue
+        const item = evidence.get(id)
+        if (!item) continue
+        const state = normalizeState(rawState ?? '')
+        if (!knownState(state)) {
+          item.diagnostics.push(`sacct returned an unrecognized state: ${rawState ?? ''}.`)
+          continue
+        }
+        const row = { state, exitCode: parseExitCode(rawExit) }
+        mergeSchedulerRow(item, row)
+      }
+    }
+  }
+  for (const { handle } of candidates) {
+    const id = handle.scheduler_job_id
+    const item = evidence.get(id)!
+    const row = item.row
+    if (row && usableRow(row)) {
+      if (activeStates.has(row.state)) observations.set(id, { kind: 'active', ...row })
+      else
+        observations.set(id, {
+          kind: 'terminal',
+          state: row.state,
+          exitCode: row.exitCode,
+          stdout: '',
+          stderr: '',
+          ...(item.diagnostics.length > 0 ? { diagnostic: item.diagnostics.join(' ') } : {})
+        })
+      continue
+    }
+    const disabled = accounting?.result !== undefined && accountingDisabled(accounting.result)
+    if (item.queueMissing && item.controllerMissing && disabled && !row) {
+      observations.set(id, {
+        kind: 'unavailable',
+        diagnostic: `Unable to obtain the final status of Slurm job ${id}: squeue and scontrol report no record, and accounting is unavailable (${accounting!.result!.stderr.trim()}). Automatic status checks have ended. The remote process may still be running; inspect the scheduler and output files before deciding what to do next.`
+      })
+      continue
+    }
+    const accountingDiagnostic =
+      disconnectedDiagnostic ?? accounting?.diagnostic ?? accounting?.result?.stderr.trim()
+    observations.set(id, {
+      kind: 'unknown',
+      ...(row ? { state: row.state } : {}),
+      diagnostic: [
+        ...item.diagnostics,
+        accountingDiagnostic,
+        row
+          ? `Slurm scheduler state: ${row.state}; a valid exit code is not yet available.`
+          : 'slurm_accounting_pending'
+      ]
+        .filter(Boolean)
+        .join(' ')
+    })
+  }
+  return { observations, evidence, disconnectedDiagnostic }
+}
+
+const readSlurmTails = async (
+  observation: Extract<SlurmObservation, { kind: 'terminal' }>,
+  handle: SlurmRemoteHandle,
+  connection: ComputeConnectionLease
+): Promise<string | undefined> => {
+  const diagnostics: string[] = []
+  let disconnectedDiagnostic: string | undefined
+  for (const [key, path] of [
+    ['stdout', handle.stdout_path],
+    ['stderr', handle.stderr_path]
+  ] as const) {
+    const tail = await query(
+      connection,
+      `tail -c ${TAIL_BYTES} ${quoteRemotePath(path)}`,
+      TAIL_BYTES
+    )
+    if (tail.result?.exitCode === 0) observation[key] = tail.result.stdout
+    else
+      diagnostics.push(
+        tail.diagnostic || tail.result?.stderr.trim() || 'Slurm output tail could not be read.'
+      )
+    if (tail.disconnected) {
+      disconnectedDiagnostic = tail.diagnostic
+      break
+    }
+  }
+  if (diagnostics.length > 0)
+    observation.diagnostic = [observation.diagnostic, ...diagnostics].filter(Boolean).join(' ')
+  return disconnectedDiagnostic
+}
+
 export const pollSlurmJobs = async (
-  jobs: Array<{ job: ComputeJob; handle: SlurmRemoteHandle }>,
+  jobs: SlurmEntry[],
   connection: ComputeConnectionLease
 ): Promise<Map<string, SlurmObservation>> => {
-  const observations = new Map<string, SlurmObservation>()
-  if (jobs.length === 0) return observations
-  const ids = jobs.map(({ handle }) => handle.scheduler_job_id).join(',')
-  const queue = await connection.run(
-    `squeue --noheader --states=all -j ${ids} --format='%i|%T|%r'`,
-    {
-      timeoutMs: SLURM_POLL_TIMEOUT_MS,
-      loginShell: false,
-      maxOutputBytes: jobs.length * 1024
+  const queried = await querySlurmJobs(jobs, connection)
+  const { observations } = queried
+  let disconnectedDiagnostic = queried.disconnectedDiagnostic
+  for (const { handle } of jobs) {
+    const observation = observations.get(handle.scheduler_job_id)
+    if (observation?.kind === 'terminal') {
+      if (disconnectedDiagnostic)
+        observation.diagnostic = [observation.diagnostic, disconnectedDiagnostic]
+          .filter(Boolean)
+          .join(' ')
+      else disconnectedDiagnostic = await readSlurmTails(observation, handle, connection)
     }
-  )
-  const queueFailure = classifyConnectionFailure(queue, false)
-  if (queueFailure) throw queueFailure
-  const queued = new Map<string, { state: string; reason?: string }>()
-  if (queue.exitCode === 0 || /invalid job id|no jobs? in the system/i.test(queue.stderr)) {
-    for (const line of queue.stdout.split(/\r?\n/)) {
-      const [id, state, reason] = line.trim().split('|')
-      if (id && state) queued.set(id, { state: normalizeState(state), reason: reason || undefined })
-    }
-  } else {
-    throw new Error(queue.stderr || 'squeue failed.')
-  }
-  const terminalCandidates = jobs.filter(({ handle }) => {
-    const row = queued.get(handle.scheduler_job_id)
-    if (row && !isTerminalSlurmState(row.state)) {
-      observations.set(handle.scheduler_job_id, {
-        kind: 'active',
-        state: row.state,
-        reason: row.reason
-      })
-      return false
-    }
-    return true
-  })
-  if (terminalCandidates.length === 0) return observations
-  const terminalIds = terminalCandidates.map(({ handle }) => handle.scheduler_job_id).join(',')
-  const accounting = await connection.run(
-    `sacct --parsable2 --noheader -j ${terminalIds} --format=JobIDRaw,State,ExitCode`,
-    {
-      timeoutMs: SLURM_POLL_TIMEOUT_MS,
-      loginShell: false,
-      maxOutputBytes: terminalCandidates.length * 2048
-    }
-  )
-  const accountingFailure = classifyConnectionFailure(accounting, false)
-  if (accountingFailure) throw accountingFailure
-  if (accounting.exitCode !== 0) {
-    throw new Error(
-      accounting.stderr.trim() || `sacct exited ${accounting.exitCode ?? 'without a code'}`
-    )
-  }
-  const rows = new Map<string, { state: string; exitCode: number }>()
-  for (const line of accounting.stdout.split(/\r?\n/)) {
-    const [id, rawState, rawExit] = line.trim().split('|')
-    if (!id || id.includes('.') || !rawState || rows.has(id)) continue
-    const [codeText = '', signalText = ''] = (rawExit ?? '').split(':')
-    const code = Number.parseInt(codeText, 10)
-    const signal = Number.parseInt(signalText, 10)
-    const exitCode = Number.isFinite(signal) && signal > 0 ? 128 + signal : code
-    rows.set(id, {
-      state: normalizeState(rawState),
-      exitCode: Number.isFinite(exitCode) ? exitCode : 1
-    })
-  }
-  for (const { handle } of terminalCandidates) {
-    const row = rows.get(handle.scheduler_job_id)
-    if (!row) {
-      observations.set(handle.scheduler_job_id, {
-        kind: 'unknown',
-        diagnostic: 'slurm_accounting_pending'
-      })
-      continue
-    }
-    if (!isTerminalSlurmState(row.state)) {
-      observations.set(handle.scheduler_job_id, { kind: 'active', state: row.state })
-      continue
-    }
-    const readTail = async (path: string): Promise<string> => {
-      const result = await connection.run(
-        `tail -c ${TAIL_BYTES} ${quoteRemotePath(path)} 2>/dev/null || true`,
-        { timeoutMs: SLURM_POLL_TIMEOUT_MS, loginShell: false, maxOutputBytes: TAIL_BYTES }
-      )
-      const failure = classifyConnectionFailure(result, false)
-      if (failure) throw failure
-      if (result.exitCode !== 0 || isConnectionStdoutTruncated(result)) {
-        throw new Error(
-          isConnectionStdoutTruncated(result)
-            ? 'Slurm output tail exceeded the polling protocol limit.'
-            : result.stderr.trim() || 'Slurm output tail could not be read.'
-        )
-      }
-      return result.stdout
-    }
-    const stdout = await readTail(handle.stdout_path)
-    const stderr = await readTail(handle.stderr_path)
-    observations.set(handle.scheduler_job_id, {
-      kind: 'terminal',
-      state: row.state,
-      exitCode: row.exitCode,
-      stdout,
-      stderr
-    })
   }
   return observations
 }
@@ -441,36 +697,58 @@ export const pollSlurmJobs = async (
 export const cancelSlurmJob = async (
   handle: SlurmRemoteHandle,
   connection: ComputeConnectionLease
-): Promise<boolean> => {
-  const cancel = await connection.run(`scancel ${handle.scheduler_job_id}`, {
-    timeoutMs: SLURM_POLL_TIMEOUT_MS,
-    loginShell: false,
-    maxOutputBytes: 1024
-  })
-  const failure = classifyConnectionFailure(cancel, false)
-  if (failure) throw failure
-  if (cancel.exitCode !== 0 && !/invalid job id/i.test(cancel.stderr)) return false
-
-  // scancel exit 0 acknowledges the request; it does not prove that the allocation stopped.
-  const queue = await connection.run(
-    `squeue --noheader --states=all -j ${handle.scheduler_job_id} --format='%T'`,
-    { timeoutMs: SLURM_POLL_TIMEOUT_MS, loginShell: false, maxOutputBytes: 1024 }
+): Promise<SlurmCancellationResult> => {
+  const cancel = await query(connection, `scancel ${handle.scheduler_job_id}`, 1024)
+  if (!cancel.result) return { kind: 'unconfirmed', message: cancel.diagnostic }
+  let rejection: { code: 'cancel_request_rejected'; message: string } | undefined
+  if (cancel.result.exitCode !== 0 && !noSuchJob(cancel.result.stderr)) {
+    const message = cancel.result.stderr.trim() || 'scancel failed.'
+    if (
+      /permission|access denied|not authorized|unauthori[sz]ed|not permitted|security violation/i.test(
+        message
+      )
+    )
+      rejection = { code: 'cancel_request_rejected', message }
+    else return { kind: 'unconfirmed', message }
+  }
+  const { observations, evidence, disconnectedDiagnostic } = await querySlurmJobs(
+    [{ job: { job_id: handle.scheduler_job_id } as ComputeJob, handle }],
+    connection
   )
-  const queueFailure = classifyConnectionFailure(queue, false)
-  if (queueFailure) throw queueFailure
-  const queueStates = queue.stdout.split(/\r?\n/).map(normalizeState).filter(Boolean)
-  if (queueStates.length > 0) return queueStates.every(isTerminalSlurmState)
-
-  const accounting = await connection.run(
-    `sacct --parsable2 --noheader -j ${handle.scheduler_job_id} --format=JobIDRaw,State`,
-    { timeoutMs: SLURM_POLL_TIMEOUT_MS, loginShell: false, maxOutputBytes: 2048 }
-  )
-  const accountingFailure = classifyConnectionFailure(accounting, false)
-  if (accountingFailure) throw accountingFailure
-  if (accounting.exitCode !== 0) return false
-  const parent = accounting.stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim().split('|'))
-    .find(([id]) => id === handle.scheduler_job_id)
-  return parent?.[1] !== undefined && isTerminalSlurmState(parent[1])
+  const observation = observations.get(handle.scheduler_job_id)!
+  if (observation.kind === 'terminal') {
+    if (observation.state === 'CANCELLED')
+      return { kind: 'cancelled', diagnostic: 'Slurm reported CANCELLED.' }
+    if (!disconnectedDiagnostic) await readSlurmTails(observation, handle, connection)
+    return {
+      kind: 'completed',
+      state: observation.state,
+      exitCode: observation.exitCode,
+      stdoutTail: observation.stdout,
+      stderrTail: observation.stderr,
+      diagnostic: observation.diagnostic
+    }
+  }
+  const item = evidence.get(handle.scheduler_job_id)!
+  if (cancel.result.exitCode === 0 && item.queueMissing && item.controllerMissing && !item.row) {
+    return {
+      kind: 'cancelled',
+      diagnostic:
+        'Cancellation inferred: scancel succeeded and the job disappeared from both squeue and scontrol; no contrary terminal result was observed.'
+    }
+  }
+  if (observation.kind === 'unavailable')
+    return {
+      kind: 'unavailable',
+      message: observation.diagnostic,
+      ...(rejection ? { cancellationError: rejection } : {})
+    }
+  if (rejection) return { kind: 'rejected', message: rejection.message }
+  return {
+    kind: 'unconfirmed',
+    message:
+      observation.kind === 'unknown'
+        ? observation.diagnostic
+        : `Slurm scheduler state: ${observation.state}.`
+  }
 }

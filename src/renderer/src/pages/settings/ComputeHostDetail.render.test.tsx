@@ -130,6 +130,30 @@ it('shows unknown facts for legacy snapshots and separates failed scratch from s
 })
 
 describe('ComputeHostDetail', () => {
+  it('shows accounting as a non-blocking diagnostic beside the independent Slurm checks', async () => {
+    useComputeStore.setState({
+      hosts: [
+        host({
+          executionMode: 'slurm',
+          probeResult: {
+            ok: true,
+            probedAt: '2026-10-28T00:00:00Z',
+            exitCode: 0,
+            errorTail: null,
+            detectedScheduler: 'slurm',
+            schedulerAvailable: true,
+            controllerAvailable: true,
+            accountingAvailable: false
+          }
+        })
+      ]
+    })
+    await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+    expect(container.textContent).toContain('Slurm controller query')
+    expect(container.textContent).toContain('Slurm accounting query')
+    expect(container.textContent).toContain('Jobs can still use the queue and controller')
+    expect(container.textContent).not.toContain('A connection check failed')
+  })
   it('keeps ordinary Settings sections uncarded while retaining the resource status surface', () => {
     useComputeStore.setState({
       hosts: [

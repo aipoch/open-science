@@ -267,8 +267,14 @@ export async function composeComputeAdmission({
       const summary = await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot)
       return computeJobResultDelivery.observeResult({
         ...summary,
-        status: snapshot.status,
-        cancellation_status: snapshot.cancellation_status,
+        status: snapshot.status === 'cancelled' ? 'failed' : snapshot.status,
+        cancellation_status:
+          snapshot.status === 'cancelled' ? 'cancelled' : snapshot.cancellation?.status,
+        cancellation_error:
+          snapshot.cancellation?.status === 'failed' ? snapshot.cancellation.error : undefined,
+        error_code:
+          snapshot.error?.code ?? (snapshot.status === 'cancelled' ? 'job_cancelled' : undefined),
+        error_message: snapshot.error?.message,
         exit_code: snapshot.exit_code,
         stdout_tail: snapshot.stdout_tail,
         stderr_tail: snapshot.stderr_tail,

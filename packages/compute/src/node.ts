@@ -1,7 +1,11 @@
 export { createCleanupStopEvidence, hasCleanupStopEvidence } from './cleanup-stop-evidence'
 export { validateComputeEnvironmentName } from './compute-environment'
 export { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
-export { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
+export {
+  isComputeJobCancelled,
+  isComputeJobResultFinal,
+  projectJobStatus
+} from './compute-job-status'
 export { type SessionStatus } from './concurrency-manager'
 export {
   ComputeConnectionError,

@@ -94,7 +94,7 @@ describe('Slurm lifecycle boundaries', () => {
       run: async (command: string) =>
         success(command.startsWith('squeue ') ? '123|RUNNING|None\n' : '')
     } as unknown as ComputeConnectionLease
-    expect(await cancelSlurmJob(handle, connection)).toBe(false)
+    expect(await cancelSlurmJob(handle, connection)).toMatchObject({ kind: 'unconfirmed' })
   })
   it('retains a user time limit and resources before the first executable line', () => {
     const script = buildSlurmScript(
@@ -193,15 +193,16 @@ describe('Slurm lifecycle boundaries', () => {
     if (result?.kind === 'terminal') expect(result.exitCode).not.toBe(0)
   })
 
-  it('surfaces an accounting command failure as an actionable error', async () => {
+  it('surfaces an accounting command failure as an actionable per-job diagnostic', async () => {
     const connection = {
       run: async (command: string) =>
         command.startsWith('sacct ')
           ? { ...success(''), exitCode: 1, stderr: 'Accounting storage is disabled' }
           : success('')
     } as unknown as ComputeConnectionLease
-    await expect(pollSlurmJobs([entry], connection)).rejects.toThrow(
-      /Accounting storage is disabled/
-    )
+    expect((await pollSlurmJobs([entry], connection)).get('123')).toMatchObject({
+      kind: 'unknown',
+      diagnostic: expect.stringContaining('Accounting storage is disabled')
+    })
   })
 })

@@ -1,4 +1,4 @@
-import { createComputeExecution } from '@aipoch/compute/node'
+import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
 /**
  * job-notifier.ts — emits compute_done notifications for finished jobs.
  *
@@ -177,12 +177,16 @@ export const emitJobNotification = async (
     session_id: updatedJob.session_id,
     status: updatedJob.status,
     cancellation_status: updatedJob.cancellation_status,
+    cancellation_error: updatedJob.cancellation_error,
+    cancellation_revision: updatedJob.cancellation_revision,
+    scheduler_job_id: parseSlurmSchedulerJobId(updatedJob.remote_handle, updatedJob.remote_workdir),
     intent: updatedJob.intent,
     created_at: updatedJob.created_at,
     started_at: updatedJob.started_at,
     finished_at: updatedJob.finished_at,
     exit_code: updatedJob.exit_code,
     error_code: updatedJob.error_code,
+    error_message: updatedJob.error_message,
     last_poll_error: updatedJob.last_poll_error,
     remote_workdir: updatedJob.remote_workdir,
     stdout_tail: updatedJob.stdout_tail,

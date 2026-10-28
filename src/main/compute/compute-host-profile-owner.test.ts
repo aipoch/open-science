@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { ComputeHost } from '@aipoch/compute'
 
-import { ComputeConnectionError, type ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
+import {
+  ComputeConnectionError,
+  type ComputeConnectionBrokerAcquirer,
+  type ComputeConnectionLease
+} from '@aipoch/compute/node'
 
 import type { SshRunner } from '@aipoch/compute/node'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
@@ -103,6 +107,80 @@ const SLURM_STDOUT = [
 // ---------------------------------------------------------------------------
 
 describe('ComputeHostProfileOwner.probe', () => {
+  it('keeps Slurm usable when optional accounting is unavailable and probes the services', async () => {
+    const run = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue({
+      exitCode: 0,
+      stdout: `${SLURM_STDOUT}\nscratch_writable=yes\nscheduler_available=yes\ncontroller_available=yes\naccounting_available=no`,
+      stderr: '',
+      truncated: false,
+      timedOut: false
+    })
+    const broker: ComputeConnectionBrokerAcquirer = {
+      acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn() }))
+    }
+    const { repo } = makeRepo(sampleHost({ executionMode: 'slurm' }))
+    const result = await new ComputeHostProfileOwner(broker, repo).probe('ssh:biowulf')
+    expect(result).toMatchObject({
+      ok: true,
+      schedulerAvailable: true,
+      controllerAvailable: true,
+      accountingAvailable: false
+    })
+    const script = run.mock.calls[1]?.[0] as string | undefined
+    expect(script).toContain('scontrol show job --oneliner')
+    expect(script).toContain('sacct --noheader --allocations')
+    expect(script).not.toContain('command -v sacct')
+    expect(run.mock.calls[0]?.[0]).not.toContain('sacct')
+    expect(run).toHaveBeenCalledWith(expect.any(String), {
+      timeoutMs: 30_000,
+      loginShell: true,
+      maxOutputBytes: 4 * 1024
+    })
+  })
+
+  it.each([false, true])(
+    'preserves successful base Slurm facts when optional probing times out (controller completed: %s)',
+    async (controllerCompleted) => {
+      const run = vi
+        .fn()
+        .mockResolvedValueOnce({
+          exitCode: 0,
+          stdout: `${SLURM_STDOUT}\nscratch_writable=yes\nscheduler_available=yes`,
+          stderr: '',
+          timedOut: false,
+          truncated: false
+        })
+        .mockResolvedValueOnce({
+          exitCode: null,
+          stdout: controllerCompleted ? 'controller_available=yes\n' : '',
+          stderr: '',
+          timedOut: true,
+          truncated: false
+        })
+      const broker: ComputeConnectionBrokerAcquirer = {
+        acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn() }))
+      }
+      const { repo, updateProbeResult } = makeRepo(sampleHost({ executionMode: 'slurm' }))
+      const result = await new ComputeHostProfileOwner(broker, repo).probe('ssh:biowulf')
+      expect(result).toMatchObject({
+        ok: true,
+        sshConnected: true,
+        schedulerAvailable: true,
+        controllerAvailable: controllerCompleted,
+        accountingAvailable: false,
+        errorTail: expect.stringContaining('timed out')
+      })
+      expect(run).toHaveBeenCalledTimes(2)
+      expect(broker.acquire).toHaveBeenCalledOnce()
+      expect(updateProbeResult).toHaveBeenCalledWith(
+        'ssh:biowulf',
+        expect.objectContaining({ ok: true }),
+        'scheduler_cluster',
+        'host-1',
+        '/gpfs/scratch/user123'
+      )
+    }
+  )
   it('binds Probe persistence to the authentication revision it observed', async () => {
     const observedHost = sampleHost({
       authentication: {
@@ -289,7 +367,7 @@ describe('ComputeHostProfileOwner.probe', () => {
 
     await expect(probing).resolves.toMatchObject({ ok: true })
     expect(broker.acquire).toHaveBeenCalledOnce()
-    expect(run).toHaveBeenCalledTimes(2)
+    expect(run).toHaveBeenCalledTimes(3)
     vi.useRealTimers()
   })
 

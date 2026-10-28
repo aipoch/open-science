@@ -18,7 +18,7 @@ afterEach(async () => {
 })
 
 describe('Compute Job operation migration', () => {
-  it('replays an unledgered operation suffix without rewriting ComputeJob', async () => {
+  it('replays an unledgered operation suffix with only the later Slurm schema additions', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-job-operation-upgrade-'))
     const client = createProjectDbClient(storageRoot)
     disconnect = () => client.$disconnect()
@@ -40,7 +40,10 @@ describe('Compute Job operation migration', () => {
       `SELECT "sql" FROM "sqlite_schema" WHERE "type" = 'table' AND "name" = 'ComputeJob'`
     )
     expect(
-      computeJobSqlAfter.replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
+      computeJobSqlAfter
+        .replace(/,\s*"executionMode" TEXT NOT NULL DEFAULT 'direct_ssh'/u, '')
+        .replace(/,\s*"errorMessage" TEXT/u, '')
+        .replace(", 'job_cancelled', 'job_status_unavailable'", '')
     ).toBe(computeJobSqlBefore)
     expect(computeJobSqlAfter).toContain('"executionMode" TEXT NOT NULL DEFAULT')
     await expect(
@@ -48,8 +51,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0052_literature_personal_note_search' },
-      { id: '0051_literature_reading_status' }
+      { id: '0053_slurm_job_reliability' },
+      { id: '0052_literature_personal_note_search' }
     ])
   })
 
@@ -76,6 +79,8 @@ describe('Compute Job operation migration', () => {
       'kind',
       'phase',
       'outcome',
+      'errorCode',
+      'errorMessage',
       'revision',
       'attemptCount',
       'eligibleAt',

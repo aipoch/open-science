@@ -1,4 +1,4 @@
-import { createComputeExecution } from '@aipoch/compute/node'
+import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -109,12 +109,16 @@ export const toJobSummary = async (
     integrity_issues: job.integrity_issues,
     needs_attention: job.needs_attention,
     cancellation_status: job.cancellation_status,
+    cancellation_error: job.cancellation_error,
+    cancellation_revision: job.cancellation_revision,
+    scheduler_job_id: parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir),
     intent: job.intent,
     created_at: job.created_at,
     started_at: job.started_at,
     finished_at: job.finished_at,
     exit_code: job.exit_code,
     error_code: job.error_code,
+    error_message: job.error_message,
     last_poll_error: job.last_poll_error,
     remote_workdir: job.remote_workdir,
     stdout_tail: job.stdout_tail,
@@ -422,6 +426,7 @@ const createComputeHandlers = (
           sessionId: job.session_id,
           status: job.status,
           cancellationStatus: job.cancellation_status,
+          errorCode: job.error_code,
           harvested: job.harvested_at !== undefined,
           intent: job.intent,
           createdAt: job.created_at

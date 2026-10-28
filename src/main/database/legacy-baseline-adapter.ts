@@ -23,6 +23,7 @@ import {
 } from './sqlite-schema-migrations'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
+import { SLURM_JOB_RELIABILITY_ADDED_COLUMNS } from './migrations/0053-slurm-job-reliability'
 
 // schema-locality: begin frozen-0001-repairs
 // Frozen legacy repair routes into the generated 0001 target. New schema changes must add a
@@ -506,6 +507,7 @@ const adaptMigrationOperationsForCurrentSchema = async (
       continue
     }
     const adaptedTableNames = new Set<string>()
+    let addsSlurmColumns = false
     const tables: (typeof operation.tables)[number][] = []
     for (const table of operation.tables) {
       const current = CURRENT_TARGET_TABLES.get(table.tableName)
@@ -518,13 +520,22 @@ const adaptMigrationOperationsForCurrentSchema = async (
         `PRAGMA table_info(${quoteSqliteIdentifier(table.tableName)})`
       )
       const existingColumns = new Set(columns.map(({ name }) => name))
-      if ([...current.columns.keys()].every((column) => existingColumns.has(column))) {
+      // Released pre-ledger schemas already contain the managed-file-era Compute tables. The
+      // Slurm suffix adds only these nullable diagnostics; they must not force an old rebuild
+      // that discards or rejects the other existing columns.
+      const slurmAdditions = SLURM_JOB_RELIABILITY_ADDED_COLUMNS[table.tableName] ?? []
+      if (
+        [...current.columns.keys()].every(
+          (column) => existingColumns.has(column) || slurmAdditions.includes(column)
+        )
+      ) {
+        if (slurmAdditions.some((column) => !existingColumns.has(column))) addsSlurmColumns = true
         adaptedTableNames.add(table.tableName)
         currentTableNames.add(table.tableName)
         tables.push({
           ...table,
           canonicalTableDdl,
-          columns: [...current.columns.keys()]
+          columns: [...current.columns.keys()].filter((column) => existingColumns.has(column))
         })
       } else {
         tables.push(table)
@@ -540,6 +551,9 @@ const adaptMigrationOperationsForCurrentSchema = async (
     })
     adaptedOperations.push({
       ...operation,
+      // Adding the nullable suffix may now require a rebuild that was previously adopted.
+      // Preserve inbound references with the existing replacement-first rebuild path.
+      version: addsSlurmColumns ? 2 : operation.version,
       tables,
       indexes: [...retainedIndexes, ...currentIndexes]
     })

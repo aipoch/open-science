@@ -35,7 +35,8 @@ it('upgrades the prior schema with empty unified tables and is idempotent', asyn
     applied: [
       '0050_literature_translation',
       '0051_literature_reading_status',
-      '0052_literature_personal_note_search'
+      '0052_literature_personal_note_search',
+      '0053_slurm_job_reliability'
     ]
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual({

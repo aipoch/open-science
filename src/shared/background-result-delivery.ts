@@ -1,8 +1,16 @@
-import type { ComputeJobStatus } from '@aipoch/compute'
+import type { ComputeJobStatus, JobError } from '@aipoch/compute'
 
 import type { NotebookRunStatus } from './notebook'
 
-export type BackgroundResultSourceKind = 'local-run' | 'compute-job'
+export type BackgroundResultSourceKind = 'local-run' | 'compute-job' | 'compute-cancellation'
+
+export type ComputeCancellationFailureSnapshot = Readonly<{
+  jobId: string
+  operationId: string
+  revision: number
+  jobStatus: 'queued' | 'submitted' | 'running'
+  error: JobError
+}>
 
 export type BackgroundResultDeliveryState =
   'waiting-result' | 'pending' | 'claimed' | 'dispatching' | 'consumed' | 'needs-attention'
@@ -29,6 +37,8 @@ export type BackgroundResultDelivery = BackgroundResultSourceRef &
     continuationMessageId?: string
     createdAt: number
     updatedAt: number
+    // Immutable cancellation failure facts, captured in the operation settlement transaction.
+    sourceSnapshot?: ComputeCancellationFailureSnapshot
   }>
 
 export type BackgroundResultActivityItem = BackgroundResultSourceRef &

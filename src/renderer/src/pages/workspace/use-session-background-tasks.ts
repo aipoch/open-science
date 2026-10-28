@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { isComputeJobCancelled } from '@aipoch/compute'
 
 import { sessionExportLocked, usePackageOperationStore } from '../../stores/package-operation-store'
 import type { BackgroundResultActivityItem } from '../../../../shared/background-result-delivery'
@@ -29,7 +30,7 @@ const isRunActive = (run: NotebookRunRecord): boolean =>
   run.status === 'queued' || run.status === 'running'
 
 const isJobActive = (job: JobSummary): boolean =>
-  job.cancellation_status !== 'cancelled' &&
+  !isComputeJobCancelled(job) &&
   (job.status === 'queued' || job.status === 'submitted' || job.status === 'running')
 
 const jobStartedAt = (job: JobSummary): number => job.started_at ?? job.created_at
@@ -140,7 +141,7 @@ const useSessionBackgroundTasks = (
     () =>
       new Map(
         deliveries.flatMap((delivery) =>
-          delivery.sourceKind === 'compute-job' ? [] : [[delivery.sourceId, delivery] as const]
+          delivery.sourceKind === 'local-run' ? [[delivery.sourceId, delivery] as const] : []
         )
       ),
     [deliveries]

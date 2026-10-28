@@ -531,7 +531,9 @@ export function ComputeHostDetail({
             [t('SSH connection'), probed?.sshConnected],
             [t('Command execution'), probed?.commandExecutable],
             [t('Scratch write check'), probed?.scratchWritable],
-            [t('Slurm query'), probed?.schedulerAvailable]
+            [t('Slurm query'), probed?.schedulerAvailable],
+            [t('Slurm controller query'), probed?.controllerAvailable],
+            [t('Slurm accounting query'), probed?.accountingAvailable]
           ].map(([label, value]) => (
             <div key={String(label)}>
               <dt className="text-muted-foreground">{label}</dt>
@@ -539,6 +541,13 @@ export function ComputeHostDetail({
             </div>
           ))}
         </dl>
+        {probed?.detectedScheduler === 'slurm' && probed.accountingAvailable === false ? (
+          <InlineNotice level="warning" className="mt-3">
+            {t(
+              'Slurm accounting is unavailable. Jobs can still use the queue and controller for status updates.'
+            )}
+          </InlineNotice>
+        ) : null}
         {probed?.scratchPath ? (
           <p className="mt-2 break-all font-mono text-xs">{probed.scratchPath}</p>
         ) : null}

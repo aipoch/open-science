@@ -68,6 +68,8 @@ export type ProbeResult = {
   scratchWritable?: boolean
   // Required Slurm CLI presence plus a successful squeue query; not allocation/submission permission.
   schedulerAvailable?: boolean
+  controllerAvailable?: boolean
+  accountingAvailable?: boolean
   detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
 }
 
@@ -137,6 +139,8 @@ export type ComputeProbeSnapshot = {
   mem_mib?: number
   gpus?: ProbeGpu[]
   detected_scheduler?: ProbeResult['detectedScheduler']
+  controller_available?: boolean
+  accounting_available?: boolean
 }
 
 export const computeHostSummary = (host: ComputeHost): ComputeHostSummary => ({
@@ -167,6 +171,12 @@ export const computeProbeSnapshot = (
         ...(probeResult.gpus !== undefined ? { gpus: probeResult.gpus } : {}),
         ...(probeResult.detectedScheduler !== undefined
           ? { detected_scheduler: probeResult.detectedScheduler }
+          : {}),
+        ...(probeResult.controllerAvailable !== undefined
+          ? { controller_available: probeResult.controllerAvailable }
+          : {}),
+        ...(probeResult.accountingAvailable !== undefined
+          ? { accounting_available: probeResult.accountingAvailable }
           : {})
       }
     : null
@@ -210,11 +220,18 @@ export type ComputeJobIntegrityIssue = Readonly<{
   rawErrorCode?: string
 }>
 
-// Additive logical projection. Existing clients can continue reading `status`; cancellation-aware
-// clients use this field to distinguish durable intent from confirmed termination.
-export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled'
-// A compute job record, normalized for cross-process sharing (main → renderer via IPC, main → repl
-// via JSON RPC). Timestamps are epoch milliseconds; JSON columns are parsed at the repository
+// Internal renderer/IPC projection of the durable operation. Agent calls use the unified
+// JobStatusResult conclusion and never receive these flat cancellation fields.
+export type ComputeJobCancellationStatus = 'cancelling' | 'cancelled' | 'failed'
+
+export type JobError = Readonly<{ code: string; message: string }>
+
+// Agent conclusions are projected from the internal job and cancellation operation together.
+export type AgentJobStatus = ComputeJobStatus | 'cancelled'
+export type AgentJobCancellation =
+  Readonly<{ status: 'cancelling' }> | Readonly<{ status: 'failed'; error: JobError }>
+// An internal compute job record, normalized for sharing with the renderer. Agent JSON RPC uses
+// JobStatusResult instead. Timestamps are epoch milliseconds; JSON columns are parsed at the repository
 // boundary to their respective types.
 export type ComputeJob = {
   // Read-side scheduling diagnostics; never persisted as a Job status.
@@ -232,6 +249,8 @@ export type ComputeJob = {
   integrity_issues?: ComputeJobIntegrityIssue[]
   needs_attention?: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation_error?: JobError
+  cancellation_revision?: number
   intent: string
   command: string
   command_hash: string
@@ -250,9 +269,9 @@ export type ComputeJob = {
   stdout_tail: string | undefined
   stderr_tail: string | undefined
   error_code: string | undefined
-  // Set when a poll SSH connection fails; job status is NOT changed. Cleared on next successful poll.
-  // retry_after_user_action is always true for this condition (design.md §8 boundary 2 / §11).
-  // Optional: absent means no poll error has been recorded for this job.
+  error_message?: string
+  // Latest observation/recovery diagnostic; this alone is not a terminal result. Cleared when a
+  // valid scheduler observation resumes. Final task errors carry their own complete message.
   last_poll_error?: string
   // Phase 3b harvest fields (compute-harvest issue 01). All optional; null until Phase 3b fills them.
   // harvest_error: latest collection error; only harvested_at confirms collection is final.
@@ -279,13 +298,12 @@ export type JobStatusResult = {
   queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
   scheduler_job_id?: string
-  error_code?: string
+  error?: JobError
   last_poll_error?: string
-  status: ComputeJobStatus
-  // True only when this exact DB snapshot includes the final locally-harvested result. Provider
-  // terminality can precede harvest, so callers must not infer finality from status alone.
+  status: AgentJobStatus
+  // The final automatic reply is ready. Cancelled/error do not wait for partial output collection.
   result_final: boolean
-  cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: AgentJobCancellation
   exit_code: number | undefined
   stdout_tail: string | undefined
   stderr_tail: string | undefined
@@ -332,6 +350,8 @@ export type ComputeJobErrorCode =
   | 'host_unreachable'
   | 'dispatch_failed'
   | 'job_failed'
+  | 'job_cancelled'
+  | 'job_status_unavailable'
   | 'timeout'
   | 'process_vanished'
   | 'invalid_resources'

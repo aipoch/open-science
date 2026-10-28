@@ -4,10 +4,14 @@ import { platform } from 'node:os'
 import { ComputeConnectionError } from '@aipoch/compute/node'
 import type { ComputePasswordCapability } from '../../shared/compute'
 import type { SecureStorageCipher } from '../credential-identity/cipher-contract'
-import { isSecureStorageAvailable, protectedSafeStorage as safeStorage } from '../secure-storage'
+import {
+  isSecureStorageAvailable,
+  protectedSafeStorage as safeStorage,
+  PROTECTED_STRING_PREFIX,
+  revealProtectedString
+} from '../secure-storage'
 
 const MAX_PASSWORD_BYTES = 16 * 1024
-const PROTECTED_STRING_PREFIX = 'open-science:protected:v1:'
 const PROTECTED_JSON_MARKER = 'open-science:protected-json:v1'
 
 type StoredComputeCredential = Readonly<{ ciphertext: Buffer; revision?: number }>
@@ -56,14 +60,7 @@ export class OptionalSecureStorageStringProtection {
   }
 
   reveal(value: string): string {
-    if (!value.startsWith(PROTECTED_STRING_PREFIX)) return value
-
-    try {
-      const ciphertext = Buffer.from(value.slice(PROTECTED_STRING_PREFIX.length), 'base64')
-      return this.cipher.decryptString(ciphertext)
-    } catch {
-      throw new Error('Protected application data cannot be decrypted on this system.')
-    }
+    return revealProtectedString(value, this.cipher)
   }
 
   revealJson(value: string, container: ProtectedJsonContainer): string {

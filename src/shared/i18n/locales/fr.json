@@ -7990,6 +7990,16 @@
     "Verifying download…": "Vérification du téléchargement…",
     "Example download progress": "Progression du téléchargement de l’exemple",
     "Could not cancel download. Try again.": "Impossible d’annuler le téléchargement. Réessayez.",
-    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez."
+    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez.",
+    "Slurm controller query": "Requête du contrôleur Slurm",
+    "Slurm accounting query": "Requête de comptabilité Slurm",
+    "Slurm accounting is unavailable. Jobs can still use the queue and controller for status updates.": "La comptabilité Slurm est indisponible. Les tâches peuvent toujours obtenir leur état depuis la file et le contrôleur.",
+    "Not collected": "Non collecté",
+    "Not scheduled": "Non planifié",
+    "Unable to confirm cancellation": "Impossible de confirmer l’annulation",
+    "Cancellation failed": "Échec de l’annulation",
+    "The cancellation attempt ended. The job is still being tracked.": "Cette tentative d’annulation est terminée. Le suivi de la tâche continue.",
+    "Unable to get job status": "Impossible d’obtenir l’état de la tâche",
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite."
   }
 }

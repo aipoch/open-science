@@ -407,16 +407,24 @@ class PasswordSshAdapter implements ComputeConnectionAdapter {
     return {
       run: async (command, options) =>
         withAskpass(async (askpass) => {
+          const { preserveRemoteCommandErrors, ...runOptions } = options
           const result = await this.runner.run(target, command, {
-            ...options,
+            ...runOptions,
             env: askpass.env,
             signal: request.signal ?? options.signal
           })
-          const failure = classifyPasswordConnectionFailure(
-            result,
-            askpass,
-            !REMOTE_COMMAND_STATUS_INTENTS.has(request.intent)
-          )
+          const completedCommand =
+            preserveRemoteCommandErrors &&
+            !result.timedOut &&
+            result.exitCode !== null &&
+            result.exitCode !== 255
+          const failure = completedCommand
+            ? undefined
+            : classifyPasswordConnectionFailure(
+                result,
+                askpass,
+                !REMOTE_COMMAND_STATUS_INTENTS.has(request.intent)
+              )
           if (failure) throw failure
           return {
             ...result,

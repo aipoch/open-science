@@ -515,7 +515,7 @@ describe('ComputeService job workflow facade', () => {
           sessionId: job.session_id,
           providerId: job.provider_id
         })
-      ).resolves.toMatchObject({ cancellation_status: 'cancelled' })
+      ).resolves.toMatchObject({ status: 'cancelled', result_final: true })
 
       await expect(access(receiptPath)).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(access(stagingPath)).rejects.toMatchObject({ code: 'ENOENT' })
