@@ -393,8 +393,10 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
       (element) =>
         element
           .getAnimations()
-          .find((animation) =>
-            animation.effect?.getKeyframes().some((frame) => 'clipPath' in frame)
+          .find(
+            (animation) =>
+              animation.effect instanceof KeyframeEffect &&
+              animation.effect.getKeyframes().some((frame) => 'clipPath' in frame)
           )
           ?.effect?.getTiming().duration
     )
@@ -420,8 +422,10 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
           (element) =>
             element
               .getAnimations()
-              .find((animation) =>
-                animation.effect?.getKeyframes().some((frame) => 'clipPath' in frame)
+              .find(
+                (animation) =>
+                  animation.effect instanceof KeyframeEffect &&
+                  animation.effect.getKeyframes().some((frame) => 'clipPath' in frame)
               )
               ?.effect?.getTiming().duration
         ),

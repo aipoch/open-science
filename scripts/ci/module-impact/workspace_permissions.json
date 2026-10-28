@@ -84,5 +84,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Question skip controls now use the shared split button instead of their reviewed stylesheet; retain complete validation until the changed permission control boundary is reviewed and reclassified."
 }
