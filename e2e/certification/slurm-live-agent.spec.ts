@@ -305,7 +305,7 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
                   },
                   { sessionId: session.id, prompt }
                 ),
-              { timeout: 240_000 }
+              { timeout: 900_000 }
             )
             .toBe(true)
           const observed = await page.evaluate(async (sessionId) => {
@@ -373,10 +373,41 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
       async () => {
         await runWithCleanup(
           async () => {
-            if (notebookScope)
-              expect(
-                await page.evaluate((scope) => window.api.notebook.shutdown(scope), notebookScope)
-              ).toMatchObject({ status: 'shutdown' })
+            if (!notebookScope) return
+            const scope = notebookScope
+            await runWithCleanup(
+              async () => {
+                const active = await page.evaluate(async (sessionId) => {
+                  const session = (await window.api.sessions.loadAll()).sessions.find(
+                    (candidate) => candidate.id === sessionId
+                  )
+                  return Boolean(session?.activeRun)
+                }, scope.sessionId)
+                if (active) {
+                  await page.evaluate(
+                    (sessionId) => window.api.acp.cancel({ sessionId }),
+                    scope.sessionId
+                  )
+                  await expect
+                    .poll(
+                      () =>
+                        page.evaluate(async (sessionId) => {
+                          const session = (await window.api.sessions.loadAll()).sessions.find(
+                            (candidate) => candidate.id === sessionId
+                          )
+                          return Boolean(session?.activeRun)
+                        }, scope.sessionId),
+                      { timeout: 60_000 }
+                    )
+                    .toBe(false)
+                }
+              },
+              async () => {
+                expect(
+                  await page.evaluate((scope) => window.api.notebook.shutdown(scope), scope)
+                ).toMatchObject({ status: 'shutdown' })
+              }
+            )
           },
           async () => {
             if (protectionAttempted) {

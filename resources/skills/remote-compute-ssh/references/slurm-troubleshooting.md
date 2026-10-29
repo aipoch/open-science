@@ -25,6 +25,20 @@ request. Command presence alone proves none of these services is usable.
   history are different from explicit absence. Use the returned diagnostics, not an empty stdout
   alone, to interpret them.
 
+Keep scheduler observations, process observations, and recovered output separate. An empty queue,
+an invalid job ID, and no match in a name-filtered `ps` listing still do not prove that every task
+process stopped. The SSH target may be a login node rather than an allocated compute node, process
+names may differ, and records can expire. Report "no matching record/process was observed" unless
+you have a terminal scheduler observation or verified termination of the identified task processes
+on the relevant nodes. A successful `scancel` command alone establishes request acceptance, not
+termination.
+
+Readable files, expected stdout, empty stderr, and timestamps establish the recovered artifacts;
+they do not establish an exit code or normal completion. When no authoritative exit record is
+available, leave the exit code unknown. Do not infer exit 0 from a final output token: a process can
+be killed after writing it. Use useful output while explaining these limits, and do not persist a
+stronger conclusion as host knowledge.
+
 ## Inspect the same task on the same host
 
 Use the saved `job_id`, `scheduler_job_id`, and `remote_workdir`. Select the same enabled host from

@@ -277,6 +277,8 @@ Its operation-failure notification is separate from the job's later final-result
 
 After final `error` or `cancelled`, end waiting rather than repeatedly calling status or cancel.
 An `error` reports an application processing problem and does not prove the remote process stopped.
+Empty scheduler queries and a name-filtered `ps` check do not establish remote termination. Output
+files establish the bytes recovered, not the job's exit code; keep those conclusions separate.
 Retain `job_id`, `scheduler_job_id`, and `remote_workdir` for diagnosis. When useful output remains,
 inspect it before choosing a rerun based on command idempotency, compute cost, remote state, and
 the user's goal. See the troubleshooting reference for concrete checks.
