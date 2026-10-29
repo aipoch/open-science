@@ -212,6 +212,7 @@
     "src/main/desktop-startup-recovery.integration.test.ts",
     "src/main/desktop-startup-recovery.test.ts",
     "src/main/desktop-startup-recovery.ts",
+    "src/main/desktop-startup-retry.ts",
     "src/main/desktop-update-integration.test.ts",
     "src/main/desktop-update-integration.ts",
     "src/main/runtime-network-node.test.ts",

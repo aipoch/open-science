@@ -1,5 +1,11 @@
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
+import {
+  consumeDesktopStartupRetry,
+  desktopStartupRetryArgs,
+  DesktopStartupRelaunch,
+  type DesktopStartupRetry
+} from './desktop-startup-retry'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
 import type { PackageOperationSnapshot } from '../shared/session-package'
 import { randomUUID } from 'node:crypto'
@@ -223,6 +229,7 @@ const buildZoomSafeApplicationMenu = (
 }
 
 async function startDesktop(): Promise<void> {
+  const startupRetry = consumeDesktopStartupRetry(process.argv)
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
@@ -288,28 +295,38 @@ async function startDesktop(): Promise<void> {
     preservedStartupOptions ??= windowsUpdateStartup?.startupOptions
     windowsUpdateAlreadyConfirmed = windowsUpdateStartup?.confirmed ?? false
   }
-  const credentialArgs = preservedStartupOptions
+  if (startupRetry && preservedStartupOptions) {
+    for (const key of [
+      'configRoot',
+      'profilePath',
+      'credentialStore',
+      'passwordStore',
+      'port',
+      'host'
+    ] as const)
+      if (startupRetry.options[key] !== preservedStartupOptions[key])
+        throw new Error('Desktop startup retry conflicts with installation recovery configuration.')
+  }
+  const launchOptions = preservedStartupOptions ?? startupRetry?.options
+  const credentialArgs = launchOptions
     ? [
-        `--credential-store=${preservedStartupOptions.credentialStore}`,
-        ...(preservedStartupOptions.passwordStore
-          ? [`--password-store=${preservedStartupOptions.passwordStore}`]
-          : [])
+        `--credential-store=${launchOptions.credentialStore}`,
+        ...(launchOptions.passwordStore ? [`--password-store=${launchOptions.passwordStore}`] : [])
       ]
     : process.argv.filter(
         (arg) => arg.startsWith('--credential-store=') || arg.startsWith('--password-store=')
       )
-  if (preservedStartupOptions?.passwordStore)
-    app.commandLine.appendSwitch('password-store', preservedStartupOptions.passwordStore)
+  if (launchOptions?.passwordStore)
+    app.commandLine.appendSwitch('password-store', launchOptions.passwordStore)
   configureCredentialStore(credentialArgs, process.platform, false)
   const configRoot =
-    preservedStartupOptions?.configRoot ??
-    resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
+    launchOptions?.configRoot ?? resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
   const profilePath = resolveElectronProfile({
     appData: app.getPath('appData'),
     configRoot,
     packaged: app.isPackaged,
-    ...(preservedStartupOptions
-      ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: preservedStartupOptions.profilePath } }
+    ...(launchOptions
+      ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: launchOptions.profilePath } }
       : {})
   })
   // Selecting paths does not open Chromium databases; scope the lock before credential preflight.
@@ -906,10 +923,20 @@ async function startDesktop(): Promise<void> {
           preservedStartupOptions = failure.startupOptions
         }
         if (initialRecoveryError) {
-          app.relaunch()
+          // Installation recovery is still part of this startup attempt.
+          app.relaunch(
+            startupRetry
+              ? { args: desktopStartupRetryArgs(process.argv.slice(1), startupRetry) }
+              : undefined
+          )
           app.exit(0)
         } else continueStartup?.()
       } catch (error) {
+        if (error instanceof DesktopStartupRelaunch) {
+          app.relaunch({ args: desktopStartupRetryArgs(process.argv.slice(1), error.retry) })
+          app.exit(0)
+          return runtimeStartupState
+        }
         startupFailure =
           error instanceof DesktopRuntimeStartupError
             ? error
@@ -939,6 +966,44 @@ async function startDesktop(): Promise<void> {
     app.exit(0)
   })
   startupDiagnostics?.phase('launch-node-runtime')
+  const reviewStartupRestart = async (
+    authorization: Awaited<ReturnType<typeof readServiceLifetime>>,
+    options: DesktopStartupRetry['options']
+  ): Promise<Awaited<ReturnType<typeof readServiceLifetime>>> => {
+    // A detached startup has no process identity: prove directory ownership before reading hints.
+    const lease = acquireRuntimeDirectorySync(configRoot)
+    try {
+      const intent = await readServiceLifetime(configRoot, true)
+      try {
+        assertDesktopRuntimeRestartAllowed(
+          intent,
+          authorization,
+          updateCommitted || plannedRelaunch
+        )
+      } catch (error) {
+        if (!intent?.stopping || updateCommitted || plannedRelaunch) throw error
+        const reviewed = Object.freeze({ ...intent })
+        throw new DesktopRuntimeStartupError(
+          {
+            reason: 'startup-recovery-required',
+            desktopVersion: app.getVersion(),
+            canStop: false,
+            canRecover: true,
+            diagnostics: error instanceof Error ? error.message : String(error)
+          },
+          'The local service was intentionally stopped.',
+          undefined,
+          async () => {
+            const stop = await reviewStartupRestart(reviewed, options)
+            throw new DesktopStartupRelaunch({ options, restart: { stop } })
+          }
+        )
+      }
+      return intent
+    } finally {
+      lease.release()
+    }
+  }
   let launch!: Awaited<ReturnType<typeof startOrAttachDesktopBackend>>
   // Shared by the first launch and the startup replacement of a stopping Runtime, so a replacement
   // keeps the preserved service port and credential arguments of the original launch.
@@ -952,10 +1017,12 @@ async function startDesktop(): Promise<void> {
       packaged: app.isPackaged,
       credentialInventory: startupCredentialCiphertexts,
       credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
-      args: [
-        ...credentialArgs,
-        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
-      ]
+      beforeLaunch: startupRetry?.restart
+        ? async () => {
+            await reviewStartupRestart(startupRetry.restart?.stop, startupRetry.options)
+          }
+        : undefined,
+      args: [...credentialArgs, ...(launchOptions ? [`--serve=${launchOptions.port}`] : [])]
     })
     startedBackend = launch.startedProcess
   }
@@ -1047,7 +1114,16 @@ async function startDesktop(): Promise<void> {
           .waitForStopped()
           .then((lease) => {
             retainShutdownLease(lease)
-            app.relaunch()
+            // Electron otherwise reuses native argv, including an already-consumed retry grant.
+            app.relaunch(
+              startupRetry
+                ? {
+                    args: desktopStartupRetryArgs(process.argv.slice(1), {
+                      options: startupRetry.options
+                    })
+                  }
+                : undefined
+            )
             app.exit(0)
           })
           .catch((error) => {
@@ -1166,6 +1242,15 @@ async function startDesktop(): Promise<void> {
     if (endpoint) launch = { endpoint }
     else {
       if (config) validatePreservedConfiguration(config)
+      const options: DesktopStartupRetry['options'] = {
+        configRoot,
+        profilePath,
+        credentialStore: config?.credentialStore ?? getCredentialStore(),
+        passwordStore:
+          (config?.passwordStore ?? app.commandLine.getSwitchValue('password-store')) || undefined,
+        port: config?.port ?? startupRetry?.options.port ?? 0,
+        host: '127.0.0.1'
+      }
       launch = await startOrAttachDesktopBackend({
         configRoot,
         profilePath,
@@ -1175,27 +1260,23 @@ async function startDesktop(): Promise<void> {
         signal,
         beforeLaunch: async () => {
           signal.throwIfAborted()
-          assertDesktopRuntimeRestartAllowed(
-            await (async () => {
-              if (client)
-                return readServiceLifetime(configRoot, !isRuntimeProcessAlive(client.processId()))
-              // A cold repair has no attached process identity. Real directory ownership is the
-              // substitute proof before tolerating malformed historical hints; keep valid stops.
-              const lease = acquireRuntimeDirectorySync(configRoot)
-              try {
-                return await readServiceLifetime(configRoot, true)
-              } finally {
-                lease.release()
-              }
-            })(),
-            repairAuthorization,
-            updateCommitted || plannedRelaunch
-          )
+          if (client) {
+            assertDesktopRuntimeRestartAllowed(
+              await readServiceLifetime(configRoot, !isRuntimeProcessAlive(client.processId())),
+              repairAuthorization,
+              updateCommitted || plannedRelaunch
+            )
+          } else {
+            const stop = await reviewStartupRestart(repairAuthorization, options)
+            // Chromium now owns Cookies. Re-enter bootstrap instead of reading that open profile
+            // or reusing a credential inventory whose original 60-second lifetime may have expired.
+            if (startupWindow) throw new DesktopStartupRelaunch({ options, restart: { stop } })
+          }
         },
         args: [
-          `--credential-store=${config?.credentialStore ?? getCredentialStore()}`,
-          `--serve=${config?.port ?? 0}`,
-          ...(config?.passwordStore ? [`--password-store=${config?.passwordStore}`] : [])
+          `--credential-store=${options.credentialStore}`,
+          `--serve=${options.port}`,
+          ...(options.passwordStore ? [`--password-store=${options.passwordStore}`] : [])
         ]
       })
       startedBackend = launch.startedProcess
