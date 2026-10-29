@@ -441,6 +441,75 @@ AppImage. Old payloads are not automatically deleted while a server may use them
 versions manually after stopping every server that uses them. Full AppImage execution remains a
 Linux release validation item.
 
+## Separately installed Pi runtime
+
+Pi is installed explicitly from **Settings → Agent → Pi → Install**. The application ships
+only its bootstrap code, permission guard and pinned dependency manifest. Pi SDK/ACP and their
+exclusive dependencies are absent from the application dependency graph and packaged resources.
+The installer uses the existing runtime admission lock, progress events and local-only settings
+commands; it downloads and verifies packages without requiring a global Node.js or npm installation.
+
+**Update** downloads the application-approved release into a staging directory, applies the
+permission guard, checks adapter integrity and SDK compatibility, and completes an ACP initialization
+probe before replacing the existing runtime. A failed preparation leaves the previous runtime in
+place. The approved versions are currently Pi SDK `1.4.0` and ACP `0.1.8`; Update can refresh this
+same compatible release and does not opt into arbitrary upstream versions. Transient download
+failures receive one logged retry per registry before the existing registry fallback is used.
+
+To uninstall through Settings, first select another available Agent, following the existing active
+runtime removal rule. Uninstall removes only the managed runtime and its installer-owned temporary
+directories. Conversation history and provider credentials remain available for reinstallation.
+
+### Historical-data compatibility
+
+No database migration or credential conversion is introduced. Existing `agentFrameworkId = pi`
+settings remain valid. Users of the previous bundled Pi integration must explicitly install the
+managed runtime before starting Pi again; existing native session files and application history are
+retained. The existing optional `piRuntimePath` preflight field also identifies a managed installation
+that needs a compatible update, rather than treating that installation as absent.
+
+### Newly persisted state
+
+- `<configRoot>/pi-managed/adapter/`: the application-patched ACP adapter and permission guard.
+- `<configRoot>/pi-managed/node_modules/`: the pinned runtime dependency closure for the host.
+- `pi-managed.staging-<uuid>` and `pi-managed.backup-<uuid>` siblings: temporary replacement state;
+  uninstall also removes matching installer-owned leftovers.
+
+There are no new settings-document fields or database rows for Pi installation. The dependency
+manifest is maintained in `src/main/pi-acp/package.json` and its lockfile.
+
+### Enum and command additions
+
+No enum values, permission scopes or persisted schema versions are added. The local settings
+commands `settings:install-pi` and `settings:uninstall-pi` are new; update uses the install command.
+
+### Local validation record — 2026-10-29
+
+The isolated macOS ARM64 Electron + MiniMax-M3 run completed: clean profile without Pi → explicit
+UI installation → successful conversation and `list_authorized_directories` tool call in Ask mode →
+Update → switch away and uninstall → reinstall. Native tool-result records confirmed the call.
+Update replaced the runtime directory, verified by its changed inode. Native session-file hashes and
+provider credential-reference hashes were unchanged after update, uninstall and reinstall. A download
+timeout during reinstall recovered on the single logged retry.
+
+An injected offline update preserved the previous working runtime. A modified permission guard was
+rejected, then restored byte-for-byte. Uninstall also removed an installer-owned leftover staging
+directory while retaining history and credential sentinels.
+
+The ad-hoc-signed macOS `.app` was inspected: neither its archive nor loose resources contained Pi's
+62 exclusive dependencies or the old `out/pi-acp` tree. The three bootstrap resources totaled 69,754
+bytes. This is a resource inventory, not a measured installer-size reduction. The lifecycle run used
+an isolated Electron build; the packaged `.app` was inspected but not launched.
+
+Relevant existing checks passed: 1,167 tests across 11 files (8 skipped), typechecking, changed-file
+ESLint/Prettier, module-consumer validation, the Electron build and macOS packaging. No new unit or
+integration test cases were added; existing interface inventories and live Pi harness installation
+setup were updated. Windows/Linux runtime execution and the full test suite were not run.
+
+This change does not close the separately reported fork/missing-history recovery, post-restart tool
+discovery, Side chat, Plan-review timeout, numeric Calls telemetry, malformed ask-user argument or
+intermittent streaming-table findings. Those remain follow-up work.
+
 ## Historical compatibility requiring review
 
 The [release compatibility policy](compatibility.md) defines stable interfaces and the direction
