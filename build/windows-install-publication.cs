@@ -26,6 +26,18 @@ public static class InstallDirectory {
   static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, ref byte disposition, uint size);
   [DllImport("kernel32.dll", SetLastError=true)]
   static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, ref BasicInformation information, uint size);
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct FindData {
+    public uint Attributes;
+    public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+    public uint SizeHigh, SizeLow, Reserved0, Reserved1;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=260)] public string Name;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=14)] public string AlternateName;
+  }
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern IntPtr FindFirstFile(string pattern, out FindData data);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern bool FindNextFile(IntPtr search, out FindData data);
+  [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr search);
   sealed class PendingRemoval {
     public SafeFileHandle Handle;
     public SafeFileHandle AttributeHandle;
@@ -39,17 +51,34 @@ public static class InstallDirectory {
       throw new Win32Exception(Marshal.GetLastWin32Error());
   }
   static IEnumerable<string> ProgramLeaves(string directory) {
-    foreach (var path in Directory.GetFileSystemEntries(directory)) {
-      var attributes = File.GetAttributes(path);
-      if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory) {
-        foreach (var child in ProgramLeaves(path)) yield return child;
-      } else yield return path;
+    // Framework IO expands short aliases and reapplies legacy MAX_PATH limits. Keep the
+    // extended Win32 path through enumeration, attributes and the final no-follow open.
+    FindData data;
+    var search = FindFirstFile(directory + @"\*", out data);
+    if (search == new IntPtr(-1)) {
+      var error = Marshal.GetLastWin32Error();
+      if (error == 2) yield break;
+      throw new Win32Exception(error, directory);
     }
+    try {
+      do {
+        if (data.Name == "." || data.Name == "..") continue;
+        var path = directory + @"\" + data.Name;
+        if ((data.Attributes & 0x410) == 0x10) {
+          foreach (var child in ProgramLeaves(path)) yield return child;
+        } else yield return path;
+      } while (FindNextFile(search, out data));
+      var error = Marshal.GetLastWin32Error();
+      if (error != 18) throw new Win32Exception(error, directory);
+    } finally { FindClose(search); }
   }
   // Only the caller's freshly staged program tree is accepted. No configured data is staged.
   // Classic FileDispositionInfo remains reversible until the handles close. Do not substitute
   // DELETE_ON_CLOSE or POSIX unlink: either would defeat cancellation after a later failure.
   public static void RemoveStagedProgramFiles(string directory) {
+    if (!directory.StartsWith(@"\\?\", StringComparison.Ordinal))
+      directory = directory.StartsWith(@"\\", StringComparison.Ordinal)
+        ? @"\\?\UNC\" + directory.Substring(2) : @"\\?\" + directory;
     using (Hold(directory)) {
       var pending = new List<PendingRemoval>();
       try {

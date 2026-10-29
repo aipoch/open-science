@@ -294,6 +294,9 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
   (layout) => {
     const root = mkdtempSync(join(tmpdir(), 'nsis-workspace-safety-'))
     const install = join(root, 'Open-Science')
+    const longProgramDirectory = 'p'.repeat(
+      Math.max(1, 270 - join(install, 'resources', 'index.js').length - 1)
+    )
     const restoreAcl = join(root, 'restore-program-acl.ps1')
     const powershell = join(
       process.env.SystemRoot!,
@@ -356,7 +359,7 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       // rename still works, while final deletion fails without a production test seam.
       writeFileSync(
         restoreAcl,
-        `$ErrorActionPreference='Stop'\nImport-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force\nif (Test-Path -LiteralPath ${psQuote(savedAcl)}) {\nGet-ChildItem -LiteralPath ${psQuote(install)} -Recurse -Filter 'vulkan-1.dll' | ForEach-Object {\n$acl=New-Object Security.AccessControl.FileSecurity\n$acl.SetSecurityDescriptorSddlForm([IO.File]::ReadAllText(${psQuote(savedAcl)}))\nSet-Acl -LiteralPath $_.FullName -AclObject $acl\n[IO.File]::SetAttributes($_.FullName,[IO.FileAttributes]::Normal)\n}\n}`
+        `$ErrorActionPreference='Stop'\nImport-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force\nif (Test-Path -LiteralPath ${psQuote(savedAcl)}) {\n@(${psQuote(install)}) + @(Get-ChildItem -LiteralPath ${psQuote(install)} -Directory | ForEach-Object FullName) | ForEach-Object { Get-Item -LiteralPath (Join-Path $_ 'vulkan-1.dll') -ErrorAction SilentlyContinue } | ForEach-Object {\n$acl=New-Object Security.AccessControl.FileSecurity\n$acl.SetSecurityDescriptorSddlForm([IO.File]::ReadAllText(${psQuote(savedAcl)}))\nSet-Acl -LiteralPath $_.FullName -AclObject $acl\n[IO.File]::SetAttributes($_.FullName,[IO.FileAttributes]::Normal)\n}\n}`
       )
       const prepareAcl = `$ErrorActionPreference='Stop'\nImport-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force\n$file=${psQuote(lateProgramFile)}\n$acl=Get-Acl -LiteralPath $file\n[IO.File]::WriteAllText(${psQuote(savedAcl)},$acl.Sddl)\n[IO.File]::SetAttributes($file,[IO.FileAttributes]::ReadOnly)\n$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User,[Security.AccessControl.FileSystemRights]::WriteAttributes,[Security.AccessControl.AccessControlType]::Deny)\n$acl.AddAccessRule($rule)\nSet-Acl -LiteralPath $file -AclObject $acl`
       const acl = spawnSync(
@@ -532,6 +535,22 @@ ${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\
   System::Call 'kernel32::CloseHandle(p R6)'
   # An ordinary read-only program file remains removable when attribute access is allowed.
   SetFileAttributes "${lateProgramFile}" READONLY
+  # A short installation alias can address a payload whose expanded path exceeds MAX_PATH.
+  # Volumes without short names retain the ordinary fixture instead of failing in NSIS staging.
+  StrCmp $INSTDIR "${install}" noLongPayload
+  CreateDirectory "$INSTDIR\\resources\\${longProgramDirectory}"
+  FileOpen $8 "$INSTDIR\\resources\\${longProgramDirectory}\\index.js" w
+  FileWrite $8 "deep program bytes"
+  FileClose $8
+  StrCpy $7 "missing"
+  FileOpen $8 "$INSTDIR\\resources\\${longProgramDirectory}\\index.js" r
+  FileRead $8 $7
+  FileClose $8
+  FileWriteUTF16LE $9 "|long-payload=$7"
+  Goto longPayloadReady
+  noLongPayload:
+  FileWriteUTF16LE $9 "|long-payload=unavailable"
+  longPayloadReady:
   ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|first-uninstall=$0"
   # Match the updater's existing one-retry budget. A standalone uninstall can truthfully fail
@@ -551,6 +570,7 @@ SectionEnd
 `
       )
       const result = readFileSync(join(root, 'result.txt'), 'utf16le')
+      expect(result).toMatch(/\|long-payload=(?:deep program bytes|unavailable)\|/)
       if (result.includes('|retried'))
         paths.forEach((_, index) => expect(result).toContain(`|retry-data-${index}=${content}`))
       expect(result).toContain('|restore=0')
