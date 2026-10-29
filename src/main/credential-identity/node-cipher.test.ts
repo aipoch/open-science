@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto'
+import { createCipheriv } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -202,25 +202,6 @@ describe('Node OSCrypt-compatible cipher', () => {
       const expected = Buffer.concat([Buffer.from(prefix), Buffer.from(hex, 'hex')])
       expect(cipher.decryptString(expected)).toBe('fixture-科学-secret')
       expect(cipher.encryptString('fixture-科学-secret')).toEqual(expected)
-      // Cookie v24 plaintext begins with a binary domain digest, not UTF-8 text.
-      const plaintext = Buffer.concat([
-        createHash('sha256').update('example.com').digest(),
-        Buffer.from('session-value')
-      ])
-      const key = pbkdf2Sync(
-        'fixture-vault-password',
-        'saltysalt',
-        identity.backend === 'mac-keychain' ? 1003 : 1,
-        16,
-        'sha1'
-      )
-      const producer = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20))
-      const cookie = Buffer.concat([
-        Buffer.from(prefix),
-        producer.update(plaintext),
-        producer.final()
-      ])
-      expect(cipher.decryptString(cookie)).toBe(plaintext.toString('utf8'))
       expect(readPassword).toHaveBeenCalledWith(identity, false)
       cipher.dispose()
       expect(() => cipher.encryptString('after-close')).toThrow('recovery')
@@ -295,6 +276,25 @@ describe('Node OSCrypt-compatible cipher', () => {
     )
     try {
       expect(cipher.decryptString(Buffer.from('legacy-dpapi-fixture'))).toBe('\ufffda')
+    } finally {
+      cipher.dispose()
+    }
+  })
+
+  it('retains the Linux legacy-key fallback when the selected key produces non-UTF-8 bytes with valid padding', () => {
+    // Fixed independently generated v11 record encrypted using Chromium's legacy empty password.
+    // The selected password deliberately decrypts it to non-UTF-8 bytes with valid CBC padding.
+    const encrypted = Buffer.from(
+      '76313135072aab3a3a50ff49513b81d93df001bcb6de1e08c5fba755645b7b2a898769',
+      'hex'
+    )
+    const cipher = createNodeSecureStorageCipher(
+      { backend: 'linux-secret-service', appName: 'Open Science', exists: true },
+      '/unused',
+      { readPassword: () => Buffer.from('wrong-vault-22'), unprotect: vi.fn() }
+    )
+    try {
+      expect(cipher.decryptString(encrypted)).toBe('fixture-legacy-secret')
     } finally {
       cipher.dispose()
     }
