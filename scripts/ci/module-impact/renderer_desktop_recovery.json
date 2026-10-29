@@ -1,8 +1,11 @@
 {
-  "ownerPaths": ["src/renderer/src/stores/desktop-runtime-recovery-store.ts"],
+  "ownerPaths": [
+    "src/renderer/src/stores/desktop-runtime-recovery-store.ts",
+    "src/renderer/src/stores/desktop-runtime-recovery-store.test.ts"
+  ],
   "interfacePaths": ["src/renderer/src/stores/desktop-runtime-recovery-store.ts"],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/renderer/src/stores/desktop-runtime-recovery-store.test.ts"],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts"
@@ -18,6 +21,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/hooks/useLifecycleSync.test.tsx",
+      "src/renderer/src/hooks/useQuitPersistenceFlush.integration.test.tsx",
       "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-client.test.ts",

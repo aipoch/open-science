@@ -95,6 +95,11 @@ export const databaseStartupGetStateContracts = {
     [DESKTOP_RUNTIME_RECOVERY_CHANNELS.reconciled, ELECTRON],
     { optionalRoot: true }
   ),
+  'desktopRuntime.restartApp': callable<() => Promise<'blocked' | 'restarting'>>()(
+    'desktop-runtime',
+    [DESKTOP_RUNTIME_RECOVERY_CHANNELS.restartApp, ELECTRON],
+    { optionalRoot: true }
+  ),
   'desktopRuntime.quit': callable<() => Promise<void>>()(
     'desktop-runtime',
     [DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, ELECTRON],

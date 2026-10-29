@@ -14,7 +14,9 @@ import { createRequire } from 'node:module'
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { expect, test } from '@playwright/test'
+import { expect, test, type TestInfo } from '@playwright/test'
+import { DatabaseSync } from 'node:sqlite'
+import { processBirthIdentity } from '../src/main/process-birth-identity'
 import { chromium, type Browser, type ElectronApplication } from 'playwright'
 import {
   closeElectronApplicationForCleanup,
@@ -260,8 +262,7 @@ for (const stalled of [false, true]) {
   })
 }
 
-// eslint-disable-next-line no-empty-pattern
-test('actual Electron relaunch starts a new Desktop and Runtime and reads the original Session', async ({}, testInfo) => {
+const actualRelaunch = async (cookieLock: boolean, testInfo: TestInfo): Promise<void> => {
   test.skip(
     !['darwin', 'win32', 'linux'].includes(process.platform) ||
       Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
@@ -381,17 +382,48 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     const firstOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
     const firstService = await captureFixtureService(configRoot)
     if (firstService) capturedServices.push(firstService)
-    await page
-      .evaluate(
-        async (target) => {
-          const result = await window.api.storage.setDataRootAndRelaunch(target, true)
-          if (!result.ok) throw new Error(JSON.stringify(result))
-        },
-        join(root, 'new-data')
-      )
-      .catch((error) => {
-        if (!/closed|destroyed/.test(String(error))) throw error
-      })
+    if (cookieLock) {
+      // A dormant partition exercises the real SQLite inventory without touching Chromium's
+      // active cookie database. Only the Node child filesystem boundary injects Windows EBUSY.
+      const partition = join(profileRoot, 'Partitions', 'recovery-lock')
+      await mkdir(partition, { recursive: true })
+      const cookies = new DatabaseSync(join(partition, 'Cookies'))
+      cookies.exec('CREATE TABLE cookies(encrypted_value BLOB)')
+      cookies.close()
+      await page.getByRole('button', { name: 'Relaunch fixture', exact: true }).first().click()
+      const composer = page.getByRole('textbox', { name: 'Ask anything', exact: true })
+      await expect(composer).toBeVisible()
+      await composer.fill('Unsent draft before credential recovery')
+      await writeFile(join(configRoot, 'fixture-cookie-locked'), 'locked')
+      if (!firstService || processBirthIdentity(firstService.pid) !== firstService.birthToken)
+        throw new Error('Fixture Runtime identity changed before simulated crash.')
+      process.kill(firstService.pid, 'SIGKILL')
+      await expect
+        .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), {
+          timeout: 30000
+        })
+        .toMatchObject({
+          phase: 'unavailable',
+          startupFailure: {
+            code: 'credential-unavailable',
+            diagnostic: { source: 'cookies', systemCode: 'EBUSY' }
+          }
+        })
+      await expect(composer).toHaveText('Unsent draft before credential recovery')
+      await page.getByRole('button', { name: 'Restart Open-Science', exact: true }).click()
+    } else {
+      await page
+        .evaluate(
+          async (target) => {
+            const result = await window.api.storage.setDataRootAndRelaunch(target, true)
+            if (!result.ok) throw new Error(JSON.stringify(result))
+          },
+          join(root, 'new-data')
+        )
+        .catch((error) => {
+          if (!/closed|destroyed/.test(String(error))) throw error
+        })
+    }
     await expect.poll(() => firstDesktop.exitCode, { timeout: 25000 }).toBe(0)
     desktop = undefined
     await expect
@@ -438,6 +470,16 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     await expect(
       page.locator('header').getByRole('button', { name: 'New project', exact: true })
     ).toBeVisible()
+    if (cookieLock) {
+      await page.getByRole('button', { name: 'Relaunch fixture', exact: true }).first().click()
+      await expect(page.getByRole('textbox', { name: 'Ask anything', exact: true })).toHaveText(
+        'Unsent draft before credential recovery'
+      )
+      await expect
+        .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+        .toMatchObject({ phase: 'connected' })
+    }
+
     await testInfo.attach('successor-desktop', {
       body: await page.screenshot({ path: join(root, 'successor-desktop.png') }),
       contentType: 'image/png'
@@ -538,4 +580,15 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
     )
     if (completed) await removeTreeForCleanup(root)
   }
-})
+}
+
+for (const cookieLock of [false, true])
+  test(
+    cookieLock
+      ? 'actual Electron recovery restart escapes cookie inventory failure and preserves drafts'
+      : 'actual Electron relaunch starts a new Desktop and Runtime and reads the original Session',
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, testInfo) => {
+      await actualRelaunch(cookieLock, testInfo)
+    }
+  )

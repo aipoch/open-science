@@ -17,14 +17,20 @@ import {
 import { randomUUID } from 'node:crypto'
 import { writeRuntimeExit } from './runtime-stop-confirmation'
 import { resolveDataRoot } from './storage-root'
-import { backendStartupAttemptId, createBackendStartupReporter } from './backend-startup'
+import {
+  backendStartupAttemptId,
+  backendStartupStatusSchema,
+  createBackendStartupReporter,
+  type BackendStartupStatus
+} from './backend-startup'
 import {
   buildStartupDiagnostics,
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
   flushLogs,
-  initLogger
+  initLogger,
+  writeFatalLogSync
 } from '@aipoch/diagnostics/node'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -44,6 +50,7 @@ import {
   initializeNodeWindowsProfileKey
 } from './credential-identity/node-cipher'
 import { CredentialIdentityError } from './credential-identity/selection'
+import { credentialDiagnosticSchema } from './credential-identity/diagnostic'
 import { createDatabaseStartupLogging } from './database/database-startup-logging'
 import {
   createDatabaseStartupOwner,
@@ -93,18 +100,27 @@ import { cancelMigrationForQuit, isMigrationInProgress } from './storage/migrati
 import { parseWebModeOptions } from './web-service/options'
 
 const startupReporter = createBackendStartupReporter()
+let startupStage: BackendStartupStatus['stage'] = 'bootstrap'
+const reportStartupPhase = (stage: BackendStartupStatus['stage']): void => {
+  startupStage = stage
+  startupReporter.phase(stage)
+}
+const startupErrorFields = (error: unknown): Record<string, unknown> => {
+  if (!(error instanceof CredentialIdentityError))
+    return { ...diagnosticErrorFields(error), ...errorLogFields(error) }
+  // Credential exceptions can carry native causes or profile details. Persist only the same
+  // reviewed diagnostic codes used by the startup protocol, never their raw text or probe data.
+  const reason = backendStartupStatusSchema.shape.reason.safeParse(error.reason)
+  const diagnostic = credentialDiagnosticSchema.safeParse(error.diagnostic)
+  return {
+    ...diagnosticErrorFields(error),
+    ...(reason.success ? { recoveryReason: reason.data } : {}),
+    ...(diagnostic.success ? { validationDiagnostic: diagnostic.data } : {})
+  }
+}
 // Helpers retain their own protocol and exit contract. Install before asynchronous bootstrap so
 // early failures cannot escape the same diagnostic-and-exit path as runtime failures.
-if (!isRuntimeHelper(process.argv))
-  installNodeFatalErrors({
-    process,
-    report: (error, kind) => {
-      createLogger('node-runtime').error('fatal local service failure', {
-        kind,
-        ...diagnosticErrorFields(error)
-      })
-    }
-  })
+if (!isRuntimeHelper(process.argv)) installNodeFatalErrors({ process })
 
 async function main(): Promise<void> {
   const mainEntryPath = fileURLToPath(import.meta.url)
@@ -170,6 +186,8 @@ async function main(): Promise<void> {
   let stopRequested = false
   let profilePath: string | undefined
   let credentialFailure: CredentialIdentityError | undefined
+  let startupFailed = false
+  let startupReady = false
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
     finishStartup = resolve
@@ -244,7 +262,7 @@ async function main(): Promise<void> {
         await writeRuntimeExit(configRoot, {
           generation,
           pid: process.pid,
-          outcome: failed || credentialFailure ? 'failed' : 'clean'
+          outcome: failed || startupFailed || credentialFailure ? 'failed' : 'clean'
         })
       } catch {
         failed = true
@@ -270,8 +288,8 @@ async function main(): Promise<void> {
           }
         }
       }
-      process.exitCode = failed || credentialFailure ? 1 : 0
-      if (restartRequested && !desktopWillRestart && !failed) {
+      process.exitCode = failed || startupFailed || credentialFailure ? 1 : 0
+      if (restartRequested && !desktopWillRestart && !failed && !startupFailed) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
@@ -285,7 +303,7 @@ async function main(): Promise<void> {
         child.unref()
       }
       clearTimeout(deadline)
-      process.exit(failed || credentialFailure ? 1 : 0)
+      process.exit(failed || startupFailed || credentialFailure ? 1 : 0)
     }))
   }
   const lifetime = await createLocalServiceLifetime({
@@ -342,7 +360,7 @@ async function main(): Promise<void> {
     exit: (code) => process.exit(code)
   })
   try {
-    startupReporter.phase('credentials')
+    reportStartupPhase('credentials')
     configureCredentialStore(process.argv, process.platform, true)
     const passwordStore = process.argv
       .find((arg) => arg.startsWith('--password-store='))
@@ -387,7 +405,11 @@ async function main(): Promise<void> {
       configureSecureStorageCipher(cipher)
       validateCredentials(cipher, (error) => {
         credentialFailure = error
-        createLogger('node-runtime').error('credential recovery required', { reason: error.reason })
+        if (startupReady)
+          createLogger('node-runtime').error(
+            'credential recovery required',
+            startupErrorFields(error)
+          )
         void stop()
       })
       if (identity.backend !== 'file') cipher.isEncryptionAvailable()
@@ -404,7 +426,7 @@ async function main(): Promise<void> {
       nodeVersion: process.versions.node,
       cpuUsage: process.cpuUsage
     })
-    startupReporter.phase('storage')
+    reportStartupPhase('storage')
     const { prepareApplicationLocations } = await import('./storage/initialize-location')
     abortStartupIfStopping()
     const { settingsStore, repository } = await prepareApplicationLocations(configRoot)
@@ -660,7 +682,7 @@ async function main(): Promise<void> {
       }
     )
     abortStartupIfStopping()
-    startupReporter.phase('database')
+    reportStartupPhase('database')
     const state = await databaseStartup.start()
     abortStartupIfStopping()
     if (state.phase === 'blocked' && !process.argv.includes('--desktop'))
@@ -668,7 +690,7 @@ async function main(): Promise<void> {
     await waitForVerifiedDatabaseStartup(databaseStartup, startupCancellation.signal)
 
     abortStartupIfStopping()
-    startupReporter.phase('runtime')
+    reportStartupPhase('runtime')
     const { createCoreRuntime } = await import('./core-runtime')
     abortStartupIfStopping()
     configureDesktopFileInteraction(
@@ -782,7 +804,7 @@ async function main(): Promise<void> {
       }
     })
     remoteAccess.attachWebController(web)
-    startupReporter.phase('endpoint')
+    reportStartupPhase('endpoint')
     const serving = await web.ensureStarted(parseWebModeOptions(process.argv).port, {
       attached: false
     })
@@ -792,32 +814,30 @@ async function main(): Promise<void> {
     databaseStartup.complete()
     diagnostics.operation.complete()
     startupReporter.ready()
+    startupReady = true
     finishStartup()
     if (stopRequested) await stop()
   } catch (error) {
     const cancelled = stopRequested
-    if (credentialFailure || !cancelled) startupReporter.failed(credentialFailure ?? error)
+    if (credentialFailure || !cancelled) {
+      startupFailed = true
+      const failure = credentialFailure ?? error
+      startupReporter.failed(failure)
+      createLogger('node-runtime').error('startup failed', {
+        stage: startupStage,
+        ...startupErrorFields(failure)
+      })
+    }
     finishStartup()
     await stop()
-    if (credentialFailure) throw credentialFailure
-    if (!cancelled) throw error
   }
 }
 void main().catch((error: unknown) => {
   try {
     startupReporter.failed(error)
-    createLogger('node-runtime').error('startup failed', {
-      ...diagnosticErrorFields(error),
-      ...errorLogFields(error),
-      ...(error instanceof CredentialIdentityError
-        ? {
-            recoveryReason: error.reason,
-            identityProbe: error.probe,
-            // Inventory context is transient UI data, not an additional persisted diagnostic.
-            validationDiagnostic:
-              error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
-          }
-        : {})
+    writeFatalLogSync('node-runtime', 'startup failed', {
+      stage: startupStage,
+      ...startupErrorFields(error)
     })
   } finally {
     process.exit(error instanceof RuntimeOwnershipConflict ? 75 : 1)

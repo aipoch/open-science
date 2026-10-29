@@ -68,6 +68,25 @@ const createPersistedSession = (
   ...overrides
 })
 
+it('retains a received durable Session receipt across transient Store projections without a write', async () => {
+  useSessionStore.setState(createInitialSessionState())
+  const api = {
+    saveSession: vi.fn(async (session: PersistedChatSession) => session),
+    saveManifest: vi.fn(async () => ({ version: SESSION_MANIFEST_VERSION }))
+  } as unknown as SessionPersistenceApi
+  const persistence = createOrderedSessionPersistence(api)
+  const saver = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+  const durable = createPersistedSession({ id: 'event-read-receipt', revision: 1 })
+  // This is the real full-snapshot boundary used by sessions.onUpdated/onCreated.
+  useSessionStore.getState().upsertPersistedSession(durable)
+  await saver(useSessionStore.getState())
+  useSessionStore.getState().setBranchSwitchBlocked(durable.id, true)
+  useSessionStore.getState().setBranchSwitchBlocked(durable.id, false)
+  await saver(useSessionStore.getState())
+  expect(persistence.getAcknowledgedSession(durable.id)).toEqual(durable)
+  expect(api.saveSession).not.toHaveBeenCalled()
+})
+
 const createCompletedTaskReplyConflict = (
   agentFrameworkId: PersistedChatSession['agentFrameworkId'] = 'opencode'
 ): {

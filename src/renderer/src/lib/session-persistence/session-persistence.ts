@@ -111,6 +111,14 @@ const resetSessionContentCacheForTests = (): void => {
   sessionContentCache.clear()
 }
 
+const acceptSessionRead = (session: PersistedChatSession, api: SessionReadApi): void => {
+  cacheSessionContent(session)
+  // Retain the real read receipt across transient Store projections which replace object identity.
+  // A single-session read must not reset other Sessions' failed or pending write evidence.
+  if (typeof window !== 'undefined' && api === window.api?.sessions)
+    liveSessionPersistence.acceptSessionAuthority(session)
+}
+
 const loadPersistedSession = async (
   request: LoadSessionRequest,
   api: SessionReadApi = window.api.sessions,
@@ -129,19 +137,20 @@ const loadPersistedSession = async (
       typeof storeSummary.revision === 'number' &&
       storeSummary.revision === cached.revision
     ) {
+      acceptSessionRead(cached.session, api)
       return cached.session
     }
   }
   if (typeof api.loadOne === 'function') {
     const result = await api.loadOne(request)
-    if (result) cacheSessionContent(result)
+    if (result) acceptSessionRead(result, api)
     return result
   }
   const result = await api.loadAll()
   const session = result.sessions.find(
     (candidate) => candidate.id === request.sessionId && candidate.projectId === request.projectId
   )
-  if (session) cacheSessionContent(session)
+  if (session) acceptSessionRead(session, api)
   return session
 }
 
@@ -234,14 +243,19 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     options: SaveSessionOptions | undefined,
     recover: OrderedSessionSaveRecovery
   ) => Promise<PersistedChatSession>
-  seedAcknowledgedSessions: (sessions: readonly PersistedChatSession[]) => void
+  seedAcknowledgedSessions: (
+    sessions: readonly PersistedChatSession[],
+    invalidateOnly?: boolean
+  ) => void
   getAcknowledgedSession: (sessionId: string) => PersistedChatSession | undefined
+  acceptSessionAuthority: (session: PersistedChatSession) => void
   releaseAcknowledgedSessionBody: (sessionId: string) => boolean
   clearWriteFailure: (target: string) => void
   clearWriteFailures: () => void
   pruneDeferredConversationCommands: (sessions: readonly Pick<ChatSession, 'id'>[]) => void
   hasDeferredConversationCommands: (target: string) => boolean
   flush: (target?: string) => Promise<void>
+  assertSettled: () => void
 }
 
 export class SessionPersistenceDeferredError extends Error {
@@ -952,6 +966,7 @@ const createOrderedSessionPersistence = (
 ): OrderedSessionPersistence => {
   let queue: Promise<unknown> = Promise.resolve()
   let pendingWriteCount = 0
+  let unconfirmedWrites = false
   let activeFlushes = 0
   const deferredSaves = new Set<Promise<unknown>>()
   const acknowledgedRevisions = new Map<string, number>()
@@ -1064,6 +1079,8 @@ const createOrderedSessionPersistence = (
       } catch (error) {
         if (error instanceof SessionExportSaveDeferred)
           return { kind: 'deferred' as const, released: error.released }
+        if (!(error instanceof SessionPersistenceGenerationChangedError))
+          failedWritesByTarget.set(target, error)
         throw error
       }
     })
@@ -1170,27 +1187,48 @@ const createOrderedSessionPersistence = (
   }
 
   return {
+    assertSettled: () => {
+      if (
+        pendingWriteCount ||
+        deferredSaves.size ||
+        failedWritesByTarget.size ||
+        deferredConversationCommandTargets.size ||
+        unconfirmedWrites
+      )
+        throw new Error('Session changes have not been confirmed saved.')
+    },
     saveLatestSession,
-    seedAcknowledgedSessions: (sessions) => {
+    seedAcknowledgedSessions: (sessions, invalidateOnly = false) => {
+      if (invalidateOnly) {
+        unconfirmedWrites ||= Boolean(
+          pendingWriteCount ||
+          deferredSaves.size ||
+          failedWritesByTarget.size ||
+          deferredConversationCommandTargets.size
+        )
+      } else unconfirmedWrites = false
       // A newly hydrated store invalidates delayed snapshots from the previous store generation.
       // The shared queue still preserves barriers, but stale local state can no longer write later.
       hydrationGeneration += 1
       releasePendingLatestCadence()
       pendingLatestByTarget.clear()
       latestSessionSaveStartedAt = Number.NEGATIVE_INFINITY
-      for (const target of failedWritesByTarget.keys()) {
-        if (target.startsWith('session:')) failedWritesByTarget.delete(target)
-      }
+      if (!invalidateOnly)
+        for (const target of failedWritesByTarget.keys()) {
+          if (target.startsWith('session:')) failedWritesByTarget.delete(target)
+        }
       const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
-      for (const target of deferredConversationCommandTargets) {
-        if (target.startsWith('session:') && !activeSessionTargets.has(target))
-          deferredConversationCommandTargets.delete(target)
-      }
+      if (!invalidateOnly)
+        for (const target of deferredConversationCommandTargets) {
+          if (target.startsWith('session:') && !activeSessionTargets.has(target))
+            deferredConversationCommandTargets.delete(target)
+        }
       for (const session of sessions) {
         acknowledgedRevisions.set(session.id, sessionRevision(session))
         acknowledgedSessions.set(session.id, structuredClone(session))
       }
     },
+    acceptSessionAuthority: acknowledgeSession,
     getAcknowledgedSession: (sessionId) => {
       const session = acknowledgedSessions.get(sessionId)
       return session ? structuredClone(session) : undefined
@@ -1208,6 +1246,7 @@ const createOrderedSessionPersistence = (
     clearWriteFailures: () => {
       failedWritesByTarget.clear()
       deferredConversationCommandTargets.clear()
+      unconfirmedWrites = false
     },
     pruneDeferredConversationCommands: (sessions) => {
       const activeSessionTargets = new Set(sessions.map((session) => `session:${session.id}`))
@@ -1286,6 +1325,53 @@ const liveSessionPersistence = createOrderedSessionPersistence({
 })
 
 const unresolvedSessionRevisionConflictTargets = new Set<string>()
+const acknowledgedReadOnlySessionSnapshots = new WeakSet<ChatSession>()
+
+const assertSessionPersistenceSavedForRecoveryRestart = (): void => {
+  liveSessionPersistence.assertSettled()
+  if (unresolvedSessionRevisionConflictTargets.size)
+    throw new SessionPersistenceFlushConflictError()
+  const state = useSessionStore.getState()
+  if (Object.keys(state.streamingMessages).length)
+    throw new Error('Streaming Session changes have not been confirmed saved.')
+  for (const session of state.sessions) {
+    if (
+      session.unsavedTitle ||
+      session.isPending ||
+      session.firstPromptDraft ||
+      session.delegationPolicyAuthorityPending ||
+      Object.keys(session.elicitationEditDrafts ?? {}).length
+    )
+      throw new Error('Session drafts have not been confirmed saved.')
+    if (pendingSessionConversationCommands(session.id).length)
+      throw new Error('Local Session commands have not been confirmed saved.')
+    if (session.contentLoaded === false && acknowledgedReadOnlySessionSnapshots.has(session))
+      continue
+    // A lazy disk read is already durable authority even when this renderer has never saved it.
+    // Use its original snapshot, not the projection which can retain local editable drafts.
+    const acknowledged =
+      getExternallyHydratedSessionAuthority(session) ??
+      liveSessionPersistence.getAcknowledgedSession(session.id)
+    if (
+      !acknowledged ||
+      // A save receipt can advance the revision before React receives its matching projection.
+      // Confirm the durable contents; revision-only lag does not introduce unsaved work.
+      !jsonValuesEqual(
+        {
+          ...toPersistedSession(session),
+          revision: sessionRevision(acknowledged),
+          filesRevision: session.filesRevision ?? 0
+        },
+        {
+          ...toPersistedSession(hydrateSession(acknowledged)),
+          filesRevision: acknowledged.filesRevision ?? 0,
+          revision: sessionRevision(acknowledged)
+        }
+      )
+    )
+      throw new Error('Local Session changes have not been confirmed saved.')
+  }
+}
 
 const resetSessionPersistenceWriteFailuresForTests = (): void => {
   liveSessionPersistence.clearWriteFailures()
@@ -1880,6 +1966,9 @@ const createStoreSaver = (
       .map((session) => [session.id, toPersistedSession(session)])
   )
   persistence.seedAcknowledgedSessions([...acknowledgedSessions.values()])
+  if (persistence === liveSessionPersistence)
+    for (const session of initial.sessions)
+      if (session.contentLoaded === false) acknowledgedReadOnlySessionSnapshots.add(session)
   // Keep an explicit local selection until its own receipt; a queued runtime update can coalesce
   // with that save, and an older receipt must not clear a newer navigation intent.
   const pendingBranchSelections = new Map<
@@ -2015,6 +2104,7 @@ const createStoreSaver = (
         ? getExternallyHydratedSessionAuthority(session)
         : undefined
       if (authority) {
+        persistence.acceptSessionAuthority(authority)
         const previousAuthority = acknowledgedSessions.get(session.id)
         const authorityIsNewer =
           !previousAuthority ||
@@ -2386,6 +2476,7 @@ const createStoreSaver = (
     )
       return false
     acknowledgedSessions.delete(source.id)
+    if (persistence === liveSessionPersistence) acknowledgedReadOnlySessionSnapshots.add(summary)
     // Change the diff baseline before publishing the summary. Unloading is not a metadata edit
     // and must not enqueue a save which loads the same body straight back into the store.
     previousSessions = current.sessions.map((session) => (session === source ? summary : session))
@@ -2654,7 +2745,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteErrorRetryable(true)
     sizeLimitTargets.current.clear()
     setPersistenceBlockedSessionIds([])
-    retryManifestWritePending.current = false
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
@@ -2720,7 +2810,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
   useEffect(() => {
     const recovery = useDesktopRuntimeRecoveryStore.getState()
     if (recoveryLoadEpoch < 0) {
-      liveSessionPersistence.seedAcknowledgedSessions([])
+      liveSessionPersistence.seedAcknowledgedSessions([], true)
       return
     }
     const recovering = recovery.epoch > 0
@@ -2728,7 +2818,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
     let unsubscribe: (() => void) | undefined
     let activeSaver: StoreSaver | undefined
     saverRef.current = undefined
+    const manifestWriteFailed = failedWriteTargets.current.has('manifest')
     failedWriteTargets.current.clear()
+    if (manifestWriteFailed || retryManifestWritePending.current)
+      failedWriteTargets.current.add('manifest')
     failedConflictRebaseFields.current.clear()
     sizeLimitTargets.current.clear()
 
@@ -3030,9 +3123,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
       retrySelection.current = undefined
       setIsLoading(false)
-      if (retryManifestWritePending.current) return
-      setIsReady(true)
+      // A successful authoritative read releases this transport epoch. A manifest write still
+      // owns its storage gate and explicit retry even though the backend connection recovered.
       if (recovering) completeDesktopSessionRecovery(recovery.epoch, true)
+      if (retryManifestWritePending.current) {
+        presentOutstandingWriteFailures()
+        return
+      }
+      setIsReady(true)
     }
 
     void startPersistence()
@@ -3066,6 +3164,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
 }
 
 export {
+  assertSessionPersistenceSavedForRecoveryRestart,
   MAX_SESSION_REVISION_REBASE_ATTEMPTS,
   confirmPendingDelegationPolicyAuthority,
   createOrderedSessionPersistence,

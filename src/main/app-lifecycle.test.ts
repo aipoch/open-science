@@ -163,6 +163,7 @@ const setup = (
       | 'refreshQuitState'
       | 'requireCleanBackendShutdown'
       | 'onQuitError'
+      | 'onQuitCancelled'
       | 'handleDisconnectedQuit'
       | 'shutdownBackends'
       | 'beforeExit'
@@ -234,6 +235,7 @@ const setup = (
       refreshQuitState: overrides.refreshQuitState,
       requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
       onQuitError: overrides.onQuitError,
+      onQuitCancelled: overrides.onQuitCancelled,
       handleDisconnectedQuit: overrides.handleDisconnectedQuit,
       shutdownBackends,
       prepareForQuit,
@@ -565,6 +567,27 @@ describe('installAppLifecycle', () => {
     expect(confirmClose).not.toHaveBeenCalled()
     expect(shutdownBackends).toHaveBeenCalledOnce()
     expect(app.exit).toHaveBeenCalledWith(0)
+  })
+
+  it('clears a pending relaunch when ordinary quit confirmation is canceled', async () => {
+    const onQuitCancelled = vi.fn()
+    const { app } = setup({
+      onQuitCancelled,
+      detectActiveSessions: () => [{ projectId: 'p', sessionId: 's', kind: 'agent' }],
+      confirmClose: async () => 'cancel'
+    })
+    app.emit('before-quit')
+    await flush()
+    expect(onQuitCancelled).toHaveBeenCalledOnce()
+    expect(app.exit).not.toHaveBeenCalled()
+  })
+
+  it('clears a pending relaunch when the migration guard prevents quit', async () => {
+    const onQuitCancelled = vi.fn()
+    const { app } = setup({ onQuitCancelled, isMigrationInProgress: () => true })
+    app.emit('before-quit')
+    await flush()
+    expect(onQuitCancelled).toHaveBeenCalledOnce()
   })
 
   it('defers to the migration guard when a migration is in progress', async () => {

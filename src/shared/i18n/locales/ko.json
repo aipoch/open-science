@@ -7690,6 +7690,10 @@
     "Cancellation failed": "취소 실패",
     "The cancellation attempt ended. The job is still being tracked.": "이번 취소 처리가 종료되었습니다. 작업은 계속 추적됩니다.",
     "Unable to get job status": "작업 상태를 가져올 수 없음",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "스케줄러에 이 작업의 사용 가능한 결과가 없습니다. 원격 프로세스가 계속 실행 중일 수 있습니다. 다음 작업을 결정하기 전에 스케줄러와 원격 파일을 확인하세요."
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "스케줄러에 이 작업의 사용 가능한 결과가 없습니다. 원격 프로세스가 계속 실행 중일 수 있습니다. 다음 작업을 결정하기 전에 스케줄러와 원격 파일을 확인하세요.",
+    "Local service could not restart": "로컬 서비스를 다시 시작하지 못했습니다",
+    "Restart Open-Science": "Open-Science 다시 시작",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "앱을 다시 시작하기 전에 작업이 저장되었는지 확인합니다. 저장되지 않은 첨부 파일이 있으면 다시 시작하지 못할 수 있습니다.",
+    "Open-Science could not restart. Save or copy your work, then try again.": "Open-Science를 다시 시작하지 못했습니다. 작업을 저장하거나 복사한 후 다시 시도해 주세요."
   }
 }

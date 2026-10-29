@@ -53,6 +53,7 @@ type PreviewSaveScheduler = {
   hasFailure: (projectId: string) => boolean
   waitForIdle: (projectId: string) => Promise<void>
   flush: () => Promise<void>
+  assertSaved: (projectId?: string, state?: PersistedPreviewState) => void
 }
 
 const reportPersistenceError = (error: unknown): void => {
@@ -250,6 +251,8 @@ const createPreviewSaveScheduler = (
   const revisions = new Map<string, number>()
   const generations = new Map<string, number>()
   const acceptedStates = new Map<string, PersistedPreviewState>()
+  const recoverySavedStates = new Map<string, PersistedPreviewState>()
+  const unconfirmedProjects = new Set<string>()
 
   const bumpGeneration = (projectId: string): void => {
     generations.set(projectId, (generations.get(projectId) ?? 0) + 1)
@@ -261,10 +264,12 @@ const createPreviewSaveScheduler = (
     if (state.epoch === previous.epoch && state.phase === previous.phase) return
     if (state.phase === 'connected' && state.epoch === previous.epoch) return
     for (const [projectId, queue] of queues) {
+      unconfirmedProjects.add(projectId)
       queue.pendingState = undefined
       queue.pendingBaseState = undefined
       bumpGeneration(projectId)
     }
+    for (const projectId of failures.keys()) unconfirmedProjects.add(projectId)
     failures.clear()
     revisions.clear()
     acceptedStates.clear()
@@ -329,6 +334,7 @@ const createPreviewSaveScheduler = (
               const revision = result.snapshot?.revision ?? 0
               revisions.set(projectId, revision)
               acceptedStates.set(projectId, authoritativeState)
+              recoverySavedStates.set(projectId, authoritativeState)
               bumpGeneration(projectId)
               failures.delete(projectId)
 
@@ -354,6 +360,8 @@ const createPreviewSaveScheduler = (
             }
             revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, result.revision))
             acceptedStates.set(projectId, nextState)
+            recoverySavedStates.set(projectId, nextState)
+            unconfirmedProjects.delete(projectId)
             bumpGeneration(projectId)
             failures.delete(projectId)
           } catch (error) {
@@ -421,10 +429,33 @@ const createPreviewSaveScheduler = (
       projectId,
       canonicalizeLiteraturePreviewState(snapshot?.state ?? createEmptyPersistedPreviewState())
     )
+    recoverySavedStates.set(projectId, acceptedStates.get(projectId)!)
+    unconfirmedProjects.delete(projectId)
     return true
   }
 
-  return { schedule, getGeneration, acceptLoadedSnapshot, hasFailure, waitForIdle, flush }
+  const assertSaved = (projectId?: string, state?: PersistedPreviewState): void => {
+    if (queues.size || failures.size || unconfirmedProjects.size)
+      throw new Error('Preview changes have not been confirmed saved.')
+    if (
+      projectId &&
+      state &&
+      !previewValuesEqual(
+        canonicalizeLiteraturePreviewState(state),
+        recoverySavedStates.get(projectId) ?? createEmptyPersistedPreviewState()
+      )
+    )
+      throw new Error('Local preview changes have not been confirmed saved.')
+  }
+  return {
+    schedule,
+    getGeneration,
+    acceptLoadedSnapshot,
+    hasFailure,
+    waitForIdle,
+    flush,
+    assertSaved
+  }
 }
 
 // Projects the live store slice down to its durable subset: file previews plus the one Session-scoped
@@ -592,6 +623,14 @@ const previewSaveScheduler = createPreviewSaveScheduler(
 )
 const schedulePreviewSave = previewSaveScheduler.schedule
 const flushPreviewPersistence = previewSaveScheduler.flush
+const assertPreviewPersistenceSavedForRecoveryRestart = (): void => {
+  previewSaveScheduler.assertSaved()
+  const state = usePreviewWorkbenchStore.getState()
+  for (const [projectId, slice] of Object.entries(state.byProject))
+    previewSaveScheduler.assertSaved(projectId, toPersistedPreviewState({ ...state, ...slice }))
+  if (state.activeProjectId)
+    previewSaveScheduler.assertSaved(state.activeProjectId, toPersistedPreviewState(state))
+}
 
 // Persists and restores the preview panel per project: saves the outgoing project before switching,
 // loads the incoming project's saved slice, and flushes the current project on unmount (e.g. Home).
@@ -694,4 +733,9 @@ export const usePreviewPersistence = (
   }, [])
 }
 
-export { flushPreviewPersistence, toPersistedPreviewState, toRestoredSlice }
+export {
+  assertPreviewPersistenceSavedForRecoveryRestart,
+  flushPreviewPersistence,
+  toPersistedPreviewState,
+  toRestoredSlice
+}

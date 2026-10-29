@@ -10,6 +10,9 @@ const f = vi.hoisted(() => ({
   startupFailure: false,
   healthyCredentials: false,
   inventoryFailure: undefined as Error | undefined,
+  credentialRecover: undefined as
+    | ((error: import('./credential-identity/selection').CredentialIdentityError) => void)
+    | undefined,
   credentialAccess: undefined as
     typeof import('./credential-identity/access').createCredentialAccess | undefined,
   releaseInstallation: vi.fn(),
@@ -177,6 +180,7 @@ vi.mock('./credential-identity/bootstrap', () => {
         cipher: import('./secure-storage').SecureStorageCipher,
         recover: (error: import('./credential-identity/selection').CredentialIdentityError) => void
       ) => {
+        f.credentialRecover = recover
         if (f.inventoryFailure) throw f.inventoryFailure
         if (f.healthyCredentials) return
         f.credentialAccess!({
@@ -252,6 +256,7 @@ beforeEach(async () => {
   vi.clearAllMocks()
   f.healthyCredentials = false
   f.inventoryFailure = undefined
+  f.credentialRecover = undefined
   f.startupFailure = false
   f.startDesktop.mockResolvedValue(
     f.desktop as unknown as Awaited<ReturnType<typeof f.startDesktop>>
@@ -288,9 +293,10 @@ it('reports credential recovery during startup as a failure after draining resou
   await import('./node-entry')
   await vi.waitFor(() => expect(process.exitCode).toBeDefined())
   expect(unref).toHaveBeenCalledOnce()
-  expect(f.log.error).toHaveBeenCalledWith('credential recovery required', {
-    reason: 'decryption-failed'
-  })
+  expect(f.log.error).toHaveBeenCalledExactlyOnceWith(
+    'startup failed',
+    expect.objectContaining({ stage: 'credentials', recoveryReason: 'decryption-failed' })
+  )
   expect(f.closeNetwork).toHaveBeenCalledOnce()
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(f.disposeCipher).toHaveBeenCalledOnce()
@@ -309,14 +315,44 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(JSON.stringify(messages)).not.toContain('fixture key')
 })
 
-it('sends transient inventory details to the desktop without persisting them', async () => {
+it('reports a failed startup before exiting and never publishes clean exit evidence', async () => {
+  f.startupFailure = true
+  vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
+  vi.spyOn(process, 'send').mockImplementation(() => true)
+  vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
+  const atExit: Array<{ code: unknown; diagnostics: unknown[] }> = []
+  vi.mocked(process.exit).mockImplementation((code) => {
+    atExit.push({ code, diagnostics: [...f.log.error.mock.calls] })
+    process.exitCode = code ?? 0
+    return undefined as never
+  })
+  await import('./node-entry')
+  await vi.waitFor(() => expect(atExit.length).toBeGreaterThan(0))
+  expect(atExit[0]).toMatchObject({
+    code: 1,
+    diagnostics: [['startup failed', { stage: 'credentials', errorCategory: 'error' }]]
+  })
+  expect(f.writeExit).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ outcome: 'failed' })
+  )
+  expect(f.writeExit.mock.calls).not.toContainEqual([
+    expect.any(String),
+    expect.objectContaining({ outcome: 'clean' })
+  ])
+  expect(f.closeOwnership).toHaveBeenCalledOnce()
+})
+
+it('preserves allowlisted credential failure details before cleanup without logging profile contents', async () => {
   const { CredentialIdentityError } = await import('./credential-identity/selection')
   f.inventoryFailure = new CredentialIdentityError('ciphertext-inventory-unavailable', undefined, {
     code: 'inventory-failed',
     source: 'cookies',
     stage: 'check-journal',
-    reason: 'journal-invalid'
+    reason: 'journal-invalid',
+    systemCode: 'EACCES'
   })
+  f.inventoryFailure.message = 'private-fixture-credential'
   vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
   const send = vi.spyOn(process, 'send').mockImplementation(() => true)
   vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
@@ -329,28 +365,40 @@ it('sends transient inventory details to the desktop without persisting them', a
     code: 'inventory-failed',
     source: 'cookies',
     stage: 'check-journal',
-    reason: 'journal-invalid'
+    reason: 'journal-invalid',
+    systemCode: 'EACCES'
   })
-  expect(f.log.error).toHaveBeenCalled()
-  expect(JSON.stringify(f.log.error.mock.calls)).not.toContain('inventory-failed')
-  expect(JSON.stringify(f.log.error.mock.calls)).not.toContain('journal-invalid')
+  expect(f.log.error).toHaveBeenCalledExactlyOnceWith('startup failed', {
+    stage: 'credentials',
+    errorCategory: 'object',
+    recoveryReason: 'ciphertext-inventory-unavailable',
+    validationDiagnostic: {
+      code: 'inventory-failed',
+      source: 'cookies',
+      stage: 'check-journal',
+      reason: 'journal-invalid',
+      systemCode: 'EACCES'
+    }
+  })
+  expect(JSON.stringify(f.log.error.mock.calls)).not.toContain('private-fixture-credential')
+  expect(f.log.error.mock.invocationCallOrder[0]).toBeLessThan(
+    f.closeNetwork.mock.invocationCallOrder[0]
+  )
 })
 
 it.each(['directory', 'installation'] as const)(
   'replaces clean evidence when %s ownership release fails',
   async (kind) => {
-    f.startupFailure = true
-    process.exitCode = undefined
+    const send = await startHealthyRuntime()
+    await waitForReady(send)
     const failure = new Error('injected release failure')
     if (kind === 'directory') f.closeOwnership.mockRejectedValueOnce(failure)
     else
       f.releaseInstallation.mockImplementationOnce(() => {
         throw failure
       })
-    const send = vi.spyOn(process, 'send').mockImplementation(() => true)
-    vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
     try {
-      await import('./node-entry')
+      f.lifecycle.mock.calls[0][0].quit()
       await vi.waitFor(() => expect(process.exitCode).toBe(1))
       expect(
         f.writeExit.mock.calls.map(
@@ -363,7 +411,6 @@ it.each(['directory', 'installation'] as const)(
       )
       if (kind === 'directory') expect(f.releaseInstallation).not.toHaveBeenCalled()
     } finally {
-      f.startupFailure = false
       send.mockRestore()
     }
   }
@@ -563,6 +610,22 @@ it('retains ownership and records failed shutdown when a running service cannot 
   )
   expect(f.closeOwnership).not.toHaveBeenCalled()
   expect(f.releaseInstallation).not.toHaveBeenCalled()
+})
+
+it('records credential recovery after startup before shutting down the running service', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
+  f.credentialRecover!(new CredentialIdentityError('decryption-failed'))
+  await vi.waitFor(() => expect(process.exitCode).toBe(1))
+  expect(f.log.error).toHaveBeenCalledExactlyOnceWith(
+    'credential recovery required',
+    expect.objectContaining({ recoveryReason: 'decryption-failed' })
+  )
+  expect(f.writeExit).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ outcome: 'failed' })
+  )
 })
 
 it('waits for database verification to settle before honoring a startup shutdown request', async () => {

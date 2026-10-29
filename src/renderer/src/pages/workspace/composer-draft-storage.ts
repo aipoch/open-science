@@ -194,6 +194,10 @@ export const removeComposerDrafts = (projectId: string, key?: string): void => {
 
 export const composerDraftStorageFailed = (): boolean => failed
 
+// Saved labels/receipts do not preserve File bytes or guarantee that an upload can be recovered.
+// Keep the live window until the user has dealt with these attachments explicitly.
+export const composerDraftHasFiles = (): boolean => drafts.some((draft) => draft.files.length > 0)
+
 export const registerComposerDraftWriter = (writer: () => void): (() => void) => {
   writers.add(writer)
   return () => {

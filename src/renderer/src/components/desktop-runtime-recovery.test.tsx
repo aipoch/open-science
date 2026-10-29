@@ -39,6 +39,25 @@ afterEach(cleanup)
 describe('desktop recovery notice', () => {
   let publish: (state: DesktopRuntimeRecoveryState) => void
   const reconnect = vi.fn(async () => ({ phase: 'connected', epoch: 1, closing: false }))
+  const restartApp = vi.fn<() => Promise<'blocked' | 'restarting'>>()
+  const inventoryFailure = (source = 'cookies'): DesktopRuntimeRecoveryState => ({
+    phase: 'unavailable',
+    epoch: 1,
+    closing: false,
+    reason: 'startup-failed',
+    startupFailure: {
+      stage: 'credentials',
+      code: 'credential-unavailable',
+      reason: 'ciphertext-inventory-unavailable',
+      diagnostic: {
+        code: 'inventory-failed',
+        source,
+        stage: 'copy-snapshot',
+        reason: 'operation-failed',
+        systemCode: 'EBUSY'
+      }
+    }
+  })
   beforeEach(() => {
     useUpdateStore.setState({ status: { state: 'idle', current: '1' } })
     useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false }, true)
@@ -46,10 +65,12 @@ describe('desktop recovery notice', () => {
     sessionMocks.openSession.mockReset()
     sessionMocks.save.mockReset()
     reconnect.mockClear()
+    restartApp.mockReset().mockResolvedValue('restarting')
     window.api = {
       desktopRuntime: {
         getState: async () => ({ phase: 'connected', epoch: 0, closing: false }),
         reconnect,
+        restartApp,
         quit: vi.fn(),
         reconciled: vi.fn(),
         onStateChanged: (listener: typeof publish) => {
@@ -60,6 +81,94 @@ describe('desktop recovery notice', () => {
     } as unknown as Window['api']
   })
   afterEach(cleanup)
+  it('offers an explicit app restart for a locked Cookie inventory and keeps unsaved work when blocked', async () => {
+    const outcome = Promise.withResolvers<'blocked' | 'restarting'>()
+    restartApp.mockReturnValueOnce(outcome.promise)
+    render(
+      <>
+        <textarea aria-label="draft" defaultValue="unsent work" />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
+      </>
+    )
+    const draft = screen.getByLabelText('draft')
+    await act(async () => publish(inventoryFailure()))
+    expect(screen.getByText('Local service could not restart')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain(
+      'Unsaved attachments can block the restart.'
+    )
+    const restart = screen.getByRole('button', {
+      name: 'Restart Open-Science'
+    }) as HTMLButtonElement
+    fireEvent.click(restart)
+    expect(restartApp).toHaveBeenCalledOnce()
+    expect(reconnect).not.toHaveBeenCalled()
+    expect(restart.disabled).toBe(true)
+    fireEvent.click(restart)
+    expect(restartApp).toHaveBeenCalledOnce()
+    await act(async () => outcome.resolve('blocked'))
+    expect(
+      screen.getByText('Open-Science could not restart. Save or copy your work, then try again.')
+    ).toBeTruthy()
+    expect(restart.disabled).toBe(false)
+    expect(screen.getByLabelText('draft')).toBe(draft)
+    expect((draft as HTMLTextAreaElement).value).toBe('unsent work')
+    await act(async () => fireEvent.click(restart))
+    expect(restartApp).toHaveBeenCalledTimes(2)
+    expect(restart.disabled).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('keeps the app and its draft open when the restart request rejects', async () => {
+    restartApp.mockRejectedValueOnce(new Error('restart IPC unavailable'))
+    render(
+      <>
+        <textarea aria-label="draft" defaultValue="unsent work" />
+        <DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />
+      </>
+    )
+    const draft = screen.getByLabelText('draft')
+    await act(async () => publish(inventoryFailure()))
+    const restart = screen.getByRole('button', {
+      name: 'Restart Open-Science'
+    }) as HTMLButtonElement
+    await act(async () => fireEvent.click(restart))
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Save or copy your work, then try again.'
+    )
+    expect(restart.disabled).toBe(false)
+    expect(screen.getByLabelText('draft')).toBe(draft)
+    expect((draft as HTMLTextAreaElement).value).toBe('unsent work')
+    expect(reconnect).not.toHaveBeenCalled()
+  })
+
+  it('allows another restart when the app reports that closing was cancelled', async () => {
+    render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
+    await act(async () => publish(inventoryFailure()))
+    const restart = screen.getByRole('button', {
+      name: 'Restart Open-Science'
+    }) as HTMLButtonElement
+    await act(async () => fireEvent.click(restart))
+    expect(restart.disabled).toBe(true)
+    await act(async () => publish({ ...inventoryFailure(), closing: true }))
+    await act(async () => publish({ ...inventoryFailure(), closing: false }))
+    expect(restart.disabled).toBe(false)
+    await act(async () => fireEvent.click(restart))
+    expect(restartApp).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['settings', 'application-database'])(
+    'keeps ordinary Retry for a %s inventory failure',
+    async (source) => {
+      render(<DesktopRuntimeRecovery saveDiagnostics={sessionMocks.save} />)
+      await act(async () => publish(inventoryFailure(source)))
+      expect(screen.getByText('Local service could not restart')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Restart Open-Science' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+      expect(reconnect).toHaveBeenCalledOnce()
+      expect(restartApp).not.toHaveBeenCalled()
+    }
+  )
+
   it('keeps draft focus across repeated disconnects without a modal or duplicate notice', async () => {
     render(
       <>

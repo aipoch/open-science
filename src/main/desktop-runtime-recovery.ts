@@ -3,7 +3,26 @@ import { setTimeout as delay } from 'node:timers/promises'
 import type { ChildProcess } from 'node:child_process'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { ServiceLifetimeRecord } from './local-service-lifetime'
-import type { DesktopRuntimeRecoveryState } from '../shared/desktop-runtime-recovery'
+import type {
+  DesktopRuntimeRecoveryState,
+  DesktopRuntimeStartupFailure
+} from '../shared/desktop-runtime-recovery'
+import { backendStartupStatusSchema, DesktopBackendStartupError } from './backend-startup'
+
+function projectStartupFailure(error: unknown): DesktopRuntimeStartupFailure | undefined {
+  if (!(error instanceof DesktopBackendStartupError)) return undefined
+  const stage = backendStartupStatusSchema.shape.stage.safeParse(error.stage)
+  if (!stage.success) return undefined
+  const credential = error.credentialFailure
+  const reason = backendStartupStatusSchema.shape.reason.safeParse(credential?.reason)
+  const diagnostic = backendStartupStatusSchema.shape.diagnostic.safeParse(credential?.diagnostic)
+  return {
+    stage: stage.data,
+    code: credential ? 'credential-unavailable' : 'startup-failed',
+    ...(reason.success && reason.data ? { reason: reason.data } : {}),
+    ...(diagnostic.success && diagnostic.data ? { diagnostic: diagnostic.data } : {})
+  }
+}
 
 export class RuntimeRecoveryStoppedError extends Error {
   constructor(
@@ -76,6 +95,7 @@ export function createDesktopRuntimeRecovery(options: {
   let pendingRestartedGeneration: string | undefined
   let crashedGeneration: string | undefined
   let crashes: number[] = []
+  let failedStarts: number[] = []
   const schedule = (): void => {
     if (!options.automatic || state.closing || stopped || state.phase === 'connected') return
     roundDeadline ||= Date.now() + (options.timeoutMs ?? 12_000)
@@ -148,6 +168,7 @@ export function createDesktopRuntimeRecovery(options: {
         void restartAuthorization?.catch(() => undefined)
         stopped = false
         crashes = []
+        failedStarts = []
         roundDeadline = Date.now() + (options.timeoutMs ?? 30_000)
       }
       if (!childAlive() && !options.restart) {
@@ -171,6 +192,8 @@ export function createDesktopRuntimeRecovery(options: {
       // not clear the slot before assignment leaves a settled Promise permanently occupying it.
       attempt = Promise.resolve().then(async () => {
         let candidate: DesktopRuntimeClient | undefined
+        let replacing = false
+        let attached = false
         try {
           const authorization = restartAuthorization
             ? await abortable(restartAuthorization, controller.signal)
@@ -190,8 +213,10 @@ export function createDesktopRuntimeRecovery(options: {
             )
           }
           const connection = (async () => {
-            if (restarting && options.restart)
+            if (restarting && options.restart) {
+              replacing = true
               return options.restart(controller.signal, authorization)
+            }
             if (!automatic && options.repair) {
               try {
                 return await options.connect(
@@ -200,6 +225,7 @@ export function createDesktopRuntimeRecovery(options: {
               } catch {
                 controller.signal.throwIfAborted()
                 repairing = true
+                replacing = true
                 return options.repair(controller.signal)
               }
             }
@@ -212,6 +238,7 @@ export function createDesktopRuntimeRecovery(options: {
             () => undefined
           )
           candidate = await abortable(connection, controller.signal)
+          attached = true
           pendingCandidate = candidate
           if (controller.signal.aborted) throw new Error('Desktop reconnect canceled.')
           if (restarting || (!automatic && options.repair && candidate.processId() !== processId)) {
@@ -247,6 +274,7 @@ export function createDesktopRuntimeRecovery(options: {
             phase: 'connected',
             reason: undefined,
             diagnostics: undefined,
+            startupFailure: undefined,
             ...(pendingRestartedGeneration
               ? { restartedGeneration: pendingRestartedGeneration }
               : {})
@@ -255,6 +283,24 @@ export function createDesktopRuntimeRecovery(options: {
           restartAuthorization = undefined
         } catch (error) {
           if (error instanceof RuntimeRecoveryStoppedError) stopped = true
+          const startupFailure = controller.signal.aborted
+            ? undefined
+            : projectStartupFailure(error)
+          const startupBlocked = startupFailure?.code === 'credential-unavailable'
+          if (startupBlocked) stopped = true
+          // A replacement can exit before it publishes an attachable generation. Bound those
+          // failed starts separately from crashes of a service we actually attached to.
+          if (
+            !controller.signal.aborted &&
+            replacing &&
+            !attached &&
+            error instanceof DesktopBackendStartupError &&
+            error.canRetry
+          ) {
+            failedStarts = failedStarts.filter((time) => Date.now() - time < 300_000)
+            failedStarts.push(Date.now())
+            if (failedStarts.length >= 3) stopped = true
+          }
           if (candidate) options.discard?.(candidate)
           candidate?.close()
           if (
@@ -265,20 +311,35 @@ export function createDesktopRuntimeRecovery(options: {
             publish({ ...state, phase: 'unavailable' })
           publish({
             ...state,
+            ...(startupFailure ? { startupFailure } : {}),
             reason:
               error instanceof RuntimeRecoveryStoppedError
                 ? error.reason
-                : Date.now() >= roundDeadline
-                  ? 'recovery-timeout'
-                  : state.reason,
+                : startupBlocked
+                  ? 'startup-failed'
+                  : stopped
+                    ? 'crash-limit'
+                    : Date.now() >= roundDeadline
+                      ? 'recovery-timeout'
+                      : state.reason,
             diagnostics: JSON.stringify(
               {
                 generation,
                 pid: processId,
                 reason:
-                  error instanceof RuntimeRecoveryStoppedError ? error.reason : 'attempt-failed',
+                  error instanceof RuntimeRecoveryStoppedError
+                    ? error.reason
+                    : startupBlocked
+                      ? 'startup-failed'
+                      : stopped
+                        ? 'crash-limit'
+                        : 'attempt-failed',
                 timedOut: Date.now() >= roundDeadline,
-                crashesInWindow: crashes.length
+                crashesInWindow: crashes.length,
+                failedStartsInWindow: failedStarts.length,
+                ...((startupFailure ?? state.startupFailure)
+                  ? { startupFailure: startupFailure ?? state.startupFailure }
+                  : {})
               },
               null,
               2

@@ -19,7 +19,8 @@ export * from './flush-protocol'
 
 export const createElectronSessionPersistenceFlush = (
   getWindow: () => BrowserWindow | undefined,
-  timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS
+  timeoutMs = DEFAULT_RENDERER_FLUSH_TIMEOUT_MS,
+  purpose?: SessionPersistenceFlushRequest['purpose']
 ): ((timeoutOverrideMs?: number) => Promise<RendererSessionPersistenceFlushOutcome>) => {
   return (timeoutOverrideMs) => {
     const window = getWindow()
@@ -28,7 +29,10 @@ export const createElectronSessionPersistenceFlush = (
       isRendererAvailable: () =>
         Boolean(window && !window.isDestroyed() && webContents && !webContents.isDestroyed()),
       sendRequest: (requestId) => {
-        const request: SessionPersistenceFlushRequest = { requestId }
+        const request: SessionPersistenceFlushRequest = {
+          requestId,
+          ...(purpose ? { purpose } : {})
+        }
         webContents?.send(SESSION_PERSISTENCE_FLUSH_REQUEST_CHANNEL, request)
       },
       onResponse: (listener) => {

@@ -12,9 +12,19 @@ import {
   suppressAutoReviewsForQuit
 } from '../lib/acp/workspace-events'
 import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
-import { flushPreviewPersistence } from '../lib/preview-persistence/preview-persistence'
-import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
-import { flushComposerDrafts } from '../pages/workspace/composer-draft-storage'
+import {
+  assertPreviewPersistenceSavedForRecoveryRestart,
+  flushPreviewPersistence
+} from '../lib/preview-persistence/preview-persistence'
+import {
+  assertSessionPersistenceSavedForRecoveryRestart,
+  flushSessionPersistence
+} from '../lib/session-persistence/session-persistence'
+import { assertWorkspaceRuntimeEventsSavedForRecoveryRestart } from '../lib/acp/workspace-runtime-event-owner'
+import {
+  flushComposerDrafts,
+  composerDraftHasFiles
+} from '../pages/workspace/composer-draft-storage'
 import { pendingWorkspaceQueueCount } from '../pages/workspace/workspace-message-queue-owner'
 
 const flushDrafts = (): void => {
@@ -43,10 +53,20 @@ export const completeQuitPersistenceFlush = async (
   let status: SessionPersistenceFlushResponse['status'] = 'completed'
   try {
     deps.suppressAutoReviews()
-    await deps.drainRuntimeEvents()
-    await deps.flushPersistence()
-    await deps.flushPreviewPersistence()
+    if (request.purpose === 'recovery-restart') {
+      // The disconnected service cannot prove or accept new writes. Inspect only work already
+      // received and durable acknowledgements; never pull snapshots or drive retry queues here.
+      assertWorkspaceRuntimeEventsSavedForRecoveryRestart()
+      assertSessionPersistenceSavedForRecoveryRestart()
+      assertPreviewPersistenceSavedForRecoveryRestart()
+    } else {
+      await deps.drainRuntimeEvents()
+      await deps.flushPersistence()
+      await deps.flushPreviewPersistence()
+    }
     flushDrafts()
+    if (request.purpose === 'recovery-restart' && composerDraftHasFiles())
+      throw new Error('Draft attachments must be saved before restarting.')
     if (pendingWorkspaceQueueCount() > 0) throw new Error('Queued messages have not been sent.')
     // Tab persistence does not save edited file content. Reuse Main's existing retry/force-quit gate.
     if (previewLeaveGuards.hasUnsavedChanges()) throw new Error('Preview has unsaved changes.')

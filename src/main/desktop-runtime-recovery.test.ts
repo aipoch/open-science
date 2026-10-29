@@ -5,6 +5,7 @@ import {
 } from './desktop-runtime-recovery'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { ServiceLifetimeRecord } from './local-service-lifetime'
+import { DesktopBackendStartupError } from './backend-startup'
 
 vi.mock('./runtime-stop-confirmation', () => ({ isRuntimeProcessAlive: vi.fn(() => true) }))
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
@@ -576,6 +577,237 @@ describe('automatic recovery rounds', () => {
     recovery.disconnect(latest)
     await vi.advanceTimersByTimeAsync(300)
     expect(restart).toHaveBeenCalledTimes(4)
+    recovery.setClosing(true)
+  })
+
+  it('pauses repeated exited replacement launches and lets a manual retry start a new round', async () => {
+    vi.useFakeTimers()
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+    const original = client()
+    const restart = vi.fn<() => Promise<DesktopRuntimeClient>>(async () => {
+      throw new DesktopBackendStartupError('Backend exited.', 'credentials', true, '/logs')
+    })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      restart,
+      connect: vi.fn(),
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(recovery.state()).toMatchObject({ phase: 'unavailable', reason: 'crash-limit' })
+    expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+      crashesInWindow: 1,
+      failedStartsInWindow: 3
+    })
+    expect(restart).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(restart).toHaveBeenCalledTimes(3)
+
+    const replacement = client(8)
+    restart.mockImplementation(async () => {
+      vi.mocked(isRuntimeProcessAlive).mockReturnValue(true)
+      return replacement
+    })
+    await recovery.reconnect()
+    expect(recovery.state().phase).toBe('connected')
+    expect(restart).toHaveBeenCalledTimes(4)
+    recovery.setClosing(true)
+  })
+
+  it('pauses a credential-blocked replacement with its safe startup diagnosis instead of retrying it', async () => {
+    vi.useFakeTimers()
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+    const original = client()
+    const restart = vi.fn<() => Promise<DesktopRuntimeClient>>(async () => {
+      throw new DesktopBackendStartupError(
+        'PRIVATE exception text and credential contents',
+        'credentials',
+        true,
+        '/PRIVATE/logs',
+        {
+          protocolVersion: 1,
+          attemptId: 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b',
+          stage: 'credentials',
+          kind: 'failed',
+          code: 'credential-unavailable',
+          reason: 'ciphertext-inventory-unavailable',
+          diagnostic: {
+            code: 'inventory-failed',
+            source: 'cookies',
+            stage: 'read-files',
+            reason: 'operation-failed',
+            systemCode: 'EBUSY'
+          }
+        }
+      )
+    })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      restart,
+      connect: vi.fn(),
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(300)
+    const startupFailure = {
+      stage: 'credentials',
+      code: 'credential-unavailable',
+      reason: 'ciphertext-inventory-unavailable',
+      diagnostic: {
+        code: 'inventory-failed',
+        source: 'cookies',
+        stage: 'read-files',
+        reason: 'operation-failed',
+        systemCode: 'EBUSY'
+      }
+    }
+    expect(recovery.state()).toMatchObject({
+      phase: 'unavailable',
+      reason: 'startup-failed',
+      startupFailure
+    })
+    expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({ startupFailure })
+    expect(JSON.stringify(recovery.state())).not.toContain('PRIVATE')
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(restart).toHaveBeenCalledOnce()
+    restart.mockImplementation(async () => {
+      vi.mocked(isRuntimeProcessAlive).mockReturnValue(true)
+      return client(8)
+    })
+    await recovery.reconnect()
+    expect(recovery.state()).toMatchObject({ phase: 'connected', startupFailure: undefined })
+    recovery.setClosing(true)
+  })
+
+  it('counts failed replacement starts in every new manual recovery round', async () => {
+    vi.useFakeTimers()
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+    const original = client()
+    const restart = vi.fn(async () => {
+      throw new DesktopBackendStartupError('Replacement exited.', 'runtime', true, '/logs')
+    })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      restart,
+      connect: vi.fn(),
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(recovery.state().reason).toBe('crash-limit')
+    await recovery.reconnect()
+    expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+      crashesInWindow: 0,
+      failedStartsInWindow: 1
+    })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(recovery.state().reason).toBe('crash-limit')
+    expect(restart).toHaveBeenCalledTimes(6)
+    recovery.setClosing(true)
+  })
+
+  it.each(['attachment', 'synchronization', 'unconfirmed-start'] as const)(
+    'does not count %s failures as exited replacement processes',
+    async (failure) => {
+      vi.useFakeTimers()
+      const original = client()
+      const next = client()
+      const connect = vi.fn(async () => {
+        if (failure === 'attachment') throw new Error('Connection unavailable.')
+        return next
+      })
+      if (failure === 'unconfirmed-start') vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+      const recovery = createDesktopRuntimeRecovery({
+        client: original,
+        automatic: true,
+        timeoutMs: 1000,
+        connect,
+        restart: async () => {
+          throw new DesktopBackendStartupError('Still starting.', 'runtime', false, '/logs')
+        },
+        activate: async () => {
+          throw new Error('Snapshot unavailable.')
+        },
+        onState: vi.fn()
+      })
+      recovery.disconnect(original)
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(recovery.state().reason).toBe('recovery-timeout')
+      expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+        crashesInWindow: failure === 'unconfirmed-start' ? 1 : 0,
+        failedStartsInWindow: 0
+      })
+      recovery.setClosing(true)
+    }
+  )
+
+  it('does not count a canceled replacement or its late startup rejection', async () => {
+    vi.useFakeTimers()
+    vi.mocked(isRuntimeProcessAlive).mockReturnValue(false)
+    const original = client()
+    let rejectStart!: (error: Error) => void
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      restart: () =>
+        new Promise((_resolve, reject) => {
+          rejectStart = reject
+        }),
+      connect: vi.fn(),
+      activate: async () => undefined,
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(300)
+    recovery.setClosing(true)
+    await vi.advanceTimersByTimeAsync(0)
+    rejectStart(new DesktopBackendStartupError('Canceled child exited.', 'runtime', true, '/logs'))
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+      crashesInWindow: 1,
+      failedStartsInWindow: 0
+    })
+    expect(recovery.state().startupFailure).toBeUndefined()
+  })
+
+  it('does not count a startup-classified activation failure after the replacement attaches', async () => {
+    vi.useFakeTimers()
+    let alive = false
+    vi.mocked(isRuntimeProcessAlive).mockImplementation(() => alive)
+    const original = client()
+    const next = client(8)
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      automatic: true,
+      timeoutMs: 1000,
+      connect: async () => next,
+      restart: async () => {
+        alive = true
+        return next
+      },
+      activate: async () => {
+        throw new DesktopBackendStartupError(
+          'Snapshot failed after attach.',
+          'runtime',
+          true,
+          '/logs'
+        )
+      },
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+      crashesInWindow: 1,
+      failedStartsInWindow: 0
+    })
     recovery.setClosing(true)
   })
 

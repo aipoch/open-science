@@ -15,6 +15,7 @@ import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 import { useSessionStore } from '@/stores/session-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { Button } from '@/components/ui/button'
+import { desktopRecoveryNeedsAppRestart } from '../../../shared/desktop-runtime-recovery'
 
 /** Keeps the application mounted: recovery must never discard editors or composer drafts. */
 export function DesktopRuntimeRecovery({
@@ -30,12 +31,41 @@ export function DesktopRuntimeRecovery({
   const announcedGeneration = useRef<string | undefined>(undefined)
   const [interrupted, setInterrupted] = useState<{ id: string; projectId: string }[]>([])
   const [diagnosticResult, setDiagnosticResult] = useState<'downloaded' | 'failed' | undefined>()
+  const restartPending = useRef(false)
+  const [restartingApp, setRestartingApp] = useState(false)
+  const [restartBlocked, setRestartBlocked] = useState(false)
+  const restartApplication = async (): Promise<void> => {
+    if (restartPending.current) return
+    restartPending.current = true
+    setRestartingApp(true)
+    setRestartBlocked(false)
+    let restarting = false
+    try {
+      restarting = (await window.api.desktopRuntime?.restartApp()) === 'restarting'
+      if (!restarting) setRestartBlocked(true)
+    } catch {
+      setRestartBlocked(true)
+    } finally {
+      if (!restarting) {
+        restartPending.current = false
+        setRestartingApp(false)
+      }
+    }
+  }
   useEffect(() => {
     const api = window.api.desktopRuntime
     if (!api) return
     let live = true
     const apply = (next: typeof state): void => {
       if (!live) return
+      if (
+        restartPending.current &&
+        useDesktopRuntimeRecoveryStore.getState().closing &&
+        !next.closing
+      ) {
+        restartPending.current = false
+        setRestartingApp(false)
+      }
       if (
         next.phase !== 'connected' &&
         useDesktopRuntimeRecoveryStore.getState().phase === 'connected'
@@ -132,23 +162,26 @@ export function DesktopRuntimeRecovery({
     return null
   const busy = state.phase === 'reconnecting' || state.phase === 'reconciling'
   const connected = state.phase === 'connected'
+  const needsAppRestart = desktopRecoveryNeedsAppRestart(state)
   const title = state.shutdownProgress
     ? t('Closing Open-Science…')
     : connected
       ? interrupted.length
         ? t('Local service restarted')
         : t('Diagnostics')
-      : state.reason === 'crash-limit'
-        ? t('Local service keeps stopping')
-        : state.reason === 'recovery-timeout'
-          ? t('Unable to restore the local service connection')
-          : state.reason === 'service-stopped'
-            ? t('Local service stopped')
-            : busy && state.reason === 'process-exited'
-              ? t('Restarting local service…')
-              : busy
-                ? t('Restoring local service connection…')
-                : t('Local service connection lost')
+      : state.startupFailure
+        ? t('Local service could not restart')
+        : state.reason === 'crash-limit'
+          ? t('Local service keeps stopping')
+          : state.reason === 'recovery-timeout'
+            ? t('Unable to restore the local service connection')
+            : state.reason === 'service-stopped'
+              ? t('Local service stopped')
+              : busy && state.reason === 'process-exited'
+                ? t('Restarting local service…')
+                : busy
+                  ? t('Restoring local service connection…')
+                  : t('Local service connection lost')
   return (
     <div
       className="fixed bottom-4 right-4 z-50 w-[min(520px,calc(100vw-2rem))] rounded-lg border bg-background p-4 shadow-lg"
@@ -172,17 +205,21 @@ export function DesktopRuntimeRecovery({
               ? interrupted.length
                 ? t('Some tasks were interrupted. Open them to resume.')
                 : undefined
-              : state.reason === 'crash-limit'
+              : needsAppRestart
                 ? t(
-                    'Automatic recovery has paused. Your drafts, projects and saved records are kept. You can retry now.'
+                    'The app checks that your work is saved before restarting. Unsaved attachments can block the restart.'
                   )
-                : state.reason === 'service-stopped'
+                : state.reason === 'crash-limit'
                   ? t(
-                      'Your windows and drafts are kept. The local service will not restart automatically. Reconnect to check task status.'
+                      'Automatic recovery has paused. Your drafts, projects and saved records are kept. You can retry now.'
                     )
-                  : t(
-                      'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
-                    )
+                  : state.reason === 'service-stopped'
+                    ? t(
+                        'Your windows and drafts are kept. The local service will not restart automatically. Reconnect to check task status.'
+                      )
+                    : t(
+                        'Your local drafts remain open. Submitted operations may have completed; they will not be retried.'
+                      )
         }
         dismissButton={
           connected && !state.shutdownProgress
@@ -216,14 +253,21 @@ export function DesktopRuntimeRecovery({
               }
             : !connected && !busy && !state.shutdownProgress
               ? {
-                  label: t('Retry'),
+                  label: needsAppRestart ? t('Restart Open-Science') : t('Retry'),
+                  loading: restartingApp,
                   onClick: () => {
-                    void window.api.desktopRuntime?.reconnect()
+                    if (needsAppRestart) void restartApplication()
+                    else void window.api.desktopRuntime?.reconnect()
                   }
                 }
               : undefined
         }
       >
+        {needsAppRestart && restartBlocked ? (
+          <p role="alert" className="mt-2 text-sm">
+            {t('Open-Science could not restart. Save or copy your work, then try again.')}
+          </p>
+        ) : null}
         {!connected && !state.shutdownProgress ? (
           <details className="mt-3 text-sm">
             <summary>{t('Diagnostics')}</summary>

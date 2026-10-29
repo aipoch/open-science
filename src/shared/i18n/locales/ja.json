@@ -7692,6 +7692,10 @@
     "Cancellation failed": "キャンセルに失敗しました",
     "The cancellation attempt ended. The job is still being tracked.": "今回のキャンセル処理は終了しました。ジョブの追跡は継続しています。",
     "Unable to get job status": "ジョブの状態を取得できません",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "スケジューラーにこのジョブの利用可能な結果がありません。リモートプロセスはまだ実行中の可能性があります。次の操作を決める前に、スケジューラーとリモートファイルを確認してください。"
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "スケジューラーにこのジョブの利用可能な結果がありません。リモートプロセスはまだ実行中の可能性があります。次の操作を決める前に、スケジューラーとリモートファイルを確認してください。",
+    "Local service could not restart": "ローカルサービスを再起動できませんでした",
+    "Restart Open-Science": "Open-Science を再起動",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "アプリは再起動前に作業が保存されているか確認します。未保存の添付ファイルがあると再起動できない場合があります。",
+    "Open-Science could not restart. Save or copy your work, then try again.": "Open-Science を再起動できませんでした。作業を保存またはコピーしてから、もう一度お試しください。"
   }
 }

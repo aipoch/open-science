@@ -7858,6 +7858,10 @@
     "Cancellation failed": "Abbruch fehlgeschlagen",
     "The cancellation attempt ended. The job is still being tracked.": "Dieser Abbruchversuch ist beendet. Der Job wird weiterhin verfolgt.",
     "Unable to get job status": "Jobstatus kann nicht abgerufen werden",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "Der Scheduler hat kein verfügbares Ergebnis für diesen Job. Der entfernte Prozess läuft möglicherweise noch. Prüfen Sie den Scheduler und die entfernten Dateien, bevor Sie das weitere Vorgehen festlegen."
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "Der Scheduler hat kein verfügbares Ergebnis für diesen Job. Der entfernte Prozess läuft möglicherweise noch. Prüfen Sie den Scheduler und die entfernten Dateien, bevor Sie das weitere Vorgehen festlegen.",
+    "Local service could not restart": "Der lokale Dienst konnte nicht neu gestartet werden",
+    "Restart Open-Science": "Open-Science neu starten",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "Die App prüft vor dem Neustart, ob Ihre Arbeit gespeichert ist. Nicht gespeicherte Anhänge können den Neustart verhindern.",
+    "Open-Science could not restart. Save or copy your work, then try again.": "Open-Science konnte nicht neu gestartet werden. Speichern oder kopieren Sie Ihre Arbeit und versuchen Sie es erneut."
   }
 }

@@ -96,6 +96,8 @@ export type AppLifecycleDeps = {
   // Requests an app quit (app.quit); the before-quit handler below turns it into an awaited teardown.
   quit: () => void
   beforeExit?: () => void | Promise<void>
+  // Cancels a caller-owned restart intent when quit is declined before preparation.
+  onQuitCancelled?: () => void
   // Number of live BrowserWindows (retained for existing lifecycle compositions).
   countWindows: () => number
   // Headless web mode starts the backend and tray without opening a renderer window.
@@ -423,6 +425,7 @@ export const installAppLifecycle = (
     const persistenceFailureIsForced = forceQuitAfterPersistenceFailure
     forceQuitAfterPersistenceFailure = false
     if (event.defaultPrevented || deps.isMigrationInProgress()) {
+      deps.onQuitCancelled?.()
       // This quit is being aborted (e.g. the migration guard cancelled it). Clear any prior
       // confirmation and shutdown trigger so neither leaks into a later close: otherwise a later
       // ordinary quit could bypass its active-session confirmation. A system request remains latched
@@ -473,6 +476,7 @@ export const installAppLifecycle = (
           requestConfirmedQuit(settingsInstallAtConfirmation)
           return
         }
+        deps.onQuitCancelled?.()
         // Cancel with no tray and no surviving window would strand the app with no UI (no-tray
         // Windows/Linux: X destroys the window -> window-all-closed quit -> Cancel): recreate the
         // window so the app the user chose to keep stays reachable. Gate on a window that existed

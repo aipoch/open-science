@@ -8178,6 +8178,10 @@
     "Cancellation failed": "Ошибка отмены",
     "The cancellation attempt ended. The job is still being tracked.": "Эта попытка отмены завершена. Отслеживание задания продолжается.",
     "Unable to get job status": "Не удалось получить состояние задания",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше."
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше.",
+    "Local service could not restart": "Не удалось перезапустить локальную службу",
+    "Restart Open-Science": "Перезапустить Open-Science",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "Перед перезапуском приложение проверит, сохранены ли ваши данные. Несохранённые вложения могут помешать перезапуску.",
+    "Open-Science could not restart. Save or copy your work, then try again.": "Не удалось перезапустить Open-Science. Сохраните или скопируйте свою работу и повторите попытку."
   }
 }
