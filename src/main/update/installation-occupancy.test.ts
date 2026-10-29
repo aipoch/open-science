@@ -196,6 +196,26 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
   })
 
+  it('uses system PowerShell and modules when the inherited search paths are customized', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\custom-tools')
+    vi.stubEnv('PSModulePath', 'C:\\custom-modules')
+    output(JSON.stringify({ resourcePids: [42], processes: [] }))
+    expect(await inspect('C:\\应用 程序\\Science')).toEqual([42])
+    const [command, args] = (mode === 'sync' ? mocks.spawnSync : mocks.run).mock.calls[0]
+    expect(command).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    for (const module of [
+      'Microsoft.PowerShell.Management',
+      'Microsoft.PowerShell.Utility',
+      'CimCmdlets'
+    ]) {
+      expect(args.at(-1)).toContain(
+        `Import-Module "$PSHOME\\Modules\\${module}\\${module}.psd1" -ErrorAction Stop`
+      )
+    }
+  })
+
   it('finds Linux open descriptors and mapped files outside the executable path', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
     output('10 unrelated\n20 unrelated\n30 unrelated\n')
@@ -402,6 +422,20 @@ describe('Windows crash reporter ownership', () => {
   it('recognizes its own handler using native parsed arguments and actual executable identity', () => {
     snapshot([row()])
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
+  })
+  it('inspects handler ownership with system PowerShell and modules under customized search paths', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\custom-tools')
+    vi.stubEnv('PSModulePath', 'C:\\custom-modules')
+    snapshot([row()])
+    expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
+    const [command, args] = mocks.spawnSync.mock.calls[0]
+    expect(command).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+    for (const module of ['Microsoft.PowerShell.Utility', 'CimCmdlets']) {
+      expect(args.at(-1)).toContain(
+        `Import-Module "$PSHOME\\Modules\\${module}\\${module}.psd1" -ErrorAction Stop`
+      )
+    }
   })
   it.each([
     ['another parent', { ParentProcessId: process.pid + 1 }],

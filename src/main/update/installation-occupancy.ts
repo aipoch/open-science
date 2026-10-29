@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 const requireNative = createRequire(__filename)
 
@@ -15,6 +16,10 @@ function windowsInstallationQuery(installationRoot: string): string[] {
   const script = `
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+# Inspection must not depend on user PATH entries or third-party module discovery.
+Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Management\\Microsoft.PowerShell.Management.psd1" -ErrorAction Stop
+Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop
+Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop
 Add-Type -TypeDefinition @'
 using System; using System.Text; using System.Linq; using System.Collections.Generic; using System.Runtime.InteropServices;
 public static class OpenScienceInstallationResources {
@@ -171,12 +176,16 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
     /* The installation may already have moved. */
   }
   if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', windowsInstallationQuery(installationRoot), {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer: 16 * 1024 * 1024,
-      windowsHide: true
-    })
+    const result = spawnSync(
+      resolveWindowsPowerShellExecutable(),
+      windowsInstallationQuery(installationRoot),
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true
+      }
+    )
     if (result.status !== 0)
       throw new UpdateLifecycleError(
         'installation-busy',
@@ -252,7 +261,10 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot))
+    const { stdout } = await run(
+      resolveWindowsPowerShellExecutable(),
+      windowsInstallationQuery(installationRoot)
+    )
     return parseWindowsInstallationQuery(stdout, installationRoot)
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
@@ -451,6 +463,8 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
   const script = [
     '$ErrorActionPreference = "Stop"',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+    'Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1" -ErrorAction Stop',
+    'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop',
     '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
       process.pid +
       '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
@@ -472,7 +486,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
   ].join('\n')
   const result = spawnSync(
-    'powershell.exe',
+    resolveWindowsPowerShellExecutable(),
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       encoding: 'utf8',
