@@ -45,6 +45,7 @@ import {
 type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
+  reviewDestinations?: boolean
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
@@ -58,6 +59,9 @@ type NetworkRuntimeConfig = Readonly<{
 }>
 
 type NetworkAskCallback = (request: {
+  addresses?: readonly string[]
+  reason?: string
+  policyAllowed?: boolean
   host: string
   port: number
   commandId?: string
@@ -171,6 +175,7 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
+    reviewDestinations: config.reviewDestinations,
     trustedPrivateDestinations: config.trustedPrivateDestinations,
     allowedDomains: config.allowedDomains,
     askDomains: config.askDomains,
@@ -201,7 +206,8 @@ const decide = async (
   }
   const verdict = await policy.inspect(host, port)
   if (!current()) return expired
-  if (verdict.kind === 'allow') return { allowed: true, address: verdict.address }
+  if (verdict.kind === 'allow' && !verdict.addresses)
+    return { allowed: true, address: verdict.address }
   if (verdict.kind === 'deny') {
     violations.record(commandId, `deny network-outbound ${host}:${port} (${verdict.reason})`)
     return {
@@ -213,7 +219,14 @@ const decide = async (
   try {
     allowed =
       (await approval?.({
-        host: verdict.host,
+        host: verdict.host ?? host,
+        ...(verdict.addresses
+          ? {
+              addresses: verdict.addresses,
+              policyAllowed: verdict.kind === 'allow',
+              reason: verdict.kind === 'ask' ? verdict.reason : undefined
+            }
+          : {}),
         port,
         commandId,
         purpose,
@@ -225,8 +238,12 @@ const decide = async (
   if (!current()) return expired
   if (allowed) return { allowed: true, address: verdict.address }
   if (purpose === 'probe')
-    return { allowed: false, source: verdict.source, address: verdict.address }
-  violations.record(commandId, `deny network-outbound ${verdict.host}:${port} (not approved)`)
+    return {
+      allowed: false,
+      source: verdict.addresses ? 'explicit' : verdict.kind === 'ask' ? verdict.source : 'explicit',
+      address: verdict.address
+    }
+  violations.record(commandId, `deny network-outbound ${host}:${port} (not approved)`)
   return {
     allowed: false,
     message: NETWORK_APPROVAL_REQUIRED

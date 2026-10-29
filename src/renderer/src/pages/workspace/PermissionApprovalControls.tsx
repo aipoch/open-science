@@ -480,6 +480,33 @@ const NotebookNetworkApprovalDetail = ({
   return (
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
+      {approval.addresses ? (
+        <>
+          <p>
+            {t('Resolved addresses: {{addresses}}', { addresses: approval.addresses.join(', ') })}
+          </p>
+          {approval.blockReason === 'addresses-changed' ? (
+            <p>{t('Addresses changed. Review the new addresses before approving again.')}</p>
+          ) : null}
+          {approval.risks?.includes('sensitive') ? (
+            <p>
+              {t(
+                'Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.'
+              )}
+            </p>
+          ) : null}
+          {approval.risks?.includes('fake-ip') ? (
+            <p>
+              {t('Possible Mihomo Fake-IP: this virtual address is not the final server address.')}
+            </p>
+          ) : null}
+          <p>
+            {t(
+              'Approval does not replay the command. The agent must check side effects and retry explicitly.'
+            )}
+          </p>
+        </>
+      ) : null}
       {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
       {approval.runtime &&
       approval.runtime !== 'bash' &&
@@ -689,13 +716,16 @@ const PermissionApprovalCard = ({
   // Default to Session when available: it avoids repeated prompts without silently widening to a
   // whole Project or Global grant. Once remains the fallback for requests without Session scope.
   const availableScopes = request ? getAvailableScopes(request.options) : new Set<PermissionScope>()
-  const defaultScope: PermissionScope = availableScopes.has('session')
-    ? 'session'
-    : availableScopes.has('once')
-      ? 'once'
-      : availableScopes.has('project')
-        ? 'project'
-        : 'global'
+  const defaultScope: PermissionScope =
+    getNotebookNetworkApproval(request)?.recordId && availableScopes.has('project')
+      ? 'project'
+      : availableScopes.has('session')
+        ? 'session'
+        : availableScopes.has('once')
+          ? 'once'
+          : availableScopes.has('project')
+            ? 'project'
+            : 'global'
 
   // Reset per-request UI state (scope + open menu) whenever the displayed request changes,
   // so nothing leaks from the previously answered prompt.

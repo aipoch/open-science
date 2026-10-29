@@ -8025,6 +8025,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Références enregistrées. Certains PDF n’ont pas pu être copiés ; restaurez-les dans Zotero et réessayez.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Impossible de se connecter à Zotero. Ouvrez Zotero 10 ou une version ultérieure, puis réessayez.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Dans Zotero, ouvrez Paramètres → Avancées et autorisez les autres applications de cet ordinateur à communiquer avec Zotero, puis réessayez.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero n’a pas répondu à temps. Attendez la fin de son démarrage, puis réessayez."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero n’a pas répondu à temps. Attendez la fin de son démarrage, puis réessayez.",
+    "Resolved addresses: {{addresses}}": "Adresses résolues : {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "Les adresses ont changé. Vérifiez les nouvelles adresses avant de donner à nouveau votre accord.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "Destination sensible : cet accès peut exposer des services locaux, des réseaux privés ou des identifiants cloud. Autorisez uniquement un accès de confiance.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Possible Fake-IP Mihomo : cette adresse virtuelle n’est pas celle du serveur final.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "L’autorisation ne relance pas la commande. L’agent doit vérifier les effets de bord et réessayer explicitement.",
+    "Approved network destinations": "Destinations réseau autorisées",
+    "Could not revoke network access. Try again.": "Impossible de révoquer l’accès réseau. Réessayez.",
+    "Project: {{project}}": "Projet : {{project}}",
+    "Source session: {{session}}": "Session d’origine : {{session}}"
   }
 }

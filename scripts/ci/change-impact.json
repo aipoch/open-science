@@ -524,6 +524,7 @@
         "e2e/pdf-translation-local.spec.ts",
         "e2e/pdf-translation-performance.spec.ts",
         "e2e/runtime-approval.spec.ts",
+        "e2e/network-destination-approval.spec.ts",
         "e2e/session-wait-status.spec.ts",
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",

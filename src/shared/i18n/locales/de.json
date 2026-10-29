@@ -7851,6 +7851,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Literaturangaben gespeichert. Einige PDFs konnten nicht kopiert werden. Stellen Sie sie in Zotero wieder her und versuchen Sie es erneut.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Verbindung zu Zotero fehlgeschlagen. Öffnen Sie Zotero 10 oder neuer und versuchen Sie es erneut.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Öffnen Sie in Zotero Einstellungen → Erweitert und erlauben Sie anderen Anwendungen auf diesem Computer, mit Zotero zu kommunizieren. Versuchen Sie es dann erneut.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero hat nicht rechtzeitig geantwortet. Warten Sie, bis der Start abgeschlossen ist, und versuchen Sie es erneut."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero hat nicht rechtzeitig geantwortet. Warten Sie, bis der Start abgeschlossen ist, und versuchen Sie es erneut.",
+    "Resolved addresses: {{addresses}}": "Aufgelöste Adressen: {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "Die Adressen haben sich geändert. Prüfen Sie die neuen Adressen vor einer erneuten Freigabe.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "Sensibles Ziel: Dieser Zugriff kann lokale Dienste, private Netzwerke oder Cloud-Zugangsdaten offenlegen. Geben Sie nur vertrauenswürdige Zugriffe frei.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Mögliche Mihomo Fake-IP: Diese virtuelle Adresse ist nicht die Adresse des endgültigen Servers.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "Die Freigabe führt den Befehl nicht erneut aus. Der Agent muss Nebenwirkungen prüfen und ausdrücklich einen neuen Versuch starten.",
+    "Approved network destinations": "Freigegebene Netzwerkziele",
+    "Could not revoke network access. Try again.": "Der Netzwerkzugriff konnte nicht widerrufen werden. Versuchen Sie es erneut.",
+    "Project: {{project}}": "Projekt: {{project}}",
+    "Source session: {{session}}": "Ursprüngliche Sitzung: {{session}}"
   }
 }

@@ -577,6 +577,48 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('notebookNetworkApproval')
   })
 
+  it('defaults trusted destination approval to the project and presents the reviewed addresses and risks', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...networkApprovalRequest,
+            rawInput: {
+              notebookNetworkApproval: {
+                hostname: 'local.test',
+                port: 443,
+                runtime: 'bash',
+                recordId: 'trusted',
+                revision: 1,
+                addresses: ['198.18.0.1'],
+                risks: ['sensitive', 'fake-ip'],
+                blockReason: 'addresses-changed'
+              }
+            },
+            options: [
+              { optionId: 'allow-once@1', kind: 'allow_once', name: 'Once', scope: 'once' },
+              {
+                optionId: 'project-allow@1',
+                kind: 'allow_always',
+                name: 'Project',
+                scope: 'project'
+              },
+              { optionId: 'always-allow@1', kind: 'allow_always', name: 'Global', scope: 'global' },
+              { optionId: 'deny', kind: 'reject_once', name: 'Deny' }
+            ]
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(html).toContain('Allow for this project')
+    expect(html).toContain('198.18.0.1')
+    expect(html).toContain('Sensitive destination')
+    expect(html).toContain('Possible Mihomo Fake-IP')
+    expect(html).toContain('Addresses changed')
+    expect(html).toContain('Approval does not replay the command')
+  })
+
   it.each(['python', 'r', 'repl', 'bash', undefined])(
     'TB-06 describes the existing %s execution contract',
     (runtime) => {

@@ -391,15 +391,18 @@ describe('notebook MCP server config', () => {
     ])
   })
 
-  it('allows explicit network approval before a connection while preserving scoped grants', () => {
-    const tool = NOTEBOOK_RPC_TOOLS.find((candidate) => candidate.name === 'request_network_access')
-
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('A failed connection is not required')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call `request_network_access`')
-    expect(tool?.description).toContain(
-      'before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED'
-    )
-    expect(tool?.description).toContain('Execute or retry only when the result is allowed')
+  it('requires a trusted block record and an access purpose', () => {
+    const tool = NOTEBOOK_RPC_TOOLS.find(
+      (candidate) => candidate.name === 'request_network_access'
+    )!
+    expect(
+      z.object(tool.inputSchema).safeParse({ hostname: 'example.org', reason: 'Download data' })
+        .success
+    ).toBe(false)
+    expect(
+      z.object(tool.inputSchema).safeParse({ recordId: 'trusted-record', reason: 'Download data' })
+        .success
+    ).toBe(true)
   })
 
   it.each(['aborted', 'user-decision', 'approval-surface-unavailable'])(
@@ -436,9 +439,8 @@ describe('notebook MCP server config', () => {
         const delivered = await client.callTool({
           name: 'request_network_access',
           arguments: {
-            hostname: 'data.example.org',
-            reason: 'Download the dataset.',
-            runtime: 'python'
+            recordId: 'trusted-record',
+            reason: 'Download the dataset.'
           }
         })
         expect(delivered.content).toEqual([{ type: 'text', text: JSON.stringify(result, null, 2) }])
@@ -493,8 +495,7 @@ describe('notebook MCP server config', () => {
               toolName === 'bash_execute'
                 ? { command: 'sample-client request' }
                 : {
-                    hostname: 'service.example.test',
-                    runtime: 'python',
+                    recordId: 'trusted-record',
                     reason: 'Read the fixture.'
                   }
           },

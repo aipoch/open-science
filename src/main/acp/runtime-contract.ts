@@ -139,6 +139,11 @@ export type AcpRuntimeOptions = {
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
     networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
+    allowNetworkDestination?: (
+      grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<unknown>
     allowNetworkDomain?: (
       hostname: string,
       assertCurrent?: () => Promise<void>,

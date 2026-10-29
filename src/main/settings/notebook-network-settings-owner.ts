@@ -1,5 +1,10 @@
+import type { NetworkDestinationGrant } from '../../shared/network-destination-grants'
+import { addressesApproved } from '../../shared/network-destination-grants'
 import { isDeepStrictEqual } from 'node:util'
-import { reviewPrivateDestination } from '@aipoch/notebook-network-sandbox'
+import {
+  reviewPrivateDestination,
+  reviewNetworkDestination
+} from '@aipoch/notebook-network-sandbox'
 import {
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
@@ -51,6 +56,37 @@ class NotebookNetworkSettingsOwner {
     )
   }
 
+  allowDestination(
+    grant: NetworkDestinationGrant,
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    return this.enqueue(
+      async (current) => {
+        if (
+          current.destinationGrants?.some(
+            (entry) => entry.id === grant.id && entry.revokedAt !== undefined
+          )
+        )
+          throw Object.assign(new Error('Network grant was revoked.'), {
+            code: 'network-grant-revoked'
+          })
+        const reviewed = await reviewNetworkDestination(grant)
+        if (!addressesApproved(reviewed.approvedAddresses, grant.approvedAddresses))
+          throw new Error('Network addresses changed. Review the destination again.')
+        return {
+          ...current,
+          destinationGrants: [
+            ...(current.destinationGrants ?? []).filter((entry) => entry.id !== grant.id),
+            grant
+          ]
+        }
+      },
+      assertCurrent,
+      finalize
+    )
+  }
+
   private enqueue(
     update: (
       current: NotebookNetworkSettings
@@ -71,6 +107,16 @@ class NotebookNetworkSettingsOwner {
     request: SetNotebookNetworkRequest
   ): Promise<NotebookNetworkSettings> {
     let requested = normalizeNotebookNetworkSettings(request)
+    // Settings can revoke existing authority; only the conversation approval owner can add it.
+    const revoked = request.revokeNetworkGrantIds ?? []
+    if (!Array.isArray(revoked) || revoked.some((id) => typeof id !== 'string'))
+      throw new Error('Invalid network grant revocation.')
+    requested = {
+      ...requested,
+      destinationGrants: (current.destinationGrants ?? []).map((entry) =>
+        revoked.includes(entry.id) ? { ...entry, revokedAt: entry.revokedAt ?? Date.now() } : entry
+      )
+    }
     if (request.trustedPrivateDestinations === undefined) {
       // Public-only and historical clients must not erase independently reviewed grants.
       requested = { ...requested, trustedPrivateDestinations: current.trustedPrivateDestinations }

@@ -792,6 +792,20 @@ class SettingsService {
     return settings
   }
 
+  async allowNotebookNetworkDestination(
+    grant: import('../../shared/network-destination-grants').NetworkDestinationGrant,
+    assertCurrent?: () => Promise<void>,
+    finalize?: () => Promise<void>
+  ): Promise<NotebookNetworkSettings> {
+    const result = await this.notebookNetwork.allowDestination(grant, assertCurrent, finalize)
+    try {
+      await this.onNotebookNetworkDomainAllowed?.()
+    } catch (error) {
+      this.log.warn('Network settings publication failed.', diagnosticErrorFields(error))
+    }
+    return result
+  }
+
   getNotebookNetworkStatus(): Promise<NotebookNetworkStatus> {
     return this.getNotebookNetworkStatusImpl()
   }

@@ -18,6 +18,7 @@ export type TrustedPrivateDestination = Readonly<{
 }>
 
 type DestinationPolicyOptions = Readonly<{
+  reviewDestinations?: boolean
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
@@ -26,8 +27,15 @@ type DestinationPolicyOptions = Readonly<{
 }>
 
 type DestinationVerdict =
-  | Readonly<{ kind: 'allow'; address: string }>
-  | Readonly<{ kind: 'ask'; source: 'explicit' | 'unknown'; host: string; address: string }>
+  | Readonly<{ kind: 'allow'; address: string; host?: string; addresses?: readonly string[] }>
+  | Readonly<{
+      kind: 'ask'
+      source: 'explicit' | 'unknown'
+      host: string
+      address: string
+      addresses?: readonly string[]
+      reason?: string
+    }>
   | Readonly<{ kind: 'deny'; reason: string; configurable: boolean }>
 
 const parseRule = (text: string): Rule => {
@@ -267,7 +275,46 @@ const reviewPrivateDestination = async (request: {
   }
 }
 
+export const reviewNetworkDestination = async (request: {
+  hostname: string
+  port: number
+}): Promise<TrustedPrivateDestination> => {
+  const hostname = normalizeRequestedHost(request.hostname)
+  if (
+    !hostname ||
+    /[\s/\\?#@%]/.test(request.hostname) ||
+    !Number.isInteger(request.port) ||
+    request.port < 1 ||
+    request.port > 65535
+  )
+    throw new Error('Invalid network destination.')
+  const addresses = isIP(hostname)
+    ? [hostname]
+    : (await lookup(hostname, { all: true, verbatim: true })).map(({ address }) => address)
+  if (!addresses.length || addresses.some((address) => !isIP(address)))
+    throw new Error('Network destination did not resolve.')
+  return {
+    hostname,
+    port: request.port,
+    approvedAddresses: [...new Set(addresses.map(canonicalAddress))].sort()
+  }
+}
+
+export const networkDestinationRisks = (addresses: readonly string[]): string[] => {
+  const risks = new Set<string>()
+  for (const address of addresses) {
+    if (!isInternetAddress(address) || isHostAddress(address)) risks.add('sensitive')
+    if (isHostAddress(address) || address === '::1' || address.startsWith('127.'))
+      risks.add('local')
+    if (address === '169.254.169.254' || canonicalAddress(address) === 'fd00:ec2::254')
+      risks.add('metadata')
+    if (isIP(address) === 4 && ipv4In(ipv4Number(address), '198.18.0.0', 15)) risks.add('fake-ip')
+  }
+  return [...risks].sort()
+}
+
 class DestinationPolicy {
+  readonly #review: boolean
   readonly #private: readonly TrustedPrivateDestination[]
   readonly #allowed: readonly Rule[]
   readonly #asked: readonly Rule[]
@@ -275,6 +322,7 @@ class DestinationPolicy {
   readonly #reasons: Readonly<Record<string, string>>
 
   constructor(options: DestinationPolicyOptions) {
+    this.#review = options.reviewDestinations === true
     this.#private = (options.trustedPrivateDestinations ?? [])
       .filter(validPrivateDestination)
       .map((entry) => ({
@@ -289,6 +337,8 @@ class DestinationPolicy {
 
   async inspect(input: string, port: number): Promise<DestinationVerdict> {
     const host = normalizeRequestedHost(input)
+    if (!Number.isInteger(port) || port < 1 || port > 65535)
+      return { kind: 'deny', reason: 'invalid port', configurable: false }
     if (!host) return { kind: 'deny', reason: 'malformed host', configurable: false }
     const blocked = this.#denied.find(({ rule }) => ruleAccepts(rule, host, port))
     if (blocked) {
@@ -307,7 +357,19 @@ class DestinationPolicy {
     if (addresses.length === 0) {
       return { kind: 'deny', reason: 'host did not resolve', configurable: false }
     }
-    if (addresses.some((address) => !isInternetAddress(address))) {
+    const reviewed = this.#review
+      ? { host, addresses: [...new Set(addresses.map(canonicalAddress))].sort() }
+      : {}
+    if (addresses.some((address) => !isInternetAddress(address) || isHostAddress(address))) {
+      if (this.#review)
+        return {
+          kind: 'ask',
+          source: 'explicit',
+          host,
+          address: addresses[0]!,
+          ...reviewed,
+          reason: 'sensitive-destination'
+        }
       const trusted = this.#private.find((entry) => entry.hostname === host && entry.port === port)
       if (
         trusted &&
@@ -337,9 +399,16 @@ class DestinationPolicy {
           (!needsApproval || (!rule.subdomains && !rule.labels && !rule.all))
       )
     ) {
-      return { kind: 'allow', address }
+      return { kind: 'allow', address, ...reviewed }
     }
-    return { kind: 'ask', source: needsApproval ? 'explicit' : 'unknown', host, address }
+    return {
+      kind: 'ask',
+      source: needsApproval ? 'explicit' : 'unknown',
+      host,
+      address,
+      ...reviewed,
+      ...(this.#review ? { reason: 'approval-required' } : {})
+    }
   }
 }
 

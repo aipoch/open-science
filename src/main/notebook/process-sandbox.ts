@@ -112,6 +112,7 @@ export type NotebookSandboxedSpawn = Readonly<{
 }>
 
 export type NotebookNetworkAccessDecisionRequest = Readonly<{
+  recordId?: string
   sessionId: string
   projectId: string
   hostname: string

@@ -871,3 +871,231 @@ describe('durable sandbox destination approvals', () => {
     expect(send).not.toHaveBeenCalled()
   })
 })
+
+describe('trusted destination approvals', () => {
+  const exactInput = (f: ReturnType<typeof fixture>): AppPermissionRequest => ({
+    ...f.input,
+    networkApproval: {
+      ...f.input.networkApproval!,
+      hostname: '127.0.0.1',
+      port: 8443,
+      evidence: {
+        recordId: 'trusted-record',
+        revision: 0,
+        addresses: ['127.0.0.1'],
+        risks: ['local', 'sensitive'],
+        blockReason: 'sensitive-destination'
+      }
+    }
+  })
+
+  it('deduplicates requests and requires a new execution after a once decision', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const result = f.owner.request(input, 'prompt-fixture', f.send)
+    const duplicate = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    expect(request.options.map((option) => option.scope)).toEqual([
+      'once',
+      'project',
+      'global',
+      undefined
+    ])
+    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
+    expect(await result).toBe('retry-required')
+    expect(await duplicate).toBe('retry-required')
+    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('continuing')
+    expect(await f.owner.request(input, 'prompt-fixture', f.send)).toBe('retry-required')
+    const next = {
+      ...input,
+      networkApproval: { ...input.networkApproval!, executionId: 'explicit-retry' }
+    }
+    expect(await f.owner.request(next, 'prompt-fixture', f.send)).toBe('allow-once')
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('keeps a denied record denied on repeated submission', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const result = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    await f.broker.respond({ requestId: request.requestId, optionId: 'deny' })
+    expect(await result).toBe('deny')
+    expect(await f.owner.request(input, 'prompt-fixture', f.send)).toBe('deny')
+    expect(f.broker.getPendingRequests()).toEqual([])
+  })
+
+  it('refreshes the displayed snapshot before any changed address can be approved', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const evidence = input.networkApproval!.evidence as { addresses: readonly string[] }
+    evidence.addresses = ['10.0.0.1']
+    const result = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    await expect(
+      f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
+    ).rejects.toThrow('changed')
+    const refreshed = f.broker.getPendingRequests()[0]
+    expect(refreshed.rawInput).toMatchObject({
+      notebookNetworkApproval: { addresses: ['127.0.0.1'], revision: 1 }
+    })
+    expect(refreshed.options.map((option) => option.optionId)).toContain('allow-once@1')
+    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
+    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@1' })
+    expect(await result).toBe('retry-required')
+  })
+
+  it('persists project consent before returning, and restores exact one-shot authority', async () => {
+    const f = fixture()
+    let grants: unknown[] = []
+    const owner = new SandboxNetworkApprovalOwner(
+      f.sessions,
+      f.published,
+      f.allowDomain,
+      async (grant, assertCurrent, finalize) => {
+        await assertCurrent?.()
+        grants = [grant]
+        await finalize?.()
+      }
+    )
+    const input = exactInput(f)
+    const result = owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    await f.broker.respond({ requestId: request.requestId, optionId: 'project-allow@0' })
+    expect(await result).toBe('retry-required')
+    expect(grants).toEqual([
+      expect.objectContaining({
+        scope: 'project',
+        projectId: 'project-fixture',
+        approvedAddresses: ['127.0.0.1'],
+        port: 8443,
+        recordId: 'trusted-record'
+      })
+    ])
+    expect(f.session.runtimeContext?.networkApprovals).toBeUndefined()
+  })
+
+  it('restores one-shot consent across an owner restart and binds it to the runtime', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const result = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
+    await result
+    const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+    expect(
+      await restarted.recordStatus('project-fixture', 'session-fixture', 'trusted-record')
+    ).toBe('approved')
+    const wrongRuntime = restarted.request(
+      {
+        ...input,
+        networkApproval: {
+          ...input.networkApproval!,
+          runtime: 'python',
+          executionId: 'python-retry',
+          evidence: { ...input.networkApproval!.evidence!, recordId: 'python-record' }
+        }
+      },
+      'prompt-fixture',
+      f.send
+    )
+    const second = await f.pending()
+    await f.broker.respond({ requestId: second.requestId, optionId: 'deny' })
+    expect(await wrongRuntime).toBe('deny')
+    expect(
+      await restarted.request(
+        { ...input, networkApproval: { ...input.networkApproval!, executionId: 'shell-retry' } },
+        'prompt-fixture',
+        f.send
+      )
+    ).toBe('allow-once')
+    expect(
+      await restarted.recordStatus('project-fixture', 'session-fixture', 'trusted-record')
+    ).toBeUndefined()
+  })
+
+  it('rejects a stale restored decision when the displayed DNS snapshot changes concurrently', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const live = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    const read = f.sessions.loadSessionForContinuation
+    let replaced = false
+    f.sessions.loadSessionForContinuation = async (...args) => {
+      const old = await read(...args)
+      if (!replaced) {
+        replaced = true
+        const context = await f.sessions.readSessionRuntimeContext(
+          'project-fixture',
+          'session-fixture'
+        )
+        const current = context.networkApprovals![0]
+        await f.sessions.patchSessionRuntimeContext({
+          projectId: 'project-fixture',
+          sessionId: 'session-fixture',
+          expectedRevision: context.revision,
+          patch: {
+            networkApprovals: [
+              {
+                ...current,
+                evidence: {
+                  ...current.evidence!,
+                  revision: 1,
+                  addresses: ['127.0.0.1', '10.0.0.1']
+                }
+              }
+            ]
+          }
+        })
+      }
+      return old
+    }
+    const restarted = new SandboxNetworkApprovalOwner(f.sessions, f.published, f.allowDomain)
+    await expect(
+      restarted.respondRestored(
+        {
+          requestId: request.requestId,
+          optionId: 'allow-once@0',
+          restored: { projectId: 'project-fixture', sessionId: 'session-fixture' }
+        },
+        'project-fixture'
+      )
+    ).rejects.toThrow('changed')
+    expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
+      state: 'pending',
+      evidence: { revision: 1 }
+    })
+    await f.broker.respond({ requestId: request.requestId, cancelled: true })
+    await live
+  })
+
+  it('does not release consumed once authority when cancellation wins during publication', async () => {
+    const f = fixture()
+    const input = exactInput(f)
+    const result = f.owner.request(input, 'prompt-fixture', f.send)
+    const request = await f.pending()
+    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
+    await result
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    f.published.mockImplementationOnce(async () => {
+      entered.resolve()
+      await release.promise
+    })
+    const onNetworkAddressesApproved = vi.fn()
+    const retry = f.owner.request(
+      {
+        ...input,
+        onNetworkAddressesApproved,
+        networkApproval: { ...input.networkApproval!, executionId: 'retry-after-approval' }
+      },
+      'prompt-fixture',
+      f.send
+    )
+    await entered.promise
+    await f.owner.cancel('project-fixture', 'session-fixture')
+    release.resolve()
+    expect(await retry).toBeUndefined()
+    expect(onNetworkAddressesApproved).not.toHaveBeenCalled()
+  })
+})

@@ -7685,6 +7685,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文獻已儲存。部分 PDF 無法複製；請在 Zotero 中還原檔案後重試。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "無法連線至 Zotero。請開啟 Zotero 10 或更新版本，然後重試。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "請在 Zotero 的「設定 → 進階」中啟用「允許此電腦上的其他應用程式與 Zotero 通訊」，然後重試。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 回應逾時。請等待其啟動完成，然後重試。"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 回應逾時。請等待其啟動完成，然後重試。",
+    "Resolved addresses: {{addresses}}": "解析位址：{{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "位址已變更。請檢查新位址後重新核准。",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "敏感目標：此存取可能暴露本機服務、私人網路或雲端憑證。僅在信任此次存取時核准。",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "可能為 Mihomo Fake-IP：此虛擬位址並非最終伺服器位址。",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "核准不會重新執行命令。智能體必須檢查副作用後明確重試。",
+    "Approved network destinations": "已核准的網路目標",
+    "Could not revoke network access. Try again.": "無法撤銷網路存取權限。請重試。",
+    "Project: {{project}}": "專案：{{project}}",
+    "Source session: {{session}}": "來源工作階段：{{session}}"
   }
 }

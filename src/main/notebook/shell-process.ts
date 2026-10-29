@@ -1152,6 +1152,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
                 return preparedLaunch.sandboxed?.networkApprovalRetryRequired?.()
               }
             },
+            annotateStderr: (stderr, stdout) =>
+              preparedLaunch.sandboxed?.annotateStderr(stderr, stdout) ?? stderr,
             retryCleanup: async () => (await retryCleanup?.()) ?? false
           }
         },

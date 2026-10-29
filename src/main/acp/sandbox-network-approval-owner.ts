@@ -1,3 +1,8 @@
+import { reviewNetworkDestination, networkDestinationRisks } from '@aipoch/notebook-network-sandbox'
+import {
+  addressesApproved,
+  type NetworkDestinationGrant
+} from '../../shared/network-destination-grants'
 import { randomUUID } from 'node:crypto'
 import type { AcpPermissionResponse } from '../../shared/acp'
 import {
@@ -13,8 +18,23 @@ import {
 import type { AppPermissionRequest } from './permission-broker'
 import type { PermissionWaitSessions, PublishPermissionWaitSession } from './permission-wait-owner'
 
+const assertSnapshot = (context: SessionRuntimeContext, approval: SandboxNetworkApproval): void => {
+  if (!approval.evidence) return
+  const current = context.networkApprovals?.find((entry) => entry.requestId === approval.requestId)
+  if (
+    !current?.evidence ||
+    current.evidence.revision !== approval.evidence.revision ||
+    JSON.stringify(current.evidence.addresses) !== JSON.stringify(approval.evidence.addresses)
+  )
+    throw new Error('Network approval changed. Review the current request.')
+}
+
+const persistentDecision = (decision: string | undefined): boolean =>
+  decision === 'always-allow' || decision === 'project-allow'
+
 // Owns only destination authority. The provider permission slot and its tool replay stay separate.
 export class SandboxNetworkApprovalOwner {
+  private readonly exactRequests = new Map<string, Promise<string | undefined>>()
   private readonly liveRequests = new Map<
     string,
     { abort: AbortController; settled: Promise<void> }
@@ -39,10 +59,31 @@ export class SandboxNetworkApprovalOwner {
       hostname: string,
       assertCurrent?: () => Promise<void>,
       finalize?: () => Promise<void>
+    ) => Promise<unknown>,
+    private readonly allowDestination?: (
+      grant: NetworkDestinationGrant,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
     ) => Promise<unknown>
   ) {}
 
-  async request(
+  request(
+    input: AppPermissionRequest,
+    promptMessageId: string | undefined,
+    send: (input: AppPermissionRequest) => Promise<string | undefined>,
+    isCurrent: () => boolean = () => !input.signal?.aborted
+  ): Promise<string | undefined> {
+    const id = input.networkApproval?.evidence?.recordId
+    if (!id) return this.requestInternal(input, promptMessageId, send, isCurrent)
+    const existing = this.exactRequests.get(id)
+    if (existing) return existing
+    const result = this.requestInternal(input, promptMessageId, send, isCurrent)
+    this.exactRequests.set(id, result)
+    void result.finally(() => this.exactRequests.delete(id)).catch(() => {})
+    return result
+  }
+
+  private async requestInternal(
     input: AppPermissionRequest,
     promptMessageId: string | undefined,
     send: (input: AppPermissionRequest) => Promise<string | undefined>,
@@ -57,12 +98,12 @@ export class SandboxNetworkApprovalOwner {
     const graph = session.conversationGraph
     const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
     if (!frame) return undefined
-    const approval: SandboxNetworkApproval = {
+    let approval: SandboxNetworkApproval = {
       ...network,
       version: 1,
       kind: 'sandbox-network',
       state: 'pending',
-      requestId: randomUUID(),
+      requestId: network.evidence?.recordId ?? randomUUID(),
       sessionId: input.sessionId,
       originatingPromptMessageId: promptMessageId,
       agentFrameId: frame.id,
@@ -70,15 +111,37 @@ export class SandboxNetworkApprovalOwner {
       createdAt: Date.now()
     }
     const sameDestination = (candidate: SandboxNetworkApproval): boolean =>
+      candidate.runtime === network.runtime &&
       candidate.commandFingerprint === network.commandFingerprint &&
       candidate.hostname === network.hostname &&
-      candidate.port === network.port
+      candidate.port === network.port &&
+      (!network.evidence
+        ? !candidate.evidence
+        : Boolean(
+            candidate.evidence &&
+            addressesApproved(network.evidence.addresses, candidate.evidence.addresses)
+          ))
     const grant = activeSandboxNetworkApprovals(session).find(
       (candidate) =>
         candidate.state === 'continuing' &&
-        candidate.decision !== 'always-allow' &&
+        candidate.decision === undefined &&
         sameDestination(candidate)
     )
+    const previous = activeSandboxNetworkApprovals(session).find(
+      (candidate) => candidate.requestId === approval.requestId
+    )
+    if (
+      previous?.decision === 'deny' ||
+      activeSandboxNetworkApprovals(session).some(
+        (candidate) =>
+          candidate.decision === 'deny' &&
+          candidate.originatingPromptMessageId === promptMessageId &&
+          sameDestination(candidate)
+      )
+    )
+      return 'deny'
+    if (grant && grant.executionId === network.executionId && network.evidence)
+      return 'retry-required'
     if (grant) {
       await this.patch(
         network.projectId,
@@ -92,7 +155,9 @@ export class SandboxNetworkApprovalOwner {
         false,
         current
       )
-      return input.signal?.aborted ? undefined : 'allow-once'
+      if (!current() || input.signal?.aborted) return undefined
+      if (grant.evidence) input.onNetworkAddressesApproved?.(grant.evidence.addresses)
+      return 'allow-once'
     }
     await this.patch(
       network.projectId,
@@ -100,7 +165,12 @@ export class SandboxNetworkApprovalOwner {
       (context) => {
         if ((context.networkApprovals?.length ?? 0) >= 32)
           throw new Error('Too many pending network approvals.')
-        return [...(context.networkApprovals ?? []), approval]
+        return [
+          ...(context.networkApprovals ?? []).filter(
+            (entry) => entry.requestId !== approval.requestId
+          ),
+          approval
+        ]
       },
       approval,
       false,
@@ -119,7 +189,7 @@ export class SandboxNetworkApprovalOwner {
     const settled = Promise.withResolvers<void>()
     this.liveRequests.set(approval.requestId, { abort: recoveryAbort, settled: settled.promise })
     try {
-      return await send({
+      const selected = await send({
         ...input,
         signal: input.signal
           ? AbortSignal.any([input.signal, recoveryAbort.signal])
@@ -130,20 +200,65 @@ export class SandboxNetworkApprovalOwner {
         },
         ...request,
         durable: true,
-        beforeRespond: async (optionId) => {
-          if (optionId === 'always-allow') {
-            await this.grantGlobal(network.projectId, approval, false, current)
+        ...(approval.evidence
+          ? { refreshRequest: () => sandboxNetworkApprovalRequest(approval) }
+          : {}),
+        beforeRespond: async (rawOptionId) => {
+          const optionId = rawOptionId?.split('@')[0]
+          if (approval.evidence && optionId && optionId !== 'deny') {
+            const reviewed = await reviewNetworkDestination(approval)
+            if (!addressesApproved(reviewed.approvedAddresses, approval.evidence.addresses)) {
+              const updated = {
+                ...approval,
+                evidence: {
+                  ...approval.evidence,
+                  revision: approval.evidence.revision + 1,
+                  addresses: reviewed.approvedAddresses,
+                  risks: networkDestinationRisks(reviewed.approvedAddresses),
+                  blockReason: 'addresses-changed'
+                }
+              }
+              await this.patch(
+                network.projectId,
+                input.sessionId,
+                (context) => {
+                  assertSnapshot(context, approval)
+                  return (context.networkApprovals ?? []).map((entry) =>
+                    entry.requestId === approval.requestId ? updated : entry
+                  )
+                },
+                approval,
+                false,
+                current
+              )
+              approval = updated
+              throw new Error(
+                'Network addresses changed. Review the new addresses and approve again.'
+              )
+            }
+          }
+          if (persistentDecision(optionId)) {
+            await this.grantGlobal(
+              network.projectId,
+              {
+                ...approval,
+                ...(optionId === 'project-allow' ? { decision: 'project-allow' as const } : {})
+              },
+              false,
+              current
+            )
             return
           }
           await this.patch(
             network.projectId,
             input.sessionId,
             (context) => {
+              if (optionId === 'allow-once') assertSnapshot(context, approval)
               if (
                 context.networkApprovals?.some(
                   (candidate) =>
                     candidate.requestId === approval.requestId &&
-                    candidate.decision === 'always-allow'
+                    persistentDecision(candidate.decision)
                 )
               )
                 throw new Error('Network approval was already answered.')
@@ -152,15 +267,18 @@ export class SandboxNetworkApprovalOwner {
                   ? [candidate]
                   : optionId === 'allow-once' &&
                       !input.signal?.aborted &&
-                      input.canResume?.() === false
+                      (approval.evidence !== undefined || input.canResume?.() === false)
                     ? [{ ...candidate, state: 'continuing' as const }]
-                    : []
+                    : approval.evidence
+                      ? [{ ...candidate, state: 'continuing' as const, decision: 'deny' as const }]
+                      : []
               )
             },
             optionId === 'allow-once' ? approval : undefined
           )
         }
       })
+      return approval.evidence && selected && selected !== 'deny' ? 'retry-required' : selected
     } finally {
       this.liveRequests.delete(approval.requestId)
       settled.resolve()
@@ -173,6 +291,26 @@ export class SandboxNetworkApprovalOwner {
         )
       }
     }
+  }
+
+  async recordStatus(
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ): Promise<'pending' | 'approved' | 'denied' | undefined> {
+    if (!this.sessions) return undefined
+    const session = await this.sessions.loadSessionForContinuation(projectId, sessionId)
+    if (session.projectId !== projectId || session.id !== sessionId) return undefined
+    const record = activeSandboxNetworkApprovals(session).find(
+      (entry) => entry.evidence?.recordId === recordId
+    )
+    return !record
+      ? undefined
+      : record.state === 'pending'
+        ? 'pending'
+        : record.decision === 'deny'
+          ? 'denied'
+          : 'approved'
   }
 
   async respondRestored(response: AcpPermissionResponse, projectId: string): Promise<boolean> {
@@ -188,22 +326,61 @@ export class SandboxNetworkApprovalOwner {
     )
     if (!approval) return false
     if (approval.state !== 'pending') throw new Error('Network approval was already answered.')
-    const optionId = response.cancelled ? undefined : response.optionId
+    const rawOptionId = response.cancelled ? undefined : response.optionId
+    const optionId = rawOptionId?.split('@')[0]
     if (
       optionId &&
       !sandboxNetworkApprovalRequest(approval).options.some(
-        (option) => option.optionId === optionId
+        (option) => option.optionId === rawOptionId
       )
     )
       throw new Error('Invalid network approval option.')
-    if (optionId === 'always-allow') {
-      await this.grantGlobal(projectId, approval, true, isCurrent)
+    if (approval.evidence && optionId && optionId !== 'deny') {
+      const reviewed = await reviewNetworkDestination(approval)
+      if (!addressesApproved(reviewed.approvedAddresses, approval.evidence.addresses)) {
+        const updated = {
+          ...approval,
+          evidence: {
+            ...approval.evidence,
+            revision: approval.evidence.revision + 1,
+            addresses: reviewed.approvedAddresses,
+            risks: networkDestinationRisks(reviewed.approvedAddresses),
+            blockReason: 'addresses-changed'
+          }
+        }
+        await this.patch(
+          projectId,
+          approval.sessionId,
+          (context) => {
+            assertSnapshot(context, approval)
+            return (context.networkApprovals ?? []).map((entry) =>
+              entry.requestId === approval.requestId ? updated : entry
+            )
+          },
+          approval,
+          true,
+          isCurrent
+        )
+        throw new Error('Network addresses changed. Review the new addresses and approve again.')
+      }
+    }
+    if (persistentDecision(optionId)) {
+      await this.grantGlobal(
+        projectId,
+        {
+          ...approval,
+          ...(optionId === 'project-allow' ? { decision: 'project-allow' as const } : {})
+        },
+        true,
+        isCurrent
+      )
       return true
     }
     await this.patch(
       projectId,
       approval.sessionId,
       (context) => {
+        assertSnapshot(context, approval)
         const current = context.networkApprovals?.find(
           ({ requestId }) => requestId === approval.requestId
         )
@@ -213,7 +390,9 @@ export class SandboxNetworkApprovalOwner {
             ? [candidate]
             : optionId === 'allow-once'
               ? [{ ...candidate, state: 'continuing' as const }]
-              : []
+              : approval.evidence
+                ? [{ ...candidate, state: 'continuing' as const, decision: 'deny' as const }]
+                : []
         )
       },
       optionId === 'allow-once' ? approval : undefined,
@@ -228,13 +407,13 @@ export class SandboxNetworkApprovalOwner {
     if (
       !this.sessions ||
       !session.runtimeContext?.networkApprovals?.some(
-        (approval) => approval.state === 'continuing' && approval.decision === 'always-allow'
+        (approval) => approval.state === 'continuing' && persistentDecision(approval.decision)
       )
     )
       return session
     const context = await this.sessions.readSessionRuntimeContext(session.projectId, session.id)
     for (const approval of context.networkApprovals ?? []) {
-      if (approval.state !== 'continuing' || approval.decision !== 'always-allow') continue
+      if (approval.state !== 'continuing' || !persistentDecision(approval.decision)) continue
       const live = this.globalDecisions.get(approval.requestId)
       if (live && !live.rollbackFailure) {
         // Never take over a live choice. Concurrent recovery readers may join an already saved one.
@@ -276,7 +455,7 @@ export class SandboxNetworkApprovalOwner {
       }
       let context = await this.sessions.readSessionRuntimeContext(projectId, sessionId)
       if (!context.networkApprovals?.length) return
-      if (context.networkApprovals.some((approval) => approval.decision === 'always-allow')) {
+      if (context.networkApprovals.some((approval) => persistentDecision(approval.decision))) {
         // A decision saved by a prior process is already consent, not an unanswered request.
         await this.recoverSession(
           await this.sessions.loadSessionForContinuation(projectId, sessionId)
@@ -364,13 +543,37 @@ export class SandboxNetworkApprovalOwner {
     markCommitted: () => void,
     recovering: boolean
   ): Promise<void> {
-    if (!this.allowDomain) throw new Error('Network settings are unavailable.')
+    const decision = approval.decision === 'project-allow' ? 'project-allow' : 'always-allow'
+    const persist = approval.evidence
+      ? (assertCurrent: () => Promise<void>, finalize: () => Promise<void>) => {
+          if (!this.allowDestination) throw new Error('Network settings are unavailable.')
+          return this.allowDestination(
+            {
+              id: approval.requestId,
+              hostname: approval.hostname,
+              port: approval.port,
+              approvedAddresses: approval.evidence!.addresses,
+              scope: decision === 'project-allow' ? 'project' : 'global',
+              projectId,
+              sessionId: approval.sessionId,
+              recordId: approval.evidence!.recordId,
+              createdAt: approval.createdAt
+            },
+            assertCurrent,
+            finalize
+          )
+        }
+      : (assertCurrent: () => Promise<void>, finalize: () => Promise<void>) => {
+          if (!this.allowDomain) throw new Error('Network settings are unavailable.')
+          return this.allowDomain(approval.hostname, assertCurrent, finalize)
+        }
     // A recovery resumes saved consent; a live response first claims an unanswered request.
     if (!recovering)
       await this.patch(
         projectId,
         approval.sessionId,
         (context) => {
+          assertSnapshot(context, approval)
           const current = context.networkApprovals?.find(
             ({ requestId }) => requestId === approval.requestId
           )
@@ -378,7 +581,7 @@ export class SandboxNetworkApprovalOwner {
             throw new Error('Network approval is no longer pending.')
           return context.networkApprovals!.map((candidate) =>
             candidate.requestId === approval.requestId
-              ? { ...candidate, state: 'continuing' as const, decision: 'always-allow' as const }
+              ? { ...candidate, state: 'continuing' as const, decision }
               : candidate
           )
         },
@@ -389,8 +592,7 @@ export class SandboxNetworkApprovalOwner {
     const alreadySettled = new Error('Saved network approval was already settled.')
     let authorityValidated = !recovering
     try {
-      await this.allowDomain(
-        approval.hostname,
+      await persist(
         async () => {
           if (!isCurrent()) throw new Error('Network approval execution is no longer current.')
           const session = await this.sessions!.loadSessionForContinuation(
@@ -405,7 +607,7 @@ export class SandboxNetworkApprovalOwner {
           const current = context.networkApprovals?.find(
             ({ requestId }) => requestId === approval.requestId
           )
-          if (current?.state !== 'continuing' || current.decision !== 'always-allow') {
+          if (current?.state !== 'continuing' || !persistentDecision(current.decision)) {
             // A catalog snapshot may outlive another reader's completed transaction. The Settings
             // owner runs this first guard before writing; never resurrect that settled decision.
             if (!authorityValidated) throw alreadySettled
@@ -434,6 +636,24 @@ export class SandboxNetworkApprovalOwner {
       )
     } catch (error) {
       if (error === alreadySettled) return
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'network-grant-revoked'
+      ) {
+        await this.patch(
+          projectId,
+          approval.sessionId,
+          (context) =>
+            (context.networkApprovals ?? []).filter(
+              (entry) => entry.requestId !== approval.requestId
+            ),
+          undefined,
+          true
+        )
+        return
+      }
       try {
         await this.patch(
           projectId,
@@ -441,7 +661,7 @@ export class SandboxNetworkApprovalOwner {
           (context) => {
             const retry: SandboxNetworkApproval =
               recovering || error instanceof AggregateError
-                ? { ...approval, state: 'continuing', decision: 'always-allow' }
+                ? { ...approval, state: 'continuing', decision }
                 : { ...approval, state: 'pending' }
             const approvals = context.networkApprovals ?? []
             if (!approvals.some(({ requestId }) => requestId === approval.requestId)) {
@@ -451,10 +671,10 @@ export class SandboxNetworkApprovalOwner {
             return approvals.map((candidate) => {
               if (
                 candidate.requestId !== approval.requestId ||
-                candidate.decision !== 'always-allow'
+                !persistentDecision(candidate.decision)
               )
                 return candidate
-              if (retry.decision === 'always-allow') return retry
+              if (persistentDecision(retry.decision)) return retry
               const { decision: _decision, ...rest } = retry
               void _decision
               return rest

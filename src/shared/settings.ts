@@ -656,6 +656,7 @@ export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
   // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
   // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
   baseAllowedDomains?: readonly string[]
+  revokeNetworkGrantIds?: readonly string[]
   baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
 }
 

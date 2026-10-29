@@ -8171,6 +8171,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Источники сохранены. Некоторые PDF не удалось скопировать; восстановите их в Zotero и повторите попытку.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Не удалось подключиться к Zotero. Откройте Zotero 10 или новее и повторите попытку.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "В Zotero откройте Настройки → Дополнительно и разрешите другим приложениям на этом компьютере взаимодействовать с Zotero, затем повторите попытку.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero не ответил вовремя. Дождитесь завершения запуска и повторите попытку."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero не ответил вовремя. Дождитесь завершения запуска и повторите попытку.",
+    "Resolved addresses: {{addresses}}": "Разрешённые DNS-адреса: {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "Адреса изменились. Проверьте новые адреса перед повторным утверждением.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "Чувствительный адрес: доступ может раскрыть локальные службы, частные сети или облачные учётные данные. Утверждайте только доверенный доступ.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Возможный Mihomo Fake-IP: этот виртуальный адрес не является адресом конечного сервера.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "Утверждение не запускает команду повторно. Агент должен проверить побочные эффекты и явно повторить попытку.",
+    "Approved network destinations": "Утверждённые сетевые адреса",
+    "Could not revoke network access. Try again.": "Не удалось отозвать доступ к сети. Повторите попытку.",
+    "Project: {{project}}": "Проект: {{project}}",
+    "Source session: {{session}}": "Исходная сессия: {{session}}"
   }
 }

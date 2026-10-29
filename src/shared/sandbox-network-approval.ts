@@ -1,3 +1,4 @@
+import type { NetworkBlockEvidence } from './network-destination-grants'
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import {
   resolveActiveConversationMessages,
@@ -9,14 +10,15 @@ export type SandboxNetworkApproval = Readonly<{
   version: 1
   kind: 'sandbox-network'
   state: 'pending' | 'continuing'
-  decision?: 'always-allow'
+  decision?: 'always-allow' | 'project-allow' | 'deny'
+  evidence?: NetworkBlockEvidence
   requestId: string
   sessionId: string
   executionId: string
   commandFingerprint: string
   hostname: string
   port: number
-  runtime: 'bash'
+  runtime: 'bash' | 'python' | 'r' | 'repl'
   originatingPromptMessageId: string
   agentFrameId: string
   messageBranchId: string
@@ -37,16 +39,39 @@ export const sandboxNetworkApprovalRequest = (
   rawInput: {
     notebookNetworkApproval: {
       hostname: approval.hostname,
+      ...(approval.evidence ? { ...approval.evidence } : {}),
       port: approval.port,
       runtime: approval.runtime,
       ...(restored ? { retryRequired: true } : {})
     }
   },
-  options: [
-    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
-    { optionId: 'always-allow', name: 'Global', kind: 'allow_always', scope: 'global' },
-    { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
-  ]
+  options: approval.evidence
+    ? [
+        {
+          optionId: `allow-once@${approval.evidence.revision}`,
+          name: 'Allow once',
+          kind: 'allow_once',
+          scope: 'once'
+        },
+        {
+          optionId: `project-allow@${approval.evidence.revision}`,
+          name: 'Project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        {
+          optionId: `always-allow@${approval.evidence.revision}`,
+          name: 'Global',
+          kind: 'allow_always',
+          scope: 'global'
+        },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    : [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+        { optionId: 'always-allow', name: 'Global', kind: 'allow_always', scope: 'global' },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ]
 })
 
 type NetworkApprovalSession = Readonly<{

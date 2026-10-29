@@ -7685,6 +7685,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文献は保存されました。一部の PDF をコピーできませんでした。Zotero で復元して再試行してください。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Zotero に接続できませんでした。Zotero 10 以降を起動して、もう一度お試しください。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Zotero の「設定 → 詳細」で、このコンピューター上の他のアプリケーションが Zotero と通信することを許可してから、もう一度お試しください。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。",
+    "Resolved addresses: {{addresses}}": "解決されたアドレス：{{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "アドレスが変更されました。新しいアドレスを確認してから再度承認してください。",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "機密性の高い接続先：ローカルサービス、プライベートネットワーク、クラウド認証情報が公開される可能性があります。このアクセスを信頼できる場合のみ承認してください。",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Mihomo Fake-IP の可能性があります。この仮想アドレスは最終的なサーバーのアドレスではありません。",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "承認してもコマンドは再実行されません。エージェントは副作用を確認してから明示的に再試行する必要があります。",
+    "Approved network destinations": "承認済みのネットワーク接続先",
+    "Could not revoke network access. Try again.": "ネットワークアクセスを取り消せませんでした。再試行してください。",
+    "Project: {{project}}": "プロジェクト：{{project}}",
+    "Source session: {{session}}": "要求元のセッション：{{session}}"
   }
 }
