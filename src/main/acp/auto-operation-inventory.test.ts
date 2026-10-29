@@ -15,7 +15,7 @@ import {
 // Legacy entries require no migration of their existing authorization contract.
 const registrations: Record<
   string,
-  'allow_once' | 'inner_authorization' | 'legacy' | 'operations'
+  'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
@@ -29,6 +29,10 @@ const registrations: Record<
   'literature/mcp-server.ts:LITERATURE_READ_DOCUMENT_TOOL_NAME': 'allow_once',
   "literature/mcp-server.ts:'list_pdf_elements'": 'allow_once',
   "literature/mcp-server.ts:'read_pdf_element'": 'allow_once',
+  // Additive Reading annotations keep the normal permission broker; no Auto allowlist expansion.
+  "literature/mcp-server.ts:'list_pdf_annotations'": 'review',
+  "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'review',
+  "literature/mcp-server.ts:'create_pdf_annotation'": 'review',
   'notebook/mcp-server.ts:definition.name': 'operations',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readTurn': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',

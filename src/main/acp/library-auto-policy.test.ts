@@ -36,6 +36,21 @@ const request = (title: string): RequestPermissionRequest => ({
 })
 
 describe('Library Auto policy', () => {
+  it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
+    'keeps new annotation tool %s under the normal permission broker',
+    (name) => {
+      const identity = `open-science-literature/${name}`
+      const trusted = withTrustedMcpToolIdentity(request(name), identity)
+      expect(appMcpToolIdentities()).toContain(identity)
+      expect(
+        resolveAutomaticPermission(trusted, { profile: 'auto', mcpServerNames: servers })
+      ).toBeUndefined()
+      expect(
+        resolveAutomaticPermission(trusted, { profile: 'ask', mcpServerNames: servers })
+      ).toBeUndefined()
+    }
+  )
+
   it.each([...LIBRARY_AUTO_TOOL_IDENTITIES])(
     'only allows a verified mounted identity in Auto: %s',
     (identity) => {

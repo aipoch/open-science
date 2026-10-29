@@ -315,6 +315,34 @@ export class PdfElementAgentReader {
     }
   }
 
+  async annotationRegions(
+    context: PdfElementContext,
+    elementRef: string
+  ): Promise<{
+    documentId: string
+    regions: Array<Element['regions'][number] & { rotation: number }>
+  }> {
+    const ref = this.decode(context, token.parse(elementRef), 'element')
+    const auth = await this.authorize(context, ref.documentId, ref.sourceKey)
+    const result = await this.dependencies.owner.readCached(
+      auth.request,
+      [ref.page],
+      context.signal
+    )
+    if (!result || result.extractionId !== ref.extractionId || result.pageCount !== ref.pageCount)
+      throw stale()
+    const element = result.elements.find((item) => item.id === ref.elementId)
+    if (!element || element.regions.length > 20) throw stale()
+    const regions = element.regions.map((region) => {
+      const page = result.pages.find((page) => page.page === region.page)
+      if (!page) throw stale()
+      return { ...region, rotation: page.rotation }
+    })
+    await this.dependencies.sources.reauthorize(auth.request, auth.source)
+    context.signal.throwIfAborted()
+    return { documentId: auth.binding.bindingId, regions }
+  }
+
   async read(context: PdfElementContext, raw: ReadPdfElementInput): Promise<PdfElementOutput> {
     const input = readPdfElementInput.parse(raw)
     const ref = this.decode(context, input.elementRef, 'element')

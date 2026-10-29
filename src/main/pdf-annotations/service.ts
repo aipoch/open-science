@@ -309,10 +309,11 @@ class PdfAnnotationService {
     })
   }
 
-  create(request: CreatePdfAnnotationRequest): Promise<PdfAnnotation> {
+  create(request: CreatePdfAnnotationRequest, beforeWrite?: () => void): Promise<PdfAnnotation> {
     if (!createPdfAnnotationRequestSchema.safeParse(request).success)
       return Promise.reject(new Error('PDF annotation source is not available.'))
     return this.withScope(request, async () => {
+      beforeWrite?.()
       const recovered = await this.options.repository.recoverCreate(request)
       if (recovered) return recovered
       const source = request.target.source
@@ -330,7 +331,10 @@ class PdfAnnotationService {
       ) {
         throw new Error('PDF annotation source is not available.')
       }
-      return this.options.repository.create(request)
+      beforeWrite?.()
+      return beforeWrite
+        ? this.options.repository.create(request, beforeWrite)
+        : this.options.repository.create(request)
     })
   }
 

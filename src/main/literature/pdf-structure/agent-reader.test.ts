@@ -218,6 +218,21 @@ describe('Agent PDF evidence from existing Structure caches', () => {
     expect(sources.pageCount).toHaveBeenCalledTimes(1)
   })
 
+  it('authorizes annotation regions against the current message and unchanged extraction', async () => {
+    const { reader, context, reference, result } = setup()
+    result.pages = [{ page: 2, width: 600, height: 800, rotation: 0 }]
+    const elementRef = await reference()
+    expect(await reader.annotationRegions(context, elementRef)).toMatchObject({
+      documentId: 'paper',
+      regions: [{ ...region, rotation: 0 }]
+    })
+    await expect(
+      reader.annotationRegions({ ...context, promptMessageId: 'other' }, elementRef)
+    ).rejects.toThrow()
+    result.extractionId = 'replacement'
+    await expect(reader.annotationRegions(context, elementRef)).rejects.toThrow()
+  })
+
   it('delivers Figure 3 as typed image evidence with its native caption and physical pages', async () => {
     const { reader, context, reference, owner } = setup()
     const output = await reader.read(context, { elementRef: await reference() })
