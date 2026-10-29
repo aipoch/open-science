@@ -69,7 +69,8 @@ export const prepareWorkspacePrompt = async (
 }
 
 export const rollbackWorkspacePrompt = async (
-  preparation: WorkspacePromptPreparation
+  preparation: WorkspacePromptPreparation,
+  preserveSubmittedMessage = false
 ): Promise<boolean> => {
   discardPreparedSessionConversationIntents(preparation.sessionId, preparation.id)
   const source = useSessionStore.getState().sessions.find(({ id }) => id === preparation.sessionId)
@@ -83,7 +84,8 @@ export const rollbackWorkspacePrompt = async (
           kind: 'rollback-prompt',
           id: `prompt-rollback-${crypto.randomUUID()}`,
           timestamp: Date.now(),
-          preparationId: preparation.id
+          preparationId: preparation.id,
+          ...(preserveSubmittedMessage ? { preserveSubmittedMessage: true } : {})
         }
       ]
     }
@@ -100,6 +102,17 @@ export const rollbackWorkspacePrompt = async (
       session: authority,
       mode: 'prompt-rollback-authority'
     })
+  if (preserveSubmittedMessage && !admitted && authority.promptPreparation?.id !== preparation.id) {
+    const current = useSessionStore
+      .getState()
+      .sessions.find(({ id }) => id === preparation.sessionId)
+    // A submitted branch prompt is now history, so the next append must not replace its replay
+    // placeholder. A newer preparation/run, including a rearm of this Message, owns its own pointer.
+    if (!current?.promptPreparation && !current?.activeRun)
+      useSessionStore
+        .getState()
+        .clearPendingContextReplay(preparation.sessionId, preparation.promptMessageId)
+  }
   return !admitted
 }
 
@@ -152,7 +165,7 @@ export const withdrawWorkspacePrompt = (preparation: WorkspacePromptPreparation)
 // nothing outside the preparation is touched. Main allows one marker per Session.
 const failedPromptRollbacks = new Map<
   string,
-  { preparation: WorkspacePromptPreparation; failure: string }
+  { preparation: WorkspacePromptPreparation; preserveSubmittedMessage: boolean; failure: string }
 >()
 const pendingPromptRollbacks = new Map<
   string,
@@ -184,13 +197,14 @@ export const describeWorkspacePromptRollbackFailure = (
 // Rolls back one preparation. A failed write is retained for retry and returned instead of thrown,
 // so the caller's original failure can still be reported alongside it.
 export const attemptWorkspacePromptRollback = (
-  preparation: WorkspacePromptPreparation
+  preparation: WorkspacePromptPreparation,
+  preserveSubmittedMessage = false
 ): Promise<{ rolledBack: boolean; failure?: string }> => {
   const pending = pendingPromptRollbacks.get(preparation.sessionId)
   if (pending) return pending.result
   const result = (async (): Promise<{ rolledBack: boolean; failure?: string }> => {
     try {
-      const rolledBack = await rollbackWorkspacePrompt(preparation)
+      const rolledBack = await rollbackWorkspacePrompt(preparation, preserveSubmittedMessage)
       if (failedPromptRollbacks.get(preparation.sessionId)?.preparation.id === preparation.id) {
         failedPromptRollbacks.delete(preparation.sessionId)
       }
@@ -199,7 +213,11 @@ export const attemptWorkspacePromptRollback = (
       const failure = errorText(error)
       const retained = failedPromptRollbacks.get(preparation.sessionId)
       if (!retained || retained.preparation.id === preparation.id) {
-        failedPromptRollbacks.set(preparation.sessionId, { preparation, failure })
+        failedPromptRollbacks.set(preparation.sessionId, {
+          preparation,
+          preserveSubmittedMessage,
+          failure
+        })
       }
       return { rolledBack: false, failure }
     }
@@ -229,13 +247,16 @@ export const retryPendingWorkspacePromptRollback = async (
           failure: describeWorkspacePromptRollbackFailure(undefined, result.failure)
         }
   }
-  const preparation = failedPromptRollbacks.get(sessionId)?.preparation
-  if (!preparation) return { rolledBack: false }
+  const failed = failedPromptRollbacks.get(sessionId)
+  if (!failed) return { rolledBack: false }
   if (!useSessionStore.getState().sessions.some(({ id }) => id === sessionId)) {
     failedPromptRollbacks.delete(sessionId)
     return { rolledBack: false }
   }
-  const result = await attemptWorkspacePromptRollback(preparation)
+  const result = await attemptWorkspacePromptRollback(
+    failed.preparation,
+    failed.preserveSubmittedMessage
+  )
   return result.failure === undefined
     ? { rolledBack: result.rolledBack }
     : {

@@ -223,13 +223,18 @@ const recoverPromptAttachments = (
     source?.conversationGraph?.messages.find(({ id }) => id === messageId) ??
     source?.messages.find(({ id }) => id === messageId)
   )?.uploads
-  const originals = preparingSessionAttempts.get(sessionId)?.attachments ?? []
+  const attempt = preparingSessionAttempts.get(sessionId)
+  const originals = attempt?.attachments ?? []
   return uploads?.flatMap((upload) => {
+    const original = originals.find(({ id }) => id === upload.id)
+    const draftReceipt = attempt?.draftReceipts.get(upload.id)
     const attachment =
       upload.versionId || upload.path
         ? toRuntimeUploadedAttachment(upload, source?.projectId)
-        : originals.find(({ id }) => id === upload.id)
-    return attachment ? [attachment] : []
+        : original
+    // Message projections deliberately omit Web draft receipts. Recover that renderer-only field
+    // from the original draft without replacing a finalized upload's current owner or Version.
+    return attachment ? [{ ...attachment, ...(draftReceipt ? { draftReceipt } : {}) }] : []
   })
 }
 const rejectPreparedPrompt = async (
@@ -396,7 +401,15 @@ const dispatchPrompt = (
     })
     .catch(async (error) => {
       unsubscribe()
-      if (isCurrent()) {
+      if (
+        request.cancelled?.() &&
+        request.preparation &&
+        ownsWorkspacePromptPreparation(request.preparation)
+      ) {
+        // Stop after dispatch keeps the sent Message. If Main never admitted a turn, no terminal
+        // event can release its preparation; the exact receipt conditionally releases it instead.
+        await attemptWorkspacePromptRollback(request.preparation, true)
+      } else if (isCurrent()) {
         const message = errorMessage(error).trim() || 'Agent run failed'
         await rejectPreparedPrompt(
           request.sessionId,
@@ -1784,6 +1797,7 @@ type WorkspaceSendAttempt = {
   rollback?: ReturnType<typeof attemptWorkspacePromptRollback>
   bindForCancellation?: () => string | undefined
   attachments: UploadedAttachment[]
+  draftReceipts: ReadonlyMap<string, string>
   sessionIds: Set<string>
   endPresentation: (sessionId?: string) => void
   notifyPreparation?: WorkspaceCommandLifecycle['onSendPreparationStateChange']
@@ -1855,6 +1869,11 @@ const sendWorkspaceMessage = async (
     dispatched: false,
     failed: false,
     attachments: input.attachments ?? [],
+    draftReceipts: new Map(
+      (input.attachments ?? []).flatMap(({ id, draftReceipt }) =>
+        draftReceipt ? [[id, draftReceipt] as const] : []
+      )
+    ),
     sessionIds: new Set(),
     notifyPreparation: (id, inFlight) => {
       if (inFlight === visibleSessionIds.has(id)) return
