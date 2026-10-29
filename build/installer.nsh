@@ -8,17 +8,24 @@
 !macroend
 
 !macro customUnInstall
+  # Cleanup can fail after removing some program files. Keep retry's lifecycle scripts in the
+  # uninstaller itself, so their availability never depends on a partly removed installation.
+  InitPluginsDir
+  SetOutPath $PLUGINSDIR
+  File "${BUILD_RESOURCES_DIR}\windows-update-handoff-uninstall.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-notebook-sandbox-uninstall.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-runtime-cache-uninstall.ps1"
   # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
   # real product uninstall removes the AppContainer resources.
   ${ifNot} ${isUpdated}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
     Pop $0
     StrCmp $0 "0" updatePresentationCleanupComplete
     DetailPrint `Open-Science update presentation cleanup failure code=$0`
     MessageBox MB_OK|MB_ICONSTOP "An Open-Science update may still be active. Finish the update and close its update window, then retry uninstall."
     Abort
     updatePresentationCleanupComplete:
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
     DetailPrint `Open-Science Notebook cleanup failure code=$0 sandboxRoot="$INSTDIR\resources\notebook-network-sandbox\windows"`
@@ -31,7 +38,7 @@
       DeleteRegKey HKCU "Software\Classes\open-science"
     ${endif}
   ${endif}
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-runtime-cache-uninstall.ps1"'
 !macroend
 
 !ifndef BUILD_UNINSTALLER
@@ -441,69 +448,49 @@ FunctionEnd
   Call writeUpdateReceipt
 !macroend
 
-# Resilient replacement for handleUninstallResult's default failure handling, installed via
-# electron-builder's customUnInstallCheck hooks below. During an in-app update the new installer
-# runs the OLD uninstaller and treats any non-zero exit code as fatal ("Failed to uninstall old
-# application files. Please try running the installer again.: <code>") — aborting the update.
-# That code is not trustworthy for our assisted installer (oneClick: false): electron-builder only
-# normalizes the uninstaller's exit code (quitSuccess, "avoid exit code 2") for ONE_CLICK builds,
-# so a benign trailing error leaks out as exit code 2 even when the old version was fully removed
-# (electron-userland/electron-builder#9593). And when the code IS real, it is usually a background
-# child still running from the install dir (micromamba provisioning, the CLI in Node mode, an
-# agent child) locking files — worth one more attempt after a force-kill instead of failing.
-# Recovery order (${DIR} = the installation this pass was uninstalling):
-#   1. Exit code non-zero but the old executable is already gone -> the uninstall did its job
-#      despite the reported code; log and continue installing.
-#   2. Files remain -> force-kill processes running from the install dir, wait, and run the old
-#      uninstaller once more. Only if it still fails show the original dialog and quit.
+# Retry the bundled selective uninstaller once after releasing leftover program processes.
+# Its success callback normalizes the assisted-uninstaller exit code. A non-zero result is a
+# real failure even if the main executable has already been removed during payload cleanup.
 # Symbol constraints: handleUninstallResult is parsed BEFORE uninstallOldVersion and
 # CHECK_APP_RUNNING declare their globals ($installationDir, $PowerShellPath, ...), and makensis
 # treats unknown variables as errors — so this stays self-contained: registers, built-in
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
 !macro uninstallFailureRecoveryAt DIR
-  ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
-    DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
-  ${else}
-    DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
-    # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
-    # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
-    # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
-    # never interpolated into the script source — so a custom install dir containing an apostrophe
-    # breaks nothing and injects nothing. The image-name taskkills are ONLY a fallback for when
-    # the sweep could not run (PowerShell missing or policy-blocked): they match by exe name in
-    # ANY directory — open-science.exe covers the app and its Electron-as-Node children (the
-    # CLI), micromamba.exe covers in-flight provisioning — so a second install, the portable zip
-    # copy, or an unrelated micromamba would be killed too. Acceptable solely when no path-scoped
-    # option exists. Both are best-effort; the retry is the verdict.
-    # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
-    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
+  DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
+  # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
+  # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
+  # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
+  # never interpolated into the script source — so a custom install dir containing an apostrophe
+  # breaks nothing and injects nothing. The image-name taskkills are ONLY a fallback for when
+  # the sweep could not run (PowerShell missing or policy-blocked): they match by exe name in
+  # ANY directory — open-science.exe covers the app and its Electron-as-Node children (the
+  # CLI), micromamba.exe covers in-flight provisioning — so a second install, the portable zip
+  # copy, or an unrelated micromamba would be killed too. Acceptable solely when no path-scoped
+  # option exists. Both are best-effort; the retry is the verdict.
+  # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
+  Pop $R1
+  # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
+  # non-zero means the sweep did not run, so only then widen to the image-name kills.
+  ${if} $R1 != 0
+    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
     Pop $R1
-    # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
-    # non-zero means the sweep did not run, so only then widen to the image-name kills.
-    ${if} $R1 != 0
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
-      Pop $R1
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
-      Pop $R1
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "notebook-appcontainer-host.exe"`
-      Pop $R1
-    ${endif}
-    ClearErrors
-    Sleep 1000
-    # The bundled current uninstaller excludes data on every attempt. Never move a data root
-    # around retry and never fall back to the old installed uninstaller.
+    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
+    Pop $R1
+    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "notebook-appcontainer-host.exe"`
+    Pop $R1
+  ${endif}
+  ClearErrors
+  Sleep 1000
+  # The bundled current uninstaller excludes data on every attempt. Never move a data root
+  # around retry and never fall back to the old installed uninstaller.
 
-    ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
-    ${if} $R0 != 0
-      ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
-        DetailPrint `Retry exited with $R0 but the previous installation is already removed; continuing.`
-      ${else}
-        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
-        DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
-        !insertmacro restoreAllNestedDataRoots
-        !insertmacro quitFailedUpdate
-      ${endif}
-    ${endif}
+  ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
+  ${if} $R0 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+    DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+    !insertmacro restoreAllNestedDataRoots
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 

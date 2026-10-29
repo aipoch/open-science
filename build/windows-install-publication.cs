@@ -1,6 +1,9 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.IO;
+using System.Text;
+using System.Collections.Generic;
 using Microsoft.Win32.SafeHandles;
 public static class InstallDirectory {
   [StructLayout(LayoutKind.Sequential, Pack=4)] struct Information {
@@ -13,6 +16,32 @@ public static class InstallDirectory {
   [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Information information);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
   static extern bool CreateDirectory(string path, IntPtr security);
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+  static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+  public static string CanonicalPath(string path) {
+    var missing = new Stack<string>();
+    var current = Path.GetFullPath(path);
+    while (true) {
+      using (var handle = CreateFile(current, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+        if (!handle.IsInvalid) {
+          var buffer = new StringBuilder(32768);
+          var length = GetFinalPathNameByHandle(handle, buffer, (uint)buffer.Capacity, 0);
+          if (length == 0 || length >= buffer.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+          var resolved = buffer.ToString();
+          if (resolved.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) resolved = @"\\" + resolved.Substring(8);
+          else if (resolved.StartsWith(@"\\?\", StringComparison.Ordinal)) resolved = resolved.Substring(4);
+          while (missing.Count > 0) resolved = Path.Combine(resolved, missing.Pop());
+          return resolved;
+        }
+        var error = Marshal.GetLastWin32Error();
+        if (error != 2 && error != 3) throw new Win32Exception(error);
+        var parent = Path.GetDirectoryName(current);
+        if (String.IsNullOrEmpty(parent)) throw new Win32Exception(error);
+        missing.Push(Path.GetFileName(current));
+        current = parent;
+      }
+    }
+  }
   public static void Create(string path) {
     if (!CreateDirectory(path, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
   }

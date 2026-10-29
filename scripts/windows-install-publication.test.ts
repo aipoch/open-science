@@ -347,8 +347,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           writeFileSync(join(f.install, 'app.exe'), 'X'.repeat('synthetic executable'.length))
           for (const root of [f.payload, f.install])
             utimesSync(join(root, 'app.exe'), timestamp, timestamp)
-          for (const name of ['OpenScience', 'Open-Science', 'unrelated']) {
-            mkdirSync(join(f.install, name))
+          for (const name of [
+            'OpenScience',
+            'Open-Science',
+            'unrelated',
+            'resources/custom-data/content',
+            'locales/custom-config'
+          ]) {
+            mkdirSync(join(f.install, name), { recursive: true })
             writeFileSync(join(f.install, name, 'keep.txt'), name)
           }
           mkdirSync(join(f.payload, 'empty'))
@@ -569,7 +575,13 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         if (mode === 'copy-replacement') {
           expect(readFileSync(join(f.install, 'app.exe'), 'utf8')).toBe('synthetic executable')
           expect(readdirSync(join(f.install, 'empty'))).toEqual([])
-          for (const name of ['OpenScience', 'Open-Science', 'unrelated'])
+          for (const name of [
+            'OpenScience',
+            'Open-Science',
+            'unrelated',
+            'resources/custom-data/content',
+            'locales/custom-config'
+          ])
             expect(readFileSync(join(f.install, name, 'keep.txt'), 'utf8')).toBe(name)
           expect(readFixtureAcl(f.install, true)).toBe(originalAcl!.directory)
           expect(readFixtureAcl(join(f.install, 'app.exe'))).toBe(originalAcl!.existing)
