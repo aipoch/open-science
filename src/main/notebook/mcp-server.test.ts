@@ -877,13 +877,10 @@ describe('ask_user_question tool', () => {
       questionItems?.options as { items?: { properties?: Record<string, unknown> } }
     ).items?.properties
     // Pi validates the emitted JSON Schema before its permission hook, so a whitespace-only
-    // string fails without reaching the app. The semantic boundary stays with the sanitizer.
-    for (const field of ['question', 'header']) {
-      expect((questionItems?.[field] as { pattern?: string }).pattern).toBe('\\S')
-    }
-    for (const field of ['label', 'description']) {
-      expect((optionItems?.[field] as { pattern?: string }).pattern).toBe('\\S')
-    }
+    // required string fails without reaching the app. Optional fields stay pattern-free to fit
+    // the static context budget; zod and the sanitizer still reject them.
+    expect((questionItems?.question as { pattern?: string }).pattern).toBe('\\S')
+    expect((optionItems?.label as { pattern?: string }).pattern).toBe('\\S')
 
     const schema = z.object(tool!.inputSchema)
     const malformed = [
