@@ -25,8 +25,6 @@ import {
 } from '../agent-framework/app-mcp-names'
 
 type PermissionPolicyContext = {
-  // Experimental Pi admission can only release this specific call, never create or reuse a grant.
-  oneCallOnly?: boolean
   // Main-only handoff to the Notebook execution owner's per-code gate. Never read from tool input.
   notebookHostAdmission?: boolean
   // Separate main-only handoff to the validated Runtime binding boundary.

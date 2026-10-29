@@ -608,7 +608,6 @@ class AcpPermissionContext {
       // The authenticated Notebook host reviews finalized code at dispatch. Do not ask for a
       // language-wide grant here, or create a second approval before the host's one-shot decision.
       const response = await this.requestPermission(routedParams, {
-        ...(piBound ? { oneCallOnly: true } : {}),
         notebookHostAdmission: Boolean(executionMethod),
         notebookBindingHostAdmission,
         profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
