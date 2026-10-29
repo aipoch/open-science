@@ -45,6 +45,7 @@ import { extractProviderToolName } from './runtime-events'
 type PendingPermission = {
   request: AcpPermissionRequest
   appOwned?: true
+  refreshRequest?: () => AcpPermissionRequest
   beforeRespond?: (optionId: string | undefined) => Promise<void>
   decisionAuthority?: PermissionDiagnostic['authority']
   automaticRequest?: RequestPermissionRequest
@@ -66,6 +67,7 @@ type PendingPermission = {
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 type AppPermissionRequest = Readonly<{
+  onNetworkAddressesApproved?: (addresses: readonly string[]) => void
   requestId?: string
   durable?: true
   networkApproval?: Readonly<{
@@ -74,10 +76,12 @@ type AppPermissionRequest = Readonly<{
     commandFingerprint: string
     hostname: string
     port: number
-    runtime: 'bash'
+    runtime: 'bash' | 'python' | 'r' | 'repl'
+    evidence?: import('../../shared/network-destination-grants').NetworkBlockEvidence
   }>
   onAdmitted?: () => void
   canResume?: () => boolean
+  refreshRequest?: () => AcpPermissionRequest
   beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
   title: string
@@ -1152,6 +1156,7 @@ class AcpPermissionBroker {
         appOwned: true,
         durablePersisted: input.durable === true,
         beforeRespond: input.beforeRespond,
+        refreshRequest: input.refreshRequest,
         ...(input.permissionPrompts
           ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
           : {})
@@ -1842,6 +1847,10 @@ class AcpPermissionBroker {
       // A durable app decision that failed to commit still owns its live wait. Keep it actionable
       // and do not release privileged work as if the human had denied the request.
       if (pending.beforeRespond && !pending.settled) {
+        if (pending.refreshRequest) {
+          pending.request = pending.refreshRequest()
+          this.emitPermissionRequest(pending.request)
+        }
         this.pendingRequests.set(response.requestId, pending)
         throw error
       }

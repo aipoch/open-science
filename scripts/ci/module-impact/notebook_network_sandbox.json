@@ -75,7 +75,8 @@
     "scripts/check-windows-notebook-runtime.test.ts",
     "scripts/windows-runtime-cdn.test.ts",
     "scripts/windows-release-workflows.test.ts",
-    "packages/notebook-network-sandbox/test/cache-environment.ts"
+    "packages/notebook-network-sandbox/test/cache-environment.ts",
+    "packages/notebook-network-sandbox/src/destination-review.test.ts"
   ],
   "interfacePaths": [
     "packages/notebook-network-sandbox/src/index.ts",
@@ -115,7 +116,8 @@
       "packages/notebook-network-sandbox/src/windows-runtime-access.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.integration.test.ts",
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
-      "packages/notebook-network-sandbox/src/installed-package.test.ts"
+      "packages/notebook-network-sandbox/src/installed-package.test.ts",
+      "packages/notebook-network-sandbox/src/destination-review.test.ts"
     ],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",

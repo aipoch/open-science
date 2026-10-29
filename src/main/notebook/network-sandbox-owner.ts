@@ -1,7 +1,11 @@
-import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
+import {
+  destinationGrantAllows,
+  type NetworkBlockEvidence
+} from '../../shared/network-destination-grants'
+import { NotebookNetworkSandbox, networkDestinationRisks } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, type Stats } from 'node:fs'
+import { existsSync, realpathSync, type Stats } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   lstat,
@@ -15,7 +19,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
@@ -77,7 +81,8 @@ import {
   legacyDefaultEnvPrefix
 } from '@aipoch/environment'
 
-export type NotebookNetworkDecision = 'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable'
+export type NotebookNetworkDecision =
+  'deny' | 'allowOnce' | 'alwaysAllow' | 'unavailable' | 'retryRequired'
 
 type NotebookNetworkDecisionRequest = Readonly<{
   sessionId: string
@@ -87,6 +92,8 @@ type NotebookNetworkDecisionRequest = Readonly<{
   runtime?: NotebookSandboxInvocation['runtime']
   reason?: string
   allowOnce: boolean
+  evidence?: NetworkBlockEvidence
+  onOnceGrant?: (addresses: readonly string[]) => void
   executionId?: string
   commandFingerprint?: string
   canResume?: () => boolean
@@ -199,6 +206,11 @@ type NotebookNetworkSandboxOwnerOptions = Readonly<{
   resourceRoot: string
   allowRuntimeAccessPrompt?: boolean
   getSettings: () => Promise<NotebookNetworkSettings | undefined>
+  recordStatus?: (
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ) => Promise<'pending' | 'approved' | 'denied' | undefined>
   hasFullAccess?: (sessionId: string) => boolean
   subscribeFullAccess?: (sessionId: string, listener: (allowed: boolean) => void) => () => void
   getFolderRestrictionEnabled?: () => Promise<boolean>
@@ -299,6 +311,17 @@ const commandLine = (
 }
 
 class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
+  private readonly blockedRecords = new Map<
+    string,
+    {
+      projectId: string
+      sessionId: string
+      hostname: string
+      port: number
+      evidence: NetworkBlockEvidence
+      result: Promise<NotebookNetworkDecision>
+    }
+  >()
   private sandbox: NotebookNetworkSandbox | undefined
   private initializePromise: Promise<void> | undefined
   private initialized = false
@@ -522,6 +545,26 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     await this.reconcilePendingCommandCleanups(target)
     await this.updateTrustBundle()
     const grantedRoots = (await this.options.getGrantedLocalRoots?.()) ?? []
+    // Broad writable ancestors must never make application authority or its future staging
+    // files writable. Keep explicit descendant workspaces and caches usable.
+    const physicalPath = (path: string): string => {
+      try {
+        return realpathSync.native(path)
+      } catch {
+        return resolve(path)
+      }
+    }
+    const authorityRoot = this.options.configRoot
+      ? physicalPath(this.options.configRoot)
+      : undefined
+    const coversAuthority = (path: string): boolean => {
+      const root = physicalPath(path)
+      return Boolean(
+        authorityRoot &&
+        (authorityRoot === root || authorityRoot.startsWith(root.endsWith(sep) ? root : root + sep))
+      )
+    }
+
     const skillReadRoots = this.options.configRoot
       ? await managedSkillReadRoots(this.options.configRoot)
       : []
@@ -544,6 +587,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     let executionWaitListener: ((waiting: boolean) => void) | undefined
     const waitListeners = new Set<(waiting: boolean) => void>()
     const decisions = new Map<string, Promise<boolean>>()
+    const exactExecutionGrants = new Map<string, readonly string[]>()
+    const executionRecordIds = new Set<string>()
     const connections = new Map<string, Set<() => boolean>>()
     let retryRequired = false
     const pendingDecisions = new Set<Promise<boolean>>()
@@ -593,6 +638,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           privateRoot: homedir(),
           readOnlyRoots: [
             ...invocation.filesystem.readOnlyRoots,
+            ...(authorityRoot && restrictFolders !== true ? [authorityRoot] : []),
             ...skillReadRoots,
             ...(invocation.target?.kind === 'wsl2' || this.platform === 'win32'
               ? []
@@ -612,10 +658,16 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             ...invocation.filesystem.readWriteRoots,
             commandTempRoot,
             ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path)
-          ],
+          ].filter((path) => !coversAuthority(path)),
           deniedReadRoots: invocation.filesystem.deniedReadRoots,
           deniedWriteRoots: [
             ...invocation.filesystem.deniedWriteRoots,
+            ...(this.options.configRoot
+              ? [
+                  join(this.options.configRoot, 'settings.json'),
+                  join(this.options.configRoot, 'sessions')
+                ]
+              : []),
             ...skillReadRoots,
             ...protectedWriteRoots([
               ...invocation.filesystem.readWriteRoots,
@@ -627,6 +679,120 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         ...(invocation.signal ? { signal: invocation.signal } : {}),
         onNetworkAccessRequest: async (request) => {
           if (activeSignal?.aborted) return false
+          if (request.addresses) {
+            if (!executionActive || !activeExecutionId || request.signal.aborted) return false
+            // This snapshot is emitted by the trusted gateway, never parsed from process output.
+            const hostname = request.host
+            const port = request.port ?? 443
+            const addresses = [...request.addresses]
+            if (!addresses.length) return false
+            if (this.options.hasFullAccess?.(invocation.sessionId)) return true
+            const settings =
+              this.settings ?? normalizeNotebookNetworkSettings(await this.options.getSettings())
+            const grants = settings.destinationGrants ?? []
+            if (
+              grants.some((grant) =>
+                destinationGrantAllows(grant, invocation.projectId, hostname, port, addresses)
+              )
+            )
+              return true
+            const exactTarget = grants.some(
+              (grant) => grant.hostname === hostname && grant.port === port
+            )
+            if (
+              !exactTarget &&
+              settings.trustedPrivateDestinations?.some(
+                (grant) =>
+                  grant.hostname === hostname &&
+                  grant.port === port &&
+                  addresses.every((address) => grant.approvedAddresses.includes(address))
+              )
+            )
+              return true
+            const builtIn = notebookNetworkSettingsAllowDomain(
+              { ...settings, allowedDomains: [] },
+              hostname
+            )
+            if (
+              request.policyAllowed &&
+              (builtIn || allowedNetworkHosts.has(hostname)) &&
+              !exactTarget
+            )
+              return true
+            const destinationKey = JSON.stringify([hostname, port])
+            const once = exactExecutionGrants.get(destinationKey)
+            if (once && addresses.every((address) => once.includes(address))) return true
+            const key = JSON.stringify([executionGeneration, hostname, port, addresses])
+            const previous = decisions.get(key)
+            if (previous) return previous
+            if (request.purpose === 'probe') return false
+            const evidence: NetworkBlockEvidence = {
+              recordId: randomUUID(),
+              revision: 0,
+              addresses,
+              risks: networkDestinationRisks(addresses),
+              blockReason: exactTarget
+                ? 'addresses-or-scope-changed'
+                : (request.reason ?? 'approval-required')
+            }
+            const signal = activeSignal ?? new AbortController().signal
+            let approvedOnceAddresses: readonly string[] = addresses
+            const result = this.options.requestDecision({
+              onOnceGrant: (approved) => {
+                approvedOnceAddresses = approved
+              },
+              sessionId: invocation.sessionId,
+              projectId: invocation.projectId,
+              hostname,
+              port,
+              runtime: invocation.runtime,
+              allowOnce: true,
+              executionId: activeExecutionId,
+              commandFingerprint: createHash('sha256').update(activeCommandText).digest('hex'),
+              evidence,
+              canResume: () => false,
+              signal
+            })
+            executionRecordIds.add(evidence.recordId)
+            this.blockedRecords.set(evidence.recordId, {
+              projectId: invocation.projectId,
+              sessionId: invocation.sessionId,
+              hostname,
+              port,
+              evidence,
+              result
+            })
+            // Bound trusted history; pending records remain authoritative in session persistence.
+            if (this.blockedRecords.size > 1024)
+              this.blockedRecords.delete(this.blockedRecords.keys().next().value!)
+            const generation = executionGeneration
+            const decision = result.then(
+              (choice) => {
+                if (
+                  choice === 'retryRequired' &&
+                  generation === executionGeneration &&
+                  !signal.aborted
+                )
+                  retryRequired = true
+                const allowed =
+                  choice === 'allowOnce' &&
+                  generation === executionGeneration &&
+                  executionActive &&
+                  !signal.aborted
+                if (allowed) exactExecutionGrants.set(destinationKey, approvedOnceAddresses)
+                return allowed
+              },
+              () => false
+            )
+            decisions.set(key, decision)
+            pendingDecisions.add(decision)
+            notifyWait()
+            void decision.finally(() => {
+              pendingDecisions.delete(decision)
+              notifyWait()
+            })
+            return decision
+          }
           if (
             await this.isCommandGrantAllowed(
               invocation.sessionId,
@@ -968,6 +1134,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         executionWaitListener = request?.onNetworkWaitChange
         executionGeneration += 1
         decisions.clear()
+        exactExecutionGrants.clear()
+        executionRecordIds.clear()
         connections.clear()
         retryRequired = false
         wrapped.setExecutionActive(true)
@@ -999,7 +1167,28 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           waitListeners.delete(listener)
         }
       },
-      annotateStderr: wrapped.annotateStderr,
+      annotateStderr: (stderr, stdout) => {
+        const annotated = wrapped.annotateStderr(stderr, stdout)
+        const records = [...this.blockedRecords.values()].filter((entry) =>
+          executionRecordIds.has(entry.evidence.recordId)
+        )
+        const result = retryRequired
+          ? annotated +
+            '\nNETWORK_APPROVAL_RETRY_REQUIRED: Access approved. Check side effects and retry explicitly. No command was replayed.\n'
+          : annotated
+        return records.length
+          ? result +
+              '\n' +
+              records
+                .slice(-8)
+                .map(
+                  (entry) =>
+                    `OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ${entry.evidence.recordId} ${entry.hostname}:${entry.port}`
+                )
+                .join('\n') +
+              '\n'
+          : result
+      },
       cleanup
     }
   }
@@ -1007,6 +1196,66 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   async requestNetworkAccess(
     request: NotebookNetworkAccessDecisionRequest
   ): Promise<NotebookNetworkAccessDecisionResult> {
+    if (request.recordId) {
+      const record = this.blockedRecords.get(request.recordId)
+      if (
+        record &&
+        (record.projectId !== request.projectId || record.sessionId !== request.sessionId)
+      )
+        return this.networkAccessResult('', 'blocked', request.runtime, {
+          message: 'Unknown or foreign network block record. No access was granted.'
+        })
+      const saved = (await this.options.getSettings())?.destinationGrants?.find(
+        (grant) =>
+          grant.recordId === request.recordId &&
+          grant.projectId === request.projectId &&
+          grant.sessionId === request.sessionId
+      )
+      if (saved)
+        return this.networkAccessResult(
+          saved.hostname,
+          saved.revokedAt === undefined ? 'alwaysAllowed' : 'denied',
+          request.runtime,
+          {
+            message:
+              saved.revokedAt === undefined
+                ? 'Access was saved. Check side effects and retry explicitly; each new connection rechecks addresses.'
+                : 'Access was revoked. Do not retry without new user approval.'
+          }
+        )
+      if (!record) {
+        const status = await this.options.recordStatus?.(
+          request.projectId,
+          request.sessionId,
+          request.recordId
+        )
+        return this.networkAccessResult(
+          '',
+          status === 'approved' ? 'allowedOnce' : status === 'denied' ? 'denied' : 'blocked',
+          request.runtime,
+          {
+            message:
+              status === 'pending'
+                ? 'User approval is still pending in this conversation. No access was granted.'
+                : status === 'approved'
+                  ? 'A single explicit retry was approved. Check side effects before retrying.'
+                  : 'Unknown, denied, or consumed network block record. No access was granted.'
+          }
+        )
+      }
+      const decision = await record.result
+      return this.networkAccessResult(
+        record.hostname,
+        decision === 'retryRequired' || decision === 'allowOnce' ? 'allowedOnce' : 'denied',
+        request.runtime,
+        {
+          message:
+            decision === 'retryRequired' || decision === 'allowOnce'
+              ? 'Access was approved. Check side effects and retry explicitly; no command was replayed.'
+              : 'Access was not approved. Do not retry or bypass this decision.'
+        }
+      )
+    }
     const normalized = validateCustomAllowedDomain(request.hostname)
     if (!normalized.ok) {
       return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
@@ -1109,7 +1358,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   applySettings(settings: NotebookNetworkSettings): void {
     this.settings = normalizeNotebookNetworkSettings(settings)
     try {
-      if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
+      if (this.initialized)
+        this.sandbox!.updatePolicy({
+          ...buildNotebookNetworkPolicy(this.settings),
+          reviewDestinations: true
+        })
       this.log.info('network policy applied', {
         active: this.initialized,
         customDomainCount: this.settings.allowedDomains.length,
@@ -2074,7 +2327,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   ): NotebookNetworkSandbox {
     return new NotebookNetworkSandbox({
       packaged: this.options.packaged,
-      policy: buildNotebookNetworkPolicy(settings),
+      policy: { ...buildNotebookNetworkPolicy(settings), reviewDestinations: true },
       resources: { root: this.options.resourceRoot },
       ...(parentProxy ? { parentProxy } : {}),
       ...(this.trustBundle

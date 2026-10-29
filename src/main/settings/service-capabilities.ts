@@ -23,7 +23,10 @@ export type AcpSettingsCapabilities = Pick<
   Partial<
     Pick<
       SettingsService,
-      'resolveAdmittedSubagentBackend' | 'prepareDelegatedSkills' | 'allowNotebookNetworkDomain'
+      | 'resolveAdmittedSubagentBackend'
+      | 'prepareDelegatedSkills'
+      | 'allowNotebookNetworkDomain'
+      | 'allowNotebookNetworkDestination'
     >
   >
 

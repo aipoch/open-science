@@ -206,6 +206,9 @@ export async function composeSettingsBootstrap({
         return (await service.getPackageMirror()).caBundle
       },
       getGrantedLocalRoots: async () => grantedRootsRepositoryRef.current?.list() ?? [],
+      recordStatus: (projectId, sessionId, recordId) =>
+        getRuntimeRef().current?.networkApprovalRecordStatus(projectId, sessionId, recordId) ??
+        Promise.resolve(undefined),
       hasFullAccess: (sessionId) => getRuntimeRef().current?.hasFullAccess(sessionId) ?? false,
       subscribeFullAccess: (sessionId, listener) =>
         getRuntimeRef().current?.subscribeFullAccess(sessionId, listener) ?? (() => {}),
@@ -224,6 +227,8 @@ export async function composeSettingsBootstrap({
         projectId,
         executionId,
         commandFingerprint,
+        evidence,
+        onOnceGrant,
         canResume,
         signal
       }) => {
@@ -234,12 +239,14 @@ export async function composeSettingsBootstrap({
           .requestAppPermission({
             sessionId,
             title: `Connect to ${hostname}?`,
-            ...(executionId && commandFingerprint && runtime === 'bash'
+            onNetworkAddressesApproved: onOnceGrant,
+            ...(executionId && commandFingerprint && runtime
               ? {
                   networkApproval: {
                     projectId,
                     executionId,
                     commandFingerprint,
+                    ...(evidence ? { evidence } : {}),
                     hostname,
                     port: port ?? 443,
                     runtime
@@ -277,6 +284,7 @@ export async function composeSettingsBootstrap({
             signal
           })
           .catch(() => undefined)
+        if (selected === 'retry-required') return 'retryRequired'
         return selected === 'always-allow'
           ? 'alwaysAllow'
           : selected === 'allow-once'

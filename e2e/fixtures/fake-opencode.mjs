@@ -2184,6 +2184,50 @@ if (process.argv.includes('--version')) {
             if (!run.runId) throw new Error('WSL background admission has no runId')
           })
           reply = 'WSL background task submitted for cancellation.'
+        } else if (/Verify network destination approval port (\d+)/u.test(prompt)) {
+          const port = /Verify network destination approval port (\d+)/u.exec(prompt)[1]
+          const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
+          let retried = false
+          await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
+            const run = async () =>
+              toolResult(
+                'bash_execute',
+                await client.callTool({ name: 'bash_execute', arguments: { command } })
+              )
+            const first = await run()
+            if (first.exitCode === 0) return
+            const recordId = /OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ([^\s]+)/u.exec(
+              first.stderr ?? ''
+            )?.[1]
+            if (!recordId) throw new Error(`No trusted block record: ${JSON.stringify(first)}`)
+            const decision = toolResult(
+              'request_network_access',
+              await client.callTool({
+                name: 'request_network_access',
+                arguments: {
+                  recordId,
+                  reason: 'Send the requested test payload to the local fixture.'
+                }
+              })
+            )
+            if (
+              decision.status !== 'allowed' &&
+              decision.status !== 'allowedOnce' &&
+              decision.status !== 'alreadyAllowed' &&
+              decision.status !== 'alwaysAllowed'
+            ) {
+              throw new Error(`Destination was not approved: ${JSON.stringify(decision)}`)
+            }
+            // The test server confirmed no payload was received before consent. The Agent now
+            // explicitly retries this known fixture command; the application never replays it.
+            const retry = await run()
+            if (retry.exitCode !== 0)
+              throw new Error(`Explicit retry failed: ${JSON.stringify(retry)}`)
+            retried = true
+          })
+          reply = retried
+            ? 'Network destination explicit retry verified.'
+            : 'Network destination saved access verified.'
         } else if (prompt.includes('Verify real WSL Bash execution.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
             const execution = toolResult(

@@ -1,3 +1,4 @@
+import { normalizeNetworkDestinationGrants } from './network-destination-grants'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
@@ -332,6 +333,9 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    ...(Array.isArray(record.destinationGrants)
+      ? { destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants) }
+      : {}),
     ...(Array.isArray(record.trustedPrivateDestinations)
       ? {
           trustedPrivateDestinations: normalizeTrustedPrivateDestinations(

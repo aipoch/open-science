@@ -2960,6 +2960,14 @@ class AcpRuntime {
     return this.permissionContext.requestAppApproval(input)
   }
 
+  networkApprovalRecordStatus(
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ): Promise<'pending' | 'approved' | 'denied' | undefined> {
+    return this.sandboxNetworkApprovalOwner.recordStatus(projectId, sessionId, recordId)
+  }
+
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
     if (input.networkApproval) {
       const scope = this.sessionInteractions.current(input.sessionId)

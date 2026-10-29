@@ -7652,6 +7652,15 @@
     "Verifying download…": "다운로드 검증 중…",
     "Example download progress": "사례 다운로드 진행률",
     "Could not cancel download. Try again.": "다운로드를 취소하지 못했습니다. 다시 시도해 주세요.",
-    "Could not download this example. Try again.": "이 사례를 다운로드하지 못했습니다. 다시 시도해 주세요."
+    "Could not download this example. Try again.": "이 사례를 다운로드하지 못했습니다. 다시 시도해 주세요.",
+    "Resolved addresses: {{addresses}}": "확인된 주소: {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "주소가 변경되었습니다. 새 주소를 검토한 후 다시 승인하세요.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "민감한 대상: 이 접근으로 로컬 서비스, 사설 네트워크 또는 클라우드 자격 증명이 노출될 수 있습니다. 신뢰할 수 있는 접근만 승인하세요.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Mihomo Fake-IP일 수 있습니다. 이 가상 주소는 최종 서버의 실제 주소가 아닙니다.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "승인해도 명령은 다시 실행되지 않습니다. 에이전트가 부작용을 확인한 후 명시적으로 재시도해야 합니다.",
+    "Approved network destinations": "승인된 네트워크 대상",
+    "Could not revoke network access. Try again.": "네트워크 접근 권한을 취소하지 못했습니다. 다시 시도하세요.",
+    "Project: {{project}}": "프로젝트: {{project}}",
+    "Source session: {{session}}": "출처 세션: {{session}}"
   }
 }

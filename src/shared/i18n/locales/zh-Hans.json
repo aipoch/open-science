@@ -7654,6 +7654,15 @@
     "Verifying download…": "正在校验下载文件…",
     "Example download progress": "案例下载进度",
     "Could not cancel download. Try again.": "无法取消下载，请重试。",
-    "Could not download this example. Try again.": "无法下载此案例，请重试。"
+    "Could not download this example. Try again.": "无法下载此案例，请重试。",
+    "Resolved addresses: {{addresses}}": "解析地址：{{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "地址已变化。请核查新地址后重新批准。",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "敏感目标：此访问可能暴露本机服务、私有网络或云凭据。仅在信任此次访问时批准。",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "可能为 Mihomo Fake-IP：此虚拟地址并非最终服务器地址。",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "批准不会重新执行命令。智能体必须检查副作用后显式重试。",
+    "Approved network destinations": "已批准的网络目标",
+    "Could not revoke network access. Try again.": "无法撤销网络访问权限。请重试。",
+    "Project: {{project}}": "项目：{{project}}",
+    "Source session: {{session}}": "来源会话：{{session}}"
   }
 }

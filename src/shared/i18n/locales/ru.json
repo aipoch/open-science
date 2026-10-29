@@ -8134,6 +8134,15 @@
     "Verifying download…": "Проверка загрузки…",
     "Example download progress": "Ход загрузки примера",
     "Could not cancel download. Try again.": "Не удалось отменить загрузку. Повторите попытку.",
-    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку."
+    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку.",
+    "Resolved addresses: {{addresses}}": "Разрешённые DNS-адреса: {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "Адреса изменились. Проверьте новые адреса перед повторным утверждением.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "Чувствительный адрес: доступ может раскрыть локальные службы, частные сети или облачные учётные данные. Утверждайте только доверенный доступ.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Возможный Mihomo Fake-IP: этот виртуальный адрес не является адресом конечного сервера.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "Утверждение не запускает команду повторно. Агент должен проверить побочные эффекты и явно повторить попытку.",
+    "Approved network destinations": "Утверждённые сетевые адреса",
+    "Could not revoke network access. Try again.": "Не удалось отозвать доступ к сети. Повторите попытку.",
+    "Project: {{project}}": "Проект: {{project}}",
+    "Source session: {{session}}": "Исходная сессия: {{session}}"
   }
 }

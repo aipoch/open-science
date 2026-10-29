@@ -991,7 +991,9 @@ class CommandGateway {
       rejectSocket(client, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: malformed CONNECT target')
       return
     }
-    destination.host = domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
+    destination.host = isIP(destination.host)
+      ? destination.host
+      : domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
     let decision = await this.#authorize(
       destination.host,
       destination.port,

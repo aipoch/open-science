@@ -8,9 +8,10 @@ import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
+import type { NotebookNetworkSettings } from '../../shared/notebook-network-settings'
 import { flushLogs, initLogger, type Logger } from '@aipoch/diagnostics/node'
 import type {
   NotebookSandboxCleanupReason,
@@ -25,6 +26,8 @@ const backend = vi.hoisted(() => ({
         port?: number
         purpose?: 'probe' | 'block'
         canResume?: () => boolean
+        addresses?: readonly string[]
+        policyAllowed?: boolean
       }) => Promise<boolean>)
     | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
@@ -64,7 +67,8 @@ vi.mock('@aipoch/environment', async (importOriginal) => ({
   rKernelProtocolProbe: backend.rKernelProtocolProbe
 }))
 
-vi.mock('@aipoch/notebook-network-sandbox', () => ({
+vi.mock('@aipoch/notebook-network-sandbox', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/notebook-network-sandbox')>()),
   NotebookNetworkSandbox: class {
     status = backend.status
     initialize = backend.initialize
@@ -80,7 +84,11 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
   }
 }))
 
-import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
+import {
+  NotebookNetworkSandboxOwner,
+  commandLine,
+  type NotebookNetworkDecision
+} from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { runShellCommand } from './shell-process'
@@ -144,6 +152,8 @@ beforeEach(() => {
         host: string
         port?: number
         purpose?: 'probe' | 'block'
+        addresses?: readonly string[]
+        policyAllowed?: boolean
         signal: AbortSignal
       }) => Promise<boolean>
     }) => {
@@ -166,9 +176,11 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port, purpose, canResume }) =>
+      backend.request = ({ host, port, purpose, canResume, addresses, policyAllowed }) =>
         command.onNetworkAccessRequest({
           host,
+          addresses,
+          policyAllowed,
           purpose,
           ...(canResume ? { canResume } : {}),
           ...(port === undefined ? {} : { port }),
@@ -4600,3 +4612,219 @@ it('explains that existing public policy is not private-service admission', asyn
 })
 
 configureTestRuntimeMetadata()
+
+describe('trusted gateway destination records', () => {
+  type DecisionRequest = Parameters<
+    ConstructorParameters<typeof NotebookNetworkSandboxOwner>[0]['requestDecision']
+  >[0]
+  type Fixture = {
+    root: string
+    owner: NotebookNetworkSandboxOwner
+    wrapped: Awaited<ReturnType<NotebookNetworkSandboxOwner['wrap']>>
+    requestDecision: Mock<(request: DecisionRequest) => Promise<NotebookNetworkDecision>>
+    connect: (addresses?: string[], port?: number) => Promise<boolean>
+    end: () => void
+    setSettings: (value: NotebookNetworkSettings) => Promise<void>
+  }
+  const setup = async (fullAccess = false, restrictFolders = true): Promise<Fixture> => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'destination-grants-')))
+    await mkdir(join(root, 'workspace'))
+    await mkdir(join(root, 'sessions'))
+    await writeFile(join(root, 'settings.json'), 'original')
+    fixtureDirectories.push(root)
+    let settings: NotebookNetworkSettings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS }
+    const requestDecision = vi
+      .fn<(request: DecisionRequest) => Promise<NotebookNetworkDecision>>()
+      .mockResolvedValue('retryRequired')
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      configRoot: root,
+      temporaryRoot: join(root, 'tmp'),
+      platform: 'linux',
+      getSettings: async () => settings,
+      persistAlwaysAllow: async () => settings,
+      requestDecision,
+      hasFullAccess: () => fullAccess,
+      getFolderRestrictionEnabled: async () => restrictFolders
+    })
+    const wrapped = await owner.wrap({
+      executable: '/bin/sh',
+      args: [],
+      env: {},
+      cwd: root,
+      commandText: 'request fixture',
+      executionReference: 'execution-1',
+      sessionId: 'session-1',
+      projectId: 'project-1',
+      runtime: 'bash',
+      filesystem: {
+        readOnlyRoots: [],
+        readWriteRoots: [root, join(root, 'workspace')],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      }
+    })
+    const end = wrapped.beginExecution!({
+      executionReference: 'execution-1',
+      commandText: 'request fixture'
+    })
+    const connect = (addresses = ['127.0.0.1'], port = 8443): Promise<boolean> =>
+      backend.request!({ host: 'local.test', port, purpose: 'block', addresses })
+    return {
+      root,
+      owner,
+      wrapped,
+      requestDecision,
+      connect,
+      end,
+      setSettings: async (value: typeof settings) => {
+        settings = value
+        owner.applySettings(value)
+      }
+    }
+  }
+
+  it('deduplicates records, keeps the original connection blocked and rejects forged ownership', async () => {
+    const f = await setup()
+    const [first, duplicate] = await Promise.all([f.connect(), f.connect()])
+    expect([first, duplicate]).toEqual([false, false])
+    expect(f.requestDecision).toHaveBeenCalledTimes(1)
+    const request = f.requestDecision.mock.calls[0]![0]
+    expect(request).toMatchObject({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      hostname: 'local.test',
+      port: 8443,
+      evidence: {
+        addresses: ['127.0.0.1'],
+        risks: expect.arrayContaining(['sensitive']),
+        recordId: expect.any(String)
+      }
+    })
+    const recordId = request.evidence!.recordId
+    expect(f.wrapped.annotateStderr('', '')).toContain(recordId)
+    for (const [projectId, sessionId, id] of [
+      ['project-2', 'session-1', recordId],
+      ['project-1', 'session-2', recordId],
+      ['project-1', 'session-1', 'forged']
+    ]) {
+      const result = await f.owner.requestNetworkAccess({
+        projectId,
+        sessionId,
+        recordId: id,
+        hostname: 'attacker.test',
+        reason: 'fixture'
+      })
+      expect(result.status).toBe('blocked')
+    }
+    expect(
+      (
+        await f.owner.requestNetworkAccess({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          recordId,
+          hostname: '',
+          reason: 'fixture'
+        })
+      ).status
+    ).toBe('allowedOnce')
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it('uses full access as the existing explicit exemption, including sensitive addresses', async () => {
+    const f = await setup(true)
+    expect(await f.connect()).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it('enforces host, port, full address set and project scope on every connection, then revokes', async () => {
+    const f = await setup()
+    const grant = {
+      id: 'grant',
+      scope: 'project' as const,
+      projectId: 'project-1',
+      sessionId: 'source',
+      recordId: 'source-record',
+      createdAt: 1,
+      hostname: 'local.test',
+      port: 8443,
+      approvedAddresses: ['127.0.0.1', '10.0.0.1']
+    }
+    await f.setSettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, destinationGrants: [grant] })
+    expect(await f.connect()).toBe(true)
+    expect(await f.connect(['10.0.0.1'])).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    expect(await f.connect(['127.0.0.1', '10.0.0.2'])).toBe(false)
+    expect(await f.connect(['127.0.0.1'], 443)).toBe(false)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, projectId: 'project-2' }]
+    })
+    expect(await f.connect()).toBe(false)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, projectId: 'project-2', scope: 'global' }]
+    })
+    expect(await f.connect()).toBe(true)
+    await f.setSettings({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, revokedAt: 2 }]
+    })
+    expect(await f.connect()).toBe(false)
+    const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+    expect(filesystem.deniedWriteRoots).toEqual(
+      expect.arrayContaining([join(f.root, 'settings.json'), join(f.root, 'sessions')])
+    )
+    f.end()
+    await f.owner.dispose()
+  })
+
+  it.skipIf(process.platform !== 'darwin').each([true, false])(
+    'protects live settings, future staging and sessions with folder restrictions %s',
+    async (restricted) => {
+      const f = await setup(false, restricted)
+      const { seatbeltProfile } =
+        await import('../../../packages/notebook-network-sandbox/runtime/src/platform/macos-isolation')
+      const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+      const profile = seatbeltProfile({
+        command: '',
+        shell: '/bin/sh',
+        gatewayPort: 1,
+        gatewayCredentials: { username: 'unused', password: 'unused' },
+        env: process.env,
+        filesystem
+      })
+      const attempt = (path: string): Promise<{ stdout: string; stderr: string }> =>
+        promisify(execFile)(
+          '/usr/bin/sandbox-exec',
+          ['-p', profile, '/bin/sh', '-c', 'printf forged > "$1"', 'fixture', path],
+          { cwd: join(f.root, 'workspace') }
+        )
+      await expect(attempt(join(f.root, 'settings.json'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'settings.json.123-test.tmp'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'sessions', 'forged.json'))).rejects.toThrow()
+      await expect(attempt(join(f.root, 'workspace', 'output.txt'))).resolves.toMatchObject({
+        stderr: ''
+      })
+      expect(await readFile(join(f.root, 'settings.json'), 'utf8')).toBe('original')
+      f.end()
+      await f.owner.dispose()
+    }
+  )
+
+  it('retains the whole consumed once snapshot for subsequent connections in the same execution', async () => {
+    const f = await setup()
+    f.requestDecision.mockImplementationOnce(async (request) => {
+      request.onOnceGrant?.(['127.0.0.1', '10.0.0.1'])
+      return 'allowOnce'
+    })
+    expect(await f.connect(['127.0.0.1'])).toBe(true)
+    expect(await f.connect(['10.0.0.1'])).toBe(true)
+    expect(f.requestDecision).toHaveBeenCalledTimes(1)
+    f.end()
+    await f.owner.dispose()
+  })
+})

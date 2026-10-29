@@ -59,7 +59,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
-  'Beyond restricted reads, call `request_network_access`. A failed connection is not required. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
+  'For a network block record, call `request_network_access` with its recordId and purpose. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
@@ -133,10 +133,12 @@ const backgroundRunToolSchema = {
 }
 
 const requestNetworkAccessToolSchema = {
-  hostname: z.string().trim().min(1).max(253),
-  reason: z.string().trim().min(1).max(1_000),
-  runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
-  command: z.string().min(1).optional().describe('Exact bash command, not Notebook source.')
+  recordId: z
+    .string()
+    .min(1)
+    .max(256)
+    .describe('Trusted network block record ID returned by the sandbox.'),
+  reason: z.string().trim().min(1).max(1_000)
 }
 
 const managePackagesToolSchema = {
@@ -1619,7 +1621,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'request_network_access',
     title: 'Request Notebook network access',
     description:
-      'Request before connecting or after OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED. Once: bash runtime+command or matching failure; otherwise Global. Execute or retry only when the result is allowed.',
+      'Request or query access using a trusted sandbox block record ID and purpose. The user approves in this conversation. Never supply addresses or an approval decision. Retry explicitly only after approval and after checking side effects.',
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,

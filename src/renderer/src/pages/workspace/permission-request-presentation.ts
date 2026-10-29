@@ -29,6 +29,11 @@ type PermissionPresentation = {
 type RequestInput = Record<string, unknown>
 
 type NotebookNetworkApproval = Readonly<{
+  addresses?: readonly string[]
+  risks?: readonly string[]
+  recordId?: string
+  revision?: number
+  blockReason?: string
   hostname: string
   port?: number
   runtime?: NotebookRuntime
@@ -184,6 +189,15 @@ const getNotebookNetworkApproval = (
         : undefined
   return {
     hostname: payload.hostname,
+    ...(Array.isArray(payload.addresses) && payload.addresses.every((v) => typeof v === 'string')
+      ? { addresses: payload.addresses as string[] }
+      : {}),
+    ...(Array.isArray(payload.risks)
+      ? { risks: payload.risks.filter((v): v is string => typeof v === 'string') }
+      : {}),
+    ...(typeof payload.recordId === 'string' ? { recordId: payload.recordId } : {}),
+    ...(typeof payload.revision === 'number' ? { revision: payload.revision } : {}),
+    ...(typeof payload.blockReason === 'string' ? { blockReason: payload.blockReason } : {}),
     ...(payload.port === undefined ? {} : { port: payload.port }),
     ...(runtime ? { runtime } : {}),
     ...(typeof payload.reason === 'string' && payload.reason.trim()

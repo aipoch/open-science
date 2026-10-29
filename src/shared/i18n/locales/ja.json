@@ -7654,6 +7654,15 @@
     "Verifying download…": "ダウンロードを検証中…",
     "Example download progress": "事例のダウンロード進捗",
     "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
-    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。"
+    "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。",
+    "Resolved addresses: {{addresses}}": "解決されたアドレス：{{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "アドレスが変更されました。新しいアドレスを確認してから再度承認してください。",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "機密性の高い接続先：ローカルサービス、プライベートネットワーク、クラウド認証情報が公開される可能性があります。このアクセスを信頼できる場合のみ承認してください。",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Mihomo Fake-IP の可能性があります。この仮想アドレスは最終的なサーバーのアドレスではありません。",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "承認してもコマンドは再実行されません。エージェントは副作用を確認してから明示的に再試行する必要があります。",
+    "Approved network destinations": "承認済みのネットワーク接続先",
+    "Could not revoke network access. Try again.": "ネットワークアクセスを取り消せませんでした。再試行してください。",
+    "Project: {{project}}": "プロジェクト：{{project}}",
+    "Source session: {{session}}": "要求元のセッション：{{session}}"
   }
 }

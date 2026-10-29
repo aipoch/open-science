@@ -7818,6 +7818,15 @@
     "Verifying download…": "Download wird überprüft…",
     "Example download progress": "Downloadfortschritt des Beispiels",
     "Could not cancel download. Try again.": "Download konnte nicht abgebrochen werden. Versuchen Sie es erneut.",
-    "Could not download this example. Try again.": "Dieses Beispiel konnte nicht heruntergeladen werden. Versuchen Sie es erneut."
+    "Could not download this example. Try again.": "Dieses Beispiel konnte nicht heruntergeladen werden. Versuchen Sie es erneut.",
+    "Resolved addresses: {{addresses}}": "Aufgelöste Adressen: {{addresses}}",
+    "Addresses changed. Review the new addresses before approving again.": "Die Adressen haben sich geändert. Prüfen Sie die neuen Adressen vor einer erneuten Freigabe.",
+    "Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.": "Sensibles Ziel: Dieser Zugriff kann lokale Dienste, private Netzwerke oder Cloud-Zugangsdaten offenlegen. Geben Sie nur vertrauenswürdige Zugriffe frei.",
+    "Possible Mihomo Fake-IP: this virtual address is not the final server address.": "Mögliche Mihomo Fake-IP: Diese virtuelle Adresse ist nicht die Adresse des endgültigen Servers.",
+    "Approval does not replay the command. The agent must check side effects and retry explicitly.": "Die Freigabe führt den Befehl nicht erneut aus. Der Agent muss Nebenwirkungen prüfen und ausdrücklich einen neuen Versuch starten.",
+    "Approved network destinations": "Freigegebene Netzwerkziele",
+    "Could not revoke network access. Try again.": "Der Netzwerkzugriff konnte nicht widerrufen werden. Versuchen Sie es erneut.",
+    "Project: {{project}}": "Projekt: {{project}}",
+    "Source session: {{session}}": "Ursprüngliche Sitzung: {{session}}"
   }
 }

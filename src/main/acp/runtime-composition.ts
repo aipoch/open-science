@@ -867,6 +867,8 @@ const createAcpRuntime = ({
           ? {
               permissionWait: {
                 networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDestination:
+                  settingsService.allowNotebookNetworkDestination?.bind(settingsService),
                 allowNetworkDomain:
                   settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,

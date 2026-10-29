@@ -27,6 +27,7 @@ export type PrivateDestinationReview =
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>
 
 export type NotebookNetworkSettings = Readonly<{
+  destinationGrants?: readonly import('./network-destination-grants').NetworkDestinationGrant[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   disabledOpenScienceDomainGroups: readonly OpenScienceDomainGroupId[]

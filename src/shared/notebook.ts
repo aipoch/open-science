@@ -52,6 +52,7 @@ export type NotebookRunSource = 'agent' | 'user'
 export type NotebookExecutionRpcMethod = 'execute' | 'executeControl' | 'executeShell'
 
 export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
+  recordId?: string
   hostname: string
   reason: string
   runtime?: 'python' | 'r' | 'repl' | 'bash'

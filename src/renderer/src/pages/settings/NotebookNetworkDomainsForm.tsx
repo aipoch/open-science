@@ -1,3 +1,4 @@
+import { NetworkDestinationGrants } from './NetworkDestinationGrants'
 import { TrustedPrivateServices } from './TrustedPrivateServices'
 import { SettingsSection } from './SettingsLayout'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -620,6 +621,7 @@ const NotebookNetworkDomainsForm = ({
         </div>
       </section>
 
+      <NetworkDestinationGrants />
       <TrustedPrivateServices
         rules={draft.trustedPrivateDestinations ?? []}
         disabled={isSaving}

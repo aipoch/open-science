@@ -304,3 +304,48 @@ describe('NotebookNetworkSettingsOwner', () => {
     expect(state.repository.setNotebookNetwork).not.toHaveBeenCalled()
   })
 })
+
+describe('exact destination grants', () => {
+  it('rechecks addresses, persists an exact project grant and only accepts revocation from settings', async () => {
+    let stored: NotebookNetworkSettings = DEFAULT_NOTEBOOK_NETWORK_SETTINGS
+    const repository = {
+      getSettings: async (): Promise<StoredSettings> => ({
+        version: SETTINGS_FILE_VERSION,
+        providers: [],
+        notebookNetwork: stored
+      }),
+      setNotebookNetwork: async (next: NotebookNetworkSettings): Promise<StoredSettings> => {
+        stored = next
+        return { version: SETTINGS_FILE_VERSION, providers: [], notebookNetwork: stored }
+      }
+    }
+    const owner = new NotebookNetworkSettingsOwner({ repository, apply: async () => {} })
+    const grant = {
+      id: 'grant',
+      hostname: 'private.example',
+      port: 443,
+      approvedAddresses: ['10.32.0.7'],
+      projectId: 'project',
+      sessionId: 'session',
+      recordId: 'record',
+      scope: 'project' as const,
+      createdAt: 1
+    }
+    await owner.allowDestination(grant)
+    expect((await owner.get()).destinationGrants).toEqual([grant])
+    lookup.mockResolvedValue([{ address: '10.32.0.8', family: 4 }])
+    await expect(owner.allowDestination({ ...grant, id: 'second' })).rejects.toThrow('changed')
+    await owner.set({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [{ ...grant, id: 'forged' }]
+    })
+    expect((await owner.get()).destinationGrants).toEqual([grant])
+    await owner.set({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, revokeNetworkGrantIds: ['grant'] })
+    expect((await owner.get()).destinationGrants).toEqual([
+      expect.objectContaining({ id: 'grant', revokedAt: expect.any(Number) })
+    ])
+    const restarted = new NotebookNetworkSettingsOwner({ repository, apply: async () => {} })
+    await expect(restarted.allowDestination(grant)).rejects.toThrow('revoked')
+    expect((await restarted.get()).destinationGrants?.[0].revokedAt).toBeDefined()
+  })
+})
