@@ -11,7 +11,10 @@ import {
   resumeAutoReviewsAfterQuitAbort,
   suppressAutoReviewsForQuit
 } from '../lib/acp/workspace-events'
-import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
+import {
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart,
+  drainWorkspaceRuntimeEventsForPersistence
+} from '../lib/acp/useWorkspaceAgentRuntime'
 import {
   assertPreviewPersistenceSavedForRecoveryRestart,
   flushPreviewPersistence
@@ -20,7 +23,6 @@ import {
   assertSessionPersistenceSavedForRecoveryRestart,
   flushSessionPersistence
 } from '../lib/session-persistence/session-persistence'
-import { assertWorkspaceRuntimeEventsSavedForRecoveryRestart } from '../lib/acp/workspace-runtime-event-owner'
 import {
   flushComposerDrafts,
   composerDraftHasFiles

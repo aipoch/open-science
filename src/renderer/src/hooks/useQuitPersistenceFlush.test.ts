@@ -25,6 +25,7 @@ vi.mock('../lib/acp/workspace-events', () => ({
   suppressAutoReviewsForQuit: vi.fn()
 }))
 vi.mock('../lib/acp/useWorkspaceAgentRuntime', () => ({
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart: vi.fn(),
   drainWorkspaceRuntimeEventsForPersistence
 }))
 vi.mock('../lib/session-persistence/session-persistence', () => ({
