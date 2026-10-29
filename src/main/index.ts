@@ -923,7 +923,12 @@ async function startDesktop(): Promise<void> {
           preservedStartupOptions = failure.startupOptions
         }
         if (initialRecoveryError) {
-          app.relaunch()
+          // Installation recovery is still part of this startup attempt.
+          app.relaunch(
+            startupRetry
+              ? { args: desktopStartupRetryArgs(process.argv.slice(1), startupRetry) }
+              : undefined
+          )
           app.exit(0)
         } else continueStartup?.()
       } catch (error) {
@@ -990,7 +995,7 @@ async function startDesktop(): Promise<void> {
           undefined,
           async () => {
             const stop = await reviewStartupRestart(reviewed, options)
-            throw new DesktopStartupRelaunch({ options, stop })
+            throw new DesktopStartupRelaunch({ options, restart: { stop } })
           }
         )
       }
@@ -1012,9 +1017,9 @@ async function startDesktop(): Promise<void> {
       packaged: app.isPackaged,
       credentialInventory: startupCredentialCiphertexts,
       credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
-      beforeLaunch: startupRetry
+      beforeLaunch: startupRetry?.restart
         ? async () => {
-            await reviewStartupRestart(startupRetry.stop, startupRetry.options)
+            await reviewStartupRestart(startupRetry.restart?.stop, startupRetry.options)
           }
         : undefined,
       args: [...credentialArgs, ...(launchOptions ? [`--serve=${launchOptions.port}`] : [])]
@@ -1109,7 +1114,16 @@ async function startDesktop(): Promise<void> {
           .waitForStopped()
           .then((lease) => {
             retainShutdownLease(lease)
-            app.relaunch()
+            // Electron otherwise reuses native argv, including an already-consumed retry grant.
+            app.relaunch(
+              startupRetry
+                ? {
+                    args: desktopStartupRetryArgs(process.argv.slice(1), {
+                      options: startupRetry.options
+                    })
+                  }
+                : undefined
+            )
             app.exit(0)
           })
           .catch((error) => {
@@ -1257,7 +1271,7 @@ async function startDesktop(): Promise<void> {
             const stop = await reviewStartupRestart(repairAuthorization, options)
             // Chromium now owns Cookies. Re-enter bootstrap instead of reading that open profile
             // or reusing a credential inventory whose original 60-second lifetime may have expired.
-            if (startupWindow) throw new DesktopStartupRelaunch({ options, stop })
+            if (startupWindow) throw new DesktopStartupRelaunch({ options, restart: { stop } })
           }
         },
         args: [

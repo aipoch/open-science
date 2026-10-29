@@ -582,7 +582,7 @@ it.each([false, true])(
   }
 )
 
-it.each(['matching', 'changed', 'invalid'] as const)(
+it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configuration-only'] as const)(
   'consumes a startup retry once and checks its successor authorization (%s)',
   async (mode) => {
     const argv = process.argv
@@ -605,8 +605,29 @@ it.each(['matching', 'changed', 'invalid'] as const)(
       '--desktop-startup-retry=' +
       (mode === 'invalid'
         ? 'invalid'
-        : Buffer.from(JSON.stringify({ stop, options })).toString('base64url'))
+        : Buffer.from(
+            JSON.stringify({
+              options,
+              ...(mode === 'configuration-only' ? {} : { restart: { stop } })
+            })
+          ).toString('base64url'))
     process.argv = ['electron', 'app', argument]
+    if (mode === 'installation-recovery') {
+      const startup = await import('./desktop-startup-recovery')
+      vi.spyOn(startup, 'resolveDesktopInstallationStartup').mockRejectedValue(
+        new startup.DesktopRuntimeStartupError(
+          {
+            reason: 'startup-recovery-required',
+            desktopVersion: 'test',
+            canStop: false,
+            canRecover: true
+          },
+          'The installation needs recovery before Open-Science can start.',
+          undefined,
+          async () => {}
+        )
+      )
+    }
     f.readLifetime.mockResolvedValue(
       mode === 'changed' ? { ...stop, generation: '1e1f1d5f-79b8-43bc-bd73-c24ef73c4dad' } : stop
     )
@@ -619,7 +640,8 @@ it.each(['matching', 'changed', 'invalid'] as const)(
     f.connect.mockResolvedValue({
       ownsRuntime: () => false,
       processId: () => 123,
-      runtimeInfo: () => ({ generation: 'successor' }),
+      runtimeInfo: () => ({ generation: 'successor', control: 'granted' }),
+      waitForStopped: async () => undefined,
       invokeHost: async () => ({ locale: 'en' }),
       startupState: () => ({ phase: 'checking' }),
       close: vi.fn()
@@ -632,7 +654,7 @@ it.each(['matching', 'changed', 'invalid'] as const)(
     })
     try {
       await import('./index')
-      if (mode === 'matching') {
+      if (mode === 'matching' || mode === 'configuration-only') {
         await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalledOnce())
         expect(spawned).toBe(true)
         expect(f.inventory).toHaveBeenCalledWith({
@@ -647,6 +669,39 @@ it.each(['matching', 'changed', 'invalid'] as const)(
             args: ['--credential-store=os', '--password-store=gnome-libsecret', '--serve=49123']
           })
         )
+        const connection = f.connect.mock.calls[0][0]
+        const request = { request: { operation: 'runtime-relaunch' } }
+        expect(await connection.onNativeRequest(request, new AbortController().signal)).toBe(true)
+        connection.onNativeResponseSent(request, true)
+        await vi.waitFor(() => expect(f.app.relaunch).toHaveBeenCalledOnce())
+        // Electron's implicit relaunch retains its original native argv, not mutated process.argv.
+        const args = f.app.relaunch.mock.calls[0][0].args
+        expect(args).toHaveLength(2)
+        expect(args[0]).toBe('app')
+        expect(
+          JSON.parse(Buffer.from(args[1].split('=')[1], 'base64url').toString('utf8'))
+        ).toEqual({ options })
+        if (mode === 'configuration-only') expect(f.readLifetime).not.toHaveBeenCalled()
+      } else if (mode === 'installation-recovery') {
+        const { createMainWindow, isMainWindow } = await import('./windows')
+        const { BrowserWindow } = await import('electron')
+        await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())
+        const window = vi.mocked(createMainWindow).mock.results[0].value
+        vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(window)
+        vi.mocked(isMainWindow).mockReturnValue(true)
+        const frame = {}
+        await f.handlers.get('runtime-startup:recover')!({
+          sender: { mainFrame: frame },
+          senderFrame: frame
+        })
+        expect(f.app.relaunch).toHaveBeenCalledOnce()
+        const args = f.app.relaunch.mock.calls[0][0].args
+        expect(args).toHaveLength(2)
+        expect(args[0]).toBe('app')
+        expect(
+          JSON.parse(Buffer.from(args[1].split('=')[1], 'base64url').toString('utf8'))
+        ).toEqual({ options, restart: { stop } })
+        expect(f.inventory).not.toHaveBeenCalled()
       } else if (mode === 'changed') {
         const { createMainWindow } = await import('./windows')
         await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())

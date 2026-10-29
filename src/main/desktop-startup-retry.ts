@@ -8,7 +8,8 @@ const argumentPrefix = '--desktop-startup-retry='
 const retrySchema = z
   .object({
     options: runtimeStartupOptionsSchema.omit({ dataRoot: true }),
-    stop: serviceLifetimeRecordSchema.optional()
+    // Configuration survives ordinary relaunches; stop authorization belongs only to recovery.
+    restart: z.object({ stop: serviceLifetimeRecordSchema.optional() }).strict().optional()
   })
   .strict()
 export type DesktopStartupRetry = z.infer<typeof retrySchema>
@@ -20,7 +21,7 @@ export class DesktopStartupRelaunch extends Error {
   }
 }
 
-/** Consume once, including from argv retained by a later ordinary app.relaunch(). */
+/** Consume from JS argv; later ordinary relaunches must explicitly pass that cleaned argv. */
 export function consumeDesktopStartupRetry(args: string[]): DesktopStartupRetry | undefined {
   const values = args.filter((arg) => arg.startsWith(argumentPrefix))
   if (!values.length) return undefined
