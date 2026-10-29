@@ -1955,7 +1955,7 @@
     "Offline": "Offline",
     "On this machine": "Auf dieser Maschine",
     "Once": "Einmal",
-    "Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>.": "Befehle: <code>start</code>, <code>stop</code>, <code>status</code> und <code>url</code>.",
+    "Commands: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code>, and <code>open-science url</code>.": "Befehle: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code> und <code>open-science url</code>.",
     "One moment.": "Einen Moment.",
     "One or more agent runtimes could not be detected.": "Eine oder mehrere Agentenlaufzeiten konnten nicht erkannt werden.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Ein Satz: Was lehrt diese Fähigkeit den Agenten und wann kommt sie zur Anwendung?",

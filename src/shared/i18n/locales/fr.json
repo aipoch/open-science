@@ -2144,7 +2144,7 @@
     "Offline": "Hors ligne",
     "On this machine": "Sur cette machine",
     "Once": "Une fois",
-    "Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>.": "Commandes : <code>start</code>, <code>stop</code>, <code>status</code> et <code>url</code>.",
+    "Commands: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code>, and <code>open-science url</code>.": "Commandes : <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code> et <code>open-science url</code>.",
     "One moment.": "Un instant.",
     "One or more agent runtimes could not be detected.": "Un ou plusieurs environnements d'exécution d'agent n'ont pas pu être détectés.",
     "One sentence — what does this skill teach the agent, and when does it apply?": "Une phrase : qu'est-ce que cette compétence enseigne à l'agent et quand s'applique-t-elle ?",

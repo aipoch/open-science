@@ -600,7 +600,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         <p className="mt-3 text-xs text-muted-foreground">
           <Trans
-            i18nKey="Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>."
+            i18nKey="Commands: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code>, and <code>open-science url</code>."
             components={{ code: <code className="font-mono" /> }}
           />
         </p>

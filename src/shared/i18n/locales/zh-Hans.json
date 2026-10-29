@@ -2156,7 +2156,7 @@
     "Offline": "离线",
     "On this machine": "在这台机器上",
     "Once": "仅此一次",
-    "Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>.": "命令：<code>start</code>、<code>stop</code>、<code>status</code> 和 <code>url</code>。",
+    "Commands: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code>, and <code>open-science url</code>.": "命令：<code>open-science start</code>、<code>open-science stop</code>、<code>open-science status</code> 和 <code>open-science url</code>。",
     "One moment.": "请稍候。",
     "One or more agent runtimes could not be detected.": "有一个或多个智能体运行时无法检测到。",
     "One sentence — what does this skill teach the agent, and when does it apply?": "一句话 —— 这个技能教给智能体什么，什么时候适用？",

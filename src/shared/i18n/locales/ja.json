@@ -2069,7 +2069,7 @@
     "Offline": "オフライン",
     "On this machine": "このマシンでは",
     "Once": "一度",
-    "Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>.": "コマンド: <code>start</code>、<code>stop</code>、<code>status</code>、<code>url</code>。",
+    "Commands: <code>open-science start</code>, <code>open-science stop</code>, <code>open-science status</code>, and <code>open-science url</code>.": "コマンド: <code>open-science start</code>、<code>open-science stop</code>、<code>open-science status</code>、<code>open-science url</code>。",
     "One moment.": "少々お待ちください。",
     "One or more agent runtimes could not be detected.": "1 つ以上のエージェントランタイムが検出できませんでした。",
     "One sentence — what does this skill teach the agent, and when does it apply?": "一文 — このスキルはエージェントに何を教えますか？いつ適用されますか？",
