@@ -2,6 +2,7 @@ import { createComputeExecution, createScpRunner, createSshRunner } from '@aipoc
 // RUN_COMPUTE_SLURM=1 COMPUTE_TEST_SSH_ALIAS=hpc-dev npx vitest run src/main/compute/slurm.real-ssh.integration.test.ts
 import {
   JobPoller,
+  computeRemoteWorkdir,
   parseSbatchJobId,
   quoteRemotePath,
   recoverSlurmJob,
@@ -30,6 +31,10 @@ import { BackgroundResultDeliveryRepository } from '../background-result-deliver
 const alias = process.env['COMPUTE_TEST_SSH_ALIAS'] ?? ''
 const run = process.env['RUN_COMPUTE_SLURM'] === '1' && alias !== ''
 const partition = process.env['COMPUTE_SLURM_PARTITION'] ?? 'debug'
+const configuredScratchRoot = process.env['COMPUTE_SLURM_SCRATCH_ROOT']?.trim()
+const scratchRoot = configuredScratchRoot
+  ? configuredScratchRoot.replace(/\/+$/, '') || '/'
+  : undefined
 const reliability = process.env['COMPUTE_SLURM_RELIABILITY'] === '1'
 const evidenceDirectory = process.env['COMPUTE_SLURM_EVIDENCE_DIR']
 const acceptanceRun = randomUUID()
@@ -47,7 +52,9 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   const retainedForAgent = new Set<string>()
   const envName = `os-cert-${randomUUID()}`
   const envPath = `~/.openscience/environments/${envName}.sh`
-  const envRoot = `~/.openscience/environments/${envName}`
+  const envRoot = scratchRoot
+    ? `${scratchRoot}/${envName}`
+    : `~/.openscience/environments/${envName}`
   const schedulerHeader = `#SBATCH --partition=${partition}\n#SBATCH --cpus-per-task=1\n#SBATCH --mem=128M\n`
 
   const record = async (kind: string, data: unknown): Promise<void> => {
@@ -84,6 +91,24 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       `Slurm wait timed out: ${JSON.stringify(await db.repositories.jobs.get(jobId))}`
     )
   }
+  const collect = async (job: ComputeJob): Promise<ComputeJob> => {
+    await harvestJob(job, {
+      connectionBroker,
+      hostRepository: hosts,
+      jobRepository: db.repositories.jobs,
+      storageRoot: db.storageRoot,
+      broadcast: () => undefined
+    })
+    const collected = (await db.repositories.jobs.get(job.job_id))!
+    expect(collected.harvested_at).toBeDefined()
+    expect(collected.harvest_error).toBeUndefined()
+    return collected
+  }
+  const readCollectedLog = (job: ComputeJob, stream: 'stdout' | 'stderr'): Promise<string> =>
+    readFile(
+      join(getJobHarvestDir(db.storageRoot, job.project_id, job.session_id, job.job_id), stream),
+      'utf8'
+    )
   const submit = async (
     command: string,
     options: Parameters<ComputeService['submitJob']>[3] = {}
@@ -103,7 +128,18 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     if (evidenceDirectory) await mkdir(evidenceDirectory, { recursive: true })
     db = await createMigratedComputeTestDatabase('os-slurm-real-')
     hosts = new ComputeHostRepository(async () => db.client)
-    await hosts.create({ sshAlias: alias, executionMode: 'slurm' })
+    await hosts.create({
+      sshAlias: alias,
+      executionMode: 'slurm',
+      sshOverrides: {
+        user: process.env['COMPUTE_SLURM_USERNAME'],
+        port: process.env['COMPUTE_SLURM_PORT']
+          ? Number(process.env['COMPUTE_SLURM_PORT'])
+          : undefined,
+        identityFile: process.env['COMPUTE_SLURM_IDENTITY_FILE']
+      }
+    })
+    if (scratchRoot) await hosts.updateScratchPinned(scope.providerId, scratchRoot)
     const transport = createSshRunner()
     const runner: SshRunner = {
       run: async (...args) => {
@@ -143,7 +179,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     })
     expect((await service.probe(scope.providerId)).detectedScheduler).toBe('slurm')
     const setup = await remote(
-      `mkdir -p ~/.openscience/environments && python3 -m venv --without-pip ${quoteRemotePath(envRoot)} && printf '%s\\n' ${shellSingleQuote(`. "$HOME/.openscience/environments/${envName}/bin/activate"\nexport OS_COMPUTE_WITNESS=activated`)} > ${quoteRemotePath(envPath)}`
+      `mkdir -p ~/.openscience/environments && python3 -m venv --without-pip ${quoteRemotePath(envRoot)} && printf '%s\\n' ${shellSingleQuote(`. ${quoteRemotePath(`${envRoot}/bin/activate`)}\nexport OS_COMPUTE_WITNESS=activated`)} > ${quoteRemotePath(envPath)}`
     )
     expect(setup.exitCode).toBe(0)
   })
@@ -318,7 +354,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       const recovered = await wait(submitted.job_id, terminal, makePoller(createComputeExecution()))
       expect(recovered.status).toBe('success')
       expect(JSON.parse(recovered.remote_handle!).scheduler_job_id).toBe(schedulerId)
-      expect(recovered.stdout_tail).toContain('recovered')
+      const collected = await collect(recovered)
+      expect(await readCollectedLog(collected, 'stdout')).toContain('recovered')
     } finally {
       await hosts.updateExecutionMode(scope.providerId, 'slurm')
     }
@@ -326,14 +363,14 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
 
   it('does not adopt a same-name scheduler job from another workdir', async () => {
     const jobId = randomUUID()
-    const expectedWorkdir = `~/.openscience/jobs/${jobId}`
-    const decoyWorkdir = `~/.openscience/slurm-decoy-${jobId}`
+    const expectedWorkdir = computeRemoteWorkdir(scratchRoot, jobId)
+    const decoyWorkdir = `${scratchRoot ?? '~'}/.open-science/slurm-decoy-${jobId}`
     const launched = await remote(
       [
         `mkdir -p ${quoteRemotePath(expectedWorkdir)} ${quoteRemotePath(decoyWorkdir)}`,
         `touch ${quoteRemotePath(`${expectedWorkdir}/job.sbatch`)}`,
         `cd ${quoteRemotePath(decoyWorkdir)}`,
-        `sbatch --parsable --hold --partition=${partition} --job-name=openscience-${jobId} --chdir="$PWD" --output=stdout --error=stderr --wrap=true`
+        `sbatch --parsable --hold --partition=${partition} --job-name=open-science-${jobId} --chdir="$PWD" --output=stdout --error=stderr --wrap=true`
       ].join('\n')
     )
     expect(launched.exitCode).toBe(0)
@@ -360,12 +397,14 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     const result = await wait(failed.job_id)
     expect(result.status).toBe('failed')
     expect(result.exit_code).toBe(7)
-    expect(result.stderr_tail).toContain('science-failure')
+    const collected = await collect(result)
+    expect(await readCollectedLog(collected, 'stderr')).toContain('science-failure')
     const missing = await submit('echo must-not-run', { environment: `${envName}-missing` })
-    const missingResult = await wait(missing.job_id)
-    expect(missingResult.status).toBe('failed')
-    expect(missingResult.stderr_tail).toContain('compute-env-setup')
-    expect(missingResult.stdout_tail ?? '').not.toContain('must-not-run')
+    const missingFinished = await wait(missing.job_id)
+    expect(missingFinished.status).toBe('failed')
+    const missingResult = await collect(missingFinished)
+    expect(await readCollectedLog(missingResult, 'stderr')).toContain('compute-env-setup')
+    expect(await readCollectedLog(missingResult, 'stdout')).not.toContain('must-not-run')
   }, 180000)
 
   it('cancels via Slurm and confirms termination before settling cancellation', async () => {
@@ -544,6 +583,51 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     const observed = await remote(`squeue --noheader --states=all -j ${schedulerId} --format='%T'`)
     expect(observed.stdout.trim()).not.toMatch(/^(RUNNING|PENDING|COMPLETING|CONFIGURING)$/m)
   }, 180000)
+
+  it.skipIf(!reliability)(
+    'reliability: observes a completed controller batch before collecting either job',
+    async () => {
+      const submitted = [
+        await submit('printf first-controller-batch'),
+        await submit('printf last-controller-batch')
+      ]
+      await execution.waitForDispatch(submitted.map((job) => job.job_id))
+      for (const item of submitted) {
+        const job = (await db.repositories.jobs.get(item.job_id))!
+        const id = JSON.parse(job.remote_handle!).scheduler_job_id
+        const deadline = Date.now() + 120000
+        let server = await remote(`scontrol show job ${id} --oneliner`)
+        while (!server.stdout.includes('JobState=COMPLETED') && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+          server = await remote(`scontrol show job ${id} --oneliner`)
+        }
+        expect(server.stdout).toContain('JobState=COMPLETED')
+      }
+      await makePoller().tick()
+      const finishedJobs: ComputeJob[] = []
+      for (const item of submitted) {
+        const finished = (await db.repositories.jobs.get(item.job_id))!
+        expect(finished).toMatchObject({ status: 'success', exit_code: 0 })
+        expect(finished.harvested_at).toBeUndefined()
+        await record('controller-batch-before-collection', finished)
+        finishedJobs.push(finished)
+      }
+      for (const [index, finished] of finishedJobs.entries()) {
+        const collected = await collect(finished)
+        const expected = index === 0 ? 'first-controller-batch' : 'last-controller-batch'
+        // Tail snapshots are best effort; the collected log is the durable output witness.
+        if (collected.stdout_tail !== undefined) expect(collected.stdout_tail).toBe(expected)
+        const stdout = await readCollectedLog(collected, 'stdout')
+        expect(stdout).toBe(expected)
+        await record('controller-batch-collected-output', {
+          jobId: finished.job_id,
+          stdout,
+          stdoutTail: collected.stdout_tail
+        })
+      }
+    },
+    180000
+  )
 
   it.skipIf(!reliability)(
     'reliability: completes a short job before its first application poll',
