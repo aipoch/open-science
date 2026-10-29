@@ -5,13 +5,23 @@
     "src/shared/run-error-classification.ts",
     "src/shared/media-overflow.ts",
     "src/shared/run-error-classification.test.ts",
-    "src/shared/media-overflow.test.ts"
+    "src/shared/media-overflow.test.ts",
+    "src/shared/failure/classify.test.ts",
+    "src/shared/failure/classify.ts",
+    "src/shared/failure/contract.ts",
+    "src/shared/failure/recognizers/agent-runtime.ts",
+    "src/shared/failure/recognizers/environment.ts",
+    "src/shared/failure/recognizers/input.ts",
+    "src/shared/failure/recognizers/provider.ts",
+    "src/shared/failure/recognizers/session.ts"
   ],
   "interfacePaths": [
     "src/shared/claude-runtime.ts",
     "src/shared/codex-runtime.ts",
     "src/shared/run-error-classification.ts",
-    "src/shared/media-overflow.ts"
+    "src/shared/media-overflow.ts",
+    "src/shared/failure/contract.ts",
+    "src/shared/failure/classify.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -20,7 +30,11 @@
     "web_renderer_bridge"
   ],
   "testFiles": {
-    "owner": ["src/shared/run-error-classification.test.ts", "src/shared/media-overflow.test.ts"],
+    "owner": [
+      "src/shared/run-error-classification.test.ts",
+      "src/shared/media-overflow.test.ts",
+      "src/shared/failure/classify.test.ts"
+    ],
     "contract": [],
     "consumer": [
       "src/shared/application-command-contract.test.ts",
