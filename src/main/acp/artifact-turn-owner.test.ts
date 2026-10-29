@@ -955,12 +955,17 @@ describe('ArtifactTurnOwner', () => {
     const dataRoot = await createRoot()
     const contexts: unknown[] = []
     const revoked: string[] = []
+    let isOwnerActive!: () => boolean
     const owner = new ArtifactTurnOwner({
       dataRoot,
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
-      issueRpcCapability: () => 'capability-1',
+      issueRpcCapability: (_binding, isActive) => {
+        isOwnerActive = isActive
+        return 'capability-1'
+      },
       revokeRpcCapability: (token) => {
+        expect(isOwnerActive()).toBe(false)
         revoked.push(token)
         throw new Error('cleanup revoke failed')
       },
@@ -994,6 +999,7 @@ describe('ArtifactTurnOwner', () => {
     expect(contexts.at(-1)).toBeUndefined()
     expect(revoked).toEqual(['capability-1'])
     expect(owner.activeRunIds()).toEqual([])
+    expect(isOwnerActive()).toBe(false)
   })
 
   it('releases Artifact ownership after the Notebook binding reports a stop failure', async () => {

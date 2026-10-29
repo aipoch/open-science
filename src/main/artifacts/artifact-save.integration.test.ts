@@ -40,6 +40,102 @@ afterEach(async () => {
 const hash = (data: string): string => createHash('sha256').update(data).digest('hex')
 
 describe('complete Artifact save over the production local RPC', () => {
+  it('admits a save as soon as the activating turn publishes its handoff', async () => {
+    const f = await setup()
+    let saved: { versionId: string } | undefined
+    const owner = new ArtifactTurnOwner({
+      dataRoot: f.storageRoot,
+      repository: f.compatibilityRepository,
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: (binding, isOwnerActive) =>
+        f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+      revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+      writeHandoffFile: async (path, content) => {
+        await writeFile(path, content)
+        if (!JSON.parse(content).rpcCapabilityToken) return
+        saved = await writeArtifactFileForCurrentRun(
+          f.compatibilityRepository,
+          {
+            storageRoot: f.storageRoot,
+            projectId: 'project-1',
+            sessionId: f.binding.artifactStorageSessionId,
+            currentRunFile: path,
+            allowedImportRoots: [],
+            rpcEndpoint: f.connection.endpoint
+          },
+          { filename: 'report.md', content: '# Completed report' }
+        )
+      }
+    })
+    const turn = await owner.openRootExecution({
+      ...f.binding,
+      executionId: 'activating-execution',
+      agentName: 'Test Agent'
+    })
+    try {
+      expect(saved?.versionId).toBeTruthy()
+      expect(await f.client.artifactVersion.count()).toBe(1)
+    } finally {
+      await owner.dispose(turn)
+    }
+  })
+
+  it('keeps the previous handoff usable during and after a failed replacement write', async () => {
+    const f = await setup()
+    let failWrite = false
+    const outcomes: unknown[] = []
+    const save = async (path: string, filename: string): Promise<void> => {
+      outcomes.push(
+        await writeArtifactFileForCurrentRun(
+          f.compatibilityRepository,
+          {
+            storageRoot: f.storageRoot,
+            projectId: 'project-1',
+            sessionId: f.binding.artifactStorageSessionId,
+            currentRunFile: path,
+            allowedImportRoots: [],
+            rpcEndpoint: f.connection.endpoint
+          },
+          { filename, content: '# Completed report' }
+        ).then(
+          () => 'saved',
+          (error: Error) => error.message
+        )
+      )
+    }
+    const owner = new ArtifactTurnOwner({
+      dataRoot: f.storageRoot,
+      repository: f.compatibilityRepository,
+      runRegistry: new ArtifactRunRegistry(),
+      issueRpcCapability: (binding, isOwnerActive) =>
+        f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+      revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+      writeHandoffFile: async (path, content) => {
+        if (failWrite) {
+          await save(path, 'during.md')
+          throw new Error('replacement write failed')
+        }
+        await writeFile(path, content)
+      }
+    })
+    const request = { ...f.binding, agentName: 'Test Agent' }
+    const first = await owner.openRootExecution({ ...request, executionId: 'first-execution' })
+    const handoff = await readFile(owner.handoffFile(first), 'utf8')
+    try {
+      failWrite = true
+      await expect(
+        owner.openRootExecution({ ...request, executionId: 'replacement-execution' })
+      ).rejects.toThrow('replacement write failed')
+      await save(owner.handoffFile(first), 'after.md')
+      expect(await readFile(owner.handoffFile(first), 'utf8')).toBe(handoff)
+      expect(outcomes).toEqual(['saved', 'saved'])
+      expect(owner.activeRunIds()).toEqual([JSON.parse(handoff).artifactRunId])
+    } finally {
+      failWrite = false
+      await owner.dispose(first)
+    }
+  })
+
   it.each([false, true])(
     'publishes generated files late in an active turn (producerRunId: %s)',
     async (includeProducer) => {
