@@ -136,7 +136,6 @@
     "@bokuweb/zstd-wasm": "^0.0.27",
     "@electron-toolkit/utils": "^4.0.0",
     "@embedpdf/pdfium": "2.15.1",
-    "@huggingface/transformers": "4.2.0",
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@napi-rs/canvas": "0.1.100",
     "@peculiar/x509": "2.1.0",
@@ -193,12 +192,6 @@
     "@aipoch/providers": "file:packages/providers"
   },
   "overrides": {
-    "@huggingface/transformers": {
-      "sharp": "$sharp"
-    },
-    "onnxruntime-node@1.24.3": {
-      "adm-zip": "0.6.1"
-    },
     "@file-viewer/core@3.0.3": {
       "dompurify": "3.4.17"
     },

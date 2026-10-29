@@ -13,7 +13,7 @@ it('routes capabilities independently and rejects unknown model names before mut
   const tables = owner(),
     translation = owner(),
     api = createLocalModelApi(tables, translation)
-  for (const action of ['getSnapshot', 'install', 'cancel', 'remove'] as const) {
+  for (const action of ['getSnapshot', 'cancel', 'remove'] as const) {
     await api[action]()
     expect(tables[action]).toHaveBeenCalledOnce()
     expect(translation[action]).not.toHaveBeenCalled()
@@ -25,4 +25,18 @@ it('routes capabilities independently and rejects unknown model names before mut
     expect(tables[action]).toHaveBeenCalledOnce()
     expect(translation[action]).toHaveBeenCalledOnce()
   }
+})
+
+it('keeps Figure/Table installation available and rejects translation downloads before mutation', async () => {
+  const tables = owner(),
+    translation = owner(),
+    api = createLocalModelApi(tables, translation)
+  await api.install()
+  await api.install('pdf-tables')
+  expect(tables.install).toHaveBeenCalledTimes(2)
+  await expect(api.install('pdf-translation')).rejects.toThrow('Local translation is unavailable.')
+  expect(translation.install).not.toHaveBeenCalled()
+  expect(() => api.install('../other' as LocalModelCapability)).toThrow(
+    'Unsupported local model capability'
+  )
 })

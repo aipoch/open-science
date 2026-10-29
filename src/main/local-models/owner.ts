@@ -459,7 +459,13 @@ export const createLocalModelApi = (
   }
   return {
     getSnapshot: (capability) => owner(capability).getSnapshot(),
-    install: (capability) => owner(capability).install(),
+    install: (capability) => {
+      const target = owner(capability)
+      // Retain historical model management, but do not download weights with no app runtime.
+      if (capability === 'pdf-translation')
+        return Promise.reject(new Error('Local translation is unavailable.'))
+      return target.install()
+    },
     cancel: (capability) => owner(capability).cancel(),
     remove: (capability) => owner(capability).remove()
   }

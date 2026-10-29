@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { net } from 'electron'
 import { DownloadChecksumError } from '@aipoch/resilient-download'
-import { createLocalModelOwner } from './owner'
+import { createLocalModelApi, createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
 import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
 import type { DownloadProgress } from '@aipoch/resilient-download'
@@ -965,7 +965,19 @@ it('isolates flat translation assets and receipts from parser model management',
   })
   await owner.install()
   await waitForIdle(owner)
+  const api = createLocalModelApi(createLocalModelOwner({ dataRoot: () => root }), owner)
+  const before = await api.getSnapshot('pdf-translation')
+  const receiptPath = join(root, 'models/pdf-translation/active.json')
+  const receipt = await readFile(receiptPath, 'utf8')
+  await expect(api.install('pdf-translation')).rejects.toThrow('Local translation is unavailable.')
+  expect(await api.getSnapshot('pdf-translation')).toEqual(before)
+  expect(before).toMatchObject({ availability: 'ready', installedRevision: 'translation-v1' })
+  expect(await readFile(receiptPath, 'utf8')).toBe(receipt)
   const use = await owner.acquireUse()
+  expect(await Promise.all(use.assets.map((asset) => readFile(asset.path)))).toEqual([
+    content,
+    content
+  ])
   expect(
     use.assets.every(
       (asset) =>
