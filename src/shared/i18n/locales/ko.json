@@ -1022,7 +1022,7 @@
     "Thinking mode": "사고 모드",
     "Use provider default": "모델 제공업체 기본값 사용",
     "Choose what the titlebar close button does.": "제목 표시줄 닫기 버튼의 기능을 선택합니다.",
-    "Switching starts a fresh agent session and replays open conversation transcripts to the selected backend.": "전환은 새로운 에이전트 세션을 시작하고 대화를 열면 기록이 새 백엔드로 재생됩니다.",
+    "Switching starts a fresh agent session and replays open conversation transcripts to the selected backend.": "전환하면 새 에이전트 세션이 시작되고 열린 대화의 기록이 선택한 백엔드에서 재생됩니다.",
     "Choose who can reach your workspace. Projects, agents, files, and runtimes stay on this computer. Install and sign in to Remote.It first. <lnk>Download Remote.It App</lnk>": "워크스페이스에 접속할 사용자를 선택하세요. 프로젝트, 에이전트, 파일, 런타임은 이 컴퓨터에 유지됩니다. 먼저 Remote.It을 설치하고 로그인하세요. <lnk>Remote.It 앱 다운로드</lnk>",
     "Claude authentication": "Claude 인증",
     "Claude setup token": "Claude 설정 토큰",
