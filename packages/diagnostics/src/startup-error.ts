@@ -24,7 +24,9 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 
 const replaceRoot = (text: string, root: string | undefined, marker: string): string => {
   if (!root || /^[\\/]+$/.test(root) || /^[A-Za-z]:[\\/]*$/.test(root)) return text
-  const normalizedRoot = root.replace(/[\\/]+$/, '')
+  let end = root.length
+  while (end > 0 && (root[end - 1] === '/' || root[end - 1] === '\\')) end -= 1
+  const normalizedRoot = root.slice(0, end)
   const variants = new Set([normalizedRoot, normalizedRoot.replace(/\\/g, '/')])
   let redacted = text
   for (const variant of variants) {
