@@ -33,7 +33,7 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "zod": "^4.6.5",
+    "zod": "^4.6.6",
     "fflate": "0.8.3",
     "papaparse": "^5.7.0",
     "styled-exceljs": "0.21.6"
@@ -41,7 +41,7 @@
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "@types/papaparse": "^5.5.2"
   }
 }

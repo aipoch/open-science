@@ -49,11 +49,11 @@
     "saxes": "6.0.0",
     "fflate": "0.8.3",
     "parse5": "^7.3.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
