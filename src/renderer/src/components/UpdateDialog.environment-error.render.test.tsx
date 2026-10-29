@@ -12,8 +12,8 @@ const originalStore = useUpdateStore.getState()
 const originalApi = window.api
 let container: HTMLDivElement
 let root: Root
-let retryEnvironment: ReturnType<typeof vi.fn>
-let openRuntimes: ReturnType<typeof vi.fn>
+let retryEnvironment: ReturnType<typeof vi.fn<() => void>>
+let openRuntimes: ReturnType<typeof vi.fn<() => void>>
 
 const ready: UpdateStatus = {
   state: 'ready',
