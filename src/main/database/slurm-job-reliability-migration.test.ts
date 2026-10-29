@@ -16,7 +16,7 @@ afterEach(async () => {
 })
 
 describe('Slurm reliability schema migration', () => {
-  it.each(['0049_pascalcase_table_names', '0053_slurm_job_reliability'])(
+  it.each(['0049_pascalcase_table_names', '0054_slurm_job_reliability'])(
     'preserves an active cancellation and opaque job payload from the schema before %s',
     async (nextMigration) => {
       root = await mkdtemp(join(tmpdir(), 'slurm-reliability-schema-'))

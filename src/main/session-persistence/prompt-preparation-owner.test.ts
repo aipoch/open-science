@@ -707,12 +707,17 @@ describe('Main prompt preparation rollback authority', () => {
   )
 
   it('sanitizes the wire markers but refuses to execute them in the renderer projection helper', () => {
-    expect(sanitizeSessionConversationCommands([prepare(), rollback()])).toEqual([
+    const retained = { ...rollback('release'), preserveSubmittedMessage: true }
+    expect(sanitizeSessionConversationCommands([prepare(), rollback(), retained])).toEqual([
       prepare(),
-      rollback()
+      rollback(),
+      retained
     ])
     expect(() =>
       sanitizeSessionConversationCommands([{ ...rollback(), preparationId: '' }])
+    ).toThrow()
+    expect(() =>
+      sanitizeSessionConversationCommands([{ ...retained, preserveSubmittedMessage: 'yes' }])
     ).toThrow()
     expect(() => applySessionConversationCommands(fixture(), [prepare()])).toThrow(
       'Invalid Session conversation command'

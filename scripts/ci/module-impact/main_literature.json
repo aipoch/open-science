@@ -69,7 +69,11 @@
     "src/main/literature/full-text-index-sqlite-fixture.ts",
     "src/main/literature/supplement-attachments.ts",
     "src/main/literature/supplement-attachments.test.ts",
-    "src/main/literature/publication-check.test.ts"
+    "src/main/literature/publication-check.test.ts",
+    "src/main/literature/collector.ts",
+    "src/main/literature/collector.test.ts",
+    "src/main/literature/collector-identity.test.ts",
+    "src/main/literature/pdf-attachment.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -95,7 +99,8 @@
     "src/main/literature/screening-adapter.ts",
     "src/main/literature/screening-store.ts",
     "src/main/literature/package-source.ts",
-    "src/main/literature/full-text-index-sqlite-fixture.ts"
+    "src/main/literature/full-text-index-sqlite-fixture.ts",
+    "src/main/literature/collector.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -134,14 +139,17 @@
       "src/main/literature/pdf-structure/engine-adapter.test.ts",
       "src/main/literature/full-text-index-storage.test.ts",
       "src/main/literature/supplement-attachments.test.ts",
-      "src/main/literature/publication-check.test.ts"
+      "src/main/literature/publication-check.test.ts",
+      "src/main/literature/collector.test.ts",
+      "src/main/literature/collector-identity.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/main/host-layer-dependencies.architecture.test.ts"
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/preload/electron-renderer-contract-adapter.test.ts"
     ],
     "consumer": [
       "src/main/composition/project-lifecycle.test.ts",

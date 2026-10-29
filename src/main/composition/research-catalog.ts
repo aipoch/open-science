@@ -18,6 +18,7 @@ import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { AgentPdfAcquisition } from '../literature/agent-pdf-acquisition'
 import { LiteratureCatalog } from '../literature/catalog'
+import { LiteratureCollector } from '../literature/collector'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import { discoveryJobOptions } from '../literature/discovery-adapters'
 import { LiteratureDocumentReader } from '../literature/document-reader'
@@ -88,6 +89,7 @@ export async function composeResearchCatalog({
   literaturePublicationChecker: LiteraturePublicationChecker
   literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
+  literatureCollector: LiteratureCollector
   literaturePdfAcquisition: AgentPdfAcquisition
   literatureBatchJobs: LiteratureBatchJobs
   removeResourceTagsOrThrow: (
@@ -229,6 +231,10 @@ export async function composeResearchCatalog({
     onNativeImportProgress: (progress) =>
       applicationEvents.publish('pdf-annotations:import-progress', progress)
   })
+  const literatureCollector = new LiteratureCollector({
+    catalog: literatureCatalog,
+    content: contentRepository
+  })
   const literaturePdfAcquisition = new AgentPdfAcquisition({
     catalog: literatureCatalog,
     fullText: literatureFullTextFinder,
@@ -277,6 +283,7 @@ export async function composeResearchCatalog({
     literaturePublicationChecker,
     literatureSupplementAttachments,
     literaturePdfImporter,
+    literatureCollector,
     literaturePdfAcquisition,
     literatureBatchJobs,
     removeResourceTagsOrThrow,

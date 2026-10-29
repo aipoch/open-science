@@ -36,6 +36,7 @@
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 # Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
 # receipt at each explicit failure exit so the detached presentation can become dismissible.

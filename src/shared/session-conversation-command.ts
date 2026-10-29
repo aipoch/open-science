@@ -38,7 +38,12 @@ const wireCommands = z
         promptMessageId: identity,
         mode: z.enum(['new', 'resume', 'rearm'])
       }),
-      z.object({ ...commandBase, kind: z.literal('rollback-prompt'), preparationId: identity }),
+      z.object({
+        ...commandBase,
+        kind: z.literal('rollback-prompt'),
+        preparationId: identity,
+        preserveSubmittedMessage: z.boolean().optional()
+      }),
       z.object({
         ...commandBase,
         kind: z.literal('append-user'),

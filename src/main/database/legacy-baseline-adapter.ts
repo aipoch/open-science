@@ -23,7 +23,7 @@ import {
 } from './sqlite-schema-migrations'
 import { DatabaseValidationError } from './database-validation-error'
 import { migrationSqlExecutor } from './migration-sql-executor'
-import { SLURM_JOB_RELIABILITY_ADDED_COLUMNS } from './migrations/0053-slurm-job-reliability'
+import { SLURM_JOB_RELIABILITY_ADDED_COLUMNS } from './migrations/0054-slurm-job-reliability'
 
 // schema-locality: begin frozen-0001-repairs
 // Frozen legacy repair routes into the generated 0001 target. New schema changes must add a

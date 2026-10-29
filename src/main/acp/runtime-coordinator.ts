@@ -5,6 +5,7 @@ import {
 } from '../lifecycle-settlement'
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
   AcpCancelPromptRequest,
@@ -44,9 +45,15 @@ import type { RootDelegatedWorkControl } from '../delegation/production-composit
 import type { ShutdownStepOutcome } from '../lifecycle-shutdown'
 import { ConversationPermissionGrantStore, type AppPermissionRequest } from './permission-broker'
 import { AcpRuntime } from './runtime'
+import {
+  retainSessionCreationCleanup,
+  waitForSessionCreationCleanup
+} from './session-creation-cleanup'
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
+
+const log = createLogger('acp')
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 const SETTLEMENT_GRACE_MS = 3_000
@@ -645,7 +652,18 @@ class AcpRuntimeCoordinator {
       response = await runtime.createSession(request)
     } catch (error) {
       this.pendingSessionCreations.delete(pending)
-      await this.retireUnusedTargetedRuntime(runtime)
+      const capabilityCleanup = waitForSessionCreationCleanup(error)
+      const cleanup = (
+        capabilityCleanup
+          ? capabilityCleanup.then(() => this.retireUnusedTargetedRuntime(runtime))
+          : this.retireUnusedTargetedRuntime(runtime)
+      ).catch((cleanupError) => {
+        log.warn(
+          'Agent runtime cleanup after creation failure failed',
+          diagnosticErrorFields(cleanupError)
+        )
+      })
+      retainSessionCreationCleanup(error, cleanup)
       throw error
     } finally {
       this.pendingSessionCreations.delete(pending)

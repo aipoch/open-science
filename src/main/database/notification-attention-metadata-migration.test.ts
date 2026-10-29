@@ -112,10 +112,11 @@ describe('notification attention metadata migration', () => {
         '0050_literature_translation',
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
-        '0053_slurm_job_reliability'
+        '0053_literature_doi_identity',
+        '0054_slurm_job_reliability'
       ],
       from: '0006_database_domain_constraints',
-      to: '0053_slurm_job_reliability'
+      to: '0054_slurm_job_reliability'
     })
     await expect(
       access(`${databasePath}.before-0007_notification_attention_metadata.backup`)

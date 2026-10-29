@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0053_slurm_job_reliability'
+    to: '0054_slurm_job_reliability'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -104,7 +104,8 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
       '0050_literature_translation',
       '0051_literature_reading_status',
       '0052_literature_personal_note_search',
-      '0053_slurm_job_reliability'
+      '0053_literature_doi_identity',
+      '0054_slurm_job_reliability'
     ]
   })
   for (const [index, [, table]] of names.entries())
@@ -171,7 +172,8 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
       '0050_literature_translation',
       '0051_literature_reading_status',
       '0052_literature_personal_note_search',
-      '0053_slurm_job_reliability'
+      '0053_literature_doi_identity',
+      '0054_slurm_job_reliability'
     ]
   })
 })

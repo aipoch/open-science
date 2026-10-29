@@ -6015,13 +6015,14 @@ describe('workspace agent message sending', () => {
             : undefined
         continuePreparation.resolve()
         await sending
+        await flushRuntimeTasks()
         expect(runtime.sendPrompt).not.toHaveBeenCalled()
         expect(runtime.cancel).not.toHaveBeenCalled()
         if (sessionKind === 'cancel-rollback-error') {
           expect(durable?.promptPreparation).toBeDefined()
-          expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toContain(
-            'Rollback write failed'
-          )
+          expect(
+            useWorkspaceOperationErrors.getState().errors['transport-session-1']
+          ).toBeUndefined()
           failRollback = false
           await cancelWorkspaceRun(runtime, 'transport-session-1')
           expect(runtime.cancel).not.toHaveBeenCalled()
@@ -6033,18 +6034,14 @@ describe('workspace agent message sending', () => {
           expect(
             useSessionStore.getState().sessions.find(({ id }) => id === pending.id)
           ).toMatchObject({
-            isPending: true,
             activeRun: { promptMessageId: replacement.messageId }
           })
           return
         }
+        // Stop binds an already prepared upload owner before restoring its retry draft.
         expect(
           useSessionStore.getState().sessions.find(({ id }) => id === 'transport-session-1')
-        ).toMatchObject({
-          isPending: false,
-          status: 'idle',
-          activeRun: undefined
-        })
+        ).toMatchObject({ isPending: false, status: 'idle', activeRun: undefined })
         return
       }
       const sent = await sending
@@ -6874,6 +6871,7 @@ describe('workspace agent message sending', () => {
     )
 
     expect(sent).toBeUndefined()
+    await flushRuntimeTasks()
     expect(deleteSession).toHaveBeenCalledWith('transport-session-denied')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -6968,6 +6966,7 @@ describe('workspace agent message sending', () => {
     expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-pdf-denied')
 
     runtime.state = createSnapshot(['transport-session-pdf-denied'])
+    await flushRuntimeTasks()
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: 'transport-session-pdf-denied',
       text: 'Retry the reading',
@@ -7012,7 +7011,7 @@ describe('workspace agent message sending', () => {
     })
 
     await flushRuntimeTasks()
-    expect(deleteSession).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledWith('transport-session-1')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
@@ -7608,10 +7607,8 @@ describe('workspace agent message sending', () => {
     expect(runtime.cancel).not.toHaveBeenCalled()
 
     finalization.resolve([finalizedHistory])
-    await expect(branching).resolves.toEqual({
-      sessionId: pending.id,
-      messageId: pending.activeRun?.promptMessageId
-    })
+    await expect(branching).resolves.toBeUndefined()
+    await flushRuntimeTasks()
     await flushRuntimeTasks()
 
     expect(runtime.createSession).not.toHaveBeenCalled()

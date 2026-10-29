@@ -17,7 +17,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0052_literature_personal_note_search'
-const currentMigrationId = '0053_slurm_job_reliability'
+const currentMigrationId = '0054_slurm_job_reliability'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -62,7 +62,7 @@ it('backfills existing personal notes in bounded batches without changing source
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0051_literature_reading_status',
     to: currentMigrationId,
-    applied: [migrationId, currentMigrationId]
+    applied: [migrationId, '0053_literature_doi_identity', currentMigrationId]
   })
   expect(await client.$queryRaw`SELECT * FROM "LiteratureItem" ORDER BY id`).toEqual(
     items.map((item) => ({
@@ -152,7 +152,7 @@ it('rolls back the column and ledger when verification fails', async () => {
     ledger
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: [migrationId, currentMigrationId]
+    applied: [migrationId, '0053_literature_doi_identity', currentMigrationId]
   })
 })
 
@@ -160,7 +160,7 @@ it('backfills an existing target column when its migration has not been recorded
   await seedHistoricalDatabase()
   await client.$executeRaw`ALTER TABLE "LiteratureItem" ADD COLUMN "normalizedPersonalNote" TEXT NOT NULL DEFAULT ''`
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: [migrationId, currentMigrationId]
+    applied: [migrationId, '0053_literature_doi_identity', currentMigrationId]
   })
   expect(
     await client.literatureItem.findUnique({

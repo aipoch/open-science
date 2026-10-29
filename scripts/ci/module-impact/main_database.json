@@ -98,7 +98,9 @@
     "scripts/database-migration-ledger-smoke.test.ts",
     "src/main/database/migrations/0052-literature-personal-note-search.ts",
     "src/main/database/literature-personal-note-search-migration.test.ts",
-    "src/main/database/migrations/0053-slurm-job-reliability.ts",
+    "src/main/database/migrations/0053-literature-doi-identity.ts",
+    "src/main/database/literature-doi-identity-migration.test.ts",
+    "src/main/database/migrations/0054-slurm-job-reliability.ts",
     "src/main/database/slurm-job-reliability-migration.test.ts"
   ],
   "interfacePaths": [
@@ -148,6 +150,7 @@
       "src/main/database/literature-reading-status-migration.test.ts",
       "src/main/database/workspace-pdf-translation-migration.test.ts",
       "src/main/database/literature-personal-note-search-migration.test.ts",
+      "src/main/database/literature-doi-identity-migration.test.ts",
       "src/main/database/slurm-job-reliability-migration.test.ts"
     ],
     "contract": [

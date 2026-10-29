@@ -140,6 +140,7 @@ type WorkspaceMessageScrollerProps = {
   credentialPending?: boolean
   visiblePermissionPending?: boolean
   isResumingSession?: boolean
+  sendPreparing?: boolean
   notebookReference?: NotebookSessionReference
   onSendEditedMessage: SendEditedMessage
   onStartResearch?: (prompt: string) => void
@@ -534,6 +535,7 @@ const WorkspaceMessageScrollerImpl = ({
   credentialPending = false,
   visiblePermissionPending = false,
   isResumingSession = false,
+  sendPreparing = false,
   notebookReference,
   onSendEditedMessage,
   onOpenLibraryMention,
@@ -1281,7 +1283,10 @@ const WorkspaceMessageScrollerImpl = ({
       )
     )
   }, [conversationItems])
-  const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })
+  const agentLoadingPhase = getAgentLoadingPhase(activeSession, {
+    credentialPending,
+    sendPreparing
+  })
   const [terminalAnnouncement, setTerminalAnnouncement] = useState<
     TerminalAnnouncement | undefined
   >()
@@ -2469,6 +2474,7 @@ const areWorkspaceMessageScrollerPropsEqual = (
   previous.forkSourceContent === next.forkSourceContent &&
   previous.trailingContent === next.trailingContent &&
   previous.isResumingSession === next.isResumingSession &&
+  previous.sendPreparing === next.sendPreparing &&
   previous.onAddAnnotation === next.onAddAnnotation &&
   previous.onRemoveAnnotation === next.onRemoveAnnotation &&
   previous.onUpdateAnnotationNote === next.onUpdateAnnotationNote &&

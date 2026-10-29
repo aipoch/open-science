@@ -186,6 +186,29 @@ it('stops after a verified result already includes an abstract', async () => {
   expect(notice).not.toHaveBeenCalled()
 })
 
+it.each([
+  ['10.1234/Á', '10.1234/á'],
+  ['10.1234/Ａ', '10.1234/A'],
+  ['10.1234/term.', '10.1234/term']
+])(
+  'rejects completion for a different opaque DOI suffix: %s vs %s',
+  async (localDoi, remoteDoi) => {
+    const local = {
+      ...draft,
+      identifiers: [{ scheme: 'doi' as const, value: localDoi, isPrimary: true }]
+    }
+    const lookup = vi.fn().mockResolvedValue({
+      ...resolved,
+      abstract: 'An unrelated publication.',
+      identifiers: [{ scheme: 'doi', value: remoteDoi, isPrimary: true }]
+    })
+    install(lookup)
+    const notice = vi.fn()
+    expect(await completeLiteraturePdfDraft(window.api, local, notice)).toBe(local)
+    expect(notice).toHaveBeenCalledExactlyOnceWith({ lookupFailed: true })
+  }
+)
+
 it('does not report a lookup failure when local metadata has no lookup identifier', async () => {
   const lookup = vi.fn()
   install(lookup)

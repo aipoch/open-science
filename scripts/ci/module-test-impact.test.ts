@@ -1488,20 +1488,27 @@ it('keeps literature command consumers covered by the explicit full fallback', (
   )
 })
 
-it.each([
-  [
-    'src/main/session-persistence/coordinator.ts',
-    'src/renderer/src/hooks/useLifecycleSync.test.tsx'
-  ],
-  [
-    'src/main/tags/repository.ts',
+it('keeps tag event consumers covered by the explicit full fallback', () => {
+  const manifest = loadModuleImpactManifest()
+  const reason = manifest.modules.main_tags.fullTestReason
+  expect(reason).toBeTruthy()
+  const plan = createAffectedTestPlan(
+    [{ path: 'src/main/tags/repository.ts', status: 'modified' }],
+    { status: 'not-used', testFiles: [] },
+    manifest
+  )
+  expect(plan.mode).toBe('full')
+  expect(plan.reasonChains).toEqual([`main_tags -> ${reason} -> full`])
+  expect(manifest.modules.main_tags.testFiles.consumer).toContain(
     'src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx'
-  ]
-])('preserves the explicit command or event consumer for %s', (path, test) => {
-  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-    status: 'not-used',
-    testFiles: []
-  })
+  )
+})
+
+it('preserves the explicit command or event consumer for src/main/session-persistence/coordinator.ts', () => {
+  const plan = createAffectedTestPlan(
+    [{ path: 'src/main/session-persistence/coordinator.ts', status: 'modified' }],
+    { status: 'not-used', testFiles: [] }
+  )
   expect(plan.mode).toBe('selective')
-  expect(plan.testFiles).toContain(test)
+  expect(plan.testFiles).toContain('src/renderer/src/hooks/useLifecycleSync.test.tsx')
 })

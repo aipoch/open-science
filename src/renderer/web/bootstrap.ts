@@ -71,6 +71,7 @@ const WEB_BLOB_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 const EVENT_CONNECTION_ATTEMPTS = 8
 const EVENT_CONNECTION_IDLE_TIMEOUT_MS = 30_000
 const DOMAIN_OWNED_WEB_RPC_CHANNELS = new Set([
+  'literature:collect',
   'storage:migrate',
   'notebook:execute',
   'notebook:run-cell',

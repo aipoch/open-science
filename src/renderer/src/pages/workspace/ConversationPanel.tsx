@@ -365,6 +365,7 @@ type ConversationPanelView = {
   composerFocusKey?: string
   canEditDraft: boolean
   canEditLocalDraft?: boolean
+  sendPreparing?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -1665,7 +1666,7 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && (
+          {activeSession && !activeSession.firstPromptDraft && !activeSession.isPending && (
             <SessionHeaderMenu
               key={activeSession.id}
               session={activeSession}
@@ -1736,6 +1737,7 @@ const ConversationPanel = ({
               visiblePermissionPending={!isImported && pendingPermissions.length > 0}
               optimisticMessage={optimisticMessage}
               isResumingSession={isResuming}
+              sendPreparing={view.sendPreparing}
               notebookReference={notebookReference}
               onSendEditedMessage={onSendEditedMessage}
               canBranchInNewSession={canBranchInNewSession}

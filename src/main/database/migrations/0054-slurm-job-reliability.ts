@@ -1,6 +1,6 @@
 // Immutable schema snapshot for Slurm result and cancellation diagnostics.
 const slurmJobReliabilityMigration = {
-  id: '0053_slurm_job_reliability',
+  id: '0054_slurm_job_reliability',
   statements: [],
   operations: [
     {
