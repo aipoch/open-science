@@ -183,6 +183,7 @@
     "src/main/acp/session-config.ts",
     "src/main/acp/session-configurator.test.ts",
     "src/main/acp/session-configurator.ts",
+    "src/main/acp/session-creation-cleanup.ts",
     "src/main/acp/session-deletion-workflow.test.ts",
     "src/main/acp/session-deletion-workflow.ts",
     "src/main/acp/session-environment-policy.test.ts",

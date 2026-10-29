@@ -242,7 +242,7 @@ for (const flow of [
               height,
               top: y,
               opacity: parseFloat(
-                getComputedStyle(element.querySelector('[data-package-content]')!).opacity
+                getComputedStyle(element.querySelector('[data-workflow-content]')!).opacity
               )
             })
             if (element.getAnimations().some((animation) => animation.playState === 'running'))
@@ -274,7 +274,7 @@ for (const flow of [
     await expect(async () =>
       expect(
         await dialog
-          .locator('[data-package-content]')
+          .locator('[data-workflow-content]')
           .evaluate((body) => getComputedStyle(body).opacity)
       ).toBe('1')
     ).toPass()

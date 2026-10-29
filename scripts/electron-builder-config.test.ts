@@ -256,6 +256,45 @@ describe('electron-builder local evidence exclusion', () => {
     }
   })
 
+  it('copies bundled npm and its nested dependencies through the real builder filter', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
+      extraResources: Array<{ from: string; to: string; filter?: string[] }>
+    }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-npm-package-'))
+    const files = [
+      'node',
+      'version.json',
+      'npm',
+      'node_modules/npm/bin/npx-cli.js',
+      'node_modules/npm/node_modules/package/lib/index.js',
+      'node_modules/npm/LICENSE'
+    ]
+    try {
+      for (const file of files) {
+        const path = join(root, 'out/node-runtime/darwin-arm64', file)
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, file)
+      }
+      await copyFiles(
+        config.extraResources
+          .filter((entry) => entry.to.startsWith('node-runtime'))
+          .map(
+            (entry) =>
+              new FileMatcher(
+                join(root, entry.from.replace('${platform}', 'darwin').replace('${arch}', 'arm64')),
+                join(root, 'resources', entry.to),
+                (value) => value,
+                entry.filter
+              )
+          )
+      )
+      for (const file of files)
+        expect(await readFile(join(root, 'resources/node-runtime', file), 'utf8')).toBe(file)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('loads the installed providers protocol through the desktop filter without host tokenizer dependencies', async () => {
     const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
     const root = await mkdtemp(join(tmpdir(), 'desktop-providers-'))

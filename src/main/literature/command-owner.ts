@@ -17,12 +17,23 @@ import type { ContentRepository } from '../storage/content-repository'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureCatalog } from './catalog'
+import type { LiteratureCollector } from './collector'
 import type { LiteratureSupplementAttachments } from './supplement-attachments'
 import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
 import type { LiteraturePdfImporter } from './pdf-importer'
 import { transactLiterature } from './transact'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ZOTERO_BATCH_POLICY_CONFLICT,
+  ZOTERO_FILL_TYPE_CONFLICT,
+  ZOTERO_COLLECTION_CONFLICT,
+  ZOTERO_PREVIEW_CHANGED,
+  ZOTERO_CONNECTION_FAILED,
+  ZOTERO_REQUEST_TIMED_OUT,
+  ZOTERO_LOCAL_API_DISABLED
+} from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
   journalAttributes: Pick<JournalAttributes, 'run'>
@@ -61,6 +72,7 @@ type LiteratureCommandServices = Readonly<{
     | 'transact'
     | 'contentBlobIdsForItems'
   >
+  literatureCollector: Pick<LiteratureCollector, 'run'>
   literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport' | 'addToLiterature'>
   contentRepository: Pick<ContentRepository, 'sweep'>
 }>
@@ -81,8 +93,29 @@ export const createLiteratureCommandOwner = ({
   literatureCitationDocument,
   literatureCatalog,
   literaturePdfImporter,
+  literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  collect: async (request, signal) => {
+    try {
+      return await literatureCollector.run(request, signal)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          ZOTERO_BATCH_POLICY_CONFLICT,
+          ZOTERO_FILL_TYPE_CONFLICT,
+          ZOTERO_COLLECTION_CONFLICT,
+          ZOTERO_PREVIEW_CHANGED,
+          ZOTERO_CONNECTION_FAILED,
+          ZOTERO_REQUEST_TIMED_OUT,
+          ZOTERO_LOCAL_API_DISABLED
+        ].includes(error.message)
+      )
+        throw new ApplicationCommandError('command-failed', error.message)
+      throw error
+    }
+  },
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),

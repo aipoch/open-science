@@ -11,6 +11,10 @@ import {
   backfillLiteraturePersonalNoteSearch
 } from './migrations/0052-literature-personal-note-search'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
+import {
+  literatureDoiIdentityMigration,
+  backfillLiteratureDoiIdentity
+} from './migrations/0053-literature-doi-identity'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import { pdfAnnotationsMigration } from './migrations/0043-pdf-annotations'
@@ -255,6 +259,11 @@ const checksumMigrationPayload = (
   return hash.digest('hex')
 }
 
+const LITERATURE_DOI_IDENTITY_CHECKSUM = checksumMigrationPayload(
+  literatureDoiIdentityMigration.id,
+  literatureDoiIdentityMigration.statements,
+  literatureDoiIdentityMigration.verifiers
+)
 const LITERATURE_SEARCH_TEXT_CHECKSUM = checksumMigrationPayload(
   literatureSearchTextMigration.id,
   literatureSearchTextMigration.statements,
@@ -962,6 +971,12 @@ const MIGRATION_MANIFEST = [
   {
     ...literaturePersonalNoteSearchMigration,
     checksum: LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureDoiIdentityMigration,
+    checksum: LITERATURE_DOI_IDENTITY_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
   }
@@ -1782,7 +1797,10 @@ const classifyDatabaseFailure = (
   if (validationFailure) {
     return new DatabaseMigrationError(
       'database_validation_failed',
-      'The existing database does not satisfy the required schema contract.',
+      error instanceof DatabaseValidationError &&
+        error.data.kind === 'literature-doi-identity-alias-conflict'
+        ? error.message
+        : 'The existing database does not satisfy the required schema contract.',
       false,
       migrationId,
       { cause: error }
@@ -2082,6 +2100,12 @@ const applyManifestMigration = async (
           migration.checksum === LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM
         ) {
           await backfillLiteraturePersonalNoteSearch(transaction)
+        }
+        if (
+          migration.id === literatureDoiIdentityMigration.id &&
+          migration.checksum === LITERATURE_DOI_IDENTITY_CHECKSUM
+        ) {
+          await backfillLiteratureDoiIdentity(transaction)
         }
         if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
           // The upstream history created VisionEvidence before this immutable migration. Rebuild it

@@ -449,6 +449,13 @@ describe('LiteratureLibraryPage', () => {
           supplementAttachmentProgress: vi.fn().mockResolvedValue(null),
           getCandidateStates: vi.fn(async () => ({ candidates: [] })),
           journals: vi.fn(async () => ({ datasets: [], matches: [] })),
+          collect: vi.fn().mockResolvedValue({
+            entries: [],
+            savedItemIds: [],
+            failures: [],
+            pdfCount: 0,
+            collections: []
+          }),
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),
           onChanged: vi.fn(() => () => undefined),
@@ -6695,6 +6702,30 @@ describe('LiteratureLibraryPage', () => {
     expect(within(unsafeRow!).queryByRole('link')).toBeNull()
   })
 
+  it.each([
+    ['10.1234/part/../one', 'https://doi.org/10.1234/part%2F..%2Fone'],
+    ['10.1234/.', undefined]
+  ])('keeps a DOI identity intact in detail navigation: %s', async (doi, href) => {
+    const linkedItem: LiteratureItemView = {
+      ...libraryItem,
+      item: { ...libraryItem.item, identifiers: [{ scheme: 'doi', value: doi!, isPrimary: true }] }
+    }
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [linkedItem] } : { entries: [] })
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const detail = await openReferenceDetail(
+      await screen.findByRole('button', { name: 'Corrective Retrieval Augmented Generation' })
+    )
+    if (href) {
+      expect(within(detail).getByRole('link', { name: `DOI: ${doi}` })).toHaveProperty('href', href)
+    } else {
+      expect(within(detail).queryByRole('link', { name: `DOI: ${doi}` })).toBeNull()
+      expect(within(detail).getByText(doi!)).not.toBeNull()
+    }
+  })
+
   it('links DOI, PMID, and PMCID identifiers from reference details', async () => {
     const linkedItem: LiteratureItemView = {
       ...libraryItem,
@@ -6717,10 +6748,9 @@ describe('LiteratureLibraryPage', () => {
       await screen.findByRole('button', { name: 'Corrective Retrieval Augmented Generation' })
     )
 
-    expect(within(detail).getByRole('link', { name: 'DOI: 10.1234/example' })).toHaveProperty(
-      'href',
-      'https://doi.org/10.1234/example'
-    )
+    expect(
+      within(detail).getByRole('link', { name: 'DOI: 10.1234/exampleCopyright' })
+    ).toHaveProperty('href', 'https://doi.org/10.1234/exampleCopyright')
     expect(within(detail).getByRole('link', { name: 'PMID: 32877581' })).toHaveProperty(
       'href',
       'https://pubmed.ncbi.nlm.nih.gov/32877581/'
@@ -7085,7 +7115,7 @@ describe('LiteratureLibraryPage', () => {
       expect(completeMetadata).toHaveBeenCalledWith({
         mode: 'preview',
         itemId: libraryItem.id,
-        identifier: { scheme: 'doi', value: '10.1234/example' }
+        identifier: { scheme: 'doi', value: '10.1234/exampleCopyright' }
       })
     )
     expect(await screen.findByText('Journal of Retrieval')).not.toBeNull()
@@ -7101,7 +7131,7 @@ describe('LiteratureLibraryPage', () => {
         mode: 'commit',
         itemId: libraryItem.id,
         expectedMetadataRevision: 1,
-        identifier: { scheme: 'doi', value: '10.1234/example' },
+        identifier: { scheme: 'doi', value: '10.1234/exampleCopyright' },
         overwriteFields: ['title']
       })
     )
@@ -7862,6 +7892,15 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.queryByText('Only the first 1,000 references will be imported.')).toBeNull()
   })
 
+  it('opens Zotero import from the literature Add menu', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openMenu(await screen.findByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Import from Zotero' }))
+    expect(await screen.findByRole('dialog', { name: 'Import from Zotero' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Preview Zotero library' })).toBeTruthy()
+  })
+
   it('shows the insertion edge while dragging a table column', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -8534,8 +8573,8 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
-  it('normalizes a stored DOI before requesting completed metadata', async () => {
-    const itemWithJoinedSuffix: LiteratureItemView = {
+  it('preserves an opaque stored DOI suffix when requesting completed metadata', async () => {
+    const itemWithOpaqueSuffix: LiteratureItemView = {
       ...libraryItem,
       item: {
         ...libraryItem.item,
@@ -8544,7 +8583,7 @@ describe('LiteratureLibraryPage', () => {
     }
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(
-        request.scope === 'library' ? { entries: [itemWithJoinedSuffix] } : { entries: [] }
+        request.scope === 'library' ? { entries: [itemWithOpaqueSuffix] } : { entries: [] }
       )
     )
 
@@ -8557,14 +8596,14 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
 
     expect((within(detail).getByRole('textbox', { name: 'DOI' }) as HTMLInputElement).value).toBe(
-      '10.1234/example'
+      '10.1234/exampleCopyright'
     )
     fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
     await waitFor(() =>
       expect(completeMetadata).toHaveBeenCalledWith({
         mode: 'preview',
         itemId: libraryItem.id,
-        identifier: { scheme: 'doi', value: '10.1234/example' }
+        identifier: { scheme: 'doi', value: '10.1234/exampleCopyright' }
       })
     )
   })

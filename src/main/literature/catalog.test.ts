@@ -8,7 +8,12 @@ import type { PrismaClient } from '@prisma/client'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
-import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
+import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
+import {
+  createLiteratureIdentifierUrl,
+  literatureIssuedYear
+} from '@aipoch/literature-citations/contracts'
+import { normalizeIdentifier } from '@aipoch/literature-library'
 import { toCslItem } from '@aipoch/literature-citations/csl'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
@@ -31,6 +36,16 @@ import type { LiteratureScreening } from './screening-adapter'
 import { createLiteratureCommandOwner } from './command-owner'
 import { ContentRepository } from '../storage/content-repository'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
+import {
+  collectedReferenceSchema,
+  type CollectedReference
+} from '../../shared/literature-collector'
+
+describe('Literature identifier normalization', () => {
+  it('preserves an explicit opaque DOI suffix before provider lookup', () => {
+    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/examplecopyright')
+  })
+})
 
 const candidate = (
   overrides: {
@@ -813,6 +828,656 @@ describe('LiteratureCatalog', () => {
     await client!.projectDeletionIntent.delete({ where: { projectId: 'project-1' } })
     await client!.project.update({ where: { id: 'project-1' }, data: { deletedAt: new Date() } })
     expect((await catalog.search(request)).totalCount).toBe(0)
+  })
+
+  it.each([{ path: ['Smart'] }, { path: ['Smart', 'Child'] }])(
+    'preserves smart collection ownership for collector path $path',
+    async ({ path }) => {
+      const catalog = await setup()
+      await client!.literatureCollection.create({
+        data: { name: 'Smart', nameKey: 'smart', smart: { create: { scopeKind: 'library' } } }
+      })
+      const reference = collectedReferenceSchema.parse({
+        item: { ...candidate().item, url: 'https://example.test/smart-collector' },
+        source: { ...candidate().source, provider: 'zotero', externalId: 'smart-collector' },
+        tags: ['Must roll back'],
+        collectionPaths: [['Created before rejection'], path]
+      })
+      await expect(catalog.collectReferences([reference])).rejects.toThrow(
+        'Use an explicit smart collection override.'
+      )
+      expect(await client!.literatureItem.count()).toBe(0)
+      expect(await client!.literatureSourceRecord.count()).toBe(0)
+      expect(await client!.literatureCollectionItem.count()).toBe(0)
+      expect(await client!.tagAssignment.count()).toBe(0)
+      expect(await client!.literatureCollection.count()).toBe(1)
+      expect(await client!.literatureSmartCollection.count()).toBe(1)
+    }
+  )
+
+  it('collects source identity, tags and nested collections atomically and reuses repeated imports', async () => {
+    const catalog = await setup()
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Collected paper',
+        url: 'https://example.test/collected',
+        issuedText: '2024-01-02',
+        issuedYear: literatureIssuedYear('2024-01-02'),
+        identifiers: []
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/collected',
+        sourceUrl: 'https://example.test/collected',
+        rawMetadata: {}
+      },
+      tags: ['Read later'],
+      collectionPaths: [['Research', 'Review']]
+    })
+    const [id] = (await catalog.collectReferences([reference])).itemIds
+    expect((await catalog.collectReferences([reference])).itemIds).toEqual([id])
+    expect(await client!.literatureItem.count()).toBe(1)
+    expect(await client!.literatureSourceRecord.count()).toBe(1)
+    expect(await client!.tagAssignment.findMany()).toMatchObject([
+      { resourceType: 'literature.item', resourceId: id }
+    ])
+    expect(await client!.literatureCollection.count()).toBe(2)
+    expect(await client!.literatureCollectionItem.count()).toBe(1)
+    const filtered = await catalog.search({
+      scope: 'library',
+      filter: { yearFrom: 2024, yearTo: 2024 }
+    })
+    expect(filtered.entries).toHaveLength(1)
+    const collection = await client!.literatureCollection.findFirst({
+      where: { name: 'Review' },
+      include: { parent: true }
+    })
+    expect(collection?.parent?.name).toBe('Research')
+  })
+  it('keeps Zotero fill-missing compatible with official reading and journal state', async () => {
+    await setup()
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot: storageRoot!,
+      getClient: async () => client!
+    })
+    const catalog = new LiteratureCatalog(async () => client!, undefined, content)
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        ...candidate().item,
+        abstract: '',
+        containerTitle: '',
+        url: 'https://example.test/zotero-journal-fill',
+        personalNote: 'Zotero reviewed evidence'
+      },
+      source: {
+        ...candidate().source,
+        provider: 'zotero',
+        externalId: 'zotero-journal-fill'
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    const [itemId] = (await catalog.collectReferences([reference])).itemIds
+    await catalog.transact({ kind: 'set-reading-status', itemIds: [itemId], readingStatus: 'read' })
+    await client!.journal.create({
+      data: {
+        id: 'manual-journal',
+        name: 'Manual fixture journal',
+        normalizedName: 'manual fixture journal'
+      }
+    })
+    const bind = async (): Promise<void> => {
+      const current = (await catalog.get(itemId))!
+      const data = {
+        journalId: 'manual-journal',
+        identityFingerprint: journalBindingIdentity(current.item),
+        revision: 'confirmed-fixture'
+      }
+      await client!.journalItemBinding.upsert({
+        where: { itemId },
+        create: { itemId, ...data },
+        update: data
+      })
+    }
+    await bind()
+    const binding = await client!.journalItemBinding.findUniqueOrThrow({ where: { itemId } })
+    const path = join(storageRoot!, 'journal-fill.pdf')
+    await writeFile(path, createTestPdf())
+    const blob = await content.publish({ sourcePath: path, contentType: 'application/pdf' })
+    const attachment = await catalog.attachContent({
+      itemId,
+      contentBlobId: blob.id,
+      filename: 'journal-fill.pdf',
+      contentType: 'application/pdf',
+      checksum: blob.checksum,
+      sizeBytes: Number(blob.sizeBytes)
+    })
+    const annotations = new PdfAnnotationRepository(async () => client!)
+    await annotations.create({
+      id: 'journal-fill-note',
+      literatureVersionId: attachment.versionId,
+      kind: 'document-note',
+      tagIds: [],
+      note: 'Preserved annotated evidence',
+      target: {
+        source: {
+          kind: 'literature-attachment-version',
+          sourceFileId: attachment.attachmentId,
+          versionId: attachment.versionId,
+          checksum: blob.checksum,
+          name: 'journal-fill.pdf',
+          path: `literature-attachment-version:${attachment.versionId}`
+        },
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      }
+    })
+    const attachments = await client!.literatureAttachment.findMany({
+      where: { itemId },
+      include: { versions: true }
+    })
+    const notes = await client!.pdfAnnotation.findMany()
+    const sources = await client!.pdfAnnotationSourceBinding.findMany()
+    const fill = async (fields: Partial<CollectedReference['item']>): Promise<void> => {
+      const incoming = collectedReferenceSchema.parse({
+        ...reference,
+        item: { ...reference.item, ...fields }
+      })
+      const reviewed = await catalog.inspectCollectedReferences([incoming])
+      expect(
+        (await catalog.collectReferences([incoming], [], reviewed, ['fill-missing'])).itemIds
+      ).toEqual([itemId])
+    }
+    expect(
+      await catalog.search({ scope: 'library', query: 'Zotero reviewed evidence' })
+    ).toMatchObject({ totalCount: 1 })
+    await fill({ abstract: 'Imported abstract', personalNote: 'Incoming conflicting note' })
+    expect(await catalog.get(itemId)).toMatchObject({
+      readingStatus: 'read',
+      item: { abstract: 'Imported abstract', personalNote: 'Zotero reviewed evidence' }
+    })
+    expect(
+      await catalog.search({ scope: 'library', query: 'Zotero reviewed evidence' })
+    ).toMatchObject({ totalCount: 1 })
+    expect(
+      await catalog.search({ scope: 'library', query: 'Incoming conflicting note' })
+    ).toMatchObject({ totalCount: 0 })
+    expect(await client!.journalItemBinding.findUnique({ where: { itemId } })).toEqual(binding)
+
+    await fill({ containerTitle: 'Verified source journal' })
+    expect(await client!.journalItemBinding.findUnique({ where: { itemId } })).toBeNull()
+    await bind()
+    await fill({
+      identifiers: [
+        ...reference.item.identifiers,
+        { scheme: 'issn', value: '1234-5679', isPrimary: false }
+      ]
+    })
+    expect(await client!.journalItemBinding.findUnique({ where: { itemId } })).toBeNull()
+    expect(await catalog.get(itemId)).toMatchObject({
+      readingStatus: 'read',
+      item: {
+        abstract: 'Imported abstract',
+        containerTitle: 'Verified source journal',
+        identifiers: expect.arrayContaining([
+          expect.objectContaining({ scheme: 'issn', value: '1234-5679' })
+        ])
+      }
+    })
+    expect(
+      await client!.literatureAttachment.findMany({
+        where: { itemId },
+        include: { versions: true }
+      })
+    ).toEqual(attachments)
+    expect(await client!.pdfAnnotation.findMany()).toEqual(notes)
+    expect(await client!.pdfAnnotationSourceBinding.findMany()).toEqual(sources)
+  })
+
+  it('returns final revisions for repeated collector IDs after fill-then-reuse for every returned item', async () => {
+    const catalog = await setup()
+    const original = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/receipt',
+        identifiers: [{ scheme: 'doi', value: '10.1234/receipt' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/receipt',
+        sourceUrl: 'https://example.test/receipt',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    const [id] = (await catalog.collectReferences([original])).itemIds
+    const before = (await catalog.get(id))!.metadataRevision
+    const references = [
+      { ...original, item: { ...original.item, abstract: 'Filled abstract' } },
+      { ...original, item: { ...original.item, language: 'en' } },
+      original
+    ]
+    const reviewed = await catalog.inspectCollectedReferences(references)
+    const receipt = await catalog.collectReferences(references, [], reviewed, [
+      'fill-missing',
+      'fill-missing',
+      'reuse'
+    ])
+    expect(receipt).toEqual({
+      itemIds: [id, id, id],
+      metadataRevisions: [before + 2, before + 2, before + 2]
+    })
+    expect((await catalog.get(id))!.metadataRevision).toBe(before + 2)
+    expect((await catalog.collectReferences([original])).itemIds).toEqual([id])
+  })
+
+  it('previews collector identities without writes and imports only the reviewed subset', async () => {
+    const catalog = await setup()
+    const reference = (title: string, url: string, doi: string): CollectedReference =>
+      collectedReferenceSchema.parse({
+        item: {
+          itemType: 'journalArticle',
+          title,
+          url,
+          identifiers: doi ? [{ scheme: 'doi', value: doi }] : []
+        },
+        source: { provider: 'zotero', externalId: url, sourceUrl: url, rawMetadata: {} },
+        tags: ['Review'],
+        collectionPaths: [['Papers']]
+      })
+    const original = reference('Local title', 'https://example.test/existing', '10.1234/one')
+    const [id] = (await catalog.collectReferences([original])).itemIds
+    const newRow = reference('New paper', 'https://example.test/new', '10.1234/new')
+    const changedTitle = reference(
+      'Different source title',
+      'https://example.test/other',
+      '10.1234/one'
+    )
+    const conflict = reference('Wrong DOI', 'https://example.test/existing', '10.1234/wrong')
+    const before = await client!.literatureSourceRecord.count()
+    const preview = await catalog.inspectCollectedReferences([
+      newRow,
+      original,
+      changedTitle,
+      conflict
+    ])
+    expect(preview.map(({ status, reason }) => [status, reason])).toEqual([
+      ['new', 'new'],
+      ['reuse', 'source'],
+      ['review', 'title'],
+      ['conflict', 'conflict']
+    ])
+    expect(preview[3].matches).toMatchObject([
+      { title: 'Local title', identifiers: [{ scheme: 'doi', value: '10.1234/one' }] }
+    ])
+    expect(await client!.literatureItem.count()).toBe(1)
+    expect(await client!.literatureSourceRecord.count()).toBe(before)
+    await expect(catalog.collectReferences([newRow, conflict])).rejects.toThrow(
+      'conflicting identifiers'
+    )
+    expect(await client!.literatureItem.count()).toBe(1)
+    const saved = (await catalog.collectReferences([newRow, changedTitle])).itemIds
+    expect(saved[1]).toBe(id)
+    expect((await catalog.get(id))!.item.title).toBe('Local title')
+    expect(await client!.literatureItem.count()).toBe(2)
+  })
+
+  it('previews batch source and identifier reuse and detects bridges to multiple owners', async () => {
+    const catalog = await setup()
+    const row = (title: string, url: string, doi: string): CollectedReference =>
+      collectedReferenceSchema.parse({
+        item: {
+          itemType: 'journalArticle',
+          title,
+          url,
+          identifiers: doi ? [{ scheme: 'doi', value: doi }] : []
+        },
+        source: { provider: 'zotero', externalId: url, sourceUrl: url, rawMetadata: {} },
+        tags: [],
+        collectionPaths: []
+      })
+    const first = row('Paper', 'https://example.test/one', '10.1234/one')
+    const repeated = row('Paper', 'https://example.test/two', 'https://doi.org/10.1234/ONE')
+    const second = row('Other', 'https://example.test/three', '10.1234/two')
+    const bridge = row('Paper', 'https://example.test/one', '10.1234/two')
+    expect(
+      (await catalog.inspectCollectedReferences([first, first, repeated, second, bridge])).map(
+        ({ status }) => status
+      )
+    ).toEqual(['new', 'reuse', 'reuse', 'new', 'conflict'])
+    expect(await client!.literatureItem.count()).toBe(0)
+    const saved = (await catalog.collectReferences([first, repeated, second])).itemIds
+    expect(saved[0]).toBe(saved[1])
+    const preview = await catalog.inspectCollectedReferences([bridge])
+    expect(preview[0].status).toBe('conflict')
+    expect(preview[0].matches.map(({ title }) => title)).toEqual(
+      expect.arrayContaining(['Paper', 'Other'])
+    )
+  })
+
+  it('requires review before a collector match restores a trashed reference', async () => {
+    const catalog = await setup()
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/trash',
+        identifiers: [{ scheme: 'doi', value: '10.1234/trash' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/trash',
+        sourceUrl: 'https://example.test/trash',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    const [id] = (await catalog.collectReferences([reference])).itemIds
+    await client!.literatureItem.update({ where: { id }, data: { deletedAt: new Date() } })
+    expect((await catalog.inspectCollectedReferences([reference]))[0]).toMatchObject({
+      status: 'review',
+      reason: 'trash'
+    })
+    expect((await client!.literatureItem.findUnique({ where: { id } }))!.deletedAt).not.toBeNull()
+    expect((await catalog.collectReferences([reference])).itemIds).toEqual([id])
+    expect((await client!.literatureItem.findUnique({ where: { id } }))!.deletedAt).toBeNull()
+  })
+
+  it('rechecks collector identity on commit after a successful preview', async () => {
+    const catalog = await setup()
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/race',
+        identifiers: [{ scheme: 'doi', value: '10.1234/one' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/race',
+        sourceUrl: 'https://example.test/race',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    expect((await catalog.inspectCollectedReferences([reference]))[0].status).toBe('new')
+    await catalog.collectReferences([
+      {
+        ...reference,
+        item: {
+          ...reference.item,
+          identifiers: [{ scheme: 'doi', value: '10.1234/two', isPrimary: true }]
+        }
+      }
+    ])
+    await expect(catalog.collectReferences([reference])).rejects.toThrow('conflicting identifiers')
+    expect(await client!.literatureItem.count()).toBe(1)
+  })
+
+  it('shares manual tag identity and global ordering with collector tag writes', async () => {
+    const catalog = await setup()
+    const tags = new TagRepository(async () => client!)
+    await tags.create({ name: 'Ｒesearch   Notes', iconKey: 'star', colorKey: 'blue' })
+    const [id] = (
+      await catalog.collectReferences([
+        collectedReferenceSchema.parse({
+          item: {
+            itemType: 'journalArticle',
+            title: 'Paper',
+            url: 'https://example.test/tags',
+            issuedText: '',
+            issuedYear: literatureIssuedYear(''),
+            identifiers: []
+          },
+          source: {
+            provider: 'zotero',
+            externalId: 'https://example.test/tags',
+            sourceUrl: 'https://example.test/tags',
+            rawMetadata: {}
+          },
+          tags: ['research notes', 'Next'],
+          collectionPaths: []
+        })
+      ])
+    ).itemIds
+    const rows = await client!.tag.findMany({
+      where: { systemKey: null },
+      orderBy: { sortOrder: 'asc' }
+    })
+    expect(rows).toMatchObject([
+      {
+        name: 'Research Notes',
+        nameKey: 'research notes',
+        iconKey: 'star',
+        colorKey: 'blue',
+        sortOrder: 1
+      },
+      { name: 'Next', nameKey: 'next', iconKey: 'tag', colorKey: 'gray', sortOrder: 2 }
+    ])
+    expect(rows).toHaveLength(2)
+    expect(await client!.tagAssignment.count({ where: { resourceId: id } })).toBe(2)
+    await expect(tags.create({ name: 'NEXT', iconKey: 'tag', colorKey: 'amber' })).rejects.toThrow(
+      'already exists'
+    )
+  })
+
+  it('rolls back collector metadata and tags when a normalized tag exceeds the shared limit', async () => {
+    const catalog = await setup()
+    const first = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/first',
+        identifiers: []
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/first',
+        sourceUrl: 'https://example.test/first',
+        rawMetadata: {}
+      },
+      tags: ['Transient'],
+      collectionPaths: [['Research']]
+    })
+    const invalid = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Invalid',
+        url: 'https://example.test/invalid',
+        identifiers: []
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/invalid',
+        sourceUrl: 'https://example.test/invalid',
+        rawMetadata: {}
+      },
+      tags: ['İ'.repeat(64)],
+      collectionPaths: []
+    })
+    await expect(catalog.collectReferences([first, invalid])).rejects.toThrow(
+      'Tag name is too long.'
+    )
+    expect(await client!.literatureItem.count()).toBe(0)
+    expect(await client!.literatureSourceRecord.count()).toBe(0)
+    expect(await client!.literatureCollection.count()).toBe(0)
+    expect(await client!.tag.count({ where: { systemKey: null } })).toBe(0)
+    expect(await client!.tagAssignment.count()).toBe(0)
+  })
+
+  it('preserves empty collection hierarchies during collection-only imports', async () => {
+    const catalog = await setup()
+    expect(
+      (await catalog.collectReferences([], [['Empty parent'], ['Empty parent', 'Empty child']]))
+        .itemIds
+    ).toEqual([])
+    expect(
+      (await catalog.collectReferences([], [['Empty parent', 'Empty child']])).itemIds
+    ).toEqual([])
+    expect(await client!.literatureCollection.count()).toBe(2)
+    expect(await client!.literatureItem.count()).toBe(0)
+  })
+
+  it.each([false, true])(
+    'rolls back all imported organization and records when any source is invalid (notifications: %s)',
+    async (notifications) => {
+      const base = await setup()
+      const changed = vi.fn()
+      const catalog = notifications
+        ? new LiteratureCatalog(async () => client!, undefined, undefined, undefined, changed)
+        : base
+      const reference = collectedReferenceSchema.parse({
+        item: {
+          itemType: 'journalArticle',
+          title: 'Paper',
+          url: 'https://example.test/paper',
+          identifiers: []
+        },
+        source: {
+          provider: 'zotero',
+          externalId: 'https://example.test/paper',
+          sourceUrl: 'https://example.test/paper',
+          rawMetadata: {}
+        },
+        tags: ['Read'],
+        collectionPaths: [['Research']]
+      })
+      const invalid = { ...reference, source: { ...reference.source, externalId: undefined } }
+      await expect(catalog.collectReferences([reference, invalid])).rejects.toThrow(
+        'source identity is required'
+      )
+      expect(await client!.literatureItem.count()).toBe(0)
+      expect(await client!.literatureCollection.count()).toBe(0)
+      expect(await client!.tag.count({ where: { systemKey: null } })).toBe(0)
+      expect(changed).not.toHaveBeenCalled()
+    }
+  )
+
+  it('rejects Zotero source reuse when an unseen DOI contradicts its item', async () => {
+    const catalog = await setup()
+    const first = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'First paper',
+        url: 'https://example.test/current',
+        identifiers: [{ scheme: 'doi', value: '10.1234/first' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/current',
+        sourceUrl: 'https://example.test/current',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    first.source.externalId = 'server-1:ABCDEFGH'
+    const [id] = (await catalog.collectReferences([first])).itemIds
+    const before = await catalog.sources(id)
+    const incoming = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Different paper',
+        url: 'https://example.test/current',
+        identifiers: [{ scheme: 'doi', value: '10.1234/unseen' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/current',
+        sourceUrl: 'https://example.test/current',
+        rawMetadata: {}
+      },
+      tags: ['Wrong paper'],
+      collectionPaths: [['Wrong collection']]
+    })
+    incoming.source.externalId = first.source.externalId
+    await expect(catalog.collectReferences([incoming], [['Wrong collection']])).rejects.toThrow(
+      'conflicting identifiers'
+    )
+    expect(await client!.literatureItem.count()).toBe(1)
+    expect(await client!.literatureCollection.count()).toBe(0)
+    expect(await client!.tag.count({ where: { systemKey: null } })).toBe(0)
+    expect(await catalog.sources(id)).toEqual(before)
+    expect((await catalog.get(id))!.item.identifiers).toMatchObject([
+      { scheme: 'doi', value: '10.1234/first' }
+    ])
+  })
+
+  it('reuses collector source when DOI spelling changes but normalized identity agrees', async () => {
+    const catalog = await setup()
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/same',
+        identifiers: [{ scheme: 'doi', value: '10.1234/same' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/same',
+        sourceUrl: 'https://example.test/same',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    const [id] = (await catalog.collectReferences([reference])).itemIds
+    const repeated = {
+      ...reference,
+      item: {
+        ...reference.item,
+        identifiers: [
+          { scheme: 'doi' as const, value: 'https://doi.org/10.1234/SAME', isPrimary: true }
+        ]
+      }
+    }
+    expect((await catalog.collectReferences([repeated])).itemIds).toEqual([id])
+    expect(await client!.literatureItem.count()).toBe(1)
+  })
+
+  it('reuses DOI matches without replacing edited metadata and rejects conflicting identities', async () => {
+    const catalog = await setup()
+    const reference = collectedReferenceSchema.parse({
+      item: {
+        itemType: 'journalArticle',
+        title: 'Paper',
+        url: 'https://example.test/paper',
+        identifiers: [{ scheme: 'doi', value: '10.1234/paper' }]
+      },
+      source: {
+        provider: 'zotero',
+        externalId: 'https://example.test/paper',
+        sourceUrl: 'https://example.test/paper',
+        rawMetadata: {}
+      },
+      tags: [],
+      collectionPaths: []
+    })
+    const [id] = (await catalog.collectReferences([reference])).itemIds
+    const repeated = {
+      ...reference,
+      item: { ...reference.item, title: 'Changed source title' },
+      source: { ...reference.source, externalId: 'different-page' }
+    }
+    expect((await catalog.collectReferences([repeated])).itemIds).toEqual([id])
+    expect((await catalog.get(id))?.item.title).toBe('Paper')
+    const other = {
+      ...reference,
+      item: {
+        ...reference.item,
+        identifiers: [{ scheme: 'doi' as const, value: '10.1234/other', isPrimary: true }]
+      },
+      source: { ...reference.source, externalId: 'other' }
+    }
+    await catalog.collectReferences([other])
+    await expect(
+      catalog.collectReferences([{ ...other, source: reference.source }])
+    ).rejects.toThrow('conflicting identifiers')
   })
 
   it('pages global search across collections and literature without duplicates', async () => {
@@ -3055,6 +3720,29 @@ describe('LiteratureCatalog', () => {
     }
   })
 
+  it.each(['query', 'filter'] as const)(
+    'searches DOI Unicode width without folding it through %s',
+    async (field) => {
+      const catalog = await setup()
+      const first = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ title: 'Wide DOI record', doi: '10.1234/Ａ' }).item
+      })
+      const second = await catalog.transact({
+        kind: 'create-item',
+        item: candidate({ title: 'ASCII DOI record', doi: '10.1234/A' }).item
+      })
+      const result = await catalog.search({
+        scope: 'library',
+        ...(field === 'query' ? { query: '10.1234/Ａ' } : { filter: { query: '10.1234/Ａ' } })
+      })
+      expect(result.entries.map((entry) => ('id' in entry ? entry.id : undefined))).toEqual([
+        first.id
+      ])
+      expect(result.entries.some((entry) => 'id' in entry && entry.id === second.id)).toBe(false)
+    }
+  )
+
   it('stores and returns canonical identifier values', async () => {
     const catalog = await setup()
     const created = await catalog.transact({
@@ -3065,7 +3753,11 @@ describe('LiteratureCatalog', () => {
     await expect(catalog.get(created.id)).resolves.toMatchObject({
       item: {
         identifiers: [
-          expect.objectContaining({ scheme: 'doi', value: '10.1234/example', isPrimary: true })
+          expect.objectContaining({
+            scheme: 'doi',
+            value: '10.1234/exampleCopyright',
+            isPrimary: true
+          })
         ]
       }
     })

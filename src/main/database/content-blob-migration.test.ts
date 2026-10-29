@@ -100,7 +100,8 @@ describe('Content blob migration', () => {
         '0049_pascalcase_table_names',
         '0050_literature_translation',
         '0051_literature_reading_status',
-        '0052_literature_personal_note_search'
+        '0052_literature_personal_note_search',
+        '0053_literature_doi_identity'
       ]
     })
     await expect(
@@ -200,10 +201,11 @@ describe('Content blob migration', () => {
                 '0049_pascalcase_table_names',
                 '0050_literature_translation',
                 '0051_literature_reading_status',
-                '0052_literature_personal_note_search'
+                '0052_literature_personal_note_search',
+                '0053_literature_doi_identity'
               ],
         from: schema === 'pre-ledger' ? null : '0029_compute_host_execution_mode',
-        to: '0052_literature_personal_note_search'
+        to: '0053_literature_doi_identity'
       })
 
       await expect(

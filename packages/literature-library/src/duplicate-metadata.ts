@@ -1,6 +1,7 @@
 import {
   LITERATURE_IDENTITY_SCHEMES,
-  normalizeLiteratureIdentifierValue
+  normalizeLiteratureIdentifierKey,
+  literatureIssuedYear
 } from '@aipoch/literature-citations/contracts'
 import { isDeepStrictEqual } from 'node:util'
 import {
@@ -17,7 +18,7 @@ const empty = (value: unknown): boolean =>
   (Array.isArray(value) && value.length === 0)
 
 const identifierValue = (identifier: LiteratureItemInput['identifiers'][number]): string =>
-  normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value).toLowerCase()
+  normalizeLiteratureIdentifierKey(identifier.scheme, identifier.value)
 
 // Preserve populated fields (including notes and rating); identifiers are filled by scheme.
 export function supplementLiteratureMetadata(
@@ -39,6 +40,13 @@ export function supplementLiteratureMetadata(
   // Optional fields may be absent rather than explicitly undefined in parsed inputs.
   for (const key of Object.keys(incoming) as (keyof LiteratureItemInput)[]) {
     if (!(key in fields)) Object.assign(fields, { [key]: incoming[key] })
+  }
+  // Date text and its filter year are one value: filling a gap must not change the local date.
+  const dateYear = literatureIssuedYear(fields.issuedText)
+  if (dateYear !== undefined && fields.issuedYear !== undefined && dateYear !== fields.issuedYear) {
+    fields.issuedText = existing.issuedText
+    fields.issuedYear = existing.issuedYear
+    conflict = true
   }
   fields.typeFields = { ...existing.typeFields }
   for (const [key, value] of Object.entries(incoming.typeFields)) {

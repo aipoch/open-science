@@ -57,6 +57,7 @@ class FakeWebSocket {
 type WebApi = {
   getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
+  literature: Window['api']['literature']
   sessions: Window['api']['sessions']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
@@ -99,6 +100,11 @@ const chunkOperations = [
 
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
+  {
+    channel: 'literature:collect',
+    result: { entries: [], savedItemIds: [], failures: [], pdfCount: 0 },
+    invoke: (api: WebApi) => api.literature.collect({ kind: 'zotero-preview' })
+  },
   {
     channel: 'storage:migrate',
     result: { ok: true, cleanupPending: false },

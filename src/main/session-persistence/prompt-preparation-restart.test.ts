@@ -359,6 +359,94 @@ it.each(['new', 'resume', 'rearm'] as const)(
   }
 )
 
+it('releases a stopped submitted run durably and ignores its stale cancellation after a new rearm', async () => {
+  const h = await harness('new', 'main', true)
+  const release = {
+    kind: 'rollback-prompt' as const,
+    id: 'release-stopped-dispatch',
+    preparationId: 'prepare',
+    preserveSubmittedMessage: true,
+    timestamp: 15
+  }
+  const released = await h.main.saveSession(h.prepared, { conversationCommands: [release] })
+  expect(released.status).toBe('idle')
+  expect(released.activeRun).toBeUndefined()
+  expect(released.promptPreparation).toBeUndefined()
+  expect(released.messages).toEqual(h.prepared.messages)
+  expect(released.conversationGraph).toEqual(h.prepared.conversationGraph)
+  expect(released.messages[1].turnOutcome).toBeUndefined()
+  const reopened = (await new SessionRepository(h.root).loadSession('p', 's'))!
+  expect(reopened.messages).toEqual(released.messages)
+  expect(reopened.activeRun).toBeUndefined()
+  expect(reopened.promptPreparation).toBeUndefined()
+
+  // Even the same Message and millisecond are a new attempt: the preparation ID owns release.
+  const rearmed = await h.main.saveSession(released, {
+    conversationCommands: [
+      {
+        kind: 'prepare-prompt',
+        id: 'prepare-next',
+        promptMessageId: 'new',
+        mode: 'rearm',
+        timestamp: 16
+      },
+      {
+        kind: 'start-run',
+        id: 'start-next',
+        preparationId: 'prepare-next',
+        run: h.prepared.activeRun!,
+        timestamp: 16
+      }
+    ]
+  })
+  const late = await h.main.saveSession(h.prepared, {
+    conversationCommands: [release]
+  })
+  expect(late.activeRun).toEqual(rearmed.activeRun)
+  expect(late.promptPreparation).toEqual(rearmed.promptPreparation)
+  expect(late.messages).toEqual(rearmed.messages)
+  const admitted = await h.main.admitTaskTurn({ session: late, contextReset: false })
+  expect(admitted.activeRun).toEqual(rearmed.activeRun)
+  expect(admitted.promptPreparation).toBeUndefined()
+})
+
+it('leaves an admitted execution and its Main terminal outcome untouched by a submitted release', async () => {
+  const h = await harness('new', 'main', true)
+  vi.spyOn(h.repository, 'hasLiveRuntimeSession').mockReturnValue(true)
+  const runtime = new RuntimeSessionOwner({
+    loadSession: () => h.raw(),
+    mutateSession: (scope, mutate) => h.main.mutateRuntimeSession(scope, mutate),
+    finalizeArtifacts: vi.fn(async () => []),
+    scheduleFlush: () => () => undefined
+  })
+  await runtime.begin(h.scope)
+  const admitted = await h.raw()
+  const release = {
+    kind: 'rollback-prompt' as const,
+    id: 'release-after-admission',
+    preparationId: 'prepare',
+    preserveSubmittedMessage: true,
+    timestamp: 15
+  }
+  const unchanged = await h.main.saveSession(h.prepared, { conversationCommands: [release] })
+  expect(unchanged.activeRun).toEqual(admitted.activeRun)
+  expect(unchanged.messages).toEqual(admitted.messages)
+  expect(unchanged.runtimeSessionAdmissions).toEqual(admitted.runtimeSessionAdmissions)
+  await h.main.mutateRuntimeSession(h.scope, (latest) =>
+    setTurnOutcome({ ...latest, status: 'idle', activeRun: undefined }, 'new', {
+      kind: 'cancelled',
+      settledAt: 16,
+      recovery: 'resume'
+    })
+  )
+  const stopped = await h.raw()
+  const late = await h.main.saveSession(h.prepared, {
+    conversationCommands: [{ ...release, id: 'release-after-terminal', timestamp: 17 }]
+  })
+  expect(late.messages).toEqual(stopped.messages)
+  expect(late.activeRun).toBeUndefined()
+})
+
 it.each(['interrupted', 'cancelled', 'failed'] as const)(
   'preserves prior %s state when preparation has not appended a new prompt',
   async (kind) => {

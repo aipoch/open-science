@@ -64,7 +64,14 @@ for (const [directory, version, code, hook] of [
     await writeFile(join(packed, 'resources', script), 'exit 0\r\n')
   }
   await writeFile(join(projectDir, 'installer.nsh'), hook)
-  for (const file of ['windows-install-publication.nsh', 'windows-install-publication.ps1']) {
+  // The current hook generates extraction lists from the final archive during NSIS compilation.
+  for (const file of [
+    'windows-install-publication.nsh',
+    'windows-install-publication.ps1',
+    'prepare-windows-extraction.cjs',
+    'windows-app-running.nsh',
+    'windows-extract-payload.ps1'
+  ]) {
     await writeFile(join(projectDir, file), await readFile(`build/${file}`))
   }
   // prepackaged intentionally bypasses afterSign; stage the same verified installer tool.

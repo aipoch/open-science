@@ -694,8 +694,8 @@ describe('conversation message scroller integration', () => {
     expect(workspaceMessageScrollerSource).toContain(
       "import { getAgentLoadingPhase } from './agent-loading-message'"
     )
-    expect(workspaceMessageScrollerSource).toContain(
-      'const agentLoadingPhase = getAgentLoadingPhase(activeSession, { credentialPending })'
+    expect(workspaceMessageScrollerSource).toMatch(
+      /getAgentLoadingPhase\(activeSession,\s*\{\s*credentialPending,\s*sendPreparing\s*\}\)/
     )
     expect(workspaceMessageScrollerSource).toContain('<WorkspaceAgentLoadingRow')
     expect(workspaceAgentLoadingRowSource).toContain('role="status"')

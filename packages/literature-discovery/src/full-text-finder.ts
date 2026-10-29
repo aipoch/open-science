@@ -14,6 +14,7 @@ import type {
 } from './contracts.js'
 import {
   createLiteratureIdentifierUrl,
+  normalizeLiteratureIdentifierKey,
   normalizeLiteratureIdentifierValue
 } from '@aipoch/literature-citations/contracts'
 
@@ -145,7 +146,8 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
         normalizeLiteratureIdentifierValue(scheme, value)
       ])
     )
-    const doi = identifiers.get('doi')?.toLowerCase()
+    const doiValue = identifiers.get('doi')
+    const doi = doiValue ? normalizeLiteratureIdentifierKey('doi', doiValue) : undefined
     const pmid = identifiers.get('pmid')
     const pmcid = identifiers.get('pmcid')
     const arxivPage = createLiteratureIdentifierUrl('arxiv', identifiers.get('arxiv') ?? '')
@@ -218,12 +220,7 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
           .parse(await this.json(url.href))
         for (const record of result.resultList.result) {
           const pairs = [
-            [
-              doi,
-              record.doi
-                ? normalizeLiteratureIdentifierValue('doi', record.doi).toLowerCase()
-                : undefined
-            ],
+            [doi, record.doi ? normalizeLiteratureIdentifierKey('doi', record.doi) : undefined],
             [pmid, record.source === 'MED' ? record.id : undefined],
             [pmcid?.toUpperCase(), record.pmcid?.toUpperCase()]
           ]
@@ -269,7 +266,8 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
     })()
     const openAlex = (async (): Promise<Candidate[]> => {
       const candidates: Candidate[] = []
-      if (!doi) return candidates
+      const doiUrl = doi ? createLiteratureIdentifierUrl('doi', doi) : undefined
+      if (!doiUrl) return candidates
       try {
         const key = await this.options.openAlexKey()
         if (!key) {
@@ -278,18 +276,14 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
         }
         const url = new URL('https://api.openalex.org/works')
         url.search = new URLSearchParams({
-          filter: `doi:https://doi.org/${doi}`,
+          filter: `doi:${doiUrl}`,
           per_page: '5',
           select: 'doi,best_oa_location,locations',
           api_key: key
         }).toString()
         const result = z.object({ results: z.array(openAlexWork) }).parse(await this.json(url.href))
         for (const work of result.results) {
-          if (
-            !work.doi ||
-            normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi
-          )
-            continue
+          if (!work.doi || normalizeLiteratureIdentifierKey('doi', work.doi) !== doi) continue
           for (const entry of [work.best_oa_location, ...(work.locations ?? [])]) {
             if (!entry?.is_oa || !entry.pdf_url) continue
             const version =
@@ -303,7 +297,7 @@ class LiteratureFullTextFinder<Item extends DiscoveryReference = DiscoveryRefere
             candidates.push({
               provider: 'openalex',
               url: entry.pdf_url,
-              sourceUrl: entry.landing_page_url || `https://doi.org/${doi}`,
+              sourceUrl: entry.landing_page_url || doiUrl,
               source: entry.source?.display_name || 'OpenAlex',
               ...(version ? { version } : {}),
               ...(entry.license ? { license: entry.license } : {})

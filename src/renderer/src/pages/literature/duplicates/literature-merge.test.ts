@@ -19,6 +19,21 @@ const entry = (id: string, metadata: Record<string, unknown> = {}): LiteratureIt
 })
 
 describe('Literature merge comparison', () => {
+  it.each([
+    ['10.1234/term.', '10.1234/term'],
+    ['10.1234/Á', '10.1234/á'],
+    ['10.1234/Ａ', '10.1234/A']
+  ])(
+    'keeps distinct opaque DOI suffixes in the merge identifier union: %s vs %s',
+    (first, second) => {
+      const a = entry('a', { identifiers: [{ scheme: 'doi', value: first }] })
+      const b = entry('b', { identifiers: [{ scheme: 'doi', value: second }] })
+      expect(
+        buildLiteratureMergeItem([a, b], 'a', {}).identifiers.map(({ value }) => value)
+      ).toEqual([first, second])
+    }
+  )
+
   it('excludes attachment and association differences from metadata equality', () => {
     const first = entry('a', { typeFields: { volume: '2', pages: '1–5' } })
     const second = {

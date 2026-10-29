@@ -60,6 +60,21 @@ const FAKE_REMOTEIT_PATH = resolve(APP_ROOT, 'e2e', 'fixtures', 'fake-remoteit.c
 const FAKE_PROVIDER_NAME = 'Electron E2E provider'
 type E2eWindowMode = 'hidden' | 'normal'
 
+const assertPackagedElectronIdentity = (
+  evidence: { packaged: boolean; appPath: string; executable: string; version: string },
+  environment: NodeJS.ProcessEnv = process.env
+): void => {
+  const revision = environment.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
+  if (
+    !evidence.packaged ||
+    !evidence.appPath.endsWith('app.asar') ||
+    evidence.executable !== environment.OPEN_SCIENCE_E2E_EXECUTABLE ||
+    (revision && !evidence.version.endsWith(`-nightly.g${revision.slice(0, 7)}`))
+  ) {
+    throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
+  }
+}
+
 const electronLaunchTarget = (
   userDataRoot: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -1940,15 +1955,7 @@ class ElectronAppHarness implements ElectronApp {
           executable: process.execPath,
           version: app.getVersion()
         }))
-        const revision = process.env.OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA
-        if (
-          !evidence.packaged ||
-          !evidence.appPath.endsWith('app.asar') ||
-          evidence.executable !== process.env.OPEN_SCIENCE_E2E_EXECUTABLE ||
-          (revision && !evidence.version.endsWith(`-nightly.${revision.slice(0, 7)}`))
-        ) {
-          throw new Error(`Packaged Electron identity mismatch: ${JSON.stringify(evidence)}`)
-        }
+        assertPackagedElectronIdentity(evidence)
         console.info('Packaged Electron identity:', JSON.stringify(evidence))
       }
       this.currentPage = await openMainWindow(
@@ -2171,6 +2178,7 @@ const test = base.extend<{ app: ElectronApp; windowMode: E2eWindowMode }>({
 })
 
 export {
+  assertPackagedElectronIdentity,
   configurePackagedMacKeychain,
   runWithCleanup,
   closeElectronApplicationForCleanup,

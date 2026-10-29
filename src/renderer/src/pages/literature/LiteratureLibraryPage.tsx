@@ -55,6 +55,7 @@ import type { LiteratureSort } from './list/useLiteratureQuery'
 import { useLiteratureQuery } from './list/useLiteratureQuery'
 import { useLiteratureTable } from './list/useLiteratureTable'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { LiteratureZoteroDialog } from './LiteratureZoteroDialog'
 import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
 import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
 import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
@@ -330,6 +331,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const importPdfInputRef = useRef<HTMLInputElement>(null)
   const importRecordsInputRef = useRef<HTMLInputElement>(null)
+  const [zoteroOpen, setZoteroOpen] = useState(false)
   const tableScrollRef = useRef<HTMLDivElement>(null)
   const citationStyleRef = useRef<LiteratureCitationStyle>('apa')
   const detailTagMenuOpenRef = useRef(false)
@@ -1708,6 +1710,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 duplicatesOpen ||
                 isCreatingItem ||
                 recordImport ||
+                zoteroOpen ||
                 pdfBatch ||
                 previewItem
               )
@@ -1732,6 +1735,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onImportFiles={receiveImportFiles}
               importRecordsInputRef={importRecordsInputRef}
               beginManualImport={beginManualImport}
+              onImportZotero={() => setZoteroOpen(true)}
               query={query}
               searchResetRevision={searchResetRevision}
               setQuery={setQuery}
@@ -2505,6 +2509,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </Button>
                         ) : (
                           <LiteratureAddMenu
+                            onImportZotero={() => setZoteroOpen(true)}
                             label={t('Add reference')}
                             onAddReference={() => {
                               beginManualImport()
@@ -2553,6 +2558,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }}
           />
         ) : null}
+        {zoteroOpen ? <LiteratureZoteroDialog onClose={() => setZoteroOpen(false)} /> : null}
         {recordImport ? (
           <LiteratureRecordImportDialog
             recordImport={recordImport}

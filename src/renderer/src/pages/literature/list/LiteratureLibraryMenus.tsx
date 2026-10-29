@@ -6,6 +6,7 @@ import {
   Download,
   FilePlus2,
   FileText,
+  LibraryBig,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
@@ -28,11 +29,13 @@ import {
 export function LiteratureAddMenu({
   label,
   onAddReference,
+  onImportZotero,
   onImportPdf,
   onImportReferences
 }: Readonly<{
   label?: string
   onAddReference: () => void
+  onImportZotero: () => void
   onImportPdf: () => void
   onImportReferences: () => void
 }>): React.JSX.Element {
@@ -77,6 +80,19 @@ export function LiteratureAddMenu({
             <span>{t('Import references')}</span>
             <span className="text-xs text-muted-foreground">
               {t('BibTeX, RIS, or PubMed NBIB')}
+            </span>
+          </span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="gap-2.5"
+          aria-label={t('Import from Zotero')}
+          onSelect={onImportZotero}
+        >
+          <LibraryBig className="size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex flex-col">
+            <span>{t('Import from Zotero')}</span>
+            <span className="text-xs text-muted-foreground">
+              {t('References, PDFs, tags and collections')}
             </span>
           </span>
         </DropdownMenuItem>

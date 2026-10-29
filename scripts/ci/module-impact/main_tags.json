@@ -7,14 +7,16 @@
     "src/main/tags/resource-catalog.ts",
     "src/main/tags/service.test.ts",
     "src/main/tags/service.ts",
-    "src/main/tags/resource-contract.ts"
+    "src/main/tags/resource-contract.ts",
+    "src/main/tags/tag-write.ts"
   ],
   "interfacePaths": [
     "src/main/tags/application-commands.ts",
     "src/main/tags/repository.ts",
     "src/main/tags/resource-catalog.ts",
     "src/main/tags/service.ts",
-    "src/main/tags/resource-contract.ts"
+    "src/main/tags/resource-contract.ts",
+    "src/main/tags/tag-write.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -64,9 +66,12 @@
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/literature/collector.test.ts",
+      "src/main/literature/collector-identity.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Transactional tag writes add a shared writer beyond the reviewed tags source boundary; retain full CI validation until the expanded source and import transaction contracts are reviewed."
 }

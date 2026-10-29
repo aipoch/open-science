@@ -60,8 +60,8 @@ it('backfills existing personal notes in bounded batches without changing source
 
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0051_literature_reading_status',
-    to: migrationId,
-    applied: [migrationId]
+    to: '0053_literature_doi_identity',
+    applied: [migrationId, '0053_literature_doi_identity']
   })
   expect(await client.$queryRaw`SELECT * FROM "LiteratureItem" ORDER BY id`).toEqual(
     items.map((item) => ({
@@ -85,8 +85,8 @@ it('backfills existing personal notes in bounded batches without changing source
   await client.$disconnect()
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    from: migrationId,
-    to: migrationId,
+    from: '0053_literature_doi_identity',
+    to: '0053_literature_doi_identity',
     applied: []
   })
   expect(
@@ -150,13 +150,17 @@ it('rolls back the column and ledger when verification fails', async () => {
   expect(await client.$queryRaw`SELECT * FROM "_open_science_migrations" ORDER BY id`).toEqual(
     ledger
   )
-  expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [migrationId] })
+  expect(await migrateApplicationDatabase(client)).toMatchObject({
+    applied: [migrationId, '0053_literature_doi_identity']
+  })
 })
 
 it('backfills an existing target column when its migration has not been recorded', async () => {
   await seedHistoricalDatabase()
   await client.$executeRaw`ALTER TABLE "LiteratureItem" ADD COLUMN "normalizedPersonalNote" TEXT NOT NULL DEFAULT ''`
-  expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [migrationId] })
+  expect(await migrateApplicationDatabase(client)).toMatchObject({
+    applied: [migrationId, '0053_literature_doi_identity']
+  })
   expect(
     await client.literatureItem.findUnique({
       where: { id: 'paper-001' },

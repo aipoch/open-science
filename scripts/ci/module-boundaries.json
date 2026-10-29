@@ -20,6 +20,7 @@
     "src/main/pdf-annotations/sharing.ts": "repository",
     "src/main/pdf-annotations/native-import-core.ts": "host-infrastructure",
     "src/main/pdf-documents/identity.ts": "repository",
+    "src/main/tags/tag-write.ts": "repository",
     "src/main/reviewer/submission-limits.ts": "policy",
     "src/main/uploads/atomic-no-replace-publisher.ts": "host-infrastructure",
     "src/shared/in-flight-promise.ts": "foundation",

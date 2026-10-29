@@ -286,8 +286,19 @@ Development commands:
 Desktop packaging's `beforePack` hook builds/stages the backend and ordinary Node, even when CI
 invokes electron-builder directly. It refuses cross-OS/architecture packaging. The pinned executable
 and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.4 to retain the
-application's macOS deployment range. Only the executable and license are staged, not npm/headers.
+application's macOS deployment range. Staging includes Node, its license, and a trimmed npm tree
+under `node_modules/npm`, with official npm/npx launchers beside Node. npm runtime code, package
+metadata, templates and licenses are retained; documentation, man pages, README/changelog files
+and Node headers are omitted. The staging receipt covers the retained files; older Node-only
+receipts or missing/corrupt files trigger restaging.
 The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.4/SHASUMS256.txt).
+
+Local stdio MCP Connectors preserve explicit executable paths and prefer npm/npx found on their
+configured, augmented PATH. When a bare npm/npx command is absent, desktop and bundled CLI archive
+hosts use the staged npm CLI with the matching Node, including for child processes. A command that
+starts and fails is not retried with the bundled version. Ordinary Node/Web installations without
+the staged bundle retain their installed-command behavior. npm keeps its configurable download
+cache/log behavior; this fallback does not install a system runtime or change global PATH.
 
 `OPEN_SCIENCE_WEB_PORT` selects the Web port. CLI/Web starts default to 44100; desktop-owned
 backends default to a system-assigned free port so independent profiles can run concurrently.

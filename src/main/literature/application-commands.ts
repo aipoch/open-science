@@ -46,6 +46,11 @@ import {
   type LiteraturePdfImportRequest
 } from '../../shared/literature'
 import {
+  literatureCollectorContract,
+  type CollectorRequest,
+  type CollectorResult
+} from '../../shared/literature-collector'
+import {
   literatureExportRecordContract,
   type LiteratureExportRecordRequest,
   type LiteratureExportRecordResult
@@ -69,6 +74,7 @@ type LiteratureCommandOwner = Readonly<{
     signal?: AbortSignal
   ): Promise<LiteraturePdfImportReceipt>
   journals(request: JournalRequest): Promise<JournalResult>
+  collect(request: CollectorRequest, signal?: AbortSignal): Promise<CollectorResult>
   exportRecord(request: LiteratureExportRecordRequest): Promise<LiteratureExportRecordResult>
   jobs(request: LiteratureJobRequest): Promise<LiteratureJobsResult>
   supplementAttachmentProgress(
@@ -125,6 +131,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [JournalRequest],
     JournalResult
   >('literature:journals', journalAttributesContract),
+  collect: defineApplicationCommand<
+    'literature:collect',
+    readonly [CollectorRequest],
+    CollectorResult
+  >('literature:collect', literatureCollectorContract),
   exportRecord: defineApplicationCommand<
     'literature:export-record',
     readonly [LiteratureExportRecordRequest],
@@ -233,6 +244,7 @@ const literatureApplicationCommands = Object.freeze({
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
   literatureApplicationCommands.getCandidateStates,
   literatureApplicationCommands.journals,
+  literatureApplicationCommands.collect,
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
   literatureApplicationCommands.fullText,
@@ -284,6 +296,8 @@ const registerLiteratureApplicationCommands = (
   }
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:collect': ({ args, callerLease }) =>
+        run(() => owner.collect(args[0], AbortSignal.any([callerLease.signal, lifetime.signal]))),
       'literature:get-candidate-states': ({ args }) => run(() => owner.getCandidateStates(args[0])),
       'literature:journals': ({ args }) => run(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) => run(() => owner.exportRecord(args[0])),

@@ -1,6 +1,7 @@
 import type { LiteratureRendererApi, LiteratureRendererHost } from '../renderer-host'
 import {
   createLiteratureIdentifierUrl,
+  normalizeLiteratureIdentifierKey,
   normalizeLiteratureIdentifierValue,
   type LiteratureCreatorInput
 } from '@aipoch/literature-citations/contracts'
@@ -21,6 +22,13 @@ const draftTitles = new WeakMap<LiteratureItemInput, string>()
 // A terminal publication block is stronger evidence than a DOI somewhere in References.
 const PUBLICATION_DOI_PATTERN =
   /(?:^|\n)Accepted[^\n]*\b\d{4}\s*\nPublished[^\n]*\b\d{4}\s*\n(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)?(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\s*$/iu
+
+// These prose heuristics belong to extraction, never to explicit identifier normalization.
+const extractedDoi = (value: string): string =>
+  normalizeLiteratureIdentifierValue('doi', value)
+    .replace(/Copyright(?:\s.*)?$/iu, '')
+    .replace(/[.,;:)}\]]+$/gu, '')
+    .trim()
 
 const comparableTitle = (text: string): string =>
   text
@@ -126,8 +134,8 @@ const completeLiteraturePdfDraft = async (
             resolved.identifiers.some(
               (remote) =>
                 remote.scheme === local.scheme &&
-                normalizeLiteratureIdentifierValue(remote.scheme, remote.value).toLowerCase() !==
-                  normalizeLiteratureIdentifierValue(local.scheme, local.value).toLowerCase()
+                normalizeLiteratureIdentifierKey(remote.scheme, remote.value) !==
+                  normalizeLiteratureIdentifierKey(local.scheme, local.value)
             )
         )
       if (conflictingIdentifier) continue
@@ -153,8 +161,8 @@ const completeLiteraturePdfDraft = async (
           !mergedIdentifiers.some(
             (local) =>
               local.scheme === remote.scheme &&
-              normalizeLiteratureIdentifierValue(local.scheme, local.value).toLowerCase() ===
-                normalizeLiteratureIdentifierValue(remote.scheme, remote.value).toLowerCase()
+              normalizeLiteratureIdentifierKey(local.scheme, local.value) ===
+                normalizeLiteratureIdentifierKey(remote.scheme, remote.value)
           )
         )
           mergedIdentifiers.push({ ...remote, isPrimary: false })
@@ -268,15 +276,15 @@ const parseLiteraturePdfMetadata = (
 ): Partial<LiteratureItemInput> => {
   const custom =
     typeof info.Custom === 'object' && info.Custom !== null
-      ? Object.values(info.Custom as Record<string, unknown>)
-      : []
-  const searchableText = `${[...Object.values(info), ...custom]
+      ? (info.Custom as Record<string, unknown>)
+      : {}
+  const searchableText = `${[...Object.values(info), ...Object.values(custom)]
     .filter((value) => typeof value === 'string')
     .join('\n')}\n${text.split(/(?:^|\n)\s*(?:references|bibliography)\s*(?:\n|$)/iu)[0]}`
-  const doi = searchableText
-    .match(DOI_PATTERN)
-    ?.map((value) => normalizeLiteratureIdentifierValue('doi', value))
-    .find(Boolean)
+  const embeddedDoi = [info.DOI, custom.DOI]
+    .map((value) => normalizeLiteratureIdentifierValue('doi', textValue(value)))
+    .find((value) => /^10\.\d{4,9}\/\S+$/u.test(value))
+  const doi = embeddedDoi ?? searchableText.match(DOI_PATTERN)?.map(extractedDoi).find(Boolean)
   const pmid = PMID_PATTERN.exec(searchableText)?.[1]
   const embeddedTitle = pdfInfoValue(info, 'Title')
   const title = meaningfulTitle(embeddedTitle) ? embeddedTitle : ''
@@ -399,7 +407,7 @@ const extractLiteraturePdfDraft = async (
           }
           const doi = PUBLICATION_DOI_PATTERN.exec(text)?.[1]
           if (doi && firstPageTitle.length >= 20) {
-            const normalized = normalizeLiteratureIdentifierValue('doi', doi)
+            const normalized = extractedDoi(doi)
             const resolved = await lookupPdfDoi(api, normalized)
             // A valid DOI may belong to a cited paper. Require the complete prominent title,
             // not the embedded Title, a substring in the abstract, or a fuzzy title match.

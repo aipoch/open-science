@@ -29,6 +29,8 @@ import { discoveryJobOptions } from './discovery-adapters'
 import { literatureIndex } from './full-text-index'
 import { createLiteratureLibraryMcpServer } from './library-mcp-server'
 import { createLiteratureMcpServer } from './mcp-server'
+import { LiteratureCollector } from './collector'
+import type { CollectedReference } from '../../shared/literature-collector'
 
 vi.mock('@aipoch/durable-files', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@aipoch/durable-files')>())
@@ -60,6 +62,161 @@ const invocation = <Args extends readonly unknown[]>(args: Args): ApplicationInv
   }
 }
 const style = `<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text"><info><title>Migration race</title><id>https://example.test/race</id></info><citation><layout><text variable="title"/></layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>`
+
+it('validates collector input and refuses collection while storage is moving', async () => {
+  const collect = vi
+    .fn()
+    .mockResolvedValue({ entries: [], savedItemIds: [], failures: [], pdfCount: 0 })
+  const router = createApplicationCommandRouter()
+  const installation = registerLiteratureApplicationCommands(router.registrar, {
+    collect
+  } as unknown as Parameters<typeof registerLiteratureApplicationCommands>[1])
+  try {
+    await expect(
+      router.dispatcher.invoke(
+        literatureApplicationCommands.collect,
+        invocation([{ kind: 'zotero-preview', collectionKey: 'bad' }])
+      )
+    ).rejects.toThrow()
+    expect(collect).not.toHaveBeenCalled()
+    await expect(
+      router.dispatcher.invoke(
+        literatureApplicationCommands.collect,
+        invocation([{ kind: 'zotero-preview' }])
+      )
+    ).resolves.toMatchObject({ savedItemIds: [] })
+    expect(collect).toHaveBeenCalledTimes(1)
+    beginMigration()
+    await expect(
+      router.dispatcher.invoke(
+        literatureApplicationCommands.collect,
+        invocation([{ kind: 'zotero-preview' }])
+      )
+    ).rejects.toThrow(/moving your data/i)
+    expect(collect).toHaveBeenCalledTimes(1)
+  } finally {
+    installation.uninstall()
+  }
+})
+
+it.each(['uninstall', 'caller abort'] as const)(
+  'cancels admitted Zotero copying on %s and drains cleanup before teardown',
+  async (cancellation) => {
+    let entered!: () => void
+    let aborted!: () => void
+    let finishCleanup!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const abortSeen = new Promise<void>((resolve) => {
+      aborted = resolve
+    })
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    let observedSignal: AbortSignal | undefined
+    const catalog = {
+      inspectCollectedReferences: vi.fn(async (references: readonly CollectedReference[]) =>
+        references.map((reference) => ({
+          status: 'new' as const,
+          reason: 'new' as const,
+          reviewedTargets: [],
+          matches: [],
+          identifiers: reference.item.identifiers
+        }))
+      ),
+      collectReferences: vi.fn().mockResolvedValue({ itemIds: ['paper'], metadataRevisions: [1] }),
+      attachContent: vi.fn()
+    }
+    const content = { withPublishedContent: vi.fn(), sweep: vi.fn(), verify: vi.fn() }
+    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/file/view/url')) {
+        observedSignal = init!.signal!
+        entered()
+        await new Promise<void>((_resolve, reject) => {
+          observedSignal!.addEventListener(
+            'abort',
+            () => {
+              aborted()
+              void cleanup.then(() => reject(observedSignal!.reason))
+            },
+            { once: true }
+          )
+        })
+        throw new Error('Unexpected completed transfer')
+      }
+      const rows = url.includes('/collections?')
+        ? []
+        : [
+            { key: 'ABCDEFGH', data: { itemType: 'journalArticle', title: 'Paper' } },
+            ...['PDFKEY01', 'PDFKEY02'].map((key) => ({
+              key,
+              data: {
+                itemType: 'attachment',
+                parentItem: 'ABCDEFGH',
+                contentType: 'application/pdf'
+              }
+            }))
+          ]
+      return new Response(JSON.stringify(rows), {
+        headers: { 'Last-Modified-Version': '1', 'Zotero-Server-ID': 'server' }
+      })
+    })
+    const collector = new LiteratureCollector({ catalog, content, fetch })
+    const router = createApplicationCommandRouter()
+    const installation = registerLiteratureApplicationCommands(router.registrar, {
+      collect: (request, signal) => collector.run(request, signal)
+    } as Parameters<typeof registerLiteratureApplicationCommands>[1])
+    const controller = new AbortController()
+    const preview = await collector.run({ kind: 'zotero-preview' })
+    const request = {
+      kind: 'zotero-commit' as const,
+      snapshotId: preview.snapshotId!,
+      keys: ['ABCDEFGH'],
+      includePdfs: true
+    }
+    const input = invocation([request] as const)
+    const pending = router.dispatcher.invoke(literatureApplicationCommands.collect, {
+      ...input,
+      callerLease: { ...input.callerLease, signal: controller.signal }
+    })
+    const rejection = expect(pending).rejects.toThrow(
+      cancellation === 'uninstall' ? 'uninstalled' : 'Caller stopped'
+    )
+    let drained = false
+    try {
+      await started
+      if (cancellation === 'uninstall') installation.uninstall()
+      else controller.abort(new Error('Caller stopped'))
+      await abortSeen
+      const idle = installation.whenIdle().then(() => {
+        drained = true
+      })
+      await Promise.resolve()
+      expect(observedSignal?.aborted).toBe(true)
+      expect(drained).toBe(false)
+      finishCleanup()
+      await Promise.all([rejection, idle])
+      expect(drained).toBe(true)
+      expect(
+        fetch.mock.calls.filter(([input]) => String(input).endsWith('/file/view/url'))
+      ).toHaveLength(1)
+      expect(content.withPublishedContent).not.toHaveBeenCalled()
+      expect(catalog.attachContent).not.toHaveBeenCalled()
+      expect(catalog.collectReferences).toHaveBeenCalledTimes(1)
+      await expect(collector.run({ ...request, includePdfs: false })).resolves.toMatchObject({
+        savedItemIds: ['paper']
+      })
+      expect(catalog.collectReferences).toHaveBeenCalledTimes(1)
+    } finally {
+      finishCleanup()
+      installation.uninstall()
+      await installation.whenIdle()
+      await pending.catch(() => undefined)
+    }
+  }
+)
 
 it('refuses a CSL import through the public command while a migration copy awaits commit', async () => {
   const library = new LiteratureCitationStyleLibrary(

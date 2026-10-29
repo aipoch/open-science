@@ -467,6 +467,7 @@ export const createSessionMessageGraphOwner = <
         id: sessionId,
         projectId: projectId ?? '',
         isPending: isPending ? true : undefined,
+        firstPromptDraft: isPending ? true : undefined,
         delegationPolicyAuthorityPending:
           isPending && delegationPolicy !== undefined ? true : undefined,
         ...sessionDetails.prepareNewRootSessionDetails(
@@ -590,6 +591,7 @@ export const createSessionMessageGraphOwner = <
       projectId: source.projectId,
       branchSource: createSessionBranchSource(source, sourceMessage?.id),
       isPending: true,
+      firstPromptDraft: userMessage ? true : undefined,
       delegationPolicyAuthorityPending: true,
       title: sourceMessage
         ? source.title

@@ -3,6 +3,7 @@ export type {
   CustomMcpServerConfig,
   McpClientManagerTool,
   McpClientManagerDeps,
+  McpStdioLaunch,
   McpTransportDependencies
 } from './client-manager'
 export type { McpOAuthConfig, McpOAuthState } from './types'

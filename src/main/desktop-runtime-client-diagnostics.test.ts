@@ -506,17 +506,26 @@ it('preserves an explicit clean-exit requirement and shorter deadline after veri
 })
 
 it('honors cancellation before native stop escalation while preserving clean-exit requirements', async () => {
+  vi.useFakeTimers()
   const { client } = await setup(undefined, undefined, true)
-  const controller = new AbortController()
-  const cancelled = new Error('stop observation cancelled')
-  vi.mocked(waitForRuntimeStopped).mockImplementationOnce(async () => {
-    controller.abort(cancelled)
-    throw Object.assign(new Error('grace expired'), { code: 'runtime-stop-timeout' })
-  })
-  await expect(client.waitForStopped(controller.signal, true, 10_000)).rejects.toBe(cancelled)
-  expect(waitForRuntimeStopped).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ signal: controller.signal, timeoutMs: 6500, requireCleanExit: true })
-  )
-  expect(mocks.terminate).not.toHaveBeenCalled()
-  client.close()
+  try {
+    const controller = new AbortController()
+    const cancelled = new Error('stop observation cancelled')
+    vi.mocked(waitForRuntimeStopped).mockImplementationOnce(async () => {
+      controller.abort(cancelled)
+      throw Object.assign(new Error('grace expired'), { code: 'runtime-stop-timeout' })
+    })
+    await expect(client.waitForStopped(controller.signal, true, 10_000)).rejects.toBe(cancelled)
+    expect(waitForRuntimeStopped).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        signal: controller.signal,
+        timeoutMs: 6500,
+        requireCleanExit: true
+      })
+    )
+    expect(mocks.terminate).not.toHaveBeenCalled()
+  } finally {
+    client.close()
+    vi.useRealTimers()
+  }
 })

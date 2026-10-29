@@ -1,6 +1,6 @@
 import {
+  normalizeLiteratureIdentifierKey,
   normalizeLiteratureIdentifierPreferences,
-  normalizeLiteratureIdentifierValue,
   preferredLiteratureIdentifier
 } from '@aipoch/literature-citations/contracts'
 import { type LiteratureItemInput } from '@aipoch/literature-library/item'
@@ -142,15 +142,14 @@ export function buildLiteratureMergeItem(
         item.identifiers.map((identifier) => ({
           ...identifier,
           isPrimary:
-            normalizeLiteratureIdentifierValue(
+            normalizeLiteratureIdentifierKey(
               identifier.scheme,
               preferred.get(identifier.scheme)!.value
-            ).toLowerCase() ===
-            normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value).toLowerCase()
+            ) === normalizeLiteratureIdentifierKey(identifier.scheme, identifier.value)
         }))
       )
       .filter((identifier) => {
-        const key = `${identifier.scheme}:${normalizeLiteratureIdentifierValue(identifier.scheme, identifier.value).toLowerCase()}`
+        const key = `${identifier.scheme}:${normalizeLiteratureIdentifierKey(identifier.scheme, identifier.value)}`
         if (seen.has(key)) return false
         seen.add(key)
         return true

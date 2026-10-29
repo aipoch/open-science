@@ -79,7 +79,7 @@ describe('toCslItem', () => {
     }
   )
 
-  it('normalizes identifiers before projecting citation metadata', () => {
+  it('normalizes DOI wrappers without deleting opaque citation suffixes', () => {
     expect(
       toCslItem(
         'item-1',
@@ -87,7 +87,7 @@ describe('toCslItem', () => {
           identifiers: [{ scheme: 'doi', value: 'doi:10.1234/exampleCopyright', isPrimary: true }]
         })
       ).DOI
-    ).toBe('10.1234/example')
+    ).toBe('10.1234/exampleCopyright')
   })
 
   it('projects bibliographic metadata without copying empty fields', () => {

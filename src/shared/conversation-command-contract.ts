@@ -10,7 +10,7 @@ export type SessionConversationCommand = {
   preparationId?: string
 } & (
   | { kind: 'prepare-prompt'; promptMessageId: string; mode: 'new' | 'resume' | 'rearm' }
-  | { kind: 'rollback-prompt'; preparationId: string }
+  | { kind: 'rollback-prompt'; preparationId: string; preserveSubmittedMessage?: boolean }
   | {
       kind: 'append-user'
       branchId: string

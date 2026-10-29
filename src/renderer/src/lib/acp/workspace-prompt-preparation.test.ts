@@ -27,7 +27,11 @@ import {
   saveSessionInOrder,
   type SessionPersistenceApi
 } from '../session-persistence/session-persistence'
-import { prepareWorkspacePrompt, rollbackWorkspacePrompt } from './workspace-prompt-preparation'
+import {
+  describeWorkspacePromptRollbackFailure,
+  prepareWorkspacePrompt,
+  rollbackWorkspacePrompt
+} from './workspace-prompt-preparation'
 
 const fixture = (): PersistedChatSession =>
   materializeSessionConversationGraph({
@@ -124,6 +128,65 @@ afterEach(() => {
 })
 
 describe('workspace prompt preparation with Main rollback authority', () => {
+  it.each([false, true])(
+    'does not clear a newer rearm replay pointer on a late submitted release (started: %s)',
+    async (started) => {
+      const main = mainAdapter()
+      const prep = await prepareWorkspacePrompt(current(), 'new', 'new')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: prep.sessionId,
+        messageId: 'new',
+        content: 'Submitted question',
+        preparationId: prep.id
+      })
+      await saveSessionInOrder(current())
+      const run = current().activeRun!
+      const realSave = vi.mocked(main.api.saveSession).getMockImplementation()!
+      vi.mocked(main.api.saveSession).mockImplementation(async (candidate, options) => {
+        const saved = await realSave(candidate, options)
+        if (
+          options?.conversationCommands?.some(
+            (command) => command.kind === 'rollback-prompt' && command.preserveSubmittedMessage
+          )
+        ) {
+          // Another sender rearms the same Message while the old release acknowledgement is delayed.
+          const commands: SessionConversationCommand[] = [
+            {
+              kind: 'prepare-prompt',
+              id: 'next-preparation',
+              promptMessageId: 'new',
+              mode: 'rearm',
+              timestamp: 30
+            }
+          ]
+          if (started)
+            commands.push({
+              kind: 'start-run',
+              id: 'next-start',
+              preparationId: 'next-preparation',
+              run,
+              timestamp: 30
+            })
+          const fresh = await realSave(saved, { conversationCommands: commands })
+          useSessionStore.getState().upsertPersistedSession(fresh)
+          useSessionStore.setState((state) => ({
+            sessions: state.sessions.map((session) => ({
+              ...session,
+              pendingContextReplayMessageId: 'new'
+            }))
+          }))
+        }
+        return saved
+      })
+      expect(await rollbackWorkspacePrompt(prep, true)).toBe(true)
+      const fresh = useSessionStore.getState().sessions[0]
+      expect(fresh.promptPreparation?.id).toBe('next-preparation')
+      expect(fresh.activeRun).toEqual(started ? run : undefined)
+      expect(fresh.pendingContextReplayMessageId).toBe('new')
+      expect(fresh.messages.map(({ id }) => id)).toEqual(['old', 'new'])
+    }
+  )
+
   it('rolls back rearm of an existing failed prompt without requiring resumeRecovery', async () => {
     const original = fixture()
     const main = mainAdapter(original)
@@ -487,5 +550,19 @@ describe('workspace prompt preparation with Main rollback authority', () => {
     expect(await rollbackWorkspacePrompt(prep)).toBe(true)
     expect(current().messages.map(({ id }) => id)).toEqual(['old'])
     expect(main.read().messages.map(({ id }) => id)).toEqual(['old'])
+  })
+})
+
+describe('rollback error presentation', () => {
+  it('keeps the operation error without exposing cleanup details or obsolete Stop instructions', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    expect(
+      describeWorkspacePromptRollbackFailure('Attachment preparation failed', 'private disk detail')
+    ).toBe('Attachment preparation failed')
+    expect(describeWorkspacePromptRollbackFailure(undefined, 'private disk detail')).toBe(
+      'Session storage is not ready.'
+    )
+    expect(warning).toHaveBeenCalledWith('Workspace prompt rollback failed', 'private disk detail')
+    warning.mockRestore()
   })
 })
