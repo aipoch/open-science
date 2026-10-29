@@ -49,6 +49,46 @@ const focusAppearance = (
   })
 
 for (const dark of [false, true]) {
+  test(`keeps input help available beside a filled composer (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/message-clipboard.html?keyboard${dark ? '&dark' : ''}`)
+    const editor = page.getByRole('textbox', { name: 'Ask anything' })
+    const inputHelp = page.getByRole('button', { name: 'Input help', exact: true })
+    const draft = `${'Continue analyzing these results. '.repeat(80)}${'longword'.repeat(40)}`
+
+    for (const width of [390, 1000]) {
+      await page.setViewportSize({ width, height: 900 })
+      await editor.fill(draft)
+      await expect(inputHelp).toBeVisible()
+      const helpBounds = (await inputHelp.boundingBox())!
+      const editorBounds = (await editor.boundingBox())!
+      expect(editorBounds.x + editorBounds.width).toBeLessThanOrEqual(helpBounds.x - 4)
+      const textRight = await editor.evaluate((element) => {
+        const range = document.createRange()
+        range.selectNodeContents(element)
+        return Math.max(...Array.from(range.getClientRects(), (rect) => rect.right))
+      })
+      expect(textRight).toBeLessThanOrEqual(helpBounds.x - 4)
+      await editor.evaluate((element) => (element.scrollTop = element.scrollHeight))
+      expect(await editor.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+      expect(await inputHelp.boundingBox()).toEqual(helpBounds)
+
+      await editor.focus()
+      await page.keyboard.press('Tab')
+      await expect(inputHelp).toBeFocused()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('dialog')).toContainText('Input help')
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+      await expect(inputHelp).toBeFocused()
+      await expect(editor).toHaveText(draft)
+      await editor.locator('..').screenshot({
+        path: testInfo.outputPath(`filled-composer-${width}.png`)
+      })
+    }
+  })
+
   test(`shows message focus and keeps the composer borderless in both directions (${dark ? 'dark' : 'light'})`, async ({
     page
   }, testInfo) => {
