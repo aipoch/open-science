@@ -55,18 +55,13 @@ const run = (
 describe('Windows Electron round-robin sharding', () => {
   it('distributes every file across runners without dropping or duplicating cases', () => {
     const titles: string[] = []
-    for (let current = 1; current <= 3; current++) {
-      const { exit, report } = run([`--shard=${current}/3`])
+    for (let current = 1; current <= 6; current++) {
+      const { exit, report } = run([`--shard=${current}/6`])
       expect(exit).toBe(0)
-      expect(report.config.shard).toEqual({ current, total: 3 })
-      expect(report.stats.expected).toBe(4)
+      expect(report.config.shard).toEqual({ current, total: 6 })
+      expect(report.stats.expected).toBe(2)
       const shard = report.suites.flatMap((suite) => suite.specs.map((spec) => spec.title))
-      expect(shard).toEqual([
-        `fast ${current - 1}`,
-        `fast ${current + 2}`,
-        `slow ${current - 1}`,
-        `slow ${current + 2}`
-      ])
+      expect(shard).toEqual([`fast ${current - 1}`, `slow ${current - 1}`])
       titles.push(...shard)
     }
     expect(new Set(titles).size).toBe(12)
@@ -76,7 +71,7 @@ describe('Windows Electron round-robin sharding', () => {
     const complete = run([])
     expect(complete.exit).toBe(0)
     expect(complete.report.stats.expected).toBe(12)
-    const flaky = run(['--shard=1/3', '--fail-on-flaky-tests'], true)
+    const flaky = run(['--shard=1/6', '--fail-on-flaky-tests'], true)
     expect(flaky.exit).toBe(1)
     expect(flaky.report.stats.flaky).toBe(2)
   }, 45_000)
@@ -95,13 +90,11 @@ describe('Windows Electron round-robin sharding', () => {
   })
 
   it('preserves native sharding in named browser projects inheriting the reporter', () => {
-    const { exit, report } = run(['--shard=1/3'], false, true)
+    const { exit, report } = run(['--shard=1/6'], false, true)
     expect(exit).toBe(0)
     expect(report.suites.flatMap((suite) => suite.specs.map((spec) => spec.title))).toEqual([
       'fast 0',
-      'fast 1',
-      'fast 2',
-      'fast 3'
+      'fast 1'
     ])
   }, 25_000)
 })
