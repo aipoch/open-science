@@ -25,14 +25,13 @@ describe('Literature MCP server', () => {
       const tools = (await client.listTools()).tools
       expect(tools.map(({ name }) => name)).toEqual([LITERATURE_READ_DOCUMENT_TOOL_NAME])
       expect(tools[0]?.description).toContain('instead of Notebook')
-      expect(tools[0]?.description).toContain('Desktop-confirmed')
-      expect(tools[0]?.description).toContain('current message snapshot')
+      expect(tools[0]?.description).toContain('Reading order is resolved automatically')
       expect(tools[0]?.description).toContain('search and cursor continuation')
       expect(tools[0]?.description).not.toContain('proseRegions')
       expect(tools[0]?.inputSchema.properties).not.toHaveProperty('proseRegions')
       expect(tools[0]?.inputSchema.additionalProperties).toBe(false)
-      expect(tools[0]?.description).toContain('text outside regions')
-      expect(tools[0]?.description).toContain('apply automatically to each linked PDF Version')
+      expect(tools[0]?.description).toContain('Ambiguous layouts retain native order')
+      expect(tools[0]?.description).toContain('No manual body-region configuration is required')
       const result = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { query: 'retrieval evaluator' }

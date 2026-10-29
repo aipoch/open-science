@@ -262,6 +262,8 @@ roles remain explicit in the tables above.
 
 ### PDF reading and annotations
 
+- PDF reading order is automatic. The reader shows no manual body-region configuration panel or overlays. Extraction uses complete PDF logical structure when available, then page layout; ambiguous untagged layouts retain native order. Historical manual body selections no longer control extraction.
+
 - All single-page PDFs, including Literature attachments, use an image-style preview with centered fit, pan and zoom controls. Hide reading tabs, annotations, translation, search and page navigation; do not offer a full-reader switch. Existing saved annotations and translations remain stored. Multi-page PDFs retain the complete reader.
 
 - PDF floating toolbars use 28px fine-pointer buttons, at least 24px-wide split disclosures, compact gaps and 44px coarse-pointer targets. Keep selected states, focus indicators and tooltips. Notes & Annotations uses 32px controls, 12px utility text and 4px vertical toolbar padding, matching Replay density.

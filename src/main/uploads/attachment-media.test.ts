@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { joinPdfTextItems } from '../../shared/pdf-text'
 
 import {
   buildImageContentData,
@@ -169,9 +168,11 @@ const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(
     getPage: async (pageNumber: number) => ({
       view: [0, 0, 600, 800],
       rotate: fakePdf.rotate ?? 0,
+      getStructTree: async () => null,
       getTextContent: async () => {
         await beforePdfPageRead?.()
         return {
+          styles: {},
           items: (fakePdf.pages[pageNumber - 1] ?? []).map((item) =>
             typeof item === 'string' ? { str: item } : item
           )
@@ -672,11 +673,11 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
-  it('reorders only explicit regions while ordinary and targeted extraction retain native order', async () => {
+  it('automatically orders ragged columns in both ordinary and targeted extraction, ignoring legacy regions', async () => {
     const rows = [
-      ['The trial enrolled adults with asthma.', 'The registry followed adults with diabetes.'],
-      ['Participants received therapy every day.', 'Participants provided samples each month.'],
-      ['Lung function improved during follow up.', 'Blood glucose declined during follow up.']
+      ['Left first sentence.', 'Right first sentence.'],
+      ['Left second sentence.', 'Right second sentence.'],
+      ['Left third sentence.', 'Right third sentence.']
     ]
     fakePdf = {
       numPages: 1,
@@ -684,40 +685,32 @@ describe('extractPdfText', () => {
         rows.flatMap(([left, right], row) => [
           {
             str: left,
-            width: 160 + row * 5,
+            width: 180,
             height: 10,
-            transform: [10, 0, 0, 10, 40, 720 - row * 20]
+            dir: 'ltr',
+            transform: [10, 0, 0, 10, 40, 720 - row * 14],
+            hasEOL: true
           },
-          { str: ' ', width: 100, height: 0, transform: [10, 0, 0, 10, 210, 720 - row * 20] },
           {
             str: right,
-            width: 170 + row * 3,
+            width: 180,
             height: 10,
-            transform: [10, 0, 0, 10, 330, 720 - row * 20]
-          },
-          {
-            str: '',
-            hasEOL: true,
-            width: 0,
-            height: 0,
-            transform: [10, 0, 0, 10, 40, 700 - row * 20]
+            dir: 'ltr',
+            transform: [10, 0, 0, 10, 330, 715 - row * 17],
+            hasEOL: true
           }
         ])
       ]
     }
     const filePath = join(root, 'columns.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
-    const text = rows
-      .map(([left]) => left)
-      .concat(rows.map(([, right]) => right))
-      .join('\n')
-    const native = joinPdfTextItems(
-      fakePdf.pages[0].map((item) => (typeof item === 'string' ? { str: item } : item))
-    )
-    const proseRegions = [{ page: 1, left: 0.05, top: 0.08, right: 0.95, bottom: 0.4, split: 0.5 }]
+    const text = [...rows.map(([left]) => left), ...rows.map(([, right]) => right)].join('\n')
+    const proseRegions = [
+      { page: 999, left: 0.05, top: 0.08, right: 0.95, bottom: 0.4, split: 0.5 }
+    ]
     for (const page of [undefined, 1]) {
       await expect(extractPdfText(filePath, page)).resolves.toMatchObject({
-        text: `--- Page 1 ---\n${native}`
+        text: `--- Page 1 ---\n${text}`
       })
       await expect(extractPdfText(filePath, page, { proseRegions })).resolves.toMatchObject({
         text: `--- Page 1 ---\n${text}`,
@@ -725,21 +718,8 @@ describe('extractPdfText', () => {
       })
     }
     await expect(extractPdfTextPages(filePath, [1])).resolves.toMatchObject({
-      pages: [{ pageNumber: 1, text: native }],
+      pages: [{ pageNumber: 1, text }],
       truncated: false
-    })
-    await expect(
-      extractPdfText(filePath, undefined, { proseRegions: [{ ...proseRegions[0], page: 2 }] })
-    ).rejects.toThrow('PDF_READING_REGION_INVALID:')
-    await expect(extractPdfText(filePath, undefined, { proseRegions: [] })).rejects.toThrow(
-      'PDF_READING_REGION_INVALID:'
-    )
-    fakePdf.rotate = 90
-    await expect(extractPdfText(filePath, undefined, { proseRegions })).rejects.toThrow(
-      'unrotated PDF page'
-    )
-    await expect(extractPdfText(filePath)).resolves.toMatchObject({
-      text: `--- Page 1 ---\n${native}`
     })
   })
   it('reads PDF page count without extracting page text', async () => {

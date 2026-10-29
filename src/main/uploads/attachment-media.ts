@@ -12,12 +12,8 @@ import {
   type RasterImageDimensions
 } from '../raster-image-safety'
 
-import {
-  joinPdfProseTextItems,
-  joinPdfTextItems,
-  validatePdfProseRegions,
-  type PdfProseRegion
-} from '../../shared/pdf-text'
+import type { PdfProseRegion } from '../../shared/pdf-text'
+import { readPdfPageText } from './pdf-reading-order'
 
 // Images larger than this are downscaled/re-encoded before inlining so a single upload never
 // blows past the model's per-image (~5MB) and total-request (~32MB) limits after base64 growth.
@@ -603,7 +599,6 @@ export const extractPdfText = async (
   targetPageOrSource?: number | AttachmentByteSource,
   options: Readonly<{ maxChars?: number; proseRegions?: readonly PdfProseRegion[] }> = {}
 ): Promise<PdfTextResult> => {
-  if (options.proseRegions !== undefined) validatePdfProseRegions(options.proseRegions)
   const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
   const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
   const size = source?.size ?? (await stat(filePath)).size
@@ -637,31 +632,11 @@ export const extractPdfText = async (
           : undefined
       const firstPage = boundedTargetPage ?? 1
       const lastPage = boundedTargetPage ?? document.numPages
-      if (
-        options.proseRegions?.some(
-          (region) =>
-            region.page > document.numPages || region.page < firstPage || region.page > lastPage
-        )
-      )
-        throw new Error(
-          'PDF_READING_REGION_INVALID: A region page is outside the requested PDF pages.'
-        )
-
       for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
         const page = await document.getPage(pageNumber)
         let pageText: string
         try {
-          const regions = options.proseRegions?.filter((region) => region.page === pageNumber) ?? []
-          if (regions.length > 0 && page.rotate % 360 !== 0)
-            throw new Error(
-              'PDF_READING_REGION_INVALID: Explicit prose regions require an unrotated PDF page.'
-            )
-          const content = await page.getTextContent()
-          pageText = joinPdfProseTextItems(
-            content.items.map((item) => ('str' in item ? item : {})),
-            regions,
-            page.view
-          )
+          pageText = await readPdfPageText(page)
         } finally {
           page.cleanup()
         }
@@ -739,9 +714,12 @@ export const extractPdfTextPages = async (
       for (const pageNumber of pages) {
         signal?.throwIfAborted()
         const page = await document.getPage(pageNumber)
-        const content = await page.getTextContent()
-        page.cleanup()
-        const pageText = joinPdfTextItems(content.items.map((item) => ('str' in item ? item : {})))
+        let pageText: string
+        try {
+          pageText = await readPdfPageText(page)
+        } finally {
+          page.cleanup()
+        }
         const remaining = Math.max(0, maxChars - totalChars)
         pageTexts.push({ pageNumber, text: pageText.slice(0, remaining) })
         totalChars += pageText.length

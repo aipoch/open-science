@@ -20,7 +20,9 @@
     "src/main/uploads/repository.architecture.test.ts",
     "src/main/uploads/repository.characterization.test.ts",
     "src/main/uploads/repository.test-utils.ts",
-    "src/main/uploads/repository.test.ts"
+    "src/main/uploads/repository.test.ts",
+    "src/main/uploads/pdf-reading-order.ts",
+    "src/main/uploads/pdf-reading-order.test.ts"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",
@@ -42,7 +44,8 @@
       "src/main/uploads/attachment-media.pdf-preview.test.ts",
       "src/main/uploads/attachment-media.sharp.test.ts",
       "src/main/uploads/attachment-media.test.ts",
-      "src/main/uploads/caller-cancellation.test.ts"
+      "src/main/uploads/caller-cancellation.test.ts",
+      "src/main/uploads/pdf-reading-order.test.ts"
     ],
     "contract": [
       "src/main/uploads/ipc.test.ts",

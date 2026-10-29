@@ -197,263 +197,79 @@ describe('LiteratureDocumentReader', () => {
     ) as PersistedChatSession
   }
 
-  it('automatically reuses persisted confirmed regions for active reads and cursor continuation', async () => {
+  it('ignores historical manual regions for reading, search and cursor continuation', async () => {
     vi.mocked(extractPdfText).mockResolvedValue({
-      text: 'a'.repeat(17000),
-      pageCount: 2,
-      truncated: false
-    })
-    const reader = makeReader(confirmedSession({ 'binding-1': regions }))
-    const first = (await reader.readCurrent({ ...readRequest, input: {} })) as {
-      nextCursor: string
-    }
-    await expect(
-      reader.readCurrent({ ...readRequest, input: { cursor: first.nextCursor } })
-    ).resolves.toMatchObject({
-      nextCursor: null,
-      reading: { order: 'explicit-prose-regions', proseRegions: regions }
-    })
-    expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
-      maxChars: 24 * 1024 * 1024,
-      proseRegions: regions
-    })
-  })
-
-  it.each([undefined, [{ ...regions[0]!, split: 0.6 }]])(
-    'searches each linked PDF with its own confirmed or native strategy: %j',
-    async (secondRegions) => {
-      vi.mocked(extractPdfText).mockImplementation(async (path, _source, options) => ({
-        text: `--- Page 1 ---\ncohort ${path.includes('second') ? 'second' : 'first'} ${options?.proseRegions?.[0]?.split ?? 'native'}`,
-        pageCount: 2,
-        truncated: false
-      }))
-      const current = confirmedSession({
-        'binding-1': regions,
-        ...(secondRegions ? { 'binding-2': secondRegions } : {})
-      })
-      const reader = new LiteratureDocumentReader({
-        storageRoot: root,
-        sessions: { loadSessionForContinuation: vi.fn(async () => current) },
-        sources: sessionPdfSources({
-          resolveVersion: vi.fn(async (request) =>
-            request.inputFileVersionId === 'version-1' ? input : secondInput
-          ),
-          resolveContent: vi.fn(async (file) => join(root, file.filename))
-        })
-      })
-      await expect(
-        reader.readCurrent({ ...readRequest, input: { query: 'cohort' } })
-      ).resolves.toMatchObject({
-        reading: {
-          order: 'per-document',
-          documents: [
-            { documentId: 'binding-1', order: 'explicit-prose-regions', proseRegions: regions },
-            {
-              documentId: 'binding-2',
-              ...(secondRegions
-                ? { order: 'explicit-prose-regions', proseRegions: secondRegions }
-                : { order: 'native' })
-            }
-          ]
-        },
-        passages: expect.arrayContaining([
-          expect.objectContaining({
-            documentId: 'binding-1',
-            content: expect.stringContaining('first 0.5')
-          }),
-          expect.objectContaining({
-            documentId: 'binding-2',
-            content: expect.stringContaining(secondRegions ? 'second 0.6' : 'second native')
-          })
-        ])
-      })
-      expect(extractPdfText).toHaveBeenCalledTimes(2)
-    }
-  )
-
-  it('rejects invalid or foreign snapshot regions even when an in-memory session bypasses persistence', async () => {
-    const invalidSelections: Record<string, readonly PdfProseRegion[]>[] = [
-      { unknown: regions },
-      { 'binding-1': [] },
-      { 'binding-1': [regions[0]!, regions[0]!] }
-    ]
-    for (const selections of invalidSelections) {
-      await expect(
-        makeReader(confirmedSession(selections)).readCurrent({ ...readRequest, input: {} })
-      ).rejects.toThrow('PDF_READING_REGION_INVALID')
-    }
-    expect(extractPdfText).not.toHaveBeenCalled()
-  })
-
-  it('isolates native and explicit region text and search indexes while canonicalizing region order', async () => {
-    vi.mocked(extractPdfText).mockImplementation(async (_path, _source, options) => ({
-      text: options?.proseRegions
-        ? '--- Page 1 ---\nexplicit cohort evidence\n--- Page 2 ---\nconclusion'
-        : '--- Page 1 ---\nnative cohort evidence\n--- Page 2 ---\nconclusion',
-      pageCount: 2,
-      truncated: false
-    }))
-    const current = confirmedSession({ 'binding-1': [...regions].reverse() })
-    current.messages.push({ ...session().messages[0]!, id: 'message-native' })
-    const reader = makeReader(current)
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        promptMessageId: 'message-native',
-        input: { query: 'cohort', documentIds: ['binding-1'] }
-      })
-    ).resolves.toMatchObject({
-      reading: { order: 'native' },
-      retrievalMode: 'bm25',
-      passages: [expect.objectContaining({ content: expect.stringContaining('native cohort') })]
-    })
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        input: { query: 'cohort', documentIds: ['binding-1'] }
-      })
-    ).resolves.toMatchObject({
-      reading: { order: 'explicit-prose-regions', proseRegions: regions },
-      retrievalMode: 'bm25',
-      passages: [expect.objectContaining({ content: expect.stringContaining('explicit cohort') })]
-    })
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        input: { documentId: 'binding-1' }
-      })
-    ).resolves.toMatchObject({
-      reading: { order: 'explicit-prose-regions', proseRegions: regions },
-      passage: { text: expect.stringContaining('explicit cohort') }
-    })
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        promptMessageId: 'message-native',
-        input: { query: 'cohort', documentIds: ['binding-1'] }
-      })
-    ).resolves.toMatchObject({
-      reading: { order: 'native' },
-      passages: [expect.objectContaining({ content: expect.stringContaining('native cohort') })]
-    })
-    expect(extractPdfText).toHaveBeenCalledTimes(2)
-    expect(extractPdfText).toHaveBeenLastCalledWith(join(root, 'paper.pdf'), undefined, {
-      maxChars: 24 * 1024 * 1024,
-      proseRegions: regions
-    })
-  })
-
-  it('rebuilds explicit v2 BM25 extraction instead of reusing persisted v1 text and rejects v1 cursors', async () => {
-    const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
-    const fingerprint = (version: number): string =>
-      hash(
-        `open-science-pdfjs-verified-bytes-explicit-prose-regions-v${version}:${JSON.stringify(regions)}`
-      )
-    const oldId = hash(`${checksum}:${fingerprint(1)}`)
-    const newId = hash(`${checksum}:${fingerprint(2)}`)
-    const owner = literatureIndex(root)
-    const oldIndex = await owner.open()
-    try {
-      await oldIndex.replace({
-        extractionId: oldId,
-        documentChecksum: checksum,
-        extractorFingerprint: fingerprint(1),
-        chunks: [
-          { pageStart: 1, pageEnd: 1, textStart: 0, textEnd: 21, content: 'legacy cohort Hel lo' }
-        ]
-      })
-      expect(await oldIndex.search({ extractionIds: [oldId], query: 'cohort' })).toMatchObject([
-        { content: 'legacy cohort Hel lo' }
-      ])
-    } finally {
-      await oldIndex.close()
-    }
-    vi.mocked(extractPdfText).mockResolvedValue({
-      text: 'corrected cohort Hello',
-      pageCount: 2,
-      truncated: false
-    })
-    const reader = makeReader(confirmedSession({ 'binding-1': regions }))
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        input: { query: 'cohort', documentIds: ['binding-1'] }
-      })
-    ).resolves.toMatchObject({
-      retrievalMode: 'bm25',
-      passages: [expect.objectContaining({ content: 'corrected cohort Hello' })]
-    })
-    const currentIndex = await owner.open()
-    try {
-      expect(await currentIndex.hasExtraction(oldId)).toBe(true)
-      expect(await currentIndex.hasExtraction(newId)).toBe(true)
-      expect(await currentIndex.search({ extractionIds: [newId], query: 'Hello' })).toMatchObject([
-        { content: 'corrected cohort Hello' }
-      ])
-    } finally {
-      await currentIndex.close()
-    }
-    const cursor = Buffer.from(
-      JSON.stringify({ documentId: 'binding-1', extractionId: oldId, offset: 1 })
-    ).toString('base64url')
-    await expect(
-      reader.readCurrent({
-        ...readRequest,
-        input: { documentId: 'binding-1', cursor }
-      })
-    ).rejects.toThrow('cursor is invalid')
-    expect(extractPdfText).toHaveBeenCalledTimes(1)
-  })
-
-  it('binds cursor continuation to the current message reading strategy and canonical regions', async () => {
-    vi.mocked(extractPdfText).mockResolvedValue({
-      text: 'a'.repeat(17000),
+      text: 'cohort ' + 'a'.repeat(17000),
       pageCount: 2,
       truncated: false
     })
     const current = confirmedSession({ 'binding-1': regions })
-    current.messages.push(
-      { ...session().messages[0]!, id: 'message-native' },
-      {
-        ...confirmedSession({ 'binding-1': [{ ...regions[0]!, split: 0.6 }] }).messages[0]!,
-        id: 'message-changed'
-      },
-      {
-        ...confirmedSession({ 'binding-1': [...regions].reverse() }).messages[0]!,
-        id: 'message-reordered'
-      }
-    )
+    current.messages.push({ ...session().messages[0]!, id: 'message-automatic' })
     const reader = makeReader(current)
-    const first = (await reader.readCurrent({ ...readRequest, input: {} })) as {
-      nextCursor: string
-    }
-    for (const promptMessageId of ['message-native', 'message-changed']) {
-      await expect(
-        reader.readCurrent({ ...readRequest, promptMessageId, input: { cursor: first.nextCursor } })
-      ).rejects.toThrow('cursor is invalid')
-    }
+    const first = (await reader.readCurrent({
+      ...readRequest,
+      input: { documentId: 'binding-1' }
+    })) as { nextCursor: string }
     await expect(
       reader.readCurrent({
         ...readRequest,
-        promptMessageId: 'message-reordered',
-        input: { cursor: first.nextCursor }
+        promptMessageId: 'message-automatic',
+        input: { documentId: 'binding-1', cursor: first.nextCursor }
       })
-    ).resolves.toMatchObject({
-      nextCursor: null,
-      reading: { order: 'explicit-prose-regions', proseRegions: regions }
-    })
-    const native = (await reader.readCurrent({
-      ...readRequest,
-      promptMessageId: 'message-native',
-      input: {}
-    })) as { nextCursor: string }
+    ).resolves.toMatchObject({ nextCursor: null, reading: { order: 'automatic' } })
     await expect(
-      reader.readCurrent({ ...readRequest, input: { cursor: native.nextCursor } })
-    ).rejects.toThrow('cursor is invalid')
-    expect(extractPdfText).toHaveBeenCalledTimes(3)
+      reader.readCurrent({ ...readRequest, input: { query: 'cohort', documentIds: ['binding-1'] } })
+    ).resolves.toMatchObject({
+      reading: { order: 'automatic' },
+      passages: [expect.objectContaining({ content: expect.stringContaining('cohort') })]
+    })
+    expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
+      maxChars: 24 * 1024 * 1024
+    })
   })
 
-  it('passes explicit regions through verified content leases and closes them after extraction failure', async () => {
+  it.each([
+    'open-science-pdfjs-verified-bytes-native-v4',
+    `open-science-pdfjs-verified-bytes-explicit-prose-regions-v2:${JSON.stringify(regions)}`
+  ])('rebuilds old extraction caches and rejects old cursors: %s', async (oldFingerprint) => {
+    const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
+    const fingerprint = hash(oldFingerprint)
+    const oldId = hash(`${checksum}:${fingerprint}`)
+    const owner = literatureIndex(root)
+    const index = await owner.open()
+    try {
+      await index.replace({
+        extractionId: oldId,
+        documentChecksum: checksum,
+        extractorFingerprint: fingerprint,
+        chunks: [
+          { pageStart: 1, pageEnd: 1, textStart: 0, textEnd: 20, content: 'obsolete cohort text' }
+        ]
+      })
+    } finally {
+      await index.close()
+    }
+    vi.mocked(extractPdfText).mockResolvedValue({
+      text: 'automatic cohort text',
+      pageCount: 2,
+      truncated: false
+    })
+    const reader = makeReader(confirmedSession({ 'binding-1': regions }))
+    await expect(
+      reader.readCurrent({ ...readRequest, input: { query: 'cohort', documentIds: ['binding-1'] } })
+    ).resolves.toMatchObject({
+      passages: [expect.objectContaining({ content: 'automatic cohort text' })]
+    })
+    const cursor = Buffer.from(
+      JSON.stringify({ documentId: 'binding-1', extractionId: oldId, offset: 1 })
+    ).toString('base64url')
+    await expect(
+      reader.readCurrent({ ...readRequest, input: { documentId: 'binding-1', cursor } })
+    ).rejects.toThrow('cursor is invalid')
+    expect(extractPdfText).toHaveBeenCalledOnce()
+  })
+
+  it('ignores historical regions in verified content leases and closes them after extraction failure', async () => {
     const close = vi.fn(async () => {})
     const verifyUnchanged = vi.fn(async () => {})
     const reader = new LiteratureDocumentReader({
@@ -494,7 +310,7 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(
       join(root, 'verified.pdf'),
       expect.objectContaining({ size: 42, readBytes: expect.any(Function) }),
-      { maxChars: 24 * 1024 * 1024, proseRegions: regions }
+      { maxChars: 24 * 1024 * 1024 }
     )
     expect(close).toHaveBeenCalledOnce()
     expect(verifyUnchanged).not.toHaveBeenCalled()
