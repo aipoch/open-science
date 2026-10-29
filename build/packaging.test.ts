@@ -130,7 +130,7 @@ describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
           `!define APP_EXECUTABLE_FILENAME "${name}"`,
           `!include "${join(repoRoot, 'build/windows-app-running.nsh')}"`,
           '!include allowOnlyOneInstallerInstance.nsh',
-          `LoadLanguageFile "${join(dirname(nsisCompiler!), 'Contrib/Language files/English.nlf')}"`,
+          'LoadLanguageFile "${NSISDIR}/Contrib/Language files/English.nlf"',
           'LangString appRunning 1033 "Fixture running"',
           'LangString appClosing 1033 "Closing fixture"',
           'LangString appCannotBeClosed 1033 "Fixture cannot close"',
@@ -153,8 +153,7 @@ describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
       const compiled = spawnSync(nsisCompiler!, ['/V2', source], {
         windowsHide: true,
         encoding: 'utf8',
-        timeout: 30_000,
-        env: { ...process.env, NSISDIR: dirname(nsisCompiler!) }
+        timeout: 30_000
       })
       expect(compiled.status, compiled.stderr).toBe(0)
       const run = spawnSync(executable, ['/S'], { windowsHide: true, timeout: 30_000 })
