@@ -227,12 +227,15 @@ describe('native reference boundary through content-first preparation', () => {
         ['References', 1, 0.56, 0.12, marked],
         ['A complete left column paragraph remains ordinary.', 1, 0.1, 0.3, false],
         ['[1] A complete bibliography citation.', 1, 0.56, 0.3, marked],
-        ['A Book Title in This Bibliography', 2, 0.56, 0.1, true]
+        ['A Book Title in This Bibliography', 2, 0.56, 0.1, true],
+        ['Appendix  :', 3, 0.1, 0.1, false],
+        [body, 3, 0.1, 0.3, false]
       ] as const
       const source = createPdfTranslationSource({
         resourceRequestKey: 'anonymous',
         fingerprint: 'native',
         pages: [
+          { width: 600, height: 800 },
           { width: 600, height: 800 },
           { width: 600, height: 800 }
         ],
@@ -250,7 +253,14 @@ describe('native reference boundary through content-first preparation', () => {
         }))
       })
       const prepared = applyPdfContentFirstPolicy(source)
-      expect(prepared.units.map((unit) => !!unit.sourceOnly)).toEqual([true, false, true, true])
+      expect(prepared.units.map((unit) => !!unit.sourceOnly)).toEqual([
+        true,
+        false,
+        true,
+        true,
+        false,
+        false
+      ])
       expect(prepared.units[3].preserve).toBe('reference')
     }
   )

@@ -267,10 +267,32 @@ export function nativeCompoundAppendixBoundaries(units: Unit[], pages: PdfLayout
   // Establish the native fixed-advance role with a complete command, then retain
   // only complete same-role packets; mixed prose owners are never claimed.
   const protectCommands = (start: number, bodySize: number): boolean => {
-    const command = (line: string): boolean =>
-      /^(?:[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.-]+\s+)*(?:docker\s+load\s+-i\s+[A-Za-z0-9_./-]+|\.\/[A-Za-z0-9_./-]+\.sh(?:\s+--?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z0-9_./-]+)?)+)$/u.test(
-        line
-      )
+    const command = (line: string): boolean => {
+      const tokens = line.replace(/(?:\r\n|[\n\r\u2028\u2029])$/u, '').split(/\s+/u)
+      let index = 0
+      while (/^[A-Z_][A-Z0-9_]*=[A-Za-z0-9_.-]+$/u.test(tokens[index] ?? '')) index += 1
+      if (tokens[index] === 'docker')
+        return (
+          tokens[index + 1] === 'load' &&
+          tokens[index + 2] === '-i' &&
+          /^[A-Za-z0-9_./-]+$/u.test(tokens[index + 3] ?? '') &&
+          tokens.length === index + 4
+        )
+      if (!/^\.\/[A-Za-z0-9_./-]+\.sh$/u.test(tokens[index] ?? '')) return false
+      index += 1
+      const option = /^--?[A-Za-z][A-Za-z0-9-]*$/u
+      if (!option.test(tokens[index] ?? '')) return false
+      while (index < tokens.length) {
+        if (!option.test(tokens[index]!)) return false
+        index += 1
+        // An option-shaped value can also stand alone as the next option.
+        if (index < tokens.length && !option.test(tokens[index]!)) {
+          if (!/^[A-Za-z0-9_./-]+$/u.test(tokens[index]!)) return false
+          index += 1
+        }
+      }
+      return true
+    }
     const commandOwners = units
       .slice(start)
       .filter((u) =>

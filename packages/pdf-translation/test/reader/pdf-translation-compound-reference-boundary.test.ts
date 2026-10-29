@@ -216,6 +216,30 @@ function fixture(
 }
 
 describe('complete native compound appendix boundaries', () => {
+  it.each([
+    ['./run.sh -a -b value', true],
+    ['MODE=x ./run.sh -a -- --b', true],
+    [`./r.sh${'\t-A'.repeat(14)}!`, false]
+  ] as const)('preserves only complete shell commands: %s', async (command, complete) => {
+    const { document, pages } = fixture('stacked')
+    const item = lastCommand(pages)
+    item.str = command
+    item.width = command.length * item.height * 0.6
+    const { source } = await extractPdfTranslationSource({
+      document,
+      resourceRequestKey: 'anonymous',
+      signal: new AbortController().signal
+    })
+    const prepared = applyPdfContentFirstPolicy(source)
+    const explanationUnit = prepared.units.find(
+      (unit) => unit.source === explanation && unit.fragments[0].pageNumber === document.numPages
+    )!
+    expect(explanationUnit.preserve === 'reference').toBe(!complete)
+    expect(prepared.units.flatMap((unit) => unit.fragments)).toEqual(
+      source.units.flatMap((unit) => unit.fragments)
+    )
+  })
+
   it.each(['stacked', 'overlapping'] as const)(
     'ends reference carryover at a complete %s appendix',
     async (kind) => {

@@ -5541,24 +5541,26 @@ test('does not absorb a separate same-font prose column into numbered code', () 
   assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
 })
 
-test('does not borrow a later control condition to close an incomplete function declaration', () => {
-  const items = [
-    { ...item('Listing 1: Example function.', 180, 100, 260, 11), fontName: 'caption' },
-    ...[
-      'def compute(values',
-      'x = values.copy()',
-      'y = norm(x)',
-      'if ready(x):',
-      'return x, y'
-    ].map((text, i) => ({
-      ...item(text, i ? 92 : 72, 116 + [0, 12, 36, 48, 60][i], 300),
-      fontName: 'code'
-    }))
-  ]
-  const result = extractDocument(document([page(items)]))
-  assert.ok(result.units.some((unit) => unit.items.includes('1:1') && !unit.sourceOnly))
-  assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
-})
+test.each([
+  ['control condition', 'def compute(values'],
+  ['extra closing parenthesis', `def compute(values)${'\t'.repeat(20_000)})->A:`]
+])(
+  'does not borrow a later closing token for an incomplete function declaration: %s',
+  (_label, definition) => {
+    const items = [
+      { ...item('Listing 1: Example function.', 180, 100, 260, 11), fontName: 'caption' },
+      ...[definition, 'x = values.copy()', 'y = norm(x)', 'if ready(x):', 'return x, y'].map(
+        (text, i) => ({
+          ...item(text, i ? 92 : 72, 116 + [0, 12, 36, 48, 60][i], 300),
+          fontName: 'code'
+        })
+      )
+    ]
+    const result = extractDocument(document([page(items)]))
+    assert.ok(result.units.some((unit) => unit.items.includes('1:1') && !unit.sourceOnly))
+    assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
+  }
+)
 
 test.each(
   ['python', 'matlab'].flatMap((language) =>

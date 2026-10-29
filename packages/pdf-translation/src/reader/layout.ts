@@ -3850,10 +3850,49 @@ function extractPage(
   const codeItems = new Set<Item>()
   const orderedLines = [...lines].sort((a, b) => a.baseline - b.baseline || a.x - b.x)
   const listingPackets: Set<Item>[] = []
-  const assignment = /^(?:[A-Za-z_][\w., [\]():]*|\[[\w, ]+\])\s*=(?!=)/u
-  const call = /[A-Za-z_]\w*(?:\s*\.\s*\w+)*\s*\(/u
+  const assignment = (text: string): boolean => {
+    const equals = text.indexOf('=')
+    return (
+      equals >= 0 &&
+      text[equals + 1] !== '=' &&
+      /^(?:[A-Za-z_][\w., [\]():]*|\[[\w, ]+\])$/u.test(text.slice(0, equals).trimEnd())
+    )
+  }
+  const call = (text: string): boolean => {
+    for (let open = text.indexOf('('); open >= 0; open = text.indexOf('(', open + 1)) {
+      let end = open - 1
+      while (end >= 0) {
+        while (end >= 0 && /\s/u.test(text[end])) end -= 1
+        const last = end
+        while (end >= 0 && /\w/u.test(text[end])) {
+          if (/[A-Za-z_]/u.test(text[end])) return true
+          end -= 1
+        }
+        if (end === last) break
+        while (end >= 0 && /\s/u.test(text[end])) end -= 1
+        if (text[end] !== '.') break
+        end -= 1
+      }
+    }
+    return false
+  }
+  const signatureEnd = (text: string): number => {
+    const colon = text.lastIndexOf(':')
+    if (colon < 0 || text.slice(colon + 1).trim()) return -1
+    const previousColon = text.lastIndexOf(':', colon - 1)
+    for (
+      let close = text.indexOf(')', previousColon + 1);
+      close >= 0 && close < colon;
+      close = text.indexOf(')', close + 1)
+    ) {
+      let next = close + 1
+      while (next < colon && /\s/u.test(text[next])) next += 1
+      if (next === colon || (text.startsWith('->', next) && next + 2 < colon)) return close
+    }
+    return -1
+  }
   const syntax = (text: string): boolean =>
-    assignment.test(text) ||
+    assignment(text) ||
     /^[A-Za-z_]\w*(?:\s*\.\s*\w+)*\s*\([^]*(?:[),;:]|\()\s*$/u.test(text) ||
     /^(?:import|from|def|function|return|raise|if|for|while|else|end)\b/u.test(text) ||
     /^(?:[#%]|"""[^]*"""$|[({]?\s*["'’][^]*[,:;)]\s*$|[()[\]{} ,:;]+$|\)\s*(?:->|[-+*/@]))/u.test(
@@ -3987,9 +4026,9 @@ function extractPage(
       body.some(
         (row) => !syntax(row.text) || row.parts[0].fontName !== body[0].parts[0].fontName
       ) ||
-      body.filter((row) => assignment.test(row.text)).length < 2 ||
+      body.filter((row) => assignment(row.text)).length < 2 ||
       !(
-        body.some((row) => call.test(row.text) || /^(?:import|from)\b/u.test(row.text)) ||
+        body.some((row) => call(row.text) || /^(?:import|from)\b/u.test(row.text)) ||
         body.filter((row) => /^["']\s*\w[^]*["']\s*:/u.test(row.text)).length >= 2
       )
     )
@@ -4050,8 +4089,7 @@ function extractPage(
         break
       listing.push(line)
     }
-    if (listing.length < 4 || listing.filter((line) => assignment.test(line.text)).length < 2)
-      continue
+    if (listing.length < 4 || listing.filter((line) => assignment(line.text)).length < 2) continue
     const gaps = listing.slice(1).map((line, n) => line.baseline - listing[n].baseline),
       pitch = median(gaps.filter((gap) => gap > start.font * 0.75 && gap < start.font * 1.8))
     if (
@@ -4085,16 +4123,17 @@ function extractPage(
     } else {
       const last = listing.at(-1)!
       const definitionRows = listing.slice(listing.indexOf(definition)),
-        signature = definitionRows.findIndex((line) => /\)\s*(?:->[^:]+)?\s*:\s*$/u.test(line.text))
+        signature = definitionRows.findIndex((line) => signatureEnd(line.text) >= 0)
+      const signatureText = definitionRows
+        .slice(0, signature + 1)
+        .map((line) => line.text)
+        .join(' ')
+      const declaration = /^def\s+[A-Za-z_]\w*\([^()]*\)/u.exec(signatureText)
       closed =
         signature >= 0 &&
-        (signature === 0 || /^\)\s*(?:->[^:]+)?\s*:\s*$/u.test(definitionRows[signature].text)) &&
-        /^def\s+[A-Za-z_]\w*\([^()]*\)\s*(?:->[^:]+)?\s*:\s*$/u.test(
-          definitionRows
-            .slice(0, signature + 1)
-            .map((line) => line.text)
-            .join(' ')
-        ) &&
+        (signature === 0 || signatureEnd(definitionRows[signature].text) === 0) &&
+        !!declaration &&
+        signatureEnd(signatureText) === declaration[0].length - 1 &&
         definitionRows
           .slice(1, signature)
           .every((line) => /^[A-Za-z_]\w*(?:\s*:\s*[\w.[\], |]+)?\s*,?$/u.test(line.text)) &&
@@ -4703,7 +4742,7 @@ function extractPage(
     const predecessor = all.findLast((part) => part.index < expansionTail.index)
     const previousExpansionLine =
       predecessor && lines.find((row) => row.items.at(-1) === predecessor)
-    const expansionWords = predecessor?.str.trim().match(/[A-Za-z]+$/u)
+    const expansionWords = predecessor?.str.trim().match(/[A-Za-z]$/u)
       ? predecessor.str.trim().split(/\s+/u)
       : []
     const initials =
