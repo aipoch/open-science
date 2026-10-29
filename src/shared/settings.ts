@@ -735,7 +735,7 @@ export type Preflight = {
   codexReady: boolean
   // Missing on older Main processes; Pi is selectable only when Main reports true.
   piReady?: boolean
-  // Location of the app-bundled Pi ACP adapter, reported only while Pi is ready.
+  // Location of the separately installed Pi ACP adapter, reported while a managed installation exists.
   piRuntimePath?: string
   // Readiness of the selected agent framework, plus which one it is.
   agentFrameworkId: AgentFrameworkId
@@ -984,6 +984,10 @@ export type InstallClaudeRequest = {
 // is the recommended default and the only cross-platform-guaranteed path (no user Node/npm needed).
 export type InstallOpencodeRequest = {
   source: ClaudeInstallSource
+}
+
+export type InstallPiRequest = {
+  source: 'managed'
 }
 
 export type InstallCodeBuddyRequest = {

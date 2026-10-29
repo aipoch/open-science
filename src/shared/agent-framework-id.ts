@@ -12,7 +12,7 @@ export type AgentFrameworkId = (typeof AGENT_FRAMEWORK_ID_VALUES)[number]
 export const isAgentFrameworkId = (value: unknown): value is AgentFrameworkId =>
   typeof value === 'string' && (AGENT_FRAMEWORK_ID_VALUES as readonly string[]).includes(value)
 
-// The Pi SDK version the bundled adapter accepts (enforced again by scripts/build-pi-acp.mjs).
+// The Pi SDK version the managed adapter accepts (enforced again by src/main/pi-acp/bootstrap.mjs).
 export const PI_SDK_VERSION = '1.4.0'
 
 // Registration and runtime readiness both come from Main; older snapshots must fail closed.

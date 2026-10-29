@@ -69,7 +69,7 @@ const computePreflight = ({
     opencode: Boolean(settings.opencodePath),
     codex: Boolean(settings.codex?.resolvedPath),
     codebuddy: Boolean(settings.codebuddyPath),
-    pi: piReady
+    pi: Boolean(piRuntimePath)
   }
   const runtimeReadiness = {
     status: agentReady
@@ -130,7 +130,7 @@ const computePreflight = ({
     codebuddyReady,
     codexReady,
     piReady,
-    ...(piReady && piRuntimePath ? { piRuntimePath } : {}),
+    ...(piRuntimePath ? { piRuntimePath } : {}),
     agentFrameworkId,
     agentReady,
     activeProviderReady,

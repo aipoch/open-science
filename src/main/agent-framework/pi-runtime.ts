@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveConfigRoot } from '../storage-root'
 
 const EXPECTED = {
   'bin.js': '066e83d7f9b4ccbd475691af05a5be365aec0927574769dcacd21e22abe49382',
@@ -14,25 +15,32 @@ const EXPECTED = {
 const PACKAGE_HASH = '7b7bd311e494ae6813fb8fb036f4bd75cd37c43e011f7670e753d6ffa723fc9d'
 
 type PiRuntimeLocation = Readonly<{
+  configRoot?: string
   backendDirectory?: string
   resourcesPath?: string
   packaged?: boolean
 }>
 
-export const piAdapterPath = (options: PiRuntimeLocation = {}): string => {
+export const managedPiRoot = (configRoot = resolveConfigRoot()): string =>
+  join(configRoot, 'pi-managed')
+
+export const piAdapterPath = (options: PiRuntimeLocation = {}): string =>
+  join(managedPiRoot(options.configRoot), 'adapter', 'dist', 'bin.js')
+
+export const piBootstrapPath = (options: PiRuntimeLocation = {}): string => {
   const packaged = options.packaged ?? process.env.OPEN_SCIENCE_HOST_PACKAGED === '1'
   const resources = options.resourcesPath ?? process.env.OPEN_SCIENCE_RESOURCES_PATH
   if (packaged) {
-    if (!resources) throw new Error('Pi ACP resources path is unavailable.')
-    return join(resources, 'backend', 'out', 'pi-acp', 'dist', 'bin.js')
+    if (!resources) throw new Error('Pi bootstrap resources path is unavailable.')
+    return join(resources, 'backend', 'out', 'pi-bootstrap')
   }
   const backend = options.backendDirectory ?? dirname(fileURLToPath(import.meta.url))
-  return resolve(backend, '..', 'pi-acp', 'dist', 'bin.js')
+  return resolve(backend, '..', 'pi-bootstrap')
 }
 
 const hash = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
 
-// Accept only the application-owned output produced by build-pi-acp.mjs. A checked ACP bundle
+// Accept only the application-owned output produced by the runtime bootstrap. A checked ACP bundle
 // still relies on the version-pinned SDK and its runtime guard; it is not an OS sandbox.
 export const assertPiAdapter = (path: string, options: PiRuntimeLocation = {}): void => {
   const expected = piAdapterPath(options)
@@ -149,7 +157,7 @@ export const resolvePiExecutable = async (options: PiRuntimeLocation = {}): Prom
   return path
 }
 
-// Preflight uses this integrity-only check to list Pi while another framework is active.
+// Preflight uses this integrity-only readiness check while another framework is active.
 // Selecting or launching Pi still requires the real ACP initialization probe above.
 export const isPiAdapterAvailable = (options: PiRuntimeLocation = {}): boolean => {
   try {

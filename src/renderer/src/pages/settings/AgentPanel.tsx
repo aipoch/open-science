@@ -30,7 +30,7 @@ import { AgentFrameworkCard } from './AgentFrameworkCard'
 import { isSupportedClaudeCliVersion } from '../../../../shared/claude-runtime'
 import { ModelFrameworkCompatibilityAlert } from './ModelFrameworkCompatibilityAlert'
 import { AgentFrameworkIcon } from './provider-icons'
-import { isPiFrameworkReady, PI_SDK_VERSION } from '../../../../shared/agent-framework-id'
+import { PI_SDK_VERSION } from '../../../../shared/agent-framework-id'
 import { RepairFrameworkDialog } from './RepairFrameworkDialog'
 import { SettingsSection } from './SettingsLayout'
 import { SwitchFrameworkDialog } from './SwitchFrameworkDialog'
@@ -85,6 +85,8 @@ const AgentPanel = ({
   const opencodeInstall = useSettingsStore((state) => state.installStates.opencode)
   const codexInstall = useSettingsStore((state) => state.installStates.codex)
   const codebuddyInstall = useSettingsStore((state) => state.installStates.codebuddy)
+  const installPi = useSettingsStore((state) => state.installPi)
+  const uninstallPi = useSettingsStore((state) => state.uninstallPi)
   const piInstall = useSettingsStore((state) => state.installStates.pi)
   // Any install running locks the framework selector and every card's uninstall button.
   const anyInstalling = useSettingsStore(selectAnyInstalling)
@@ -134,7 +136,7 @@ const AgentPanel = ({
 
   // The app-managed runtime pending an uninstall confirmation (null = dialog closed), plus the
   // in-flight flag so the dialog and status cards can show progress and stay locked during removal.
-  const [pendingUninstall, setPendingUninstall] = useState<FrameworkKey | null>(null)
+  const [pendingUninstall, setPendingUninstall] = useState<FrameworkCardKey | null>(null)
   const [pendingRepair, setPendingRepair] = useState<FrameworkKey | null>(null)
   const [isUninstalling, setIsUninstalling] = useState(false)
   // The framework the user picked (via a card) but hasn't confirmed switching to yet.
@@ -167,6 +169,7 @@ const AgentPanel = ({
       if (pendingUninstall === 'claude') await uninstallClaude()
       else if (pendingUninstall === 'opencode') await uninstallOpencode()
       else if (pendingUninstall === 'codex') await uninstallCodex()
+      else if (pendingUninstall === 'pi') await uninstallPi()
       else await uninstallCodeBuddy()
 
       setPendingUninstall(null)
@@ -349,6 +352,7 @@ const AgentPanel = ({
     version?: string
     versionDetail?: string
     updateAvailable?: boolean
+    canUpdate?: boolean
     updateHint?: string
     path?: string
     sourceLabel: string
@@ -532,27 +536,36 @@ const AgentPanel = ({
   ]
 
   // Main owns registration and readiness. Older/incomplete backends do not expose a Pi card.
-  if (isPiFrameworkReady(agentFrameworks, preflight.piReady)) {
+  if (agentFrameworks.some(({ id }) => id === 'pi')) {
     frameworkCards.push({
       key: 'pi',
       frameworkId: 'pi',
       name: 'Pi',
       icon: <AgentFrameworkIcon frameworkId="pi" size={24} />,
       description: t(
-        'Minimal open-source coding agent, bundled and connected through the Pi ACP adapter.'
+        'Minimal open-source coding agent, installed separately through the Pi ACP adapter.'
       ),
-      ready: true,
-      installed: true,
-      version: PI_SDK_VERSION,
+      ready: preflight.piReady === true,
+      installed: Boolean(preflight.piRuntimePath),
+      updateRequired: Boolean(preflight.piRuntimePath) && !preflight.piReady,
+      version: preflight.piReady ? PI_SDK_VERSION : undefined,
+      canUpdate: true,
       path: preflight.piRuntimePath,
       sourceLabel: 'earendil-works/pi',
       sourceUrl: 'https://github.com/earendil-works/pi',
       notReadyHint: null,
       uninstallCommand: '',
-      managed: false,
-      installSources: [],
+      managed: true,
+      installSources: [
+        {
+          id: 'managed',
+          labelKey: 'App-managed download (recommended)',
+          displayCommand: '',
+          requiresNpm: false
+        }
+      ],
       install: piInstall,
-      onInstall: () => Promise.resolve(undefined)
+      onInstall: () => installPi()
     })
   }
 
@@ -693,6 +706,7 @@ const AgentPanel = ({
       version={card.version}
       versionDetail={card.versionDetail}
       updateAvailable={card.updateAvailable}
+      canUpdate={card.canUpdate}
       updateHint={card.updateHint}
       path={card.path}
       sourceLabel={card.sourceLabel}
@@ -718,9 +732,9 @@ const AgentPanel = ({
       isDetecting={isDetectingAnyFramework}
       promptInFlight={promptInFlight}
       onUninstall={() => {
-        if (card.key !== 'pi') setPendingUninstall(card.key)
+        setPendingUninstall(card.key)
       }}
-      showUninstall={!isOnboarding && card.key !== 'pi'}
+      showUninstall={!isOnboarding}
       installSources={card.installSources}
       install={card.install}
       installRunning={anyInstalling || (!isOnboarding && isSwitching)}

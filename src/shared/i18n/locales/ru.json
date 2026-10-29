@@ -2242,7 +2242,7 @@
     "Open {{name}} configuration": "Откройте настройки {{name}}",
     "Open {{scope}}": "Откройте {{scope}}",
     "Open-source coding agent for the terminal.": "Открытый агент для программирования в командной строке.",
-    "Minimal open-source coding agent, bundled and connected through the Pi ACP adapter.": "Минималистичный открытый агент для программирования, встроенный и подключенный через адаптер Pi ACP.",
+    "Minimal open-source coding agent, installed separately through the Pi ACP adapter.": "Минималистичный открытый агент для программирования, устанавливаемый отдельно через адаптер Pi ACP.",
     "OpenAI's coding agent, connected through the Codex ACP adapter.": "Агент для программирования от OpenAI, подключенный через адаптер Codex ACP.",
     "OpenCode is required for this framework. Install it below, or install it manually (see <docs>opencode.ai/docs</docs>) and re-detect.": "Для этого фреймворка требуется OpenCode. Установите его ниже или вручную (см. <docs>opencode.ai/docs</docs>), затем выполните повторную проверку.",
     "Opening your browser to sign in… Didn't open? Cancel and use a setup token.": "Открывается браузер для входа… Не открылся? Отмените и воспользуйтесь токеном настройки.",

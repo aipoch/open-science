@@ -63,9 +63,11 @@ export type RuntimeSetupActions = {
   installOpencode: (source?: ClaudeInstallSource) => Promise<ClaudeInstallResult>
   installCodex: (source?: CodexInstallSource) => Promise<ClaudeInstallResult>
   installCodeBuddy: (source?: 'managed') => Promise<ClaudeInstallResult>
+  installPi: (source?: 'managed') => Promise<ClaudeInstallResult>
   uninstallClaude: () => Promise<void>
   uninstallOpencode: () => Promise<void>
   uninstallCodeBuddy: () => Promise<void>
+  uninstallPi: () => Promise<void>
   uninstallCodex: () => Promise<void>
   clearInstallLogs: (runtime?: AgentFrameworkId) => void
 }
@@ -91,9 +93,11 @@ type RuntimeSetupCommands = Pick<
   | 'installOpencode'
   | 'installCodex'
   | 'installCodeBuddy'
+  | 'installPi'
   | 'uninstallClaude'
   | 'uninstallOpencode'
   | 'uninstallCodeBuddy'
+  | 'uninstallPi'
   | 'uninstallCodex'
   | 'onInstallLog'
 >
@@ -305,7 +309,8 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
     try {
       const snapshot = await commands.getSettings()
       reconcileSnapshot(snapshot)
-      if (result.ok) clearRuntimeInstallDiagnosticsIfMissing(set, runtime, snapshot)
+      if (result.ok && runtime !== 'pi')
+        clearRuntimeInstallDiagnosticsIfMissing(set, runtime, snapshot)
       await get().refreshPreflight()
     } catch {
       // The next detection or refresh repairs a briefly stale renderer projection.
@@ -487,6 +492,10 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'codebuddy', (commands) =>
       commands.installCodeBuddy({ source })
     ),
+  installPi: (source = 'managed') =>
+    runRuntimeInstall(set, get, getCommands, reconcileSnapshot, 'pi', (commands) =>
+      commands.installPi({ source })
+    ),
 
   uninstallClaude: async () => {
     reconcileSnapshot(await getCommands().uninstallClaude())
@@ -500,6 +509,11 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
     const snapshot = await getCommands().uninstallCodeBuddy()
     reconcileSnapshot(snapshot)
     clearRuntimeInstallDiagnosticsIfMissing(set, 'codebuddy', snapshot)
+    await get().refreshPreflight()
+  },
+  uninstallPi: async () => {
+    const snapshot = await getCommands().uninstallPi()
+    reconcileSnapshot(snapshot)
     await get().refreshPreflight()
   },
   uninstallCodex: async () => {

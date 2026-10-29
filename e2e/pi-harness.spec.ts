@@ -19,7 +19,14 @@ const initialPrompt =
 const selectPi = async (page: Page): Promise<void> => {
   const settings = await openSettingsPage(page, 'Agent')
   const pi = settings.getByRole('radio', { name: 'Use Pi', exact: true })
-  await expect(pi).toBeVisible()
+  const install = settings.getByRole('button', { name: 'Install Pi', exact: true })
+  if (await install.isVisible()) {
+    await install.click()
+    await page
+      .getByRole('menuitem', { name: 'App-managed download (recommended)', exact: true })
+      .click()
+  }
+  await expect(pi).toBeVisible({ timeout: 180_000 })
   await pi.click()
   const confirmation = page.getByRole('alertdialog', { name: 'Switch to Pi?', exact: true })
   await expect(confirmation).toBeVisible()

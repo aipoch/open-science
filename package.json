@@ -126,8 +126,6 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
     "@agentclientprotocol/sdk": "^1.2.1",
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@openma/pi-acp": "0.1.8",
     "@aipoch/connector-core": "file:packages/connector-core",
     "@aipoch/connector-builtins": "file:packages/connector-builtins",
     "@aipoch/credential-identity-probe-native": "file:packages/credential-identity-probe-native",
@@ -206,9 +204,6 @@
     },
     "@prisma/config@6.19.3": {
       "deepmerge-ts": "8.0.2"
-    },
-    "@earendil-works/pi-coding-agent@1.4.0": {
-      "undici": "8.12.2"
     },
     "@tailwindcss/typography": {
       "postcss-selector-parser": "^6.1.5"

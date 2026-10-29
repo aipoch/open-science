@@ -2248,7 +2248,7 @@
     "Open {{name}} configuration": "開啟 {{name}} 設定",
     "Open {{scope}}": "開啟{{scope}}",
     "Open-source coding agent for the terminal.": "面向終端的開源編碼智能體。",
-    "Minimal open-source coding agent, bundled and connected through the Pi ACP adapter.": "極簡的開源編碼智能體，隨應用程式內建，透過 Pi ACP 轉接器接入。",
+    "Minimal open-source coding agent, installed separately through the Pi ACP adapter.": "極簡的開源編碼智能體，透過 Pi ACP 轉接器單獨安裝。",
     "OpenAI's coding agent, connected through the Codex ACP adapter.": "OpenAI 的編碼智能體，透過 Codex ACP 轉接器接入。",
     "OpenCode is required for this framework. Install it below, or install it manually (see <docs>opencode.ai/docs</docs>) and re-detect.": "此框架需要 OpenCode。在下方安裝，或手動安裝（參見 <docs>opencode.ai/docs</docs>）後重新偵測。",
     "Opening your browser to sign in… Didn't open? Cancel and use a setup token.": "正在開啟瀏覽器以登入…未開啟？取消並使用設定權杖。",
