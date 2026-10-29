@@ -93,6 +93,11 @@ import {
 } from '../storage/migration-state'
 
 const fixtureDirectories: string[] = []
+// A fallback test needs an actually whitespace-free parent, including on hosts whose TEMP
+// contains the reported username pattern. Do not manufacture a candidate under that TEMP.
+const rTemporaryTestParent = [join(process.cwd(), '.cache'), tmpdir()].find(
+  (path) => !/\s/u.test(path)
+)
 let diagnosticLogRoot: string | undefined
 afterAll(async () => {
   await flushLogs()
@@ -202,6 +207,197 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.skipIf(!rTemporaryTestParent).each([
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: false, fallback: true },
+    { platform: 'win32' as const, runtime: 'python' as const, wsl: false, fallback: false },
+    { platform: 'linux' as const, runtime: 'r' as const, wsl: false, fallback: false },
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: true, fallback: false }
+  ])('selects and cleans R temporary storage for $platform/$runtime/wsl=$wsl', async (testCase) => {
+    await mkdir(rTemporaryTestParent!, { recursive: true })
+    const root = await mkdtemp(join(rTemporaryTestParent!, 'os-r-temp-policy-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    const unavailable = join(root, 'not-a-directory')
+    await writeFile(unavailable, 'preserve')
+    vi.stubEnv('TMPDIR', unavailable)
+    vi.stubEnv('TMP', root)
+    vi.stubEnv('TEMP', join(root, 'Other User'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: testCase.platform,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      const wrapped = await owner.wrap({
+        executable: process.execPath,
+        args: [],
+        env: {},
+        cwd: root,
+        commandText: 'temporary directory regression',
+        sessionId: 'r-temp-policy',
+        projectId: 'r-temp-policy',
+        runtime: testCase.runtime,
+        ...(testCase.wsl
+          ? { target: { kind: 'wsl2' as const, profileId: 'test', distro: 'test', user: 'test' } }
+          : {}),
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const command = backend.wrap.mock.calls.at(-1)![0]
+      const directory = command.env.TMPDIR as string
+      expect(directory).toMatch(new RegExp('command-[0-9a-f-]+$'))
+      expect(
+        directory.startsWith(
+          join(testCase.fallback ? join(root, 'open-science-notebook') : configured, 'command-')
+        )
+      ).toBe(true)
+      expect(command.env.TMP).toBe(directory)
+      expect(command.env.TEMP).toBe(directory)
+      expect(command.filesystem.readWriteRoots).toContain(directory)
+      const failure = "Fatal error: 'R_TempDir' contains space"
+      expect(wrapped.annotateStderr(failure)).toBe(
+        testCase.fallback
+          ? `${failure}\nR requires a writable temporary directory without spaces. Set TMPDIR, TMP, or TEMP to such a directory and restart Open-Science.`
+          : failure
+      )
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
+      })
+      await wrapped.cleanup('exit', { processesTerminated: false })
+      expect(existsSync(directory)).toBe(true)
+      expect(existsSync(`${directory}.receipt`)).toBe(true)
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(existsSync(directory)).toBe(false)
+      expect(existsSync(`${directory}.receipt`)).toBe(false)
+      expect(await readFile(unavailable, 'utf8')).toBe('preserve')
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
+  it
+    .skipIf(
+      process.platform !== 'win32' ||
+        !process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX ||
+        !rTemporaryTestParent
+    )
+    .each(['plain', 'Test User'])(
+    'verifies real R when the managed command temporary root is under %s',
+    async (parentName) => {
+      const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX!
+      await mkdir(rTemporaryTestParent!, { recursive: true })
+      const root = await mkdtemp(join(rTemporaryTestParent!, 'r-temp-spaces-'))
+      fixtureDirectories.push(root)
+      vi.stubEnv('TMPDIR', root)
+      backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+      // Keep the real owner, environment and R process. Only native containment is replaced;
+      // no administrator setup or persistent runtime authorization is needed for this path test.
+      backend.wrap.mockImplementation(
+        async (command: { executable: string; args: string[]; env: NodeJS.ProcessEnv }) => ({
+          argv: [command.executable, ...command.args],
+          env: command.env,
+          annotateStderr: (value: string) => value,
+          resetNetworkConnections: backend.resetNetworkConnections,
+          setExecutionActive: backend.setExecutionActive,
+          confirmProcessTreeTermination: async () => true,
+          cleanup: (
+            _reason: NotebookSandboxCleanupReason,
+            outcome: NotebookSandboxProcessOutcome
+          ) => backend.cleanup(outcome)
+        })
+      )
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, parentName, 'notebook-command-temp'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        await expect(
+          owner.ensureRuntimeAccess({
+            runtime: 'r',
+            executable: join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            sessionId: 'r-temp-spaces'
+          })
+        ).resolves.toEqual({ windowsProtectionRequired: true, windowsRuntimeAccessRequired: false })
+      } finally {
+        vi.unstubAllEnvs()
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('preserves the failed R probe and gives guidance when no compatible temporary parent exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-temp-guidance-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, configured)
+    await mkdir(configured, { recursive: true })
+    const stderr = "Fatal error: 'R_TempDir' contains space\r\n\r\n"
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    // Replay the captured R startup diagnostic through the existing public probe and a real
+    // subprocess. This tests guidance, independently of whether this volume supports 8.3 paths.
+    backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `process.stderr.write(${JSON.stringify(stderr)}); process.exit(2)`
+      ],
+      env: command.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: process.execPath,
+          sessionId: 'r-temp-guidance'
+        })
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('Set TMPDIR, TMP, or TEMP'),
+        cause: expect.objectContaining({ code: 2, stderr })
+      })
+      const commandRoot = backend.wrap.mock.calls[0]![0].env.TMPDIR as string
+      expect(commandRoot.startsWith(join(configured, 'command-'))).toBe(true)
+      expect(existsSync(commandRoot)).toBe(false)
+      expect(existsSync(`${commandRoot}.receipt`)).toBe(false)
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
   it.each(
     (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
       (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))

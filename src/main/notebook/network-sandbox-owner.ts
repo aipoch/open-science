@@ -12,10 +12,11 @@ import {
   readdir,
   realpath,
   rm,
+  stat,
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { assertProcessTreeSupport } from '../process-tree'
@@ -106,6 +107,11 @@ const sameCleanupDomain = (left: NotebookSandboxTarget, right: NotebookSandboxTa
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const annotateRTemporaryDirectoryError = (text: string): string =>
+  text.includes("Fatal error: 'R_TempDir' contains space")
+    ? `${text}\nR requires a writable temporary directory without spaces. Set TMPDIR, TMP, or TEMP to such a directory and restart Open-Science.`
+    : text
 
 // A required runtime root can fail before the contained probe starts when Windows refuses the
 // AppContainer ACL grant. That is the point at which the interactive elevated repair is needed.
@@ -525,7 +531,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     const skillReadRoots = this.options.configRoot
       ? await managedSkillReadRoots(this.options.configRoot)
       : []
-    const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(target)
+    const { commandTempRoot, receipt, retained } = await this.createCommandTemporaryRoot(
+      target,
+      invocation.runtime
+    )
     this.pendingTemporaryRoots.set(commandTempRoot, receipt)
     const env = {
       ...invocation.env,
@@ -999,7 +1008,12 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           waitListeners.delete(listener)
         }
       },
-      annotateStderr: wrapped.annotateStderr,
+      annotateStderr: (stderr) => {
+        const annotated = wrapped.annotateStderr(stderr)
+        return nativeWindows && invocation.runtime === 'r'
+          ? annotateRTemporaryDirectoryError(annotated)
+          : annotated
+      },
       cleanup
     }
   }
@@ -1541,6 +1555,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       } catch (error) {
         logFailure('R runtime verification probe failed', error)
         verificationError = error
+        if (error instanceof Error) {
+          const message = annotateRTemporaryDirectoryError(error.message)
+          if (message !== error.message) verificationError = new Error(message, { cause: error })
+        }
         verificationFailurePhase = phase
         const failure = error as { code?: number; stdout?: string }
         if (pathsOnly && failure.code === 77 && failure.stdout?.trim()) {
@@ -1755,7 +1773,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   }
 
   private async createCommandTemporaryRoot(
-    target: NonNullable<NotebookSandboxInvocation['target']>
+    target: NonNullable<NotebookSandboxInvocation['target']>,
+    runtime: NotebookSandboxInvocation['runtime']
   ): Promise<{
     commandTempRoot: string
     receipt: string
@@ -1774,6 +1793,41 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       return creation
     }
     const ownerRoot = this.commandTemporaryRoot()
+    if (
+      this.platform === 'win32' &&
+      target.kind === 'native' &&
+      runtime === 'r' &&
+      /\s/u.test(ownerRoot)
+    ) {
+      // R rejects whitespace when Windows cannot supply a short path. Honor an existing
+      // host temp-directory workaround without exposing its shared parent to the child.
+      for (const parent of new Set([process.env.TMPDIR, process.env.TMP, process.env.TEMP])) {
+        if (!parent || !isAbsolute(parent) || /\s/u.test(parent)) continue
+        try {
+          if (!(await stat(parent)).isDirectory()) continue
+          return await this.createCommandTemporaryRootAt(
+            join(parent, 'open-science-notebook'),
+            target
+          )
+        } catch (error) {
+          if (
+            !['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'EROFS'].includes(
+              (error as NodeJS.ErrnoException).code ?? ''
+            )
+          )
+            throw error
+        }
+      }
+      // Preserve R's own short-path support when no alternative is available. Only an actual
+      // R_TempDir failure receives configuration guidance; spaces alone do not prove failure.
+    }
+    return this.createCommandTemporaryRootAt(ownerRoot, target)
+  }
+
+  private async createCommandTemporaryRootAt(
+    ownerRoot: string,
+    target: NonNullable<NotebookSandboxInvocation['target']>
+  ): Promise<{ commandTempRoot: string; receipt: string }> {
     const id = randomUUID()
     const commandTempRoot = join(ownerRoot, `command-${id}`)
     const receipt = join(ownerRoot, `command-${id}.receipt`)
@@ -1786,7 +1840,11 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     try {
       await mkdir(commandTempRoot, { mode: 0o700 })
     } catch (error) {
-      await rm(receipt, { force: true }).catch(() => undefined)
+      try {
+        await rm(receipt, { force: true })
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Command temporary receipt cleanup failed.')
+      }
       throw error
     }
     return { commandTempRoot, receipt }
