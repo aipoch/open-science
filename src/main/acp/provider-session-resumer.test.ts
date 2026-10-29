@@ -7,6 +7,7 @@ import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../sh
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import { createPiFramework } from '../agent-framework/pi'
 import {
   shellRuntimeAgentContract,
   type ShellRuntimeAgentContract
@@ -433,6 +434,32 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it.each([undefined, 'native-missing'])(
+    'adopts Pi history after missing native session (persisted id: %s)',
+    async (providerSessionId) => {
+      const harness = createHarness({
+        initialBackend: {
+          ...backend,
+          framework: createPiFramework({
+            assertApprovedAdapter: () => undefined,
+            mapPermissionProfile: claudeCodeFramework.mapPermissionProfile
+          }),
+          backendId: 'pi'
+        },
+        resumeError: acp.RequestError.invalidParams(
+          undefined,
+          `unknown session: ${providerSessionId ?? 'stable-app-session'}`
+        )
+      })
+      await expect(
+        harness.resume({ providerSessionId, previousFrameworkId: 'pi', previousBackendId: 'pi' })
+      ).resolves.toMatchObject({ sessionId: 'stable-app-session', contextReset: true })
+      expect(harness.request).toHaveBeenCalledOnce()
+      expect(harness.adopt).toHaveBeenCalledOnce()
+      expect(harness.release).toHaveBeenCalledWith({ ownsStableIdentity: true })
+    }
+  )
+
   it('adopts an independent context in the original conversation when historical ownership is unknown', async () => {
     const assertResumeAllowed = vi
       .fn()
