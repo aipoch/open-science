@@ -135,7 +135,11 @@ export class LiteratureCollector {
     return Buffer.concat(chunks).toString('utf8')
   }
 
-  private async preview(collectionKey?: string, signal?: AbortSignal): Promise<CollectorResult> {
+  private async preview(
+    request: Extract<CollectorRequest, { kind: 'zotero-preview' | 'zotero-collections' }>,
+    signal?: AbortSignal
+  ): Promise<CollectorResult> {
+    const collectionKey = request.kind === 'zotero-preview' ? request.collectionKey : undefined
     let responseBytes = 0
     let version: string | null | undefined
     let server: string | null | undefined
@@ -178,7 +182,7 @@ export class LiteratureCollector {
         key = text(data.parentCollection)
       }
       // Match catalog path identity, including ancestors of external memberships.
-      for (let index = 0; index < path.length; index++) {
+      for (let index = 0; request.kind === 'zotero-preview' && index < path.length; index++) {
         const identity = JSON.stringify(
           path.slice(0, index + 1).map(normalizeLiteratureSearchTextV1)
         )
@@ -189,6 +193,11 @@ export class LiteratureCollector {
       }
       return path
     }
+    if (request.kind === 'zotero-collections')
+      return {
+        ...emptyResult(),
+        collections: collections.map(({ key }) => ({ key, path: collectionPath(key) }))
+      }
     if (collectionKey && !byKey.has(collectionKey)) throw new Error(ZOTERO_PREVIEW_CHANGED)
     const selectedCollections = collections.filter(({ key }) => {
       if (!collectionKey) return true
@@ -412,7 +421,8 @@ export class LiteratureCollector {
   async run(input: CollectorRequest, signal?: AbortSignal): Promise<CollectorResult> {
     const request = collectorRequestSchema.parse(input)
     signal?.throwIfAborted()
-    if (request.kind === 'zotero-preview') return this.preview(request.collectionKey, signal)
+    if (request.kind === 'zotero-preview' || request.kind === 'zotero-collections')
+      return this.preview(request, signal)
     const snapshot = this.snapshots.get(request.snapshotId)
     if (!snapshot || snapshot.expires <= (this.options.now ?? Date.now)())
       throw new Error('Zotero preview expired. Preview again.')

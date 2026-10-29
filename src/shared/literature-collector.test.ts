@@ -8,6 +8,26 @@ import {
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { literatureIssuedYear } from '@aipoch/literature-citations/contracts'
 describe('Zotero collection boundary', () => {
+  it('allows only bounded, named collection discovery across the command boundary', () => {
+    expect(literatureCollectorContract.args.parse([{ kind: 'zotero-collections' }])).toEqual([
+      { kind: 'zotero-collections' }
+    ])
+    expect(() =>
+      literatureCollectorContract.args.parse([
+        { kind: 'zotero-collections', url: 'http://example.test' }
+      ])
+    ).toThrow()
+    expect(() =>
+      literatureCollectorContract.result.parse({
+        entries: [],
+        savedItemIds: [],
+        failures: [],
+        pdfCount: 0,
+        collections: [{ key: 'COLLECT1', path: [] }]
+      })
+    ).toThrow()
+  })
+
   it.each([
     ['2024-02-01', 2024],
     ['circa 1650', 1650],

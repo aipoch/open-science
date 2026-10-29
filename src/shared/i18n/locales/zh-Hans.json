@@ -190,6 +190,14 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "启动在访问系统凭据时停止。现有凭据和配置文件数据已保留。解决授权问题后，请重试启动。"
   },
   "renderer": {
+    "Reading collections…": "正在读取合集…",
+    "Retry PDFs": "重试 PDF",
+    "Import collections": "导入合集",
+    "Import scope": "导入范围",
+    "Connection help": "连接帮助",
+    "Review {{title}}": "审阅 {{title}}",
+    "Import {{count}} references_other": "导入 {{count}} 篇文献",
+    "{{count}} skipped_other": "已跳过 {{count}} 项",
     "Skipped {{key}}: use at most 100 tags of 64 characters each.": "已跳过 {{key}}：最多支持 100 个标签，每个标签不超过 64 个字符。",
     "Only .science packages can be imported.": "只能导入 .science 包。",
     "Read the security policy and report vulnerabilities.": "查看安全政策并报告漏洞。",
@@ -7657,7 +7665,6 @@
     "Could not cancel download. Try again.": "无法取消下载，请重试。",
     "Could not download this example. Try again.": "无法下载此案例，请重试。",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "不同的 Zotero 集合将因名称相同而合并。请在 Zotero 中重命名后重新预览。",
-    "Import options": "导入选项",
     "Edit import metadata": "编辑导入元数据",
     "Edits apply to this import only. Zotero will not be changed.": "修改仅适用于本次导入，不会更改 Zotero。",
     "Metadata differs. Review authors, year and publication before reusing this reference.": "元数据存在差异。复用此条目前，请核对作者、年份和出版物。",
@@ -7669,23 +7676,18 @@
     "Matched reference": "匹配条目",
     "Incoming reference": "待导入条目",
     "The matched title differs. Review the metadata and import options.": "匹配条目的标题不同。请检查元数据和导入选项。",
-    "The identifier matches an existing reference.": "标识符与已有条目匹配。",
-    "The source matches an existing reference.": "来源与已有条目匹配。",
-    "No matching source or identifier. A new reference will be created.": "没有匹配的来源或标识符，将创建新条目。",
     "Identifier conflict": "标识符冲突",
     "Reuse existing": "复用已有条目",
     "New reference": "新增条目",
     "Import from Zotero": "从 Zotero 导入",
+    "References, PDFs, tags and collections": "条目、PDF、标签与集合",
     "Enable the local API in Zotero 10 or later Settings → Advanced. Zotero data will not be changed.": "请在 Zotero 10 或更高版本的设置 → 高级中启用本地 API。不会修改 Zotero 数据。",
-    "Zotero collection key (optional)": "Zotero 集合键（可选）",
     "Preview Zotero library": "预览 Zotero 文献库",
-    "Imports up to 1,000 references with tags, collection paths and source links. Existing references are reused.": "每次最多导入 1,000 条文献，保留标签、集合路径和来源链接。已有文献将复用。",
     "Copy local PDF attachments": "复制本地 PDF 附件",
     "Select references": "选择文献",
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文献已保存。部分 PDF 无法复制；请在 Zotero 中恢复文件后重试。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "无法连接 Zotero。请打开 Zotero 10 或更新版本，然后重试。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "请在 Zotero 的“设置 → 高级”中启用“允许此计算机上的其他应用程序与 Zotero 通信”，然后重试。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 响应超时。请等待其启动完成，然后重试。",
-    "References, PDFs, tags and collections": "条目、PDF、标签与集合"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 响应超时。请等待其启动完成，然后重试。"
   }
 }

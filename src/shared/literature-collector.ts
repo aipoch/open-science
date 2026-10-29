@@ -34,6 +34,7 @@ export const collectedReferenceSchema = z
 export type CollectedReference = z.infer<typeof collectedReferenceSchema>
 
 export const collectorRequestSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('zotero-collections') }).strict(),
   z
     .object({
       kind: z.literal('zotero-preview'),
@@ -90,6 +91,17 @@ export type CollectedIdentity = z.infer<typeof collectedIdentitySchema>
 const collectorResultSchema = z
   .object({
     snapshotId: z.string().optional(),
+    collections: z
+      .array(
+        z
+          .object({
+            key: z.string().regex(/^[A-Z0-9]{8}$/),
+            path: z.array(z.string().trim().min(1).max(200)).min(1).max(20)
+          })
+          .strict()
+      )
+      .max(5000)
+      .optional(),
     entries: z
       .array(
         z

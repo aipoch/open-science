@@ -7,10 +7,11 @@ import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-locati
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { PackageImportSelection } from './PackageImportSelection'
 import { PackageImportQueue } from './PackageImportQueue'
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
+import { WorkflowDialogLayout } from '@/components/ui/workflow-dialog-frame'
 import {
   Check,
   ChevronRight,
@@ -532,80 +533,6 @@ export const PackageOperationIndicator = ({
 }
 
 // Measure the bounded content, not the animating shell, to avoid resize feedback loops.
-const PackageDialogLayout = ({
-  children,
-  stage,
-  enabled
-}: {
-  children: React.ReactNode
-  stage: string
-  enabled: boolean
-}): React.JSX.Element => {
-  const contentRef = useRef<HTMLDivElement>(null)
-  const previousStage = useRef(stage)
-  useLayoutEffect(() => {
-    const content = contentRef.current
-    const panel = content?.parentElement
-    if (!content || !panel) return
-    if (!enabled) {
-      panel.style.removeProperty('height')
-      return
-    }
-    const body = content.querySelector<HTMLElement>('[data-package-body]')
-    const naturalContent = body?.querySelector<HTMLElement>('[data-package-content]')
-    if (!body || !naturalContent) return
-    const chrome = Array.from(content.children).filter(
-      (element) => element !== body
-    ) as HTMLElement[]
-    const measure = (): void => {
-      const style = getComputedStyle(body)
-      const height =
-        naturalContent.offsetHeight +
-        (parseFloat(style.paddingTop) || 0) +
-        (parseFloat(style.paddingBottom) || 0) +
-        chrome.reduce((total, element) => total + element.offsetHeight, 0) +
-        2
-      const maximum = parseFloat(getComputedStyle(panel).maxHeight) || height
-      if (height > 2) panel.style.height = `${Math.min(height, maximum)}px`
-    }
-    measure()
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
-    for (const element of [naturalContent, ...chrome]) observer?.observe(element)
-    return () => observer?.disconnect()
-  }, [enabled, stage])
-  useLayoutEffect(() => {
-    const changed = previousStage.current !== stage
-    previousStage.current = stage
-    if (!enabled || !changed || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
-      return
-    const animations = Array.from(
-      contentRef.current?.querySelectorAll<HTMLElement>('[data-package-content]') ?? []
-    ).flatMap((element) =>
-      element.animate
-        ? [
-            element.animate([{ opacity: 0.72 }, { opacity: 1 }], {
-              duration: 160,
-              fill: 'backwards'
-            })
-          ]
-        : []
-    )
-    return () => animations.forEach((animation) => animation.cancel())
-  }, [stage, enabled])
-  return (
-    <div
-      ref={contentRef}
-      className={
-        enabled
-          ? 'flex h-full max-h-[calc(var(--package-dialog-max-height)-2px)] min-h-0 flex-col'
-          : 'contents'
-      }
-    >
-      {children}
-    </div>
-  )
-}
-
 // Local Web receives a staged package path instead of a desktop save dialog, so the browser
 // saves it on demand. The save has to start inside this click: once the export promise resolves
 // the user gesture is gone and showSaveFilePicker would reject with NotAllowedError.
@@ -1005,10 +932,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               'flex flex-col overflow-hidden p-0',
               operation.kind === 'fork'
                 ? 'max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))]'
-                : '[--package-dialog-max-height:min(85svh,640px,var(--windows-content-max-height))] top-[calc(var(--windows-content-center-y)-var(--package-dialog-max-height)/2)] max-h-[var(--package-dialog-max-height)] w-[min(640px,calc(100vw-2rem))] -translate-y-0 transition-[height] duration-[220ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none'
+                : '[--workflow-dialog-max-height:min(85svh,640px,var(--windows-content-max-height))] top-[calc(var(--windows-content-center-y)-var(--workflow-dialog-max-height)/2)] max-h-[var(--workflow-dialog-max-height)] w-[min(640px,calc(100vw-2rem))] -translate-y-0 transition-[height] duration-[220ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none'
             )}
           >
-            <PackageDialogLayout
+            <WorkflowDialogLayout
               enabled={operation.kind !== 'fork'}
               stage={`${operation.id}:${selecting ? operation.progress.phase : active ? 'progress' : operation.state}`}
             >
@@ -1074,13 +1001,13 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               </div>
               {!selecting ? (
                 <div
-                  data-package-body
+                  data-workflow-body
                   className={cn(
                     `${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`
                   )}
                 >
                   <div
-                    data-package-content
+                    data-workflow-content
                     className={cn('space-y-4', active && operation.kind !== 'fork' && 'h-50')}
                   >
                     {notices}
@@ -1362,7 +1289,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                   ) : null}
                 </div>
               ) : null}
-            </PackageDialogLayout>
+            </WorkflowDialogLayout>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

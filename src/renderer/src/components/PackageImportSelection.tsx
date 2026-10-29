@@ -71,10 +71,10 @@ export const PackageImportSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
           {preview ? (
             <>

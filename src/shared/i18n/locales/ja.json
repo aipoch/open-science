@@ -190,6 +190,14 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。"
   },
   "renderer": {
+    "Reading collections…": "コレクションを読み込み中…",
+    "Retry PDFs": "PDF を再試行",
+    "Import collections": "コレクションをインポート",
+    "Import scope": "インポート範囲",
+    "Connection help": "接続のヘルプ",
+    "Review {{title}}": "{{title}} を確認",
+    "Import {{count}} references_other": "{{count}} 件の文献をインポート",
+    "{{count}} skipped_other": "{{count}} 件をスキップ",
     "Skipped {{key}}: use at most 100 tags of 64 characters each.": "{{key}} をスキップしました：タグは最大 100 個、各タグは 64 文字以内にしてください。",
     "Only .science packages can be imported.": ".science パッケージのみインポートできます。",
     "Read the security policy and report vulnerabilities.": "セキュリティポリシーの確認と脆弱性の報告。",
@@ -7657,7 +7665,6 @@
     "Could not cancel download. Try again.": "ダウンロードをキャンセルできませんでした。もう一度お試しください。",
     "Could not download this example. Try again.": "この事例をダウンロードできませんでした。もう一度お試しください。",
     "Different Zotero collections would merge under the same name. Rename them in Zotero, then preview again.": "異なるZoteroコレクションが同じ名前にまとめられてしまいます。Zoteroで名前を変更してから、再度プレビューしてください。",
-    "Import options": "インポートオプション",
     "Edit import metadata": "インポート用メタデータを編集",
     "Edits apply to this import only. Zotero will not be changed.": "編集内容は今回のインポートにのみ適用されます。Zoteroは変更されません。",
     "Metadata differs. Review authors, year and publication before reusing this reference.": "メタデータが異なります。この文献を再利用する前に、著者、年、出版情報を確認してください。",
@@ -7669,23 +7676,18 @@
     "Matched reference": "一致した文献",
     "Incoming reference": "取り込む文献",
     "The matched title differs. Review the metadata and import options.": "一致した文献のタイトルが異なります。メタデータとインポートオプションを確認してください。",
-    "The identifier matches an existing reference.": "識別子が既存の文献と一致します。",
-    "The source matches an existing reference.": "出典が既存の文献と一致します。",
-    "No matching source or identifier. A new reference will be created.": "一致する出典や識別子がありません。新しい文献を作成します。",
     "Identifier conflict": "識別子の競合",
     "Reuse existing": "既存の文献を再利用",
     "New reference": "新しい文献",
     "Import from Zotero": "Zotero からインポート",
+    "References, PDFs, tags and collections": "文献、PDF、タグ、コレクション",
     "Enable the local API in Zotero 10 or later Settings → Advanced. Zotero data will not be changed.": "Zotero 10 以降の設定 → 詳細でローカル API を有効にしてください。Zotero のデータは変更されません。",
-    "Zotero collection key (optional)": "Zotero コレクションキー（任意）",
     "Preview Zotero library": "Zotero ライブラリをプレビュー",
-    "Imports up to 1,000 references with tags, collection paths and source links. Existing references are reused.": "タグ、コレクション階層、出典リンクを含め、最大 1,000 件の文献をインポートします。既存の文献は再利用されます。",
     "Copy local PDF attachments": "ローカルの PDF 添付ファイルをコピー",
     "Select references": "文献を選択",
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文献は保存されました。一部の PDF をコピーできませんでした。Zotero で復元して再試行してください。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Zotero に接続できませんでした。Zotero 10 以降を起動して、もう一度お試しください。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Zotero の「設定 → 詳細」で、このコンピューター上の他のアプリケーションが Zotero と通信することを許可してから、もう一度お試しください。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。",
-    "References, PDFs, tags and collections": "文献、PDF、タグ、コレクション"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。"
   }
 }

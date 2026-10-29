@@ -449,7 +449,13 @@ describe('LiteratureLibraryPage', () => {
           supplementAttachmentProgress: vi.fn().mockResolvedValue(null),
           getCandidateStates: vi.fn(async () => ({ candidates: [] })),
           journals: vi.fn(async () => ({ datasets: [], matches: [] })),
-          collect: vi.fn(),
+          collect: vi.fn().mockResolvedValue({
+            entries: [],
+            savedItemIds: [],
+            failures: [],
+            pdfCount: 0,
+            collections: []
+          }),
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),
           onChanged: vi.fn(() => () => undefined),

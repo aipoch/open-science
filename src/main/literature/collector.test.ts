@@ -85,6 +85,31 @@ function fixture(
   return { collector, catalog, content, fetch }
 }
 describe('Zotero collector', () => {
+  it('discovers named collection paths without inspecting references or creating an import snapshot', async () => {
+    const f = fixture()
+    f.fetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          collection,
+          { key: 'CHILD001', data: { name: 'Nested', parentCollection: 'COLLECT1' } }
+        ]),
+        { headers: { 'Last-Modified-Version': '1', 'Zotero-Server-ID': 'server-1' } }
+      )
+    )
+    const result = await f.collector.run({ kind: 'zotero-collections' })
+    expect(literatureCollectorContract.result.parse(result).collections).toEqual([
+      { key: 'COLLECT1', path: ['Research'] },
+      { key: 'CHILD001', path: ['Research', 'Nested'] }
+    ])
+    expect(result.snapshotId).toBeUndefined()
+    expect(f.fetch).toHaveBeenCalledTimes(1)
+    expect(f.catalog.inspectCollectedReferences).not.toHaveBeenCalled()
+    expect(f.catalog.collectReferences).not.toHaveBeenCalled()
+    await expect(
+      f.collector.run({ kind: 'zotero-preview', collectionKey: 'REMOVED1' })
+    ).rejects.toThrow('ZOTERO_PREVIEW_CHANGED')
+  })
+
   it('includes descendant references and PDFs once without reading unrelated collections', async () => {
     const f = fixture()
     const child = { key: 'CHILD001', data: { name: 'Child', parentCollection: 'COLLECT1' } }
