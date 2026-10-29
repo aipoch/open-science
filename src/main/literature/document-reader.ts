@@ -8,7 +8,8 @@ import {
   type SessionPdfBinding
 } from '../../shared/session-persistence'
 import type { SessionCatalog } from '../session-persistence/coordinator'
-import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
+import { MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
+import { extractPdfText } from '../uploads/pdf-text-extraction'
 import { literatureIndex } from './full-text-index'
 import type { LiteratureReadDocumentRequest } from './mcp-server'
 import { resolveCurrentPdfContext } from './pdf-context'

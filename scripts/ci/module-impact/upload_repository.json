@@ -22,7 +22,8 @@
     "src/main/uploads/repository.test-utils.ts",
     "src/main/uploads/repository.test.ts",
     "src/main/uploads/pdf-reading-order.ts",
-    "src/main/uploads/pdf-reading-order.test.ts"
+    "src/main/uploads/pdf-reading-order.test.ts",
+    "src/main/uploads/pdf-text-extraction.ts"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",
@@ -31,7 +32,8 @@
     "src/main/uploads/command-owner.ts",
     "src/main/uploads/ipc.ts",
     "src/main/uploads/repository.test-utils.ts",
-    "src/main/uploads/storage-helpers.ts"
+    "src/main/uploads/storage-helpers.ts",
+    "src/main/uploads/pdf-text-extraction.ts"
   ],
   "consumerModules": ["session_persistence"],
   "testFiles": {

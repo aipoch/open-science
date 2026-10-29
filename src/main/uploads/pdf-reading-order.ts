@@ -26,9 +26,12 @@ const taggedOrder = (content: TextContent, tree: StructTreeNode): TextItem[][] |
       groups.set(id, group)
       previousGroup = group
       if (item.str.trim()) count++
-    } else if (item.type === 'endMarkedContent') stack.pop()
-    else stack.push(item.type === 'beginMarkedContentProps' ? item.id : undefined)
+    } else if (item.type === 'endMarkedContent') {
+      if (!stack.length) return undefined
+      stack.pop()
+    } else stack.push(item.type === 'beginMarkedContentProps' ? item.id : undefined)
   }
+  if (stack.length) return undefined
   const ordered: TextItem[][] = []
   const pending: { node: StructTreeNode['children'][number]; depth: number }[] = [
     { node: tree, depth: 0 }

@@ -16,7 +16,8 @@ import {
 } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
-import { extractPdfText, inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
+import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
+import { extractPdfText } from '../../../../main/uploads/pdf-text-extraction'
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
@@ -97,9 +98,10 @@ import {
   resumeInterruptedWorkspaceSession
 } from './workspace-runtime-session-lifecycle-owner'
 
+vi.mock('../../../../main/uploads/pdf-text-extraction', () => ({ extractPdfText: vi.fn() }))
+
 vi.mock('../../../../main/uploads/attachment-media', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../main/uploads/attachment-media')>()),
-  extractPdfText: vi.fn(),
   inspectPdfPageCount: vi.fn()
 }))
 

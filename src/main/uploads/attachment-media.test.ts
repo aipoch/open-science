@@ -1,3 +1,4 @@
+import { extractPdfText, extractPdfTextPages } from './pdf-text-extraction'
 import { mkdtemp, open, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,8 +9,6 @@ import {
   buildImageContentData,
   canInlineImageInSession,
   consumeInlineImageBudget,
-  extractPdfText,
-  extractPdfTextPages,
   inspectPdfPageCount,
   ImageContentError,
   MAX_AUTO_EXTRACT_PDF_BYTES,

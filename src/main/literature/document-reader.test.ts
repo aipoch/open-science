@@ -11,17 +11,15 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import type { PdfProseRegion } from '../../shared/pdf-text'
 import type { NotebookRunInputFile } from '../../shared/notebook'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { extractPdfText, MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
+import { MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
+import { extractPdfText } from '../uploads/pdf-text-extraction'
 import { literatureIndex } from './full-text-index'
 import { LiteratureDocumentReader } from './document-reader'
 import type { SessionPdfSourceResolver } from './session-pdf-source-resolver'
 
 import { createLiteratureMcpServer, LITERATURE_READ_DOCUMENT_TOOL_NAME } from './mcp-server'
 
-vi.mock('../uploads/attachment-media', () => ({
-  extractPdfText: vi.fn(),
-  MAX_AUTO_EXTRACT_PDF_BYTES: 50 * 1024 * 1024
-}))
+vi.mock('../uploads/pdf-text-extraction', () => ({ extractPdfText: vi.fn() }))
 
 const checksum = 'a'.repeat(64)
 const secondChecksum = 'b'.repeat(64)

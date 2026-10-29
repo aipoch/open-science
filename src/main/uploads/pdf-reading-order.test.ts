@@ -95,6 +95,10 @@ describe('automatic PDF reading order', () => {
     ]
     expect(await read(outsideBreak, tree)).toBe('first\nsecond')
     expect(await read(input, tree)).toBe('Left column\nRight column')
+    expect(await read(input.slice(0, -1), tree)).toBe('Right column\nLeft column')
+    expect(await read([{ type: 'endMarkedContent', id: '' }, ...input], tree)).toBe(
+      'Right column\nLeft column'
+    )
     expect(await read(input, { ...tree, children: tree.children.slice(0, 1) })).toBe(
       'Right column\nLeft column'
     )
