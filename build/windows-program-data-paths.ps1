@@ -32,6 +32,9 @@ try {
     }
   }
   $install = Get-AbsolutePath $InstallPath
+  # .NET expands existing 8.3 ancestors, while NSIS traversal can retain that spelling.
+  # Match normalized locations, then emit descendants under the caller's exact root prefix.
+  $traversalRoot = $InstallPath.TrimEnd('\')
   $prefix = $install.TrimEnd('\') + '\'
   $physicalInstall = [InstallDirectory]::CanonicalPath($install).TrimEnd('\')
   $physicalPrefix = $physicalInstall + '\'
@@ -39,14 +42,16 @@ try {
   # including roots inside resources/locales, without retaining unrelated ancestors' program files.
   $paths = @($configRoot, $dataRoot) | ForEach-Object {
     $root = $_
-    if ($root.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { $root } else { '' }
+    if ($root.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+      $traversalRoot + $root.Substring($install.Length)
+    } else { '' }
     # Preserve both the saved access path and its physical target. A junction/short-path alias
     # outside the installation can still address research inside the program tree.
     if ($root) {
       if ([IO.File]::Exists($root)) { throw 'The configured storage location is not a directory.' }
       $physical = [InstallDirectory]::CanonicalPath($root)
       if ($physical.StartsWith($physicalPrefix, [StringComparison]::OrdinalIgnoreCase)) {
-        $install.TrimEnd('\') + $physical.Substring($physicalInstall.Length)
+        $traversalRoot + $physical.Substring($physicalInstall.Length)
       } else { '' }
     } else { '' }
   }

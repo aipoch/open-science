@@ -487,6 +487,13 @@ ${macros}
 Section
 InitPluginsDir
 FileOpen $9 "${join(root, 'result.txt')}" w
+  # Windows CI can provide TEMP through an 8.3 alias. Exercise that spelling when the volume
+  # supports it; the configured roots still use their original paths.
+  System::Call 'kernel32::GetShortPathName(t "$INSTDIR", t .R1, i \${NSIS_MAX_STRLEN}) i.R0'
+  \${If} $R0 > 0
+  \${AndIf} $R0 < \${NSIS_MAX_STRLEN}
+    StrCpy $INSTDIR $R1
+  \${EndIf}
 StrCpy $dataProtectionFailed "0"
 StrCpy $dataRestoreFailed "0"
 StrCpy $uninstallerFileName "${root}\\old-uninstaller.exe"
@@ -498,21 +505,21 @@ ${selection}
   # A live reader blocks deleting the application executable. Failed cleanup must preserve data
   # and leave the executable available to identify an incomplete uninstall; the next attempt works.
   System::Call 'kernel32::CreateFile(t "${applicationFile}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
-  ExecWait '"$uninstallerFileNameTemp" /S _?=${install}' $0
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|locked=$0"
-  ExecWait '"$uninstallerFileNameTemp" /S _?=${install}' $0
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|still-locked=$0"
   IfFileExists "${applicationFile}" 0 +2
   FileWriteUTF16LE $9 "|application-retained"
 ${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|retry-${index}=$7"`).join('\n')}
   System::Call 'kernel32::CloseHandle(p R6)'
-  ExecWait '"$uninstallerFileNameTemp" /S _?=${install}' $0
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|cleanup-failed=$0"
   IfFileExists "${join(install, 'Uninstall open-science.exe')}" 0 +2
   FileWriteUTF16LE $9 "|uninstaller-retained"
   ExecWait '"${powershell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${restoreAcl}"' $0
   FileWriteUTF16LE $9 "|acl-restored=$0"
-  ExecWait '"$uninstallerFileNameTemp" /S _?=${install}' $0
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|first-uninstall=$0"
   # Match the updater's existing one-retry budget. A standalone uninstall can truthfully fail
   # on a transient program-file lock; data must remain readable before that retry too.
@@ -520,7 +527,7 @@ ${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileR
     FileWriteUTF16LE $9 "|retried"
 ${paths.map((path, index) => `FileOpen $8 "${join(install, path, 'research.csv')}" r\nFileRead $8 $7\nFileWriteUTF16LE $9 "|retry-data-${index}=$7"\nFileRead $8 $7\nFileWriteUTF16LE $9 "$7"\nFileClose $8`).join('\n')}
     Sleep 1000
-    ExecWait '"$uninstallerFileNameTemp" /S _?=${install}' $0
+    ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   \${EndIf}
   FileWriteUTF16LE $9 "|uninstall=$0"
   !insertmacro restoreNestedDataRoot "$INSTDIR" $backup
