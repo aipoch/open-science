@@ -166,6 +166,41 @@ describe('ACP runtime event normalization', () => {
     ).toBe('mcp__skills__load_skill')
   })
 
+  it.each([
+    ['started', 'in_progress', 'Compacting context'],
+    ['completed', 'completed', 'Context compacted'],
+    ['failed', 'failed', 'Context compaction failed']
+  ] as const)(
+    'projects OpenCode %s without exposing provider internals',
+    (status, expected, title) => {
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: {
+            'opencode/compaction': {
+              status,
+              messageId: 'compact-1',
+              reason: 'auto',
+              error: { type: 'compaction.failed', message: 'INTERNAL_PATH_AND_INSTRUCTIONS' }
+            }
+          }
+        }
+      }
+      const event = toAcpRuntimeEvent(notification, 'event-compact', 1710000000002)
+      expect(event).toMatchObject({
+        kind: 'compaction',
+        sessionId: 'session-1',
+        toolCallId: 'context-compaction:compact-1',
+        compactionReason: 'automatic',
+        status: expected,
+        title
+      })
+      expect(JSON.stringify(event)).not.toContain('INTERNAL_PATH_AND_INSTRUCTIONS')
+      expect(toAcpRuntimeEvent(notification, 'replayed-event').toolCallId).toBe(event.toolCallId)
+    }
+  )
+
   it.each([true, { version: 1 }])(
     'maps Codex context-compaction metadata %j into the shared lifecycle',
     (marker) => {

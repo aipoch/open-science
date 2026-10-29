@@ -729,13 +729,46 @@ const toAcpRuntimeEvent = (
     case 'available_commands_update':
     case 'config_option_update':
     case 'current_mode_update':
-    case 'session_info_update':
       return {
         ...base,
         kind: 'system',
         title: update.sessionUpdate,
         text: update.sessionUpdate
       }
+    case 'session_info_update': {
+      const marker = update._meta?.['opencode/compaction']
+      if (
+        isRecord(marker) &&
+        typeof marker.messageId === 'string' &&
+        marker.messageId.length > 0 &&
+        (marker.reason === 'auto' || marker.reason === 'manual') &&
+        (marker.status === 'started' || marker.status === 'completed' || marker.status === 'failed')
+      ) {
+        // OpenCode retains the summary in its own context. Publish only the lifecycle; its
+        // provider error/raw metadata may contain internal instructions or local paths.
+        return {
+          ...base,
+          raw: undefined,
+          level: marker.status === 'failed' ? 'error' : 'info',
+          kind: 'compaction',
+          toolCallId: `context-compaction:${marker.messageId}`,
+          compactionReason: marker.reason === 'auto' ? 'automatic' : 'manual',
+          status: marker.status === 'started' ? 'in_progress' : marker.status,
+          title:
+            marker.status === 'completed'
+              ? 'Context compacted'
+              : marker.status === 'failed'
+                ? 'Context compaction failed'
+                : 'Compacting context'
+        }
+      }
+      return {
+        ...base,
+        kind: 'system',
+        title: update.sessionUpdate,
+        text: update.sessionUpdate
+      }
+    }
     default:
       return {
         ...base,

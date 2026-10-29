@@ -61,6 +61,90 @@ vi.mock('electron', () => ({
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
 
+it('round-trips a compaction activity and its conversation through a science package', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(source.storageRoot)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Compacted conversation',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 3,
+    messages: [
+      {
+        id: 'prompt',
+        role: 'user',
+        content: 'Continue the analysis',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      },
+      {
+        id: 'answer',
+        role: 'agent',
+        content: 'The analysis is complete.',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 3,
+        updatedAt: 3
+      }
+    ],
+    activities: [
+      {
+        id: 'context-compaction:compact-1',
+        kind: 'tool',
+        providerToolName: 'ContextCompaction',
+        title: 'Context compacted',
+        status: 'completed',
+        promptMessageId: 'prompt',
+        sortIndex: 2,
+        eventIds: ['compact-event'],
+        createdAt: 2,
+        updatedAt: 2
+      }
+    ]
+  })
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'compacted.science')
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    initDataRoot(target.storageRoot)
+    const imported = await importer.importFrom(archive)
+    const session = await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    )
+    expect(session?.messages.map(({ content }) => content)).toEqual([
+      'Continue the analysis',
+      'The analysis is complete.'
+    ])
+    expect(session?.activities).toMatchObject([
+      {
+        providerToolName: 'ContextCompaction',
+        title: 'Context compacted',
+        status: 'completed',
+        promptMessageId: session?.messages[0].id
+      }
+    ])
+    expect(session?.conversationGraph?.activities).toHaveLength(1)
+  } finally {
+    await Promise.all([exporter.close(), importer.close()])
+  }
+})
+
 it('defers native evidence cleanup while an import publishes its marked directories', async () => {
   const source = await createProvenanceTestFixture()
   const target = await createProvenanceTestFixture()

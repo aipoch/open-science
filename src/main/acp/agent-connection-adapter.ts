@@ -24,6 +24,7 @@ import {
   type OpenCodeServiceLease
 } from './opencode-service'
 import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
+import { createOpenCodeCompactionStream } from './opencode-compaction-stream'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import type {
@@ -325,7 +326,7 @@ class AcpAgentConnectionAdapter {
           pid: spawnedProcess.pid
         })
       })
-      connection = this.createClientConnection(spawnedProcess, hooks)
+      connection = this.createClientConnection(spawnedProcess, hooks, backend)
       bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
       if (error instanceof OpenCodeServiceCleanupError) cleanupUnconfirmed = true
@@ -391,14 +392,23 @@ class AcpAgentConnectionAdapter {
 
   private createClientConnection(
     process: ChildProcessWithoutNullStreams,
-    hooks: AcpAgentConnectionHooks
+    hooks: AcpAgentConnectionHooks,
+    backend: ResolvedAgentBackend
   ): ClientConnection {
-    const stream = acp.ndJsonStream(
+    let stream = acp.ndJsonStream(
       Writable.toWeb(process.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(process.stdout) as ReadableStream<Uint8Array>
     )
 
-    return acp
+    const abort = new AbortController()
+    if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 1) {
+      stream = createOpenCodeCompactionStream(stream, {
+        api: backend.opencodeUsageApi,
+        resolveSessionCwd: hooks.filesystem.resolveSessionCwd,
+        signal: abort.signal
+      })
+    }
+    const connection = acp
       .client({ name: 'open-science' })
       .onRequest(acp.methods.client.session.requestPermission, (context) =>
         hooks.requestPermission(context.params)
@@ -430,6 +440,8 @@ class AcpAgentConnectionAdapter {
         )
       )
       .connect(stream)
+    void connection.closed.then(() => abort.abort())
+    return connection
   }
 }
 
