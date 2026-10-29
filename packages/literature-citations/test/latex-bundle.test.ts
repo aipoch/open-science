@@ -68,6 +68,23 @@ describe('LiteratureLatexBundle', () => {
     )
   })
 
+  it('handles repeated unterminated options without hiding later valid commands', async () => {
+    const bundle = new LiteratureLatexBundle(
+      { getMany: async () => [item('item-1')] },
+      { exportReferences: async () => '@article{test}' }
+    )
+    for (const command of ['usepackage', 'addbibresource']) {
+      const content = `${`\\${command}[`.repeat(20_000)}\n{{cite:item-1}}`
+      await expect(bundle.prepare({ sourceName: 'review.tex', content })).rejects.toThrow()
+      await expect(
+        bundle.prepare({
+          sourceName: 'review.tex',
+          content: `${content}\n\\usepackage[backend=\\custom]{biblatex}\n\\addbibresource{references.bib}`
+        })
+      ).resolves.toMatchObject({ citationCount: 1 })
+    }
+  })
+
   it('rejects unavailable items and duplicate imported citation keys', async () => {
     const missing = new LiteratureLatexBundle(
       { getMany: async () => [] },
