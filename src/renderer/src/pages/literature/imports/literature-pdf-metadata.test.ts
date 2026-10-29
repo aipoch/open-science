@@ -47,6 +47,26 @@ describe('parseLiteraturePdfMetadata', () => {
       }
     )
   })
+
+  it.each([
+    { DOI: '10.1234/explicitCopyright.)', Subject: '10.1234/other' },
+    { Subject: '10.1234/other', Custom: { DOI: '10.1234/explicitCopyright.)' } },
+    {
+      DOI: 'Unavailable',
+      Subject: '10.1234/other',
+      Custom: { DOI: '10.1234/explicitCopyright.)' }
+    }
+  ])('preserves an explicit embedded DOI before scanning other text: %j', (info) => {
+    expect(parseLiteraturePdfMetadata(info, '10.1234/pageCopyright')).toMatchObject({
+      identifiers: [{ scheme: 'doi', value: '10.1234/explicitCopyright.)', isPrimary: true }]
+    })
+  })
+
+  it('trims prose punctuation only when extracting a DOI from free text', () => {
+    expect(parseLiteraturePdfMetadata({}, 'See 10.1234/example.')).toMatchObject({
+      identifiers: [{ scheme: 'doi', value: '10.1234/example', isPrimary: true }]
+    })
+  })
 })
 
 it('extracts a structured abstract without an Abstract heading and stops before the body', () => {

@@ -1,3 +1,4 @@
+import type { CollectorRequest, CollectorResult } from '../literature-collector'
 import type {
   LiteraturePublicationCheckRequest,
   LiteraturePublicationCheckResult,
@@ -80,6 +81,10 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.collect': callable<(request: CollectorRequest) => Promise<CollectorResult>>()(
+    'literature',
+    ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.getCandidateStates': callable<
     (request: LiteratureCandidateStatesRequest) => Promise<LiteratureCandidateStatesResult>
   >()('literature', [

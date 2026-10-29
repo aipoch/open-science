@@ -37,6 +37,10 @@
     "./documents": {
       "types": "./dist/documents.d.ts",
       "default": "./dist/documents.js"
+    },
+    "./doi": {
+      "types": "./dist/doi.d.ts",
+      "default": "./dist/doi.js"
     }
   },
   "scripts": {

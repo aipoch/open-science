@@ -17,6 +17,7 @@ import type { ContentRepository } from '../storage/content-repository'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureCatalog } from './catalog'
+import type { LiteratureCollector } from './collector'
 import type { LiteratureSupplementAttachments } from './supplement-attachments'
 import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
@@ -61,6 +62,7 @@ type LiteratureCommandServices = Readonly<{
     | 'transact'
     | 'contentBlobIdsForItems'
   >
+  literatureCollector: Pick<LiteratureCollector, 'run'>
   literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport' | 'addToLiterature'>
   contentRepository: Pick<ContentRepository, 'sweep'>
 }>
@@ -81,8 +83,10 @@ export const createLiteratureCommandOwner = ({
   literatureCitationDocument,
   literatureCatalog,
   literaturePdfImporter,
+  literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  collect: (request, signal) => literatureCollector.run(request, signal),
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),

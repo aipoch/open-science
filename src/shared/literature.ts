@@ -222,3 +222,8 @@ export {
 }
 
 export type { LiteratureCatalogSearchPage, LiteraturePdfImportRequest }
+
+export {
+  literatureIssuedYear,
+  normalizeLiteratureIdentifierKey
+} from '@aipoch/literature-citations/contracts'

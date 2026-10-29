@@ -72,6 +72,19 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('forwards Zotero collection to its owner under the command write gate', async () => {
+    const result = { kind: 'preview' }
+    const run = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run }
+    } as unknown as Services)
+    const request = { kind: 'zotero-preview' as const }
+    const signal = new AbortController().signal
+    await expect(owner.collect(request, signal)).resolves.toBe(result)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+  })
+
   it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
     const run = vi.fn().mockResolvedValue({ records: [] })
     const owner = createLiteratureCommandOwner({

@@ -85,6 +85,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.addPdf': 'literature:add-pdf',
   'literature.cancelPdfImport': 'literature:cancel-pdf-import',
   'literature.citationStyles': 'literature:citation-styles',
+  'literature.collect': 'literature:collect',
   'literature.completeMetadata': 'literature:complete-metadata',
   'literature.exportRecord': 'literature:export-record',
   'literature.formatDocument': 'literature:format-document',
