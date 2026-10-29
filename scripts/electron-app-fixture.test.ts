@@ -16,6 +16,7 @@ vi.mock('node:child_process', { spy: true })
 vi.mock('node:fs/promises', { spy: true })
 
 import {
+  assertPackagedElectronIdentity,
   configurePackagedMacKeychain,
   closeElectronApplicationForCleanup,
   disconnectFixtureServiceConnection,
@@ -25,6 +26,54 @@ import {
   installRestartPersistenceRetry,
   observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+describe('packaged Electron identity', () => {
+  const environment = {
+    OPEN_SCIENCE_E2E_EXECUTABLE: resolve('fixture/Open-Science'),
+    OPEN_SCIENCE_E2E_EXPECTED_BUILD_SHA: 'a375b638988bbf0c95178c20196906ba41eb8582'
+  }
+  const evidence = {
+    packaged: true,
+    appPath: resolve('fixture/resources/app.asar'),
+    executable: environment.OPEN_SCIENCE_E2E_EXECUTABLE,
+    version: '1.0.5-nightly.ga375b63'
+  }
+
+  it('accepts the build workflow nightly version for the expected revision', () => {
+    expect(() => assertPackagedElectronIdentity(evidence, environment)).not.toThrow()
+  })
+
+  it.each([
+    '1.0.5-nightly.a375b63',
+    '1.0.5-nightly.g5e97d09',
+    '1.0.5-nightly.ga375b63-extra',
+    '1.0.5'
+  ])('rejects a mismatched nightly version: %s', (version) => {
+    expect(() => assertPackagedElectronIdentity({ ...evidence, version }, environment)).toThrow(
+      'Packaged Electron identity mismatch'
+    )
+  })
+
+  it.each([
+    { packaged: false },
+    { appPath: resolve('fixture/resources/app') },
+    { executable: resolve('fixture/another/Open-Science') },
+    { executable: 'fixture/Open-Science' }
+  ])('rejects invalid package evidence: %j', (invalid) => {
+    expect(() => assertPackagedElectronIdentity({ ...evidence, ...invalid }, environment)).toThrow(
+      'Packaged Electron identity mismatch'
+    )
+  })
+
+  it('allows stable packages only when no expected build revision was requested', () => {
+    expect(() =>
+      assertPackagedElectronIdentity(
+        { ...evidence, version: '1.0.5' },
+        { OPEN_SCIENCE_E2E_EXECUTABLE: environment.OPEN_SCIENCE_E2E_EXECUTABLE }
+      )
+    ).not.toThrow()
+  })
+})
 
 it('binds only packaged macOS launches to the hosted test Keychain under isolated HOME', async () => {
   const execute = vi.spyOn(childProcess, 'execFileSync').mockReturnValue(Buffer.alloc(0))
