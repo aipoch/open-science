@@ -38,13 +38,15 @@ export function createOpenCodeCompactionStream(
 ): Stream {
   const cache = new Map<string, Classification>()
   const pending = new Map<string, MessageIdentity>()
-  const requests = new Map<JsonRpcId, { sessionId: string; cwd?: string }>()
+  const requests = new Map<JsonRpcId, { method: string; sessionId?: string; cwd?: string }>()
+  const sessionCwds = new Map<string, string>()
   const abort = new AbortController()
   const signal = AbortSignal.any([options.signal, abort.signal])
   const clear = (): void => {
     cache.clear()
     pending.clear()
     requests.clear()
+    sessionCwds.clear()
   }
   signal.addEventListener('abort', clear, { once: true })
   const classify = async (identity: MessageIdentity): Promise<Classification> => {
@@ -60,7 +62,9 @@ export function createOpenCodeCompactionStream(
       )
       url.searchParams.set(
         'directory',
-        loading?.cwd ?? options.resolveSessionCwd(identity.sessionId)
+        loading?.cwd ??
+          sessionCwds.get(identity.sessionId) ??
+          options.resolveSessionCwd(identity.sessionId)
       )
       const response = await (options.fetchImpl ?? fetch)(url, {
         headers: { authorization: options.api.authorization },
@@ -106,12 +110,22 @@ export function createOpenCodeCompactionStream(
         if (
           'method' in message &&
           'id' in message &&
-          ['session/prompt', 'session/load', 'session/resume'].includes(message.method) &&
-          isRecord(message.params) &&
-          typeof message.params.sessionId === 'string'
+          [
+            'session/new',
+            'session/load',
+            'session/resume',
+            'session/fork',
+            'session/prompt',
+            'session/close',
+            'session/delete'
+          ].includes(message.method) &&
+          isRecord(message.params)
         ) {
           requests.set(message.id, {
-            sessionId: message.params.sessionId,
+            method: message.method,
+            ...(typeof message.params.sessionId === 'string'
+              ? { sessionId: message.params.sessionId }
+              : {}),
             ...(typeof message.params.cwd === 'string' ? { cwd: message.params.cwd } : {})
           })
         }
@@ -129,7 +143,31 @@ export function createOpenCodeCompactionStream(
           if (signal.aborted) throw classificationError()
           if (!('method' in message)) {
             const request = requests.get(message.id)
-            if (request) await finish(request.sessionId, controller)
+            if (
+              request?.sessionId &&
+              ['session/prompt', 'session/load', 'session/resume'].includes(request.method)
+            ) {
+              await finish(request.sessionId, controller)
+            }
+            if (request && 'result' in message) {
+              const providerSessionId =
+                isRecord(message.result) && typeof message.result.sessionId === 'string'
+                  ? message.result.sessionId
+                  : request.sessionId
+              if (request.cwd && providerSessionId) sessionCwds.set(providerSessionId, request.cwd)
+              if (
+                request.sessionId &&
+                ['session/close', 'session/delete'].includes(request.method)
+              ) {
+                sessionCwds.delete(request.sessionId)
+                // Cached identity contains no content and is bounded. Reclassify after a close,
+                // including a later load of the same native ID in another working directory.
+                cache.clear()
+                for (const [key, identity] of pending) {
+                  if (identity.sessionId === request.sessionId) pending.delete(key)
+                }
+              }
+            }
             requests.delete(message.id)
             controller.enqueue(message)
             return

@@ -19,7 +19,8 @@ const native = (sessionID: string, id: string, summary: boolean, finish?: string
   Response.json({ info: { sessionID, id, role: 'assistant', summary, finish }, parts: [] })
 const fixture = (
   messages: AnyMessage[],
-  fetchImpl: typeof fetch
+  fetchImpl: typeof fetch,
+  resolveSessionCwd = (): string => '/workspace'
 ): {
   stream: Stream
   abort: AbortController
@@ -44,7 +45,7 @@ const fixture = (
     },
     {
       api: { baseUrl: 'http://localhost:1234', authorization: 'Basic test' },
-      resolveSessionCwd: () => '/workspace',
+      resolveSessionCwd,
       signal: abort.signal,
       fetchImpl
     }
@@ -62,6 +63,36 @@ const fixture = (
 }
 
 describe('OpenCode 1.x compaction stream', () => {
+  it('uses provider-created identities for reviewer and adopted session directories', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(native('reviewer', 'm', false))
+      .mockResolvedValueOnce(native('adopted', 'm', false))
+    const replies: AnyMessage[] = [
+      { jsonrpc: '2.0', id: 1, result: { sessionId: 'reviewer' } },
+      { jsonrpc: '2.0', id: 2, result: { sessionId: 'adopted' } }
+    ]
+    const messages = [...replies, chunk('reviewer', 'm'), chunk('adopted', 'm')]
+    const test = fixture(messages, fetchImpl, () => {
+      throw new Error('Not a primary session')
+    })
+    const writer = test.stream.writable.getWriter()
+    await writer.write({ jsonrpc: '2.0', id: 1, method: 'session/new', params: { cwd: '/review' } })
+    await writer.write({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/new',
+      params: { cwd: '/adopted' }
+    })
+    expect(await test.read()).toEqual(messages)
+    expect(new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('directory')).toBe(
+      '/review'
+    )
+    expect(new URL(String(fetchImpl.mock.calls[1][0])).searchParams.get('directory')).toBe(
+      '/adopted'
+    )
+  })
+
   it('aborts a pending lookup on connection cleanup without delivering its chunk', async () => {
     let lookupSignal: AbortSignal | undefined
     const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
@@ -77,6 +108,32 @@ describe('OpenCode 1.x compaction stream', () => {
     test.abort.abort()
     await rejection
     expect(lookupSignal?.aborted).toBe(true)
+  })
+
+  it('releases a provider directory after successful session close', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(native('s', 'm', false))
+    const test = fixture(
+      [
+        { jsonrpc: '2.0', id: 1, result: { sessionId: 's' } },
+        chunk('s', 'm'),
+        { jsonrpc: '2.0', id: 2, result: {} },
+        chunk('s', 'm')
+      ],
+      fetchImpl,
+      () => {
+        throw new Error('Not a primary session')
+      }
+    )
+    const writer = test.stream.writable.getWriter()
+    await writer.write({ jsonrpc: '2.0', id: 1, method: 'session/new', params: { cwd: '/review' } })
+    await writer.write({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/close',
+      params: { sessionId: 's' }
+    })
+    await expect(test.read()).rejects.toThrow('OpenCode message classification failed')
+    expect(fetchImpl).toHaveBeenCalledOnce()
   })
 
   it('hides live summary text and reasoning before SDK delivery, retaining only lifecycle', async () => {
