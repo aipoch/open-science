@@ -4,7 +4,18 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
@@ -207,6 +218,69 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(['parent', 'shared root'])(
+    'skips an R temporary candidate with a preexisting junction at its %s',
+    async (location) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-temp-junction-'))
+      fixtureDirectories.push(root)
+      const candidate = join(root, 'candidate')
+      const safeParent = join(root, 'safe')
+      const destination = join(root, 'existing-data')
+      await mkdir(safeParent)
+      await mkdir(destination)
+      await writeFile(join(destination, 'keep.txt'), 'untouched')
+      if (location === 'shared root') await mkdir(candidate)
+      const link = location === 'parent' ? candidate : join(candidate, 'open-science-notebook')
+      await symlink(destination, link, 'junction')
+      vi.stubEnv('TMPDIR', candidate)
+      vi.stubEnv('TMP', safeParent)
+      vi.stubEnv('TEMP', safeParent)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'Test User', 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
+      try {
+        wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'temporary junction regression',
+          sessionId: 'r-temp-junction',
+          projectId: 'r-temp-junction',
+          runtime: 'r',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const command = backend.wrap.mock.calls.at(-1)![0]
+        const directory = command.env.TMPDIR as string
+        expect(directory.startsWith(join(safeParent, 'open-science-notebook', 'command-'))).toBe(
+          true
+        )
+        expect(command.filesystem.readWriteRoots).toEqual([directory])
+        expect(await readdir(destination)).toEqual(['keep.txt'])
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        expect(existsSync(directory)).toBe(false)
+        expect(existsSync(`${directory}.receipt`)).toBe(false)
+        expect(await readFile(join(destination, 'keep.txt'), 'utf8')).toBe('untouched')
+      } finally {
+        await wrapped?.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+        vi.unstubAllEnvs()
+        await unlink(link)
+      }
+    }
+  )
+
   it.skipIf(!rTemporaryTestParent).each([
     { platform: 'win32' as const, runtime: 'r' as const, wsl: false, fallback: true },
     {

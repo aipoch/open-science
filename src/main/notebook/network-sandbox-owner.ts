@@ -12,7 +12,6 @@ import {
   readdir,
   realpath,
   rm,
-  stat,
   writeFile
 } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
@@ -1804,11 +1803,13 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       for (const parent of new Set([process.env.TMPDIR, process.env.TMP, process.env.TEMP])) {
         if (!parent || !isAbsolute(parent)) continue
         try {
-          if (!(await stat(parent)).isDirectory()) continue
-          return await this.createCommandTemporaryRootAt(
-            join(parent, 'open-science-notebook'),
-            target
-          )
+          // Do not create command files through a pre-existing junction or symlink.
+          // These checks reject existing links; they do not lock paths against later replacement.
+          if (!(await lstat(parent)).isDirectory()) continue
+          const fallbackRoot = join(parent, 'open-science-notebook')
+          await mkdir(fallbackRoot, { recursive: true, mode: 0o700 })
+          if (!(await lstat(fallbackRoot)).isDirectory()) continue
+          return await this.createCommandTemporaryRootAt(fallbackRoot, target)
         } catch (error) {
           if (
             !['EACCES', 'EPERM', 'ENOENT', 'ENOTDIR', 'EROFS'].includes(
