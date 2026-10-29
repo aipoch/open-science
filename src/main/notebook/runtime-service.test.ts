@@ -220,6 +220,40 @@ const lifecycleCallbackHarness = (
 }
 
 describe('notebook runtime service', () => {
+  it('holds session creation behind a folder policy commit and releases admission after failure', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project'
+    })
+    const started = createDeferred<void>()
+    const release = createDeferred<void>()
+    const change = service.shutdownAll({
+      afterShutdown: async () => {
+        started.resolve()
+        await release.promise
+        throw new Error('settings write failed')
+      }
+    })
+    const rejected = expect(change).rejects.toThrow('settings write failed')
+    await started.promise
+    let opened = false
+    const state = service
+      .state({ sessionId: 'folder-policy', workspaceCwd: root })
+      .then((value) => {
+        opened = true
+        return value
+      })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(opened).toBe(false)
+    release.resolve()
+    await rejected
+    await state
+    expect(opened).toBe(true)
+    await service.shutdownAll()
+  })
+
   it('rejects export-locked execution before creating a Notebook or kernel', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)
@@ -5300,53 +5334,70 @@ describe('notebook runtime service', () => {
       expect((await service.state(scope)).runs).toHaveLength(1)
     })
 
-    it('dispatches a queued Shell Run with the environment frozen at admission', async () => {
-      const root = await createStorageRoot()
-      const originalPath = process.env.PATH ?? ''
-      let releaseFirst!: () => void
-      const firstGate = new Promise<void>((resolve) => {
-        releaseFirst = resolve
-      })
-      const firstStarted = createDeferred<void>()
-      const observedPaths: string[] = []
-      const execute = vi.fn<NotebookShellProcess['execute']>(async (request) => {
-        observedPaths.push(request.environment?.PATH ?? '')
-        if (request.command === 'first') firstStarted.resolve(undefined)
-        if (request.command === 'first') await firstGate
-        return { stdout: '', stderr: '', exitCode: 0 }
-      })
-      const service = new NotebookRuntimeService({
-        configRoot: root,
-        dataRoot: root,
-        projectId: 'default-project',
-        repository: new NotebookRunRepository(root),
-        shellProcess: { execute },
-        shellConcurrencyLimit: 1
-      })
-      const scope = { sessionId: 'session-1', workspaceCwd: root }
-      const first = service.executeShell({ ...scope, command: 'first' })
-      // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
-      await firstStarted.promise
-      const admittedPath = observedPaths[0]
-      expect(admittedPath).toContain(originalPath)
-      const second = service.executeShell({ ...scope, command: 'second' })
-      await vi.waitFor(
-        async () => {
-          const state = await service.state(scope)
-          expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
-        },
-        { timeout: 10_000 }
-      )
-      process.env.PATH = '/mutated-after-admission'
-      try {
-        releaseFirst()
-        await Promise.all([first, second])
-      } finally {
-        process.env.PATH = originalPath
+    it.each(['unique', 'repeated'] as const)(
+      'dispatches a queued Shell Run with the environment frozen at admission (%s PATH entries)',
+      async (pathShape) => {
+        const root = await createStorageRoot()
+        const firstDirectory = join(root, 'admitted-first')
+        const secondDirectory = join(root, 'admitted-second')
+        const directories =
+          pathShape === 'repeated'
+            ? [firstDirectory, secondDirectory, firstDirectory]
+            : [firstDirectory, secondDirectory]
+        vi.stubEnv('PATH', directories.join(delimiter))
+        let releaseFirst!: () => void
+        const firstGate = new Promise<void>((resolve) => {
+          releaseFirst = resolve
+        })
+        const firstStarted = createDeferred<void>()
+        const observedPaths: string[] = []
+        const execute = vi.fn<NotebookShellProcess['execute']>(async (request) => {
+          observedPaths.push(request.environment?.PATH ?? '')
+          if (request.command === 'first') firstStarted.resolve(undefined)
+          if (request.command === 'first') await firstGate
+          return { stdout: '', stderr: '', exitCode: 0 }
+        })
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          repository: new NotebookRunRepository(root),
+          shellProcess: { execute },
+          shellConcurrencyLimit: 1
+        })
+        const scope = { sessionId: 'session-1', workspaceCwd: root }
+        const first = service.executeShell({ ...scope, command: 'first' })
+        let second: ReturnType<typeof service.executeShell> | undefined
+        try {
+          // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
+          await firstStarted.promise
+          const admittedPath = observedPaths[0]
+          const admittedDirectories = admittedPath.split(delimiter)
+          // Platform PATH preparation may deduplicate directories or prepend trusted tools.
+          expect(admittedDirectories).toEqual(
+            expect.arrayContaining([firstDirectory, secondDirectory])
+          )
+          expect(admittedDirectories.indexOf(firstDirectory)).toBeLessThan(
+            admittedDirectories.indexOf(secondDirectory)
+          )
+          second = service.executeShell({ ...scope, command: 'second' })
+          await vi.waitFor(
+            async () => {
+              const state = await service.state(scope)
+              expect(state.runs.find((run) => run.script === 'second')?.status).toBe('queued')
+            },
+            { timeout: 10_000 }
+          )
+          vi.stubEnv('PATH', join(root, 'mutated-after-admission'))
+          releaseFirst()
+          await Promise.all([first, second])
+          expect(observedPaths).toEqual([admittedPath, admittedPath])
+        } finally {
+          releaseFirst()
+          await Promise.allSettled([first, ...(second ? [second] : [])])
+        }
       }
-
-      expect(observedPaths).toEqual([admittedPath, admittedPath])
-    })
+    )
 
     it('prepares queued Shell sandbox permissions before durable admission', async () => {
       const root = await createStorageRoot()

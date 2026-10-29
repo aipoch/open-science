@@ -1200,6 +1200,72 @@ describe('WorkspaceToolDetailsRow', () => {
     })
   })
 
+  it('renders an empty directory snapshot as a localized empty state instead of JSON', async () => {
+    const activity = createActivity({
+      title: 'mcp__open-science-notebook__list_authorized_directories',
+      providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+      rawOutput: { revision: 'v1', directories: [] }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity, i18next.t)!}
+          isExpanded={true}
+          onToggle={vi.fn()}
+        />
+      )
+    })
+    expect(container.textContent).toContain('列出已授权目录')
+    expect(container.textContent).toContain('0 个目录')
+    expect(container.textContent).toContain('尚未授予任何文件夹权限。')
+    expect(container.textContent).not.toContain('mcp__')
+    expect(container.querySelector('[data-testid="tool-code-block"]')).toBeNull()
+    await act(async () => {
+      await i18next.changeLanguage('en')
+    })
+  })
+
+  it('renders a restored directory tool result and expands only its remaining directories', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-notebook__list_authorized_directories',
+      rawOutput: {
+        result: {
+          structuredContent: {
+            revision: 'directories-1',
+            directories: Array.from({ length: 6 }, (_, index) => ({
+              name: `Research ${index}`,
+              path: `/Users/test/Research ${index}`,
+              access: 'rw',
+              grantedAt: '2026-10-26T01:42:00.000Z'
+            }))
+          }
+        }
+      }
+    })
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={vi.fn()}
+        />
+      )
+    })
+    expect(container.querySelectorAll('li')).toHaveLength(5)
+    expect(container.textContent).toContain('/Users/test/Research 0')
+    expect(container.textContent).not.toContain('directories-1')
+    const toggle = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Show remaining 1 directory'
+    )!
+    await act(async () => toggle.click())
+    expect(container.querySelectorAll('li')).toHaveLength(6)
+  })
+
   it('renders a localized memory action without exposing its MCP identity', async () => {
     const saveActivity = createActivity({
       providerToolName: 'mcp__open-science-notebook__remember_memory',

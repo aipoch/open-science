@@ -6,6 +6,10 @@ on:
         description: Comma-separated independent package names, or all
         type: string
         default: diagnostics
+      source_tests:
+        description: Include complete isolated source suites (false exercises merge queue consumers)
+        type: boolean
+        default: true
 permissions:
   contents: read
 jobs:
@@ -38,17 +42,25 @@ jobs:
         run: |
           set -euo pipefail
           fixture="$RUNNER_TEMP/package-policy-fixture"
-          mkdir -p "$fixture/scripts/ci" "$fixture/packages/core/src" "$fixture/packages/compute/src" "$fixture/packages/durable-files/src" "$fixture/packages/resilient-download/src" "$fixture/src"
-          cp scripts/ci/package-test-impact.mjs "$fixture/scripts/ci/"
-          echo '{"schemaVersion":1,"packages":[{"root":"packages/core","dependencies":[]},{"root":"packages/compute","dependencies":[]},{"root":"packages/durable-files","dependencies":[]},{"root":"packages/resilient-download","dependencies":[]}]}' > "$fixture/scripts/ci/package-test-boundaries.json"
-          echo '{"name":"fixture-core","scripts":{"test":"vitest run"}}' > "$fixture/packages/core/package.json"
-          echo '{"name":"fixture-compute","scripts":{"test":"vitest run"}}' > "$fixture/packages/compute/package.json"
-          echo "export default { root: '$fixture/packages/compute', test: { name: 'compute', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/compute/vitest.config.ts"
-          echo '{"name":"fixture-durable-files","scripts":{"test":"vitest run"}}' > "$fixture/packages/durable-files/package.json"
-          echo "export default { root: '$fixture/packages/durable-files', test: { name: 'durable-files', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/durable-files/vitest.config.ts"
-          echo '{"name":"fixture-resilient-download","scripts":{"test":"vitest run"}}' > "$fixture/packages/resilient-download/package.json"
-          echo "export default { root: '$fixture/packages/resilient-download', test: { name: 'resilient-download', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/resilient-download/vitest.config.ts"
-          touch "$fixture/packages/core/src/core.test.ts" "$fixture/packages/compute/src/compute.test.ts" "$fixture/packages/durable-files/src/durable.test.ts" "$fixture/packages/resilient-download/src/transport.test.ts" "$fixture/src/host.test.ts"
+          node --input-type=module <<'JS'
+          import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+          import { join } from 'node:path'
+          const fixture = join(process.env.RUNNER_TEMP, 'package-policy-fixture')
+          mkdirSync(join(fixture, 'scripts/ci'), { recursive: true })
+          for (const file of ['package-test-impact.mjs', 'package-test-boundaries.json'])
+            copyFileSync(`scripts/ci/${file}`, join(fixture, 'scripts/ci', file))
+          const registry = JSON.parse(readFileSync('scripts/ci/package-test-boundaries.json', 'utf8'))
+          for (const { root } of registry.packages) {
+            const directory = join(fixture, root)
+            const name = root.slice('packages/'.length)
+            mkdirSync(join(directory, 'src'), { recursive: true })
+            writeFileSync(join(directory, 'package.json'), JSON.stringify({ name: `fixture-${name}`, scripts: { test: 'vitest run' } }))
+            writeFileSync(join(directory, 'vitest.config.ts'), `export default ${JSON.stringify({ root: directory, test: { name, include: ['src/**/*.test.ts'] } })}`)
+            writeFileSync(join(directory, 'src/contract.test.ts'), '')
+          }
+          mkdirSync(join(fixture, 'src'), { recursive: true })
+          writeFileSync(join(fixture, 'src/host.test.ts'), '')
+          JS
           git -C "$fixture" init -q
           git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid add .
           git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm baseline
@@ -92,13 +104,9 @@ jobs:
           import assert from 'node:assert/strict'
           import { readFileSync } from 'node:fs'
           const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
-          assert.deepEqual(files.map(({ file }) => file).sort(), [
-            'packages/core/src/core.test.ts',
-            'packages/compute/src/compute.test.ts',
-            'packages/durable-files/src/durable.test.ts',
-            'packages/resilient-download/src/transport.test.ts',
-            'src/host.test.ts'
-          ].map(file => `${process.env.RUNNER_TEMP}/package-policy-fixture/${file}`).sort())
+          const registry = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-fixture/scripts/ci/package-test-boundaries.json`, 'utf8'))
+          const expected = ['src/host.test.ts', ...registry.packages.map(({ root }) => `${root}/src/contract.test.ts`)]
+          assert.deepEqual(files.map(({ file }) => file).sort(), expected.map(file => `${process.env.RUNNER_TEMP}/package-policy-fixture/${file}`).sort())
           JS
 
   isolation:
@@ -118,3 +126,4 @@ jobs:
         uses: ./.github/actions/verify-packages
         with:
           selection: ${{ inputs.packages }}
+          source-tests: ${{ inputs.source_tests }}

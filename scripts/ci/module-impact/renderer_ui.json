@@ -17,6 +17,7 @@
     "src/renderer/src/components/ui/input.tsx",
     "src/renderer/src/components/ui/label.tsx",
     "src/renderer/src/components/ui/message-scroller.test.tsx",
+    "src/renderer/src/components/ui/message-scroller.pause.test.tsx",
     "src/renderer/src/components/ui/message-scroller.tsx",
     "src/renderer/src/components/ui/notice-chrome.ts",
     "src/renderer/src/components/ui/overlay-layer.ts",
@@ -39,7 +40,10 @@
     "src/renderer/src/components/notice.tsx",
     "src/renderer/src/lib/utils.ts",
     "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx",
-    "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+    "src/renderer/src/components/ui/split-button.tsx",
+    "src/renderer/src/components/ui/split-button.css",
+    "src/renderer/src/components/ui/split-button.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",
@@ -114,7 +118,8 @@
     "src/renderer/src/components/session-package-import-menu-model.ts",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/lib/utils.ts",
-    "src/renderer/src/components/ui/workflow-dialog-frame.tsx"
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
+    "src/renderer/src/components/ui/split-button.tsx"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -123,10 +128,12 @@
       "src/renderer/src/components/ui/dialog.render.test.tsx",
       "src/renderer/src/components/ui/editable-number-combobox.render.test.tsx",
       "src/renderer/src/components/ui/message-scroller.test.tsx",
+      "src/renderer/src/components/ui/message-scroller.pause.test.tsx",
       "src/renderer/src/components/ui/popover.render.test.tsx",
       "src/renderer/src/components/ui/resizable.modal-isolation.test.tsx",
       "src/renderer/src/components/ui/resizable.test.tsx",
-      "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx"
+      "src/renderer/src/components/ui/use-retained-dialog-value.test.tsx",
+      "src/renderer/src/components/ui/split-button.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
@@ -544,5 +551,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "The shared split button and its stylesheet expand the reviewed renderer UI boundary; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

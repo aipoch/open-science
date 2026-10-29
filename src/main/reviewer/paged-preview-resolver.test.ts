@@ -15,8 +15,8 @@ const request = {
   includePreview: true,
   maxBytes: 10_000,
   verifiedObservation: {
-    device: 1,
-    inode: 2,
+    device: '1',
+    inode: '2',
     sizeBytes: 100,
     modifiedAtMs: 3,
     changedAtMs: 4

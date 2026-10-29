@@ -117,7 +117,10 @@
       "packages/notebook-network-sandbox/src/wsl2-isolation.test.ts",
       "packages/notebook-network-sandbox/src/installed-package.test.ts"
     ],
-    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
+    "contract": [
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "scripts/windows-dev-notebook-host.integration.test.ts"
+    ],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
@@ -637,7 +640,8 @@
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
-      "src/main/desktop-runtime-launcher.test.ts"
+      "src/main/desktop-runtime-launcher.test.ts",
+      "src/main/notebook/managed-skill-read.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

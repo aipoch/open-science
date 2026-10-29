@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it, vi } from 'vitest'
-import { exportSessionPackage } from './session-package-export'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { exportSessionPackage, sessionPackageExportAvailable } from './session-package-export'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
+import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { drainWorkspaceRuntimeEventsForPersistence } from './acp/useWorkspaceAgentRuntime'
 import { flushSessionPersistence } from './session-persistence/session-persistence'
 import { usePackageOperationStore } from '@/stores/package-operation-store'
@@ -14,6 +16,35 @@ vi.mock('./session-persistence/session-persistence', () => ({
 afterEach(() => {
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+  document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+})
+
+describe('sessionPackageExportAvailable', () => {
+  it('stays available for Electron and local Web but not for remote Web', () => {
+    vi.stubGlobal('api', { sessions: { exportPackage: vi.fn() } })
+    // Electron sets neither attribute.
+    expect(sessionPackageExportAvailable()).toBe(true)
+
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+    expect(sessionPackageExportAvailable()).toBe(true)
+
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    expect(sessionPackageExportAvailable()).toBe(false)
+
+    document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+    document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    expect(sessionPackageExportAvailable()).toBe(true)
+  })
+
+  it('stays unavailable without the export bridge on every surface', () => {
+    vi.stubGlobal('api', { sessions: {} })
+    expect(sessionPackageExportAvailable()).toBe(false)
+    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+    expect(sessionPackageExportAvailable()).toBe(false)
+  })
 })
 it('drains runtime events and pending saves before requesting the export reservation', async () => {
   usePackageOperationStore.setState({ operation: null })
@@ -110,4 +141,38 @@ it('forwards imported history with a pending Plan without enabling live executio
   await exportSessionPackage(session)
   expect(exportPackage).toHaveBeenCalledOnce()
   expect(session.runtimeContext?.plan?.approval).toBe('pending')
+})
+
+const localWebExport = (): ChatSession => ({
+  id: 'session',
+  projectId: 'project',
+  title: 'Study',
+  cwd: '',
+  status: 'idle',
+  messages: [],
+  createdAt: 1,
+  updatedAt: 1
+})
+
+it('requests the export reservation for a local Web caller', async () => {
+  usePackageOperationStore.setState({ operation: null })
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'local')
+  const exportPackage = vi.fn(async () => ({ saved: false }))
+  vi.stubGlobal('api', { sessions: { exportPackage } })
+  await exportSessionPackage(localWebExport())
+  expect(exportPackage).toHaveBeenCalledExactlyOnceWith({
+    projectId: 'project',
+    sessionId: 'session'
+  })
+})
+
+it('never starts an export for a remote Web caller', async () => {
+  usePackageOperationStore.setState({ operation: null })
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+  const exportPackage = vi.fn(async () => ({ saved: false }))
+  vi.stubGlobal('api', { sessions: { exportPackage } })
+  await exportSessionPackage(localWebExport())
+  expect(exportPackage).not.toHaveBeenCalled()
 })

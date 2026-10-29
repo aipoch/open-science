@@ -1,4 +1,6 @@
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
+import { CHEMISTRY_UNICHEM_TOOLS } from './chemistry-unichem'
+import { CHEMISTRY_LIPIDMAPS_TOOLS } from './chemistry-lipidmaps'
 
 // PubChem PUG REST + PUG-View. Structure/name inputs go via GET query params so slashes and
 // other path-reserved characters in SMILES survive intact (the engine only offers GET + JSON POST).
@@ -181,6 +183,8 @@ const asStr = (v: unknown): string | undefined => {
 // PubChem PUG REST/PUG-View, ChEBI backend API, Rhea SPARQL and BindingDB REST: read-only
 // small-molecule chemistry — compounds, similarity, bioassays, safety, ontology, reactions, affinities.
 export const CHEMISTRY_TOOLS: ToolDescriptor[] = [
+  ...CHEMISTRY_LIPIDMAPS_TOOLS,
+  ...CHEMISTRY_UNICHEM_TOOLS,
   {
     id: 'pubchem_search_compounds',
     connector: 'chemistry',

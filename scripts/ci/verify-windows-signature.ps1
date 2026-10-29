@@ -35,8 +35,8 @@ if ($CheckUnpacked) {
   $unpacked = Join-Path $InstallerDir 'win-unpacked'
   foreach ($relativePath in @(
     'open-science.exe',
-    'resources/micromamba.exe',
-    'resources/micromamba-compat.exe',
+    'resources/backend/resources/micromamba.exe',
+    'resources/backend/resources/micromamba-compat.exe',
     'resources/notebook-network-sandbox/windows/x64/notebook-appcontainer-host.exe'
   )) {
     $expected = Join-Path $unpacked $relativePath

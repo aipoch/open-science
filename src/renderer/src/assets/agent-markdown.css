@@ -141,6 +141,17 @@
 
     [data-streamdown='table-wrapper'] {
       @apply relative my-[1.1em] overflow-visible rounded-none! border-0! bg-transparent p-0!;
+      --table-scrollbar-thumb: transparent;
+
+      &:hover,
+      &:focus-within {
+        --table-scrollbar-thumb: var(--color-sd-scrollbar-thumb);
+
+        & > div:has(table)::-webkit-scrollbar-thumb,
+        & > div:has([data-streamdown='table'])::-webkit-scrollbar-thumb {
+          @apply bg-sd-scrollbar-thumb;
+        }
+      }
 
       /* Floating action chip: equidistant from the top and right edges, revealed on
          hover/focus-within. */
@@ -159,6 +170,28 @@
       & > div:has([data-streamdown='table']) {
         @apply m-0 block min-h-0 overflow-x-auto overflow-y-visible rounded-none! border-0! bg-transparent!;
         height: auto !important;
+        /* Override the transcript's inherited transparent scrollbar colors. */
+        scrollbar-width: thin;
+        scrollbar-color: var(--table-scrollbar-thumb) transparent;
+
+        /* Use the styled scrollbar in Chromium so macOS reveals it with the toolbar,
+           without requiring a scroll gesture first. */
+        @supports selector(::-webkit-scrollbar) {
+          scrollbar-width: auto;
+          scrollbar-color: auto;
+        }
+
+        &::-webkit-scrollbar {
+          @apply h-1.5;
+        }
+
+        &::-webkit-scrollbar-track {
+          @apply bg-transparent;
+        }
+
+        &::-webkit-scrollbar-thumb {
+          @apply rounded-full bg-transparent;
+        }
       }
 
       & .relative > .absolute {

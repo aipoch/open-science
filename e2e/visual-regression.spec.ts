@@ -23,6 +23,11 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.addStyleTag({
     content: 'button[aria-label="Open environment repair"] { visibility: hidden !important; }'
   })
+  // The live catalog changes independently of the app; home-use-cases.spec.ts covers its layout.
+  await page.addStyleTag({
+    content:
+      'section[aria-labelledby]:has(> div > h2 > a[href="https://aipoch.com/open-science/use-cases"]) { display: none !important; }'
+  })
 }
 
 const setVisualState = async (

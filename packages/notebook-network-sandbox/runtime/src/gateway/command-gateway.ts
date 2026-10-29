@@ -6,7 +6,72 @@ import { connect as connectTls, TLSSocket, type SecureContext } from 'node:tls'
 import { domainToASCII } from 'node:url'
 import { inspectReadRequest, MAX_HEADER_BYTES, MAX_TARGET_BYTES } from './read-request.js'
 import { timingSafeEqual } from 'node:crypto'
-import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
+import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
+
+// Parse routing authority separately: URL normalization must not rewrite resource names.
+const proxyRequestTarget = (request: IncomingMessage): { target: URL; path: string } => {
+  const raw = request.url ?? ''
+  if (!raw || /[^\x21-\x7e]|[#\\]/.test(raw)) throw new Error('Invalid request target')
+  const absolute = /^(https?):\/\/([^/?]+)(.*)$/i.exec(raw)
+  const authority = absolute?.[2] ?? request.headers.host
+  const scheme = absolute?.[1]?.toLowerCase() ?? 'http'
+  let path = absolute ? absolute[3] || '/' : raw
+  if (absolute && path.startsWith('?')) path = `/${path}`
+  if (!path.startsWith('/') && !(path === '*' && request.method === 'OPTIONS'))
+    throw new Error('Invalid request target')
+  if (!authority || /[\s/@?#\\]/.test(authority)) throw new Error('Invalid authority')
+  const target = new URL(`${scheme}://${authority}`)
+  if (!target.hostname || target.username || target.password || target.pathname !== '/')
+    throw new Error('Invalid authority')
+  return { target, path }
+}
+
+const forwardResponse = (
+  upstream: ClientRequest,
+  request: IncomingMessage,
+  response: ServerResponse,
+  failureMessage: string,
+  onEnd?: () => void,
+  isCurrent: () => boolean = () => true
+): void => {
+  let incoming: IncomingMessage | undefined
+  const fail = (): void => {
+    upstream.destroy()
+    if (response.destroyed) return
+    if (response.headersSent) response.destroy()
+    else {
+      for (const name of response.getHeaderNames()) response.removeHeader(name)
+      response.writeHead(502, { connection: 'close', 'content-type': 'text/plain' })
+      response.end(failureMessage)
+    }
+  }
+  upstream.once('response', (message) => {
+    if (!isCurrent() || response.destroyed) {
+      upstream.destroy()
+      response.destroy()
+      return
+    }
+    incoming = message
+    message.once('error', () => response.destroy())
+    message.once('end', () => onEnd?.())
+    try {
+      response.writeHead(message.statusCode ?? 502, withoutConnectionHeaders(message.headers))
+    } catch {
+      fail()
+      return
+    }
+    message.pipe(response)
+  })
+  upstream.once('error', () => {
+    // The parser can reject excess bytes after a complete response, before its body drains.
+    if (!incoming?.complete) fail()
+  })
+  request.once('aborted', () => upstream.destroy())
+  request.once('error', () => upstream.destroy())
+  response.once('error', () => upstream.destroy())
+  response.once('close', () => upstream.destroy())
+  if (request.aborted || response.destroyed) upstream.destroy()
+}
 
 type GatewayDecision =
   | Readonly<{ allowed: true; address: string }>
@@ -25,7 +90,12 @@ type ParentProxySettings = Readonly<{
 }>
 
 type CommandGatewayOptions = Readonly<{
-  decide: (host: string, port: number, purpose?: 'probe' | 'block') => Promise<GatewayDecision>
+  decide: (
+    host: string,
+    port: number,
+    purpose?: 'probe' | 'block',
+    canResume?: () => boolean
+  ) => Promise<GatewayDecision>
   inspection?: Readonly<{
     certificate: (host: string) => Promise<SecureContext>
     isExecutionActive: () => boolean
@@ -735,11 +805,14 @@ class CommandGateway {
     host: string,
     port: number,
     generation: number,
-    purpose: 'probe' | 'block' = 'block'
+    purpose: 'probe' | 'block' = 'block',
+    connectionAlive: () => boolean = () => true
   ): Promise<GatewayDecision> {
+    const canResume = (): boolean =>
+      this.#active && generation === this.#connectionGeneration && connectionAlive()
     try {
-      const decision = await this.#options.decide(host, port, purpose)
-      if (!this.#active || generation !== this.#connectionGeneration) {
+      const decision = await this.#options.decide(host, port, purpose, canResume)
+      if (!canResume()) {
         return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
       }
       return decision
@@ -778,21 +851,25 @@ class CommandGateway {
       return
     }
     let target: URL
+    let path: string
     try {
-      target =
-        request.url?.startsWith('http://') || request.url?.startsWith('https://')
-          ? new URL(request.url)
-          : new URL(request.url ?? '/', `http://${request.headers.host ?? ''}`)
+      ;({ target, path } = proxyRequestTarget(request))
     } catch {
       rejectHttp(response, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: malformed proxy request')
       return
     }
     if (target.hostname === LOCAL_RPC_BROKER_HOST) {
-      this.#forwardLocalRpc(request, response, target)
+      this.#forwardLocalRpc(request, response, target, path)
       return
     }
     const port = defaultPort(target)
-    const decision = await this.#authorize(target.hostname, port, generation)
+    const decision = await this.#authorize(
+      target.hostname,
+      port,
+      generation,
+      'block',
+      () => !response.destroyed && !request.socket.destroyed
+    )
     if (!decision.allowed) {
       rejectHttp(response, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
       return
@@ -831,26 +908,20 @@ class CommandGateway {
           return
         }
         const send = target.protocol === 'https:' ? httpsRequest : httpRequest
-        const upstream = send(
-          {
-            agent: false,
-            createConnection: () => connection,
-            method: request.method,
-            path: `${target.pathname}${target.search}`,
-            headers
-          },
-          (upstreamResponse) => {
-            response.writeHead(
-              upstreamResponse.statusCode ?? 502,
-              withoutConnectionHeaders(upstreamResponse.headers)
-            )
-            upstreamResponse.pipe(response)
-          }
-        )
-        upstream.once('error', (error) => {
-          if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-          response.end(`Policy gateway could not reach the destination: ${error.message}`)
+        const upstream = send({
+          // Without an agent, Node uses this socket directly; agent:false creates an Agent
+          // that ignores this callback and opens a different connection.
+          createConnection: () => connection,
+          method: request.method,
+          path,
+          headers
         })
+        forwardResponse(
+          upstream,
+          request,
+          response,
+          'Policy gateway could not reach the destination.'
+        )
         request.pipe(upstream)
       } catch (error) {
         if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
@@ -867,7 +938,7 @@ class CommandGateway {
             hostname: proxyUrl.hostname,
             port: defaultPort(proxyUrl),
             method: request.method,
-            path: routedTarget.href,
+            path: `${routedTarget.origin}${path === '*' ? '' : path}`,
             headers,
             ca: this.#parent?.ca ? [...this.#parent.ca] : undefined
           }
@@ -875,26 +946,21 @@ class CommandGateway {
             hostname: decision.address,
             port,
             method: request.method,
-            path: `${target.pathname}${target.search}`,
+            path,
             headers,
             ...(target.protocol === 'https:' ? { servername: target.hostname } : {})
-          },
-      (upstreamResponse) => {
-        response.writeHead(
-          upstreamResponse.statusCode ?? 502,
-          withoutConnectionHeaders(upstreamResponse.headers)
-        )
-        upstreamResponse.pipe(response)
-      }
+          }
     )
-    upstream.once('error', (error) => {
-      if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-      response.end(`Policy gateway could not reach the destination: ${error.message}`)
-    })
+    forwardResponse(upstream, request, response, 'Policy gateway could not reach the destination.')
     request.pipe(upstream)
   }
 
-  #forwardLocalRpc(request: IncomingMessage, response: ServerResponse, target: URL): void {
+  #forwardLocalRpc(
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: URL,
+    path: string
+  ): void {
     const socketPath = this.#options.localRpcSocketPath
     if (!socketPath || target.protocol !== 'http:' || defaultPort(target) !== 80) {
       rejectHttp(response, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: local RPC route unavailable')
@@ -902,25 +968,13 @@ class CommandGateway {
     }
     const headers = withoutConnectionHeaders(request.headers)
     headers.host = 'localhost'
-    const upstream = httpRequest(
-      {
-        socketPath,
-        method: request.method,
-        path: `${target.pathname}${target.search}`,
-        headers
-      },
-      (upstreamResponse) => {
-        response.writeHead(
-          upstreamResponse.statusCode ?? 502,
-          withoutConnectionHeaders(upstreamResponse.headers)
-        )
-        upstreamResponse.pipe(response)
-      }
-    )
-    upstream.once('error', (error) => {
-      if (!response.headersSent) response.writeHead(502, { 'content-type': 'text/plain' })
-      response.end(`Policy gateway could not reach local RPC: ${error.message}`)
+    const upstream = httpRequest({
+      socketPath,
+      method: request.method,
+      path,
+      headers
     })
+    forwardResponse(upstream, request, response, 'Policy gateway could not reach the destination.')
     request.pipe(upstream)
   }
 
@@ -938,7 +992,13 @@ class CommandGateway {
       return
     }
     destination.host = domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
-    let decision = await this.#authorize(destination.host, destination.port, generation, 'probe')
+    let decision = await this.#authorize(
+      destination.host,
+      destination.port,
+      generation,
+      'probe',
+      () => !client.destroyed
+    )
     if (
       !decision.allowed &&
       decision.source === 'unknown' &&
@@ -950,7 +1010,13 @@ class CommandGateway {
       return
     }
     if (!decision.allowed) {
-      decision = await this.#authorize(destination.host, destination.port, generation)
+      decision = await this.#authorize(
+        destination.host,
+        destination.port,
+        generation,
+        'block',
+        () => !client.destroyed
+      )
       if (!decision.allowed) {
         rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
         return
@@ -1041,7 +1107,13 @@ class CommandGateway {
         inspection.isExecutionActive()
       ) {
         recordedBlock = true
-        await this.#authorize(host, 443, generation, 'block')
+        await this.#authorize(
+          host,
+          443,
+          generation,
+          'block',
+          () => !client.destroyed && !tls?.destroyed
+        )
       }
     }
     try {
@@ -1085,6 +1157,7 @@ class CommandGateway {
         let completeHeader = false
         let extraBytes = false
         let busy = false
+        let approvedBody = false
         const parser = createHttpServer({
           maxHeaderSize: MAX_TARGET_BYTES + MAX_HEADER_BYTES + 1024,
           insecureHTTPParser: false
@@ -1099,7 +1172,7 @@ class CommandGateway {
         const inspectWire = (chunk: Buffer): void => {
           if (completeHeader) {
             extraBytes = true
-            if (busy) tls!.destroy()
+            if (busy && !approvedBody) tls!.destroy()
             return
           }
           buffered = Buffer.concat([buffered, chunk])
@@ -1124,23 +1197,36 @@ class CommandGateway {
           }
           clearTimeout(timer)
           sawRequest = true
+          if (
+            request.headers.expect !== undefined &&
+            request.headers.expect.toLowerCase() !== '100-continue'
+          ) {
+            // Reject unsupported expectations locally, including lists that Node routes through
+            // checkContinue. A waiting client must not depend on an upstream handshake.
+            busy = true
+            response.writeHead(417, { connection: 'close' })
+            response.end()
+            return
+          }
           const verdict = inspectReadRequest(request, host, headerBytes)
-          if (verdict.kind !== 'read') {
-            if (verdict.kind === 'approval') {
-              await block()
-              if (!response.destroyed) rejectHttp(response, NETWORK_APPROVAL_REQUIRED)
-            } else if (verdict.kind === 'limit') {
+          if (verdict.kind === 'invalid' || verdict.kind === 'limit') {
+            if (verdict.kind === 'limit') {
               response.writeHead(431, { connection: 'close' })
               response.end()
             } else tls!.destroy()
             return
           }
-          if (extraBytes) {
+          if (extraBytes && verdict.kind === 'read') {
             tls!.destroy()
             return
           }
           busy = true
+          approvedBody = verdict.kind === 'approval'
           response.once('finish', () => {
+            if (approvedBody) {
+              tls!.end()
+              return
+            }
             busy = false
             completeHeader = false
             headerBytes = 0
@@ -1148,7 +1234,21 @@ class CommandGateway {
             if (!tls!.destroyed) armHeaders()
           })
           try {
-            const decision = await this.#authorize(host, 443, generation, 'probe')
+            // Leave request bodies backpressured in the parser until the host commits the human
+            // decision. Pause the ingress timeout while approval is pending, not upstream timeouts.
+            if (approvedBody) tls!.setTimeout(0)
+            const decision = await this.#authorize(
+              host,
+              443,
+              generation,
+              approvedBody ? 'block' : 'probe',
+              () => !client.destroyed && !tls!.destroyed && !response.destroyed
+            )
+            if (approvedBody) tls!.setTimeout(60_000)
+            if (approvedBody && !decision.allowed) {
+              if (!response.destroyed) rejectHttp(response, NETWORK_APPROVAL_REQUIRED)
+              return
+            }
             if (!this.#inspectionActive(generation, client)) {
               tls!.destroy()
               return
@@ -1200,42 +1300,45 @@ class CommandGateway {
               return
             }
             upstream.setTimeout(60_000, stop)
-            const outgoing = httpRequest(
-              {
+            const headers =
+              verdict.kind === 'read' ? verdict.headers : withoutConnectionHeaders(request.headers)
+            const continueExpected = request.headers.expect?.toLowerCase() === '100-continue'
+            // We acknowledge the client's expectation below after approval. Do not start a
+            // second continue handshake upstream while already streaming the accepted body.
+            if (continueExpected) delete headers.expect
+            const outgoing = httpRequest({
+              host,
+              port: 443,
+              method: request.method,
+              path: request.url,
+              headers: {
+                ...headers,
                 host,
-                port: 443,
-                method: request.method,
-                path: request.url,
-                headers: { ...verdict.headers, connection: 'close' },
-                createConnection: () => upstream
+                connection: 'close'
               },
-              (incoming) => {
-                if (!this.#inspectionActive(generation, client)) {
-                  stop()
-                  return
-                }
-                response.writeHead(
-                  incoming.statusCode ?? 502,
-                  withoutConnectionHeaders(incoming.headers)
-                )
-                incoming.pipe(response)
-                incoming.once('error', () => response.destroy())
-                incoming.once('end', () => {
-                  tls!.removeListener('close', stop)
-                  stop()
-                })
-              }
+              createConnection: () => upstream
+            })
+            forwardResponse(
+              outgoing,
+              request,
+              response,
+              NETWORK_UPSTREAM_FAILED,
+              () => {
+                tls!.removeListener('close', stop)
+                stop()
+              },
+              () => this.#inspectionActive(generation, client)
             )
             outgoing.once('upgrade', (_res, socket) => {
               socket.destroy()
               response.destroy()
             })
-            outgoing.once('error', () => {
-              stop()
-              if (!response.headersSent) response.writeHead(502, { connection: 'close' })
-              response.end(NETWORK_UPSTREAM_FAILED)
-            })
-            outgoing.end()
+
+            if (approvedBody) {
+              if (continueExpected) response.writeContinue()
+              request.once('error', () => outgoing.destroy())
+              request.pipe(outgoing)
+            } else outgoing.end()
           } catch {
             if (!response.headersSent) response.writeHead(502, { connection: 'close' })
             response.end(NETWORK_UPSTREAM_FAILED)
@@ -1342,7 +1445,7 @@ class CommandGateway {
       throw new Error('Unsupported SOCKS address type.')
     }
     const port = (await reader.receive(2)).readUInt16BE(0)
-    const decision = await this.#authorize(host, port, generation)
+    const decision = await this.#authorize(host, port, generation, 'block', () => !client.destroyed)
     if (!decision.allowed) {
       client.end(Buffer.from([5, 2, 0, 1, 0, 0, 0, 0, 0, 0]))
       return

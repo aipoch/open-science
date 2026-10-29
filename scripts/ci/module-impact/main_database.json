@@ -91,9 +91,15 @@
     "src/main/database/pascalcase-table-names-migration.test.ts",
     "test/fixtures/application-database.ts",
     "src/main/database/migrations/0050-literature-translation.ts",
+    "src/main/database/migrations/0051-literature-reading-status.ts",
+    "src/main/database/literature-reading-status-migration.test.ts",
     "src/main/database/literature-translation-migration.test.ts",
     "src/main/database/workspace-pdf-translation-migration.test.ts",
-    "scripts/database-migration-ledger-smoke.test.ts"
+    "scripts/database-migration-ledger-smoke.test.ts",
+    "src/main/database/migrations/0052-literature-personal-note-search.ts",
+    "src/main/database/literature-personal-note-search-migration.test.ts",
+    "src/main/database/migrations/0053-literature-doi-identity.ts",
+    "src/main/database/literature-doi-identity-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -139,7 +145,10 @@
       "src/main/database/literature-smart-collections-migration.test.ts",
       "src/main/database/pascalcase-table-names-migration.test.ts",
       "src/main/database/literature-translation-migration.test.ts",
-      "src/main/database/workspace-pdf-translation-migration.test.ts"
+      "src/main/database/literature-reading-status-migration.test.ts",
+      "src/main/database/workspace-pdf-translation-migration.test.ts",
+      "src/main/database/literature-personal-note-search-migration.test.ts",
+      "src/main/database/literature-doi-identity-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -532,5 +541,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Literature reading status adds a persisted column and migration beyond the reviewed database source boundary; retain full CI validation until the expanded migration and consumer contracts are reviewed."
 }

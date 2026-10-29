@@ -4,7 +4,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
 import * as AlertDialog from '@/components/ui/alert-dialog'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -34,7 +34,7 @@ import { MaskedPasswordField } from './MaskedPasswordField'
 import { DeviceCredentialEditor } from './DeviceCredentialEditor'
 import { DeviceCredentialLoadNotice } from './DeviceCredentialLoadNotice'
 import { localizeCredentialError } from './credential-error-message'
-import { SettingsSection } from './SettingsLayout'
+import { SettingsSection, type SettingsEditorLeaveState } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
 
 export type { CredentialsServiceId } from '../../lib/settings-navigation'
@@ -46,6 +46,7 @@ type CredentialsPanelProps = {
   onNavigate(view: CredentialsView): void
   onOpenConnector(id: string): void
   onOpenProvider(provider: ProviderView): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }
 
 const statusLabel = (configured: boolean): React.JSX.Element | null =>
@@ -58,10 +59,15 @@ export function CredentialsPanel({
   view,
   onNavigate,
   onOpenConnector,
-  onOpenProvider
+  onOpenProvider,
+  onLeaveStateChange
 }: CredentialsPanelProps): React.JSX.Element {
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
+  const semanticScholar = useSettingsStore((state) => state.semanticScholar)
+  const setSemanticScholarCredential = useSettingsStore(
+    (state) => state.setSemanticScholarCredential
+  )
   const openAlex = useSettingsStore((state) => state.openAlex)
   const ncbi = useSettingsStore((state) => state.ncbi)
   const customServers = useSettingsStore((state) => state.customServers)
@@ -109,6 +115,22 @@ export function CredentialsPanel({
     return t('OpenAlex validation is temporarily unavailable. Try again.')
   }
 
+  const dirty =
+    view.kind === 'service' &&
+    ((apiKeyDraft !== undefined &&
+      apiKeyDraft.serviceId === activeServiceId &&
+      apiKeyDraft.value.length > 0) ||
+      (emailDraft !== undefined &&
+        emailDraft.source === storedEmail &&
+        emailDraft.value !== storedEmail))
+
+  const delegatesLeaveState =
+    view.kind === 'service' && (view.serviceId === 'unpaywall' || view.serviceId === 'github')
+  useLayoutEffect(() => {
+    if (view.kind === 'service' && !delegatesLeaveState) onLeaveStateChange?.({ dirty, busy })
+  }, [busy, delegatesLeaveState, dirty, onLeaveStateChange, view.kind])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
+
   useEffect(() => {
     void loadConnectors().catch(() => undefined)
     void loadDeviceCredentials().catch(() => undefined)
@@ -151,6 +173,7 @@ export function CredentialsPanel({
       <DeviceCredentialEditor
         onDone={() => onNavigate({ kind: 'list' })}
         onCancel={() => onNavigate({ kind: 'list' })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     )
   }
@@ -162,6 +185,7 @@ export function CredentialsPanel({
         credential={credential}
         onDone={() => onNavigate({ kind: 'list' })}
         onCancel={() => onNavigate({ kind: 'list' })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     ) : !credentialsLoaded || credentialsError ? (
       <div className="p-5">
@@ -265,17 +289,29 @@ export function CredentialsPanel({
             </p>
           </div>
           <UnpaywallCredentialForm
-            onSaved={() => onNavigate({ kind: 'list' })}
+            onSaved={() => {
+              onLeaveStateChange?.(null)
+              onNavigate({ kind: 'list' })
+            }}
             onCancel={() => onNavigate({ kind: 'list' })}
+            onLeaveStateChange={onLeaveStateChange}
           />
         </div>
       )
-    const isDesktopOnlyService = view.serviceId === 'github' || view.serviceId === 'openalex'
+    const isDesktopOnlyService =
+      view.serviceId === 'github' ||
+      view.serviceId === 'openalex' ||
+      view.serviceId === 'semantic-scholar'
     if (isDesktopOnlyService && desktopCredentialAvailability === 'checking') {
       return <p className="p-5 text-sm text-muted-foreground">{t('Checking…')}</p>
     }
     if (isDesktopOnlyService && desktopCredentialAvailability === 'unavailable') {
-      const serviceLabel = view.serviceId === 'github' ? t('GitHub') : t('OpenAlex')
+      const serviceLabel =
+        view.serviceId === 'github'
+          ? t('GitHub')
+          : view.serviceId === 'semantic-scholar'
+            ? t('Semantic Scholar')
+            : t('OpenAlex')
       return (
         <div className="space-y-5 p-5">
           <div>
@@ -296,29 +332,62 @@ export function CredentialsPanel({
     if (view.serviceId === 'github') {
       return (
         <div className="p-5">
-          <GitHubTokenControl onCancel={() => onNavigate({ kind: 'list' })} />
+          <GitHubTokenControl
+            onCancel={() => onNavigate({ kind: 'list' })}
+            onLeaveStateChange={onLeaveStateChange}
+          />
         </div>
       )
     }
 
+    const isSemanticScholar = view.serviceId === 'semantic-scholar'
     const isOpenAlex = view.serviceId === 'openalex'
+    const isKeyService = isOpenAlex || isSemanticScholar
+    const hasKey = isSemanticScholar
+      ? semanticScholar?.hasApiKey
+      : isOpenAlex
+        ? openAlex.hasApiKey
+        : ncbi.hasApiKey
+    const saveSemanticScholar = async (value: string): Promise<void> => {
+      if (busy) return
+      setBusy(true)
+      setMessage(undefined)
+      try {
+        await setSemanticScholarCredential({ apiKey: value })
+        setApiKeyDraft({ serviceId: view.serviceId, value: '' })
+        onLeaveStateChange?.(null)
+        onNavigate({ kind: 'list' })
+      } catch {
+        setMessage(t('Could not save the Semantic Scholar API key.'))
+      } finally {
+        setBusy(false)
+      }
+    }
     return (
       <div className="space-y-5 p-5">
         <div>
           <h2 className="text-base font-semibold">
-            {isOpenAlex ? t('OpenAlex API key') : t('Literature access')}
+            {isSemanticScholar
+              ? t('Semantic Scholar')
+              : isOpenAlex
+                ? t('OpenAlex API key')
+                : t('Literature access')}
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {isOpenAlex
+            {isSemanticScholar
               ? t(
-                  'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
+                  'Optional API key for citation discovery. Requests send only the current paper identifier or title to Semantic Scholar.'
                 )
-              : t(
-                  'Contact information and an optional NCBI API key used by research-service Connector calls.'
-                )}
+              : isOpenAlex
+                ? t(
+                    'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
+                  )
+                : t(
+                    'Contact information and an optional NCBI API key used by research-service Connector calls.'
+                  )}
           </p>
         </div>
-        {!isOpenAlex ? (
+        {!isKeyService ? (
           <div className="space-y-1.5">
             <label htmlFor="literature-contact-email" className="text-sm font-medium">
               {t('Contact email')}
@@ -338,13 +407,15 @@ export function CredentialsPanel({
         <div className="space-y-1.5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label htmlFor="service-api-key" className="text-sm font-medium">
-              {isOpenAlex ? t('API key') : t('NCBI API key')}
+              {isKeyService ? t('API key') : t('NCBI API key')}
             </label>
             <ExternalTextLink
               href={
-                isOpenAlex
-                  ? 'https://openalex.org/settings/api'
-                  : 'https://account.ncbi.nlm.nih.gov/settings/'
+                isSemanticScholar
+                  ? 'https://www.semanticscholar.org/product/api'
+                  : isOpenAlex
+                    ? 'https://openalex.org/settings/api'
+                    : 'https://account.ncbi.nlm.nih.gov/settings/'
               }
               className="whitespace-nowrap text-xs"
             >
@@ -355,11 +426,7 @@ export function CredentialsPanel({
             id="service-api-key"
             value={apiKey}
             onChange={(value) => setApiKeyDraft({ serviceId: view.serviceId, value })}
-            placeholder={
-              (isOpenAlex ? openAlex.hasApiKey : ncbi.hasApiKey)
-                ? t('Paste a replacement key')
-                : t('Paste an API key')
-            }
+            placeholder={hasKey ? t('Paste a replacement key') : t('Paste an API key')}
             disabled={busy}
           />
           <p className="text-xs text-muted-foreground">
@@ -383,17 +450,17 @@ export function CredentialsPanel({
           <Button type="button" variant="ghost" onClick={() => onNavigate({ kind: 'list' })}>
             {t('Cancel')}
           </Button>
-          {isOpenAlex && openAlex.hasApiKey ? (
+          {isKeyService && hasKey ? (
             <Button
               type="button"
               variant="outline"
               disabled={busy}
-              onClick={() => void clearOpenAlex()}
+              onClick={() => void (isSemanticScholar ? saveSemanticScholar('') : clearOpenAlex())}
             >
               {t('Remove key')}
             </Button>
           ) : null}
-          {!isOpenAlex && ncbi.hasApiKey ? (
+          {!isKeyService && ncbi.hasApiKey ? (
             <Button
               type="button"
               variant="outline"
@@ -418,9 +485,15 @@ export function CredentialsPanel({
             disabled={
               busy ||
               (Boolean(apiKey.trim()) && !encryptionAvailable) ||
-              (isOpenAlex && !apiKey.trim())
+              (isKeyService && !apiKey.trim())
             }
-            onClick={() => void (isOpenAlex ? saveOpenAlex() : saveLiterature())}
+            onClick={() =>
+              void (isSemanticScholar
+                ? saveSemanticScholar(apiKey.trim())
+                : isOpenAlex
+                  ? saveOpenAlex()
+                  : saveLiterature())
+            }
           >
             {busy ? t('Saving…') : t('Save')}
           </Button>
@@ -430,6 +503,14 @@ export function CredentialsPanel({
   }
 
   const services = [
+    {
+      id: 'semantic-scholar' as const,
+      label: t('Semantic Scholar'),
+      description: t('Optional API key for citation discovery.'),
+      configured: Boolean(semanticScholar?.hasApiKey),
+      desktopOnly: true,
+      Icon: BookOpen
+    },
     {
       id: 'github' as const,
       label: t('GitHub'),
@@ -568,7 +649,7 @@ export function CredentialsPanel({
                             : credential.kind === 'token'
                               ? t('Access token')
                               : t('OAuth')}
-                          {' · '}
+                          {' / '}
                           {encryptionAvailable
                             ? credential.kind === 'oauth' && !credential.needsClientSecret
                               ? t('Sign-in required')
@@ -576,15 +657,15 @@ export function CredentialsPanel({
                             : t('Temporarily unavailable')}
                         </>
                       ) : credential.kind === 'api_key' ? (
-                        t('API key · Stored')
+                        t('API key: Stored')
                       ) : credential.kind === 'token' ? (
-                        t('Access token · Stored')
+                        t('Access token: Stored')
                       ) : credential.status === 'connected' ? (
-                        t('OAuth · Connected')
+                        t('OAuth: Connected')
                       ) : (
-                        t('OAuth · Sign-in required')
+                        t('OAuth: Sign-in required')
                       )}
-                      {' · '}
+                      {' / '}
                       {t('{{count}} Connectors', {
                         count: credential.consumerCount,
                         defaultValue_one: '{{count}} Connector'

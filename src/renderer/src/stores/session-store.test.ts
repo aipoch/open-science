@@ -25,7 +25,8 @@ import {
   normalizeSessionFile,
   type PersistedChatSession,
   type PersistedToolActivity,
-  type SessionPdfContext
+  type SessionPdfContext,
+  type SessionRuntimeContext
 } from '../../../shared/session-persistence'
 import type { UploadedAttachment } from '../../../shared/uploads'
 import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
@@ -390,6 +391,116 @@ describe('session store', () => {
     )
 
     expect(merged.runtimeContext).toEqual({ version: 1, revision: 2 })
+  })
+
+  it.each([
+    {
+      currentRevision: 1,
+      incomingRevision: 2,
+      currentPending: false,
+      incomingPending: true,
+      expected: true
+    },
+    {
+      currentRevision: 1,
+      incomingRevision: 2,
+      currentPending: true,
+      incomingPending: false,
+      expected: false
+    },
+    {
+      currentRevision: 2,
+      incomingRevision: 1,
+      currentPending: true,
+      incomingPending: false,
+      expected: true
+    },
+    {
+      currentRevision: 2,
+      incomingRevision: 1,
+      currentPending: false,
+      incomingPending: true,
+      expected: false
+    },
+    {
+      currentRevision: 2,
+      incomingRevision: 2,
+      currentPending: true,
+      incomingPending: false,
+      expected: true
+    }
+  ])('merges network approval authority by runtime revision: %j', (scenario) => {
+    const approval = {
+      version: 1,
+      kind: 'sandbox-network',
+      state: 'pending',
+      requestId: 'approval-fixture',
+      sessionId: 'session-fixture',
+      executionId: 'execution-fixture',
+      commandFingerprint: 'a'.repeat(64),
+      hostname: 'service.example.test',
+      port: 443,
+      runtime: 'bash',
+      originatingPromptMessageId: 'prompt-fixture',
+      agentFrameId: 'frame-fixture',
+      messageBranchId: 'branch-fixture',
+      createdAt: 1
+    } satisfies NonNullable<SessionRuntimeContext['networkApprovals']>[number]
+    const merged = mergePersistedRuntimeIdentityProjection(
+      {
+        runtimeContext: {
+          version: 1,
+          revision: scenario.currentRevision,
+          ...(scenario.currentPending ? { networkApprovals: [approval] } : {})
+        }
+      },
+      {
+        runtimeContext: {
+          version: 1,
+          revision: scenario.incomingRevision,
+          ...(scenario.incomingPending ? { networkApprovals: [approval] } : {})
+        }
+      },
+      { incomingOwnsFrameConflicts: true }
+    )
+    expect(merged.runtimeContext?.networkApprovals).toEqual(
+      scenario.expected ? [approval] : undefined
+    )
+    if (scenario.expected) expect(merged.runtimeContext?.networkApprovals?.[0]).not.toBe(approval)
+  })
+
+  it('preserves network approval authority when a delegated snapshot owns only delegated work', () => {
+    const approval = {
+      version: 1,
+      kind: 'sandbox-network',
+      state: 'pending',
+      requestId: 'approval-fixture',
+      sessionId: 'session-fixture',
+      executionId: 'execution-fixture',
+      commandFingerprint: 'a'.repeat(64),
+      hostname: 'service.example.test',
+      port: 443,
+      runtime: 'bash',
+      originatingPromptMessageId: 'prompt-fixture',
+      agentFrameId: 'frame-fixture',
+      messageBranchId: 'branch-fixture',
+      createdAt: 1
+    } satisfies NonNullable<SessionRuntimeContext['networkApprovals']>[number]
+    const merged = mergePersistedRuntimeIdentityProjection(
+      { runtimeContext: { version: 1, revision: 1, networkApprovals: [approval] } },
+      {
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          delegatedWork: { records: [] },
+          networkApprovals: [{ ...approval, requestId: 'unrelated-fixture' }]
+        }
+      },
+      { incomingOwnsFrameConflicts: true, incomingOwnsRuntimeContext: false }
+    )
+    expect(merged.runtimeContext?.networkApprovals).toEqual([approval])
+    expect(merged.runtimeContext?.networkApprovals?.[0]).not.toBe(approval)
+    expect(merged.runtimeContext?.delegatedWork?.records).toEqual([])
   })
 
   it('starts empty so New can stay outside store state', () => {
@@ -7500,6 +7611,7 @@ describe('session store public contract', () => {
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
       'src/renderer/src/components/SessionPackageOperation.tsx',
+      'src/renderer/src/components/desktop-runtime-recovery.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
@@ -7524,6 +7636,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
       'src/renderer/src/lib/replay/timeline.ts',
+      'src/renderer/src/lib/session-fork.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
       'src/renderer/src/pages/settings/ArchivedPanel.tsx',
@@ -8460,6 +8573,20 @@ describe('truncateSessionFromMessage', () => {
     activeQuestionIndex: 0,
     values: { question_0_custom: 'Unsubmitted text' }
   }
+
+  it('keeps a structured skip when switching away from an unfinished choice', () => {
+    seedEditableElicitation()
+    useSessionStore.getState().setElicitationEditDraft('session-1', 'choice-1', 'request-1', {
+      ...editSnapshot,
+      values: { question_0: { status: 'skipped' } }
+    })
+    expect(
+      useSessionStore.getState().sessions[0].elicitationEditDrafts?.['choice-1'].values
+    ).toEqual({
+      question_0: { status: 'skipped' },
+      question_0_custom: undefined
+    })
+  })
 
   it('keeps bounded elicitation edits in memory across save acknowledgements', () => {
     seedEditableElicitation()

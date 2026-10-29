@@ -5,6 +5,12 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (['research-datasets', 'europepmc', 'chea3', 'biodbnet', 'ctd'].includes(connector.id))
+    return t('Scientific data APIs, official file links and access guidance.')
+  if (connector.id === 'cancer-models')
+    return t(
+      'Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.'
+    )
   if (connector.id === 'tcia')
     return t('Public cancer imaging collections and series metadata from TCIA.')
   if (connector.id === 'kegg')
@@ -97,6 +103,43 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'europepmc/search_europepmc':
+      return t('Search Europe PMC records and available abstracts with cursor pagination.')
+    case 'genes/get_hgnc_service_info':
+    case 'genes/query_hgnc_field':
+    case 'genes/list_hgnc_files':
+      return t('Inspect HGNC fields, identifiers and official file metadata.')
+    case 'biodbnet/list_input_types':
+    case 'biodbnet/list_output_types':
+    case 'biodbnet/convert_ids':
+    case 'biodbnet/recognize_ids':
+    case 'biodbnet/map_orthologs':
+    case 'biodbnet/list_pathways':
+      return t('Query bioDBnet identifier mappings, orthology and pathways.')
+    case 'chea3/rank_transcription_factors':
+    case 'chea3/list_gmt_libraries':
+      return t('Rank transcription factors with ChEA3 or discover GMT libraries.')
+    case 'cellosaurus/get_cell_line_rdf':
+    case 'cellosaurus/query_knowledge_graph':
+    case 'cellosaurus/search_str_similarity':
+    case 'cellosaurus/list_cellosaurus_files':
+      return t('Retrieve Cellosaurus RDF, graph records, STR similarity or file links.')
+    case 'research-datasets/get_dataset_access':
+    case 'research-datasets/list_nhanes_files':
+    case 'research-datasets/list_physionet_demo_files':
+      return t('Check official dataset access requirements or discover public files.')
+    case 'drug-regulatory/list_faers_bulk_files':
+      return t('List official openFDA adverse-event bulk download links.')
+    case 'ctd/list_ctd_reports':
+      return t('List maintained CTD public report links and usage terms.')
+    case 'chemistry/unichem_map_compound':
+      return t('Map exact compound identifiers with UniChem.')
+    case 'structures/pdbe_get_validation':
+      return t('Retrieve structure quality and validation statistics from PDBe.')
+    case 'chemistry/lipidmaps_get_compound':
+      return t('Retrieve lipid classification and compound details from LIPID MAPS.')
+    case 'structures/omnipath_query_regulation':
+      return t('Query upstream or downstream human protein regulation with OmniPath.')
     case 'kegg/map_gene':
       return t('Map a KEGG gene to pathways or UniProt.')
     case 'kegg/get_entry':
@@ -243,6 +286,8 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
         'Retrieve cell line identity, origin, quality records and database mappings by CVCL or RRID.'
       )
 
+    case 'structures/pdb_search_structure_similarity':
+      return t('Find experimental PDB chains with similar 3D structures using a deposited chain.')
     case 'structures/pdb_search_sequence':
       return t(
         'Search experimental PDB structures by protein sequence, sequence identity and query coverage; return entities, chains and alignment details.'
@@ -299,6 +344,16 @@ export function connectorToolDescription(id: string, fallback: string, t: TFunct
       return t('Run a bounded Bgee SPARQL expression query.')
     case 'expression/bgee_download_links':
       return t('Build official Bgee expression download links.')
+    case 'cancer-models/depmap_search_models':
+      return t('Search DepMap cell models and their identity metadata.')
+    case 'cancer-models/depmap_gene_expression':
+      return t('Fetch DepMap/CCLE RNA expression in log2(TPM+1) for a gene.')
+    case 'cancer-models/depmap_copy_number':
+      return t('Fetch DepMap/CCLE gene copy number relative to cell model ploidy.')
+    case 'cancer-models/depmap_gene_dependency':
+      return t('Fetch DepMap Chronos gene effects for a gene and selected cell models.')
+    case 'cancer-models/depmap_drug_response':
+      return t('Fetch DepMap PRISM drug response AUC values for a compound.')
     case 'cancer-models/cbioportal_mutation_frequency':
       return t('Calculate cBioPortal mutation frequencies using samples profiled for the gene.')
 

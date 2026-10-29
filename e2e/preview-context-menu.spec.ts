@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test'
+import { PDFDocument } from 'pdf-lib'
 import { realpath, writeFile } from 'node:fs/promises'
 import type { Page } from 'playwright'
 
@@ -11,24 +12,11 @@ const TEXT_FILE_NAME = 'context-menu.txt'
 const HTML_FILE_NAME = 'context-menu.html'
 const PDF_FILE_NAME = 'context-menu.pdf'
 
-const blankPdf = (): Buffer => {
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << >> >>\nendobj\n',
-    '4 0 obj\n<< /Length 0 >>\nstream\n\nendstream\nendobj\n'
-  ]
-  let pdf = '%PDF-1.4\n'
-  const offsets = objects.map((object) => {
-    const offset = Buffer.byteLength(pdf)
-    pdf += object
-    return offset
-  })
-  const xref = Buffer.byteLength(pdf)
-  pdf += `xref\n0 5\n0000000000 65535 f \n${offsets
-    .map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`)
-    .join('')}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return Buffer.from(pdf)
+const blankPdf = async (): Promise<Buffer> => {
+  const pdf = await PDFDocument.create()
+  pdf.addPage([300, 400])
+  pdf.addPage([300, 400])
+  return Buffer.from(await pdf.save())
 }
 
 const createProject = async (page: Page): Promise<void> => {
@@ -87,7 +75,7 @@ test('opens positioned shared preview actions from DOM, HTML, PDF, and Office co
     '<!doctype html><html><body><main style="position:fixed;inset:0"><h1>Local HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Local native context area</p></main></body></html>',
     'utf8'
   )
-  await writeFile(`${localRoot}/${PDF_FILE_NAME}`, blankPdf())
+  await writeFile(`${localRoot}/${PDF_FILE_NAME}`, await blankPdf())
 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()

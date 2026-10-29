@@ -65,6 +65,13 @@ HTTP(S) proxy          SOCKS5 proxy
   └─ Windows: AppContainer + a small native process host
 ```
 
+Filesystem rules resolve existing paths using native filesystem semantics, including symbolic links
+before parent traversal. Missing leaves are anchored to their existing physical parent; unresolved
+links and ambiguous missing-parent traversal fail closed. On macOS, ancestors of explicitly denied
+paths cannot be moved or replaced inside writable regions; ordinary sibling files remain writable.
+HTTP forwarding preserves the requested path and query. Invalid upstream response heads return 502,
+while an interrupted response is terminated without appending diagnostic text to its body.
+
 Callers provide a minimal environment, read/write roots, protected roots, packaged resources, and
 one network-decision callback per command. Proxy lifecycle, command attribution, platform
 enforcement, parent-proxy routing, filesystem projection, and denial annotation stay inside the
@@ -86,6 +93,34 @@ Policy is evaluated in this order:
 
 “Allow once” and “Always allow” never bypass address validation or create private-service grants.
 A stored public hostname is not proof of DNS eligibility, connectivity, credentials or TLS trust.
+
+### Shell approvals and recovery
+
+For an active `bash_execute` Run, the application persists a destination approval before publishing
+its existing permission card. The proxy holds the connection until a decision; an approved HTTPS
+request (including authentication headers and a body) is forwarded over that same connection.
+Restricted public reads remain unchanged. Repeated requests to the same host and port in one Run
+share a decision. Probes without a Run identity do not prompt.
+
+The application excludes approval time from its Shell execution budget and keeps MCP progress
+notifications active. A client can still impose its own timeout or end its process. In that case the
+application waits for the decision before returning the tool result, but cannot restore the socket
+or undo earlier side effects. It never automatically replays the command. Global allowlist changes
+invalidate existing proxy connections, so they may also require an explicit retry.
+
+Approval authority lives in the optional, versioned `Session.runtimeContext.networkApprovals`
+collection, separately from provider tool approvals. Records bind the Session, Agent Frame,
+Message Branch, prompt, execution, command SHA-256, hostname and port. They contain no shell text,
+request URL, headers or body. The existing `pending` and `continuing` states represent a human wait
+and an approved explicit retry respectively; no new Session status or SQL migration is introduced.
+A one-time recovered grant is consumed only by the same command and destination on its original
+active branch. Stops remove authority; stale branch decisions cannot grant access.
+
+Older Sessions need no backfill. Previous connection errors never imply consent. Session package
+export/import strips network authority. Older readers reject the unknown runtime-context owner
+rather than reviving its authority; downgrading does not preserve pending network approvals.
+Clients that bypass the proxy still fail closed on enforced platforms; native Windows standard
+mode retains its documented advisory protection boundary.
 
 ### Trusted private services
 
@@ -149,6 +184,13 @@ Notebook child environments start from an allowlist. Provider tokens, cloud cred
 complete PEM trust bundle is exposed only through the standard native client variables and is also
 used to verify an HTTPS parent proxy. Leaving it blank uses public/system roots.
 
+Node children receive `NODE_USE_ENV_PROXY=1` so built-in `fetch` and default HTTP(S) agents use
+the authenticated gateway. Native support requires Node 22.21+ or 24.5+ (24.0+ for `fetch` only).
+Older Node versions and clients with custom agents/dispatchers need their own proxy support;
+this setting does not route raw sockets or `dns.lookup()` through the gateway. A failed direct
+DNS lookup inside the sandbox is therefore not a test of an allowlisted HTTP(S) destination.
+Existing long-running processes must restart to receive the updated launch environment.
+
 Only one `NotebookNetworkSandbox` instance may own the platform sandbox at a time. Each wrapped
 command gets a credential-isolated proxy context whose server-side closure binds the approval to
 that command. Commands may run concurrently on every supported platform.
@@ -198,6 +240,11 @@ Call `dispose()` during lifecycle shutdown.
 `status()` never elevates privileges or changes durable setup resources. When a receipt appears
 active, it launches short-lived positive and negative connection probes before reporting protected
 mode. Missing Windows setup leaves the runtime in standard mode; first Notebook use never prompts.
+
+`isWindowsProtectionConfigured()` reads validated ownership records independently of initialization
+and ACL propagation. It does not verify runtime readiness. Unconfirmed absence during a concurrent
+setup/removal, invalid records, and a configuration helper that exceeds its five-second limit are
+errors, never permission to run unprotected. Actual execution retains the full readiness checks.
 Explicit setup, removal, and protected R authorization can display a UAC prompt. A cancelled or failed setup
 leaves standard mode available. Successful setup affects new Notebook and package-manager processes;
 already-running sessions retain their original mode. `removeWindows()` uses the same explicit

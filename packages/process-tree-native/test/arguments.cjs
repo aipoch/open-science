@@ -3,7 +3,7 @@ const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const { spawn } = require('node:child_process')
 const { once } = require('node:events')
-const { getDarwinProcessArguments } = require('..')
+const { getDarwinProcessArguments, getDarwinProcess } = require('..')
 
 test(
   'reads native argv without splitting spaces, option text or empty arguments',
@@ -23,6 +23,10 @@ test(
     const exited = once(child, 'exit')
     try {
       await once(child.stdout, 'data')
+      const parentIdentity = getDarwinProcess(process.pid)
+      const childIdentity = getDarwinProcess(child.pid)
+      assert.match(parentIdentity.coalitionId, /^[1-9][0-9]*$/)
+      assert.equal(childIdentity.coalitionId, parentIdentity.coalitionId)
       assert.deepEqual(getDarwinProcessArguments(child.pid).slice(-args.length), args)
       assert.equal(getDarwinProcessArguments(-1), null)
     } finally {

@@ -31,8 +31,8 @@
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
-    "zod": "^4.6.5"
+    "vitest": "^4.1.12",
+    "zod": "^4.6.6"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0"

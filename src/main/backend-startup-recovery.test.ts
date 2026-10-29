@@ -25,6 +25,11 @@ beforeEach(() => {
 describe('backend startup recovery', () => {
   it.each([
     {
+      reason: 'native-secret-operation-failed',
+      diagnostic: { code: 'secret-timeout', systemCode: 'ETIMEDOUT', signal: 'SIGKILL' },
+      details: ['系统凭据授权超时', 'SYSTEM_ERROR: ETIMEDOUT', 'HELPER_SIGNAL: SIGKILL']
+    },
+    {
       reason: 'windows-profile-key-unavailable',
       diagnostic: { code: 'dpapi-unprotect-failed', osStatus: 13 },
       details: ['Windows 无法解密现有凭据密钥。', 'WINDOWS_ERROR: 13']
@@ -74,6 +79,19 @@ describe('backend startup recovery', () => {
         )
         for (const detail of details) expect(host.dialog.mock.calls[0][0].detail).toContain(detail)
         expect(host.relaunch).not.toHaveBeenCalled()
+        for (const extra of [
+          { signal: 'PRIVATE' },
+          { systemCode: 'PRIVATE' },
+          { stdout: 'PRIVATE' },
+          { exitCode: 1.5 }
+        ]) {
+          expect(
+            backendStartupStatusSchema.safeParse({
+              ...status,
+              diagnostic: { code: 'secret-exit-failed', ...extra }
+            }).success
+          ).toBe(false)
+        }
         expect(
           backendStartupStatusSchema.safeParse({ ...status, diagnostic: { code: 'PRIVATE-CODE' } })
             .success

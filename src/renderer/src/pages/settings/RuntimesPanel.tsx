@@ -1415,7 +1415,7 @@ const RuntimesPanel = ({
                   <div className="min-w-0">
                     <Dialog.Title className={dialogTitleClassName}>
                       {t('Packages in {{label}}', { label: dialogPackagesEnv.label })}
-                      {dialogPackagesEnv.version ? ` · ${dialogPackagesEnv.version}` : ''}
+                      {dialogPackagesEnv.version ? ` / ${dialogPackagesEnv.version}` : ''}
                     </Dialog.Title>
                     <Dialog.Description className="sr-only">
                       {t('Installed packages in this environment.')}
@@ -1484,7 +1484,7 @@ const RuntimesPanel = ({
                           total: packages.length
                         })}
                         {hasCondaFields
-                          ? ` · ${t('{{conda}} conda, {{pypi}} pypi', {
+                          ? ` / ${t('{{conda}} conda, {{pypi}} pypi', {
                               conda: condaPackageCount,
                               pypi: packages.length - condaPackageCount
                             })}`

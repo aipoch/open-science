@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { proveNativePostfixHeaderCuts } from './literature-pdf-native-postfix-header.mjs'
+import { proveNativeFencedSectionRows } from './literature-pdf-native-fenced-section.mjs'
 import { reviewNativeTableSources } from './literature-pdf-table-source-integrity.mjs'
 import {
   recoverCaptionedRuledTables as recoverExistingCaptionedRuledTables,
@@ -83,7 +85,10 @@ import {
   nativeRecoveredCellOrigins,
   recoverNativeFirstRecordContinuations
 } from './literature-pdf-native-leaf-record-repair.mjs'
-import { recoverNativeScalarRecordPlan } from './literature-pdf-native-scalar-record-grid.mjs'
+import {
+  recoverNativeScalarRecordPlan,
+  recoverNativeSignedScalarRecords
+} from './literature-pdf-native-scalar-record-grid.mjs'
 import {
   recoverNativeTextRecordGrid,
   completeNativeTableVisualCrop,
@@ -9660,6 +9665,19 @@ export function refineTable(
     uniqueSource: uniqueWholeRecordSource,
     repairs
   })
+  const postfixHeader = proveNativePostfixHeaderCuts({
+    table,
+    items,
+    rows,
+    columnRects,
+    rules: sourceRules,
+    context: nativeRecordContext,
+    recoveredHeaderCuts
+  })
+  if (postfixHeader.qualified) {
+    recoveredHeaderCuts = postfixHeader.cuts
+    repairs.push('native-calibrated-postfix-header-recovered')
+  }
   const baseCells = rows.flatMap((r, row) =>
     columnRects.map((c, column) => ({
       row,
@@ -11571,6 +11589,22 @@ export function refineTable(
     for (let n = unresolvedSpans.length - 1; n >= 0; n--)
       if (unresolvedSpans[n].rect[3] <= sourceHeaderBands.bottom) unresolvedSpans.splice(n, 1)
     repairs.push('header-span-inferred')
+  }
+  const fencedSectionRows = proveNativeFencedSectionRows({
+    table,
+    items,
+    rows,
+    columnRects,
+    spans: proposals.map((proposal) => proposal.slots),
+    rules,
+    context: nativeRecordContext
+  })
+  for (const row of fencedSectionRows ?? []) {
+    proposals.push({
+      slots: baseCells.filter((cell) => cell.row === row),
+      origin: 'source-section'
+    })
+    repairs.push('native-fenced-section-ownership-recovered')
   }
   const cells = resolveTableCellMerges({
     proposals,
@@ -19814,7 +19848,8 @@ export function recoverCaptionedRuledTables(
   pageNumber,
   existing = [],
   runs = [],
-  rulePaintBounds
+  rulePaintBounds,
+  renderEvidence
 ) {
   const recovered = recoverExistingCaptionedRuledTables(
     items,
@@ -19857,7 +19892,17 @@ export function recoverCaptionedRuledTables(
       continue
     const proof =
       recoverNativeTinyConfigurationRecords({ cropRect: crop }, items, rules) ??
-      recoverNativeMeasuredHeaderRecords({ cropRect: crop }, items, captions, rules, runs)
+      recoverNativeMeasuredHeaderRecords({ cropRect: crop }, items, captions, rules, runs) ??
+      ([...existing, ...recovered].every((t) => !t.cropRect || intersect(t.cropRect, crop) === 0)
+        ? recoverNativeSignedScalarRecords(
+            { cropRect: crop },
+            items,
+            captions,
+            rules,
+            rulePaintBounds,
+            renderEvidence
+          )
+        : undefined)
     if (!proof) continue
     const rows = proof.groups.map((g) => [
       crop[0],

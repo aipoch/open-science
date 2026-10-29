@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
-import { startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { build } from 'esbuild'
+import { desktopBackendPaths, startOrAttachDesktopBackend } from './desktop-runtime-launcher'
 import { resolveElectronProfile } from './storage/electron-profile'
 const children = vi.hoisted(() => [] as ChildProcess[])
 vi.mock('node:child_process', async (original) => {
@@ -39,12 +50,150 @@ const desktopGeneration=crypto.randomUUID();
 const startupOptions={configRoot:root,dataRoot:root,profilePath:root,port:0,host:'127.0.0.1',credentialStore:'os'};
 const server=http.createServer((req,res)=>{
  if(req.headers.authorization!=='Bearer '+token||req.headers['x-open-science-runtime-generation']!==generation){res.writeHead(403).end();return;}
- res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions}));
+ res.end(JSON.stringify({generation,pid:process.pid,desktopGeneration,startupOptions,entryPath:fs.realpathSync(process.argv[1])}));
 });
 server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.json'),JSON.stringify({schemaVersion:1,generation,pid:process.pid,host:'node',port:server.address().port,desktop:{path:path.join(root,'fixture.sock'),generation:desktopGeneration,secret:'a'.repeat(64),version:'test'}})));
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it.each([true, false])(
+    'resolves bundled npm in the actual Node backend (packaged: %s)',
+    async (packaged) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'desktop npm 空间-')))
+      roots.push(root)
+      const paths = desktopBackendPaths({
+        applicationPath: join(root, 'application'),
+        resourcesPath: join(root, 'resources'),
+        packaged
+      })
+      const runtime = dirname(paths.command)
+      const npmBin = join(runtime, 'node_modules/npm/bin')
+      await mkdir(npmBin, { recursive: true })
+      await mkdir(dirname(paths.entry), { recursive: true })
+      await copyFile(process.execPath, paths.command)
+      await writeFile(join(runtime, 'version.json'), '{"stagingVersion":2}')
+      for (const name of ['npm', 'npx'])
+        await writeFile(
+          join(npmBin, `${name}-cli.js`),
+          `process.stdout.write(JSON.stringify({node:process.execPath,args:process.argv.slice(2)}))`
+        )
+      const resolver = join(root, 'resolver.cjs')
+      await build({
+        stdin: {
+          contents: `export { prepareMcpStdioLaunch } from './src/main/connectors/mcp-stdio-launch';
+            export { EXTRA_PATH_DIRS } from './src/main/settings/shell-path';`,
+          resolveDir: process.cwd(),
+          loader: 'ts'
+        },
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        outfile: resolver
+      })
+      await writeFile(
+        paths.entry,
+        `const {prepareMcpStdioLaunch,EXTRA_PATH_DIRS}=require(${JSON.stringify(resolver)});
+// Isolate installed-tool discovery only; process.execPath and the resolver are real.
+EXTRA_PATH_DIRS.length=0;
+const results=['npm','npx'].map(command=>{
+ const launch=prepareMcpStdioLaunch({command,args:['space argument','a&b','$(literal)'],env:{...process.env,PATH:${JSON.stringify(join(root, 'empty-bin'))}}});
+ const output=require('node:child_process').execFileSync(launch.command,launch.args,{env:launch.env,encoding:'utf8'});
+ return {command:launch.command,result:JSON.parse(output)};
+});
+require('node:fs').writeFileSync(${JSON.stringify(join(root, 'npm-observed.json'))},JSON.stringify({electron:process.versions.electron??null,node:process.execPath,results}));
+${fixtureSource}`
+      )
+      const launch = await startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: root,
+        version: 'test',
+        ...paths,
+        packaged,
+        timeoutMs: 10000
+      })
+      expect(launch.startedProcess?.pid).toBeGreaterThan(0)
+      const observed = JSON.parse(await readFile(join(root, 'npm-observed.json'), 'utf8'))
+      expect(observed).toEqual({
+        electron: null,
+        node: paths.command,
+        results: ['npm', 'npx'].map(() => ({
+          command: paths.command,
+          result: { node: paths.command, args: ['space argument', 'a&b', '$(literal)'] }
+        }))
+      })
+    }
+  )
+  it.each(['deadline', 'abort'] as const)(
+    'stops abandoned credential startup and its helper after %s',
+    async (mode) => {
+      const root = await mkdtemp(join(tmpdir(), 'desktop-abandoned-credentials-'))
+      roots.push(root)
+      const entry = join(root, 'fixture.cjs')
+      await writeFile(
+        entry,
+        `const fs = require('node:fs'), path = require('node:path');
+      process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'progress'});
+      require('node:child_process').spawnSync(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync(require('node:path').join(process.env.OPEN_SCIENCE_CONFIG_ROOT, 'late-startup'), 'continued'), 900)"]);
+      setInterval(() => {}, 1000);`
+      )
+      const cancellation = new AbortController()
+      await expect(
+        startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: root,
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true,
+          timeoutMs: mode === 'deadline' ? 300 : 5000,
+          signal: cancellation.signal,
+          onStatus() {
+            if (mode === 'abort') cancellation.abort()
+          }
+        })
+      ).rejects.toMatchObject(
+        mode === 'deadline' ? { stage: 'credentials', canRetry: true } : { name: 'AbortError' }
+      )
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+      expect(await readdir(root)).not.toContain('late-startup')
+    }
+  )
+  it('allows credential authorization beyond the ordinary startup deadline and retains retry after exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-credential-wait-'))
+    roots.push(root)
+    const entry = join(root, 'fixture.cjs')
+    await writeFile(
+      entry,
+      `
+      process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'progress'});
+      setTimeout(() => { process.send({protocolVersion:1,attemptId:process.env.OPEN_SCIENCE_STARTUP_ATTEMPT,stage:'credentials',kind:'failed',code:'credential-unavailable',reason:'native-secret-operation-failed'}); process.exitCode=1; process.disconnect(); }, 300);
+    `
+    )
+    const now = Date.now.bind(Date)
+    let elapsed = 0
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now() + elapsed)
+    try {
+      await expect(
+        startOrAttachDesktopBackend({
+          configRoot: root,
+          profilePath: root,
+          version: 'test',
+          command: process.execPath,
+          entry,
+          packaged: true,
+          onStatus(status) {
+            if (status.kind === 'progress') elapsed = 241_000
+          }
+        })
+      ).rejects.toMatchObject({
+        stage: 'credentials',
+        canRetry: true,
+        credentialFailure: { reason: 'native-secret-operation-failed' }
+      })
+    } finally {
+      clock.mockRestore()
+    }
+  })
   it('hands a target-bound credential snapshot to one backend attempt and removes it after startup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-launch-inventory-'))
     roots.push(root)

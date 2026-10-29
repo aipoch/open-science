@@ -176,6 +176,7 @@ class NotebookNetworkSandbox {
           const allowed = await command.onNetworkAccessRequest({
             host: request.host,
             purpose: request.purpose,
+            ...(request.canResume ? { canResume: request.canResume } : {}),
             ...(request.port === undefined ? {} : { port: request.port }),
             signal: command.controller.signal
           })
@@ -377,7 +378,7 @@ class NotebookNetworkSandbox {
   async isWindowsProtectionConfigured(): Promise<boolean> {
     if (process.platform !== 'win32')
       throw new Error('Windows protection is only available on Windows.')
-    if (this.#initializing) await this.#initializing
+    // Configuration is independent of runtime readiness, including an in-flight fence probe.
     return isWindowsProtectionConfigured(createRuntimeConfig(this.#options))
   }
 

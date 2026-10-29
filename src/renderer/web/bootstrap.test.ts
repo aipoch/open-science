@@ -57,6 +57,7 @@ class FakeWebSocket {
 type WebApi = {
   getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
+  literature: Window['api']['literature']
   sessions: Window['api']['sessions']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
@@ -99,6 +100,11 @@ const chunkOperations = [
 
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
+  {
+    channel: 'literature:collect',
+    result: { entries: [], savedItemIds: [], failures: [], pdfCount: 0 },
+    invoke: (api: WebApi) => api.literature.collect({ kind: 'zotero-preview' })
+  },
   {
     channel: 'storage:migrate',
     result: { ok: true, cleanupPending: false },
@@ -187,7 +193,10 @@ const heartbeatFrame = (latestSequence: number): string =>
 
 const loadBootstrap = async (): Promise<WebApi> => {
   const bootstrapImport = import('./bootstrap')
-  await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined())
+  // Cold module transforms on shared CI runners can exceed waitFor's one-second default.
+  await vi.waitFor(() => expect((window as unknown as { api?: WebApi }).api).toBeDefined(), {
+    timeout: 10_000
+  })
   window.dispatchEvent(new Event(WEB_EVENT_CONSUMERS_READY_EVENT))
   await bootstrapImport
   return (window as unknown as { api: WebApi }).api

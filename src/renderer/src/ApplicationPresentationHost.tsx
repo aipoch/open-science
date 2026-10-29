@@ -392,6 +392,7 @@ const ApplicationPresentationContent = ({
                     recovery={sessions.catalogRecovery}
                     onRetry={sessions.retryLoad}
                     onOpenRecoveryFolder={window.api.sessions.openRecoveryFolder}
+                    onDeleteRecoveryFile={window.api.sessions.deleteRecoveryFile}
                   />
                 ) : null}
                 <WorkspaceComputeRecoveryBridge enabled={sessions.isReady} />

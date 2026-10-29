@@ -38,6 +38,7 @@ class ArchiveCoordinator {
   private markReadSessions: (sessionIds: string[]) => Promise<void> = async () => undefined
   private readonly deletingProjectIds = new Set<string>()
   private readonly exportingSessions = new Map<string, string>()
+  private readonly deletingSessionRecoveryFiles = new Set<string>()
   private readonly importingProjects = new Set<string>()
   private readonly pendingDispatches = new Map<
     string,
@@ -65,6 +66,29 @@ class ArchiveCoordinator {
 
   isSessionExporting(projectId: string, sessionId: string): boolean {
     return this.exportingSessions.get(sessionId) === projectId
+  }
+
+  withSessionRecoveryDeletion<Result>(
+    projectId: string,
+    sessionId: string,
+    operation: () => Promise<Result>
+  ): Promise<Result> {
+    return this.enqueue(projectId, async () => {
+      this.assertProjectDeletionAvailable(projectId)
+      this.assertExportAvailable(sessionId)
+      if (this.pendingDispatches.has(sessionId))
+        throw new Error('Wait for Session work to finish before deleting recovery files.')
+      // Share the synchronous work-admission fence with Compute and Notebook submissions.
+      // The damaged Session cannot pass readable-Session admission, so check runtime activity here.
+      this.deletingSessionRecoveryFiles.add(sessionId)
+      try {
+        if (await this.runtime.isSessionBusy(projectId, sessionId))
+          throw new Error('Wait for Session work to finish before deleting recovery files.')
+        return await operation()
+      } finally {
+        this.deletingSessionRecoveryFiles.delete(sessionId)
+      }
+    })
   }
 
   reserveProjectImport(projectId: string, signal?: AbortSignal): Promise<() => void> {
@@ -118,6 +142,8 @@ class ArchiveCoordinator {
   }
 
   private assertExportAvailable(sessionId: string): void {
+    if (this.deletingSessionRecoveryFiles.has(sessionId))
+      throw new Error('This Session is locked while its recovery files are being deleted.')
     if (this.exportingSessions.has(sessionId))
       throw new Error('This Session is locked while its research package is being exported.')
   }

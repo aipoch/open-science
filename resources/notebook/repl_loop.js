@@ -139,6 +139,9 @@ const capturedRpcFetch = (input, init = {}) => {
           : { hostname: proxy.hostname, port: proxy.port || 80 }),
         path: proxy ? url.href : url.pathname + url.search,
         method: init.method || 'GET',
+        // This transport already selects the authenticated gateway (or Unix socket). Do not
+        // apply Node's environment proxy a second time to the explicit proxy request.
+        agent: false,
         headers
       },
       (response) => {

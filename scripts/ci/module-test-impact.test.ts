@@ -150,6 +150,7 @@ describe('module test impact commands', () => {
           throw new Error('CodeGraph unavailable in CI')
         },
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       }
       const args = ['affected', '--base', 'base', '--head', 'head']
@@ -168,6 +169,7 @@ describe('module test impact commands', () => {
     expect(
       executeModuleTestPlan(createModuleTestPlan('artifact_storage'), {
         spawn,
+        derivedConsumers: { schemaVersion: 1, modules: {} },
         environment: { npm_execpath: '/npm/bin/npm-cli.js' }
       })
     ).toBe(1)
@@ -183,10 +185,12 @@ describe('module test impact commands', () => {
       const { spawn, invocation } = captureNpmInvocation()
       const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
       const source = 'src/main/notebook/mcp-server.ts'
-      const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
-        status: 'unavailable-manifest-only',
-        testFiles: []
-      })
+      const manifest = loadModuleImpactManifest()
+      const plan = createAffectedTestPlan(
+        [{ path: source, status: 'modified' }],
+        { status: 'unavailable-manifest-only', testFiles: [] },
+        manifest
+      )
       try {
         await runModuleTestCli(
           [
@@ -208,6 +212,8 @@ describe('module test impact commands', () => {
               throw new Error('CodeGraph unavailable in CI')
             },
             spawn,
+            manifest,
+            derivedConsumers: { schemaVersion: 1, modules: {} },
             environment: { npm_execpath: '/npm/bin/npm-cli.js' }
           }
         )
@@ -331,7 +337,33 @@ describe('module test impact commands', () => {
     )
   })
 
-  it('expands User Skill repository changes through Settings and cross-surface consumers', () => {
+  it.each([
+    ['user_skills_repository', 'src/main/skills/catalog.ts'],
+    ['user_skills_repository', 'src/main/skills/user-skill-repository.ts'],
+    ['user_skills_repository', 'src/main/skills/source-repository.ts'],
+    ['settings_extension_presentation', 'src/renderer/src/pages/settings/SkillEditor.tsx'],
+    [
+      'settings_extension_presentation',
+      'src/renderer/src/pages/settings/SavedSkillRepositories.tsx'
+    ]
+  ])('retains full validation for %s changes in %s', (moduleId, path) => {
+    const manifest = loadModuleImpactManifest()
+    const reason = manifest.modules[moduleId].fullTestReason
+    expect(reason).toBeTruthy()
+    for (const plan of [
+      createModuleTestPlan(moduleId, manifest),
+      createAffectedTestPlan(
+        [{ path, status: 'modified' }],
+        { status: 'unavailable-manifest-only', testFiles: [] },
+        manifest
+      )
+    ]) {
+      expect(plan.mode).toBe('full')
+      expect(plan.reasonChains).toEqual([`${moduleId} -> ${reason} -> full`])
+    }
+  })
+
+  it('preserves User Skill evidence and expands package changes through cross-surface consumers', () => {
     const manifest = loadModuleImpactManifest()
     const packageTests = manifest.modules.skill_package.testFiles.owner
     expect(packageTests.length).toBeGreaterThan(0)
@@ -354,9 +386,7 @@ describe('module test impact commands', () => {
       ).toEqual([])
     }
     for (const path of [
-      'src/main/skills/catalog.ts',
       'src/main/skill-marketplace/service.ts',
-      'src/renderer/src/pages/settings/SkillEditor.tsx',
       'src/main/compute/skill-provisioning.ts'
     ]) {
       const hostPlan = createAffectedTestPlan([{ path, status: 'modified' }], {
@@ -369,8 +399,9 @@ describe('module test impact commands', () => {
         path
       ).toBe(false)
     }
-    const direct = createModuleTestPlan('user_skills_repository')
-    expect(direct.testFiles).toEqual(
+    // Full plans have no path filter; the explicit evidence must still be registered.
+    const registered = Object.values(manifest.modules.user_skills_repository.testFiles).flat()
+    expect(registered).toEqual(
       expect.arrayContaining([
         'src/main/skills/user-skill-repository.architecture.test.ts',
         'src/main/skills/host-skills-service.test.ts',
@@ -391,7 +422,6 @@ describe('module test impact commands', () => {
     for (const { path, status } of [
       { path: 'packages/skills/src/user-skill-catalog-observer.ts', status: 'modified' },
       { path: 'packages/skills/src/user-skill-compatibility-index.ts', status: 'added' },
-      { path: 'src/main/skills/user-skill-repository.ts', status: 'modified' },
       { path: 'packages/skills/src/user-skill-store.ts', status: 'modified' },
       { path: 'packages/skills/src/agent-home-skill-owner.ts', status: 'added' },
       { path: 'packages/skills/src/skill-bundle-import-owner.ts', status: 'modified' },
@@ -403,36 +433,37 @@ describe('module test impact commands', () => {
         status: 'current',
         testFiles: []
       })
-      const prefix = path.startsWith('packages/skills/') ? 'skill_package -> ' : ''
+      expect(affected.mode, path).toBe('selective')
+      const prefix = 'skill_package -> '
       expect([...affected.modules].sort()).toEqual([
-        ...(prefix ? ['skill_marketplace', 'skill_package'] : []),
+        'settings_service_facade',
+        'skill_marketplace',
+        'skill_package',
         'user_skills_repository'
       ])
       expect(affected.reasonChains).toEqual(
         expect.arrayContaining([
-          `${prefix}user_skills_repository -> settings_service_facade -> capability routing only`,
+          `${prefix}user_skills_repository -> settings_service_facade`,
           `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> capability routing only`,
           `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page -> capability routing only`
         ])
       )
       expect(
         affected.testFiles.filter((file) => file.startsWith('packages/skills/')).sort()
-      ).toEqual(prefix ? [...packageTests].sort() : [])
-      if (prefix) {
-        expect(affected.reasonChains).toEqual(
-          expect.arrayContaining([
-            'skill_package -> skill_marketplace',
-            'skill_package -> skill_marketplace -> settings_operations -> capability routing only'
-          ])
-        )
-        expect(affected.testFiles).toEqual(
-          expect.arrayContaining([
-            'src/main/skill-marketplace/installation.test.ts',
-            'src/main/skill-marketplace/service.test.ts',
-            'src/main/settings/workflows.test.ts'
-          ])
-        )
-      }
+      ).toEqual([...packageTests].sort())
+      expect(affected.reasonChains).toEqual(
+        expect.arrayContaining([
+          'skill_package -> skill_marketplace',
+          'skill_package -> skill_marketplace -> settings_operations -> capability routing only'
+        ])
+      )
+      expect(affected.testFiles).toEqual(
+        expect.arrayContaining([
+          'src/main/skill-marketplace/installation.test.ts',
+          'src/main/skill-marketplace/service.test.ts',
+          'src/main/settings/workflows.test.ts'
+        ])
+      )
       expect(affected.testFiles).not.toContain('packages/open-science/cli.test.ts')
       expect(affected.testFiles).not.toContain('packages/open-science/client.test.ts')
       expect(affected.testFiles).toEqual(
@@ -940,6 +971,7 @@ describe('module test impact commands', () => {
             throw new Error('CodeGraph unavailable in CI')
           },
           spawn,
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
@@ -947,6 +979,28 @@ describe('module test impact commands', () => {
       expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
     } finally {
       write.mockRestore()
+    }
+  })
+
+  it('generates derived consumers from the requested head, not the dirty worktree', async () => {
+    const cwd = mkdtempSync(resolve(tmpdir(), 'module-head-snapshot-'))
+    try {
+      const git = (...args: string[]): string =>
+        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+      git('init', '-q')
+      mkdirSync(resolve(cwd, 'scripts/ci'), { recursive: true })
+      const edges = resolve(cwd, 'scripts/ci/module-runtime-consumers.json')
+      writeFileSync(edges, JSON.stringify({ 'missing.ts': ['consumer.ts'] }))
+      git('add', '.')
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'init')
+      const head = git('rev-parse', 'HEAD')
+      writeFileSync(edges, '{}')
+
+      await expect(
+        runModuleTestCli(['affected', '--base', head, '--head', head], { cwd })
+      ).rejects.toThrow('Invalid runtime consumer edge')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
   })
 
@@ -968,9 +1022,11 @@ describe('module test impact commands', () => {
     const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     const environment = { npm_execpath: '/npm/bin/npm-cli.js' }
+    const manifest = loadModuleImpactManifest()
     const expectedPlan = createAffectedTestPlan(
       [{ path: 'src/main/artifacts/repository.ts', status: 'modified' }],
-      { status: 'current', testFiles: [] }
+      { status: 'current', testFiles: [] },
+      manifest
     )
 
     expect(
@@ -978,6 +1034,8 @@ describe('module test impact commands', () => {
         ['affected', '--base', base, '--head', head, '--coverage-changed', coverageBase],
         {
           cwd: '/repo',
+          manifest,
+          derivedConsumers: { schemaVersion: 1, modules: {} },
           execute,
           spawn,
           environment,
@@ -1065,8 +1123,13 @@ describe('module test impact commands', () => {
     expect(packageJson.scripts['test:module:arguments']).toBe(
       'node scripts/ci/run-vitest-arguments.mjs'
     )
-    expect(packageJson.scripts['test:module']).toContain('module-test-impact.mjs module')
-    expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
+    // Planning reads source snapshots; only the selected test execution prepares app outputs.
+    expect(packageJson.scripts['test:module']).toBe('node scripts/ci/module-test-impact.mjs module')
+    expect(packageJson.scripts['test:affected']).toBe(
+      'node scripts/ci/module-test-impact.mjs affected'
+    )
+    expect(packageJson.scripts['pretest:module']).toBeUndefined()
+    expect(packageJson.scripts['pretest:affected']).toBeUndefined()
   })
 })
 
@@ -1425,20 +1488,27 @@ it('keeps literature command consumers covered by the explicit full fallback', (
   )
 })
 
-it.each([
-  [
-    'src/main/session-persistence/coordinator.ts',
-    'src/renderer/src/hooks/useLifecycleSync.test.tsx'
-  ],
-  [
-    'src/main/tags/repository.ts',
+it('keeps tag event consumers covered by the explicit full fallback', () => {
+  const manifest = loadModuleImpactManifest()
+  const reason = manifest.modules.main_tags.fullTestReason
+  expect(reason).toBeTruthy()
+  const plan = createAffectedTestPlan(
+    [{ path: 'src/main/tags/repository.ts', status: 'modified' }],
+    { status: 'not-used', testFiles: [] },
+    manifest
+  )
+  expect(plan.mode).toBe('full')
+  expect(plan.reasonChains).toEqual([`main_tags -> ${reason} -> full`])
+  expect(manifest.modules.main_tags.testFiles.consumer).toContain(
     'src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx'
-  ]
-])('preserves the explicit command or event consumer for %s', (path, test) => {
-  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-    status: 'not-used',
-    testFiles: []
-  })
+  )
+})
+
+it('preserves the explicit command or event consumer for src/main/session-persistence/coordinator.ts', () => {
+  const plan = createAffectedTestPlan(
+    [{ path: 'src/main/session-persistence/coordinator.ts', status: 'modified' }],
+    { status: 'not-used', testFiles: [] }
+  )
   expect(plan.mode).toBe('selective')
-  expect(plan.testFiles).toContain(test)
+  expect(plan.testFiles).toContain('src/renderer/src/hooks/useLifecycleSync.test.tsx')
 })

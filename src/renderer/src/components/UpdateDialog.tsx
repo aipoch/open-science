@@ -1,4 +1,6 @@
+import { useManualUpdate, type ManualUpdateController } from './use-manual-update'
 import { RuntimeUpdateDialog } from './RuntimeUpdateDialog'
+import { ManualUpdateFailure, ManualUpdateGuide, ManualUpdateLinks } from './ManualUpdate'
 import { ErrorNotice } from '@/components/error-notice'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Download, ExternalLink, RefreshCw, X } from 'lucide-react'
@@ -8,6 +10,7 @@ import { Trans, useTranslation } from 'react-i18next'
 import { DownloadProgressLine } from '@/components/DownloadProgressLine'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { UpdateReleaseNotes } from './UpdateReleaseNotes'
+import { progressStates, recoveryStates, runtimeUpdateState } from './runtime-update-view'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -38,7 +41,13 @@ const UPDATE_SETTINGS_INSTALL_ERROR =
 // Update confirmation dialog: shows the target version and release notes so the user can decide
 // before a large download. Opened from the external capsule and the settings About section. When the
 // manifest carries no notes, it links to the matching GitHub release so the user can still read them.
-const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
+const LegacyUpdateDialog = ({
+  active = true,
+  manual
+}: {
+  active?: boolean
+  manual: ManualUpdateController
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const status = useUpdateStore((state) => state.status)
   const isOpen = useUpdateStore((state) => state.isDialogOpen)
@@ -111,6 +120,10 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
     <Dialog.Root
       open={open}
       onOpenChange={(open) => {
+        if (!open && manual.guideOpenRef.current) {
+          manual.closeGuide()
+          return
+        }
         if (!open && recoveryOpenRef.current) {
           // A dismissal while the recovery confirmation is open is the confirmation being escaped
           // (the nested layer's listener can lose the race that routes Escape to this root): close
@@ -130,8 +143,20 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
         <Dialog.Portal>
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
           <Dialog.Content
+            {...(manual.guideOpen
+              ? {
+                  'aria-label': t('Installation instructions'),
+                  'aria-labelledby': undefined,
+                  'aria-describedby': undefined
+                }
+              : {})}
             onInteractOutside={(event) => event.preventDefault()}
             onEscapeKeyDown={(event) => {
+              if (manual.guideOpenRef.current) {
+                event.preventDefault()
+                manual.closeGuide()
+                return
+              }
               // The nested layer may not have registered its Escape listener yet.
               if (recoveryConfirmationOpenRef.current) {
                 event.preventDefault()
@@ -142,231 +167,240 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
               'z-[60] flex max-h-[calc(100svh-2rem)] flex-col w-[min(560px,calc(100vw-2rem))] overflow-hidden p-0'
             )}
           >
-            <div className={cn(dialogHeaderClassName, 'shrink-0')}>
-              <div>
-                <Dialog.Title className={dialogTitleClassName}>
-                  {t('Update available')}
-                </Dialog.Title>
-                <Dialog.Description
-                  className={cn(dialogDescriptionClassName, 'text-xs tabular-nums')}
-                >
-                  {t('v{{current}} → v{{latest}}', {
-                    current: dialogStatus.current,
-                    latest: dialogStatus.latest
-                  })}
-                </Dialog.Description>
+            {manual.guideOpen ? <ManualUpdateGuide manual={manual} status={status} /> : null}
+            <div hidden={manual.guideOpen} className={manual.guideOpen ? 'hidden' : 'contents'}>
+              <div className={cn(dialogHeaderClassName, 'shrink-0')}>
+                <div>
+                  <Dialog.Title className={dialogTitleClassName}>
+                    {t('Update available')}
+                  </Dialog.Title>
+                  <Dialog.Description
+                    className={cn(dialogDescriptionClassName, 'text-xs tabular-nums')}
+                  >
+                    {t('v{{current}} → v{{latest}}', {
+                      current: dialogStatus.current,
+                      latest: dialogStatus.latest
+                    })}
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('Close')}
+                    disabled={isApplying}
+                    className={dialogCloseButtonClassName}
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Button>
+                </Dialog.Close>
               </div>
-              <Dialog.Close asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t('Close')}
-                  disabled={isApplying}
-                  className={dialogCloseButtonClassName}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </Dialog.Close>
-            </div>
 
-            <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
-              <div className={dialogBodyClassName}>
-                {dialogStatus.error ? (
-                  <div ref={failureNotice}>
-                    <ErrorNotice
-                      role="alert"
-                      className="mt-3"
-                      primaryButton={
-                        legacyRecovery && isReady
-                          ? {
-                              label: t('Back up records and retry'),
-                              onClick: recoverUpdate
-                            }
-                          : undefined
-                      }
-                      description={
-                        isInstallationRequired
-                          ? t(
-                              'Open-Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
-                            )
-                          : legacyRecovery
-                            ? t('Old Shell launch records are blocking this update.')
-                            : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
-                              ? t(
-                                  'Could not stop background processes before updating. Please try again.'
-                                )
-                              : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
+              <ScrollArea className="grid min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:h-auto [&>[data-slot=scroll-area-viewport]]:min-h-0">
+                <div className={dialogBodyClassName}>
+                  {dialogStatus.error ? (
+                    <div ref={failureNotice}>
+                      <ErrorNotice
+                        role="alert"
+                        className="mt-3"
+                        primaryButton={
+                          legacyRecovery && isReady
+                            ? {
+                                label: t('Back up records and retry'),
+                                testId: 'legacy-update-recovery',
+                                onClick: recoverUpdate
+                              }
+                            : undefined
+                        }
+                        description={
+                          isInstallationRequired
+                            ? t(
+                                'Open-Science is running on a read-only disk. Drag it to Applications, quit this copy, and reopen it from Applications before updating.'
+                              )
+                            : legacyRecovery
+                              ? t('Old Shell launch records are blocking this update.')
+                              : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_ERROR
                                 ? t(
-                                    'Could not fully stop background processes before updating. Please try again.'
+                                    'Could not stop background processes before updating. Please try again.'
                                   )
-                                : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
+                                : dialogStatus.error === UPDATE_BACKGROUND_PROCESS_DEGRADED_ERROR
                                   ? t(
-                                      'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
+                                      'Could not fully stop background processes before updating. Please try again.'
                                     )
-                                  : dialogStatus.error ===
-                                      'Research work is still running. Stop it before restarting to update.'
+                                  : dialogStatus.error === UPDATE_SETTINGS_INSTALL_ERROR
                                     ? t(
-                                        'Research work is still running. Stop it before restarting to update.'
+                                        'An Agent Runtime is still installing. Wait for it to finish before restarting to update.'
                                       )
                                     : dialogStatus.error ===
-                                        'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                        'Research work is still running. Stop it before restarting to update.'
                                       ? t(
-                                          'Subagents are still running. Return to their tasks and stop them before restarting to update.'
+                                          'Research work is still running. Stop it before restarting to update.'
                                         )
                                       : dialogStatus.error ===
-                                          'The installer is missing or has changed. Download the update again.'
+                                          'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                         ? t(
-                                            'The installer is missing or has changed. Download the update again.'
+                                            'Subagents are still running. Return to their tasks and stop them before restarting to update.'
                                           )
-                                        : (dialogStatus.error ?? t('Update failed'))
-                      }
-                    >
-                      {legacyRecovery ? (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          {t(
-                            'Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.'
+                                        : dialogStatus.error ===
+                                            'The installer is missing or has changed. Download the update again.'
+                                          ? t(
+                                              'The installer is missing or has changed. Download the update again.'
+                                            )
+                                          : (dialogStatus.error ?? t('Update failed'))
+                        }
+                      >
+                        {legacyRecovery ? (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {t(
+                              'Recovery will back up old Shell launch records and retry the update. Project data and settings are preserved.'
+                            )}
+                          </p>
+                        ) : isBackgroundProcessError ? (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            <Trans
+                              i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open-Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
+                              components={{
+                                issueLink: (
+                                  <ExternalTextLink href={APP.links.githubIssues}>
+                                    {''}
+                                  </ExternalTextLink>
+                                )
+                              }}
+                            />
+                          </p>
+                        ) : null}
+                        <ManualUpdateFailure manual={manual} status={dialogStatus} />
+                        {isForceableGateError && isReady ? (
+                          <button
+                            type="button"
+                            onClick={forceUpdate}
+                            className="mt-2 block text-xs text-destructive underline"
+                          >
+                            {t('Continue with force update')}
+                          </button>
+                        ) : null}
+                      </ErrorNotice>
+                    </div>
+                  ) : null}
+                  <UpdateReleaseNotes status={dialogStatus} />
+
+                  {isApplying ? (
+                    <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
+                      {dialogStatus.applyKind === 'installer'
+                        ? t('Verifying installer…')
+                        : t(
+                            "Open-Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
                           )}
-                        </p>
-                      ) : isBackgroundProcessError ? (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          <Trans
-                            i18nKey="Cancel this update, then use Reveal in Settings → General → Diagnostics to locate the log file. Quit and reopen Open-Science, then try the update again. If the problem returns, review the log for local file paths and give it to a developer or <issueLink>open a GitHub issue</issueLink>."
-                            components={{
-                              issueLink: (
-                                <ExternalTextLink href={APP.links.githubIssues}>
-                                  {''}
-                                </ExternalTextLink>
-                              )
-                            }}
-                          />
-                        </p>
-                      ) : null}
-                      {/* Fallback when the in-app update fails (e.g. a blocked/failed in-place install): let the
-                    user grab the installer by hand, mirroring the macOS manual-reinstall path. */}
-                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
-                        {t('Download manually')}
-                      </ExternalTextLink>
-                      {isForceableGateError && isReady ? (
-                        <button
-                          type="button"
-                          onClick={forceUpdate}
-                          className="mt-2 block text-xs text-destructive underline"
-                        >
-                          {t('Continue with force update')}
-                        </button>
-                      ) : null}
-                    </ErrorNotice>
-                  </div>
-                ) : null}
-                <UpdateReleaseNotes status={dialogStatus} />
+                    </div>
+                  ) : null}
 
-                {isApplying ? (
-                  <div className="mt-4 rounded-lg border border-border bg-muted/50 px-3 py-3 text-xs text-muted-foreground">
-                    {dialogStatus.applyKind === 'installer'
-                      ? t('Verifying installer…')
-                      : t(
-                          "Open-Science is stopping background tasks and will close to finish installing. The update may take a moment; please don't reopen the app during this step. The updated app will reopen automatically."
-                        )}
-                  </div>
-                ) : null}
-
-                {isInstallerUnavailable ? (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    {t(
-                      'An installer is not available for this platform. Download manually to check other installation options.'
-                    )}
-                  </p>
-                ) : null}
-              </div>
-            </ScrollArea>
-            {isDownloading ? (
-              <div className="shrink-0 px-5 pb-5">
-                <DownloadProgressLine
-                  progress={
-                    dialogStatus.downloadProgress ?? {
-                      phase: 'downloading',
-                      transferred: dialogStatus.downloadedBytes ?? 0,
-                      total: dialogStatus.totalBytes,
-                      percent: dialogStatus.progress ?? 0,
-                      bytesPerSecond: 0,
-                      attempt: 0
+                  {isInstallerUnavailable ? (
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      {t(
+                        'An installer is not available for this platform. Download manually to check other installation options.'
+                      )}
+                    </p>
+                  ) : null}
+                </div>
+              </ScrollArea>
+              {isDownloading ? (
+                <div className="shrink-0 px-5 pb-5">
+                  <DownloadProgressLine
+                    progress={
+                      dialogStatus.downloadProgress ?? {
+                        phase: 'downloading',
+                        transferred: dialogStatus.downloadedBytes ?? 0,
+                        total: dialogStatus.totalBytes,
+                        percent: dialogStatus.progress ?? 0,
+                        bytesPerSecond: 0,
+                        attempt: 0
+                      }
                     }
-                  }
-                />
-              </div>
-            ) : null}
-            <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
-              <button
-                type="button"
-                onClick={() => closeDialog()}
-                disabled={isApplying}
-                className={cn(
-                  dialogCancelButtonClassName,
-                  'rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-colors'
-                )}
+                  />
+                </div>
+              ) : null}
+              <div
+                data-testid="manual-update-footer"
+                className="shrink-0 border-t border-border-300/90 px-5 py-3.5"
               >
-                {isReady ? t('Close') : t('Cancel')}
-              </button>
-              {isApplying ? (
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground opacity-70"
+                <ManualUpdateLinks manual={manual} align="end" />
+                <div
+                  data-testid="manual-update-controls"
+                  className={cn(dialogFooterClassName, 'mt-3 border-t-0 px-0 py-0 flex-wrap')}
                 >
-                  <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-                  {dialogStatus.applyKind === 'installer'
-                    ? t('Verifying installer…')
-                    : t('Preparing update…')}
-                </button>
-              ) : isInstallationRequired ? (
-                <button
-                  type="button"
-                  onClick={() => void download()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  <ExternalLink className="size-4" aria-hidden="true" />
-                  {t('Show installation steps')}
-                </button>
-              ) : isReady ? (
-                <button
-                  type="button"
-                  onClick={() => void apply()}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-                >
-                  {dialogStatus.applyKind === 'restart' ? (
-                    <>
-                      <RefreshCw className="size-4" aria-hidden="true" />
-                      {t('Restart to update')}
-                    </>
-                  ) : (
-                    <>
+                  <button
+                    type="button"
+                    onClick={() => closeDialog()}
+                    disabled={isApplying}
+                    className={cn(
+                      dialogCancelButtonClassName,
+                      'rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-colors'
+                    )}
+                  >
+                    {isReady ? t('Close') : t('Cancel')}
+                  </button>
+                  {isApplying ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground opacity-70"
+                    >
+                      <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
+                      {dialogStatus.applyKind === 'installer'
+                        ? t('Verifying installer…')
+                        : t('Preparing update…')}
+                    </button>
+                  ) : isInstallationRequired ? (
+                    <button
+                      type="button"
+                      onClick={() => void download()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                    >
                       <ExternalLink className="size-4" aria-hidden="true" />
-                      {t('Open installer')}
-                    </>
+                      {t('Show installation steps')}
+                    </button>
+                  ) : isReady ? (
+                    <button
+                      type="button"
+                      onClick={() => void apply()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+                    >
+                      {dialogStatus.applyKind === 'restart' ? (
+                        <>
+                          <RefreshCw className="size-4" aria-hidden="true" />
+                          {t('Restart to update')}
+                        </>
+                      ) : (
+                        <>
+                          <ExternalLink className="size-4" aria-hidden="true" />
+                          {t('Open installer')}
+                        </>
+                      )}
+                    </button>
+                  ) : isInstallerUnavailable ? (
+                    <ExternalTextLink href={APP.update.downloadPage}>
+                      {t('Download manually')}
+                    </ExternalTextLink>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void download()}
+                      disabled={isDownloading}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      <Download className="size-4" aria-hidden="true" />
+                      {isDownloading
+                        ? t('Downloading {{percent}}%', { percent: dialogStatus.progress ?? 0 })
+                        : dialogStatus.totalBytes
+                          ? t('Download update ({{size}})', {
+                              size: formatBytes(dialogStatus.totalBytes)
+                            })
+                          : t('Download update')}
+                    </button>
                   )}
-                </button>
-              ) : isInstallerUnavailable ? (
-                <ExternalTextLink href={APP.update.downloadPage}>
-                  {t('Download manually')}
-                </ExternalTextLink>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => void download()}
-                  disabled={isDownloading}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-                >
-                  <Download className="size-4" aria-hidden="true" />
-                  {isDownloading
-                    ? t('Downloading {{percent}}%', { percent: dialogStatus.progress ?? 0 })
-                    : dialogStatus.totalBytes
-                      ? t('Download update ({{size}})', {
-                          size: formatBytes(dialogStatus.totalBytes)
-                        })
-                      : t('Download update')}
-                </button>
-              )}
+                </div>
+              </div>
             </div>
           </Dialog.Content>
         </Dialog.Portal>
@@ -387,7 +421,9 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
           void apply({ legacyShellRecoveryToken: recoveryToken })
         }}
         onCloseAutoFocus={(event) => {
-          const trigger = failureNotice.current?.querySelector('button')
+          const trigger = failureNotice.current?.querySelector<HTMLButtonElement>(
+            '[data-testid="legacy-update-recovery"]'
+          )
           if (open && isReady && trigger) {
             event.preventDefault()
             trigger.focus()
@@ -400,20 +436,34 @@ const LegacyUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.
 
 const UpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element | null => {
   const status = useUpdateStore((state) => state.status)
+  const isOpen = useUpdateStore((state) => state.isDialogOpen)
   const runtimeLifecycle =
     status.reason || status.recovery || status.cliConfirmation || status.outcome
   const hasUpdateState = ['available', 'downloading', 'ready', 'applying', 'error'].includes(
     status.state
   )
-  return runtimeLifecycle ||
+  const useRuntime = Boolean(
+    runtimeLifecycle ||
     ((hasUpdateState || status.state === 'checking') &&
       status.applyKind === 'restart' &&
       (!status.error || (status.state === 'error' && !status.blockedBy?.length)) &&
       status.error !== UPDATE_INSTALLATION_REQUIRED &&
-      !status.legacyShellRecovery) ? (
-    <RuntimeUpdateDialog active={active} />
+      !status.legacyShellRecovery)
+  )
+  const runtimeId = runtimeUpdateState(status)
+  const manual = useManualUpdate(
+    Boolean(
+      active &&
+      !status.outcome &&
+      (useRuntime
+        ? isOpen || recoveryStates.has(runtimeId) || progressStates.has(runtimeId)
+        : isOpen && hasUpdateState && status.latest)
+    )
+  )
+  return useRuntime ? (
+    <RuntimeUpdateDialog active={active} manual={manual} />
   ) : (
-    <LegacyUpdateDialog active={active && hasUpdateState} />
+    <LegacyUpdateDialog active={active && hasUpdateState} manual={manual} />
   )
 }
 

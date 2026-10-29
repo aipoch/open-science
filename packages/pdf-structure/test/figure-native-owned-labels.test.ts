@@ -7,6 +7,7 @@ const { associateFigures } = await import(
 )
 const {
   nativeFigureMarginPageNumber,
+  nativeRepeatedFigureHeader,
   nativeOwnedFigureLabels,
   nativeOwnedFigureGlyphTails,
   nativePanelTopHeading,
@@ -14,6 +15,174 @@ const {
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-owned-figure-labels.mjs')).href
 )
+const { tableTextToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+const { nativeFigureLabelBounds } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-crop-geometry.mjs')).href
+)
+
+function repeatedNativeHeader(kind: string): ReturnType<typeof JSON.parse> {
+  const style = { ascent: 0.7, descent: -0.2, vertical: false, fontFamily: 'serif' }
+  const raw = (str: string, x: number, baseline: number, width: number): unknown => ({
+    str,
+    dir: 'ltr',
+    width,
+    height: 10,
+    transform: [10, 0, 0, 10, x, 800 - baseline],
+    fontName: 'native-font',
+    hasEOL: false
+  })
+  const items: ReturnType<typeof JSON.parse> = [
+    ...(kind === 'title' ? [raw('REPEATED ARTICLE TITLE', 200, 52, 200)] : []),
+    raw('12', kind === 'title' ? 500 : 100, 52, 10),
+    raw('Axis', 150, 100, 30),
+    raw('Figure 1. Observed values.', 100, 360, 250)
+  ]
+  items[kind === 'title' ? 2 : 1].transform = [8.66, 5, -5, 8.66, 150, 700]
+  items.forEach((r: ReturnType<typeof JSON.parse>, index: number) => {
+    r.sourceItem = { pageNumber: 12, index, text: r.str }
+  })
+  const viewport = {
+    width: 600,
+    height: 800,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 800],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+  }
+  const tokens = items.map((r: ReturnType<typeof JSON.parse>) => ({
+    ...tableTextToken(r, viewport, 0),
+    fontAscent: style.ascent,
+    fontDescent: style.descent,
+    nativeLabelRect: nativeFigureLabelBounds(r, style, viewport)
+  }))
+  const lines = tokens.map((t: ReturnType<typeof JSON.parse>) => ({
+    text: t.text,
+    x: t.rect[0],
+    y: t.rect[1],
+    width: t.rect[2] - t.rect[0],
+    height: 10,
+    fontSize: 10
+  }))
+  if (kind === 'title')
+    lines.splice(0, 2, {
+      text: 'REPEATED ARTICLE TITLE 12',
+      x: 200,
+      y: 42,
+      width: 310,
+      height: 10,
+      fontSize: 10
+    })
+  const content = { items, styles: { 'native-font': style } }
+  const witnessContent = structuredClone(content)
+  witnessContent.items.forEach((r: ReturnType<typeof JSON.parse>) => {
+    if (r.str === '12') r.str = '10'
+    delete r.sourceItem
+  })
+  return {
+    page: {
+      pageNumber: 12,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines,
+      graphicsBounds: [{ kind: 'path', operationIndex: 7, normalizedRect: [0.15, 0.08, 0.9, 0.4] }]
+    },
+    tokens,
+    captions: [{ page: 12, lines: ['Figure 1. Observed values.'], rect: [100, 350, 540, 360] }],
+    tables: [],
+    context: {
+      sourceSha256: 'a'.repeat(64),
+      content: structuredClone(content),
+      viewport: { ...viewport, convertToViewportPoint: undefined },
+      runningHeadWitness: {
+        sourceSha256: 'a'.repeat(64),
+        currentPageNumber: 12,
+        witnessPageNumber: 10,
+        currentContent: content,
+        witnessContent,
+        witnessViewport: { ...viewport, convertToViewportPoint: undefined }
+      }
+    }
+  }
+}
+
+it.each(['number', 'title'])(
+  'excludes a repeated native %s header before figure completion',
+  (kind) => {
+    const f = repeatedNativeHeader(kind)
+    const before = structuredClone(f)
+    const result = associateFigures(f.page, f.captions, f.tables, [], [], f.tokens, f.context)
+    expect(result).toEqual([{ caption: f.captions[0], rect: [90, 64, 540, 320], graphicsCount: 1 }])
+    expect(f).toEqual(before)
+  }
+)
+
+it.each([
+  'missing witness',
+  'changed title',
+  'source alias',
+  'incomplete font',
+  'paint collision',
+  'different page label'
+])('preserves an unproved page header with %s', (issue) => {
+  const f = repeatedNativeHeader('title')
+  if (issue === 'missing witness') delete f.context.runningHeadWitness
+  if (issue === 'changed title')
+    f.context.runningHeadWitness.witnessContent.items[0].str = 'A DIFFERENT TITLE'
+  if (issue === 'source alias')
+    f.tokens.at(-1).nested = { sourceItem: { ...f.tokens[0].sourceItem } }
+  if (issue === 'incomplete font') delete f.tokens[0].fontDescent
+  if (issue === 'paint collision') f.page.graphicsBounds[0].normalizedRect[1] = 0.04
+  if (issue === 'different page label') f.page.pageLabel = '7'
+  expect(
+    nativeRepeatedFigureHeader(f.page, f.tokens, f.captions, f.tables, f.context)
+  ).toBeUndefined()
+})
+
+it('retains a repeated header when a rotated font extends into its separating band', () => {
+  const f = repeatedNativeHeader('title')
+  const style = { ascent: 0.9, descent: -0.3, vertical: false, fontFamily: 'serif' }
+  const angle = (160 * Math.PI) / 180
+  const item = structuredClone(f.context.content.items[2])
+  item.fontName = 'plot-font'
+  item.transform = [
+    10 * Math.cos(angle),
+    10 * Math.sin(angle),
+    -10 * Math.sin(angle),
+    10 * Math.cos(angle),
+    150,
+    700
+  ]
+  const viewport = {
+    ...f.context.viewport,
+    convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+  }
+  item.transform[5] += nativeFigureLabelBounds(item, style, viewport)[1] - 61
+  for (const content of [f.context.content, f.context.runningHeadWitness.currentContent]) {
+    content.items[2] = structuredClone(item)
+    content.styles['plot-font'] = style
+  }
+  f.tokens[2] = {
+    ...tableTextToken(item, viewport, 0),
+    fontAscent: style.ascent,
+    fontDescent: style.descent,
+    nativeLabelRect: nativeFigureLabelBounds(item, style, viewport)
+  }
+  const line = f.page.lines.find((line: ReturnType<typeof JSON.parse>) => line.text === 'Axis')
+  Object.assign(line, {
+    x: f.tokens[2].rect[0],
+    y: f.tokens[2].rect[1],
+    width: f.tokens[2].rect[2] - f.tokens[2].rect[0],
+    height: f.tokens[2].rect[3] - f.tokens[2].rect[1]
+  })
+  expect(f.tokens[2].nativeLabelRect[1]).toBeCloseTo(61)
+  expect(
+    nativeRepeatedFigureHeader(f.page, f.tokens, f.captions, f.tables, f.context)
+  ).toBeUndefined()
+})
 
 function isolatedMarginNumber(): ReturnType<typeof JSON.parse> {
   const items = [

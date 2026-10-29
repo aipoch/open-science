@@ -16,6 +16,62 @@ export type ConnectorMeta = {
 // Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'europepmc',
+    displayName: 'Europe PMC',
+    description: 'Independent Europe PMC core literature search and abstracts.',
+    useWhen:
+      'Use for direct Europe PMC Boolean/field/date literature search, actual available abstracts and explicit cursor pagination. No NCBI key is required. Use existing PubMed/PMC tools for full text; a link is not proof of retrieved full text.',
+    sources: ['Europe PMC'],
+    termsUrl: 'https://europepmc.org/RestfulWebService',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'research-datasets',
+    displayName: 'Research Datasets',
+    aliases: ['NHANES', 'CHARLS', 'CHNS', 'SEER', 'MIMIC', 'eICU', 'GBD'],
+    description: 'Official research-data access requirements and public file discovery.',
+    useWhen:
+      'Use to discover public NHANES survey files or fixed MIMIC/eICU public demos, or to check official CHARLS/CHNS/SEER/GBD and other research-data access requirements. Metadata does not grant approval. There is no controlled-dataset login/download, local import, job service or analysis database; process acquired authorized files with existing analysis tools.',
+    sources: ['NHANES', 'CHARLS', 'CHNS', 'SEER', 'MIMIC', 'eICU', 'GBD'],
+    termsUrl: 'https://wwwn.cdc.gov/nchs/nhanes/',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'chea3',
+    displayName: 'ChEA3',
+    description: 'Transcription-factor enrichment rankings and official GMT library links.',
+    useWhen:
+      'Use for ChEA3 transcription-factor enrichment from gene symbols or official GMT library discovery. Preserve per-library ranks and scoring context. The public API needs no key, does not report all recognized input genes, and ranks do not prove causality.',
+    sources: ['ChEA3'],
+    termsUrl: 'https://maayanlab.cloud/chea3/',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'biodbnet',
+    displayName: 'bioDBnet',
+    description: 'Identifier discovery, conversion, recognition, orthology and pathways.',
+    useWhen:
+      'Use the official bioDBnet REST API for identifier-type discovery, supported output nodes, db2db conversion, dbFind recognition, dbOrtho mapping or pathway listing. Preserve ambiguous/unmapped outputs and provenance; no local table or Python environment is created.',
+    sources: ['bioDBnet'],
+    termsUrl: 'https://biodbnet-abcc.ncifcrf.gov/webServices/RestWebService.php',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'ctd',
+    displayName: 'CTD',
+    description: 'Official CTD public report entry points and access terms.',
+    useWhen:
+      'Use to find official CTD chemical/gene/disease/pathway/exposure report URLs and terms. This is a maintained file catalog, not live verification, a web All query, a relationship-query API or an import service. Stop on official browser verification; retain CTD headers and citations in downstream analysis.',
+    sources: ['CTD'],
+    termsUrl: 'https://ctdbase.org/about/legal.jsp',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
     id: 'tcia',
     displayName: 'TCIA',
     aliases: ['TCIA', 'Cancer Imaging Archive', 'NBIA'],
@@ -162,10 +218,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'chemistry',
     displayName: 'Chemistry',
-    description: 'Small-molecule chemistry via PubChem, ChEBI, Rhea and BindingDB.',
+    description:
+      'Small-molecule chemistry via PubChem, ChEBI, Rhea, BindingDB, LIPID MAPS and UniChem.',
     useWhen:
-      'Use when a question needs authoritative small-molecule chemistry data — PubChem compound properties (formula, weight, SMILES/InChI, IUPAC name), CID resolution and 2D similarity search, bioassay and GHS safety summaries; ChEBI ontology entities, roles and relations; Rhea enzyme reactions (by ChEBI participant, EC number, or equation text); or BindingDB binding affinities (Ki/Kd/IC50/EC50) by protein target or compound.',
-    sources: ['PubChem', 'ChEBI', 'Rhea', 'BindingDB'],
+      'Use when a question needs authoritative small-molecule chemistry data — PubChem compound properties (formula, weight, SMILES/InChI, IUPAC name), CID resolution and 2D similarity search, bioassay and GHS safety summaries; ChEBI ontology entities, roles and relations; Rhea enzyme reactions (by ChEBI participant, EC number, or equation text); BindingDB binding affinities (Ki/Kd/IC50/EC50) by protein target or compound; LIPID MAPS lipid classification and compound details by exact LMID or PubChem CID; or exact InChIKey/ChEMBL ID mapping to PubChem, ChEMBL and ChEBI through UniChem.',
+    sources: ['PubChem', 'ChEBI', 'Rhea', 'BindingDB', 'LIPID MAPS', 'UniChem'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: false
   },
@@ -207,7 +264,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Gene/protein identity, ontology terms and gene-set enrichment — HGNC, mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.',
     useWhen:
-      'Use for exact HGNC human gene names and alias resolution, or to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name, organism or reviewed status, fetch UniProt records or sequences by accession, map batches of UniProt identifiers, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction, or query Enrichr libraries for transcription-factor, perturbation, drug, disease, tissue and cell-type enrichment.',
+      'Use for HGNC service/field metadata, official file discovery, exact human gene names and alias/historical-symbol resolution, or to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name, organism or reviewed status, fetch UniProt records or sequences by accession, map batches of UniProt identifiers, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction, or query Enrichr libraries for transcription-factor, perturbation, drug, disease, tissue and cell-type enrichment.',
     sources: ['HGNC', 'MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler', 'Enrichr'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
@@ -274,10 +331,10 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     id: 'structures',
     displayName: 'Structures & Interactions',
     description:
-      'Structures and molecular interactions — PDB structures, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks.',
+      'Structures and molecular interactions — PDB structures and PDBe validation, AlphaFold predictions, EMDB cryo-EM entries, Complex Portal complexes, IntAct interaction networks, and OmniPath directed regulation.',
     useWhen:
-      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, summaries, polymer entities, ligands), AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, or IntAct binary interactions and networks.',
-    sources: ['PDB', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct'],
+      'Use when you need a macromolecular 3D structure or a molecular interaction — experimental PDB entries (search, 3D chain similarity, summaries, polymer entities, ligands), PDBe quality summaries and validation statistics with experimental-method context, AlphaFold predicted models, EMDB cryo-EM metadata/validation, curated Complex Portal complexes, IntAct binary interactions and networks, or bounded upstream/downstream signed human protein regulation with OmniPath (query by UniProt accession; mixed-context evidence, not tissue-specific causal proof).',
+    sources: ['PDB', 'PDBe', 'AlphaFold', 'EMDB', 'Complex Portal', 'IntAct', 'OmniPath'],
     termsUrl: 'https://www.rcsb.org/pages/usage-policy',
     requiresNcbi: false
   },
@@ -309,7 +366,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'FDA drug applications, labels, adverse-event reports, recalls and corpus statistics via openFDA.',
     useWhen:
-      'Use when you need FDA drug regulatory and safety data — searching or fetching Drugs@FDA applications (NDA/ANDA/BLA) by brand, generic, ingredient, sponsor, marketing status, or pharmacologic class; aggregate/corpus statistics; generic equivalents of a brand; product label (SPL) sections such as indications and boxed warnings; FAERS adverse-event reports and reaction/drug aggregations; or drug product enforcement and recall reports.',
+      'Use when you need FDA drug regulatory and safety data — searching or fetching Drugs@FDA applications (NDA/ANDA/BLA) by brand, generic, ingredient, sponsor, marketing status, or pharmacologic class; aggregate/corpus statistics; generic equivalents of a brand; product label (SPL) sections such as indications and boxed warnings; FAERS adverse-event reports and reaction/drug aggregations; official openFDA bulk drug/event partition discovery, or drug product enforcement and recall reports.',
     sources: ['openFDA'],
     termsUrl: 'https://open.fda.gov/terms/',
     requiresNcbi: false
@@ -373,10 +430,11 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'cancer-models',
     displayName: 'Cancer Models',
-    description: 'Cancer genomics study records via the cBioPortal REST API.',
+    description:
+      'Cancer genomics studies, cell models, expression, copy number, gene dependencies and drug responses via cBioPortal and DepMap/CCLE.',
     useWhen:
-      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints.",
-    sources: ['cBioPortal'],
+      "Use when you need cancer genomics data from cBioPortal — listing or looking up cancer studies, samples and patients; retrieving patient/sample clinical values; fetching mRNA expression values for genes; the mutations of a gene in a study (recurrent protein changes, mutation types), a gene's mutation frequency across several studies, discrete copy-number alterations (deletions/amplifications) of a gene, or a study's clinical attributes and survival endpoints. Also use for DepMap/CCLE model identity, exact-gene RNA expression (log2(TPM+1)), WGS gene copy number relative to ploidy, Chronos gene effects and exact-compound PRISM secondary AUC profiles; preserve dataset releases, units and missing values.",
+    sources: ['cBioPortal', 'DepMap / CCLE'],
     termsUrl: 'https://www.cbioportal.org/faq',
     requiresNcbi: false
   },
@@ -439,7 +497,7 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     description:
       'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.',
     useWhen:
-      'Use for laboratory cell line identity and curated quality information: search names and aliases, resolve CVCL or RRID:CVCL identifiers, inspect species/tissue origin and donor disease, known contamination or misidentification, ICLAC registrations, and external database mappings.',
+      'Use for Cellosaurus RDF, bounded read-only SPARQL, CLASTR STR similarity and official file discovery, or laboratory cell line identity and curated quality information: search names and aliases, resolve CVCL or RRID:CVCL identifiers, inspect species/tissue origin and donor disease, known contamination or misidentification, ICLAC registrations, and external database mappings.',
     sources: ['Cellosaurus'],
     termsUrl: 'https://www.cellosaurus.org/description.html',
     requiresNcbi: false

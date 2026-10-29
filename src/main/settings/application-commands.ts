@@ -1,3 +1,8 @@
+import type {
+  SavedSkillSource,
+  AddSkillSourceRequest,
+  RemoveSkillSourceRequest
+} from '../../shared/skill-sources'
 import { z } from 'zod'
 import { defineApplicationCommandContract } from '../../shared/application-command-contract'
 import { parseSettingsSnapshot } from '../../shared/settings'
@@ -65,6 +70,7 @@ import {
   readClosePreference,
   readDefaultPermissionProfile,
   readGitHubToken,
+  readNotebookFolderRestrictionEnabled,
   readNotificationsEnabled,
   readShowNotificationContent,
   readProjectFilesFilter,
@@ -128,11 +134,15 @@ type CoreSettingsCommandStore = Pick<
   | 'previewSkillZip'
   | 'probeWslSetup'
   | 'refreshProviderModels'
+  | 'listSkillSources'
+  | 'addSkillSource'
+  | 'removeSkillSource'
   | 'scanRepoSkills'
   | 'saveGitHubToken'
   | 'removeGitHubToken'
   | 'setClosePreference'
   | 'setDefaultPermissionProfile'
+  | 'setNotebookFolderRestrictionEnabled'
   | 'setNotificationsEnabled'
   | 'setShowNotificationContent'
   | 'setPackageMirror'
@@ -412,6 +422,21 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: RefreshProviderModelsRequest],
     StoreResult<'refreshProviderModels'>
   >('settings:refresh-provider-models'),
+  listSkillSources: defineApplicationCommand<
+    'settings:list-skill-sources',
+    readonly [],
+    SavedSkillSource[]
+  >('settings:list-skill-sources'),
+  addSkillSource: defineApplicationCommand<
+    'settings:add-skill-source',
+    readonly [request: AddSkillSourceRequest],
+    SavedSkillSource[]
+  >('settings:add-skill-source'),
+  removeSkillSource: defineApplicationCommand<
+    'settings:remove-skill-source',
+    readonly [request: RemoveSkillSourceRequest],
+    SavedSkillSource[]
+  >('settings:remove-skill-source'),
   scanRepoSkills: defineApplicationCommand<
     'settings:scan-repo-skills',
     readonly [request: ScanRepoRequest],
@@ -442,6 +467,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetDefaultPermissionProfileRequest],
     StoreResult<'setDefaultPermissionProfile'>
   >('settings:set-default-permission-profile'),
+  setNotebookFolderRestrictionEnabled: defineApplicationCommand<
+    'settings:set-notebook-folder-restriction-enabled',
+    readonly [request: { enabled: boolean }],
+    StoreResult<'setNotebookFolderRestrictionEnabled'>
+  >('settings:set-notebook-folder-restriction-enabled'),
   setNotificationsEnabled: defineApplicationCommand<
     'settings:set-notifications-enabled',
     readonly [request: SetNotificationsEnabledRequest],
@@ -579,12 +609,16 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.installRecommendedWslDistro,
   settingsCoreApplicationCommands.openWslTerminal,
   settingsCoreApplicationCommands.refreshProviderModels,
+  settingsCoreApplicationCommands.listSkillSources,
+  settingsCoreApplicationCommands.addSkillSource,
+  settingsCoreApplicationCommands.removeSkillSource,
   settingsCoreApplicationCommands.scanRepoSkills,
   settingsCoreApplicationCommands.saveGitHubToken,
   settingsCoreApplicationCommands.removeGitHubToken,
   settingsCoreApplicationCommands.setAppIconVariant,
   settingsCoreApplicationCommands.setClosePreference,
   settingsCoreApplicationCommands.setDefaultPermissionProfile,
+  settingsCoreApplicationCommands.setNotebookFolderRestrictionEnabled,
   settingsCoreApplicationCommands.setNotificationsEnabled,
   settingsCoreApplicationCommands.setShowNotificationContent,
   settingsCoreApplicationCommands.setPackageMirror,
@@ -779,6 +813,9 @@ const registerCoreSettingsApplicationCommands = (
         dependencies.snapshotCommits.projectAfter(
           dependencies.runtime.refreshProviderModels(args[0])
         ),
+      'settings:list-skill-sources': () => dependencies.service.listSkillSources(),
+      'settings:add-skill-source': ({ args }) => dependencies.service.addSkillSource(args[0]),
+      'settings:remove-skill-source': ({ args }) => dependencies.service.removeSkillSource(args[0]),
       'settings:scan-repo-skills': ({ args }) => dependencies.service.scanRepoSkills(args[0]),
       'settings:save-github-token': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:save-github-token')
@@ -804,6 +841,14 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:set-default-permission-profile')
         return dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.setDefaultPermissionProfile(readDefaultPermissionProfile(args[0]))
+        )
+      },
+      'settings:set-notebook-folder-restriction-enabled': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:set-notebook-folder-restriction-enabled')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setNotebookFolderRestrictionEnabled(
+            readNotebookFolderRestrictionEnabled(args[0])
+          )
         )
       },
       'settings:set-notifications-enabled': ({ args, callerContext }) => {

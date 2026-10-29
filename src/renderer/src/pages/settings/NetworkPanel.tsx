@@ -188,7 +188,7 @@ const NetworkPanel = ({
     ? t('Could not load local network details.')
     : [typeLabel ?? null, networkInfo?.ipAddress ?? null]
         .filter((part) => part !== null)
-        .join(' · ') || undefined
+        .join(' / ') || undefined
 
   const networkLabel = t('Package registry connectivity')
 
@@ -322,7 +322,7 @@ const NetworkPanel = ({
                   })}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {t('Trusted private services')} ·{' '}
+                  {t('Trusted private services')}{' '}
                   {notebookNetwork.trustedPrivateDestinations?.length ?? 0}
                 </p>
               </div>

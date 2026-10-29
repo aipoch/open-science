@@ -58,6 +58,7 @@ export const WorkspaceAssistantMessageSurface = ({
 export const WorkspaceActivityGroupSurface = ({
   title,
   meta,
+  icon,
   isExpanded,
   onToggle,
   animate = true,
@@ -66,6 +67,7 @@ export const WorkspaceActivityGroupSurface = ({
 }: {
   title: ReactNode
   meta: ReactNode
+  icon?: ReactNode
   isExpanded: boolean
   onToggle: () => void
   animate?: boolean
@@ -84,6 +86,11 @@ export const WorkspaceActivityGroupSurface = ({
       className="flex w-full items-center gap-2 rounded-lg py-[5px] pl-1.5 pr-2.5 text-[13px] transition-colors hover:bg-bg-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
       onClick={onToggle}
     >
+      {icon}
+      <span className="min-w-0 truncate text-left font-medium text-text-000">{title}</span>
+      <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-000">
+        {meta}
+      </span>
       <span
         className={cn(
           'inline-flex w-4 shrink-0 items-center justify-center text-text-100 transition-transform duration-200',
@@ -91,10 +98,6 @@ export const WorkspaceActivityGroupSurface = ({
         )}
       >
         <ChevronRight className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-      </span>
-      <span className="min-w-0 truncate text-left font-medium text-text-000">{title}</span>
-      <span className="ml-auto shrink-0 whitespace-nowrap text-[12px] tabular-nums text-text-000">
-        {meta}
       </span>
     </button>
     {animate ? (

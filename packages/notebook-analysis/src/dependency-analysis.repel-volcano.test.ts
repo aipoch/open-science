@@ -66,7 +66,10 @@ it('recovers the self-contained plot after the blocked installation attempt', as
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
-    expect(projection.stalenessByRunId['5']).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId['5']).toEqual({
+      state: 'unknown',
+      reasons: ['external-state', 'opaque-call']
+    })
     expect(projection.dependenciesByRunId?.['5'] ?? []).not.toContain('4')
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -83,11 +86,12 @@ it.each(cells.filter((cell) => cell.status === 'completed'))(
           ? facts.reasons.filter((reason) => !['external-state', 'control-flow'].includes(reason))
           : []
       )
-      .toEqual([])
+      .toEqual(['2', '3', '5'].includes(runId) ? ['opaque-call'] : [])
     expect.soft(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete',
+      // The p-value cut has neither numeric column nor method evidence.
+      readState: ['2', '3', '5'].includes(runId) ? 'partial' : 'complete',
+      writeState: ['2', '3', '5'].includes(runId) ? 'partial' : 'complete',
+      externalState: ['2', '3', '5'].includes(runId) ? 'partial' : 'complete',
       reads: ['inputs/differential-results-333333333333.xlsx'],
       writes: runId === '5' ? ['volcano_plot.pdf', 'volcano_plot.png'] : []
     })

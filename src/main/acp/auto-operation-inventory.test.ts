@@ -48,6 +48,7 @@ const notebookOperations: Record<string, 'inner_authorization' | 'legacy' | 'ope
   bash_execute: 'legacy',
   request_network_access: 'inner_authorization',
   notebook_state: 'legacy',
+  list_authorized_directories: 'legacy',
   list_notebook_runtimes: 'legacy',
   notebook_bind_runtime: 'legacy',
   notebook_switch_runtime: 'legacy',
@@ -153,17 +154,20 @@ describe('Auto operation completeness against real tool registrations', () => {
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
+        // Reviewed: authorized-folder import guidance only; strict inputs and the
+        // allow-once disposition remain unchanged. Source access is checked by the artifact owner.
         'artifacts/mcp-server.ts':
-          '6b43e2b69387c7310dee65d97674b94e608a349f987ef90d7dd5cee7ff675c7f',
+          '0150b09ce68441eefcfafd751f6c52039e068a62d5d55e0bc0beca8343a61cc2',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
         // Reviewed: desktop regions come only from the message snapshot; strict tool inputs
         // preserve linked-PDF identity, mounted-server checks and single-use authorization.
         'literature/mcp-server.ts':
           'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
-        // Reviewed: question/mode guidance only; input validation and handlers are unchanged.
+        // Reviewed: Windows Bioconductor installer guidance only; schemas, handlers and Auto
+        // operation dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '9f0c679d39461462307788133da200b7534604d1bd9086819d513dca78bf2dc5',
+          'eeb9c3c6aab1c72f32fc6e4f0045a4aac34cf8881e014e8538fe5174cea261d8',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'

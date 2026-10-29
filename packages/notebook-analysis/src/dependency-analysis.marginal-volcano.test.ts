@@ -46,9 +46,12 @@ it.each(runsFor())('captures marginal volcano cell $runId and its prior values',
     const { facts } = await analyzeRNotebookSource(run.script, context)
     const access = await analyzeNotebookSourceFileAccess('r', run.script, context)
     expect(access, JSON.stringify({ facts, context })).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete'
+      // Conditional column renaming does not retain an ordinary ID-column
+      // proof for duplicated; its methods can affect later bindings. The
+      // literal CSV/Excel inputs and plot destination still remain known.
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
     })
     expect(access.reads).toEqual(
       run.runId === '9'
@@ -79,11 +82,16 @@ it('retains marginal input paths without certifying conditional preparation depe
     for (const runId of ['9', '10', '11']) {
       expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toEqual({
         state: 'unknown',
-        reasons: ['control-flow']
+        reasons:
+          runId === '9'
+            ? ['control-flow', 'external-state', 'opaque-call']
+            : runId === '10'
+              ? ['external-state', 'opaque-call', 'opaque-mutation']
+              : ['external-state', 'opaque-call']
       })
       expect(projection.dependenciesByRunId?.[runId]).toBeUndefined()
     }
-    expect(projection.unresolvedFileReadRunIds).toEqual(['9', '10'])
+    expect(projection.unresolvedFileReadRunIds).toEqual(['9', '10', '11'])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -111,7 +119,10 @@ it('excludes failed header assignment while retaining uncertainty in both prepar
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(before.stalenessByRunId['11']).toEqual({ state: 'unknown', reasons: ['control-flow'] })
+    expect(before.stalenessByRunId['11']).toEqual({
+      state: 'unknown',
+      reasons: ['external-state', 'opaque-call']
+    })
     expect(before.stalenessByRunId['8']).toBeUndefined()
     for (const runId of ['9', '10', '11']) {
       expect(before.dependenciesByRunId?.[runId]).toBeUndefined()
@@ -133,7 +144,7 @@ it('excludes failed header assignment while retaining uncertainty in both prepar
     })
     expect(after.stalenessByRunId['retry-11'], JSON.stringify(after)).toEqual({
       state: 'unknown',
-      reasons: ['control-flow']
+      reasons: ['external-state', 'opaque-call']
     })
     expect(after.dependenciesByRunId?.['retry-11']).toBeUndefined()
   } finally {

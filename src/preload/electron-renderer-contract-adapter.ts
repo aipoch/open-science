@@ -115,6 +115,8 @@ const encodeRequestArguments = (
       ]
     case 'session-package-import-file': {
       if (args[1] === undefined) return args
+      // Main validates catalog requests; sandboxed preload only distinguishes them from Files.
+      if (args[1] !== null && typeof args[1] === 'object' && 'useCase' in args[1]) return args
       const sourcePath = getPathForFile(args[1])
       if (!sourcePath) throw new Error('The dropped file has no native path.')
       return [args[0], sourcePath]

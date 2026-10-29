@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../sandbox-network-approval'
 import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
@@ -78,9 +79,10 @@ export const resolveRestorablePermissionToolAuthority = (
 
 const hasRestorablePermissionWait = (session: PersistedChatSession): boolean =>
   Boolean(
-    session.status === 'waiting-permission' &&
-    session.runtimeContext?.permission?.state === 'pending' &&
-    resolveRestorablePermissionToolAuthority(session)
+    (session.status === 'waiting-permission' &&
+      session.runtimeContext?.permission?.state === 'pending' &&
+      resolveRestorablePermissionToolAuthority(session)) ||
+    hasPendingSandboxNetworkApproval(session)
   )
 
 // Identifies UI states that cannot survive an app process shutdown. Permission waits are durable
@@ -127,7 +129,8 @@ const latestUserMessageId = (messages: PersistedChatMessage[]): string | undefin
 export const rearmUnacceptedElicitationContinuations = (
   session: PersistedChatSession,
   promptMessageId?: string,
-  question?: { requestId: string; toolCallId: string }
+  question?: { requestId: string; toolCallId: string },
+  recovery?: { error: string; retryable?: true }
 ): PersistedChatSession => {
   if (session.runtimeTranscriptOwner !== 'main' || !session.conversationGraph) return session
   const graph = session.conversationGraph
@@ -144,6 +147,8 @@ export const rearmUnacceptedElicitationContinuations = (
           activity.promptMessageId === promptId &&
           activity.elicitation?.durable?.kind === 'agent-user-choice' &&
           activity.elicitation.continuationPending === true &&
+          (activity.elicitation.state === 'answered' ||
+            activity.elicitation.state === 'declined') &&
           (!question ||
             (activity.id === question.toolCallId &&
               activity.elicitation.durable.requestId === question.requestId))
@@ -153,20 +158,17 @@ export const rearmUnacceptedElicitationContinuations = (
   if (recoverable.size === 0) return session
   const rearm = <T extends PersistedToolActivity>(activity: T): T => {
     if (!recoverable.has(activity.id) || !activity.elicitation) return activity
-    const {
-      continuationPending: _pending,
-      respondedAt: _respondedAt,
-      ...elicitation
-    } = activity.elicitation
-    void _pending
-    void _respondedAt
     return {
       ...activity,
-      status: 'in_progress',
       elicitation: {
-        ...elicitation,
-        state: 'pending',
-        ...(elicitation.answers?.length ? { draftAnswers: elicitation.answers } : {})
+        ...activity.elicitation,
+        continuationRecovery: recovery ?? {
+          // Restart cannot prove whether a lost transport accepted the request. Preserve
+          // the decision, but never grant replay permission from a process-local receipt.
+          error:
+            activity.elicitation.continuationRecovery?.error ??
+            'The task could not continue. Your response is saved.'
+        }
       }
     }
   }
@@ -292,11 +294,16 @@ export const normalizeSessionAfterRestore = (
     reconcileCompletedRecovery?: boolean
   } = {}
 ): PersistedChatSession => {
+  // A saved Global decision remains continuing. Main resumes that decision idempotently;
+  // re-presenting it as pending could offer Deny after Settings already persisted the grant.
   // Main releases unadmitted preparations; ordinary reads must retain their exact run witness.
   if (isPreparedSessionRun(session)) return session
   const persistedRuntimeContext = session.runtimeContext
   const continuingPermission = persistedRuntimeContext?.permission
-  if (options.deferPermissionValidation && continuingPermission) {
+  if (
+    options.deferPermissionValidation &&
+    (continuingPermission || persistedRuntimeContext?.networkApprovals?.length)
+  ) {
     return {
       ...session,
       messages: session.messages.map(normalizeMessageAfterRestore)
@@ -444,7 +451,8 @@ export const normalizeActivityAfterRestore = (
         activity.providerToolName === 'Open-Science' &&
         typeof activity.rawInput === 'object' &&
         activity.rawInput !== null &&
-        'notebookCodeRisk' in activity.rawInput))
+        ('notebookCodeRisk' in activity.rawInput ||
+          'notebookNetworkApproval' in activity.rawInput)))
   const normalized: PersistedToolActivity = {
     ...activity,
     ...(closesOpenActivity

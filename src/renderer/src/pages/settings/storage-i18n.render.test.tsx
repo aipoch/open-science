@@ -131,13 +131,13 @@ describe('StoragePanel copy', () => {
     await flush()
     expect(container.textContent).toContain('Data location')
     expect(container.textContent).toContain('Change location')
-    expect(container.textContent).toContain('35.6 MB on disk · default location')
+    expect(container.textContent).toContain('35.6 MB on disk: default location')
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain('数据位置')
     expect(container.textContent).toContain('更改位置')
     // Byte units stay untranslated; only the surrounding sentence changes.
-    expect(container.textContent).toContain('占用磁盘 35.6 MB · 默认位置')
+    expect(container.textContent).toContain('占用磁盘 35.6 MB，默认位置')
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain('資料位置')

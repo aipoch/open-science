@@ -212,9 +212,12 @@ for (const dark of [false, true]) {
       top: '0px',
       right: '0px',
       bottom: '0px',
-      left: '1px',
+      left: '0px',
       shadow: 'none'
     })
+    expect(await choose.evaluate((element) => getComputedStyle(element, '::after').width)).toBe(
+      '1px'
+    )
     await page.getByRole('button', { name: 'Batch actions' }).click()
     await expect(page.getByText('Selected: 0', { exact: true })).toBeVisible()
     await expect(

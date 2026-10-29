@@ -306,13 +306,16 @@ export async function applyCachedPdfFigureSources({
   sourceId,
   sourceIdentity,
   signal,
+  nativeDocumentFactory,
   readCached
 }: {
   extraction: PdfTranslationExtraction
-  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'>
+  document: Pick<PDFDocumentProxy, 'numPages' | 'fingerprints' | 'getPage'> &
+    Partial<Pick<PDFDocumentProxy, 'getData' | 'getMetadata'>>
   sourceId: string
   sourceIdentity: PdfTranslationSourceIdentity
   signal: AbortSignal
+  nativeDocumentFactory?: typeof import('pdfjs-dist').getDocument
   readCached: (
     request: Readonly<{ sourceId: string; page: number }>
   ) => Promise<PdfStructureResult | undefined>
@@ -398,7 +401,14 @@ export async function applyCachedPdfFigureSources({
           !figure.caption ||
           // This code records the native recovery mechanism, not uncertainty.
           // It never substitutes for the complete source and geometry proof below.
-          figure.issues.some((issue) => issue.code !== 'native-raster-composite-grid')
+          figure.issues.some(
+            (issue) =>
+              issue.code !== 'native-raster-composite-grid' &&
+              issue.code !== 'native-raster-side-by-side' &&
+              issue.code !== 'native-raster-quad' &&
+              issue.code !== 'native-raster-horizontal-array' &&
+              issue.code !== 'native-disjoint-mixed-group'
+          )
         )
           continue
         for (const item of figure.sourceItems) {
@@ -423,6 +433,16 @@ export async function applyCachedPdfFigureSources({
           }
           const original = native.get(item.pageNumber)!.items[item.index]
           if (!original || !('str' in original) || original.str !== item.text) return extraction
+          const style = native.get(item.pageNumber)!.styles?.[original.fontName]
+          if (
+            !style ||
+            !Number.isFinite(style.ascent) ||
+            !Number.isFinite(style.descent) ||
+            style.ascent! <= 0 ||
+            style.descent! > 0 ||
+            style.ascent! <= style.descent!
+          )
+            return extraction
           const region = nativeLabelRegion(
             original,
             native.get(item.pageNumber)!.styles?.[original.fontName],
@@ -509,6 +529,7 @@ export async function applyCachedPdfFigureSources({
       document,
       results,
       sourceIdentity: identity,
+      nativeDocumentFactory,
       signal
     })
   } catch {

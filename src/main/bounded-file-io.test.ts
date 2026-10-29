@@ -1,4 +1,4 @@
-import { mkdtemp, open, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +8,8 @@ import {
   copyOpenFileWithinBudget,
   readFilePageAndDigest,
   readVerifiedFilePage,
+  observeFile,
+  sameFileObservation,
   writeInlineWithinBudget
 } from './bounded-file-io'
 import { ResourceBudgetExceededError } from './resource-budget'
@@ -20,6 +22,24 @@ afterEach(async () => {
 })
 
 describe('bounded file IO', () => {
+  it.each(['dev', 'ino'] as const)(
+    'retains distinct 64-bit %s values that Number aliases',
+    async (field) => {
+      root = await mkdtemp(join(tmpdir(), 'bounded-file-identity-'))
+      const source = join(root, 'source')
+      await writeFile(source, 'verified bytes')
+      const stats = await stat(source, { bigint: true })
+      const first = 9007199254740992n
+      const second = first + 1n
+      expect(Number(first)).toBe(Number(second))
+      const admitted = observeFile(Object.assign(stats, { [field]: first }))
+      const replacement = observeFile(Object.assign(stats, { [field]: second }))
+      expect(sameFileObservation(admitted, replacement)).toBe(false)
+      expect(admitted[field === 'dev' ? 'device' : 'inode']).toBe(first.toString())
+      expect(replacement[field === 'dev' ? 'device' : 'inode']).toBe(second.toString())
+    }
+  )
+
   it('stops a streaming copy at the file limit', async () => {
     root = await mkdtemp(join(tmpdir(), 'bounded-file-io-'))
     const source = join(root, 'source')

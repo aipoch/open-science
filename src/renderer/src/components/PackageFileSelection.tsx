@@ -205,14 +205,11 @@ export const PackageFileSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
-          <p className="text-sm leading-5 text-muted-foreground">
-            {t('Research history is always included.')}
-          </p>
           <fieldset className="grid gap-2 sm:grid-cols-2">
             <legend className="sr-only">{t('Package contents')}</legend>
             {(['compact', 'full'] as const).map((preset) => (
@@ -307,22 +304,17 @@ export const PackageFileSelection = ({
               </p>
             ) : null}
             {stats.optionalCount > 0 ? (
-              <p className="text-xs text-muted-foreground">
-                {t('Optional files: {{selected}} / {{total}} selected · {{size}}', {
-                  selected: stats.selectedOptionalCount,
-                  total: stats.optionalCount,
-                  size: packageBytes(stats.selectedOptionalBytes)
-                })}
+              <p className="flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+                <span>
+                  {t('Optional files: {{selected}} / {{total}} selected', {
+                    selected: stats.selectedOptionalCount,
+                    total: stats.optionalCount
+                  })}
+                </span>
+                <span className="tabular-nums">{packageBytes(stats.selectedOptionalBytes)}</span>
               </p>
             ) : null}
           </div>
-          {excluded.size > 0 && selectionPreset === 'custom' ? (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {t(
-                'Some file contents are not included. Review your selection in Customize contents.'
-              )}
-            </p>
-          ) : null}
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -357,15 +349,16 @@ export const PackageFileSelection = ({
               </Tooltip>
             </TooltipProvider>
           </div>
-          {files.some((file) => file.source === 'literature') ? (
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              {t(
-                'Literature metadata is always included. Full export includes PDFs; Essential export omits them. Choose PDFs in Customize contents.'
-              )}
-            </p>
-          ) : null}
           {customizing ? (
             <div id="package-customization" className="space-y-4 border-t border-border pt-4">
+              {files.some((file) => file.source === 'literature') ? (
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  {t(
+                    'Literature metadata is always included. Full export includes PDFs; Essential export omits them. Choose PDFs in Customize contents.'
+                  )}
+                </p>
+              ) : null}
+
               {summary && summary.retainedFiles.length > 0 ? (
                 <section className="rounded-lg border border-border p-3 text-xs">
                   <div className="flex flex-wrap items-center gap-2">
@@ -731,9 +724,6 @@ export const PackageFileSelection = ({
               {children}
             </div>
           ) : null}
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            {t('Review private data before sharing.')}
-          </p>
           {summary?.pdfNotesAvailable ? (
             <label className="flex items-start gap-2 text-sm">
               <input

@@ -71,6 +71,8 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
       - name: Build Electron application
         run: npm run build:e2e
+      - name: Build Windows sandbox native host
+        run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Download Windows Notebook runtime
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -93,15 +95,17 @@ jobs:
           if-no-files-found: error
 
   windows_e2e:
-    name: Windows E2E regression (shard ${{ matrix.shard }}/3)
+    name: Windows E2E regression (shard ${{ matrix.shard }}/6)
     needs: [plan, windows_e2e_setup]
     if: ${{ !cancelled() && needs.plan.outputs.should_test == 'true' && needs.windows_e2e_setup.result == 'success' }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    # Budget both 7-minute browser attempts, two 15-minute Electron suites,
+    # setup and diagnostic uploads; 40 minutes can cancel a healthy final suite.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3]') }}
+        shard: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -136,7 +140,7 @@ jobs:
         # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
         # Keep each browser process serialized and cap its loopback socket churn with runner shards.
         shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests
+        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests
       - name: Run functional journeys
         id: e2e_functional_windows
         if: ${{ steps.setup.outcome == 'success' && (github.event_name != 'workflow_dispatch' || inputs.workspace_test_pattern == '') }}
@@ -145,9 +149,9 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Isolate Electron desktops: parallelize across runners, never within one runner.
-        # The complete serial shard exceeded 10 minutes with 12/15 tests passing; reserve
-        # 15 minutes for all journeys and teardown while retaining per-test timeouts.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000 --fail-on-flaky-tests
+        # Three serial shards left journeys unrun at the 15-minute cap. Six shards preserve
+        # the complete test set and existing per-test/global deadlines.
+        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/6 --global-timeout=900000 --fail-on-flaky-tests
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
@@ -166,7 +170,7 @@ jobs:
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
-        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000 --fail-on-flaky-tests
+        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/6 --global-timeout=900000 --fail-on-flaky-tests
       - name: Diagnose selected workspace journey
         id: workspace_diagnostic
         if: ${{ steps.setup.outcome == 'success' && github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' }}

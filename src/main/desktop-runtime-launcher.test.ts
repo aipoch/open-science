@@ -9,8 +9,11 @@ import {
   DesktopRuntimeStoppingError
 } from './desktop-runtime-launcher'
 import { createDesktopPreviewProxy } from './desktop-preview-proxy'
+const recoveryMocks = vi.hoisted(() => ({ connect: vi.fn() }))
+vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: recoveryMocks.connect }))
 const directories: string[] = []
 afterEach(async () => {
+  recoveryMocks.connect.mockReset()
   vi.unstubAllGlobals()
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
@@ -62,6 +65,175 @@ async function fixture() {
   return { root, owner, fetcher }
 }
 describe('desktop backend discovery', () => {
+  it('silently retires a verified old desktop service while borrowed CLI work is active', async () => {
+    const { root } = await fixture()
+    const release = vi.fn()
+    const stopRuntime = vi.fn(async () => ({ release }))
+    const lifecycle = vi.fn(async () => ({
+      sessions: [{ id: 'borrowed-cli-work' }],
+      fingerprint: 'work',
+      migrationActive: false,
+      packageTransferActive: false
+    }))
+    recoveryMocks.connect.mockResolvedValue({
+      runtimeInfo: () => ({
+        startupOptions: { configRoot: root },
+        entryPath: '/fixture/backend.cjs',
+        launch: 'desktop',
+        control: 'granted'
+      }),
+      lifecycle,
+      refreshControl: vi.fn(),
+      stopRuntime,
+      close: vi.fn()
+    })
+    await expect(
+      discoverDesktopBackend(
+        root,
+        'new',
+        {
+          inspect: async () => ({
+            commandLine: '/fixture/backend.cjs',
+            birthToken: 'fixture',
+            parentPid: 1
+          })
+        },
+        '/fixture/backend.cjs'
+      )
+    ).resolves.toBeUndefined()
+    expect(stopRuntime).toHaveBeenCalledWith('restart', { requireCleanExit: false })
+    expect(lifecycle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'prepare',
+        fingerprint: 'work',
+        deadlineAt: expect.any(Number)
+      })
+    )
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it.each(['cli', 'held', 'unknown'])(
+    'requires consent for old service with %s origin or control',
+    async (kind) => {
+      const { root } = await fixture()
+      const stopRuntime = vi.fn()
+      recoveryMocks.connect.mockResolvedValue({
+        runtimeInfo: () => ({
+          startupOptions: { configRoot: root },
+          entryPath: '/fixture/backend.cjs',
+          launch: kind === 'cli' ? 'cli' : 'desktop',
+          control: kind === 'held' ? 'held' : kind === 'unknown' ? undefined : 'granted'
+        }),
+        stopRuntime,
+        close: vi.fn()
+      })
+      await expect(
+        discoverDesktopBackend(root, 'new', undefined, '/fixture/backend.cjs')
+      ).rejects.toMatchObject({ issue: { canStop: true } })
+      expect(stopRuntime).not.toHaveBeenCalled()
+    }
+  )
+  it('reuses a compatible authenticated service from another installation path', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ...proof(root, owner),
+            entryPath: '/another/installation/backend/index.cjs'
+          })
+        )
+    )
+    await expect(
+      discoverDesktopBackend(root, 'test', undefined, '/current/backend/index.cjs')
+    ).resolves.toEqual(owner.desktop)
+    expect(recoveryMocks.connect).not.toHaveBeenCalled()
+  })
+
+  it('does not stop an initially unused service after a new independent hold wins retirement', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async (url: string) =>
+        new Response(
+          JSON.stringify(
+            url.endsWith('/owner')
+              ? {
+                  ...proof(root, owner),
+                  launch: 'desktop',
+                  lifetime: { explicit: false, apps: 0 }
+                }
+              : {
+                  pid: owner.pid,
+                  generation: owner.generation,
+                  lifetime: {
+                    generation: owner.desktop.generation,
+                    stopping: false,
+                    explicit: true
+                  }
+                }
+          )
+        )
+    )
+    recoveryMocks.connect.mockRejectedValue(new Error('desktop endpoint unavailable'))
+    await expect(
+      discoverDesktopBackend(
+        root,
+        'test',
+        {
+          inspect: async () => ({
+            commandLine: '/fixture/backend/index.cjs',
+            birthToken: 'verified',
+            parentPid: 1
+          })
+        },
+        '/fixture/backend/index.cjs',
+        true
+      )
+    ).resolves.toEqual(owner.desktop)
+    expect(fetcher).toHaveBeenCalledWith(
+      expect.stringContaining('/service/retire'),
+      expect.objectContaining({ method: 'POST' })
+    )
+  })
+
+  it('checks preserved credential configuration before retiring a same-version residue', async () => {
+    const { root, owner, fetcher } = await fixture()
+    fetcher.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ...proof(root, owner),
+            launch: 'desktop',
+            lifetime: { explicit: false, apps: 0 }
+          })
+        )
+    )
+    const verify = vi.fn(() => {
+      throw new Error('Credential profile differs')
+    })
+    await expect(
+      discoverDesktopBackend(
+        root,
+        'test',
+        {
+          inspect: async () => ({
+            birthToken: 'verified',
+            parentPid: 1,
+            commandLine: '/fixture/backend.cjs'
+          })
+        },
+        '/fixture/backend.cjs',
+        true,
+        undefined,
+        undefined,
+        verify
+      )
+    ).rejects.toThrow('Credential profile differs')
+    expect(verify).toHaveBeenCalledOnce()
+    expect(recoveryMocks.connect).not.toHaveBeenCalled()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('authenticates the recorded generation before returning its private attachment', async () => {
     const { root, owner, fetcher } = await fixture()
     await expect(discoverDesktopBackend(root, 'test')).resolves.toEqual(owner.desktop)
@@ -127,7 +299,9 @@ describe('desktop backend discovery', () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
     const error = await discoverDesktopBackend(root, 'different', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({
+        birthToken: 'test-birth',
         commandLine: '/r/node /r/backend/out/backend/index.cjs --desktop',
         parentPid: 1
       }),
@@ -156,6 +330,7 @@ describe('desktop backend discovery', () => {
     fetcher.mockImplementation(async () => new Response(JSON.stringify(legacyProof(owner))))
     const error = await discoverDesktopBackend(root, 'different', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({ commandLine: '/usr/bin/other', parentPid: 1 }),
       lockHeld: () => true,
       signal: async (_pid, mode) => void signals.push(mode)
@@ -180,7 +355,9 @@ describe('desktop backend discovery', () => {
     const signals: string[] = []
     const error = await discoverDesktopBackend(root, 'test', {
       selfPid: -1,
+      proveOwner: async () => true,
       inspect: async () => ({
+        birthToken: 'test-birth',
         commandLine: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
         parentPid: 1
       }),

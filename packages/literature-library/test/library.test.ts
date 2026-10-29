@@ -6,7 +6,14 @@ import {
   normalizedIdentifiers,
   type LibraryImportStore
 } from '../src/index.js'
-import { literatureItemInputSchema, type LiteratureCatalogCommand } from '../src/contracts.js'
+import {
+  literatureCatalogCommandSchema,
+  literatureCatalogReceiptSchema,
+  literatureCatalogSearchRequestSchema,
+  literatureItemInputSchema,
+  literatureItemViewSchema,
+  type LiteratureCatalogCommand
+} from '../src/contracts.js'
 import { describe, expect, it, vi } from 'vitest'
 import { memoryLibrary as createMemoryLibrary } from './memory-store.js'
 const memoryLibrary = () =>
@@ -66,9 +73,97 @@ describe('import-only storage', () => {
   })
 })
 
+describe('personal reading status', () => {
+  it('accepts bounded status commands and filters while keeping old snapshots compatible', async () => {
+    const db = memoryLibrary(),
+      id = await imported(db)
+    const oldSnapshot = { ...db.state.items.get(id)! }
+    delete oldSnapshot.readingStatus
+    expect(literatureItemViewSchema.parse(oldSnapshot).readingStatus).toBeUndefined()
+    for (const readingStatus of ['unread', 'reading', 'read'] as const) {
+      const command = { kind: 'set-reading-status', itemIds: [id], readingStatus }
+      expect(literatureCatalogCommandSchema.parse(command)).toEqual(command)
+      expect(
+        literatureCatalogSearchRequestSchema.parse({ scope: 'library', filter: { readingStatus } })
+      ).toMatchObject({ filter: { readingStatus } })
+    }
+    for (const itemIds of [[], Array.from({ length: 201 }, (_, index) => `item-${index}`)])
+      expect(
+        literatureCatalogCommandSchema.safeParse({
+          kind: 'set-reading-status',
+          itemIds,
+          readingStatus: 'read'
+        }).success
+      ).toBe(false)
+    expect(
+      literatureCatalogCommandSchema.safeParse({
+        kind: 'set-reading-status',
+        itemIds: [id],
+        readingStatus: 'finished'
+      }).success
+    ).toBe(false)
+    expect(
+      literatureCatalogSearchRequestSchema.safeParse({
+        scope: 'library',
+        filter: { readingStatus: 'finished' }
+      }).success
+    ).toBe(false)
+    expect(literatureItemInputSchema.safeParse({ ...paper(), readingStatus: 'read' }).success).toBe(
+      false
+    )
+    expect(
+      literatureCatalogReceiptSchema.parse({ kind: 'item', id, itemIds: [id], state: 'present' })
+        .itemIds
+    ).toEqual([id])
+  })
+
+  it('changes only personal state and rolls back batches containing unavailable references', async () => {
+    const db = memoryLibrary(),
+      id = await imported(db)
+    const original = structuredClone(db.state.items.get(id)!)
+    expect(original.readingStatus).toBe('unread')
+    expect(
+      await db.run((tx) =>
+        tx.setReadingStatus({
+          kind: 'set-reading-status',
+          itemIds: [id, id],
+          readingStatus: 'reading'
+        })
+      )
+    ).toEqual({ kind: 'item', id, itemIds: [id], state: 'present' })
+    expect(db.state.items.get(id)).toMatchObject({
+      item: original.item,
+      metadataRevision: original.metadataRevision,
+      readingStatus: 'reading'
+    })
+    expect(db.state.invalidated).toEqual([])
+    for (const unavailable of ['missing', 'deleted', 'merged']) {
+      if (unavailable !== 'missing')
+        db.state.items.set(unavailable, {
+          ...original,
+          id: unavailable,
+          ...(unavailable === 'deleted' ? { deletedAt: 1 } : { mergedIntoItemId: id })
+        })
+      const before = structuredClone([...db.state.items])
+      await expect(
+        db.run((tx) =>
+          tx.setReadingStatus({
+            kind: 'set-reading-status',
+            itemIds: [id, unavailable],
+            readingStatus: 'read'
+          })
+        )
+      ).rejects.toThrow('unavailable')
+      expect([...db.state.items]).toEqual(before)
+    }
+    expect(db.state.invalidated).toEqual([])
+    expect(db.state.items.get(id)!.readingStatus).toBe('reading')
+  })
+})
+
 describe('independent library transactions', () => {
-  it('removes text joined to a DOI without requiring a host provider', () =>
-    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/example'))
+  it('preserves opaque DOI suffixes without requiring a host provider', () =>
+    expect(normalizeIdentifier('doi', '10.1234/exampleCopyright')).toBe('10.1234/examplecopyright'))
   it('previews repeated identities using virtual targets and commits one reference', async () => {
     const db = memoryLibrary(),
       inputs = [paper(), paper()]

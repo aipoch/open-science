@@ -141,7 +141,13 @@ describe('scientific data-source contracts', () => {
     expect(() =>
       registry.validateToolArguments(tool, { ...tool.exampleArgs, unexpected: true })
     ).toThrow()
-    expect(() => registry.validateToolArguments(tool, {})).toThrow()
+    // Service/file discovery may have only optional arguments. Required-input tools
+    // still reject an empty call; unknown properties remain rejected for every tool.
+    if ((tool.input.required as string[] | undefined)?.length) {
+      expect(() => registry.validateToolArguments(tool, {})).toThrow()
+    } else {
+      expect(() => registry.validateToolArguments(tool, {})).not.toThrow()
+    }
   })
 
   it.each([

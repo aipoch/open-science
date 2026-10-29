@@ -1,4 +1,9 @@
+import type { CollectorRequest, CollectorResult } from '../literature-collector'
 import type {
+  LiteraturePublicationCheckRequest,
+  LiteraturePublicationCheckResult,
+  LiteratureRelatedRequest,
+  LiteratureRelatedResult,
   LiteratureSupplementRequest,
   LiteratureSupplementAttachmentRequest,
   LiteratureFullTextProgress,
@@ -76,6 +81,10 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.collect': callable<(request: CollectorRequest) => Promise<CollectorResult>>()(
+    'literature',
+    ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'literature.getCandidateStates': callable<
     (request: LiteratureCandidateStatesRequest) => Promise<LiteratureCandidateStatesResult>
   >()('literature', [
@@ -178,6 +187,12 @@ export const contracts = {
     undefined,
     RUNTIME_VALIDATED
   ]),
+  'literature.publicationCheck': callable<
+    (request: LiteraturePublicationCheckRequest) => Promise<LiteraturePublicationCheckResult>
+  >()('literature', ['literature:publication-check', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'literature.related': callable<
+    (request: LiteratureRelatedRequest) => Promise<LiteratureRelatedResult>
+  >()('literature', ['literature:related', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.supplements': callable<
     (request: LiteratureSupplementRequest) => Promise<LiteratureSupplementResult>
   >()('literature', ['literature:supplements', WEB, undefined, undefined, RUNTIME_VALIDATED]),

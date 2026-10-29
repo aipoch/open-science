@@ -30,6 +30,7 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
       'bash_execute',
       'request_network_access',
       'notebook_state',
+      'list_authorized_directories',
       'list_notebook_runtimes',
       'notebook_bind_runtime',
       'notebook_switch_runtime',
@@ -119,6 +120,11 @@ const appMcpToolIdentities = (): readonly string[] =>
     rememberedPermission === false ? [] : tools.map((tool) => `${canonicalName}/${tool}`)
   )
 
+const appMcpServerNames = (frameworkId: AgentFrameworkId): readonly string[] =>
+  APP_MCP_SERVERS.map(({ canonicalName }) =>
+    modelFacingAppMcpServerName(frameworkId, canonicalName)
+  )
+
 const resolveCanonicalMcpToolIdentity = (
   name: string | null | undefined,
   mcpServerNames: readonly string[]
@@ -200,6 +206,7 @@ const renderAppMcpToolReferences = (frameworkId: AgentFrameworkId, text: string)
 }
 
 export {
+  appMcpServerNames,
   appMcpServerAliases,
   appMcpToolIdentities,
   canonicalAppMcpServerName,

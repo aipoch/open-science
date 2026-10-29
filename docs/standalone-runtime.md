@@ -38,6 +38,12 @@ external. Resource-bearing and native dependencies retain their existing module 
 Desktop staging also excludes the audited type-only API SDK peer of Claude Agent SDK 0.3.232;
 the Agent SDK runtime remains included, and other versions or incoming edges remain intact.
 
+Release CLI and desktop packages omit audited unused dependency variants and duplicate
+Electron-side payloads while retaining runtime assets, licenses and diagnostic symbols.
+npm/SDK declarations and exports remain available. Local translation keeps its existing
+WASM runtime. Micromamba ships once under the backend's `resources` directory, including
+the Windows compatibility runner.
+
 Before unattended operation, review [intended use](usage-scope.md), the
 [security model](security.md), and [known limitations](known-limitations.md). A headless service
 retains the host's configured permissions and data recipients; absence of a desktop window does not
@@ -280,8 +286,19 @@ Development commands:
 Desktop packaging's `beforePack` hook builds/stages the backend and ordinary Node, even when CI
 invokes electron-builder directly. It refuses cross-OS/architecture packaging. The pinned executable
 and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.4 to retain the
-application's macOS deployment range. Only the executable and license are staged, not npm/headers.
+application's macOS deployment range. Staging includes Node, its license, and a trimmed npm tree
+under `node_modules/npm`, with official npm/npx launchers beside Node. npm runtime code, package
+metadata, templates and licenses are retained; documentation, man pages, README/changelog files
+and Node headers are omitted. The staging receipt covers the retained files; older Node-only
+receipts or missing/corrupt files trigger restaging.
 The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.4/SHASUMS256.txt).
+
+Local stdio MCP Connectors preserve explicit executable paths and prefer npm/npx found on their
+configured, augmented PATH. When a bare npm/npx command is absent, desktop and bundled CLI archive
+hosts use the staged npm CLI with the matching Node, including for child processes. A command that
+starts and fails is not retried with the bundled version. Ordinary Node/Web installations without
+the staged bundle retain their installed-command behavior. npm keeps its configurable download
+cache/log behavior; this fallback does not install a system runtime or change global PATH.
 
 `OPEN_SCIENCE_WEB_PORT` selects the Web port. CLI/Web starts default to 44100; desktop-owned
 backends default to a system-assigned free port so independent profiles can run concurrently.
@@ -313,44 +330,41 @@ Electron tests also require an unlocked test Secret Service.
 
 ## Who stops the server
 
-| Action                                        | Result                                                                                                                                                                  |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Quit the desktop that started Node            | Confirm running work, drain renderer state, prepare the same generation, stop it gracefully and verify PID exit, directory ownership and the matching clean-exit record |
-| Quit a desktop attached to a CLI-started Node | Drain this desktop's renderer state and detach; leave server work running                                                                                               |
-| Close Web, disconnect SDK, finish CLI command | Keep server running                                                                                                                                                     |
-| `open-science stop`                           | Explicitly stop the selected Node server for all clients                                                                                                                |
-| Desktop crashes, Node survives                | Next same-version desktop may claim controller authority for a Desktop-launched Runtime                                                                                 |
-| Connection is lost                            | Offer manual reconnection to the same authenticated generation; never replay mutations or restart/kill a rediscovered process                                           |
+| Action                                                                       | Result                                                                                                                                        |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Quit the last App, without explicit `start`                                  | Save renderer state, stop affected service work, and verify process exit and directory release. Ordinary CLI/Web tasks do not keep it alive.  |
+| Quit one App while another App or explicit `start` keeps the service running | Save this App's state and detach; unrelated migration, package transfers and service tasks continue.                                          |
+| Close a window to the tray                                                   | Keep the App connected under the existing close preference.                                                                                   |
+| Close Web, disconnect SDK, finish a CLI command                              | Do not change explicit persistent running.                                                                                                    |
+| `open-science start`                                                         | Set explicit persistent running, including when reusing a service.                                                                            |
+| `open-science stop`                                                          | Revoke explicit persistent running; stop only when no App remains.                                                                            |
+| `open-science stop --force`                                                  | Request a whole-service stop; Apps retain windows and drafts.                                                                                 |
+| App connection is lost                                                       | Automatically reconnect; after verified process exit, restart when no explicit stop or update prevents it. Never replay submitted operations. |
 
-After a successful desktop startup, unexpected attachment loss displays a recovery notice while
-keeping the renderer and local editor/composer drafts mounted. Reconnect is explicit, single-flight,
-cancelable, and time-bounded. It uses the retained authenticated endpoint, version, generation and
-PID; it does not discover or adopt a replacement server. Lifecycle authority belongs to the
-authenticated Desktop instance granted controller status. A CLI-launched Runtime remains borrowed
-even when that Desktop is controller. Another controller or unsettled teardown blocks handover.
+Recovery keeps the renderer and editor/composer drafts mounted. It refreshes application state before
+resuming interaction. Submitted writes with lost responses have unknown outcomes and are never
+automatically retried; interrupted tasks do not automatically resume. After repeated exits or a
+bounded recovery timeout, automatic recovery pauses and offers Retry; diagnostics are optional.
+Explicit Retry can process a verified abandoned desktop service before reconnecting. Another App's
+live parent, explicit persistent running, or an unknown process identity prevents silent termination.
 
-Recovery rebuilds native preview/notification adapters and document leases, invalidates queued old
-saves, and waits for live application frames to refresh authoritative state. Events arriving during
-that refresh have bounded retention and are delivered before interaction resumes. Submitted writes
-with lost responses have unknown outcomes and are never automatically retried. A dead or replaced
-backend cannot be resurrected by this flow. The disconnected Quit action asks for confirmation of
-unsaved/unknown work and exits the desktop without claiming that the backend has stopped; normal
-connected Quit retains the owned/borrowed shutdown behavior below.
+Compatible authenticated services can be reused across installation paths. An entry-path difference
+alone is not proof of independent use. An incompatible service confirmed to belong to an exited App
+can be retired automatically; an independently used service requires an explicit interruption
+decision. Process birth identity, bounded stop waits and actual directory ownership remain required.
+Missing or damaged historical execution records do not alone prevent a new service from starting.
+Invalid historical lifetime records are retained in a diagnostic copy before the new generation is
+published. Filesystem permissions, damaged data and unresolved live owners can still prevent startup.
 
-Closing a window still follows the existing close-to-tray preference; actual application Quit is
-the shutdown boundary. If a Web task must outlive the desktop, start Node with CLI first.
-There is no client voting, last-client shutdown, idle timeout or automatic killing of an external
-server. A Desktop-launched Runtime can be adopted after its previous controller disconnects and
-old lifecycle work settles. A PID or installation path alone never grants this authority. Failed quit preparation leaves the
-desktop open; exit timeout/error is reported without a SIGKILL fallback.
+Old agent cleanup is scoped to recorded provider-context membership. A known unrelated context is
+not blocked by another connection's evidence. When legacy or unreadable evidence cannot establish
+old-context ownership, the original conversation can continue in an independent context using its
+saved history. Old records and saved files remain; history is supplied as context, not re-executed.
+A verified still-running writer for that context must be stopped before it is reacquired.
 
-Outside a committed update or planned relaunch, an owned child exit makes the windowed desktop
-unavailable for recovery, regardless of the child's exit code. The window stays open to show the
-failure and let the user confirm Quit with unsaved or unknown work; it does not automatically run
-the connected persistence/quit flow against a dead backend. Headless desktop mode exits with code 0
-when its owned child exits. A disconnected borrowed backend follows the same visible recovery or
-unavailable state according to its authenticated liveness. Electron crashes with a surviving backend
-require separate lifecycle validation; this document does not claim that path is fully certified.
+Process exit and Config Root release establish runtime shutdown; installer file occupancy is checked
+separately. A missing clean-exit record is not itself proof that installation files are free. A
+bounded verified escalation can stop an abandoned or authorized generation, never an arbitrary PID.
 
 When an older standalone Node service blocks startup, Desktop offers an explicit, authenticated
 graceful stop and waits for process exit and directory ownership release before continuing.

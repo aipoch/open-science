@@ -363,6 +363,16 @@ const createProductionDelegatedWorkComposition = (
         }
       }
     })
+    // Startup hydration may already have marked interrupted Attempts cancelled. Their status is
+    // not proof of process cleanup: a cold composition must recover ownership and remove each
+    // runtime home before admitting more work. Failed cleanup remains retryable on the next open.
+    const snapshot = await records.snapshot()
+    for (const child of snapshot.records) {
+      for (const attempt of child.attempts) {
+        if (attempt.status === 'running' || attempt.cancellationReason === 'runtime_interrupted')
+          await workspace.deleteAttemptRuntime(key, attempt.id)
+      }
+    }
     await work.recoverInterrupted()
     return Object.freeze({ key, work })
   }

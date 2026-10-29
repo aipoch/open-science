@@ -608,7 +608,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-foreground">{sourceCandidate.name}</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {sourceCandidate.repositoryUrl} · {sourceCandidate.ref}
+                      {sourceCandidate.repositoryUrl} / {sourceCandidate.ref}
                     </p>
                     <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">
                       {t('Signing key fingerprint: {{fingerprint}}', {
@@ -671,8 +671,8 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-foreground">{source.name}</p>
                       <p className="truncate text-xs text-muted-foreground">
-                        {source.trust === 'official' ? t('Official') : t('User-added source')} ·{' '}
-                        {source.repositoryUrl} · {source.ref}
+                        {source.trust === 'official' ? t('Official') : t('User-added source')}{' '}
+                        {source.repositoryUrl} / {source.ref}
                       </p>
                     </div>
                     {source.removable ? (
@@ -912,7 +912,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     {downloadProgress ? (
                       <span className="tabular-nums">
                         {formatBytes(downloadProgress.transferred)} /{' '}
-                        {formatBytes(downloadProgress.total)} · {downloadProgress.percent}%
+                        {formatBytes(downloadProgress.total)} / {downloadProgress.percent}%
                       </span>
                     ) : null}
                   </div>
@@ -1266,7 +1266,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                     </span>
                     {lastDataAt ? (
                       <span>
-                        · {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
+                        / {t('Showing data from {{time}}', { time: formatRelative(lastDataAt) })}
                       </span>
                     ) : null}
                   </>
@@ -1423,7 +1423,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       {item.summary}
                     </span>
                     <span className="mt-2 block max-w-full truncate text-[11px] text-muted-foreground">
-                      {item.publisher.name} · v{item.version}
+                      {item.publisher.name} / v{item.version}
                     </span>
                     {item.author ? (
                       <span className="mt-0.5 block max-w-full truncate text-[11px] text-muted-foreground">

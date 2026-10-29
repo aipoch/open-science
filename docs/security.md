@@ -47,8 +47,8 @@ Notebook execution path.
 Shell executable lookup and directory searches use the same filesystem policy as other
 commands. There is no separate search parser restricting them to the session directory;
 expansions, pipelines, and working-directory changes are evaluated by the selected shell.
-Code-risk approval and managed-runtime write protection still apply. Removing the search
-preflight does not grant a directory or disable OS sandbox enforcement.
+Code-risk approval still applies. On enforced platforms, managed-runtime write protection also
+applies; removing the search preflight does not grant a directory or disable OS sandbox enforcement.
 
 - On macOS, Seatbelt enforces declared filesystem and network rules.
 - On Linux, bubblewrap enforces declared filesystem and network rules.
@@ -65,10 +65,13 @@ destinations do not use this path. The read channel is prepared by default when 
 is available, except on the separate WSL2 path; there is no user-facing switch. This is not
 an allowlist-only network boundary. Paths and query parameters in a GET/HEAD request can still
 disclose sensitive information; a request-size limit is not an aggregate exfiltration limit.
-Windows standard mode inherits the host user's
-filesystem access; its proxy applies only to software that honors proxy settings and
-cannot guarantee network enforcement. Enable protected mode before treating those Windows
-rules as security boundaries. A bypass of an enforced boundary is in scope under the
+Windows standard mode inherits the host user's filesystem access and cannot guarantee
+network enforcement. It does not OS-enforce declared read-only or denied filesystem roots,
+including application configuration, input, helper, and managed-runtime directories. Source-risk
+and language-level guards are defense in depth, not isolation of arbitrary native child processes.
+Native Notebook, Shell, and package installation remain available without
+protected-mode setup. Configured protection is checked before execution and never silently falls
+back to standard mode when protection fails. A bypass of an enforced boundary is in scope under the
 [security policy](../SECURITY.md#what-to-report).
 
 Agent-native file tools such as Read/Write/Edit run in their selected Agent process, outside
@@ -221,3 +224,26 @@ Known security-hardening work is tracked in the
 [Roadmap capability map](ROADMAP.md#capability-map). A documented boundary can still
 contain a vulnerability when an implemented control is bypassed or the resulting impact
 exceeds the authority the user granted.
+
+### Notebook folder restrictions
+
+Settings → Permissions includes a folder restriction preference for local Notebook and Shell
+execution. It defaults to enabled, including when an older settings document has no value.
+Workspace and explicitly approved folders remain accessible, along with system and runtime files
+needed by tools. `cd` and shell syntax are evaluated normally; actual file access is governed by
+the operating-system sandbox.
+
+Disabling the preference broadens host-folder access on macOS, Linux, and WSL2. On those paths,
+network isolation, explicit forbidden paths, and managed-runtime protection remain enforced. Isolated runtime/control
+mounts may still hide host paths. Windows native runtimes retain folder restrictions in protected
+mode. Standard mode runs with the host user's folder permissions and does not enforce this
+preference; the preference affects only WSL2 Shell on Windows. Protected mode is optional.
+
+Changing the preference stops live Notebook and Shell processes, clearing their in-memory
+variables. The new value is committed only after successful process cleanup, while new execution
+admission remains closed. Existing persisted Notebook history is retained. This preference does
+not control Agent-native tools or remote compute.
+
+On Linux, masking a protected path that does not exist can create an empty directory at the
+host mount point. The masking filesystem is temporary and read-only; it does not persist
+sandbox writes or change the settings schema.

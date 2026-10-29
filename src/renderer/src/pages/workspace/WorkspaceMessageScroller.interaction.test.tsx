@@ -226,6 +226,7 @@ vi.mock('@/components/ui/message-scroller', () => {
     MessageScrollerItem: Item,
     MessageScrollerButton: Button,
     useMessageScroller: () => ({
+      stopAutoScroll: vi.fn(),
       scrollToEnd: scrollToEndMock,
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
@@ -523,6 +524,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
           <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
         )
       })
+      for (const header of container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="tool-group-header"][aria-expanded="false"]'
+      )) {
+        await act(async () => header.click())
+      }
     }
     await show(original)
     expect(getCandidateStates).toHaveBeenCalledWith({ candidateIds: ['candidate-1'] })
@@ -627,6 +633,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
             <WorkspaceMessageScroller activeSession={value} onSendEditedMessage={vi.fn()} />
           )
         })
+        for (const header of container.querySelectorAll<HTMLButtonElement>(
+          '[data-testid="tool-group-header"][aria-expanded="false"]'
+        )) {
+          await act(async () => header.click())
+        }
       }
       await show(session)
       expect(getCandidateStates).toHaveBeenCalledExactlyOnceWith({
@@ -850,6 +861,11 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
+    for (const header of container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="tool-group-header"][aria-expanded="false"]'
+    )) {
+      await act(async () => header.click())
+    }
     await waitFor(() => {
       const targetedRunIds = loadNotebookState.mock.calls.flatMap(
         ([request]) => request.runIds ?? []
@@ -3804,6 +3820,123 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBe('true')
   })
 
+  it('pauses the first-message hide timer for focus and hover, then resumes after blur or leave', async () => {
+    vi.useFakeTimers()
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [
+              createMessage({ id: 'prompt-1' }),
+              createMessage({ id: 'reply-1', role: 'agent' }),
+              createMessage({ id: 'prompt-2' }),
+              createMessage({ id: 'reply-2', role: 'agent' })
+            ]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 0 }
+    })
+    const scrollTo = async (scrollTop: number): Promise<void> => {
+      viewport.scrollTop = scrollTop
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+    await scrollTo(1200)
+    await scrollTo(1199)
+    const button = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Scroll to first message"]'
+    )!
+    expect(button.dataset.revealed).toBe('true')
+
+    await act(async () => button.focus())
+    expect(document.activeElement).toBe(button)
+    await scrollTo(1200)
+    await act(async () => vi.advanceTimersByTimeAsync(3500))
+    expect(button.dataset.revealed).toBe('true')
+    expect(button.getAttribute('aria-hidden')).toBe('false')
+    expect(button.tabIndex).toBe(0)
+    const activate = vi.fn()
+    button.addEventListener('click', activate)
+    await act(async () => button.click())
+    expect(activate).toHaveBeenCalledOnce()
+
+    await act(async () => button.blur())
+    await act(async () => vi.advanceTimersByTimeAsync(2999))
+    expect(button.dataset.revealed).toBe('true')
+    await act(async () => vi.advanceTimersByTimeAsync(1))
+    expect(button.dataset.revealed).toBe('false')
+    expect(button.getAttribute('aria-hidden')).toBe('true')
+    expect(button.tabIndex).toBe(-1)
+
+    await scrollTo(1198)
+    expect(button.dataset.revealed).toBe('true')
+    await act(async () => fireEvent.pointerEnter(button, { pointerType: 'mouse' }))
+    await act(async () => vi.advanceTimersByTimeAsync(3500))
+    expect(button.dataset.revealed).toBe('true')
+    await act(async () => fireEvent.pointerLeave(button, { pointerType: 'mouse' }))
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(button.dataset.revealed).toBe('false')
+  })
+
+  it('keeps the focused first-message control mounted at the top until blur', async () => {
+    vi.useFakeTimers()
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <WorkspaceMessageScroller
+          activeSession={createSession({
+            status: 'idle',
+            messages: [
+              createMessage({ id: 'prompt-1' }),
+              createMessage({ id: 'reply-1', role: 'agent' }),
+              createMessage({ id: 'prompt-2' }),
+              createMessage({ id: 'reply-2', role: 'agent' })
+            ]
+          })}
+          onSendEditedMessage={vi.fn()}
+        />
+      )
+    })
+    const viewport = container.querySelector<HTMLElement>(
+      '[data-testid="message-scroller-viewport"]'
+    )!
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 400 },
+      scrollHeight: { configurable: true, value: 10_000 },
+      scrollTop: { configurable: true, writable: true, value: 1200 }
+    })
+    const scrollTo = async (scrollTop: number): Promise<void> => {
+      viewport.scrollTop = scrollTop
+      await act(async () => viewport.dispatchEvent(new Event('scroll', { bubbles: true })))
+    }
+    await scrollTo(1199)
+    const button = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Scroll to first message"]'
+    )!
+    await act(async () => button.focus())
+    expect(document.activeElement).toBe(button)
+
+    await scrollTo(0)
+    expect(button.isConnected).toBe(true)
+    expect(document.activeElement).toBe(button)
+    expect(button.dataset.revealed).toBe('true')
+
+    await act(async () => button.blur())
+    expect(container.querySelector('[aria-label="Scroll to first message"]')).toBeNull()
+  })
+
   it('coalesces resize-driven scroll eligibility updates into one deferred frame', async () => {
     vi.useFakeTimers()
     const resizeCallbacks: ResizeObserverCallback[] = []
@@ -4987,7 +5120,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     ).toBeLessThanOrEqual(80)
   })
 
-  it('collapses only the selected contiguous segment of a named tool group', async () => {
+  it('expands only the selected contiguous segment of a named tool group', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const { projectActivityGroupStart, projectToolActivity } =
       await import('@/stores/session-store-run-activity-helpers')
@@ -5008,6 +5141,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
         title: id,
         status: 'completed',
         toolKind: 'read',
+        rawOutput: 'Searchable file content',
         timestamp: 1710000000100 + index,
         ...(index === 1
           ? {
@@ -5041,13 +5175,42 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       ).filter((button) => button.textContent?.includes('Inspect sources'))
       expect(headings).toHaveLength(2)
       expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
-        'true',
-        'true'
+        'false',
+        'false'
       ])
       await act(async () => headings[0].click())
       expect
         .soft(headings.map((button) => button.getAttribute('aria-expanded')))
-        .toEqual(['false', 'true'])
+        .toEqual(['true', 'false'])
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller activeSession={{ ...session }} onSendEditedMessage={vi.fn()} />
+        )
+      )
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'false'
+      ])
+      expect(container.textContent).not.toContain('read-after')
+      await act(async () => showWindowFindListener?.())
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'true'
+      ])
+      expect(container.textContent).toContain('read-after')
+      expect(announceWindowFindContentReady).toHaveBeenCalled()
+      // Clicking a forced-open group must not overwrite the pre-search expansion choice.
+      await act(async () => headings[1].click())
+      await act(async () => hideWindowFindListener?.())
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'true',
+        'false'
+      ])
+      await act(async () => headings[0].click())
+      expect(headings.map((button) => button.getAttribute('aria-expanded'))).toEqual([
+        'false',
+        'false'
+      ])
       expect.soft(new Set(segments.map((item) => item.id)).size).toBe(2)
       expect.soft(errors.mock.calls.some((call) => call.join(' ').includes('same key'))).toBe(false)
     } finally {

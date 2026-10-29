@@ -191,7 +191,7 @@ const SpecialistCapabilitiesSection = ({
         id:
           referencedIds.has(server.name) && !referencedIds.has(server.id) ? server.name : server.id,
         name: server.displayName,
-        description: server.description ? `${server.name} · ${server.description}` : server.name,
+        description: server.description ? `${server.name} / ${server.description}` : server.name,
         mainEnabled: server.enabled,
         available: server.availability === undefined,
         availability: server.availability
@@ -205,7 +205,7 @@ const SpecialistCapabilitiesSection = ({
         known.push({
           id,
           name: legacy.displayName,
-          description: legacy.description ? `${legacy.name} · ${legacy.description}` : legacy.name,
+          description: legacy.description ? `${legacy.name} / ${legacy.description}` : legacy.name,
           mainEnabled: legacy.enabled,
           available: legacy.availability === undefined,
           availability: legacy.availability
@@ -284,7 +284,7 @@ const SpecialistCapabilitiesSection = ({
       ...customServers.map((server) => ({
         id: server.id,
         name: server.displayName,
-        description: server.description ? `${server.name} · ${server.description}` : server.name,
+        description: server.description ? `${server.name} / ${server.description}` : server.name,
         mainEnabled: server.enabled,
         available: server.availability === undefined,
         availability: server.availability
@@ -685,7 +685,7 @@ const SpecialistCapabilitiesSection = ({
                         </div>
                         {skill.missing ? (
                           <span className="shrink-0 text-[11px] text-muted-foreground">
-                            {t('Missing · unavailable')}
+                            {t('Missing: unavailable')}
                           </span>
                         ) : (
                           <>
@@ -696,7 +696,7 @@ const SpecialistCapabilitiesSection = ({
                             ) : null}
                             {!skill.mainEnabled ? (
                               <span className="shrink-0 text-[11px] text-muted-foreground">
-                                {t('Main disabled · available here')}
+                                {t('Main disabled: available here')}
                               </span>
                             ) : null}
                           </>
@@ -764,7 +764,7 @@ const SpecialistCapabilitiesSection = ({
                           </span>
                         ) : !connector.mainEnabled ? (
                           <span className="shrink-0 text-[11px] text-muted-foreground">
-                            {t('Main disabled · available here')}
+                            {t('Main disabled: available here')}
                           </span>
                         ) : null}
                         <SettingsIconAction

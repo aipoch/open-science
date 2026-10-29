@@ -11,7 +11,15 @@ import type {
 } from '../contracts.js'
 import type { LiteratureDetailController } from './detail.js'
 export type LiteratureMetadataIdentifier = { scheme: 'doi' | 'pmid'; value: string }
-export type DetailMode = 'view' | 'edit' | 'complete' | 'citation' | 'full-text' | 'supplements'
+export type DetailMode =
+  | 'view'
+  | 'edit'
+  | 'complete'
+  | 'citation'
+  | 'full-text'
+  | 'supplements'
+  | 'related'
+  | 'publication-check'
 export type MetadataSnapshot = {
   mode: DetailMode
   editBase?: LiteratureItemView
@@ -246,6 +254,7 @@ export function createLiteratureMetadata(
     identifierRef.current = identifier
     setCompleting(true)
     setCompletionError(undefined)
+    let committed = false
     try {
       const result = await options.completeMetadata(
         operation === 'preview'
@@ -260,10 +269,15 @@ export function createLiteratureMetadata(
             }
       )
       if (result.mode === 'commit') {
+        committed = true
+        // Personal state can change without a metadata revision while the commit response travels.
+        // Publish an authoritative read rather than the response's potentially stale whole view.
+        const latest = await controller.read(current.id)
+        if (!latest) throw new Error('Literature Item is unavailable after updating.')
         const showResult = active()
         // Publishing the saved revision invalidates its preview; retain the successful receipt.
-        controller.replace(result.item)
-        options.onItemChange(result.item)
+        controller.replace(latest)
+        options.onItemChange(latest)
         const published = controller.getSnapshot()
         if (
           showResult &&
@@ -271,13 +285,17 @@ export function createLiteratureMetadata(
           published.item?.id === current.id &&
           published.item.metadataRevision === result.item.metadataRevision
         )
-          setCompletion(result)
+          setCompletion({ ...result, item: latest })
       } else if (active()) {
         setCompletion(result)
         setOverwriteFields(new Set())
       }
     } catch {
-      if (active()) setCompletionError({ itemId: current.id, message: options.messages().complete })
+      if (active())
+        setCompletionError({
+          itemId: current.id,
+          message: committed ? options.messages().reload : options.messages().complete
+        })
     } finally {
       if (active()) setCompleting(false)
     }

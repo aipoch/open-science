@@ -1,4 +1,4 @@
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
 import type { AgentFrameworkId } from '../../shared/settings'
@@ -16,6 +16,13 @@ import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
+
+// Diagnostic metadata only: never grants authority or carries Specialist configuration.
+type AcpSpecialistResolutionContext = Readonly<{
+  sessionId: string
+  frameworkId: string
+  modelRoute?: string
+}>
 type AcpTurnSkillHooks = Readonly<{
   preparedSkillIds?: readonly string[]
   needForceLoad: (ids: string[]) => Promise<string[]>
@@ -94,12 +101,16 @@ class AcpTurnSkillOwner {
   private forced: Authorization | undefined
   constructor(
     private readonly options: Readonly<{
-      resolveSpecialistSkills?: (id: string) => Promise<EffectiveSpecialistSkills>
+      resolveSpecialistSkills?: (
+        id: string,
+        context?: AcpSpecialistResolutionContext
+      ) => Promise<EffectiveSpecialistSkills>
       skills?: AcpTurnSkillHooks
       requestSkillsReload: () => void
     }>
   ) {}
   authorize(input: {
+    diagnosticContext?: AcpSpecialistResolutionContext
     frameworkId?: AgentFrameworkId
     nativeSkillScope?: readonly string[]
     mainSkillScope?: readonly string[]
@@ -174,10 +185,20 @@ class AcpTurnSkillOwner {
     if (!input.specialistId) return finish({ kind: 'main' })
     if (!this.options.resolveSpecialistSkills) return finish()
     return this.options
-      .resolveSpecialistSkills(input.specialistId)
-      .catch(
-        () => ({ kind: 'unavailable', reason: 'The bound specialist is unavailable.' }) as const
-      )
+      .resolveSpecialistSkills(input.specialistId, input.diagnosticContext)
+      .catch((error) => {
+        log.warn('bound specialist capability resolution failed', {
+          ...input.diagnosticContext,
+          operation: 'specialist-resolution',
+          phase: 'skills',
+          mode: 'authorize',
+          specialistId: input.specialistId,
+          frameworkId: input.frameworkId,
+          reason: 'resolver-threw',
+          ...diagnosticErrorFields(error)
+        })
+        return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' } as const
+      })
       .then(finish)
   }
   backendPreparation(): Readonly<{
@@ -195,6 +216,7 @@ class AcpTurnSkillOwner {
   // checks enablement here so a stale or forged chip cannot bypass its current Skill scope.
   // Prefix names / attach Codex skill-inputs on the steered prompt instead.
   async presentFollowUp(input: {
+    diagnosticContext?: AcpSpecialistResolutionContext
     frameworkId: AgentFrameworkId
     text: string
     selectedSkillIds: readonly string[]
@@ -212,8 +234,21 @@ class AcpTurnSkillOwner {
       role !== 'primary' ? undefined : input.specialistId ? undefined : { kind: 'main' }
     if (role === 'primary' && input.specialistId && this.options.resolveSpecialistSkills) {
       try {
-        scope = await this.options.resolveSpecialistSkills(input.specialistId)
-      } catch {
+        scope = await this.options.resolveSpecialistSkills(
+          input.specialistId,
+          input.diagnosticContext
+        )
+      } catch (error) {
+        log.warn('bound specialist capability resolution failed', {
+          ...input.diagnosticContext,
+          operation: 'specialist-resolution',
+          phase: 'skills',
+          mode: 'follow-up',
+          specialistId: input.specialistId,
+          frameworkId: input.frameworkId,
+          reason: 'resolver-threw',
+          ...diagnosticErrorFields(error)
+        })
         throw new Error('The bound specialist is unavailable.')
       }
       if (scope.kind === 'unavailable') throw new Error(scope.reason)
@@ -485,4 +520,4 @@ const followUpPromptText = (presented: { text: string; skillScopeGuidance?: stri
     : presented.text
 
 export { AcpTurnSkillOwner, codeBuddySkillRuntimeRoot, followUpPromptText }
-export type { AcpTurnSkillHooks, TurnSkillHandle, TurnSkillOutcome }
+export type { AcpSpecialistResolutionContext, AcpTurnSkillHooks, TurnSkillHandle, TurnSkillOutcome }

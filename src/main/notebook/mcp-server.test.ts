@@ -376,6 +376,7 @@ describe('notebook MCP server config', () => {
       'bash_execute',
       'request_network_access',
       'notebook_state',
+      'list_authorized_directories',
       'list_notebook_runtimes',
       'notebook_bind_runtime',
       'notebook_switch_runtime',
@@ -449,9 +450,14 @@ describe('notebook MCP server config', () => {
     }
   )
 
-  it.each(['decision', 'cancellation'])(
-    'keeps network approval pending past the MCP inactivity timeout until %s',
-    async (outcome) => {
+  it.each([
+    ['request_network_access', 'decision'],
+    ['request_network_access', 'cancellation'],
+    ['bash_execute', 'decision'],
+    ['bash_execute', 'cancellation']
+  ])(
+    'keeps %s approval pending past the MCP inactivity timeout until %s',
+    async (toolName, outcome) => {
       const server = createNotebookMcpServer({
         endpoint: 'http://127.0.0.1:4567',
         token: 'secret-token',
@@ -482,12 +488,15 @@ describe('notebook MCP server config', () => {
       const call = client
         .callTool(
           {
-            name: 'request_network_access',
-            arguments: {
-              hostname: 'tcga-xena-hub.s3.us-east-1.amazonaws.com',
-              runtime: 'python',
-              reason: 'Download the dataset.'
-            }
+            name: toolName,
+            arguments:
+              toolName === 'bash_execute'
+                ? { command: 'sample-client request' }
+                : {
+                    hostname: 'service.example.test',
+                    runtime: 'python',
+                    reason: 'Read the fixture.'
+                  }
           },
           undefined,
           { onprogress, signal: cancellation.signal, timeout: 60_000, resetTimeoutOnProgress: true }
@@ -2194,6 +2203,9 @@ describe('manage_packages tool', () => {
     // Routing, restart, and the stop-and-report boundary are all stated.
     expect(doc).toContain('language="python"')
     expect(doc).toContain('language="r"')
+    expect(doc).toContain('Bioconda does not support Windows')
+    expect(doc).toContain('On Windows, use installer="biocmanager"')
+    expect(doc).toContain('case-sensitive R package names')
     expect(doc).toContain('notebook_restart')
     expect(doc).toMatch(/report .*user|tell the user/i)
   })
@@ -2542,7 +2554,9 @@ describe('compactManagePackagesResult', () => {
 describe('notebook control tool results', () => {
   it('gives every notebook tool a global result budget and projects only results that need it', () => {
     for (const tool of NOTEBOOK_RPC_TOOLS) {
-      expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
+      // Directory discovery must return a complete reusable snapshot, never a truncated list.
+      if (tool.name === 'list_authorized_directories') expect(tool.resultLimitChars).toBeUndefined()
+      else expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
       if (!tool.name.includes('memor')) expect(tool.mapResult, tool.name).toBeTypeOf('function')
     }
   })

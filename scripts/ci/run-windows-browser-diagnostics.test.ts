@@ -285,7 +285,7 @@ it('does not restart for stale NetLog evidence', async () => {
 it.each([
   [
     'windows-e2e-regression.yml',
-    'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3 --fail-on-flaky-tests'
+    'npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/6 --fail-on-flaky-tests'
   ]
 ])(
   'wraps only the Windows layout shell in %s and preserves its selected command',

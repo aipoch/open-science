@@ -65,6 +65,7 @@ type PreloadApi = {
     saveSession: (session: unknown, options?: unknown) => unknown
     setDelegationPolicy: (projectId: string, sessionId: string, policy: 'allow' | 'deny') => unknown
     editDetails: (request: unknown) => unknown
+    deleteRecoveryFile: (request: unknown) => unknown
     deleteSession: (request: unknown) => unknown
     saveManifest: (request: unknown) => unknown
     exportConversation: (request: unknown) => unknown
@@ -92,6 +93,7 @@ type PreloadApi = {
     installCodeBuddy: (request: unknown) => unknown
     installCodex: (request: unknown) => unknown
     setAgentFramework: (request: unknown) => unknown
+    setNotebookFolderRestrictionEnabled: (request: unknown) => unknown
     setNotificationsEnabled: (request: unknown) => unknown
     setConversationSkillImportEnabled: (request: unknown) => unknown
     setClosePreference: (request: unknown) => unknown
@@ -114,6 +116,9 @@ type PreloadApi = {
     loginIsolatedClaudeBrowser: () => unknown
     cancelIsolatedClaudeLogin: () => unknown
     logoutIsolatedClaude: () => unknown
+    listSkillSources: () => unknown
+    addSkillSource: (request: unknown) => unknown
+    removeSkillSource: (request: unknown) => unknown
     previewGitHubSkill: (request: unknown) => unknown
     previewAgentHomeSkill: (request: unknown) => unknown
     exportSkill: (request: unknown) => unknown
@@ -385,6 +390,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.addPdf',
       'literature.cancelPdfImport',
       'literature.citationStyles',
+      'literature.collect',
       'literature.completeMetadata',
       'literature.exportRecord',
       'literature.formatDocument',
@@ -398,6 +404,8 @@ describe('preload bridge — public surface inventory', () => {
       'literature.journals',
       'literature.lookupMetadata',
       'literature.onChanged',
+      'literature.publicationCheck',
+      'literature.related',
       'literature.search',
       'literature.sources',
       'literature.supplementAttachment',
@@ -594,6 +602,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessionReplay.saveView',
       'sessionReplay.unlinkSession',
       'sessions.cancelDiagnostics',
+      'sessions.deleteRecoveryFile',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportConversation',
@@ -625,7 +634,9 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
+      'sessions.useCaseCatalog',
       'settings.addCustomServer',
+      'settings.addSkillSource',
       'settings.authenticateCustomServer',
       'settings.authenticateDeviceCredential',
       'settings.beginXaiOAuthLogin',
@@ -683,6 +694,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.listConnectors',
       'settings.listDeviceCredentials',
       'settings.listSkillMarketplace',
+      'settings.listSkillSources',
       'settings.listSkills',
       'settings.loginIsolatedClaude',
       'settings.loginIsolatedClaudeBrowser',
@@ -715,6 +727,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.removeDeviceCredential',
       'settings.removeGitHubToken',
       'settings.removeNotebookNetwork',
+      'settings.removeSkillSource',
       'settings.replayConnectorApproval',
       'settings.replayPendingConnectorApprovals',
       'settings.replayPendingConnectorCredentialRequests',
@@ -742,6 +755,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setDefaultPermissionProfile',
       'settings.setNcbiCredentials',
       'settings.setNetworkProxy',
+      'settings.setNotebookFolderRestrictionEnabled',
       'settings.setNotebookNetwork',
       'settings.setNotificationsEnabled',
       'settings.setOpenAlexCredential',
@@ -749,6 +763,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setProjectFilesFilter',
       'settings.setReasoningEffort',
       'settings.setReviewerModel',
+      'settings.setSemanticScholarCredential',
       'settings.setSessionDetailsModel',
       'settings.setShowNotificationContent',
       'settings.setSkillEnabled',
@@ -844,11 +859,13 @@ describe('preload bridge — public surface inventory', () => {
       'update.check',
       'update.download',
       'update.getAppInfo',
+      'update.getInstaller',
       'update.getStatus',
       'update.onProgress',
       'update.onStatus',
       'update.recheck',
       'update.recover',
+      'update.revealInstaller',
       'uploads.abortTransfer',
       'uploads.appendTransfer',
       'uploads.beginTransfer',
@@ -1518,6 +1535,13 @@ const cases: ForwardingCase[] = [
     args: [sampleEditSessionDetails]
   },
   {
+    name: 'sessions.deleteRecoveryFile → sessions:delete-recovery-file',
+    invoke: (a) =>
+      a.sessions.deleteRecoveryFile({ projectId: 'project-a', fileName: 'session-1.json' }),
+    channel: 'sessions:delete-recovery-file',
+    args: [{ projectId: 'project-a', fileName: 'session-1.json' }]
+  },
+  {
     name: 'sessions.deleteSession → sessions:delete-session',
     invoke: (a) => a.sessions.deleteSession(sampleDeleteSession),
     channel: 'sessions:delete-session',
@@ -1600,6 +1624,12 @@ const cases: ForwardingCase[] = [
     name: 'settings.setNotificationsEnabled → settings:set-notifications-enabled',
     invoke: (a) => a.settings.setNotificationsEnabled({ enabled: false }),
     channel: 'settings:set-notifications-enabled',
+    args: [{ enabled: false }]
+  },
+  {
+    name: 'settings.setNotebookFolderRestrictionEnabled → settings:set-notebook-folder-restriction-enabled',
+    invoke: (a) => a.settings.setNotebookFolderRestrictionEnabled({ enabled: false }),
+    channel: 'settings:set-notebook-folder-restriction-enabled',
     args: [{ enabled: false }]
   },
   {
@@ -1733,6 +1763,24 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.settings.previewAgentHomeSkill(sampleAgentHomePreview),
     channel: 'settings:preview-agent-home-skill',
     args: [sampleAgentHomePreview]
+  },
+  {
+    name: 'settings.listSkillSources',
+    invoke: (a) => a.settings.listSkillSources(),
+    channel: 'settings:list-skill-sources',
+    args: []
+  },
+  {
+    name: 'settings.addSkillSource',
+    invoke: (a) => a.settings.addSkillSource({ repository: 'o/r' }),
+    channel: 'settings:add-skill-source',
+    args: [{ repository: 'o/r' }]
+  },
+  {
+    name: 'settings.removeSkillSource',
+    invoke: (a) => a.settings.removeSkillSource({ id: 'saved' }),
+    channel: 'settings:remove-skill-source',
+    args: [{ id: 'saved' }]
   },
   // command-line launcher install/uninstall/status
   {

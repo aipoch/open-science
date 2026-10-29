@@ -1,9 +1,19 @@
 import { readFileSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
@@ -12,13 +22,352 @@ import {
   desktopBackendDependencies,
   desktopBackendPeerDependencies,
   desktopBundledDependencies,
+  generatedPrismaIncludes,
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
+  inlineDesktopDependencyMaps,
   prismaEngineFilenames
 } from './backend-dependencies.mjs'
 
+describe('generated native Prisma payload', () => {
+  it.each(['/', '\\'])('preserves native runtime and SDK types (%s)', (separator) => {
+    for (const platform of ['darwin', 'linux', 'win32']) {
+      for (const arch of platform === 'win32' ? ['x64'] : ['x64', 'arm64']) {
+        const target = { platform, arch }
+        for (const desktop of [false, true]) {
+          const options = { ...target, desktop }
+          expect(generatedPrismaIncludes('query_engine_bg.wasm', options)).toBe(false)
+          for (const file of ['index.d.ts', 'default.d.ts', 'nested/client.d.ts.map'])
+            expect(generatedPrismaIncludes(file.replaceAll('/', separator), options)).toBe(!desktop)
+          for (const file of [
+            'index.js',
+            'default.js',
+            'package.json',
+            'schema.prisma',
+            'LICENSE',
+            'query_engine_bg.js',
+            'unknown.wasm',
+            'nested/runtime.js',
+            ...prismaEngineFilenames(platform, arch)
+          ])
+            expect(generatedPrismaIncludes(file.replaceAll('/', separator), options)).toBe(true)
+          expect(generatedPrismaIncludes('libquery_engine-foreign.so.node', options)).toBe(false)
+        }
+      }
+    }
+  })
+})
+
+it('embeds audited dependency maps without changing executable bytes or mapped exceptions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-inline-map-'))
+  try {
+    const manifest = { name: 'ajv', version: '8.20.0' }
+    const code = 'throw new Error("mapped fixture")\n//# sourceMappingURL=entry.cjs.map\n'
+    const map = JSON.stringify({
+      version: 3,
+      sources: ['original.ts'],
+      sourcesContent: ['throw new Error("mapped fixture")'],
+      names: [],
+      mappings: 'AAAA'
+    })
+    await writeFile(join(root, 'entry.cjs'), code)
+    await writeFile(join(root, 'entry.cjs.map'), map)
+    const stack = async (): Promise<string> => {
+      try {
+        await promisify(execFile)(process.execPath, [
+          '--enable-source-maps',
+          join(root, 'entry.cjs')
+        ])
+        throw new Error('Expected fixture failure')
+      } catch (error) {
+        return (error as { stderr: string }).stderr
+      }
+    }
+    const before = await stack()
+    expect(before).toContain('original.ts:1:1')
+    expect(await inlineDesktopDependencyMaps({ ...manifest, version: '8.20.1' }, root)).toBe(0)
+    expect(await readFile(join(root, 'entry.cjs'), 'utf8')).toBe(code)
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(1)
+    expect(await stack()).toBe(before)
+    const after = await readFile(join(root, 'entry.cjs'), 'utf8')
+    expect(after).toBe(
+      code.replace(
+        'entry.cjs.map',
+        `data:application/json;base64,${Buffer.from(map).toString('base64')}`
+      )
+    )
+    expect(await readdir(root)).toEqual(['entry.cjs'])
+    expect(await inlineDesktopDependencyMaps(manifest, root)).toBe(0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('preserves every real audited module and diagnostic map byte when embedding maps', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-real-maps-'))
+  try {
+    for (const [name, count] of [
+      ['@modelcontextprotocol/sdk', 174],
+      ['ajv', 106],
+      ['tar', 62],
+      ['@agentclientprotocol/sdk', 55]
+    ] as const) {
+      const source = join(process.cwd(), 'node_modules', name)
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const target = join(root, name)
+      const includes = createDesktopDependencyFilter(manifest)
+      await cp(source, target, {
+        recursive: true,
+        dereference: true,
+        filter: async (file) => {
+          const path = relative(source, file)
+          return (
+            backendDependencyIncludes(manifest, path) &&
+            includes(path, (await stat(file)).isDirectory())
+          )
+        }
+      })
+      const before = new Map<string, Buffer>()
+      for (const file of await readdir(target, { recursive: true })) {
+        if ((await stat(join(target, file))).isFile())
+          before.set(file, await readFile(join(target, file)))
+      }
+      expect(await inlineDesktopDependencyMaps(manifest, target)).toBe(count)
+      let changed = 0
+      for (const [file, bytes] of before) {
+        const current = await readFile(join(target, file)).catch((error) => {
+          if (error.code !== 'ENOENT') throw error
+          return undefined
+        })
+        if (!current) {
+          expect(file).toMatch(/\.(?:js|mjs|cjs)\.map$/)
+          expect(before.has(file.slice(0, -4))).toBe(true)
+          continue
+        }
+        if (current.equals(bytes)) continue
+        const code = bytes.toString('utf8')
+        const map = before.get(`${file}.map`)!
+        const match = code.match(/\/\/# sourceMappingURL=([^\s]+)(\r?\n)?$/)!
+        expect(current.toString('utf8')).toBe(
+          code.slice(0, match.index) +
+            match[0].replace(match[1], `data:application/json;base64,${map.toString('base64')}`)
+        )
+        changed++
+      }
+      expect(changed).toBe(count)
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}, 30000)
+
+it('preserves unsupported and non-adjacent maps and untouched package versions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'desktop-map-fallback-'))
+  try {
+    for (const [file, text] of Object.entries({
+      'remote.js': '//# sourceMappingURL=https://example.test/remote.js.map',
+      'parent.js': '//# sourceMappingURL=../parent.js.map',
+      'missing.js': '//# sourceMappingURL=missing.js.map',
+      'indexed.js': '//# sourceMappingURL=indexed.js.map',
+      'indexed.js.map': JSON.stringify({ version: 3, sections: [] }),
+      'invalid.js': '//# sourceMappingURL=invalid.js.map',
+      'invalid.js.map': '{}',
+      'malformed.js': '//# sourceMappingURL=malformed.js.map',
+      'malformed.js.map': 'not JSON',
+      'null.js': '//# sourceMappingURL=null.js.map',
+      'null.js.map': 'null',
+      'LICENSE.map': 'redistribution notice'
+    }))
+      await writeFile(join(root, file), text)
+    const snapshot = await Promise.all(
+      (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+    )
+    expect(
+      await inlineDesktopDependencyMaps({ name: '@aipoch/test', version: '8.20.0' }, root)
+    ).toBe(0)
+    expect(await inlineDesktopDependencyMaps({ name: 'ajv', version: '8.20.0' }, root)).toBe(0)
+    expect(
+      await Promise.all(
+        (await readdir(root)).map(async (file) => [file, await readFile(join(root, file), 'utf8')])
+      )
+    ).toEqual(snapshot)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 describe('desktop-only dependency contents', () => {
+  it.each(['/', '\\'])(
+    'prunes audited unused distributions but preserves runtime assets (%s)',
+    (separator) => {
+      for (const [name, version, removed, retained] of [
+        ['openchemlib', '9.25.0', 'dist/openchemlib.debug.js', 'dist/openchemlib.js'],
+        ['web-tree-sitter', '0.26.13', 'debug/web-tree-sitter.wasm', 'web-tree-sitter.wasm'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.js', 'dist/cpexcel.js'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.full.min.map', 'xlsx.js'],
+        ['styled-exceljs', '0.21.6', 'dist/xlsx.extendscript.js', 'dist/xlsx.zahl.mjs'],
+        ['@embedpdf/pdfium', '2.15.1', 'dist/index.browser.js', 'dist/pdfium.wasm'],
+        ['pako', '1.0.11', 'dist/pako.js', 'lib/inflate.js'],
+        ['pako', '0.2.9', 'dist/pako.min.js', 'index.js']
+      ]) {
+        const manifest = { name, version, exports: { './variant': `./${removed}` } }
+        const filter = createDesktopDependencyFilter(manifest)
+        expect(filter(removed.replaceAll('/', separator), false)).toBe(false)
+        expect(filter(retained.replaceAll('/', separator), false)).toBe(true)
+        expect(backendDependencyIncludes(manifest, removed)).toBe(true)
+        expect(
+          createDesktopDependencyFilter({ ...manifest, version: 'future' })(removed, false)
+        ).toBe(true)
+        for (const file of [
+          'debug/LICENSE',
+          'dist/NOTICE.txt',
+          'lite/licenses/third-party.txt',
+          'unknown.js',
+          'index.js.map'
+        ])
+          expect(filter(file.replaceAll('/', separator), false)).toBe(true)
+        expect(filter('debug', true)).toBe(true)
+      }
+      const ort = { name: 'onnxruntime-web', version: '1.26.0-dev.20260416-b7804b056c' }
+      for (const file of [
+        'dist/ort.webgpu.bundle.min.mjs',
+        'dist/ort.min.js',
+        'lib/onnxjs/backend.ts'
+      ]) {
+        // Audited TypeScript sources are unused in either mode. Runtime WebGPU bundles
+        // must still remain available when the dedicated WASM worker is not selected.
+        expect(createDesktopDependencyFilter(ort)(file, false)).toBe(!file.startsWith('lib/'))
+        expect(
+          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
+            file.replaceAll('/', separator),
+            false
+          )
+        ).toBe(false)
+        expect(
+          createDesktopDependencyFilter(
+            { ...ort, version: 'future' },
+            { localTranslationWasm: true }
+          )(file, false)
+        ).toBe(true)
+      }
+      for (const file of [
+        'dist/ort.node.min.js',
+        'dist/ort.wasm.bundle.min.mjs',
+        'dist/ort.wasm.min.mjs',
+        'dist/ort-wasm-simd-threaded.mjs',
+        'dist/ort-wasm-simd-threaded.wasm',
+        'lib/LICENSE'
+      ])
+        expect(
+          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
+            file.replaceAll('/', separator),
+            false
+          )
+        ).toBe(true)
+    }
+  )
+
+  it('runs spreadsheet, molecule, parser, PDFium and tokenizer operations from filtered packages', async () => {
+    await mkdir('node_modules/.cache', { recursive: true })
+    const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/desktop-variants-'))
+    try {
+      for (const name of [
+        'styled-exceljs',
+        'openchemlib',
+        'web-tree-sitter',
+        '@embedpdf/pdfium',
+        'tiktoken',
+        '@anthropic-ai/tokenizer'
+      ]) {
+        const source = join(process.cwd(), 'node_modules', name)
+        const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+        const filter = createDesktopDependencyFilter(manifest)
+        await cp(source, join(root, 'node_modules', name), {
+          recursive: true,
+          filter: async (path) => filter(relative(source, path), (await stat(path)).isDirectory())
+        })
+      }
+      for (const [parent, alias] of [
+        ['unicode-trie', 'pako-old'],
+        ['pdf-lib', 'pako-pdf']
+      ]) {
+        const source = join(process.cwd(), 'node_modules', parent, 'node_modules/pako')
+        const filter = createDesktopDependencyFilter(
+          JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+        )
+        await cp(source, join(root, 'node_modules', alias), {
+          recursive: true,
+          filter: async (path) => filter(relative(source, path), (await stat(path)).isDirectory())
+        })
+      }
+      await cp('packages/notebook-syntax/assets/tree-sitter-python.wasm', join(root, 'python.wasm'))
+      await writeFile(
+        join(root, 'verify.mjs'),
+        `
+        import assert from 'node:assert/strict';
+        import { createRequire } from 'node:module';
+        import { readFileSync } from 'node:fs';
+        const require = createRequire(import.meta.url);
+        for (const name of ['pako-old', 'pako-pdf']) {
+          const pako = require(name);
+          const bytes = new TextEncoder().encode('Scientific 科学');
+          assert.deepEqual(new Uint8Array(pako.inflate(pako.deflate(bytes))), bytes);
+        }
+        for (const xlsx of [require('styled-exceljs'), await import('styled-exceljs')]) {
+          const rows = [['Journal', 'Count'], ['科学', 42]];
+          for (const bookType of ['xlsx', 'xls', 'ods']) {
+            const book = xlsx.utils.book_new();
+            xlsx.utils.book_append_sheet(book, xlsx.utils.aoa_to_sheet(rows), 'Data');
+            const loaded = xlsx.read(xlsx.write(book, {type: 'buffer', bookType}), {type: 'buffer'});
+            assert.deepEqual(xlsx.utils.sheet_to_json(loaded.Sheets.Data, {header: 1}), rows);
+          }
+        }
+        await import('styled-exceljs/dist/cpexcel.full.mjs');
+        await import('styled-exceljs/dist/xlsx.zahl.mjs');
+        const {Molecule} = await import('openchemlib');
+        const molecule = Molecule.fromSmiles('CCO');
+        assert.equal(molecule.getAllAtoms(), 3);
+        assert.match(molecule.toSVG(200, 100), /<svg/);
+        const {fileURLToPath} = await import('node:url');
+        const {Parser, Language} = await import('web-tree-sitter');
+        await Parser.init();
+        const language = await Language.load(fileURLToPath(new URL('./python.wasm', import.meta.url)));
+        const parser = new Parser(); parser.setLanguage(language);
+        const tree = parser.parse('answer = 42');
+        assert.equal(tree.rootNode.type, 'module');
+        assert.equal(tree.rootNode.hasError, false); tree.delete(); parser.delete();
+        const {init} = await import('@embedpdf/pdfium');
+        const pdf = await init({thisProgram: 'packaging-test', wasmBinary: readFileSync(require.resolve('@embedpdf/pdfium/pdfium.wasm'))});
+        pdf.PDFiumExt_Init();
+        const document = pdf.FPDF_CreateNewDocument();
+        const page = pdf.FPDFPage_New(document, 0, 200, 100);
+        assert.equal(pdf.FPDF_GetPageCount(document), 1);
+        pdf.FPDF_ClosePage(page); pdf.FPDF_CloseDocument(document);
+        for (const tokenizer of [require('tiktoken'), await import('tiktoken')]) {
+          const encoder = tokenizer.get_encoding('cl100k_base');
+          assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode('Scientific 科学'))), 'Scientific 科学');
+          encoder.free();
+        }
+        // The backend's Anthropic tokenizer loads tiktoken/lite at startup, not the root entry.
+        for (const tokenizer of [require('@anthropic-ai/tokenizer'), await import('@anthropic-ai/tokenizer')]) {
+          const text = 'Scientific 科学';
+          const encoder = tokenizer.getTokenizer();
+          try {
+            assert.equal(new TextDecoder().decode(encoder.decode(encoder.encode(text))), text);
+            assert.equal(tokenizer.countTokens(text), encoder.encode(text).length);
+          } finally {
+            encoder.free();
+          }
+        }
+      `
+      )
+      await promisify(execFile)(process.execPath, [join(root, 'verify.mjs')], { timeout: 30_000 })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 40_000)
+
   it('rejects an external consumer of bundled i18next in the real staging command', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-bundle-consumer-'))
     const put = async (file: string, content: string): Promise<void> => {
@@ -26,7 +375,12 @@ describe('desktop-only dependency contents', () => {
       await writeFile(join(root, file), content)
     }
     try {
-      for (const file of ['scripts/stage-backend.mjs', 'scripts/backend-dependencies.mjs'])
+      for (const file of [
+        'scripts/stage-backend.mjs',
+        'scripts/backend-dependencies.mjs',
+        'scripts/desktop-pdf-lib.mjs',
+        'scripts/desktop-dependency-chains.mjs'
+      ])
         await put(file, await readFile(join(process.cwd(), file), 'utf8'))
       await put('package.json', JSON.stringify({ dependencies: { i18next: '1', consumer: '1' } }))
       await put('packages/open-science/package.json', '{}')
@@ -75,6 +429,18 @@ describe('desktop-only dependency contents', () => {
         code: 1,
         stderr: expect.stringContaining('requires bundled i18next')
       })
+      await expect(
+        stat(join(root, 'out/desktop-backend/out/backend/dependencies.json'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      expect(
+        await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
+      ).toContain('i18next')
+      for (const name of process.platform === 'win32'
+        ? ['micromamba.exe', 'micromamba-compat.exe']
+        : ['micromamba'])
+        expect(await readFile(join(root, 'out/desktop-backend/resources', name), 'utf8')).toBe(
+          'synthetic fixture'
+        )
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -279,6 +645,198 @@ describe('desktop-only dependency contents', () => {
     expect(desktop('examples/directory.d.ts', true)).toBe(true)
   })
 
+  it.each([
+    ['@huggingface/transformers', '4.2.0', 'src'],
+    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib'],
+    ['ajv', '8.20.0', 'lib'],
+    ['onnxruntime-common', '1.24.3', 'lib'],
+    ['flatbuffers', '25.9.23', 'ts'],
+    ['entities', '6.0.1', 'src']
+  ])('omits audited source trees from desktop %s only', (name, version, source) => {
+    const manifest = JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8'))
+    expect(manifest.version).toBe(version)
+    const desktop = createDesktopDependencyFilter(manifest)
+    for (const separator of ['/', '\\']) {
+      const file = [source, 'nested', 'implementation.js'].join(separator)
+      expect(desktop(file, false)).toBe(false)
+      expect(backendDependencyIncludes(manifest, file)).toBe(true)
+      expect(createDesktopDependencyFilter({ ...manifest, version: '99.0.0' })(file, false)).toBe(
+        true
+      )
+      expect(desktop([source, 'nested', 'LICENSE.txt'].join(separator), false)).toBe(true)
+      expect(desktop(source, true)).toBe(true)
+      const exported = { ...manifest, exports: { './source/*': `./${source}/*` } }
+      expect(createDesktopDependencyFilter(exported)(file, false)).toBe(true)
+    }
+    for (const file of [
+      manifest.main.replace(/^\.\//, ''),
+      'dist/ort-wasm-simd-threaded.wasm',
+      'dist/ort-wasm-simd-threaded.mjs',
+      'LICENSE'
+    ])
+      expect(desktop(file, false)).toBe(true)
+  })
+
+  it.each(['4.6.5', '4.6.7'])(
+    'keeps Zod %s runtime subpaths without shipping its opt-in development sources or locale types',
+    (version) => {
+      const installed = JSON.parse(readFileSync('node_modules/zod/package.json', 'utf8'))
+      expect(['4.6.5', '4.6.7']).toContain(installed.version)
+      const manifest = { ...installed, version }
+      const desktop = createDesktopDependencyFilter(manifest)
+      for (const separator of ['/', '\\']) {
+        for (const file of [
+          'src/index.ts',
+          'src/v4/core/core.ts',
+          'v4/locales/en.d.cts',
+          'v4/locales/en.d.ts'
+        ]) {
+          const path = file.replaceAll('/', separator)
+          expect(desktop(path, false)).toBe(false)
+          expect(backendDependencyIncludes(manifest, path)).toBe(true)
+          expect(createDesktopDependencyFilter({ ...manifest, version: '99' })(path, false)).toBe(
+            true
+          )
+        }
+        for (const file of [
+          'index.cjs',
+          'index.js',
+          'compile.js',
+          'v3/index.cjs',
+          'v4/core/index.js',
+          'v4/locales/en.js',
+          'v4/locales/en.cjs',
+          'src/LICENSE'
+        ])
+          expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
+      }
+      // A new runtime export into src is not the audited development-only condition.
+      const exports = { ...manifest.exports, './runtime': './src/runtime.js' }
+      expect(createDesktopDependencyFilter({ ...manifest, exports })('src/runtime.js', false)).toBe(
+        true
+      )
+      const additionalCondition = { ...manifest, exports: { '.': { unknown: './src/index.ts' } } }
+      expect(createDesktopDependencyFilter(additionalCondition)('src/index.ts', false)).toBe(true)
+    }
+  )
+
+  it('runs schema and binary consumers from isolated pruned dependency trees', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-pruned-schemas-'))
+    const dependencies = await realpath('node_modules')
+    const { createRequire } = await import('node:module')
+    const copied = new Set<string>()
+    const copy = async (name: string, from: string): Promise<void> => {
+      let source = dirname(createRequire(join(from, 'package.json')).resolve(name))
+      while (
+        JSON.parse(await readFile(join(source, 'package.json'), 'utf8').catch(() => '{}')).name !==
+        name
+      ) {
+        const parent = dirname(source)
+        if (parent === source) throw new Error(`Missing package: ${name}`)
+        source = parent
+      }
+      if (copied.has(source)) return
+      copied.add(source)
+      const path = relative(dependencies, source)
+      if (isAbsolute(path) || path.split(sep).includes('..'))
+        throw new Error('Dependency outside installed tree')
+      const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+      const desktop = createDesktopDependencyFilter(manifest)
+      await cp(source, join(root, 'node_modules', path), {
+        recursive: true,
+        filter: async (file) =>
+          backendDependencyIncludes(manifest, relative(source, file)) &&
+          desktop(relative(source, file), (await stat(file)).isDirectory())
+      })
+      for (const child of Object.keys(manifest.dependencies ?? {})) await copy(child, source)
+    }
+    try {
+      for (const name of [
+        'zod',
+        'ajv',
+        'ajv-formats',
+        'onnxruntime-common',
+        'flatbuffers',
+        'entities'
+      ])
+        await copy(name, process.cwd())
+      await expect(readFile(join(root, 'node_modules/zod/src/index.ts'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+      await expect(
+        readFile(join(root, 'node_modules/zod/v4/locales/en.d.cts'))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      const probe = `
+        import assert from 'node:assert/strict';
+        import {createRequire} from 'node:module';
+        import {readdirSync} from 'node:fs';
+        const require = createRequire(import.meta.url);
+        for (const load of [name=>import(name), async name=>require(name)]) {
+          const z = await load('zod');
+          const core = await load('zod/v4/core');
+          assert.equal(z.globalRegistry, core.globalRegistry);
+          assert.equal(z.ZodObject, (await load('zod/v4')).ZodObject);
+          const shape = z.object({name:z.string().min(2),age:z.number().int()});
+          assert.deepEqual(shape.parse({name:'科学',age:2}), {name:'科学',age:2});
+          assert.equal(shape.safeParse({name:'x',age:'2'}).success,false);
+          z.globalRegistry.add(shape,{id:'probe-schema'});
+          assert.equal(core.globalRegistry.get(shape).id,'probe-schema');
+          z.globalRegistry.remove(shape);
+          assert.equal(z.toJSONSchema(shape).properties.age.type,'integer');
+          const v3 = await load('zod/v3');
+          assert.equal(v3.string().safeParse(4).success,false);
+          for(const name of ['zod/mini','zod/v4-mini','zod/v4/mini']) {
+            const mini = await load(name); assert.equal(mini.parse(mini.string(),'ok'),'ok');
+          }
+          for(const name of ['zod/locales','zod/v4/locales']) assert.equal(typeof (await load(name)).en,'function');
+        }
+        for(const name of readdirSync(new URL('node_modules/zod/v4/locales/',import.meta.url)).filter(name=>/\\.(?:cjs|js)$/.test(name)))
+          await import('zod/v4/locales/'+name);
+        for(const entry of ['ajv','ajv/dist/2019.js','ajv/dist/2020.js']) {
+          const Ajv = require(entry);
+          const ajv = new Ajv({code:{source:true}});
+          require('ajv-formats')(ajv);
+          const validate = ajv.compile({type:'object',properties:{name:{type:'string',minLength:2},email:{type:'string',format:'email'}},required:['name'],additionalProperties:false});
+          assert.equal(validate({name:'科学',email:'a@example.test'}),true);
+          assert.equal(validate({name:'x',email:'bad'}),false);
+          const standalone = require('ajv/dist/standalone/index.js')(ajv,validate);
+          const module = {exports:{}};
+          new Function('module','exports','require',standalone)(module,module.exports,require);
+          assert.equal(module.exports({name:'ok'}),true);
+          assert.equal(module.exports({name:4}),false);
+        }
+        const JTD = require('ajv/dist/jtd.js');
+        const jtd = new JTD(); const definition={properties:{name:{type:'string'}}};
+        assert.deepEqual(jtd.compileParser(definition)(jtd.compileSerializer(definition)({name:'科学'})),{name:'科学'});
+        const ort = require('onnxruntime-common');
+        const tensor = new ort.Tensor('float32',new Float32Array([2,4,8]),[3]);
+        assert.deepEqual(tensor.reshape([1,3]).dims,[1,3]);
+        const fb = require('flatbuffers'); const builder = new fb.Builder(64);
+        builder.finish(builder.createString('科学'));
+        assert.equal(new fb.ByteBuffer(builder.asUint8Array()).__string(0),'科学');
+        for (const api of [require('entities'),await import('entities')])
+          assert.equal(api.decodeHTML('&lt;科学 &amp; data&gt;'),'<科学 & data>');
+        assert.equal(require('entities/decode').decodeHTML('&amp;'),'&');
+        assert.equal((await import('entities/escape')).escapeText('<&>'),'&lt;&amp;&gt;');
+        // Opt-in compiler activation still updates the same registry, only when explicitly loaded.
+        assert.equal((await import('zod/v4/core')).globalConfig.postProcessor,undefined);
+        assert.equal(require('zod/v4/core').globalConfig.postProcessor,undefined);
+        for(const load of [name=>import(name),async name=>require(name)]) {
+          const core = await load('zod/v4/core');
+          await load('zod/compile'); assert.equal(typeof core.globalConfig.postProcessor,'function');
+          const z=await load('zod'); assert.equal(z.string().parse('ok'),'ok');
+        }
+        console.log('Isolated pruned schemas, registries, code generation and binary consumers passed');
+      `
+      const file = join(root, 'probe.mjs')
+      await writeFile(file, probe)
+      const { stdout } = await promisify(execFile)(process.execPath, [file], { timeout: 30_000 })
+      expect(stdout).toContain('binary consumers passed')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
   it('copies a real dependency tree with nested notices and loadable runtime assets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-dependency-'))
     const source = join(root, 'source')
@@ -322,6 +880,75 @@ describe('desktop-only dependency contents', () => {
 })
 
 describe('standalone dependency boundary', () => {
+  it.each(['/', '\\'])(
+    'prunes only audited browser builds, preserving Node entries (%s)',
+    (separator) => {
+      for (const [name, version, removed, retained] of [
+        ['pdf-lib', '1.17.1', 'dist/pdf-lib.esm.js', 'cjs/index.js'],
+        ['fontkit', '2.0.4', 'dist/browser-module.mjs', 'dist/module.mjs'],
+        ['@bokuweb/zstd-wasm', '0.0.27', 'dist/web/zstd.wasm', 'dist/common/zstd.wasm']
+      ]) {
+        expect(
+          backendDependencyIncludes({ name, version }, removed.replaceAll('/', separator))
+        ).toBe(false)
+        expect(
+          backendDependencyIncludes({ name, version }, retained.replaceAll('/', separator))
+        ).toBe(true)
+        expect(
+          backendDependencyIncludes({ name, version: 'future' }, removed.replaceAll('/', separator))
+        ).toBe(true)
+        for (const file of ['package.json', 'LICENSE', 'dist/NOTICE', 'dist/web/LICENSE.txt'])
+          expect(
+            backendDependencyIncludes({ name, version }, file.replaceAll('/', separator))
+          ).toBe(true)
+      }
+    }
+  )
+
+  it('runs PDF, CJK font and compression operations from filtered real Node packages', async () => {
+    // The copied packages resolve third-party peers from this worktree, not another checkout.
+    await mkdir('node_modules/.cache', { recursive: true })
+    const root = await mkdtemp(join(process.cwd(), 'node_modules/.cache/node-payload-'))
+    try {
+      for (const name of ['pdf-lib', 'fontkit', '@bokuweb/zstd-wasm']) {
+        const source = join(process.cwd(), 'node_modules', name)
+        const manifest = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
+        await cp(source, join(root, name), {
+          recursive: true,
+          filter: (path) => backendDependencyIncludes(manifest, relative(source, path))
+        })
+      }
+      const script = `
+        import assert from 'node:assert/strict';
+        import { createRequire } from 'node:module';
+        import { readFileSync } from 'node:fs';
+        const require = createRequire(import.meta.url);
+        const pdf = require('./pdf-lib');
+        const doc = await pdf.PDFDocument.create();
+        const font = await doc.embedFont(pdf.StandardFonts.Helvetica);
+        doc.addPage().drawText('Packaging round trip', {font});
+        assert.equal((await pdf.PDFDocument.load(await doc.save())).getPageCount(), 1);
+        const bytes = readFileSync(${JSON.stringify(join(process.cwd(), 'packages/pdf-translation/resources/NotoSansSC-Regular.otf'))});
+        for (const fontkit of [require('./fontkit'), await import('./fontkit/dist/module.mjs')]) {
+          const face = fontkit.create(bytes);
+          assert(face.hasGlyphForCodePoint('中'.codePointAt(0)));
+          assert(face.layout('Scientific 科学').glyphs.length > 0);
+        }
+        const zstd = require('./@bokuweb/zstd-wasm');
+        await zstd.init();
+        const input = new TextEncoder().encode('Scientific 科学 round trip');
+        assert.deepEqual(zstd.decompress(zstd.compress(input)), input);
+      `
+      await writeFile(join(root, 'verify.mjs'), script)
+      await promisify(execFile)(process.execPath, [join(root, 'verify.mjs')], { timeout: 30_000 })
+      await expect(stat(join(root, 'pdf-lib/dist/pdf-lib.js'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }, 40_000)
+
   it('ships query engines for the release platform without development migration engines', () => {
     expect(prismaEngineFilenames('darwin', 'arm64')).toEqual([
       'libquery_engine-darwin-arm64.dylib.node'
@@ -586,7 +1213,8 @@ it('applies existing desktop asset exclusions to the standalone copy', () => {
   for (const path of [
     'legacy/build/pdf.mjs',
     'cmaps/Adobe-Japan1-UCS2.bcmap',
-    'standard_fonts/FoxitSans.pfb'
+    'standard_fonts/FoxitSans.pfb',
+    'wasm/openjpeg.wasm'
   ])
     expect(backendDependencyIncludes({ name: 'pdfjs-dist' }, path)).toBe(true)
   expect(

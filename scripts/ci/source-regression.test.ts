@@ -63,6 +63,11 @@ it('uses the packaging heap budget for Web builds in every workflow', () => {
   expect(scripts['build:web:compiled']).toBe(
     'npm run gen:web-api-map && node --max-old-space-size=8192 node_modules/vite/bin/vite.js build --config vite.web.config.ts'
   )
+  expect(
+    scripts['build:e2e']
+      .split(' && ')
+      .filter((command: string) => command === 'npm run build:web:compiled')
+  ).toHaveLength(1)
 })
 
 it('checks the reported Windows failures in the blocking PR core job', () => {
@@ -330,7 +335,7 @@ describe('independent source regression', () => {
     { group: 'functional', shard: 1 },
     { group: 'workspace', shard: 1 },
     { group: 'presentation', shard: 1 },
-    ...[1, 2, 3].map((shard) => ({ group: 'regressions', shard })),
+    ...[1, 2, 3, 4, 5, 6].map((shard) => ({ group: 'regressions', shard })),
     { group: 'capacity', shard: 1 },
     { group: 'delegation', shard: 1 }
   ]
@@ -357,8 +362,8 @@ describe('independent source regression', () => {
     }
   }
 
-  it('selects all eight jobs for full coverage even with a diagnostic shard input', () => {
-    for (const shard of ['all', '1', '2', '3'])
+  it('selects all eleven jobs for full coverage even with a diagnostic shard input', () => {
+    for (const shard of ['all', '1', '2', '3', '4', '5', '6'])
       expect(selectGroups('full', shard)).toEqual({ status: 0, matrix: { include: full } })
     expect(scheduled.jobs.regression.strategy?.matrix).toBe(
       '${{ fromJSON(needs.macos_setup.outputs.matrix) }}'
@@ -381,7 +386,7 @@ describe('independent source regression', () => {
       'presentation-screening'
     ])
       expect(selectGroups(group)).toEqual({ status: 0, matrix: { include: [{ group, shard: 1 }] } })
-    for (const shard of ['1', '2', '3'])
+    for (const shard of ['1', '2', '3', '4', '5', '6'])
       expect(selectGroups('regressions', shard)).toEqual({
         status: 0,
         matrix: { include: [{ group: 'regressions', shard: Number(shard) }] }
@@ -391,7 +396,7 @@ describe('independent source regression', () => {
     })
     for (const [mode, shard] of [
       ['invalid', 'all'],
-      ['full', '4'],
+      ['full', '7'],
       ['full', '$(exit 0)']
     ])
       expect(selectGroups(mode, shard).status).not.toBe(0)
@@ -417,7 +422,7 @@ describe('independent source regression', () => {
       'runtime-evidence',
       'static-impact'
     ])
-    expect(dispatch.inputs.shard.options).toEqual(['all', '1', '2', '3'])
+    expect(dispatch.inputs.shard.options).toEqual(['all', '1', '2', '3', '4', '5', '6'])
     expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
     expect(scheduled.on).not.toHaveProperty('push')
     expect(scheduled.jobs).not.toHaveProperty('plan')
@@ -438,7 +443,7 @@ describe('independent source regression', () => {
     expect(consumer['runs-on']).toBe(setup['runs-on'])
     expect(setup.needs).toBeUndefined()
     expect(setup.steps.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
-    expect(setup.steps.filter(({ run }) => run === 'npm run build:web')).toHaveLength(1)
+    expect(setup.steps.some(({ run }) => /npm run build:web\b/.test(run ?? ''))).toBe(false)
     expect(
       consumer.steps.some(({ run }) => run?.includes('npm-ci') || run?.includes('npm run build:'))
     ).toBe(false)
@@ -458,7 +463,7 @@ describe('independent source regression', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'preserves PR defaults and separates capacity from all three ordinary shards',
+    'preserves PR defaults and separates capacity from all six ordinary shards',
     () => {
       const run = (group: string, capacity: string, shard = ''): SpawnSyncReturns<string> =>
         spawnSync('bash', ['-e', '-c', 'npm() { printf "%s\\n" "$@"; };\n' + regression.run!], {
@@ -475,7 +480,7 @@ describe('independent source regression', () => {
       expect(ordinary.status).toBe(0)
       expect(ordinary.stdout).toContain('--grep-invert\n@capacity')
       expect(ordinary.stdout).toContain('--global-timeout=1200000')
-      for (const shard of ['1/3', '2/3', '3/3']) {
+      for (const shard of ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6']) {
         const result = run('regressions', 'false', shard)
         expect(result.status).toBe(0)
         expect(result.stdout).toContain(`--shard=${shard}`)
@@ -499,7 +504,7 @@ describe('independent source regression', () => {
       expect(call.with).toEqual({
         group: '${{ matrix.group }}',
         'include-capacity': 'false',
-        shard: "${{ matrix.group == 'regressions' && format('{0}/3', matrix.shard) || '' }}"
+        shard: "${{ matrix.group == 'regressions' && format('{0}/6', matrix.shard) || '' }}"
       })
     }
   )
@@ -658,7 +663,15 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
   expect(
     manual.jobs.isolation.steps.find((step) => step.uses === './.github/actions/verify-packages')
       ?.with
-  ).toEqual({ selection: '${{ inputs.packages }}' })
+  ).toEqual({ selection: '${{ inputs.packages }}', 'source-tests': '${{ inputs.source_tests }}' })
+  const action = load(readFileSync('.github/actions/verify-packages/action.yml', 'utf8')) as {
+    inputs: Record<string, { default: string }>
+  }
+  expect(action.inputs['source-tests'].default).toBe('true')
+  expect(
+    scheduled.jobs.packages.steps.find((step) => step.uses === './.github/actions/verify-packages')
+      ?.with?.['source-tests']
+  ).toBeUndefined()
 })
 
 it('runs complete portable discovery with no package exclusions and defers thresholds until all host and package reports', () => {

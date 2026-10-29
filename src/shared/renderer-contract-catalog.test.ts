@@ -258,7 +258,13 @@ describe('renderer contract catalog', () => {
           surfaceInstallation.localWeb === 'web-rpc' &&
           parameterCodec.electron !== parameterCodec.web
       )
-    ).toEqual(['acp.connect', 'acp.createSession', 'notebookEnv.cancel', 'sessions.saveSession'])
+    ).toEqual([
+      'acp.connect',
+      'acp.createSession',
+      'notebookEnv.cancel',
+      'sessions.importPackage',
+      'sessions.saveSession'
+    ])
 
     const explicitEquivalentTransforms = paths(
       ({ parameterCodec }) =>
@@ -514,6 +520,7 @@ describe('renderer contract catalog', () => {
       'literature.addPdf',
       'literature.cancelPdfImport',
       'literature.citationStyles',
+      'literature.collect',
       'literature.completeMetadata',
       'literature.exportRecord',
       'literature.formatDocument',
@@ -526,6 +533,8 @@ describe('renderer contract catalog', () => {
       'literature.jobs',
       'literature.journals',
       'literature.lookupMetadata',
+      'literature.publicationCheck',
+      'literature.related',
       'literature.search',
       'literature.sources',
       'literature.supplementAttachment',
@@ -569,6 +578,7 @@ describe('renderer contract catalog', () => {
       'sessionReplay.saveView',
       'sessionReplay.unlinkSession',
       'sessions.cancelDiagnostics',
+      'sessions.deleteRecoveryFile',
       'sessions.deleteSession',
       'sessions.editDetails',
       'sessions.exportDiagnostics',
@@ -583,6 +593,7 @@ describe('renderer contract catalog', () => {
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
+      'sessions.useCaseCatalog',
       'settings.getSettings',
       'tags.create',
       'tags.delete',
@@ -607,6 +618,7 @@ describe('renderer contract catalog', () => {
       'literature:add-pdf',
       'literature:cancel-pdf-import',
       'literature:citation-styles',
+      'literature:collect',
       'literature:complete-metadata',
       'literature:export-record',
       'literature:format-document',
@@ -619,6 +631,8 @@ describe('renderer contract catalog', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:publication-check',
+      'literature:related',
       'literature:search',
       'literature:sources',
       'literature:supplement-attachment',
@@ -662,6 +676,7 @@ describe('renderer contract catalog', () => {
       'session-replay:save-view',
       'session-replay:unlink-session',
       'sessions:cancel-diagnostics',
+      'sessions:delete-recovery-file',
       'sessions:delete-session',
       'sessions:edit-details',
       'sessions:export-diagnostics',
@@ -676,6 +691,7 @@ describe('renderer contract catalog', () => {
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
+      'sessions:use-case-catalog',
       'settings:get-settings',
       'tags:create',
       'tags:delete',

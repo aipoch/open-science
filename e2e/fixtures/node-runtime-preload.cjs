@@ -7,6 +7,25 @@ if (!root) throw new Error('The Node runtime fixture requires an isolated source
 if (process.versions.electron) {
   const { app } = require('electron')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
+  if (process.env.OPEN_SCIENCE_E2E_NO_FOCUS === '1') {
+    const { BrowserWindow, dialog } = require('electron')
+    BrowserWindow.prototype.show = () => {}
+    BrowserWindow.prototype.showInactive = () => {}
+    BrowserWindow.prototype.focus = () => {}
+    app.focus = () => {}
+    dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false })
+    dialog.showMessageBoxSync = () => 0
+    dialog.showErrorBox = (_title, message) => console.error('Native dialog suppressed:', message)
+  }
+  if (
+    process.platform !== 'linux' &&
+    app.commandLine.getSwitchValue('password-store') === 'basic' &&
+    !(process.argv ?? []).some((arg) => arg.startsWith('--password-store='))
+  ) {
+    // Playwright injects this Linux-only override outside argv. It is not an application-selected
+    // credential backend on macOS/Windows and must not create a false replacement mismatch.
+    app.commandLine.removeSwitch('password-store')
+  }
   if (process.platform === 'linux') {
     // Playwright's Electron loader overrides argv with password-store=basic. Restore the
     // explicitly selected test vault before application credential preflight runs.
@@ -26,7 +45,9 @@ if (process.versions.electron) {
     app.setPath('home', fixtureHome)
     for (const [key, value] of [
       ['appData', process.env.APPDATA],
-      ['cache', process.env.LOCALAPPDATA],
+      // LOCALAPPDATA retains the Windows OS profile for native AppContainer Temp resolution;
+      // Electron's cache remains inside this fixture independently of that OS environment input.
+      ['cache', join(fixtureHome, 'AppData', 'Local')],
       ['downloads', join(fixtureHome, 'Downloads')]
     ]) {
       if (!value || !resolve(value).startsWith(resolve(fixtureHome) + require('node:path').sep))
@@ -64,6 +85,7 @@ if (process.versions.electron) {
   process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(childPreload)}`
 } else {
   require('./session-outcome-preload.cjs')
+  if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) require('./use-case-download-preload.cjs')
   if (process.platform === 'darwin') require('./mock-node-credentials.cjs')
   const fs = require('node:fs/promises')
   const statfs = fs.statfs

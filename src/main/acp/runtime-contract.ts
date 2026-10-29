@@ -1,3 +1,4 @@
+import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type {
@@ -18,7 +19,11 @@ import type {
 } from '../../shared/notebook'
 import type { SideChatSendMessageRequest, SideChatSendMessageResult } from '../../shared/side-chat'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework/types'
+import type {
+  AgentFramework,
+  AgentProcessSpawner,
+  ResolvedAgentBackend
+} from '../agent-framework/types'
 import type { ArtifactRepository } from '../artifacts/repository'
 import type { ArtifactRunRegistry } from '../artifacts/run-registry'
 import type { LiteratureLibraryDiscovery } from '../literature/discovery-contract'
@@ -50,7 +55,9 @@ import type { ImageInputCompatibilityPort } from './image-input-compatibility-po
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
-import type { AcpTurnSkillHooks } from './turn-skill-owner'
+import type { AcpSpecialistResolutionContext, AcpTurnSkillHooks } from './turn-skill-owner'
+
+export type { AcpSpecialistResolutionContext } from './turn-skill-owner'
 
 export type AcpRuntimeCallbacks = {
   onStateChanged?: (state: AcpStateUpdate) => void
@@ -93,6 +100,8 @@ export type AcpRuntimeOptions = {
   // Replaces only physical process creation. Backend identity and initialization material still come
   // from resolveBackend when it is available.
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AgentProcessSpawner
+  registerOpenCodeStoreRelease?: (release: () => void) => void
   // Resolves the active agent backend (framework + spawn inputs) at connect time so a framework or
   // provider switch takes effect on reconnect.
   resolveBackend?: (context: {
@@ -107,6 +116,7 @@ export type AcpRuntimeOptions = {
   // Resolves a granted local root and its current access level (backed by the GrantedLocalRoot
   // table), enabling the linked-folder file-reference adapter. Absent ⇒ linked-folder references
   // stay unavailable.
+  authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'initialize' | 'prepareNotice'>
   grantedRoots?: {
     list?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
     resolveRoot: (rootId: string) => Promise<Pick<GrantedLocalRoot, 'path' | 'access'> | undefined>
@@ -128,6 +138,12 @@ export type AcpRuntimeOptions = {
   skills?: AcpTurnSkillHooks
   plan?: AcpRuntimePlanOptions
   permissionWait?: {
+    networkApprovalOwner?: import('./sandbox-network-approval-owner').SandboxNetworkApprovalOwner
+    allowNetworkDomain?: (
+      hostname: string,
+      assertCurrent?: () => Promise<void>,
+      finalize?: () => Promise<void>
+    ) => Promise<unknown>
     sessions: SessionRuntimeContextCommands &
       Pick<SessionCatalog, 'containsMessageOnActiveBranch' | 'loadSessionForContinuation'> &
       Partial<Pick<SessionCatalog, 'sessionProjectId'> & SessionMutation>
@@ -279,7 +295,10 @@ export type AcpRuntimeOptions = {
   // Re-resolves capabilities from the latest Specialist profile and installed catalog. This is
   // intentionally separate from Main Agent enablement: a Main-disabled installed Skill remains
   // eligible for a Specialist.
-  resolveSpecialistSkills?: (specialistId: string) => Promise<EffectiveSpecialistSkills>
+  resolveSpecialistSkills?: (
+    specialistId: string,
+    context?: AcpSpecialistResolutionContext
+  ) => Promise<EffectiveSpecialistSkills>
   // Resolves the project's Agent Context (a system prompt append) at session setup time. The ACP
   // projectId carries the Project id. Returns undefined when absent or on lookup failure.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>

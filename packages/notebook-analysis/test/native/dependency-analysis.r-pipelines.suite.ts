@@ -24,13 +24,15 @@ it.each([
     name: 'dplyr and ggplot2 pipeline',
     code: dataMaskPipelineSource,
     inputName: 'counts.csv',
-    outputNames: ['counts.csv', 'counts.png']
+    outputNames: ['counts.csv', 'counts.png'],
+    effectState: 'complete'
   },
   {
     name: 'reported theme dimensions and two plots',
     code: rThemePlots,
     inputName: 'sample-groups-666666666666.csv',
-    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
+    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png'],
+    effectState: 'partial'
   },
   {
     name: 'theme variants, grid units, legends and transparent colours',
@@ -47,11 +49,12 @@ it.each([
         'scale_fill_manual(values = cols, guide = guide_legend(nrow = 2))'
       ),
     inputName: 'sample-groups-666666666666.csv',
-    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png']
+    outputNames: ['synthetic_groups_bar_ggplot.png', 'synthetic_groups_pie_ggplot.png'],
+    effectState: 'partial'
   }
 ])(
   'captures and replays the real $name',
-  async ({ code, inputName, outputNames }) => {
+  async ({ code, inputName, outputNames, effectState }) => {
     const root = await mkdtemp(join(tmpdir(), 'r-evaluation-pipeline-'))
     try {
       const content = `group\n${Array(33).fill('Ctrl\nIRI\n').join('')}`
@@ -60,7 +63,8 @@ it.each([
         await mkdir(join(dataRoot, 'inputs'), { recursive: true })
         await writeFile(join(dataRoot, 'inputs', inputName), content)
         const analysis = await analyzeNotebookSourceFileAccess('r', code)
-        expect(analysis).toMatchObject({ readState: 'complete', writeState: 'complete' })
+        // Summary dispatch on unproved CSV columns keeps the theme examples conservative.
+        expect(analysis).toMatchObject({ readState: effectState, writeState: effectState })
         expect(analysis.reads).toEqual([`inputs/${inputName}`])
         expect(analysis.writes.slice().sort()).toEqual(outputNames.slice().sort())
         const scriptPath = join(directory, 'analysis.R')

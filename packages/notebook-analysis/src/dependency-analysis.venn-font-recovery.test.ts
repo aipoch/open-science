@@ -32,14 +32,16 @@ it.each([cells[0]!.script, corrected])(
   'captures ordinary formatting and the Venn workflow: %#',
   async (script) => {
     const { facts } = await analyzeRNotebookSource(script)
-    expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual(
-      script === corrected ? ['external-state', 'opaque-call'] : ['external-state']
-    )
+    expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
+      'external-state',
+      'function-scope',
+      'opaque-call'
+    ])
     expect(facts.rOptionWrites).toEqual(['scipen'])
     expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-      readState: script === corrected ? 'partial' : 'complete',
-      writeState: script === corrected ? 'partial' : 'complete',
-      externalState: script === corrected ? 'partial' : 'complete',
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
       reads: ['inputs/set-membership-111111111111.xlsx']
     })
   }

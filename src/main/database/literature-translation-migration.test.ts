@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, expect, it } from 'vitest'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { createProjectDbClient } from '../projects/prisma-client'
-import { migrateApplicationDatabase } from './migration-service'
+import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 let root: string
 let client: PrismaClient
@@ -17,25 +18,32 @@ async function setup(): Promise<void> {
   client = createProjectDbClient(root)
   await migrateApplicationDatabase(client)
 }
-async function dropCurrentTables(): Promise<void> {
-  for (const table of ['PdfTranslationBlock', 'PdfTranslation'])
-    await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
-}
 it('upgrades the prior schema with empty unified tables and is idempotent', async () => {
-  await setup()
-  await dropCurrentTables()
-  await client.$executeRawUnsafe('DROP TABLE "PdfTranslationUsage"')
-  await client.$executeRawUnsafe(
-    'DELETE FROM "_open_science_migrations" WHERE id = ?',
-    '0050_literature_translation'
+  root = await mkdtemp(join(tmpdir(), 'translation-migration-'))
+  client = createProjectDbClient(root)
+  await createDatabaseAtReleasedManifest(
+    client,
+    MIGRATION_MANIFEST.filter(({ id }) => id < '0050_literature_translation')
   )
-  const item = await client.literatureItem.create({
-    data: { itemType: 'journalArticle', title: 'Existing paper' }
+  await client.$executeRaw`INSERT INTO "LiteratureItem" (id, "itemType", title, "updatedAt")
+    VALUES ('paper', 'journalArticle', 'Existing paper', CURRENT_TIMESTAMP)`
+  const item = await client.literatureItem.findUnique({
+    where: { id: 'paper' },
+    omit: { readingStatus: true, normalizedPersonalNote: true }
   })
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: ['0050_literature_translation']
+    applied: [
+      '0050_literature_translation',
+      '0051_literature_reading_status',
+      '0052_literature_personal_note_search',
+      '0053_literature_doi_identity'
+    ]
   })
-  expect(await client.literatureItem.findUnique({ where: { id: item.id } })).toEqual(item)
+  expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual({
+    ...item,
+    readingStatus: 'unread',
+    normalizedPersonalNote: ''
+  })
   expect(await client.pdfTranslation.count()).toBe(0)
   expect(
     await client.$queryRawUnsafe(

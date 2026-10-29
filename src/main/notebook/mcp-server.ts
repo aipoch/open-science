@@ -1,3 +1,4 @@
+import { AUTHORIZED_DIRECTORIES_DESCRIPTION } from '../local-fs/authorized-directories'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -39,7 +40,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "Host SDK discovery in `repl_execute`: `await host.help()` is the role-aware catalog with field descriptions; query only needed topics. Main/root agents may call `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+  "`await host.help()` in `repl_execute`: role-aware catalog with field descriptions; query needed topics only. Main/root agents: `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
@@ -58,7 +59,7 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
-  'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
+  'Beyond restricted reads, call `request_network_access`. A failed connection is not required. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
@@ -221,15 +222,15 @@ const wslSetupOpenTerminalSchema = {
 // Install contract embedded as the manage_packages description so the agent always sees it (spec §8.2).
 // The process boundary enforces the same approved-domain policy for every installer worker.
 const INSPECT_PACKAGES_DOC = [
-  "Read installed/missing/version metadata from the session's bound app-managed Python/R runtime without importing or changing packages.",
-  'Use for requested version checks, not as a mandatory preflight after a clear missing-package error. Use notebook_execute to test actual importability.',
+  'Read installed/missing/version metadata from the bound app-managed Python/R runtime; no imports or changes.',
+  'For requested version checks; not mandatory after clear missing-package errors. Test importability with notebook_execute.',
   'No per-call environment. Inspect an external runtime through notebook_execute for code-risk review; it also prepares missing defaults. Bind first when multiple runtimes are enabled.'
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [
-  'Install packages in the session-bound runtime through this trusted tool only. Select with language="python" or language="r", usePip=true only for PyPI-only packages, and pass channels only when needed.',
-  'For managed R runtimes, installer="biocmanager" accepts Bioconductor package names and installer="github" accepts owner/repository or owner/repository@ref. Both are verified from the target R library inventory after installation.',
-  'conda installs resolve conda-forge + bioconda by default. A CRAN R package is installed by its plain name (e.g. "dplyr" → r-dplyr); a Bioconductor R package must be named by its bioconda package id "bioconductor-<name>" in lowercase (e.g. DESeq2 → "bioconductor-deseq2"), which is left as-is (not r- prefixed).',
+  'Install only through this tool in the session-bound runtime. Set language="python" or language="r"; usePip=true only for PyPI-only packages; channels only when needed.',
+  'Managed R: installer="biocmanager" takes Bioconductor names; installer="github" takes owner/repository or owner/repository@ref. Both verify the target R library inventory after installation.',
+  'conda: conda-forge + bioconda; CRAN names → r-*. Bioconda does not support Windows. On Windows, use installer="biocmanager" separately with case-sensitive R package names. Linux/macOS: lowercase bioconductor-* without r-.',
   'There is no per-call environment: bind/switch first. Default runtimes are additive-only (bare name or exact name==version); uninstall, ranges, URLs, extras, and downgrades require a named environment. External runtimes may refuse writes; surface that result.',
   'operation:"uninstall" is named-only. Results include a target receipt. unchanged means only target distribution metadata is unchanged; verify imports with notebook_execute. Use notebook_restart when needsRestart.',
   'Never use apt, brew, sudo, curl | bash, subprocess installs, %pip, !pip, or install.packages(), and never substitute another library. Report required OS dependencies to the user instead of installing them.'
@@ -237,9 +238,9 @@ const MANAGE_PACKAGES_DOC = [
 
 const MANAGE_ENVIRONMENTS_DOC = [
   'Create, list, or remove named persistent Python/R environments. Each is a separate process and namespace.',
-  `Only action:"list" returns the full snapshot (at most ${MAX_ENVIRONMENT_RESULTS}, with offset/limit/nextOffset); action:"create" needs language/name (optional packages), and action:"remove" needs name. Mutations return only target receipts.`,
+  `Only action:"list" returns the full snapshot: at most ${MAX_ENVIRONMENT_RESULTS}, offset/limit/nextOffset. action:"create": language/name, optional packages. action:"remove": name. Mutations return target receipts only.`,
   'Create returns created.runtimeId and does not select it; bind the first target, otherwise switch.',
-  'Removal is limited to agent-created named environments without live Kernels or active/revoking Runtime Bindings; defaults, app-managed versioned environments, and external interpreters cannot be removed.',
+  'Remove only agent-created named environments without live Kernels or active/revoking Runtime Bindings. Never remove defaults, app-managed versioned environments or external interpreters.',
   'Named data kernels cannot call connectors; use repl_execute and the OPEN_SCIENCE_HANDOFF_DIR environment path.'
 ].join('\n')
 
@@ -249,14 +250,14 @@ const LIST_NOTEBOOK_RUNTIMES_DOC = [
 ].join('\n')
 
 const BIND_RUNTIME_DOC = [
-  'Bind a language to one enabled runtimeId for the rest of this session (one runtime per language). Disabled/unknown IDs are refused.',
-  'Use bind only when no binding exists; use switch to change an existing binding. notebook_execute then uses the binding automatically; no per-call runtime is accepted.'
+  'Bind one enabled runtimeId per language for this session. Disabled/unknown IDs are refused.',
+  'Use bind when no binding exists; otherwise switch. notebook_execute uses it automatically; no per-call runtime.'
 ].join('\n')
 
 const SWITCH_RUNTIME_DOC = [
-  'Switch a language to another enabled runtimeId. This tears down that language kernel and clears its memory; other kernels are unaffected.',
+  'Switch a language to another enabled runtimeId, clearing its kernel/memory; other kernels are unaffected.',
   'Requires an existing binding; it is not a first bind.',
-  'The new per-session binding is used automatically by notebook_execute; disabled/unknown IDs are refused.'
+  'notebook_execute uses the new binding automatically; disabled/unknown IDs are refused.'
 ].join('\n')
 
 // Control-plane REPL contract, embedded as the repl_execute description so the agent always sees it.
@@ -264,11 +265,11 @@ const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
   'Gate optional namespaces with `await host.capabilities()`; `self-awareness` documents its boolean contract and capability map.',
-  'Only this kernel supports temporary tool-less inference (`await host.llm(prompt)` or bounded prompt batches), connectors (`await host.mcp(server, method, args)`), remote compute (`host.compute`), and Specialist management (`host.agents`). Discover other namespaces with `host.help()`.',
+  'Only this kernel supports temporary tool-less inference via `await host.llm(prompt)` or bounded batches, connectors via `await host.mcp(server, method, args)`, remote compute via `host.compute`, and Specialists via `host.agents`. Discover namespaces with `host.help()`.',
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Use foreground for results needed now, background:true for longer independent work. Background-safe: host.mcp, host.compute, host.llm, host.delegate and read-only Host SDK calls. host.viewImage, host.agents.switch and live user input are unsafe in background; use foreground. Save runId; avoid frequent polling. Turn end/MCP disconnect leaves accepted Runs active; cancel via background_run. On BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
+  'Declarations/globals persist until restart/process loss; top-level return/await and redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -288,8 +289,8 @@ const buildShellExecuteDoc = (
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
-      ? 'Returns { stdout, stderr, exitCode }. PowerShell host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 themselves or their output may be garbled. A failed native program preserves its exit code, while an unhandled cmdlet failure returns exitCode 1; inspect exitCode instead of assuming success.'
-      : 'Returns { stdout, stderr, exitCode } and does not throw on a non-zero exit; inspect exitCode instead of assuming success.'
+      ? 'Returns { stdout, stderr, exitCode }. Host/cmdlet text is normalized to UTF-8; native programs must emit UTF-8 to avoid garbling. Native failures retain their exit code; unhandled cmdlet failures return exitCode 1. Inspect exitCode.'
+      : 'Returns { stdout, stderr, exitCode }; non-zero exits do not throw. Inspect exitCode.'
 
   return [
     agentContract.executionDescription,
@@ -299,8 +300,8 @@ const buildShellExecuteDoc = (
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
     'Background commands must stay application-managed. Do not use &, nohup, setsid, disown, Start-Process, Start-Job, or equivalent detached-process mechanisms; use background:true instead.',
-    'Do NOT copy a generated notebook output into the workspace with this tool. For a final chart, image, report, CSV, or other user-facing file, call `write_artifact_file` with the same relative filename you saved with (it resolves against the notebook session data dir); it copies the file safely on every platform.',
-    'Use only for one managed command. Run Python/R with notebook_execute, JavaScript with repl_execute, and installs with manage_packages; never execute analysis scripts, inline code, or installers here.'
+    'Do NOT copy a generated notebook output into the workspace with this tool. Publish final user-facing files with `write_artifact_file`, using the same relative filename you saved with; it resolves against the notebook session data dir and copies safely on every platform.',
+    'One managed command only. Use notebook_execute for Python/R, repl_execute for JavaScript, manage_packages for installs; never run analysis scripts, inline code or installers here.'
   ].join('\n')
 }
 
@@ -1634,6 +1635,25 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     inputSchema: {},
     mapResult: compactNotebookStateResult,
     resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
+  },
+  {
+    name: 'list_authorized_directories',
+    title: 'List authorized directories',
+    description: AUTHORIZED_DIRECTORIES_DESCRIPTION,
+    method: 'listAuthorizedDirectories',
+    inputSchema: {},
+    outputSchema: z.object({
+      revision: z.string(),
+      directories: z.array(
+        z.object({
+          path: z.string(),
+          name: z.string(),
+          access: z.enum(['ro', 'rw']),
+          grantedAt: z.string().datetime()
+        })
+      )
+    }),
+    mapResult: (raw) => raw
   },
   {
     name: 'list_notebook_runtimes',

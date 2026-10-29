@@ -1,4 +1,6 @@
-import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LiteratureLatexBundle } from '@aipoch/literature-citations/documents'
 import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
@@ -14,6 +16,7 @@ import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/run-error-classification'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {
@@ -154,7 +157,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   // The SQLite-backed granted-roots store ("Grant folder access"); the linked-folder file-reference
   // resolver reads it fresh per resolution. Absent only in tests — linked-folder references then
   // fail closed (no root resolves).
-  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'>
+  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'> &
+    Partial<Pick<GrantedLocalRootsRepository, 'authorizedSnapshot'>>
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   initializationBarrier?: Promise<unknown>
@@ -183,6 +187,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   beforeSessionDelete?: (sessionId: string) => Promise<void>
   afterSessionDelete?: (sessionId: string, retained: boolean) => void
   specialistService?: SpecialistService
+  sandboxNetworkApprovalOwner?: SandboxNetworkApprovalOwner
   sessionPersistenceCoordinator?: SessionRuntimeContextCommands &
     SessionMutation &
     SessionCatalog &
@@ -216,6 +221,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   delegatedRuntimeHome?: string
   delegatedArtifactCurrentRunFile?: string
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AcpRuntimeOptions['spawnProcess']
+  registerOpenCodeStoreRelease?: AcpRuntimeOptions['registerOpenCodeStoreRelease']
   hasPendingCredentialRequest?: AcpRuntimeOptions['hasPendingCredentialRequest']
   sideChatRelays?: AcpRuntimeOptions['sideChatRelays']
   imageInputCompatibility?: AcpRuntimeOptions['imageInputCompatibility']
@@ -284,6 +291,7 @@ const createAcpRuntime = ({
   afterSessionDelete,
   specialistService,
   sessionPersistenceCoordinator,
+  sandboxNetworkApprovalOwner,
   finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
@@ -298,6 +306,8 @@ const createAcpRuntime = ({
   delegatedRuntimeHome,
   delegatedArtifactCurrentRunFile,
   spawnAgent,
+  spawnProcess,
+  registerOpenCodeStoreRelease,
   sideChatRelays,
   hasPendingCredentialRequest,
   imageInputCompatibility,
@@ -477,6 +487,8 @@ const createAcpRuntime = ({
               )
             : settingsService.resolveAgentBackend(await selection!, context)),
         ...(spawnAgent ? { spawnAgent } : {}),
+        ...(spawnProcess ? { spawnProcess } : {}),
+        ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
         mcpHttpHost: new AgentMcpHttpHost(),
         wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
@@ -771,6 +783,9 @@ const createAcpRuntime = ({
             }
           : {}),
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
+        authorizedDirectories: grantedRootsRepository?.authorizedSnapshot
+          ? new AuthorizedDirectoryNotices(() => grantedRootsRepository.authorizedSnapshot!())
+          : undefined,
         grantedRoots: grantedRootsRepository
           ? {
               list: () => grantedRootsRepository.list(),
@@ -851,6 +866,9 @@ const createAcpRuntime = ({
         ...(!delegatedNotebookConnection && sessionPersistenceCoordinator
           ? {
               permissionWait: {
+                networkApprovalOwner: sandboxNetworkApprovalOwner,
+                allowNetworkDomain:
+                  settingsService.allowNotebookNetworkDomain?.bind(settingsService),
                 sessions: sessionPersistenceCoordinator,
                 onSessionUpdated: (session) => {
                   try {
@@ -964,11 +982,29 @@ const createAcpRuntime = ({
               let profile
               try {
                 profile = await specialistService.resolveRunnableById(specialistId)
-              } catch {
-                // Profile not found or corrupt
+              } catch (error) {
+                log.warn('bound specialist profile resolution failed', {
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'identity',
+                  specialistId,
+                  frameworkId,
+                  reason: 'profile-read-failed',
+                  ...diagnosticErrorFields(error)
+                })
                 return undefined
               }
-              if (!profile.enabled) return undefined
+              if (!profile.enabled) {
+                log.warn('bound specialist profile resolution failed', {
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'identity',
+                  specialistId,
+                  frameworkId,
+                  reason: 'disabled'
+                })
+                return undefined
+              }
               const append = buildSpecialistIdentityAppend(profile)
               const prefix = buildSpecialistIdentityPrefix(profile)
               if (frameworkId === 'claude-code') return { append, prefix: '' }
@@ -976,17 +1012,45 @@ const createAcpRuntime = ({
             }
           : undefined,
         resolveSpecialistSkills: specialistService
-          ? async (specialistId) => {
+          ? async (specialistId, context) => {
+              let profile
               try {
-                const profile = await specialistService.resolveRunnableById(specialistId)
-                if (!profile.enabled) {
-                  return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
-                }
+                profile = await specialistService.resolveRunnableById(specialistId)
+              } catch (error) {
+                log.warn('bound specialist profile resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'skills',
+                  specialistId,
+                  reason: 'profile-read-failed',
+                  ...diagnosticErrorFields(error)
+                })
+                return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+              }
+              if (!profile.enabled) {
+                log.warn('bound specialist profile resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
+                  phase: 'profile',
+                  resolver: 'skills',
+                  specialistId,
+                  reason: 'disabled'
+                })
+                return { kind: 'unavailable', reason: 'The bound specialist is disabled.' }
+              }
+              let stage = 'skills'
+              try {
                 const effective = resolveEffectiveSpecialistSkills(
                   profile,
                   await settingsService.listSpecialistSkillCatalog()
                 )
                 if (effective.kind === 'specialist') {
+                  stage = 'connectors'
                   const [provisioned, connectors] = await Promise.all([
                     settingsService.provisionedConnectorSkillNames(),
                     settingsService.getConnectors()
@@ -1018,8 +1082,18 @@ const createAcpRuntime = ({
                   }
                 }
                 return effective
-              } catch {
-                return { kind: 'unavailable', reason: 'The bound specialist is unavailable.' }
+              } catch (error) {
+                log.warn('bound specialist capability resolution failed', {
+                  sessionId: context?.sessionId,
+                  frameworkId: context?.frameworkId,
+                  modelRoute: context?.modelRoute,
+                  operation: 'specialist-resolution',
+                  specialistId,
+                  phase: stage,
+                  reason: 'capability-read-failed',
+                  ...diagnosticErrorFields(error)
+                })
+                return { kind: 'unavailable', reason: SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE }
               }
             }
           : undefined,

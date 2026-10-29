@@ -2025,7 +2025,7 @@ if (process.argv.includes('--version')) {
           prompt.includes(
             'The user answered the pending question: Restart verification dataset?'
           ) ||
-          (prompt.includes('The user answered the pending questions:') &&
+          (prompt.includes('The user responded to the pending questions:') &&
             prompt.includes('Restart verification dataset?'))
         ) {
           reply = 'Restart verification: Question answer delivered.'
@@ -2329,6 +2329,64 @@ if (process.argv.includes('--version')) {
             }
           })
           reply = ''
+        } else if (prompt.includes('Run the tool collapse scroll probe.')) {
+          const gates = JSON.parse(prompt.split('Probe gates: ')[1])
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+              content: {
+                type: 'text',
+                text: Array.from(
+                  { length: 60 },
+                  (_, i) =>
+                    `Collapse probe paragraph ${i}. Keep this reading context above the running tool.\n\n`
+                ).join('')
+              }
+            }
+          })
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call',
+              toolCallId: 'e2e-collapse-probe',
+              title: 'Running collapse probe',
+              kind: 'other',
+              status: 'in_progress',
+              rawInput: Object.fromEntries(
+                Array.from({ length: 18 }, (_, i) => [
+                  `parameter_${i}`,
+                  `Deterministic tool input ${i}`
+                ])
+              )
+            }
+          })
+          await waitForReleaseFile(gates.grow, 180_000)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
+              content: {
+                type: 'text',
+                text: Array.from(
+                  { length: 8 },
+                  (_, i) => `After collapse growth ${i}. The tool is still running.\n\n`
+                ).join('')
+              }
+            }
+          })
+          await waitForReleaseFile(gates.finish, 180_000)
+          await context.client.notify(acp.methods.client.session.update, {
+            sessionId: context.params.sessionId,
+            update: {
+              sessionUpdate: 'tool_call_update',
+              toolCallId: 'e2e-collapse-probe',
+              status: 'completed'
+            }
+          })
+          reply = 'Collapse probe complete.'
         } else if (prompt.includes(TOOL_ORDER_PROMPT)) {
           // Mirrors a real agent turn: intent text, a slow tool call, then follow-up text.
           const intentMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`

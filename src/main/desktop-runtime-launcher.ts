@@ -1,4 +1,14 @@
-import { runtimeStartupOptionsSchema } from './desktop-runtime-info'
+import { CREDENTIAL_AUTHORIZATION_TIMEOUT_MS } from './credential-identity/identity-contract'
+import {
+  readServiceLifetime,
+  serviceLifetimeRecordSchema,
+  type ServiceLifetimeRecord
+} from './local-service-lifetime'
+import { terminateVerifiedService } from './verified-service-stop'
+import { terminateProcessTree } from './process-tree'
+import { connectDesktopRuntime } from './desktop-runtime-client'
+import type { DesktopShutdownWork } from './desktop-runtime-lifecycle'
+import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from './desktop-runtime-info'
 import { DesktopRuntimeStartupError } from './desktop-startup-recovery'
 import {
   isRuntimeProcessAlive,
@@ -31,6 +41,7 @@ const ownerSchema = z
     schemaVersion: z.literal(1),
     generation: z.string().uuid(),
     pid: z.number().int().positive(),
+    birthToken: z.string().optional(),
     host: z.enum(['node', 'electron']),
     port: z.number().int().min(1).max(65535),
     desktop: z
@@ -63,8 +74,14 @@ export type DesktopBackendLaunch = { endpoint: DesktopEndpoint; startedProcess?:
 export async function discoverDesktopBackend(
   configRoot: string,
   version: string,
-  terminationDeps?: Partial<LegacyTerminationDeps>
+  terminationDeps?: Partial<LegacyTerminationDeps>,
+  expectedEntry?: string,
+  repair = false,
+  signal?: AbortSignal,
+  onRetired?: (intent: ServiceLifetimeRecord, startupOptions?: RuntimeStartupOptions) => void,
+  verifyStartupOptions?: (startupOptions: RuntimeStartupOptions) => void
 ): Promise<DesktopEndpoint | undefined> {
+  signal?.throwIfAborted()
   let owner: z.infer<typeof ownerSchema>
   let token: string
   try {
@@ -88,7 +105,9 @@ export async function discoverDesktopBackend(
         authorization: `Bearer ${token}`,
         'x-open-science-runtime-generation': owner.generation
       },
-      signal: AbortSignal.timeout(1500),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(1500)])
+        : AbortSignal.timeout(1500),
       redirect: 'error'
     })
     if (!response.ok) return undefined
@@ -147,10 +166,181 @@ export async function discoverDesktopBackend(
     startup.success && startup.data.startupOptions.configRoot === configRoot
       ? startup.data.startupOptions
       : undefined
-  if (owner.desktop.version !== version || !startupOptions) {
-    const legacy = !startupOptions
+  const deps = { ...defaultLegacyTerminationDeps, ...terminationDeps }
+  const parentHasLeft = async (): Promise<boolean> => {
+    const process = await deps.inspect(owner.pid)
+    return Boolean(
+      process?.birthToken &&
+      process.parentPid !== undefined &&
+      (process.parentPid === deps.selfPid ||
+        process.parentPid <= 1 ||
+        !deps.isAlive(process.parentPid))
+    )
+  }
+  const lifetime = z
+    .object({ explicit: z.boolean(), apps: z.number().int().nonnegative() })
+    .safeParse('lifetime' in proof ? proof.lifetime : undefined)
+  const unusedDesktop =
+    'launch' in proof &&
+    proof.launch === 'desktop' &&
+    lifetime.success &&
+    !lifetime.data.explicit &&
+    lifetime.data.apps === 0
+  const incompatible = owner.desktop.version !== version || !startupOptions
+  if (incompatible || repair) {
+    const legacy = !startupOptions || !('lifetime' in proof)
+    // An authenticated desktop origin plus an exited parent is evidence of an abandoned App.
+    // Neither entry-path differences nor taking control alone proves independent use has ended.
+    signal?.throwIfAborted()
+    if (expectedEntry && (legacy || unusedDesktop) && (await parentHasLeft())) {
+      if (startupOptions) verifyStartupOptions?.(startupOptions)
+      let probe: Awaited<ReturnType<typeof connectDesktopRuntime>> | undefined
+      let retirementTimer: ReturnType<typeof setTimeout> | undefined
+      const retirement = new AbortController()
+      const retirementSignal = signal
+        ? AbortSignal.any([signal, retirement.signal])
+        : retirement.signal
+      try {
+        const retired = await Promise.race([
+          (async () => {
+            probe = await connectDesktopRuntime({
+              endpoint: owner.desktop!,
+              desktopInstanceId: randomUUID(),
+              signal: AbortSignal.any([retirementSignal, AbortSignal.timeout(2000)]),
+              onEvent: () => {},
+              onDisconnect: () => {}
+            })
+            const info = probe.runtimeInfo()
+            if (
+              info.startupOptions.configRoot === configRoot &&
+              info.launch === 'desktop' &&
+              info.control === 'granted' &&
+              (!info.lifetime || (!info.lifetime.explicit && info.lifetime.apps <= 1))
+            ) {
+              const work = (await probe.lifecycle({ operation: 'inspect' })) as DesktopShutdownWork
+              if (!work.migrationActive && !work.packageTransferActive && !work.settingsInstallId) {
+                retirementSignal.throwIfAborted()
+                await probe.lifecycle({
+                  operation: 'prepare',
+                  fingerprint: work.fingerprint,
+                  deadlineAt: Date.now() + 10_000
+                })
+                await probe.refreshControl()
+                const finalInfo = probe.runtimeInfo()
+                if (
+                  finalInfo.lifetime &&
+                  (finalInfo.lifetime.explicit || finalInfo.lifetime.apps > 1)
+                ) {
+                  await probe.lifecycle({ operation: 'abort' })
+                  return false
+                }
+                retirementSignal.throwIfAborted()
+                const lease = await probe.stopRuntime('restart', { requireCleanExit: false })
+                lease.release()
+                const intent = await readServiceLifetime(configRoot)
+                if (
+                  intent?.generation === owner.desktop!.generation &&
+                  intent.stopping &&
+                  intent.reason === 'restart'
+                )
+                  onRetired?.(intent, startupOptions)
+                return true
+              }
+            }
+            return false
+          })(),
+          new Promise<never>((_, reject) => {
+            retirementTimer = setTimeout(() => {
+              retirement.abort()
+              probe?.close()
+              reject(new Error('Abandoned desktop service retirement timed out.'))
+            }, 12_000)
+          })
+        ])
+        if (retired) return undefined
+      } catch {
+        // Only independently verified abandoned desktop services qualify for bounded escalation.
+        signal?.throwIfAborted()
+        if (unusedDesktop) {
+          probe?.close()
+          // The service serializes this decision with new App connections and explicit start.
+          // Snapshot-only permission is insufficient after an asynchronous failed stop attempt.
+          const response = await fetch(`http://127.0.0.1:${owner.port}/service/retire`, {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${token}`,
+              'x-open-science-runtime-generation': owner.generation
+            },
+            signal: AbortSignal.timeout(2000),
+            redirect: 'error'
+          })
+          if (response.ok) {
+            const result = z
+              .object({
+                pid: z.literal(owner.pid),
+                generation: z.literal(owner.generation),
+                lifetime: serviceLifetimeRecordSchema.extend({
+                  generation: z.literal(owner.desktop.generation),
+                  stopping: z.literal(true),
+                  reason: z.literal('disconnect'),
+                  apps: z.number().optional()
+                })
+              })
+              .safeParse(await response.json())
+            if (result.success) {
+              const { apps, ...intent } = result.data.lifetime
+              if (apps !== undefined && apps !== 0)
+                throw new Error('The service retirement still has connected Apps.')
+              onRetired?.(intent, startupOptions)
+              signal?.throwIfAborted()
+              let lease
+              try {
+                lease = await waitForRuntimeStopped({
+                  configRoot,
+                  generation: owner.desktop.generation,
+                  pid: owner.pid,
+                  requireCleanExit: false,
+                  timeoutMs: 1500,
+                  signal
+                })
+              } catch (error) {
+                if (!(error instanceof RuntimeStopError)) throw error
+                try {
+                  await terminateVerifiedService({
+                    signal,
+                    configRoot,
+                    generation: owner.desktop.generation,
+                    pid: owner.pid,
+                    birthToken: owner.birthToken,
+                    deadlineAt: Date.now() + 5000
+                  })
+                } catch (terminationError) {
+                  // The graceful stop may finish during the asynchronous identity read.
+                  if (isRuntimeProcessAlive(owner.pid)) throw terminationError
+                }
+                lease = await waitForRuntimeStopped({
+                  configRoot,
+                  generation: owner.desktop.generation,
+                  pid: owner.pid,
+                  requireCleanExit: false,
+                  timeoutMs: 5000,
+                  signal
+                })
+              }
+              lease.release()
+              return undefined
+            }
+          }
+        }
+      } finally {
+        retirement.abort()
+        clearTimeout(retirementTimer)
+        probe?.close()
+      }
+    }
+    if (!incompatible) return owner.desktop
     const issue = {
-      reason: legacy ? ('legacy-service' as const) : ('version-mismatch' as const),
+      reason: !startupOptions ? ('legacy-service' as const) : ('version-mismatch' as const),
       desktopVersion: version,
       runtimeVersion: owner.desktop.version,
       pid: owner.pid,
@@ -169,7 +359,7 @@ export async function discoverDesktopBackend(
             configRoot,
             generation: owner.desktop!.generation,
             pid: owner.pid,
-            requireCleanExit: !legacy
+            requireCleanExit: false
           })
           lease.release()
           return
@@ -257,15 +447,14 @@ export async function discoverDesktopBackend(
             pid: owner.pid,
             // Legacy CLI shutdown predates clean-exit receipts. This user-confirmed startup
             // transition waits for process exit and directory release, not installation authority.
-            requireCleanExit: !legacy
+            requireCleanExit: false
           })
           lease.release()
         }
         try {
           await graceful()
-        } catch (error) {
-          // Only a legacy service may be force-stopped: it has no clean-exit receipt to protect.
-          if (!legacy) throw error
+        } catch {
+          // Stop and continue authorizes a bounded, identity-verified fallback for this target.
           await terminateVerifiedLegacyRuntime(
             { configRoot, generation: owner.desktop!.generation, pid: owner.pid },
             terminationDeps
@@ -313,7 +502,11 @@ const MAX_OWNERSHIP_RESPAWNS = 2
 async function settleStoppingRuntime(
   configRoot: string,
   stopping: DesktopRuntimeStoppingError,
-  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+  options: {
+    waitMs: number
+    terminationDeps?: Partial<LegacyTerminationDeps>
+    expectedEntry?: string
+  }
 ): Promise<void> {
   try {
     const lease = await waitForRuntimeStopped({
@@ -336,14 +529,28 @@ async function settleStoppingRuntime(
 async function discoverOrWaitForStop(
   configRoot: string,
   version: string,
-  options: { waitMs: number; terminationDeps?: Partial<LegacyTerminationDeps> }
+  options: {
+    waitMs: number
+    terminationDeps?: Partial<LegacyTerminationDeps>
+    expectedEntry?: string
+  }
 ): Promise<DesktopEndpoint | undefined> {
   try {
-    return await discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    return await discoverDesktopBackend(
+      configRoot,
+      version,
+      options.terminationDeps,
+      options.expectedEntry
+    )
   } catch (error) {
     if (!(error instanceof DesktopRuntimeStoppingError)) throw error
     await settleStoppingRuntime(configRoot, error, options)
-    return discoverDesktopBackend(configRoot, version, options.terminationDeps)
+    return discoverDesktopBackend(
+      configRoot,
+      version,
+      options.terminationDeps,
+      options.expectedEntry
+    )
   }
 }
 
@@ -363,10 +570,15 @@ export async function startOrAttachDesktopBackend(options: {
   terminationDeps?: Partial<LegacyTerminationDeps>
   respawnAttempt?: number
   onStatus?: (status: BackendStartupStatus & { elapsedMs: number }) => void
+  signal?: AbortSignal
+  /** Recheck stopping/update intent immediately before creating a new process. */
+  beforeLaunch?: () => Promise<void>
 }): Promise<DesktopBackendLaunch> {
+  options.signal?.throwIfAborted()
   const wait = {
     waitMs: options.ownershipWaitMs ?? OWNERSHIP_RELEASE_WAIT_MS,
-    terminationDeps: options.terminationDeps
+    terminationDeps: options.terminationDeps,
+    expectedEntry: options.entry
   }
   const existing = await discoverOrWaitForStop(options.configRoot, options.version, wait)
   if (existing) return { endpoint: existing }
@@ -414,10 +626,18 @@ export async function startOrAttachDesktopBackend(options: {
   let failure: Error | undefined
   let status: BackendStartupStatus | undefined
   const startedAt = Date.now()
+  let deadline = startedAt + (options.timeoutMs ?? 60_000)
+  let credentialWaitGranted = false
   const onMessage = (message: unknown): void => {
     const result = backendStartupStatusSchema.safeParse(message)
     if (result.success && result.data.attemptId === attemptId && status?.kind !== 'failed') {
       status = result.data
+      if (status.stage === 'credentials' && status.kind === 'progress' && !credentialWaitGranted) {
+        credentialWaitGranted = true
+        // Grant once; repeated status messages cannot keep startup alive indefinitely.
+        if (options.timeoutMs === undefined)
+          deadline = Math.max(deadline, Date.now() + CREDENTIAL_AUTHORIZATION_TIMEOUT_MS + 60_000)
+      }
       try {
         options.onStatus?.({ ...status, elapsedMs: Date.now() - startedAt })
       } catch {
@@ -429,6 +649,9 @@ export async function startOrAttachDesktopBackend(options: {
     failure = error
   }
   try {
+    options.signal?.throwIfAborted()
+    await options.beforeLaunch?.()
+    options.signal?.throwIfAborted()
     child = spawn(
       options.command,
       [
@@ -456,9 +679,9 @@ export async function startOrAttachDesktopBackend(options: {
   await file.close()
   child.unref()
   child.channel?.unref()
-  const deadline = startedAt + (options.timeoutMs ?? 60_000)
   try {
     while (Date.now() < deadline) {
+      options.signal?.throwIfAborted()
       if (failure) throw failure
       if (child.exitCode === 75) {
         // RuntimeOwnershipConflict: another process holds the data directory. Wait for it to either
@@ -509,6 +732,25 @@ export async function startOrAttachDesktopBackend(options: {
       logs,
       status
     )
+  } catch (error) {
+    if (
+      status?.stage === 'credentials' &&
+      child.exitCode === null &&
+      child.signalCode === null &&
+      (options.signal?.aborted || (error instanceof DesktopBackendStartupError && !error.canRetry))
+    ) {
+      // A blocked credential helper must not outlive an abandoned launch attempt.
+      const stopped = await terminateProcessTree(child, 'SIGKILL')
+      if (stopped.reaped && error instanceof DesktopBackendStartupError)
+        throw new DesktopBackendStartupError(
+          `Node backend startup timed out. See ${logs}.`,
+          status.stage,
+          true,
+          logs,
+          status
+        )
+    }
+    throw error
   } finally {
     child.off('message', onMessage)
     if (child.connected) child.disconnect()

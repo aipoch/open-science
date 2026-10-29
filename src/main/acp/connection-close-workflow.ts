@@ -148,7 +148,8 @@ class AcpConnectionCloseWorkflow {
   handleUnexpectedClose(): void {
     if (
       this.options.currentStatus() !== 'connected' &&
-      this.options.currentStatus() !== 'connecting'
+      this.options.currentStatus() !== 'connecting' &&
+      this.options.currentStatus() !== 'error'
     ) {
       return
     }

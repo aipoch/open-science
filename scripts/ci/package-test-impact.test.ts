@@ -612,6 +612,8 @@ describe('installed-consumer input selection', () => {
     createPackageTestPlan(paths, actual, { verification: true })
   it.each([
     'src/main/application-events.ts',
+    'prisma/schema.prisma',
+    'scripts/database-migration-ledger-smoke.mjs',
     'docs/package-workflows.md',
     'README.md',
     '.github/workflows/source-regression.yml',
@@ -649,6 +651,17 @@ describe('installed-consumer input selection', () => {
         'test/config/vite.browser-test.config.test.ts'
       ]).selected
     ).toEqual([])
+  })
+  it('keeps host database changes out of library verification while retaining the changed archive', () => {
+    const paths = [
+      'prisma/schema.prisma',
+      'scripts/database-migration-ledger-smoke.mjs',
+      'src/main/database/migration-service.ts',
+      'scripts/ci/module-impact/main_database.json',
+      'packages/literature-library/README.md'
+    ]
+    expect(select(paths).selected).toEqual(['packages/literature-library'])
+    expect(createPackageTestPlan(paths, actual).selected).toEqual(['packages/literature-library'])
   })
   it('keeps mixed package/host edits directional and only builds upstream prerequisites', async () => {
     const { packageVerificationPlan } = await import('../package-verification-plan.mjs')

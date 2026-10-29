@@ -117,7 +117,9 @@ const recoveryCopy = (
         'Open-Science could not safely record the installation. No new installation command was started.'
       )
     case 'wsl_network_mode_unsupported':
-      return t('Set WSL networkingMode to mirrored, shut down WSL, then check again.')
+      return t(
+        'WSL2 Bash requires Windows 11 22H2 or later with mirrored networking. On older Windows, use PowerShell. On supported Windows, enable mirrored networking and restart WSL, then check again.'
+      )
     case 'wsl_workspace_path_unsupported':
     case 'wsl_workspace_unreachable':
     case 'wsl_workspace_not_local':
@@ -199,7 +201,7 @@ const installFailureDescription = (failure: InstallFailure, t: Translate): strin
 }
 
 const operationErrorReference = (snapshot: WslSetupSnapshot): string | undefined =>
-  snapshot.errorCode ? `${snapshot.errorCode} · ${snapshot.operationReference}` : undefined
+  snapshot.errorCode ? `${snapshot.errorCode} / ${snapshot.operationReference}` : undefined
 
 const dependencyInstallLabel = (errorCode: string, t: Translate): string => {
   if (
@@ -646,7 +648,7 @@ export const WslLocalShellSection = ({
           tone={currentInstallFailure === 'spawn-failed' ? 'red' : 'amber'}
           title={installFailureTitle(currentInstallFailure, t)}
           description={installFailureDescription(currentInstallFailure, t)}
-          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} · ${snapshot.operationReference}`}
+          errorCode={`${snapshot.errorCode ?? 'wsl_install_unknown'} / ${snapshot.operationReference}`}
           diagnosticsLabel={t('Diagnostics')}
           secondaryButton={{ label: t('Check again'), onClick: () => void probe() }}
           primaryButton={{
@@ -729,8 +731,8 @@ export const WslLocalShellSection = ({
       separated
       title={
         developmentPreview
-          ? t('Local Shell · WSL2 Bash Development Preview')
-          : t('Local Shell · WSL2 Bash Preview')
+          ? t('Local Shell: WSL2 Bash Development Preview')
+          : t('Local Shell: WSL2 Bash Preview')
       }
       description={t(
         'Choose the exact WSL2 distribution and non-root Linux user Open-Science should verify. Selection alone never enables WSL2 Bash.'

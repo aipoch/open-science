@@ -1,12 +1,337 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- inferred test fixture types */
 import { expect, it, vi } from 'vitest'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import type { PDFDocumentProxy } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { applyCachedPdfFigureSources } from '../../src/reader/figure-source.js'
 import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
+import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
+import { createHash } from 'node:crypto'
+import { nativeAlgorithmInkRegions } from '../../src/reader/native-source-geometry.js'
+import { parsePdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
+
+function boundedMathSetup() {
+  // Reader tests consume the public Worker DTO, independently of sibling test files.
+  // The producer's own tests cover its glyph, boundary and PNG certification.
+  const width = 200,
+    height = 220,
+    operators = { fnArray: [] as number[], argsArray: [] as ReturnType<typeof JSON.parse>[] },
+    add = (op: number, args: unknown) => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    rules = [40, 60, 110]
+  add(OPS.setFillRGBColor, ['#000000'])
+  add(OPS.setStrokeRGBColor, ['#000000'])
+  add(OPS.setLineWidth, [0.6])
+  const boundaryRules = rules.map((y) => {
+    const operatorIndex = operators.fnArray.length
+    add(OPS.constructPath, [
+      OPS.stroke,
+      [[0, 20, height - y, 1, 180, height - y]],
+      [20, height - y, 180, height - y]
+    ])
+    return { operatorIndex, segment: [20, y, 180, y], width: 0.6, clip: [0, 0, width, height] }
+  })
+  const records: [string, number, number, number][] = [
+    ['H', 35, 53, 8],
+    ['J', 105, 53, 8],
+    ['0', 35, 78, 8],
+    ['X', 105, 78, 8],
+    ['i', 109, 80, 5],
+    ['1', 35, 100, 8],
+    ['Y', 105, 100, 8],
+    ['j', 109, 102, 5],
+    ['Z', 30, 190, 8]
+  ]
+  const items = records.map(([str, x, baseline, size], index) => {
+    add(OPS.beginText, null)
+    add(OPS.setFont, ['F', size])
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - baseline]])
+    add(OPS.showText, [[{ unicode: str, fontChar: str, width: 500, isInFont: true }]])
+    add(OPS.endText, null)
+    return {
+      str,
+      dir: 'ltr',
+      width: size / 2,
+      height: size,
+      transform: [size, 0, 0, size, x, height - baseline],
+      fontName: 'F',
+      hasEOL: true,
+      sourceItem: { pageNumber: 1, index, text: str }
+    }
+  })
+  const native = {
+      operators,
+      content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+      viewport: {
+        width,
+        height,
+        scale: 1,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, height],
+        convertToViewportPoint: (x: number, y: number) => [x, height - y]
+      },
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: items.map((i) => ({ fontChar: i.str, bounds: [0, -0.1, 0.5, 0.7] }))
+        }
+      ]
+    },
+    itemRegion = (index: number) => ({
+      page: 1,
+      x: records[index][1] / width,
+      y: (records[index][2] - records[index][3]) / height,
+      width: items[index].width / width,
+      height: items[index].height / height
+    }),
+    bytes = new Uint8Array([1, 2, 3]),
+    sourceIdentity = {
+      sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+      sourceSizeBytes: bytes.length
+    },
+    source = createPdfTranslationSource({
+      resourceRequestKey: 'bounded',
+      fingerprint: 'bounded-body',
+      pages: [{ width: 200, height: 220 }],
+      units: items.map((item, index: number) => ({
+        id: 'owner-' + index,
+        source: item.str,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: {
+              x: itemRegion(index).x,
+              y: itemRegion(index).y,
+              width: itemRegion(index).width,
+              height: itemRegion(index).height
+            },
+            items: [{ index, text: item.str }]
+          }
+        ]
+      }))
+    }),
+    extraction: PdfTranslationExtraction = {
+      source,
+      coverage: {
+        pageCount: 1,
+        textItemCount: items.length,
+        includedItemCount: items.length,
+        excludedItemCount: 0,
+        pagesWithoutText: [],
+        exclusions: [],
+        warnings: []
+      }
+    },
+    ambiguous = {
+      code: 'native-table-structure-ambiguous',
+      detail: 'native-table-structure-ambiguous'
+    },
+    element = {
+      id: 'bounded-math-body',
+      kind: 'table' as const,
+      regions: [{ page: 1, x: 19 / 200, y: 39 / 220, width: 162 / 200, height: 72 / 220 }],
+      thumbnailId: 'bounded-math-body',
+      nativeBody: {
+        kind: 'math-table',
+        sourceItems: items.slice(0, -1).map((i) => i.sourceItem),
+        boundary: {
+          kind: 'three-rail',
+          pageNumber: 1,
+          scale: 1,
+          coordinateSystem: 'pdfjs-upright-points',
+          rules: boundaryRules,
+          raster: { width: 648, height: 288, sha256: 'a'.repeat(64) }
+        }
+      },
+      table: {
+        rowCount: 3,
+        columnCount: 2,
+        cells: [[0], [1], [2], [3, 4], [5], [6, 7]].map((indices, cell) => ({
+          row: Math.floor(cell / 2),
+          column: cell % 2,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: indices.map((i) => items[i].str).join(''),
+          ...(indices.length > 1
+            ? {
+                textRuns: indices.map((i, n) => ({
+                  text: items[i].str,
+                  position: n ? 'subscript' : 'normal'
+                }))
+              }
+            : {}),
+          sourceItems: indices.map((i) => items[i].sourceItem),
+          regions: indices.map(itemRegion)
+        })),
+        unassignedText: [],
+        issues: [ambiguous]
+      },
+      issues: [ambiguous]
+    },
+    cached = JSON.parse(
+      JSON.stringify({
+        schemaVersion: 1,
+        extractionId: 'bounded',
+        engineFingerprint: 'b'.repeat(64),
+        ...sourceIdentity,
+        pageCount: 1,
+        requestedPages: [1],
+        processedPages: [1],
+        pages: [{ page: 1, width: 200, height: 220, rotation: 0 }],
+        elements: [element],
+        thumbnails: [
+          {
+            id: element.id,
+            mimeType: 'image/png',
+            width: 648,
+            height: 288,
+            sizeBytes: 100,
+            sha256: element.nativeBody.boundary.raster.sha256
+          }
+        ],
+        navigation: [],
+        issues: []
+      })
+    ) as PdfStructureResult,
+    font = {
+      loadedName: 'F',
+      missingFile: false,
+      isInvalidPDFjsFont: false,
+      isType3Font: false,
+      vertical: false,
+      remeasure: false,
+      fontMatrix: [0.001, 0, 0, 0.001, 0, 0]
+    },
+    objects = new Map<string, unknown>([['F', font]])
+  for (const glyph of native.glyphBounds[0].glyphs)
+    objects.set('F_path_' + glyph.fontChar, {
+      path: [0, 0, -0.1, 1, 0.5, -0.1, 1, 0.5, 0.7, 1, 0, 0.7, 4]
+    })
+  const page = {
+      getViewport: vi.fn(() => native.viewport),
+      getTextContent: vi.fn(async () => native.content),
+      getOperatorList: vi.fn(async () => native.operators),
+      commonObjs: { has: (key: string) => objects.has(key), get: (key: string) => objects.get(key) }
+    },
+    document = {
+      numPages: 1,
+      fingerprints: ['bounded-body'],
+      getData: vi.fn(async () => bytes.slice()),
+      getPage: vi.fn(async () => page)
+    },
+    context = {
+      extraction,
+      sourceId: 'bounded',
+      sourceIdentity,
+      document: document as unknown as PDFDocumentProxy,
+      signal: new AbortController().signal,
+      readCached: vi.fn(async () => cached)
+    }
+  return {
+    native,
+    context,
+    cached,
+    element: cached.elements[0] as typeof element,
+    page,
+    document,
+    objects,
+    extraction
+  }
+}
+
+it('retains one complete captionless mathematical body while external native text remains eligible', async () => {
+  const f = boundedMathSetup(),
+    factory = vi.fn(() => {
+      throw new Error('Primary native path must not use auxiliary data')
+    }),
+    out = await applyCachedPdfFigureSources({ ...f.context, nativeDocumentFactory: factory })
+  expect(globalThis.crypto?.subtle).toBeDefined()
+  expect(() =>
+    parsePdfStructureResult(f.cached, {
+      extractionId: f.cached.extractionId,
+      engineFingerprint: f.cached.engineFingerprint,
+      ...f.context.sourceIdentity,
+      requestedPages: [1]
+    })
+  ).not.toThrow()
+  expect(
+    (
+      await nativeAlgorithmInkRegions(
+        f.page as unknown as PDFPageProxy,
+        f.native.content,
+        f.native.viewport,
+        1,
+        new Set(f.element.nativeBody.sourceItems.map((i) => i.index))
+      )
+    )?.size
+  ).toBe(9)
+  expect(factory).not.toHaveBeenCalled()
+  expect(out.source.units).toEqual(
+    f.extraction.source.units.map((u, i) => (i < 8 ? { ...u, sourceOnly: true } : u))
+  )
+  expect(out.source.originalRegions).toEqual([
+    { pageNumber: 1, rect: { x: 19 / 200, y: 39 / 220, width: 162 / 200, height: 72 / 220 } }
+  ])
+  expect(f.extraction.source.units.every((u) => !u.sourceOnly)).toBe(true)
+  const twice = await applyCachedPdfFigureSources({ ...f.context, extraction: out })
+  expect(twice).toEqual(out)
+  const structure = await applyCachedPdfStructureSources({
+    ...f.context,
+    extraction: out,
+    preserveUnitIdentity: true
+  })
+  expect(structure.extraction.source.units).toEqual(out.source.units)
+  expect(structure.extraction.source.originalRegions).toHaveLength(1)
+  expect(structure.extraction.source).toEqual(out.source)
+})
+
+it.each([
+  'wrong bytes',
+  'wrong raster',
+  'missing outline',
+  'foreign native ink',
+  'foreign paint',
+  'mixed whole owner'
+])('retains the original source when the captionless proof has %s', async (name) => {
+  const f = boundedMathSetup()
+  if (name === 'wrong bytes') f.document.getData.mockResolvedValue(new Uint8Array([3, 2, 1]))
+  else if (name === 'wrong raster') f.element.nativeBody.boundary.raster.width++
+  else if (name === 'missing outline') f.objects.delete('F_path_H')
+  else if (name === 'foreign native ink') {
+    const item = f.native.content.items.at(-1),
+      ops = f.native.operators,
+      show = ops.fnArray.lastIndexOf(OPS.showText)
+    item.transform[4] = 60
+    item.transform[5] = 145
+    ops.argsArray[show - 1][0][4] = 60
+    ops.argsArray[show - 1][0][5] = 145
+  } else if (name === 'foreign paint') {
+    const ops = f.native.operators
+    ops.fnArray.push(OPS.constructPath)
+    ops.argsArray.push([OPS.stroke, [[0, 60, 145, 1, 90, 145]], [60, 145, 90, 145]])
+  } else {
+    const units = f.extraction.source.units,
+      first = {
+        ...units[0],
+        source: units[0].source + ' Z',
+        fragments: [...units[0].fragments, ...units.at(-1)!.fragments]
+      }
+    f.context.extraction = {
+      ...f.extraction,
+      source: createPdfTranslationSource({
+        ...f.extraction.source,
+        units: [first, ...units.slice(1, -1)]
+      })
+    }
+  }
+  const out = await applyCachedPdfFigureSources(f.context)
+  expect(out).toEqual(f.context.extraction)
+  expect(out.source.originalRegions).toBeUndefined()
+})
 
 function setup(kind: 'math-table' | 'algorithm' = 'math-table') {
   const sourceIdentity = { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
@@ -163,6 +488,399 @@ it.each(['math-table', 'algorithm'] as const)(
     expect(extraction.source.originalRegions).toBeUndefined()
   }
 )
+
+function captionAndBodyOwner() {
+  const f = setup('algorithm'),
+    label = 'Algorithm 1 Update values'
+  f.items[2].str = label
+  f.items[2].width = 60
+  f.cached.elements[0].caption!.text = label
+  const [first, second, caption, prose] = f.items
+  f.items.splice(0, 4, caption, first, second, prose)
+  f.cached.elements[0].nativeBody!.sourceItems = [1, 2].map((index) => ({
+    pageNumber: 1,
+    index,
+    text: f.items[index].str
+  }))
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          id: 'caption',
+          source: label + ' x + y',
+          fragments: [...f.unit(0, 'caption').fragments, ...f.unit(1, 'body').fragments]
+        },
+        { ...f.unit(2, 'second'), sourceOnly: true },
+        f.unit(3, 'prose')
+      ]
+    })
+  }
+  f.page.getTextContent.mockImplementation(async () => ({
+    items: f.items,
+    styles: { f: { ascent: 0.8, descent: -0.2, vertical: false } }
+  }))
+  f.page.getViewport.mockImplementation(() => ({
+    width: 100,
+    height: 100,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 100],
+    convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+  }))
+  return f
+}
+
+// Existing fragments preserve the native body-before-caption order even when
+// their font-wide navigation rectangles overlap. Only loaded glyph ink can
+// prove their actual separation; this fixture contains no external document.
+function bodyBeforeCaptionOwner() {
+  const f = setup('algorithm')
+  const item = (str: string, x: number, y: number) => f.item(str, x, y, str.length * 0.4)
+  f.items.splice(
+    0,
+    f.items.length,
+    item('Input:', 10, 70),
+    item('Output:', 10, 50),
+    item('Algorithm', 10, 40.2),
+    item('S1:', 20, 40.2),
+    item('Update values with bounded iterations', 25, 40.2),
+    item('and preserve sources.', 10, 28),
+    item('External prose', 10, 10)
+  )
+  const text = f.items
+    .slice(2, 6)
+    .map((i) => i.str)
+    .join(' ')
+  const element = f.cached.elements[0]
+  element.regions = [{ page: 1, x: 0.05, y: 0.1, width: 0.9, height: 0.41 }]
+  element.caption = {
+    text,
+    regions: [{ page: 1, x: 0.05, y: 0.518, width: 0.9, height: 0.3 }]
+  }
+  element.nativeBody!.sourceItems = [0, 1].map((index) => ({
+    pageNumber: 1,
+    index,
+    text: f.items[index].str
+  }))
+  const fragments = [
+    ...f.unit(1, 'output').fragments,
+    {
+      ...f.unit(2, 'title').fragments[0],
+      rect: { x: 0.1, y: 0.518, width: 0.9, height: 0.1 },
+      items: [2, 3, 4].map((index) => ({ index, text: f.items[index].str }))
+    },
+    ...f.unit(5, 'title-end').fragments
+  ]
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        f.unit(0, 'input'),
+        { id: 'mixed', source: f.items[1].str + ' ' + text, fragments },
+        f.unit(6, 'prose')
+      ]
+    }),
+    coverage: {
+      ...f.extraction.coverage,
+      textItemCount: f.items.length,
+      includedItemCount: f.items.length,
+      warnings: []
+    }
+  }
+  const fnArray: number[] = [],
+    argsArray: unknown[] = []
+  const add = (op: number, args: unknown = null) => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  for (const i of f.items) {
+    add(OPS.beginText)
+    add(OPS.setFont, ['f', 10])
+    add(OPS.setTextMatrix, [1, 0, 0, 1, i.transform[4], i.transform[5]])
+    add(OPS.showText, [
+      Array.from(i.str, (c) => ({
+        unicode: c,
+        fontChar: c,
+        width: 40,
+        isInFont: true,
+        isSpace: c === ' ',
+        accent: null
+      }))
+    ])
+    add(OPS.endText)
+  }
+  const outlines = new Map<string, unknown>([
+    [
+      'f',
+      {
+        missingFile: false,
+        isInvalidPDFjsFont: false,
+        remeasure: false,
+        vertical: false,
+        isType3Font: false,
+        loadedName: 'loaded',
+        fontMatrix: [0.001, 0, 0, 0.001, 0, 0]
+      }
+    ]
+  ])
+  for (const c of new Set(f.items.flatMap((i) => Array.from(i.str))))
+    outlines.set('loaded_path_' + c, {
+      path: c === ' ' ? [] : [0, 0, -0.05, 1, 0.04, -0.05, 1, 0.04, 0.45, 1, 0, 0.45, 4]
+    })
+  const page = Object.assign(f.page, {
+    commonObjs: {
+      has: (key: string) => outlines.has(key),
+      get: (key: string) => outlines.get(key)
+    },
+    getOperatorList: vi.fn(async () => ({ fnArray, argsArray }))
+  })
+  page.getViewport.mockImplementation(() => ({
+    width: 100,
+    height: 100,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 100],
+    convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+  }))
+  page.getTextContent.mockImplementation(async () => ({
+    items: f.items,
+    styles: { f: { ascent: 0.8, descent: -0.2, vertical: false } }
+  }))
+  return { ...f, page, fnArray, argsArray, outlines }
+}
+
+it('separates a complete body prefix from a multiline caption using independent loaded glyph ink', async () => {
+  const f = bodyBeforeCaptionOwner(),
+    before = structuredClone(f.context.extraction)
+  const result = await applyCachedPdfFigureSources(f.context)
+  expect(result.source.units.map((u) => [u.id, u.sourceOnly])).toEqual([
+    ['input', true],
+    ['mixed:algorithm-body', true],
+    ['mixed', undefined],
+    ['prose', undefined]
+  ])
+  expect(result.source.units[1].fragments).toEqual(before.source.units[1].fragments.slice(0, 1))
+  expect(result.source.units[2].fragments).toEqual(before.source.units[1].fragments.slice(1))
+  expect(result.coverage).toEqual(before.coverage)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+it.each([
+  'missing-outline',
+  'empty-outline',
+  'painted-space',
+  'native-origin',
+  'native-width',
+  'caption-width',
+  'font-transform',
+  'unclosed-text',
+  'unknown-text-state',
+  'foreign-ink',
+  'mixed-fragment',
+  'missing-body-source',
+  'caption-literal',
+  'warning',
+  'competing-claim',
+  'crossing-ink'
+])('keeps a mixed body/caption owner when independent %s proof fails', async (mode) => {
+  const f = bodyBeforeCaptionOwner()
+  if (mode === 'missing-outline') f.outlines.delete('loaded_path_O')
+  if (mode === 'empty-outline') f.outlines.set('loaded_path_O', { path: [] })
+  if (mode === 'painted-space') f.outlines.set('loaded_path_ ', f.outlines.get('loaded_path_O'))
+  if (mode === 'native-origin') f.items[1].transform[4]++
+  if (mode === 'native-width') f.items[1].width++
+  if (mode === 'caption-width') f.items[4].width++
+  if (mode === 'font-transform')
+    (f.outlines.get('f') as { fontMatrix: number[] }).fontMatrix[0] = 0.002
+  if (mode === 'unclosed-text') {
+    f.fnArray.pop()
+    f.argsArray.pop()
+  }
+  if (mode === 'unknown-text-state') {
+    const at = f.fnArray.indexOf(OPS.showText)
+    f.fnArray.splice(at, 0, OPS.setTextRenderingMode)
+    f.argsArray.splice(at, 0, [1])
+  }
+  if (mode === 'foreign-ink')
+    f.outlines.set('loaded_path_E', { path: [0, 0, 0, 1, 0.04, 0, 1, 0.04, 5.5, 1, 0, 5.5, 4] })
+  if (mode === 'crossing-ink')
+    f.outlines.set('loaded_path_O', {
+      path: [0, 0, -0.8, 1, 0.04, -0.8, 1, 0.04, 0.45, 1, 0, 0.45, 4]
+    })
+  if (mode === 'missing-body-source') f.cached.elements[0].nativeBody!.sourceItems.shift()
+  if (mode === 'caption-literal') f.cached.elements[0].caption!.text += ' Other'
+  if (mode === 'mixed-fragment' || mode === 'warning') {
+    const extraction = f.context.extraction
+    f.context.extraction = {
+      ...extraction,
+      ...(mode === 'mixed-fragment'
+        ? {
+            source: createPdfTranslationSource({
+              ...extraction.source,
+              units: extraction.source.units.map((u) =>
+                u.id !== 'mixed'
+                  ? u
+                  : {
+                      ...u,
+                      fragments: [{ ...u.fragments[0], items: u.fragments.flatMap((g) => g.items) }]
+                    }
+              )
+            })
+          }
+        : {
+            coverage: {
+              ...extraction.coverage,
+              warnings: [{ unitId: 'mixed', reasons: ['formula-extraction'] }]
+            }
+          })
+    }
+  }
+  if (mode === 'competing-claim')
+    f.cached.elements.push({
+      id: 'other',
+      kind: 'figure',
+      issues: [],
+      regions: [{ page: 1, x: 0.1, y: 0.45, width: 0.1, height: 0.06 }],
+      sourceItems: [{ pageNumber: 1, index: 1, text: f.items[1].str }]
+    })
+  const before = structuredClone(f.context.extraction)
+  expect(await applyCachedPdfFigureSources(f.context)).toBe(f.context.extraction)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+it.each([
+  'complete',
+  'missing-body',
+  'caption-text',
+  'native-text',
+  'caption-boundary',
+  'mixed-prose',
+  'mixed-fragment',
+  'source-only',
+  'warning',
+  'id-collision',
+  'competing-caption',
+  'stale-cache'
+])('splits a native algorithm caption/body owner only after full body proof: %s', async (mode) => {
+  const f = captionAndBodyOwner(),
+    source = f.context.extraction.source
+  if (mode === 'missing-body') f.cached.elements[0].nativeBody!.sourceItems.pop()
+  if (mode === 'caption-text') f.cached.elements[0].caption!.text += ' Other'
+  if (mode === 'native-text') f.items[1].str = 'Different'
+  if (mode === 'caption-boundary') f.cached.elements[0].caption!.regions[0].height = 0.08
+  if (mode === 'stale-cache') f.cached.sourceChecksum = 'c'.repeat(64)
+  if (mode === 'competing-caption')
+    f.cached.elements.push({
+      id: 'other',
+      kind: 'figure',
+      regions: [{ page: 1, x: 0.1, y: 0.07, width: 0.6, height: 0.1 }],
+      issues: [],
+      sourceItems: [{ pageNumber: 1, index: 0, text: f.items[0].str }]
+    })
+  if (mode === 'warning')
+    f.context.extraction = {
+      ...f.context.extraction,
+      coverage: {
+        ...f.extraction.coverage,
+        warnings: [
+          ...f.extraction.coverage.warnings,
+          { unitId: 'caption', reasons: ['formula-extraction'] }
+        ]
+      }
+    }
+  if (
+    mode === 'source-only' ||
+    mode === 'mixed-prose' ||
+    mode === 'mixed-fragment' ||
+    mode === 'id-collision'
+  )
+    f.context.extraction = {
+      ...f.context.extraction,
+      source: createPdfTranslationSource({
+        ...source,
+        units: source.units.map((u) =>
+          u.id === 'caption'
+            ? {
+                ...u,
+                ...(mode === 'source-only' ? { sourceOnly: true as const } : {}),
+                ...(mode === 'mixed-prose'
+                  ? { fragments: [...u.fragments, ...source.units[2].fragments] }
+                  : {}),
+                ...(mode === 'mixed-fragment'
+                  ? {
+                      fragments: [
+                        {
+                          ...u.fragments[0],
+                          rect: { x: 0.1, y: 0.07, width: 0.6, height: 0.3 },
+                          items: u.fragments.flatMap((f) => f.items)
+                        }
+                      ]
+                    }
+                  : {})
+              }
+            : mode === 'id-collision' && u.id === 'prose'
+              ? { ...u, id: 'caption:algorithm-body' }
+              : u
+        )
+      })
+    }
+  const original = f.context.extraction,
+    result = await applyCachedPdfFigureSources(f.context)
+  if (mode !== 'complete') expect(result).toBe(original)
+  else {
+    expect(
+      result.source.units.map((u) => ({ id: u.id, source: u.source, sourceOnly: u.sourceOnly }))
+    ).toEqual([
+      { id: 'caption', source: f.cached.elements[0].caption!.text, sourceOnly: undefined },
+      { id: 'caption:algorithm-body', source: 'x + y', sourceOnly: true },
+      { id: 'second', source: 'Return x', sourceOnly: true },
+      { id: 'prose', source: 'External prose', sourceOnly: undefined }
+    ])
+    expect(result.source.units.flatMap((u) => u.fragments.flatMap((v) => v.items))).toEqual(
+      original.source.units.flatMap((u) => u.fragments.flatMap((v) => v.items))
+    )
+    expect(result.source.units[0].fragments).toEqual(original.source.units[0].fragments.slice(0, 1))
+    expect(result.source.units[1].fragments).toEqual(original.source.units[0].fragments.slice(1))
+    expect(result.source.units.slice(2)).toEqual(original.source.units.slice(1))
+    expect(result.coverage).toEqual(original.coverage)
+  }
+})
+
+it('does not commit a tentative caption split through an independently valid body', async () => {
+  const f = captionAndBodyOwner()
+  f.cached.elements[0].nativeBody!.sourceItems.pop()
+  f.items.push(f.item('Step', 80, 65, 10), f.item('Title', 80, 85, 10))
+  f.context.extraction = {
+    ...f.context.extraction,
+    source: createPdfTranslationSource({
+      ...f.context.extraction.source,
+      units: [
+        ...f.context.extraction.source.units,
+        f.unit(4, 'independent'),
+        f.unit(5, 'independent-caption')
+      ]
+    }),
+    coverage: { ...f.context.extraction.coverage, textItemCount: 6, includedItemCount: 6 }
+  }
+  f.cached.elements.push({
+    id: 'independent-body',
+    kind: 'algorithm',
+    issues: [],
+    regions: [{ page: 1, x: 0.78, y: 0.05, width: 0.2, height: 0.55 }],
+    caption: { text: 'Title', regions: [{ page: 1, x: 0.78, y: 0.05, width: 0.2, height: 0.15 }] },
+    nativeBody: { kind: 'algorithm', sourceItems: [{ pageNumber: 1, index: 4, text: 'Step' }] }
+  })
+  const result = await applyCachedPdfFigureSources(f.context)
+  expect(result.source.units).toEqual(
+    f.context.extraction.source.units.map((u) =>
+      u.id === 'independent' ? { ...u, sourceOnly: true } : u
+    )
+  )
+  expect(result.coverage).toEqual(f.context.extraction.coverage)
+})
 
 it.each([
   'missing-claim',
@@ -372,6 +1090,7 @@ function protectedAlgorithmCaption() {
               ...u,
               source: text,
               sourceOnly: true,
+              preserve: 'reference',
               fragments: [
                 {
                   ...u.fragments[0],
@@ -415,6 +1134,7 @@ it('restores only a complete native prose algorithm caption after full body veri
       if (i !== 2) return u
       const caption = { ...u }
       delete caption.sourceOnly
+      delete caption.preserve
       return caption
     })
   )
@@ -427,6 +1147,8 @@ it('keeps verified algorithm captions translatable through default structure pre
   const { extraction } = await applyCachedPdfStructureSources(f.context)
   expect(extraction.source.units[0].sourceOnly).toBe(true)
   expect(extraction.source.units[2].sourceOnly).toBeUndefined()
+  expect(extraction.source.units[2].preserve).toBeUndefined()
+  expect(applyPdfContentFirstPolicy(extraction.source).units[2].sourceOnly).toBeUndefined()
   expect(extraction.source.units[2].source).toBe(f.context.extraction.source.units[2].source)
   expect(extraction.coverage).toEqual(f.context.extraction.coverage)
   expect(f.context.extraction.source.units[2].sourceOnly).toBe(true)
@@ -540,3 +1262,330 @@ it.each([
   const result = await applyCachedPdfFigureSources(f.context)
   expect(result.source.units.find((u) => u.id === 'caption')?.sourceOnly).toBe(true)
 })
+
+function nativeDiffCodePacket(split?: 'ordered' | 'reversed') {
+  const f = setup('algorithm')
+  f.items.splice(
+    0,
+    f.items.length,
+    f.item('@@ sample @@', 10, 80, 48),
+    f.item('-old()', 10, 65, 24),
+    f.item('+new()', 10, 50, 24),
+    f.item('External prose', 10, 15, 56)
+  )
+  if (split)
+    f.items.splice(
+      2,
+      1,
+      f.item('+', split === 'ordered' ? 10 : 34, 50, 4),
+      f.item('new()', split === 'ordered' ? 14 : 10, 50, 20)
+    )
+  const source = createPdfTranslationSource({
+    ...f.extraction.source,
+    units: f.items.map((_, i) => f.unit(i, 'unit-' + i))
+  })
+  f.context.extraction = {
+    ...f.extraction,
+    source,
+    coverage: {
+      ...f.extraction.coverage,
+      textItemCount: f.items.length,
+      includedItemCount: f.items.length,
+      warnings: []
+    }
+  }
+  f.cached.elements = [
+    {
+      id: 'code',
+      kind: 'figure',
+      regions: [{ page: 1, x: 0.05, y: 0.12, width: 0.7, height: 0.45 }],
+      sourceItems: f.items
+        .slice(0, -1)
+        .map((_, index) => ({ pageNumber: 1, index, text: f.items[index].str })),
+      issues: [{ code: 'native-diff-code-packet', detail: 'native-diff-code-packet' }]
+    }
+  ]
+  const font = {
+    missingFile: false,
+    isInvalidPDFjsFont: false,
+    remeasure: false,
+    vertical: false,
+    isType3Font: false,
+    loadedName: 'loaded',
+    isMonospace: true,
+    fontMatrix: [0.001, 0, 0, 0.001, 0, 0]
+  }
+  const objects = new Map<string, unknown>([['f', font]])
+  const fnArray: number[] = [],
+    argsArray: unknown[] = []
+  const emit = (op: number, args: unknown = null) => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  for (const i of f.items) {
+    emit(OPS.beginText)
+    emit(OPS.setFont, ['f', 10])
+    emit(OPS.setTextMatrix, [1, 0, 0, 1, i.transform[4], i.transform[5]])
+    emit(OPS.showText, [
+      Array.from(i.str, (c) => {
+        objects.set('loaded_path_' + c, {
+          path: c === ' ' ? [] : [0, 0, 0, 1, 0.4, 0, 1, 0.4, 0.7, 1, 0, 0.7, 4]
+        })
+        return {
+          unicode: c,
+          fontChar: c,
+          width: 400,
+          isInFont: true,
+          isSpace: c === ' ',
+          accent: null
+        }
+      })
+    ])
+    emit(OPS.endText)
+  }
+  Object.assign(f.page, {
+    commonObjs: { has: (k: string) => objects.has(k), get: (k: string) => objects.get(k) },
+    getOperatorList: vi.fn(async () => ({ fnArray, argsArray }))
+  })
+  f.page.getViewport.mockImplementation(() => ({
+    width: 100,
+    height: 100,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 100],
+    convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+  }))
+  f.page.getTextContent.mockImplementation(async () => ({
+    items: f.items,
+    styles: { f: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'monospace' } }
+  }))
+  return { ...f, font, objects, fnArray, argsArray }
+}
+
+it('protects a complete independently proved native diff packet and preserves external prose', async () => {
+  const f = nativeDiffCodePacket(),
+    before = structuredClone(f.context.extraction)
+  const result = await applyCachedPdfFigureSources(f.context)
+  expect(result.source.units).toEqual(
+    before.source.units.map((u, i) => (i < 3 ? { ...u, sourceOnly: true } : u))
+  )
+  expect(result.coverage).toEqual(before.coverage)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+it.each([
+  'no header',
+  'no addition',
+  'no deletion',
+  'not mono',
+  'font incomplete',
+  'missing outline',
+  'unknown state',
+  'foreign ink',
+  'source literal',
+  'source omitted',
+  'source duplicate',
+  'source order',
+  'mixed owner',
+  'competing region',
+  'stale identity',
+  'different size',
+  'wrong mechanism'
+])('keeps a native diff packet unchanged when %s evidence fails', async (mode) => {
+  const f = nativeDiffCodePacket()
+  if (mode === 'no header') f.items[0].str = 'Ordinary explanation'
+  if (mode === 'no addition') f.items[2].str = 'new()'
+  if (mode === 'no deletion') f.items[1].str = 'old()'
+  if (mode === 'not mono') f.font.isMonospace = false
+  if (mode === 'font incomplete') f.font.missingFile = true
+  if (mode === 'missing outline') f.objects.delete('loaded_path_@')
+  if (mode === 'unknown state') {
+    f.fnArray.push(OPS.setGState)
+    f.argsArray.push([])
+  }
+  if (mode === 'foreign ink')
+    f.objects.set('loaded_path_E', { path: [0, 0, 0, 1, 0.4, 0, 1, 0.4, 7, 1, 0, 7, 4] })
+  if (mode === 'source literal') f.cached.elements[0].sourceItems![0].text += 'other'
+  if (mode === 'source omitted') f.cached.elements[0].sourceItems!.pop()
+  if (mode === 'source duplicate')
+    f.cached.elements[0].sourceItems!.push(f.cached.elements[0].sourceItems![0])
+  if (mode === 'source order') f.cached.elements[0].sourceItems!.reverse()
+  if (mode === 'mixed owner') {
+    const units = f.context.extraction.source.units
+    f.context.extraction = {
+      ...f.context.extraction,
+      source: createPdfTranslationSource({
+        ...f.context.extraction.source,
+        units: [
+          { ...units[0], fragments: [...units[0].fragments, ...units[3].fragments] },
+          units[1],
+          units[2]
+        ]
+      })
+    }
+  }
+  if (mode === 'competing region')
+    f.cached.elements.push({
+      id: 'other',
+      kind: 'figure',
+      regions: f.cached.elements[0].regions,
+      issues: []
+    })
+  if (mode === 'stale identity') f.cached.sourceChecksum = 'c'.repeat(64)
+  if (mode === 'different size') f.items[2].height = 9
+  if (mode === 'wrong mechanism') f.cached.elements[0].issues[0].code = 'other'
+  const before = structuredClone(f.context.extraction)
+  expect(await applyCachedPdfFigureSources(f.context)).toEqual(f.context.extraction)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+it.each(['ordered', 'reversed'] as const)(
+  'requires complete native diff row advances in visual source order: %s',
+  async (mode) => {
+    const f = nativeDiffCodePacket(mode),
+      before = structuredClone(f.context.extraction)
+    const result = await applyCachedPdfFigureSources(f.context)
+    expect(result.source.units).toEqual(
+      mode === 'ordered'
+        ? before.source.units.map((u, i) => (i < 4 ? { ...u, sourceOnly: true } : u))
+        : before.source.units
+    )
+    expect(result.coverage).toEqual(before.coverage)
+  }
+)
+
+it('keeps native diff owners unchanged when page count changes during glyph verification', async () => {
+  const f = nativeDiffCodePacket(),
+    before = structuredClone(f.context.extraction)
+  const page = f.page as typeof f.page & { getOperatorList: ReturnType<typeof vi.fn> }
+  page.getOperatorList.mockImplementationOnce(async () => {
+    ;(f.context.document as unknown as { numPages: number }).numPages = 2
+    return { fnArray: f.fnArray, argsArray: f.argsArray }
+  })
+  expect(await applyCachedPdfFigureSources(f.context)).toEqual(f.context.extraction)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+// A single native fragment contains a proved caption and body. Preserve the
+// existing source's formula order (Gb), independently of its b/G item order.
+function singleFragmentCaptionOwner() {
+  const f = bodyBeforeCaptionOwner()
+  const item = (s: string, x: number, y: number) => f.item(s, x, y, s.length * 0.4)
+  f.items.splice(
+    0,
+    f.items.length,
+    item('Algorithm', 10, 85),
+    item('S1:', 20, 85),
+    item('Update values with bounded iterations', 25, 85),
+    item('Input:', 10, 65),
+    item('b', 40, 50),
+    item('G', 40.4, 50),
+    item('External prose', 10, 15)
+  )
+  const label = f.items
+      .slice(0, 3)
+      .map((i) => i.str)
+      .join(' '),
+    e = f.cached.elements[0]
+  e.caption = { text: label, regions: [{ page: 1, x: 0.05, y: 0.1, width: 0.9, height: 0.08 }] }
+  e.regions = [{ page: 1, x: 0.05, y: 0.05, width: 0.9, height: 0.55 }]
+  e.nativeBody!.sourceItems = [3, 4, 5].map((index) => ({
+    pageNumber: 1,
+    index,
+    text: f.items[index].str
+  }))
+  f.fnArray.length = f.argsArray.length = 0
+  for (const i of f.items) {
+    f.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    f.argsArray.push(
+      null,
+      ['f', 10],
+      [1, 0, 0, 1, i.transform[4], i.transform[5]],
+      [
+        Array.from(i.str, (c) => ({
+          unicode: c,
+          fontChar: c,
+          width: 40,
+          isInFont: true,
+          isSpace: c === ' ',
+          accent: null
+        }))
+      ],
+      null
+    )
+  }
+  f.outlines.set('loaded_path_G', {
+    path: [0, 0, -0.05, 1, 0.04, -0.05, 1, 0.04, 0.45, 1, 0, 0.45, 4]
+  })
+  f.context.extraction = {
+    ...f.context.extraction,
+    source: createPdfTranslationSource({
+      ...f.context.extraction.source,
+      units: [
+        {
+          id: 'mixed',
+          source: label + ' Input: Gb',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.05, width: 0.8, height: 0.55 },
+              items: f.items.slice(0, 6).map((i, index) => ({ index, text: i.str }))
+            }
+          ]
+        },
+        f.unit(6, 'prose')
+      ]
+    }),
+    coverage: {
+      ...f.context.extraction.coverage,
+      warnings: [{ unitId: 'mixed', reasons: ['possible-continuation'] }]
+    }
+  }
+  return f
+}
+it('splits only the fully proved native single fragment while conserving source and continuation provenance', async () => {
+  const f = singleFragmentCaptionOwner(),
+    before = structuredClone(f.context.extraction),
+    r = await applyCachedPdfFigureSources(f.context),
+    [caption, body] = r.source.units
+  expect(caption.id).toBe('mixed')
+  expect(caption.sourceOnly).toBeUndefined()
+  expect(body.id).toBe('mixed:algorithm-body')
+  expect(body.sourceOnly).toBe(true)
+  expect(caption.source + ' ' + body.source).toBe(before.source.units[0].source)
+  expect(body.source).toBe('Input: Gb')
+  expect([...caption.fragments[0].items, ...body.fragments[0].items]).toEqual(
+    before.source.units[0].fragments[0].items
+  )
+  expect(r.coverage.warnings).toEqual([
+    { unitId: 'mixed', reasons: ['possible-continuation'] },
+    { unitId: 'mixed:algorithm-body', reasons: ['possible-continuation'] }
+  ])
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+it.each(['missing-body', 'wrong-literal', 'near-caption', 'Unicode', 'clipped', 'metadata'])(
+  'leaves a single fragment untouched without complete evidence: %s',
+  async (mode) => {
+    const f = singleFragmentCaptionOwner()
+    if (mode === 'missing-body') f.cached.elements[0].nativeBody!.sourceItems.pop()
+    if (mode === 'wrong-literal') f.cached.elements[0].nativeBody!.sourceItems[0].text += '!'
+    if (mode === 'near-caption') f.cached.elements[0].caption!.text += ' extra'
+    if (mode === 'metadata') f.cached.sourceChecksum = 'c'.repeat(64)
+    if (mode === 'Unicode' || mode === 'clipped')
+      f.context.extraction = {
+        ...f.context.extraction,
+        coverage: {
+          ...f.context.extraction.coverage,
+          warnings: [
+            {
+              unitId: 'mixed',
+              reasons: [mode === 'Unicode' ? 'unreliable-font-unicode' : 'native-text-clipped']
+            }
+          ]
+        }
+      }
+    const before = structuredClone(f.context.extraction),
+      r = await applyCachedPdfFigureSources(f.context)
+    expect(structuredClone(r)).toEqual(before)
+  }
+)

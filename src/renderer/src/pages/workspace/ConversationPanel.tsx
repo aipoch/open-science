@@ -1,3 +1,10 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
 import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
@@ -29,6 +36,7 @@ import { NotificationBell } from '@/components/NotificationBell'
 import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { ErrorNotice } from '@/components/error-notice'
+import { useNoticeCountdown } from '@/components/use-notice-countdown'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -39,6 +47,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { ResizablePanel } from '@/components/ui/resizable'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { cn } from '@/lib/utils'
@@ -53,6 +62,7 @@ import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { Popover as PopoverPrimitive } from 'radix-ui'
 import type { TFunction } from 'i18next'
 import {
   AlertTriangle,
@@ -89,6 +99,7 @@ import type {
   ElicitationResponse,
   PendingElicitationRequest
 } from '../../../../shared/acp'
+import { resolveAgentUserChoiceQuestions } from '../../../../shared/elicitation'
 import type {
   AcpPermissionGrant,
   AcpPermissionRequest
@@ -111,6 +122,7 @@ import type {
 import {
   VISION_MODEL_NOT_CONFIGURED_MESSAGE,
   isReportableRunFailure,
+  isSpecialistCapabilityReadFailure,
   visionRunFailureMessage
 } from '../../../../shared/run-error-classification'
 import {
@@ -145,7 +157,7 @@ import { SessionSwitchSkeleton } from './SessionSwitchSkeleton'
 import { SubagentAvailabilityNotice, SubagentsBar } from './SubagentReleaseSurfaces'
 import { TurnOutcomeNotice, type TurnOutcomeActions } from './TurnOutcomeNotice'
 import { WorkspaceDelegatedQuestionCard } from './WorkspaceDelegatedQuestionCard'
-import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
+import { WorkspaceElicitationCard, WorkspaceElicitationRecovery } from './WorkspaceElicitationCard'
 import { WorkspaceMessageScroller } from './WorkspaceMessageScroller'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
@@ -211,18 +223,26 @@ const localizeVisionRunFailure = (
 
 const composerInteractiveTransitionClassName = 'transition-colors duration-200 ease-out'
 
+const localizeSpecialistReadFailure = (
+  error: string | null | undefined,
+  t: TFunction
+): string | undefined =>
+  isSpecialistCapabilityReadFailure(error)
+    ? t('The Specialist Skills or Connectors could not be loaded. Try sending again.')
+    : undefined
+
 const composerIconButtonClassName = cn(
   'flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 hover:bg-bg-200 hover:text-text-100 focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-50',
   composerInteractiveTransitionClassName
 )
 
 const composerSplitSendPrimaryButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-md rounded-r-none border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground focus-visible:keyboard-focus disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:-left-3 [@media(pointer:coarse)]:before:right-0 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
 const composerSplitSendMenuButtonClassName = cn(
-  "relative h-8 w-8 rounded-l-none rounded-r-md border-0 bg-transparent bg-clip-border text-primary-foreground after:pointer-events-none after:absolute after:inset-y-1 after:left-0 after:w-px after:bg-primary-foreground/20 after:content-[''] hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
+  "relative h-8 w-8 border-0 bg-transparent bg-clip-border text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground active:translate-y-px aria-expanded:bg-primary-foreground/10 aria-expanded:text-primary-foreground focus-visible:keyboard-focus motion-reduce:active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-100 disabled:hover:bg-transparent [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:left-0 [@media(pointer:coarse)]:before:-right-3 [@media(pointer:coarse)]:before:content-['']",
   composerInteractiveTransitionClassName
 )
 
@@ -253,7 +273,10 @@ const attachmentLimitsText = (t: TFunction): string =>
     size: formatUploadSizeLimit(MAX_UPLOAD_FILE_BYTES)
   })
 
-const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): React.JSX.Element => {
+const ResizableElicitationComposer = ({
+  children,
+  choice
+}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -263,6 +286,7 @@ const ResizableElicitationComposer = ({ children }: React.PropsWithChildren): Re
       constrainGrowthToOverflow
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
+      contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
     >
       {children}
     </ResizableBottomPanel>
@@ -340,6 +364,7 @@ type ConversationPanelView = {
   authenticationRecovery?: AgentAuthenticationRecovery
   composerFocusKey?: string
   canEditDraft: boolean
+  canEditLocalDraft?: boolean
   persistenceBlocked?: boolean
   actionError: string | null
   sideChatDisabledReason?: string
@@ -478,20 +503,30 @@ type ConversationPanelProps = {
 const renderConversationError = (
   children: React.ReactNode,
   onDismiss: () => void,
-  dismissLabel: string
-): React.JSX.Element => (
-  <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
-    <button
-      type="button"
-      onClick={onDismiss}
-      aria-label={dismissLabel}
-      className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
-    >
-      <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
-    </button>
-    {children}
-  </div>
-)
+  dismissLabel: string,
+  retryable = false
+): React.JSX.Element =>
+  retryable ? (
+    <ErrorNotice
+      className="mb-2"
+      tone="amber"
+      icon={AlertTriangle}
+      content={children}
+      dismissButton={{ label: dismissLabel, onClick: onDismiss }}
+    />
+  ) : (
+    <div className="relative mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300">
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label={dismissLabel}
+        className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded hover:bg-red-100 focus-visible:keyboard-focus dark:hover:bg-red-900/40"
+      >
+        <X className="size-3.5" strokeWidth={2.2} aria-hidden="true" />
+      </button>
+      {children}
+    </div>
+  )
 
 const DismissibleConversationError = ({
   children
@@ -527,6 +562,7 @@ const ConversationPanel = ({
     activeSession,
     composerFocusKey,
     canEditDraft,
+    canEditLocalDraft = canEditDraft,
     persistenceBlocked,
     actionError,
     sideChatDisabledReason,
@@ -809,6 +845,7 @@ const ConversationPanel = ({
     window.dispatchEvent(new CustomEvent(FOCUS_COMPOSER_EVENT))
   }
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null)
   const globalSearchShortcut = window.api?.platform === 'darwin' ? '⌘K' : 'Ctrl+K'
   // The workspace retains pending Resume state while this panel remounts for another session.
   const isResuming = Boolean(
@@ -824,7 +861,20 @@ const ConversationPanel = ({
   const [reportDialogEpoch, setReportDialogEpoch] = useState(0)
   const [composerRestoreFocusRequest, setComposerRestoreFocusRequest] = useState<number>()
   const [agentControlsOpenRequest, setAgentControlsOpenRequest] = useState(0)
+  const [specialistNoticeTarget, setSpecialistNoticeTarget] = useState<{
+    sessionId: string
+    specialistId?: string
+  }>()
+  const [specialistNoticeVisible, setSpecialistNoticeVisible] = useState(false)
+  const [specialistNoticePointerPaused, setSpecialistNoticePointerPaused] = useState(false)
+  const [specialistNoticeFocusPaused, setSpecialistNoticeFocusPaused] = useState(false)
   const [computeControlsOpenRequest, setComputeControlsOpenRequest] = useState(0)
+
+  useEffect(() => {
+    if (!specialistNoticeTarget) return
+    const reveal = window.setTimeout(() => setSpecialistNoticeVisible(true), 150)
+    return () => window.clearTimeout(reveal)
+  }, [specialistNoticeTarget])
 
   // Preview surfaces (PDF "Read with agent" entries) ask the composer to take focus through a
   // window event; route it into the editor's existing restore-focus counter.
@@ -993,7 +1043,11 @@ const ConversationPanel = ({
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,
   // so neither its failure nor the live terminal-write exception returns to the composer. A newly
   // saved preparation is not an anchor yet and cannot displace anchorless attachment recovery.
-  const showLegacyRunError = legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const showLegacyRunError =
+    !isImported && legacyDisplayState?.status === 'error' && !hasCurrentTurnAnchor
+  const contextResetNotice = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.contextResets?.[activeSession.id] : false
+  )
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -1016,10 +1070,15 @@ const ConversationPanel = ({
         : undefined) ??
       localizeImageAnnotationSourceError(actionError, t) ??
       localizeVisionRunFailure(actionError, t) ??
+      localizeSpecialistReadFailure(actionError, t) ??
       actionError)
   let resumeErrorDescription = resolvedActionError
   if (resumeDiagnostic && resolvedActionError) {
-    if (/timed out/i.test(resumeDiagnostic.detail)) {
+    if (resumeDiagnostic.detail.includes('Previous agent cleanup is unconfirmed.')) {
+      resumeErrorDescription = t(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+    } else if (/timed out/i.test(resumeDiagnostic.detail)) {
       resumeErrorDescription = t(
         'The agent did not respond in time. Your conversation is preserved. Try Resume again.'
       )
@@ -1112,7 +1171,9 @@ const ConversationPanel = ({
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
   const pendingElicitation: ElicitationProjection | undefined =
-    pendingElicitationActivity?.elicitation?.state === 'pending'
+    pendingElicitationActivity?.elicitation &&
+    (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationRecovery)
       ? pendingElicitationActivity.elicitation
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
@@ -1300,7 +1361,38 @@ const ConversationPanel = ({
     }
   }
 
+  const canExplainUnavailableSpecialist = Boolean(
+    activeSession &&
+    specialistUnavailable &&
+    canEditDraft &&
+    !ordinaryComposerBlocked &&
+    effectiveCanSend
+  )
+  const specialistNoticeCurrent = Boolean(
+    canExplainUnavailableSpecialist &&
+    specialistNoticeTarget?.sessionId === activeSession?.id &&
+    specialistNoticeTarget?.specialistId === specialistId
+  )
+  const specialistUnavailableOpen = specialistNoticeCurrent && specialistNoticeVisible
+  // Forget the attempted send when its session, binding, or blocking condition changes.
+  if (specialistNoticeTarget && !specialistNoticeCurrent) setSpecialistNoticeTarget(undefined)
+  if (!specialistUnavailableOpen && specialistNoticePointerPaused)
+    setSpecialistNoticePointerPaused(false)
+  if (!specialistUnavailableOpen && specialistNoticeFocusPaused)
+    setSpecialistNoticeFocusPaused(false)
+  useNoticeCountdown(
+    specialistNoticeTarget ? 6000 : undefined,
+    !specialistUnavailableOpen || specialistNoticePointerPaused || specialistNoticeFocusPaused,
+    () => setSpecialistNoticeTarget(undefined),
+    specialistNoticeTarget
+  )
+
   const handleSubmit = (): void => {
+    if (canExplainUnavailableSpecialist && activeSession) {
+      setSpecialistNoticeVisible(!specialistNoticeTarget)
+      setSpecialistNoticeTarget({ sessionId: activeSession.id, specialistId })
+      return
+    }
     if (!canEditDraft || !effectiveCanSend || authenticationRequired) return
     if (docToText(draftDoc).trim() === '/setup-wsl') {
       void handleWslSetupCommand()
@@ -1585,6 +1677,7 @@ const ConversationPanel = ({
             />
           )}
           <PackageExportProgressButton />
+          <PackageOperationIndicator />
           <NotificationBell className="md:hidden" />
           <button
             type="button"
@@ -1601,7 +1694,6 @@ const ConversationPanel = ({
             <PanelRight className="size-4" strokeWidth={2} fill="none" aria-hidden="true" />
           </button>
         </header>
-        <PackageOperationIndicator />
 
         {isNewConversation ? null : activeSession?.contentLoaded === false ? (
           <SessionSwitchSkeleton />
@@ -1722,7 +1814,12 @@ const ConversationPanel = ({
                 !isAgentAuthenticationRequired(composerError) &&
                 composerError !== actionError ? (
                   <div role="alert" className="mb-2">
-                    <ErrorNotice inline icon={AlertTriangle} tone="red" title={composerError} />
+                    <ErrorNotice
+                      inline
+                      icon={AlertTriangle}
+                      tone={isSpecialistCapabilityReadFailure(composerError) ? 'amber' : 'red'}
+                      title={localizeSpecialistReadFailure(composerError, t) ?? composerError}
+                    />
                   </div>
                 ) : null}
                 {composerError && composerErrorDetail ? (
@@ -1738,6 +1835,23 @@ const ConversationPanel = ({
                     isDisabled={!canResumeSession || isStopping || rootTurnBusy}
                     isResuming={isResuming}
                     onResume={() => void handleResume()}
+                  />
+                ) : null}
+                {contextResetNotice ? (
+                  <ErrorNotice
+                    inline
+                    level="info"
+                    className="mb-2"
+                    description={t(
+                      'Continuing in a new context using your saved conversation history.'
+                    )}
+                    dismissButton={{
+                      label: t('Dismiss'),
+                      onClick: () =>
+                        useWorkspaceOperationErrors.setState((state) => ({
+                          contextResets: { ...state.contextResets, [activeSession!.id]: false }
+                        }))
+                    }}
                   />
                 ) : null}
                 {activeSession?.compacting ? (
@@ -1833,7 +1947,9 @@ const ConversationPanel = ({
                                 ) : null}
                               </>,
                               onDismiss,
-                              t('Dismiss error')
+                              t('Dismiss error'),
+                              isSpecialistCapabilityReadFailure(actionError) &&
+                                !showLegacyRunErrorRow
                             )
                           : null}
                       </>
@@ -1875,21 +1991,6 @@ const ConversationPanel = ({
                           }
                         : undefined
                     }
-                  />
-                ) : null}
-
-                {activeSession && specialistUnavailable ? (
-                  <ErrorNotice
-                    role="status"
-                    aria-live="polite"
-                    data-testid="specialist-unavailable-notice"
-                    className="mb-3"
-                    title={t('This Specialist is no longer available')}
-                    description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
-                    primaryButton={{
-                      label: t('Choose Specialist'),
-                      onClick: () => setAgentControlsOpenRequest((request) => request + 1)
-                    }}
                   />
                 ) : null}
 
@@ -2059,7 +2160,8 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked && !authenticationRequired ? (
+                  {ordinaryComposerBlocked &&
+                  (!authenticationRequired || pendingElicitation?.continuationRecovery) ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"
@@ -2088,8 +2190,26 @@ const ConversationPanel = ({
                             embedded
                           />
                         </ResizableCredentialComposer>
+                      ) : pendingElicitation?.continuationRecovery ? (
+                        <WorkspaceElicitationRecovery
+                          key={pendingElicitationRequest?.requestId}
+                          elicitation={{
+                            ...pendingElicitation,
+                            continuationRecovery: {
+                              ...pendingElicitation.continuationRecovery,
+                              error: actionError ?? pendingElicitation.continuationRecovery.error
+                            }
+                          }}
+                          request={pendingElicitationRequest}
+                          onRespond={onRespondToElicitation}
+                        />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
+                          choice={Boolean(
+                            resolveAgentUserChoiceQuestions(
+                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
+                            )
+                          )}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -2165,27 +2285,15 @@ const ConversationPanel = ({
                       </section>
                     ) : activeSession?.packageOrigin ? (
                       <section
-                        className="relative z-10 rounded-xl border border-border bg-muted/50 px-4 py-3"
+                        className="relative z-10 rounded-2xl bg-bg-200 p-2"
                         aria-label={t('Imported research history')}
                       >
-                        <p className="text-sm font-medium text-foreground">
-                          {t('Imported research history')}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {t('Imported on {{date}}', {
-                            date: new Date(activeSession.packageOrigin.importedAt).toLocaleString()
-                          })}
-                        </p>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                          {t(
-                            'Read-only. Browse the conversation, files and recorded results. Code execution and continuation are disabled.'
-                          )}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           {sessionForkAvailable() ? (
                             <Button
                               variant="outline"
                               size="sm"
+                              className="px-2 text-xs"
                               onClick={() => {
                                 void forkSession(activeSession)
                               }}
@@ -2197,6 +2305,7 @@ const ConversationPanel = ({
                           <Button
                             variant="outline"
                             size="sm"
+                            className="px-2 text-xs"
                             aria-controls="right-panel"
                             onClick={() => {
                               usePreviewWorkbenchStore
@@ -2219,30 +2328,23 @@ const ConversationPanel = ({
                             sessionId={activeSession.id}
                           />
                         </div>
-                        <details className="mt-2 text-xs leading-5 text-muted-foreground">
-                          <summary className="cursor-pointer">{t('Package source')}</summary>
-                          <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-                            <dt>{t('Source project')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceProjectId}
-                            </dd>
-                            <dt>{t('Source Session')}</dt>
-                            <dd className="break-all font-mono">
-                              {activeSession.packageOrigin.sourceSessionId}
-                            </dd>
-                          </dl>
-                          <p className="mt-1">
-                            {t(
-                              'Original evidence is retained separately; local references and evidence hashes are derived during import.'
-                            )}
-                          </p>
-                        </details>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
-                          <details className="mt-2 text-xs text-muted-foreground">
-                            <summary className="cursor-pointer">
-                              {t('Not included in this package')}
-                            </summary>
-                            <ul className="mt-1 max-h-36 list-disc overflow-y-auto pl-4">
+                          <details className="group/exclusions mt-1 text-xs text-muted-foreground">
+                            <Button
+                              asChild
+                              variant="ghost"
+                              size="sm"
+                              className="justify-start px-2 text-xs"
+                            >
+                              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                                <ChevronRight
+                                  className="size-4 transition-transform group-open/exclusions:rotate-90 motion-reduce:transition-none"
+                                  aria-hidden="true"
+                                />
+                                {t('Not included in this package')}
+                              </summary>
+                            </Button>
+                            <ul className="mx-2 mb-2 mt-1 max-h-36 list-disc overflow-y-auto pl-4">
                               {[
                                 ...new Set(
                                   activeSession.packageOrigin.excludedFiles.map(
@@ -2889,7 +2991,7 @@ const ConversationPanel = ({
                               onLocatePastedText={handleLocatePastedText}
                               onUndo={onUndo}
                               onRedo={onRedo}
-                              disabled={!canEditDraft}
+                              disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
                                 {
@@ -3256,81 +3358,101 @@ const ConversationPanel = ({
                               onChange={changeModelConfiguration}
                             />
 
-                            {rootTurnBusy ? (
-                              // A sendable draft replaces Stop with queue submission without starting another turn.
-                              // Detached children can outlive a wait=false Main turn, so their durable
-                              // running aggregate keeps the same root cascade reachable after Main settles.
-                              // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
-                              // in a separate ACP session), so fixLoopActive keeps the cancel affordance
-                              // reachable across the whole loop, not just the agent-fix running turn.
-                              <div
-                                data-testid="composer-running-control-slot"
-                                className="flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={canQueueMessage ? handleSubmit : handleStop}
-                                  disabled={isStopping}
-                                  data-testid={
-                                    canQueueMessage ? 'composer-queue-submit' : undefined
-                                  }
-                                  className={cn(
-                                    composerCancelButtonClassName,
-                                    canQueueMessage &&
-                                      'bg-primary text-primary-foreground hover:bg-primary/90'
-                                  )}
-                                  aria-label={
-                                    canQueueMessage
-                                      ? t('Add message to queue')
-                                      : isStopping
-                                        ? t('Stopping run and subagents')
-                                        : t('Cancel run')
-                                  }
-                                >
-                                  {canQueueMessage ? (
-                                    <ArrowUp
-                                      className="size-4"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  ) : isStopping ? (
-                                    <Loader2
-                                      className="size-3.5 animate-spin"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <Square
-                                      className="size-3.5"
-                                      strokeWidth={2.2}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                </button>
-                                {stopError ? (
-                                  <span className="sr-only" role="alert">
-                                    {stopError}
-                                  </span>
-                                ) : null}
-                                <DropdownMenu>
-                                  <>
-                                    <Tooltip>
-                                      <TooltipTrigger
-                                        asChild
-                                        onFocus={(event) => {
-                                          if (
-                                            !(event.target instanceof Element) ||
-                                            !event.target.matches(':focus-visible')
-                                          ) {
-                                            event.preventDefault()
-                                          }
-                                        }}
+                            <Popover
+                              open={specialistUnavailableOpen}
+                              onOpenChange={(open) => {
+                                if (!open) setSpecialistNoticeTarget(undefined)
+                              }}
+                            >
+                              {rootTurnBusy ? (
+                                // A sendable draft replaces Stop with queue submission without starting another turn.
+                                // Detached children can outlive a wait=false Main turn, so their durable
+                                // running aggregate keeps the same root cascade reachable after Main settles.
+                                // During a fix loop the main agent may be idle (the reviewer-review sub-phase runs
+                                // in a separate ACP session), so fixLoopActive keeps the cancel affordance
+                                // reachable across the whole loop, not just the agent-fix running turn.
+                                <SplitButton>
+                                  <SplitButtonGroup
+                                    data-testid="composer-running-control-slot"
+                                    className={cn(
+                                      'flex w-16 shrink-0 justify-end [@media(pointer:coarse)]:mx-3',
+                                      canQueueMessage ? 'bg-primary' : 'bg-bg-200'
+                                    )}
+                                  >
+                                    <PopoverAnchor asChild>
+                                      <SplitButtonPrimary
+                                        variant="ghost"
+                                        size="icon"
+                                        ref={sendButtonRef}
+                                        type="button"
+                                        onClick={canQueueMessage ? handleSubmit : handleStop}
+                                        disabled={isStopping}
+                                        data-testid={
+                                          canQueueMessage ? 'composer-queue-submit' : undefined
+                                        }
+                                        className={cn(
+                                          composerCancelButtonClassName,
+                                          canQueueMessage &&
+                                            'bg-primary text-primary-foreground hover:bg-primary/90'
+                                        )}
+                                        aria-label={
+                                          canQueueMessage
+                                            ? t('Add message to queue')
+                                            : isStopping
+                                              ? t('Stopping run and subagents')
+                                              : t('Cancel run')
+                                        }
                                       >
-                                        <span className="inline-flex">
-                                          <DropdownMenuTrigger asChild>
-                                            <button
+                                        {canQueueMessage ? (
+                                          <ArrowUp
+                                            className="size-4"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        ) : isStopping ? (
+                                          <Loader2
+                                            className="size-3.5 animate-spin"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        ) : (
+                                          <Square
+                                            className="size-3.5"
+                                            strokeWidth={2.2}
+                                            aria-hidden="true"
+                                          />
+                                        )}
+                                      </SplitButtonPrimary>
+                                    </PopoverAnchor>
+                                    {stopError ? (
+                                      <span className="sr-only" role="alert">
+                                        {stopError}
+                                      </span>
+                                    ) : null}
+
+                                    <>
+                                      <Tooltip>
+                                        <TooltipTrigger
+                                          asChild
+                                          onFocus={(event) => {
+                                            if (
+                                              !(event.target instanceof Element) ||
+                                              !event.target.matches(':focus-visible')
+                                            ) {
+                                              event.preventDefault()
+                                            }
+                                          }}
+                                        >
+                                          <span className="inline-flex">
+                                            <SplitButtonTrigger
+                                              variant="ghost"
+                                              size="icon"
                                               type="button"
-                                              className={composerIconButtonClassName}
+                                              className={cn(
+                                                composerIconButtonClassName,
+                                                canQueueMessage &&
+                                                  'text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
+                                              )}
                                               disabled={
                                                 !canQueueMessage &&
                                                 !canOpenSideChat &&
@@ -3344,18 +3466,18 @@ const ConversationPanel = ({
                                                 className="size-3.5"
                                                 aria-hidden="true"
                                               />
-                                            </button>
-                                          </DropdownMenuTrigger>
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {canQueueMessage
-                                          ? t('More send options')
-                                          : (sideChatDisabledReason ?? t('More send options'))}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </>
-                                  <DropdownMenuContent side="top" align="end" className="w-64">
+                                            </SplitButtonTrigger>
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {canQueueMessage
+                                            ? t('More send options')
+                                            : (sideChatDisabledReason ?? t('More send options'))}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </>
+                                  </SplitButtonGroup>
+                                  <SplitButtonContent side="top" align="end" className="w-64">
                                     {canQueueMessage ? (
                                       <DropdownMenuItem
                                         onSelect={handleStop}
@@ -3370,63 +3492,67 @@ const ConversationPanel = ({
                                       </DropdownMenuItem>
                                     ) : null}
                                     {sideChatMenuItems}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            ) : (
-                              <>
-                                <div
-                                  role="group"
-                                  aria-label={t('Send message options')}
-                                  className={cn(
-                                    'flex rounded-md [@media(pointer:coarse)]:mx-3',
-                                    specialistSwitchInFlight
-                                      ? 'bg-bg-300 text-text-300'
-                                      : 'bg-primary text-primary-foreground',
-                                    !specialistSwitchInFlight &&
-                                      !effectiveCanSend &&
-                                      !canOpenSendOptions &&
-                                      'opacity-50'
-                                  )}
-                                >
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={handleSubmit}
-                                        disabled={!effectiveCanSend}
-                                        className={cn(
-                                          composerSplitSendPrimaryButtonClassName,
-                                          specialistSwitchInFlight && 'text-text-300',
-                                          canOpenSendOptions && 'disabled:opacity-50'
-                                        )}
-                                        aria-label={t('Send message')}
-                                      >
-                                        <ArrowUp
-                                          className="size-4"
-                                          strokeWidth={2.2}
-                                          aria-hidden="true"
-                                        />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="top">{t('Send message')}</TooltipContent>
-                                  </Tooltip>
-                                  <DropdownMenu>
-                                    <Tooltip>
-                                      {/* Same focus guard as the + trigger: a dropdown close returns
+                                  </SplitButtonContent>
+                                </SplitButton>
+                              ) : (
+                                <>
+                                  <SplitButton>
+                                    <SplitButtonGroup
+                                      role="group"
+                                      aria-label={t('Send message options')}
+                                      className={cn(
+                                        'flex rounded-md [@media(pointer:coarse)]:mx-3',
+                                        specialistSwitchInFlight
+                                          ? 'bg-bg-300 text-text-300'
+                                          : 'bg-primary text-primary-foreground',
+                                        !specialistSwitchInFlight &&
+                                          !effectiveCanSend &&
+                                          !canOpenSendOptions &&
+                                          'opacity-50'
+                                      )}
+                                    >
+                                      <Tooltip open={specialistUnavailableOpen ? false : undefined}>
+                                        <TooltipTrigger asChild>
+                                          <PopoverAnchor asChild>
+                                            <SplitButtonPrimary
+                                              ref={sendButtonRef}
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              onClick={handleSubmit}
+                                              disabled={!effectiveCanSend}
+                                              className={cn(
+                                                composerSplitSendPrimaryButtonClassName,
+                                                specialistSwitchInFlight && 'text-text-300',
+                                                canOpenSendOptions && 'disabled:opacity-50'
+                                              )}
+                                              aria-label={t('Send message')}
+                                            >
+                                              <ArrowUp
+                                                className="size-4"
+                                                strokeWidth={2.2}
+                                                aria-hidden="true"
+                                              />
+                                            </SplitButtonPrimary>
+                                          </PopoverAnchor>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t('Send message')}
+                                        </TooltipContent>
+                                      </Tooltip>
+
+                                      <Tooltip>
+                                        {/* Same focus guard as the + trigger: a dropdown close returns
                                       programmatic focus, which must not re-open the tooltip. */}
-                                      <TooltipTrigger
-                                        asChild
-                                        onFocus={(event) => {
-                                          if (!event.currentTarget.matches(':focus-visible')) {
-                                            event.preventDefault()
-                                          }
-                                        }}
-                                      >
-                                        <DropdownMenuTrigger asChild>
-                                          <Button
+                                        <TooltipTrigger
+                                          asChild
+                                          onFocus={(event) => {
+                                            if (!event.currentTarget.matches(':focus-visible')) {
+                                              event.preventDefault()
+                                            }
+                                          }}
+                                        >
+                                          <SplitButtonTrigger
                                             type="button"
                                             variant="ghost"
                                             size="icon"
@@ -3446,14 +3572,14 @@ const ConversationPanel = ({
                                               strokeWidth={2.2}
                                               aria-hidden="true"
                                             />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="top">
-                                        {t('More send options')}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                    <DropdownMenuContent side="top" align="end" className="w-56">
+                                          </SplitButtonTrigger>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="top">
+                                          {t('More send options')}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </SplitButtonGroup>
+                                    <SplitButtonContent side="top" align="end" className="w-56">
                                       <DropdownMenuItem
                                         data-testid="menu-plan-first"
                                         disabled={!canPlanFirst}
@@ -3483,11 +3609,63 @@ const ConversationPanel = ({
                                         />
                                         {t('Branch in new session')}
                                       </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </>
-                            )}
+                                    </SplitButtonContent>
+                                  </SplitButton>
+                                </>
+                              )}
+                              <PopoverContent
+                                side="top"
+                                align="end"
+                                sideOffset={12}
+                                collisionPadding={16}
+                                className="w-80 max-w-[calc(100vw-2rem)] p-4"
+                                aria-label={t('This Specialist is no longer available')}
+                                onOpenAutoFocus={(event) => event.preventDefault()}
+                                onCloseAutoFocus={(event) => event.preventDefault()}
+                                onInteractOutside={(event) => {
+                                  if (sendButtonRef.current?.contains(event.target as Node)) {
+                                    event.preventDefault()
+                                  }
+                                }}
+                                onPointerEnter={() => setSpecialistNoticePointerPaused(true)}
+                                onPointerLeave={() => setSpecialistNoticePointerPaused(false)}
+                                onFocusCapture={() => setSpecialistNoticeFocusPaused(true)}
+                                onBlurCapture={(event) => {
+                                  if (
+                                    !event.currentTarget.contains(
+                                      event.relatedTarget as Node | null
+                                    )
+                                  ) {
+                                    setSpecialistNoticeFocusPaused(false)
+                                  }
+                                }}
+                              >
+                                <ErrorNotice
+                                  inline
+                                  role="status"
+                                  data-testid="specialist-unavailable-notice"
+                                  title={t('This Specialist is no longer available')}
+                                  description={`${t('Choose another Specialist before sending a message.')} ${t('Your draft is preserved.')}`}
+                                  primaryButton={{
+                                    label: t('Choose Specialist'),
+                                    variant: 'default',
+                                    onClick: () => {
+                                      setSpecialistNoticeTarget(undefined)
+                                      setAgentControlsOpenRequest((request) => request + 1)
+                                    }
+                                  }}
+                                  dismissButton={{
+                                    label: t('Close'),
+                                    onClick: () => setSpecialistNoticeTarget(undefined)
+                                  }}
+                                />
+                                <PopoverPrimitive.Arrow
+                                  width={12}
+                                  height={6}
+                                  className="fill-popover"
+                                />
+                              </PopoverContent>
+                            </Popover>
                             {hasRunningSubagents && !rootTurnBusy ? (
                               <>
                                 <Tooltip>

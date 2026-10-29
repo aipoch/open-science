@@ -2,6 +2,8 @@
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { readSourceRow, hasUniqueRecordTokens } from './literature-pdf-source-records.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+import { nativeWholeCellInkPacket } from './literature-pdf-figure-native-plot-labels.mjs'
 
 const scalar = '[+−-]?\\d+(?:,\\d{3})*(?:\\.\\d+)?'
 const value = new RegExp(
@@ -397,6 +399,81 @@ export function recoverNativeScalarRecordPlan(table, items, captions, rules, obs
   })
   if (supportedDescriptorCut) return
 
+  // A scalar followed by a bracketed interval is not necessarily one printed
+  // leaf. Preserve an existing boundary when independent whole headings and
+  // every complete native record support it on both sides. This only declines
+  // the replacement plan; the original model/source still receives final review.
+  const supportedValueCut = modelCuts.slice(1, -1).some((cut) => {
+    if (!(cut > first && cut < crop[2])) return false
+    const groups = [header, ...rows],
+      split = (row) =>
+        row.some((i) => i.rect[2] <= cut) &&
+        row.some((i) => i.rect[0] >= cut) &&
+        row.every((i) => i.rect[2] <= cut || i.rect[0] >= cut)
+    if (!groups.every(split)) return false
+    return !cuts
+      .slice(1, -1)
+      .some((own) =>
+        groups.every((row) =>
+          row.every(
+            (i) => i.rect[2] <= own === i.rect[2] <= cut && i.rect[0] >= own === i.rect[0] >= cut
+          )
+        )
+      )
+  })
+  if (supportedValueCut) {
+    // Complete ordinary whole headings already admit the independent late
+    // header/ambiguity review. Do not disable their native row recovery just
+    // because scalar grouping temporarily combines a value and its interval.
+    // Fragmented/scripted headings do not have this whole-source bijection.
+    const nativeHeader = original
+        .filter((i) => i.baseline < divider[1])
+        .sort((a, b) => a.rect[0] - b.rect[0]),
+      nativeBody = original.filter((i) => i.baseline > divider[1]),
+      nativeRows = rows.map((row) =>
+        nativeBody.filter((i) => Math.abs(i.baseline - row[0].baseline) <= h * 0.04)
+      ),
+      fits = (i, n) => i.rect[0] >= modelCuts[n] && i.rect[2] <= modelCuts[n + 1],
+      domains = nativeHeader.map((heading, n) =>
+        box([heading, ...nativeRows.flatMap((row) => row.filter((i) => fits(i, n)))])
+      ),
+      frame = [opening[0], opening[1], opening[2], closing[1]],
+      ordinaryHeaderLeaves =
+        modelCuts.length === nativeHeader.length + 1 &&
+        modelCuts.every(Number.isFinite) &&
+        modelCuts.slice(1).every((x, n) => x > modelCuts[n]) &&
+        proveNativeUniqueWholeFonts(original, items) &&
+        original.every((i) => Math.abs(i.height - h) <= h * 0.04) &&
+        nativeHeader.every((i) => Math.abs(i.baseline - nativeHeader[0].baseline) <= h * 0.04) &&
+        // Model cuts may pass through a long heading. Its whole native box and
+        // the corresponding repeated body leaf must instead form disjoint
+        // ordered domains; no heading is clipped to a quantized model boundary.
+        domains.every((r) => r[0] >= frame[0] && r[2] <= frame[2]) &&
+        domains.slice(1).every((r, n) => r[0] > domains[n][2]) &&
+        nativeRows.flat().length === nativeBody.length &&
+        new Set(nativeRows.flat()).size === nativeBody.length &&
+        nativeRows.every(
+          (row) =>
+            modelCuts.slice(1).every((_, n) => row.some((i) => fits(i, n))) &&
+            row.every((i) => modelCuts.slice(1).filter((_, n) => fits(i, n)).length === 1)
+        ) &&
+        items.every(
+          (i) =>
+            !i.text?.trim() ||
+            (Array.isArray(i.rect) &&
+              i.rect.length === 4 &&
+              i.rect.every(Number.isFinite) &&
+              i.rect[2] > i.rect[0] &&
+              i.rect[3] > i.rect[1] &&
+              (i.rect[0] >= frame[2] ||
+                i.rect[2] <= frame[0] ||
+                i.rect[1] >= frame[3] ||
+                i.rect[3] <= frame[1] ||
+                original.includes(i)))
+        )
+    if (!ordinaryHeaderLeaves) return
+  }
+
   const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
   if (
     model.length === cuts.length - 1 &&
@@ -434,5 +511,211 @@ export function recoverNativeScalarRecordPlan(table, items, captions, rules, obs
       preservePhysicalRows: true,
       repair: 'native-body-records-recovered'
     }
+  }
+}
+
+const withinScalarBox = (r, b) =>
+  r[0] >= b[0] - 0.02 && r[1] >= b[1] - 0.02 && r[2] <= b[2] + 0.02 && r[3] <= b[3] + 0.02
+
+function completeScalarLeafHeaders(header, columns, height) {
+  if (header.some((i) => columns.filter((c) => withinScalarBox(i.rect, c)).length !== 1))
+    return false
+  return columns.every((column, n) => {
+    const owned = header.filter((i) => withinScalarBox(i.rect, column)),
+      main = owned.filter((i) => Math.abs(i.height - height) <= height * 0.04),
+      scripts = owned.filter((i) => !main.includes(i))
+    if (main.length !== 1 || !/\p{L}/u.test(main[0].text) || scripts.length > 1) return false
+    return scripts.every(
+      (i) =>
+        n > 0 &&
+        /^\d+$/u.test(i.text) &&
+        i.height >= height * 0.55 &&
+        i.height <= height * 0.8 &&
+        i.baseline > main[0].baseline &&
+        i.baseline - main[0].baseline <= height * 0.45 &&
+        Math.abs(i.rect[0] - main[0].rect[2]) <= height * 0.22
+    )
+  })
+}
+
+function completeScalarGlyphSources(owned, rows, columns, evidence) {
+  const ordered = [...owned].sort((a, b) => a.sourceItem.index - b.sourceItem.index),
+    packet = nativeWholeCellInkPacket(evidence.page, evidence.tokens, evidence.context, {
+      text: ordered.map((i) => i.text).join(''),
+      sourceItems: ordered.map((i) => i.sourceItem),
+      sourceRects: ordered.map((i) => i.rect.map((n) => n / 1.5))
+    })
+  if (!packet) return
+  const byIndex = new Map(owned.map((i) => [i.sourceItem.index, i]))
+  const frame = [columns[0][0], columns[0][1], columns.at(-1)[2], columns[0][3]].map((n) => n / 1.5)
+  for (const record of packet.records) {
+    const item = byIndex.get(record.index)
+    if (item) {
+      const row = rows.filter((r) => withinScalarBox(item.rect, r)),
+        column = columns.filter((c) => withinScalarBox(item.rect, c))
+      if (row.length !== 1 || column.length !== 1) return
+      // Outer physical cells end at the verified frame, not at the last text
+      // advance baseline: visible descenders must remain inside the rule.
+      const cell = [
+        column[0][0],
+        row[0] === rows[0] ? columns[0][1] : row[0][1],
+        column[0][2],
+        row[0] === rows.at(-1) ? columns[0][3] : row[0][3]
+      ].map((n) => n / 1.5)
+      if (
+        !record.advanceComplete ||
+        typeof record.r.fontName !== 'string' ||
+        !record.r.fontName ||
+        !evidence.context.content?.styles?.[record.r.fontName] ||
+        record.part.some(
+          (p) =>
+            p.g.fontName !== record.r.fontName ||
+            (!p.g.rendererSkipped && !withinScalarBox(p.g.ink, cell))
+        )
+      )
+        return
+    } else if (
+      record.part.some(
+        (p) =>
+          !p.g.rendererSkipped &&
+          p.g.ink[0] < frame[2] &&
+          p.g.ink[2] > frame[0] &&
+          p.g.ink[1] < frame[3] &&
+          p.g.ink[3] > frame[1]
+      )
+    )
+      return
+  }
+  return packet
+}
+
+// Recover a missing frame from complete signed scalar records, not raw native
+// start counts. Every sign keeps its own explicit font and consecutive origin;
+// a separate sign/missing-value/uncertainty lane cannot opt into this family.
+export function recoverNativeSignedScalarRecords(table, items, captions, rules, paint, evidence) {
+  const frame = table.cropRect,
+    valid = (r) =>
+      Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  if (!valid(frame) || !(paint instanceof Map) || !evidence?.page || !evidence.context) return
+  const full = rules
+    .filter(
+      (r) =>
+        r[1] === r[3] &&
+        Math.abs(r[0] - frame[0]) < 0.02 &&
+        Math.abs(r[2] - frame[2]) < 0.02 &&
+        r[1] >= frame[1] &&
+        r[1] <= frame[3]
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 3 ||
+    Math.abs(full[0][1] - frame[1]) > 0.02 ||
+    Math.abs(full[2][1] - frame[3]) > 0.02 ||
+    full.some((r) => {
+      const p = paint.get(r.join(','))
+      return (
+        !valid(p) ||
+        p[0] > r[0] ||
+        p[2] < r[2] ||
+        p[1] >= r[1] ||
+        p[3] <= r[1] ||
+        Math.abs((p[1] + p[3]) / 2 - r[1]) > 0.02
+      )
+    })
+  )
+    return
+  const owned = items.filter(
+    (i) =>
+      i.text?.trim() &&
+      i.rect?.[0] < frame[2] &&
+      i.rect[2] > frame[0] &&
+      i.rect[1] < frame[3] &&
+      i.rect[3] > frame[1]
+  )
+  if (
+    !proveNativeUniqueWholeFonts(owned, items) ||
+    owned.some((i) => !withinScalarBox(i.rect, frame))
+  )
+    return
+  const plan = recoverNativeScalarRecordPlan(
+    { ...table, structure: { objects: [] } },
+    items,
+    captions,
+    rules
+  )
+  if (!plan || plan.grid.rows.length < 4) return
+  const rows = plan.grid.rows,
+    columns = plan.grid.columns,
+    header = owned.filter((i) => withinScalarBox(i.rect, rows[0])),
+    body = owned.filter((i) => !header.includes(i)),
+    height = body.map((i) => i.height).sort((a, b) => a - b)[Math.floor(body.length / 2)]
+  if (!(height > 0) || columns.length < 3 || !completeScalarLeafHeaders(header, columns, height))
+    return
+  const consumed = []
+  for (const row of rows.slice(1))
+    for (let n = 0; n < columns.length; n++) {
+      const cell = body.filter((i) =>
+        withinScalarBox(i.rect, [columns[n][0], row[1], columns[n][2], row[3]])
+      )
+      if (
+        !cell.length ||
+        (n > 0 && !/^[+−-]?\d+(?:\.\d+)?$/u.test(text(cell.sort((a, b) => a.rect[0] - b.rect[0]))))
+      )
+        return
+      consumed.push(...cell)
+    }
+  if (
+    consumed.length !== body.length ||
+    new Set(consumed).size !== body.length ||
+    captions.some(
+      (c) =>
+        c.page === evidence.page.pageNumber &&
+        c.rect[0] < frame[2] &&
+        c.rect[2] > frame[0] &&
+        c.rect[1] < frame[3] &&
+        c.rect[3] > frame[1]
+    )
+  )
+    return
+  const signs = body.filter((i) => /^[+−-]$/u.test(i.text.trim()))
+  if (!signs.length) return
+  const packet = completeScalarGlyphSources(owned, rows, columns, evidence)
+  if (!packet) return
+  for (const sign of signs) {
+    const next = body.find((i) => i.sourceItem.index === sign.sourceItem.index + 1),
+      a = packet.records.find((r) => r.index === sign.sourceItem.index),
+      b = packet.records.find((r) => r.index === sign.sourceItem.index + 1)
+    if (
+      !next ||
+      !a ||
+      !b ||
+      !/^\d+(?:\.\d+)?$/u.test(next.text) ||
+      b.r.sourceItem?.text !== next.text ||
+      Math.abs(next.baseline - sign.baseline) > height * 0.04 ||
+      next.rect[0] < sign.rect[2] - 0.02 ||
+      next.rect[0] - sign.rect[2] > height * 0.22
+    )
+      return
+    const matrices = [a.r.transform, b.r.transform]
+    if (
+      !matrices.every(
+        (m) =>
+          Array.isArray(m) &&
+          m.length === 6 &&
+          m.every(Number.isFinite) &&
+          m[0] > 0 &&
+          m[1] === 0 &&
+          m[2] === 0 &&
+          m[3] === m[0]
+      ) ||
+      Math.abs(matrices[0][0] - matrices[1][0]) > 1e-6 ||
+      Math.abs(matrices[0][5] - matrices[1][5]) > 0.02
+    )
+      return
+  }
+  return {
+    cuts: [...columns.map((c) => c[0]), columns.at(-1)[2]],
+    groups: rows.map((r) => owned.filter((i) => withinScalarBox(i.rect, r))),
+    consumed: owned
   }
 }

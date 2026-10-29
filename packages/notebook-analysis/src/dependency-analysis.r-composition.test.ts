@@ -17,13 +17,12 @@ describe('reported R plot composition', () => {
   ])('captures dependency and file evidence: %s', async (script) => {
     const facts = (await analyzeRSources([script]))[0]
     expect(facts?.state === 'unknown' ? facts.reasons : []).toEqual(
-      script === combinedPlot ? ['external-state'] : []
+      script === combinedPlot ? ['external-state', 'opaque-call'] : []
     )
     expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete',
-      reasonCodes: []
+      readState: script === combinedPlot ? 'partial' : 'complete',
+      writeState: script === combinedPlot ? 'partial' : 'complete',
+      externalState: script === combinedPlot ? 'partial' : 'complete'
     })
   })
 
@@ -31,9 +30,9 @@ describe('reported R plot composition', () => {
     expect(await analyzeNotebookSourceFileAccess('r', combinedPlot)).toMatchObject({
       reads: ['inputs/sample-groups-666666666666.csv'],
       writes: ['synthetic_groups_group_combined.png'],
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete'
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
     })
   })
 

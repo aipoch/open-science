@@ -938,3 +938,326 @@ it('keeps native host commands outside renderer approval presence and revokes th
   client.close()
   await vi.waitFor(() => expect(hostInvocation?.callerLease.signal.aborted).toBe(true))
 })
+
+it('keeps App holds and quit authority through stale snapshots and lost exit replies', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  const { createLocalServiceLifetime } = await import('./local-service-lifetime')
+  const { createDesktopRuntimeLifecycle } = await import('./desktop-runtime-lifecycle')
+  const configRoot = await mkdtemp(join(tmpdir(), 'desktop-lifetime-'))
+  cleanups.push(() => rm(configRoot, { recursive: true, force: true }))
+  const stop = vi.fn()
+  const lifetime = await createLocalServiceLifetime({
+    configRoot,
+    generation: randomUUID(),
+    explicitStart: false,
+    stop,
+    report: vi.fn()
+  })
+  cleanups.push(async () => lifetime.close())
+  const prepare = vi.fn(async () => 'completed' as const)
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    lifetime,
+    startupOptions: {
+      configRoot,
+      dataRoot: configRoot,
+      profilePath: configRoot,
+      port: 0,
+      host: '127.0.0.1',
+      credentialStore: 'os'
+    },
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub(),
+    createLifecycle: () =>
+      createDesktopRuntimeLifecycle({
+        detectActiveSessions: () => [],
+        hasActiveReviewerWork: () => false,
+        getActiveSettingsInstallId: () => undefined,
+        isMigrationInProgress: () => false,
+        hasActivePackageTransfer: () => false,
+        holdSettingsInstallAdmission: () => () => {},
+        prepareForQuit: prepare,
+        abortQuitPreparation: vi.fn()
+      })
+  })
+  cleanups.push(server.close)
+  const attach = (): ReturnType<typeof connectDesktopRuntime> =>
+    connectDesktopRuntime({
+      endpoint: server.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: () => {},
+      onDisconnect: () => {}
+    })
+  const a = await attach()
+  const b = await attach()
+  cleanups.push(async () => {
+    a.close()
+    b.close()
+  })
+  expect(a.runtimeInfo().lifetime?.apps).toBe(1)
+  const workA = (await a.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await a.lifecycle({ operation: 'prepare', fingerprint: workA.fingerprint })
+  expect(prepare).not.toHaveBeenCalled()
+  const appOnlyDecision = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await a.quit()
+  await vi.waitFor(() => expect(lifetime.snapshot().apps).toBe(1))
+  await expect(
+    b.lifecycle({ operation: 'prepare', fingerprint: appOnlyDecision.fingerprint })
+  ).resolves.toBe('scope-changed')
+  expect(prepare).not.toHaveBeenCalled()
+  await b.lifecycle({ operation: 'abort' })
+  expect(b.runtimeInfo().lifetime?.apps).toBe(2)
+  const workB = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: workB.fingerprint })
+  expect(prepare).toHaveBeenCalledOnce()
+  await expect(lifetime.start()).rejects.toThrow('stopping')
+  await b.lifecycle({ operation: 'abort' })
+  await lifetime.start()
+  expect(lifetime.snapshot().explicit).toBe(true)
+  const preserved = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preserved.fingerprint })
+  await lifetime.stop(false)
+  await expect(b.quit()).rejects.toThrow('whole service')
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+  await b.lifecycle({ operation: 'abort' })
+  await lifetime.start()
+  const preservedAgain = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preservedAgain.fingerprint })
+  const leave = lifetime.leave.bind(lifetime)
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ apps: 1, explicit: true, stopping: false })
+    return new Promise<never>(() => {}) // A successful App-only response is lost.
+  })
+  await expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  expect(server.isConnected()).toBe(true)
+  expect(lifetime.snapshot().apps).toBe(1)
+  await b.lifecycle({ operation: 'abort' })
+  await lifetime.stop(false)
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, explicit: false, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+  await lifetime.start()
+  const preservedAfterRollback = (await b.lifecycle({ operation: 'inspect' })) as {
+    fingerprint: string
+  }
+  await b.lifecycle({ operation: 'prepare', fingerprint: preservedAfterRollback.fingerprint })
+  await lifetime.stop(false)
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ scopeChanged: true })
+    return new Promise<never>(() => {}) // The App never receives this scope-change response.
+  })
+  await expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  expect(lifetime.snapshot()).toMatchObject({ apps: 1, stopping: false })
+  await b.lifecycle({ operation: 'abort' })
+  const confirmed = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: confirmed.fingerprint })
+  expect(prepare).toHaveBeenCalledTimes(2)
+  await b.lifecycle({ operation: 'abort' })
+  const c = await attach()
+  cleanups.push(async () => c.close())
+  const togetherB = (await b.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  const togetherC = (await c.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await b.lifecycle({ operation: 'prepare', fingerprint: togetherB.fingerprint })
+  await c.lifecycle({ operation: 'prepare', fingerprint: togetherC.fingerprint })
+  vi.spyOn(lifetime, 'leave').mockImplementationOnce(async (...args) => {
+    expect(await leave(...args)).toMatchObject({ apps: 2, stopping: false })
+    return new Promise<never>(() => {})
+  })
+  const lostTogether = expect(b.quit({ deadlineAt: Date.now() + 3600 })).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  await vi.waitFor(async () =>
+    expect(await c.lifecycle({ operation: 'inspect' })).toMatchObject({ preserveService: false })
+  )
+  await expect(c.quit()).rejects.toThrow('whole service')
+  await c.lifecycle({ operation: 'abort' })
+  const currentC = (await c.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+  await c.lifecycle({
+    operation: 'prepare',
+    fingerprint: currentC.fingerprint,
+    preserveService: false
+  })
+  await c.lifecycle({ operation: 'abort' })
+  await lostTogether
+  await b.lifecycle({ operation: 'abort' })
+  expect(await c.lifecycle({ operation: 'inspect' })).toMatchObject({ preserveService: true })
+  expect(lifetime.snapshot()).toMatchObject({ apps: 2, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+})
+
+it.each(['abort', 'disconnect', 'expiry'] as const)(
+  'does not start a delayed prepare after %s invalidates its attempt',
+  async (mode) => {
+    const deferred = Promise.withResolvers<boolean>()
+    const generation = randomUUID()
+    const lifecycle = {
+      request: vi.fn<
+        (
+          operation: import('./desktop-runtime-lifecycle').DesktopLifecycleRequest
+        ) => Promise<string>
+      >(async () => 'completed'),
+      disconnect: vi.fn(async () => {})
+    }
+    const lifetime = {
+      preservesService: () => false,
+      snapshot: () => ({
+        version: 1 as const,
+        generation,
+        explicit: false,
+        stopping: false,
+        apps: 1
+      }),
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      prepareLeave: vi.fn(() => deferred.promise),
+      abortLeave: vi.fn(async () => {
+        await deferred.promise
+      }),
+      leave: vi.fn(),
+      start: vi.fn(),
+      retireIfUnused: vi.fn(),
+      stop: vi.fn(),
+      close: vi.fn()
+    }
+    const server = await startDesktopRuntimeTransport({
+      version: 'test',
+      lifetime,
+      generation,
+      commands: { commandNames: () => [], invoke: vi.fn() },
+      events: new ApplicationEventHub(),
+      createLifecycle: () => lifecycle
+    })
+    cleanups.push(server.close)
+    const client = await connectDesktopRuntime({
+      endpoint: server.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: () => {},
+      onDisconnect: () => {}
+    })
+    cleanups.push(async () => client.close())
+    const preparing = client.lifecycle({
+      operation: 'prepare',
+      fingerprint: 'a'.repeat(64),
+      deadlineAt: Date.now() + (mode === 'expiry' ? 3550 : 5000)
+    })
+    const rejected = expect(preparing).rejects.toThrow()
+    await vi.waitFor(() => expect(lifetime.prepareLeave).toHaveBeenCalledOnce())
+    let aborted: Promise<unknown> | undefined
+    if (mode === 'abort') {
+      aborted = client.lifecycle({ operation: 'abort' })
+      await vi.waitFor(() =>
+        expect(lifecycle.request).toHaveBeenCalledWith(
+          expect.objectContaining({ operation: 'abort' })
+        )
+      )
+    } else if (mode === 'disconnect') {
+      client.close()
+      await vi.waitFor(() => expect(lifecycle.disconnect).toHaveBeenCalledOnce())
+    } else await new Promise((resolve) => setTimeout(resolve, 80))
+    deferred.resolve(true)
+    await rejected
+    await aborted
+    await vi.waitFor(() => expect(lifetime.abortLeave).toHaveBeenCalled())
+    expect(
+      lifecycle.request.mock.calls.some(([operation]) => operation.operation === 'prepare')
+    ).toBe(false)
+  }
+)
+
+it('passes an app-exit deadline even when the caller did not prepare an attempt', async () => {
+  const generation = randomUUID()
+  const snapshot = { version: 1 as const, generation, explicit: true, stopping: false, apps: 0 }
+  const lifetime = {
+    preservesService: () => true,
+    snapshot: () => snapshot,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    prepareLeave: vi.fn(),
+    abortLeave: vi.fn(),
+    leave: vi.fn(async () => snapshot),
+    start: vi.fn(),
+    retireIfUnused: vi.fn(),
+    stop: vi.fn(),
+    close: vi.fn()
+  }
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    generation,
+    lifetime,
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub()
+  })
+  cleanups.push(server.close)
+  const socket = await connectToDesktopEndpoint(server.endpoint)
+  const received = frames(socket)
+  const appId = randomUUID()
+  socket.send(stringifyRpcJson({ kind: 'bootstrap', desktopInstanceId: appId }))
+  await received.next()
+  const deadlineAt = Date.now() + 100
+  socket.send(stringifyRpcJson({ kind: 'app-exit', id: 1, generation, deadlineAt }))
+  expect(await received.next()).toMatchObject({ kind: 'response', ok: true })
+  expect(lifetime.leave).toHaveBeenCalledWith(appId, expect.any(String), {
+    deadlineAt,
+    detachOnDisconnect: true
+  })
+  socket.close()
+})
+
+it('rolls back global desktop update preparation only when its controller disconnects', async () => {
+  const generation = randomUUID()
+  const lifetime = {
+    preservesService: () => true,
+    snapshot: () => ({
+      version: 1 as const,
+      generation,
+      explicit: false,
+      stopping: false,
+      apps: 2
+    }),
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    prepareLeave: vi.fn(),
+    abortLeave: vi.fn(),
+    leave: vi.fn(),
+    start: vi.fn(),
+    retireIfUnused: vi.fn(),
+    stop: vi.fn(),
+    close: vi.fn()
+  }
+  const onControllerDisconnect = vi.fn()
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    lifetime,
+    generation,
+    controllerRetireDeadlineMs: 50,
+    onControllerDisconnect,
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub(),
+    createLifecycle: () => ({ request: vi.fn(), disconnect: vi.fn(async () => {}) })
+  })
+  cleanups.push(server.close)
+  const attach = (): ReturnType<typeof connectDesktopRuntime> =>
+    connectDesktopRuntime({
+      endpoint: server.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: () => {},
+      onDisconnect: () => {}
+    })
+  const controller = await attach()
+  const secondary = await attach()
+  cleanups.push(async () => {
+    controller.close()
+    secondary.close()
+  })
+  secondary.close()
+  await vi.waitFor(() => expect(lifetime.disconnect).toHaveBeenCalledOnce())
+  expect(onControllerDisconnect).not.toHaveBeenCalled()
+  controller.close()
+  await vi.waitFor(() => expect(onControllerDisconnect).toHaveBeenCalledOnce())
+})

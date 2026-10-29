@@ -4,7 +4,9 @@ import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/sty
 import {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureRelatedFinder,
   LiteratureSupplementFinder,
+  LiteraturePublicationChecker,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -16,6 +18,7 @@ import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
 import { AgentPdfAcquisition } from '../literature/agent-pdf-acquisition'
 import { LiteratureCatalog } from '../literature/catalog'
+import { LiteratureCollector } from '../literature/collector'
 import { LiteratureCitationDocument } from '../literature/citation-document'
 import { discoveryJobOptions } from '../literature/discovery-adapters'
 import { LiteratureDocumentReader } from '../literature/document-reader'
@@ -81,9 +84,12 @@ export async function composeResearchCatalog({
   literatureReferenceResolver: LiteratureReferenceResolver
   literatureMetadataEnricher: LiteratureMetadataEnricher<LiteratureItemView>
   literatureSupplementAttachments: LiteratureSupplementAttachments
+  literatureRelatedFinder: LiteratureRelatedFinder
   literatureSupplementFinder: LiteratureSupplementFinder
+  literaturePublicationChecker: LiteraturePublicationChecker
   literatureFullTextFinder: LiteratureFullTextFinder<LiteratureItemView>
   literaturePdfImporter: LiteraturePdfImporter
+  literatureCollector: LiteratureCollector
   literaturePdfAcquisition: AgentPdfAcquisition
   literatureBatchJobs: LiteratureBatchJobs
   removeResourceTagsOrThrow: (
@@ -185,6 +191,16 @@ export async function composeResearchCatalog({
       (proxy, address, port, signal) => tunnelThroughProxy(proxy, address, port, undefined, signal),
       options
     )
+  const literatureRelatedFinder = new LiteratureRelatedFinder({
+    catalog: literatureCatalog,
+    fetch: netFetchStandard,
+    apiKey: async () =>
+      tryDecryptKey((await settingsService.getConnectors())?.semanticScholarApiKeyRef)
+  })
+  const literaturePublicationChecker = new LiteraturePublicationChecker({
+    catalog: literatureCatalog,
+    fetch: netFetchStandard
+  })
   const literatureSupplementFinder = new LiteratureSupplementFinder({
     catalog: literatureCatalog,
     fetch: netFetchStandard
@@ -214,6 +230,10 @@ export async function composeResearchCatalog({
     workspace: { annotations: pdfAnnotationRepository, sources: pdfAnnotationService },
     onNativeImportProgress: (progress) =>
       applicationEvents.publish('pdf-annotations:import-progress', progress)
+  })
+  const literatureCollector = new LiteratureCollector({
+    catalog: literatureCatalog,
+    content: contentRepository
   })
   const literaturePdfAcquisition = new AgentPdfAcquisition({
     catalog: literatureCatalog,
@@ -258,9 +278,12 @@ export async function composeResearchCatalog({
     literatureReferenceResolver,
     literatureMetadataEnricher,
     literatureFullTextFinder,
+    literatureRelatedFinder,
     literatureSupplementFinder,
+    literaturePublicationChecker,
     literatureSupplementAttachments,
     literaturePdfImporter,
+    literatureCollector,
     literaturePdfAcquisition,
     literatureBatchJobs,
     removeResourceTagsOrThrow,

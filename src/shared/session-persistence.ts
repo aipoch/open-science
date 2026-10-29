@@ -90,6 +90,7 @@ export type {
   RetryRuntimeTerminalCommitRequest,
   OpenSessionRecoveryFolderRequest,
   DeleteSessionRequest,
+  DeleteSessionRecoveryFileRequest,
   SessionDeletionResult,
   UpdateSessionArchiveRequest,
   SaveSessionManifestRequest
@@ -100,6 +101,8 @@ export {
   linkSessionPdfContextRequestSchema,
   unlinkSessionPdfContextRequestSchema,
   deleteSessionRequestSchema,
+  deleteSessionRecoveryFileRequestSchema,
+  SESSION_RECOVERY_COMPUTE_JOBS_ERROR,
   editSessionDetailsRequestSchema,
   SessionDeletionCommittedError,
   sessionDeletionResultSchema,

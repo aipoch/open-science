@@ -2,6 +2,7 @@ import { windowsSigningBuildDefines } from './scripts/windows-signing-policy.mjs
 import { createRequire } from 'node:module'
 import { resolve } from 'path'
 import { nativeLocaleAssets } from './scripts/native-locale-assets'
+import { electronHostDependencyGuard } from './scripts/electron-host-dependencies.mjs'
 import { devBuildWatch } from './scripts/dev-build-watch.mjs'
 import { defineConfig } from 'electron-vite'
 import { normalizePath } from 'vite'
@@ -17,7 +18,7 @@ export { resolveWsl2BashPreviewBuildEnabled } from './scripts/wsl2-build-flags.m
 
 export default defineConfig(({ command }) => ({
   main: {
-    plugins: [nativeLocaleAssets()],
+    plugins: [nativeLocaleAssets(), electronHostDependencyGuard(process.cwd())],
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
       ...windowsSigningBuildDefines(process.env),
@@ -31,6 +32,7 @@ export default defineConfig(({ command }) => ({
     }
   },
   preload: {
+    plugins: [electronHostDependencyGuard(process.cwd())],
     build: {
       // Local npm packages resolve outside node_modules through their file: links.
       commonjsOptions: {

@@ -4,7 +4,18 @@ import { execFile, spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 import { promisify } from 'node:util'
-import { mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  unlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { rootCertificates } from 'node:tls'
@@ -20,7 +31,12 @@ import type {
 
 const backend = vi.hoisted(() => ({
   request: undefined as
-    | ((request: { host: string; port?: number; purpose?: 'probe' | 'block' }) => Promise<boolean>)
+    | ((request: {
+        host: string
+        port?: number
+        purpose?: 'probe' | 'block'
+        canResume?: () => boolean
+      }) => Promise<boolean>)
     | undefined,
   initialize: vi.fn().mockResolvedValue(undefined),
   cleanup: vi.fn().mockResolvedValue({
@@ -78,6 +94,7 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
 import { NotebookKernelExecutor } from './kernel-executor'
+import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
 import {
   beginMigration,
@@ -87,6 +104,11 @@ import {
 } from '../storage/migration-state'
 
 const fixtureDirectories: string[] = []
+// A fallback test needs an actually whitespace-free parent, including on hosts whose TEMP
+// contains the reported username pattern. Do not manufacture a candidate under that TEMP.
+const rTemporaryTestParent = [join(process.cwd(), '.cache'), tmpdir()].find(
+  (path) => !/\s/u.test(path)
+)
 let diagnosticLogRoot: string | undefined
 afterAll(async () => {
   await flushLogs()
@@ -160,10 +182,11 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port, purpose }) =>
+      backend.request = ({ host, port, purpose, canResume }) =>
         command.onNetworkAccessRequest({
           host,
           purpose,
+          ...(canResume ? { canResume } : {}),
           ...(port === undefined ? {} : { port }),
           signal: controller.signal
         })
@@ -195,6 +218,620 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each(['parent', 'shared root'])(
+    'skips an R temporary candidate with a preexisting junction at its %s',
+    async (location) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-r-temp-junction-'))
+      fixtureDirectories.push(root)
+      const candidate = join(root, 'candidate')
+      const safeParent = join(root, 'safe')
+      const destination = join(root, 'existing-data')
+      await mkdir(safeParent)
+      await mkdir(destination)
+      await writeFile(join(destination, 'keep.txt'), 'untouched')
+      if (location === 'shared root') await mkdir(candidate)
+      const link = location === 'parent' ? candidate : join(candidate, 'open-science-notebook')
+      await symlink(destination, link, 'junction')
+      vi.stubEnv('TMPDIR', candidate)
+      vi.stubEnv('TMP', safeParent)
+      vi.stubEnv('TEMP', safeParent)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'Test User', 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
+      try {
+        wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'temporary junction regression',
+          sessionId: 'r-temp-junction',
+          projectId: 'r-temp-junction',
+          runtime: 'r',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const command = backend.wrap.mock.calls.at(-1)![0]
+        const directory = command.env.TMPDIR as string
+        expect(directory.startsWith(join(safeParent, 'open-science-notebook', 'command-'))).toBe(
+          true
+        )
+        expect(command.filesystem.readWriteRoots).toEqual([directory])
+        expect(await readdir(destination)).toEqual(['keep.txt'])
+        await wrapped.cleanup('exit', { processesTerminated: true })
+        expect(existsSync(directory)).toBe(false)
+        expect(existsSync(`${directory}.receipt`)).toBe(false)
+        expect(await readFile(join(destination, 'keep.txt'), 'utf8')).toBe('untouched')
+      } finally {
+        await wrapped?.cleanup('exit', { processesTerminated: true })
+        await owner.dispose()
+        vi.unstubAllEnvs()
+        await unlink(link)
+      }
+    }
+  )
+
+  it.skipIf(!rTemporaryTestParent).each([
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: false, fallback: true },
+    {
+      platform: 'win32' as const,
+      runtime: 'r' as const,
+      wsl: false,
+      fallback: true,
+      temporaryParent: 'Temp With Spaces'
+    },
+    { platform: 'win32' as const, runtime: 'python' as const, wsl: false, fallback: false },
+    { platform: 'linux' as const, runtime: 'r' as const, wsl: false, fallback: false },
+    { platform: 'win32' as const, runtime: 'r' as const, wsl: true, fallback: false }
+  ])('selects and cleans R temporary storage for %j', async (testCase) => {
+    await mkdir(rTemporaryTestParent!, { recursive: true })
+    const root = await mkdtemp(join(rTemporaryTestParent!, 'os-r-temp-policy-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    const temporaryParent = join(root, testCase.temporaryParent ?? '')
+    await mkdir(temporaryParent, { recursive: true })
+    const unavailable = join(root, 'not-a-directory')
+    await writeFile(unavailable, 'preserve')
+    vi.stubEnv('TMPDIR', unavailable)
+    vi.stubEnv('TMP', temporaryParent)
+    vi.stubEnv('TEMP', join(root, 'Other User'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: testCase.platform,
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      const wrapped = await owner.wrap({
+        executable: process.execPath,
+        args: [],
+        env: {},
+        cwd: root,
+        commandText: 'temporary directory regression',
+        sessionId: 'r-temp-policy',
+        projectId: 'r-temp-policy',
+        runtime: testCase.runtime,
+        ...(testCase.wsl
+          ? { target: { kind: 'wsl2' as const, profileId: 'test', distro: 'test', user: 'test' } }
+          : {}),
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const command = backend.wrap.mock.calls.at(-1)![0]
+      const directory = command.env.TMPDIR as string
+      expect(directory).toMatch(new RegExp('command-[0-9a-f-]+$'))
+      expect(
+        directory.startsWith(
+          join(
+            testCase.fallback ? join(temporaryParent, 'open-science-notebook') : configured,
+            'command-'
+          )
+        )
+      ).toBe(true)
+      expect(command.env.TMP).toBe(directory)
+      expect(command.env.TEMP).toBe(directory)
+      expect(command.filesystem.readWriteRoots).toContain(directory)
+      const failure = "Fatal error: 'R_TempDir' contains space"
+      expect(wrapped.annotateStderr(failure)).toBe(
+        testCase.fallback
+          ? `${failure}\nR could not use the selected temporary directory. Set TMPDIR to a writable directory without spaces and restart Open-Science.`
+          : failure
+      )
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: false,
+        networkClosed: true,
+        temporaryResourcesRemoved: false
+      })
+      await wrapped.cleanup('exit', { processesTerminated: false })
+      expect(existsSync(directory)).toBe(true)
+      expect(existsSync(`${directory}.receipt`)).toBe(true)
+      backend.cleanup.mockResolvedValueOnce({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(existsSync(directory)).toBe(false)
+      expect(existsSync(`${directory}.receipt`)).toBe(false)
+      expect(await readFile(unavailable, 'utf8')).toBe('preserve')
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
+  it
+    .skipIf(
+      process.platform !== 'win32' ||
+        !process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX ||
+        !rTemporaryTestParent
+    )
+    .for([
+      { managedParent: 'plain', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: true }
+    ])(
+    'verifies real R under $managedParent with spaced host temp=$spacedHostTemp',
+    async ({ managedParent, spacedHostTemp }, context) => {
+      const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX!
+      await mkdir(rTemporaryTestParent!, { recursive: true })
+      const root = await mkdtemp(join(rTemporaryTestParent!, 'r-temp-spaces-'))
+      fixtureDirectories.push(root)
+      let temporaryParent = root
+      if (spacedHostTemp) {
+        // The system volume may provide short names even when the app-data volume does not.
+        temporaryParent = await mkdtemp(join(tmpdir(), 'R Temp With Spaces '))
+        fixtureDirectories.push(temporaryParent)
+        try {
+          const { stdout } = await promisify(execFile)(
+            join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            ['--vanilla', '-e', 'cat(1 + 1)'],
+            {
+              env: {
+                ...process.env,
+                PATH: `${join(prefix, 'Library', 'bin')};${process.env.PATH ?? ''}`,
+                TMPDIR: temporaryParent,
+                TMP: temporaryParent,
+                TEMP: temporaryParent
+              },
+              windowsHide: true,
+              timeout: 15_000
+            }
+          )
+          expect(stdout.trim()).toBe('2')
+        } catch (error) {
+          if ((error as { stderr?: string }).stderr?.includes("'R_TempDir' contains space")) {
+            context.skip('The host filesystem does not provide an R-compatible spaced temp path')
+          }
+          throw error
+        }
+      }
+      for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, temporaryParent)
+      backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+      // Keep the real owner, environment and R process. Only native containment is replaced;
+      // no administrator setup or persistent runtime authorization is needed for this path test.
+      backend.wrap.mockImplementation(
+        async (command: { executable: string; args: string[]; env: NodeJS.ProcessEnv }) => ({
+          argv: [command.executable, ...command.args],
+          env: command.env,
+          annotateStderr: (value: string) => value,
+          resetNetworkConnections: backend.resetNetworkConnections,
+          setExecutionActive: backend.setExecutionActive,
+          confirmProcessTreeTermination: async () => true,
+          cleanup: (
+            _reason: NotebookSandboxCleanupReason,
+            outcome: NotebookSandboxProcessOutcome
+          ) => backend.cleanup(outcome)
+        })
+      )
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, managedParent, 'notebook-command-temp'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        await expect(
+          owner.ensureRuntimeAccess({
+            runtime: 'r',
+            executable: join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            sessionId: 'r-temp-spaces'
+          })
+        ).resolves.toEqual({ windowsProtectionRequired: true, windowsRuntimeAccessRequired: false })
+      } finally {
+        vi.unstubAllEnvs()
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('preserves the failed R probe and gives guidance when no compatible temporary parent exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-r-temp-guidance-'))
+    fixtureDirectories.push(root)
+    const configured = join(root, 'Test User', 'commands')
+    for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, configured)
+    await mkdir(configured, { recursive: true })
+    const stderr = "Fatal error: 'R_TempDir' contains space\r\n\r\n"
+    backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
+    // Replay the captured R startup diagnostic through the existing public probe and a real
+    // subprocess. This tests guidance, independently of whether this volume supports 8.3 paths.
+    backend.wrap.mockImplementationOnce(async (command: { env: NodeJS.ProcessEnv }) => ({
+      argv: [
+        process.execPath,
+        '-e',
+        `process.stderr.write(${JSON.stringify(stderr)}); process.exit(2)`
+      ],
+      env: command.env,
+      annotateStderr: (value: string) => value,
+      resetNetworkConnections: backend.resetNetworkConnections,
+      setExecutionActive: backend.setExecutionActive,
+      confirmProcessTreeTermination: async () => true,
+      cleanup: (_reason: NotebookSandboxCleanupReason, outcome: NotebookSandboxProcessOutcome) =>
+        backend.cleanup(outcome)
+    }))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      temporaryRoot: configured,
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.ensureRuntimeAccess({
+          runtime: 'r',
+          executable: process.execPath,
+          sessionId: 'r-temp-guidance'
+        })
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('Set TMPDIR to a writable directory without spaces'),
+        cause: expect.objectContaining({ code: 2, stderr })
+      })
+      const commandRoot = backend.wrap.mock.calls[0]![0].env.TMPDIR as string
+      expect(commandRoot.startsWith(join(configured, 'open-science-notebook', 'command-'))).toBe(
+        true
+      )
+      expect(existsSync(commandRoot)).toBe(false)
+      expect(existsSync(`${commandRoot}.receipt`)).toBe(false)
+      expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllEnvs()
+      await owner.dispose()
+    }
+  })
+
+  it.each(
+    (['darwin', 'linux', 'win32', 'wsl2'] as const).flatMap((target) =>
+      (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({ target, runtime }))
+    )
+  )(
+    'makes managed Skill resources read-only for $runtime on $target',
+    async ({ target, runtime }) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'sandbox-skill-resources-')))
+      fixtureDirectories.push(root)
+      const configRoot = join(root, 'config')
+      const skills = join(configRoot, 'codex', 'skills')
+      await mkdir(skills, { recursive: true })
+      const owner = new NotebookNetworkSandboxOwner({
+        configRoot,
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: target === 'wsl2' ? 'win32' : target,
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        // A broad user grant must not turn the built-in Skill read grant into write access.
+        getGrantedLocalRoots: async () => [
+          { id: 'config', name: 'config', path: configRoot, access: 'rw' }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      try {
+        const wrapped = await owner.wrap({
+          ...(target === 'wsl2'
+            ? {
+                target: {
+                  kind: 'wsl2',
+                  profileId: 'wsl',
+                  distro: 'Ubuntu',
+                  user: 'researcher'
+                } as const
+              }
+            : {}),
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'read Skill reference',
+          sessionId: 'skill-session',
+          projectId: 'skill-project',
+          runtime,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        const filesystem = backend.wrap.mock.calls.at(-1)![0].filesystem
+        expect(filesystem.readOnlyRoots).toContain(skills)
+        expect(filesystem.deniedWriteRoots).toContain(skills)
+        expect(filesystem.readWriteRoots).not.toContain(skills)
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it.each([true, false])(
+    'parks a Shell network request, deduplicates it, and releases only a live connection (%s)',
+    async (connectionLive) => {
+      const root = await mkdtemp(join(tmpdir(), 'sandbox-network-approval-'))
+      fixtureDirectories.push(root)
+      const decision = Promise.withResolvers<'allowOnce'>()
+      const requestDecision = vi.fn(() => decision.promise)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: 'linux',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'sample-client request'],
+        env: {},
+        cwd: root,
+        commandText: 'sample-client request',
+        executionReference: 'run-fixture',
+        sessionId: 'session-fixture',
+        projectId: 'project-fixture',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const waiting = vi.fn()
+      const end = wrapped.beginExecution!({
+        commandText: 'sample-client request',
+        onNetworkWaitChange: waiting
+      })
+      const first = backend.request!({
+        host: 'service.example.test',
+        port: 443,
+        purpose: 'block',
+        canResume: () => connectionLive
+      })
+      const duplicate = backend.request!({
+        host: 'service.example.test',
+        port: 443,
+        purpose: 'block',
+        canResume: () => connectionLive
+      })
+      await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
+      expect(requestDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hostname: 'service.example.test',
+          executionId: 'run-fixture',
+          commandFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/)
+        })
+      )
+      expect(waiting).toHaveBeenLastCalledWith(true)
+      let settled = false
+      void first.then(() => {
+        settled = true
+      })
+      await Promise.resolve()
+      expect(settled).toBe(false)
+      decision.resolve('allowOnce')
+      await expect(first).resolves.toBe(connectionLive)
+      await expect(duplicate).resolves.toBe(connectionLive)
+      expect(waiting).toHaveBeenLastCalledWith(false)
+      expect(wrapped.networkApprovalRetryRequired?.()).toBe(!connectionLive)
+      end()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it.each([undefined, true, false])(
+    'projects folder restriction %s while preserving explicit roots',
+    async (enabled) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-folder-policy-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'tmp'),
+        platform: 'darwin',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: enabled === undefined ? undefined : async () => enabled,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const wrapped = await owner.wrap({
+        executable: '/bin/sh',
+        args: ['-c', 'true'],
+        env: {},
+        cwd: root,
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        runtime: 'bash',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [root],
+          deniedReadRoots: [join(root, 'secret')],
+          deniedWriteRoots: []
+        }
+      })
+      expect(backend.wrap).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          filesystem: expect.objectContaining({
+            restrictFolders: enabled !== false,
+            deniedReadRoots: [join(root, 'secret')]
+          })
+        })
+      )
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it.each(
+    [false, true].flatMap((configured) =>
+      [false, true].flatMap((restrictFolders) =>
+        (['python', 'r', 'repl', 'bash'] as const).map((runtime) => ({
+          configured,
+          restrictFolders,
+          runtime
+        }))
+      )
+    )
+  )(
+    'pins $runtime launch mode (protected: $configured, folder preference: $restrictFolders)',
+    async ({ configured, restrictFolders, runtime }) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-windows-mode-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => restrictFolders,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      try {
+        const wrapped = await owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query public database',
+          sessionId: 's',
+          projectId: 'p',
+          runtime,
+          superviseProcessTree: true,
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [root],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            windowsProtectionRequired: configured,
+            superviseProcessTree: true,
+            filesystem: expect.objectContaining({ restrictFolders: configured })
+          })
+        )
+        expect(wrapped.env.HTTPS_PROXY).toBe('http://127.0.0.1:4567')
+        expect(wrapped.beginSpawn).toBeTypeOf('function')
+        expect(backend.installWindows).not.toHaveBeenCalled()
+        await wrapped.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
+  it('refuses explicit protected admission when protection is no longer configured', async () => {
+    backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/unused',
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      getFolderRestrictionEnabled: async () => false,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    await expect(
+      owner.wrap({
+        executable: 'powershell.exe',
+        args: [],
+        env: {},
+        cwd: 'C:\\workspace',
+        commandText: 'true',
+        sessionId: 's',
+        projectId: 'p',
+        runtime: 'bash',
+        windowsProtectionRequired: true,
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+    ).rejects.toThrow('require Windows protected mode')
+    expect(backend.wrap).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
+  it.each([false, true])(
+    'enforces installer admission with Windows protection configured: %s',
+    async (configured) => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(configured)
+      const root = await mkdtemp(join(tmpdir(), 'os-installer-admission-'))
+      fixtureDirectories.push(root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const { sandboxedPackageSpawn } = await import('./package-process-sandbox')
+      backend.wrap.mockRejectedValue(new Error('installer reached backend'))
+      try {
+        const spawn = sandboxedPackageSpawn({
+          processSandbox: owner,
+          request: { language: 'python', packages: ['example'] },
+          runtimeRoot: root,
+          storageRoot: root,
+          platform: 'win32'
+        })
+        await expect(spawn(process.execPath, ['-m', 'pip', '--version'], {})).rejects.toThrow(
+          'installer reached backend'
+        )
+        expect(backend.wrap).toHaveBeenCalledWith(
+          expect.objectContaining({
+            superviseProcessTree: true,
+            windowsProtectionRequired: configured
+          })
+        )
+      } finally {
+        await owner.dispose()
+      }
+    }
+  )
+
   it
     .runIf(process.platform === 'win32')
     .each(['directory', 'receipt', 'persistent-directory'] as const)(
@@ -692,6 +1329,109 @@ describe('NotebookNetworkSandboxOwner', () => {
     await owner.dispose()
   })
 
+  it.each(['bash', 'python', 'r', 'repl'] as const)(
+    'uses live session full access for %s without persisting or requesting approval',
+    async (runtime) => {
+      let fullSession: string | undefined = 'session-1'
+      let onFullAccess: ((allowed: boolean) => void) | undefined
+      const unsubscribe = vi.fn()
+      const requestDecision = vi.fn().mockResolvedValue('deny')
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        hasFullAccess: (sessionId) => sessionId === fullSession,
+        subscribeFullAccess: (sessionId, listener) => {
+          expect(sessionId).toBe('session-1')
+          onFullAccess = listener
+          return unsubscribe
+        },
+        persistAlwaysAllow,
+        requestDecision,
+        platform: 'linux'
+      })
+      const controller = new AbortController()
+      const wrapped = await owner.wrap({
+        signal: controller.signal,
+        executable: '/usr/bin/runtime',
+        args: [],
+        env: {},
+        cwd: '/workspace',
+        commandText: 'download dataset',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        runtime,
+        executionReference: 'execution-1',
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: ['/workspace'],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const request = backend.request!
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(false)
+      const end = wrapped.beginExecution?.()
+      await expect(request({ host: 'data.example.org' })).resolves.toBe(true)
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      expect(requestDecision).not.toHaveBeenCalled()
+      backend.resetNetworkConnections.mockClear()
+      fullSession = 'other-session'
+      onFullAccess!(false)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      fullSession = 'session-1'
+      onFullAccess!(true)
+      expect(backend.resetNetworkConnections).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(true)
+      controller.abort()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      end?.()
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      await expect(request({ host: 'data.example.org', purpose: 'probe' })).resolves.toBe(false)
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
+      expect(backend.updatePolicy).not.toHaveBeenCalled()
+      await wrapped.cleanup('exit', { processesTerminated: true })
+      await owner.dispose()
+    }
+  )
+
+  it('answers explicit full-access requests without command context or durable grants', async () => {
+    const requestDecision = vi.fn().mockResolvedValue('deny')
+    const persistAlwaysAllow = vi.fn()
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: '/resources',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      hasFullAccess: (sessionId) => sessionId === 'full-session',
+      persistAlwaysAllow,
+      requestDecision
+    })
+    const request = {
+      sessionId: 'full-session',
+      projectId: 'project',
+      hostname: 'data.example.org',
+      reason: 'Download'
+    }
+    await expect(owner.requestNetworkAccess(request)).resolves.toMatchObject({
+      status: 'alreadyAllowed'
+    })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
+    ).resolves.toMatchObject({ status: 'blocked' })
+    await expect(
+      owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
+    ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })
+    expect(requestDecision).not.toHaveBeenCalled()
+    await expect(
+      owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
+    ).resolves.toMatchObject({ status: 'denied' })
+    expect(requestDecision).toHaveBeenCalledOnce()
+    expect(persistAlwaysAllow).not.toHaveBeenCalled()
+    expect(backend.updatePolicy).not.toHaveBeenCalled()
+    await owner.dispose()
+  })
+
   it('applies allow-once to every matching connection in the next command only', async () => {
     const requestDecision = vi.fn().mockResolvedValue('allowOnce')
     const persistAlwaysAllow = vi.fn()
@@ -1075,6 +1815,108 @@ describe('NotebookNetworkSandboxOwner', () => {
     } finally {
       prepare.mockRestore()
       await owner.dispose()
+    }
+  })
+
+  it.each(['bash', 'repl'] as const)(
+    'rejects removed protection after selecting the protected %s interpreter',
+    async (runtimeKind) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-selected-runtime-mode-'))
+      fixtureDirectories.push(root)
+      const runtime = { root, node: process.execPath, powershell: process.execPath }
+      const prepare = vi
+        .spyOn(WindowsNotebookRuntimeManager.prototype, 'prepare')
+        .mockImplementation(async () => {
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+          return runtime
+        })
+      const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockReturnValue(runtime)
+      backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const executor = new NotebookKernelExecutor({ platform: 'win32', processSandbox: owner })
+      try {
+        const request = {
+          cwd: root,
+          runtimeRoot: root,
+          sessionId: 'selected-mode',
+          projectId: 'project'
+        }
+        const result =
+          runtimeKind === 'bash'
+            ? await runShellCommand({
+                ...request,
+                command: 'echo query',
+                handoffDir: root,
+                platform: 'win32',
+                runtimeBinding: { kind: 'powershell', version: '7.6' },
+                processSandbox: owner
+              })
+            : await executor.execute({
+                ...request,
+                kind: 'repl',
+                language: 'python',
+                code: 'console.log("query")',
+                dataRoot: root,
+                notebookSessionRoot: root
+              })
+        expect(result.stderr).toContain('require Windows protected mode')
+        expect(backend.wrap).not.toHaveBeenCalled()
+      } finally {
+        await executor.shutdown()
+        await owner.dispose()
+        prepare.mockRestore()
+        get.mockRestore()
+      }
+    }
+  )
+
+  it('pins protection before validating the prepared interpreter identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'os-mode-identity-race-'))
+    fixtureDirectories.push(root)
+    const get = vi.spyOn(WindowsNotebookRuntimeManager.prototype, 'get').mockImplementation(() => {
+      backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+      return { root, node: process.execPath, powershell: process.execPath }
+    })
+    backend.wrap.mockRejectedValue(new Error('unexpected standard launch'))
+    const owner = new NotebookNetworkSandboxOwner({
+      resourceRoot: root,
+      windowsRuntimeRoot: join(root, 'protected-runtimes'),
+      platform: 'win32',
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: vi.fn(),
+      requestDecision: vi.fn()
+    })
+    try {
+      await expect(
+        owner.wrap({
+          executable: process.execPath,
+          args: [],
+          env: {},
+          cwd: root,
+          commandText: 'query',
+          sessionId: 's',
+          projectId: 'p',
+          runtime: 'repl',
+          filesystem: {
+            readOnlyRoots: [],
+            readWriteRoots: [],
+            deniedReadRoots: [],
+            deniedWriteRoots: []
+          }
+        })
+      ).rejects.toThrow('require Windows protected mode')
+      expect(backend.wrap).not.toHaveBeenCalled()
+    } finally {
+      await owner.dispose()
+      get.mockRestore()
     }
   })
 
@@ -2202,7 +3044,7 @@ it('does not automatically grant durable permissions to an agent-created R envir
 })
 
 it.each(['managed', 'external'] as const)(
-  'dispatches %s R in unconfigured Windows standard mode without authorization',
+  'runs %s R in unconfigured Windows standard mode without protection setup',
   async (selection) => {
     const root = await mkdtemp(join(tmpdir(), 'os-r-standard-'))
     fixtureDirectories.push(root)
@@ -2257,12 +3099,15 @@ it.each(['managed', 'external'] as const)(
         timeoutMs: 5000
       })
       expect(result.status, result.stderr).toBe('completed')
-      expect(result.stdout).toContain('15')
+      expect(result.stdout).toBe('15')
       expect(beginSpawn).toHaveBeenCalledOnce()
       expect(started).toHaveBeenCalledOnce()
       expect(notStarted).not.toHaveBeenCalled()
       expect(backend.wrap).toHaveBeenCalledWith(
-        expect.objectContaining({ windowsProtectionRequired: false })
+        expect.objectContaining({
+          windowsProtectionRequired: false,
+          superviseProcessTree: true
+        })
       )
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()
     } finally {

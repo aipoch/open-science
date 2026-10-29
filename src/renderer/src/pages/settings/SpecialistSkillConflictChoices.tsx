@@ -31,7 +31,7 @@ export const SpecialistSkillConflictChoices = ({
             <fieldset key={skill.id} className="rounded-lg border border-border bg-background p-3">
               <legend className="px-1 text-xs font-semibold">{skill.id}</legend>
               <p className="text-xs text-muted-foreground">
-                {t('Installed {{installedVersion}} · Package {{packageVersion}}', {
+                {t('Installed {{installedVersion}}: Package {{packageVersion}}', {
                   installedVersion: skill.conflict?.installedVersion ?? t('Unknown'),
                   packageVersion: skill.version
                 })}

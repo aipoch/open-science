@@ -55,7 +55,11 @@
     "src/shared/session-persistence/turn-outcome-codec.test.ts",
     "src/shared/session-persistence/prompt-preparation.test.ts",
     "src/shared/runtime-tool-identity.ts",
-    "src/shared/history-preamble.ts"
+    "src/shared/history-preamble.ts",
+    "src/shared/sandbox-network-approval.ts",
+    "src/shared/session-persistence/network-approvals.ts",
+    "src/shared/use-cases.ts",
+    "src/shared/use-cases.test.ts"
   ],
   "interfacePaths": [
     "src/shared/acp.ts",
@@ -180,7 +184,9 @@
     "src/shared/window-controls.ts",
     "src/shared/wsl-setup.ts",
     "src/shared/runtime-tool-identity.ts",
-    "src/shared/history-preamble.ts"
+    "src/shared/history-preamble.ts",
+    "src/shared/sandbox-network-approval.ts",
+    "src/shared/use-cases.ts"
   ],
   "consumerModules": ["shared_application_contracts"],
   "testFiles": {
@@ -199,7 +205,8 @@
       "src/shared/session-persistence/attention.test.ts",
       "src/shared/session-persistence/turn-anchor.test.ts",
       "src/shared/session-persistence/turn-outcome-codec.test.ts",
-      "src/shared/session-persistence/prompt-preparation.test.ts"
+      "src/shared/session-persistence/prompt-preparation.test.ts",
+      "src/shared/use-cases.test.ts"
     ],
     "contract": ["src/shared/session-persistence.architecture.test.ts"],
     "consumer": [

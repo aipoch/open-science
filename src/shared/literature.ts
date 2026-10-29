@@ -1,4 +1,8 @@
 import {
+  literaturePublicationCheckRequestSchema,
+  literaturePublicationCheckResultSchema,
+  literatureRelatedRequestSchema,
+  literatureRelatedResultSchema,
   literatureFullTextRequestSchema,
   literatureFullTextProgressSchema,
   literatureSupplementRequestSchema,
@@ -130,6 +134,14 @@ const literatureApplicationCommandContracts = Object.freeze({
     validationCodec(z.tuple([literatureSupplementAttachmentRequestSchema])),
     validationCodec(literatureSupplementAttachmentResultSchema)
   ),
+  publicationCheck: defineApplicationCommandContract(
+    validationCodec(z.tuple([literaturePublicationCheckRequestSchema])),
+    validationCodec(literaturePublicationCheckResultSchema)
+  ),
+  related: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureRelatedRequestSchema])),
+    validationCodec(literatureRelatedResultSchema)
+  ),
   supplements: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureSupplementRequestSchema])),
     validationCodec(literatureSupplementResultSchema)
@@ -210,3 +222,8 @@ export {
 }
 
 export type { LiteratureCatalogSearchPage, LiteraturePdfImportRequest }
+
+export {
+  literatureIssuedYear,
+  normalizeLiteratureIdentifierKey
+} from '@aipoch/literature-citations/contracts'

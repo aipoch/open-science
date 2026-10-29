@@ -253,7 +253,7 @@ export function ComputeHostAuthenticationDetail({
             <dd>
               {currentMode === 'password'
                 ? host.authentication?.credentialStatus === 'configured'
-                  ? t('Configured · cannot be viewed')
+                  ? t('Configured: cannot be viewed')
                   : host.authentication?.credentialStatus === 'unavailable'
                     ? t('Saved credential unavailable')
                     : t('Password required')

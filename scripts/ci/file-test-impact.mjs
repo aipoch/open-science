@@ -3,23 +3,20 @@
 // imports plus declared dynamic edges. Module ownership never selects tests here; the plan is
 // compared against the module planner in module-test-impact.mjs.
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { appendFileSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import {
   classifyChanges,
   fixtureTestPatterns,
   matchesPath,
-  parseNameStatus,
   playwrightReaderTests
 } from './classify-pr-changes.mjs'
-import { loadModuleImpactManifest } from './load-module-impact.mjs'
-import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
-import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { resolveAffectedTestPlan } from './module-test-impact.mjs'
 import {
   consumerDependencyGraph,
-  loadDerivedConsumers,
-  withDerivedConsumers,
+  sourceSnapshot,
   workingTreeSource
 } from './module-graph/index.mjs'
 
@@ -47,14 +44,40 @@ export const testBoundaries = [
   }
 ]
 
-// Tests that scan production source files via fs rather than import — they must run whenever
-// any file matching their glob changes, regardless of import reachability.
-export const sourceReaderTests = [
+// Tests that reach files by value — fs reads or a computed import() path — instead of a static
+// import. A change to any matching path runs every matching test, whatever the import graph says.
+export const dynamicReaders = [
   {
-    // Scans all src/{main,renderer,shared}/** production source via git ls-files + readFileSync.
+    reason: 'scans production source with git ls-files and readFileSync',
     paths: ['src/main/**', 'src/renderer/**', 'src/shared/**'],
-    excludePattern: /\.(test|spec)\.[cm]?[jt]sx?$/,
+    exclude: ['**/*.test.*', '**/*.spec.*'],
     tests: ['src/main/host-layer-dependencies.architecture.test.ts']
+  },
+  {
+    reason: 'loads extractor resources and JSONL fixtures through the resolve() test helper',
+    paths: ['packages/pdf-structure/resources/**', 'packages/pdf-structure/test/fixtures/**'],
+    tests: ['packages/pdf-structure/test/*.test.ts']
+  },
+  {
+    reason: 'loads translation fixtures through new URL(filename, import.meta.url) + readFileSync',
+    paths: ['packages/pdf-translation/test/fixtures/**'],
+    tests: [
+      'packages/pdf-translation/test/*.test.ts',
+      'packages/pdf-translation/test/reader/*.test.ts'
+    ]
+  },
+  {
+    reason: 'loads the PDFium engine through the resolve() test helper',
+    paths: ['packages/pdf-translation/resources/pdfium.mjs'],
+    tests: [
+      'packages/pdf-translation/test/*.test.ts',
+      'packages/pdf-translation/test/reader/*.test.ts'
+    ]
+  },
+  {
+    reason: 'copies the locator into a temporary package root before importing it',
+    paths: ['packages/open-science/locate-backend.mjs'],
+    tests: ['packages/open-science/locate-backend.test.ts']
   }
 ]
 
@@ -65,7 +88,7 @@ export function createFileTestPlan(
     reverse,
     classify = classifyChanges,
     boundaries = testBoundaries,
-    sourceReaders = sourceReaderTests
+    readers = dynamicReaders
   }
 ) {
   const changePlan = classify(changes)
@@ -110,9 +133,9 @@ export function createFileTestPlan(
       continue
     }
     if (kind.lanes.includes('docs') && !kind.bundles.includes('unit')) continue
-    const readers = playwrightReaderTests(change.path)
-    if (readers) {
-      for (const test of readers) selected.add(test)
+    const playwright = playwrightReaderTests(change.path)
+    if (playwright) {
+      for (const test of playwright) selected.add(test)
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {
@@ -130,15 +153,12 @@ export function createFileTestPlan(
         unresolved.push(path)
         continue
       }
-      // Source-scanning tests observe any production file in their glob via fs, not import.
-      for (const reader of sourceReaders) {
-        if (
-          !reader.excludePattern?.test(path) &&
-          reader.paths.some((pattern) => matchesPath(path, pattern))
-        ) {
-          for (const test of reader.tests) selected.add(test)
-          reasons.push(`${path} -> source-reader ${reader.tests.join(', ')}`)
-        }
+      for (const reader of readers) {
+        const matches = (patterns = []) => patterns.some((pattern) => matchesPath(path, pattern))
+        if (!matches(reader.paths) || matches(reader.exclude)) continue
+        const readerTests = tests.filter((test) => reader.tests.some((p) => matchesPath(test, p)))
+        for (const test of readerTests) selected.add(test)
+        reasons.push(`${path} -> ${reader.reason} -> ${readerTests.length} tests`)
       }
       const reached = reach(path)
       for (const test of reached) selected.add(test)
@@ -156,8 +176,12 @@ export function createFileTestPlan(
 // Tests the module planner selects but the file planner does not, labelled by the evidence that
 // put them there. Explicit entries are the candidates for declared dynamic edges.
 export function compareTestPlans(modulePlan, filePlan, manifest) {
+  const summary = {
+    module: { mode: modulePlan.mode, tests: modulePlan.testFiles.length },
+    file: { mode: filePlan.mode, tests: filePlan.testFiles.length }
+  }
   if (modulePlan.mode !== 'selective' || filePlan.mode !== 'selective')
-    return { status: 'not-comparable', module: modulePlan.mode, file: filePlan.mode }
+    return { status: 'not-comparable', ...summary, missing: [], extra: [], unresolved: [] }
   const fileTests = new Set(filePlan.testFiles)
   const moduleTests = new Set(modulePlan.testFiles)
   const evidence = (test) => {
@@ -167,14 +191,13 @@ export function compareTestPlans(modulePlan, filePlan, manifest) {
       if ((module.derivedConsumerTests ?? []).includes(test)) found.push(`${id}:derived`)
       else
         for (const kind of ['owner', 'contract', 'consumer'])
-          if (module.testFiles[kind].includes(test)) found.push(`${id}:${kind}`)
+          if ((module.testFiles[kind] ?? []).includes(test)) found.push(`${id}:${kind}`)
     }
     return found.length ? found : ['direct']
   }
   return {
     status: 'compared',
-    module: modulePlan.testFiles.length,
-    file: filePlan.testFiles.length,
+    ...summary,
     missing: modulePlan.testFiles
       .filter((test) => !fileTests.has(test))
       .map((test) => ({ test, evidence: evidence(test) })),
@@ -183,62 +206,143 @@ export function compareTestPlans(modulePlan, filePlan, manifest) {
   }
 }
 
-// One HEAD snapshot for every commit: both planners see the same graph and registrations, so
-// the difference isolates selection policy rather than repository drift. Inputs resolve as the
-// PR Gate does, so an accepted derived index or registration-only diff is not a global input.
-export function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.cwd() } = {}) {
-  const git = (...args) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+// Reverse runtime import graph built from the working tree — the same source the module planner
+// sees when run in CI (the checked-out merge commit on pull_request, HEAD locally).
+export function workingTreeGraph(cwd = process.cwd()) {
   const source = workingTreeSource(cwd)
   const runtime = Object.entries(
-    JSON.parse(readFileSync(`${cwd}/scripts/ci/module-runtime-consumers.json`, 'utf8'))
+    JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
   )
-  const { reverse } = consumerDependencyGraph(source, runtime)
-  const derivedConsumers = loadDerivedConsumers()
-  const manifest = loadModuleImpactManifest()
-  const noGraph = { status: 'not-used', testFiles: [] }
-  return git('rev-list', '--first-parent', `--max-count=${count}`, ref)
-    .trim()
-    .split('\n')
-    .map((commit) => {
-      const raw = parseNameStatus(git('diff', '--name-status', '-z', `${commit}^`, commit))
-      const inputs = resolveModuleImpactInputs(raw, {
-        base: `${commit}^`,
-        head: commit,
-        cwd,
-        manifest,
-        derivedConsumers
-      })
-      const effective = inputs.manifest ?? withDerivedConsumers(manifest, derivedConsumers)
-      const registration = {
-        moduleManifest: effective,
-        registrationModules: inputs.registrationModules,
-        registrationOnly: inputs.registrationOnly
-      }
-      const modulePlan = createAffectedTestPlan(
-        inputs.changes,
-        noGraph,
-        effective,
-        inputs.registrationModules,
-        inputs.registrationOnly
-      )
-      const filePlan = inputs.registrationOnly
-        ? { mode: 'selective', testFiles: [], unresolved: [], reasonChains: [] }
-        : createFileTestPlan(inputs.changes, {
-            source,
-            reverse,
-            classify: (changes) => classifyChanges(changes, undefined, registration)
-          })
-      return {
-        commit: commit.slice(0, 10),
-        subject: git('log', '-1', '--format=%s', commit).trim(),
-        ...(inputs.derivedIndexAccepted && { derivedIndexAccepted: true }),
-        ...compareTestPlans(modulePlan, filePlan, effective)
-      }
-    })
+  return { source, reverse: consumerDependencyGraph(source, runtime).reverse }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const count = Number(process.argv[2] ?? 30)
-  process.stdout.write(JSON.stringify(compareRecentCommits({ count }), null, 2) + '\n')
+// Reverse runtime import graph of a committed revision, read from Git objects.
+// Use for iterating over historical commits; for live comparisons use workingTreeGraph().
+export function revisionGraph(revision, cwd = process.cwd()) {
+  const source = sourceSnapshot(revision, cwd)
+  const runtime = Object.entries(
+    JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}')
+  )
+  return { source, reverse: consumerDependencyGraph(source, runtime).reverse }
+}
+
+// Both planners read the same resolved inputs and the same checkout: the module plan is exactly
+// what `affected` executes. By default both see the working tree (merge checkout in CI, HEAD locally).
+export async function compareRevisionRange(
+  base,
+  head,
+  { cwd = process.cwd(), graph = workingTreeGraph(cwd), ...options } = {}
+) {
+  const resolved = await resolveAffectedTestPlan(base, head, { cwd, ...options })
+  const registration = {
+    moduleManifest: resolved.manifest,
+    registrationModules: resolved.registrationModules,
+    registrationOnly: resolved.registrationOnly
+  }
+  const filePlan = resolved.registrationOnly
+    ? { mode: 'selective', testFiles: [], unresolved: [], reasonChains: [] }
+    : createFileTestPlan(resolved.changes, {
+        ...graph,
+        classify: (changes) => classifyChanges(changes, undefined, registration)
+      })
+  return compareTestPlans(resolved.plan, filePlan, resolved.manifest)
+}
+
+// Local evidence over recent first-parent history. One HEAD graph for every commit keeps the
+// file plan comparable; the module plan resolves each commit against its parent.
+export async function compareRecentCommits({ count = 30, ref = 'HEAD', cwd = process.cwd() } = {}) {
+  const git = (...args) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const graph = revisionGraph(ref, cwd)
+  const results = []
+  for (const commit of git('rev-list', '--first-parent', `--max-count=${count}`, ref)
+    .trim()
+    .split('\n')) {
+    results.push({
+      commit: commit.slice(0, 10),
+      subject: git('log', '-1', '--format=%s', commit).trim(),
+      ...(await compareRevisionRange(`${commit}^`, commit, { cwd, graph }))
+    })
+  }
+  return results
+}
+
+const listLimit = 25
+
+export function formatFileTestImpactReport(report) {
+  const lines = [
+    '## File-level test impact (advisory)',
+    '',
+    '| Planner | Mode | Tests |',
+    '| --- | --- | --- |',
+    `| Module (runs today) | ${report.module.mode} | ${report.module.tests} |`,
+    `| File (shadow) | ${report.file.mode} | ${report.file.tests} |`,
+    ''
+  ]
+  if (report.status !== 'compared') {
+    lines.push('Not comparable: at least one planner runs the complete suite.', '')
+    return lines.join('\n')
+  }
+  const section = (title, entries) => {
+    lines.push(`### ${title} (${entries.length})`, '')
+    if (!entries.length) lines.push('_none_')
+    for (const entry of entries.slice(0, listLimit)) lines.push(`- ${entry}`)
+    if (entries.length > listLimit)
+      lines.push(`- … ${entries.length - listLimit} more in the artifact`)
+    lines.push('')
+  }
+  section(
+    'Selected only by the module planner',
+    report.missing.map(({ test, evidence }) => `\`${test}\` — ${evidence.join(', ')}`)
+  )
+  section(
+    'Selected only by the file planner',
+    report.extra.map((test) => `\`${test}\``)
+  )
+  if (report.unresolved.length)
+    section(
+      'Changed paths absent from the head snapshot',
+      report.unresolved.map((path) => `\`${path}\``)
+    )
+  return lines.join('\n')
+}
+
+function argumentValue(arguments_, name) {
+  const index = arguments_.indexOf(name)
+  return index === -1 ? undefined : arguments_[index + 1]
+}
+
+export async function runFileTestImpactCli(
+  arguments_ = process.argv.slice(2),
+  { cwd = process.cwd(), environment = process.env, stdout = process.stdout } = {}
+) {
+  const [command] = arguments_
+  if (command === 'recent') {
+    const count = Number(arguments_[1] ?? 30)
+    stdout.write(JSON.stringify(await compareRecentCommits({ count, cwd }), null, 2) + '\n')
+    return 0
+  }
+  if (command !== 'compare') throw new Error(`Unknown file test-impact command: ${command}`)
+  const base = argumentValue(arguments_, '--base')
+  const head = argumentValue(arguments_, '--head')
+  if (!base || !head) throw new Error('--base and --head are required')
+  const tier = argumentValue(arguments_, '--tier') ?? 'queue'
+  if (!['pr', 'queue'].includes(tier)) throw new Error('--tier must be pr or queue')
+  const report = { base, head, tier, ...(await compareRevisionRange(base, head, { cwd, tier })) }
+  const output = argumentValue(arguments_, '--output')
+  if (output) writeFileSync(output, JSON.stringify(report, null, 2) + '\n')
+  const markdown = formatFileTestImpactReport(report)
+  stdout.write(markdown + '\n')
+  if (environment.GITHUB_STEP_SUMMARY)
+    appendFileSync(environment.GITHUB_STEP_SUMMARY, markdown + '\n')
+  return 0
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    process.exitCode = await runFileTestImpactCli()
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error)
+    process.exitCode = 1
+  }
 }

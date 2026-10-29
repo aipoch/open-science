@@ -3,7 +3,6 @@ import { expect } from '@playwright/test'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
-import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
@@ -20,6 +19,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   const file = join(directory, 'native-notes.pdf')
   const pdf = await PDFDocument.create()
   const sheet = pdf.addPage([300, 1400])
+  pdf.addPage([300, 1400])
   sheet.drawText('Selection placement', { x: 20, y: 1340, size: 14 })
   sheet.drawText('External evidence', { x: 20, y: 300, size: 14 })
   sheet.node.set(
@@ -152,6 +152,50 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click()
   await expect(notesSidebar).toBeVisible()
   const toolbar = page.getByRole('tablist', { name: 'PDF reading mode' })
+  // Exercise the production split controls in Electron, including the PDF-specific hover pin.
+  const markTrigger = page.getByRole('button', { name: 'Mark style', exact: true })
+  await markTrigger.hover()
+  const splitPanel = page.locator('[data-split-panel][data-state="open"]')
+  await expect(splitPanel).toBeVisible()
+  await expect(splitPanel).toHaveAttribute('data-connected', 'true')
+  await expect(splitPanel).toHaveCSS('animation-name', 'split-button-present')
+  await expect(splitPanel).toHaveCSS('transform', 'none')
+  await markTrigger.click()
+  await page.mouse.move(10, 700)
+  await expect(splitPanel).toBeVisible()
+  await splitPanel.getByRole('button', { name: 'Underline', exact: true }).click()
+  await expect(splitPanel.getByRole('button', { name: 'Underline', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await splitPanel.getByRole('button', { name: 'Blue', exact: true }).click()
+  await expect(splitPanel.getByRole('button', { name: 'Blue', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await splitPanel.getByRole('button', { name: 'Highlight', exact: true }).click()
+  await splitPanel.getByRole('button', { name: 'Yellow', exact: true }).click()
+  await page.screenshot({ path: testInfo.outputPath('connected-pdf-mark-panel.png') })
+  await page.keyboard.press('Escape')
+  await expect(splitPanel).toHaveCount(0)
+  const areaTrigger = page.getByRole('button', { name: 'Area selection actions' })
+  await areaTrigger.focus()
+  await areaTrigger.press('ArrowDown')
+  await expect(
+    page.getByRole('menuitem', { name: 'Select area to annotate', exact: true })
+  ).toBeVisible()
+  await expect(page.locator('[data-split-panel][data-state="open"]')).toHaveAttribute(
+    'data-connected',
+    'true'
+  )
+  // The first disabled item exposes its reason in a tooltip; move to the available action.
+  await page.keyboard.press('ArrowDown')
+  await expect(
+    page.getByRole('menuitem', { name: 'Select area to annotate', exact: true })
+  ).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(areaTrigger).toBeFocused()
+  await page.getByRole('button', { name: 'Annotate selected text' }).click()
   await expect(
     toolbar.getByRole('button', { name: 'Hide notes sidebar', exact: true })
   ).toBeEnabled()
@@ -424,10 +468,13 @@ test('shares Workspace notes with Literature across two windows and reopening', 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProjectViaUi(page, 'Shared PDF project')
+  const pdf = await PDFDocument.create()
+  pdf.addPage([300, 400])
+  pdf.addPage([300, 400])
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'shared-paper.pdf',
     mimeType: 'application/pdf',
-    buffer: createTestPdf()
+    buffer: Buffer.from(await pdf.save())
   })
   await submitPromptViaUi(page, 'Read the attached paper.')
   await expect(
@@ -579,6 +626,7 @@ test('shares independently imported native notes without duplication or resurrec
   test.setTimeout(180_000)
   const pdf = await PDFDocument.create()
   const sheet = pdf.addPage([300, 400])
+  pdf.addPage([300, 400])
   sheet.drawText('Shared native evidence', { x: 20, y: 300, size: 12 })
   sheet.node.set(
     PDFName.of('Annots'),

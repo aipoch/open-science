@@ -30,7 +30,7 @@ Agent Allow/Deny, uploaded Markdown editing/preview, real Python analysis/resump
 Windows tray/second-launch lifecycle. New cases and additional variants stay untagged in
 complete scheduled/manual regression; adding a mainline tag requires CI policy review.
 The discovery guard asserts these five exact test identities to prevent silent growth.
-PR Windows E2E installs, builds and runs on one runner; the three-runner scheduled regression
+PR Windows E2E installs, builds and runs on one runner; the six-runner scheduled regression
 retains its shared setup snapshot. Selection uses the trusted base module owners and consumer graph and explains every chosen group
 in the preflight summary. Unknown/shared/build changes select all mainline groups, never complete
 E2E suites. Windows core checks remain blocking when selected. The trusted selector uses the existing module
@@ -51,6 +51,21 @@ three native platforms for its declared lifecycle owner and harness paths, as de
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
+
+### Static check groups
+
+The static bundle runs two parallel groups: **lint** executes the complete ESLint check,
+and **checks** runs workflow audits, changed-file formatting, typechecks, module/architecture
+contracts, interface checks and i18n in their existing order. Plans without lint allocate only
+the checks group. Each runner installs its own dependencies and builds its own generated outputs;
+consumer-index generation stays with its readers. Node and Web typechecks remain concurrent
+after package declarations are ready.
+
+The matrix disables fail-fast so both groups report diagnostics. The existing PR Gate consumes
+the aggregate static result; either group's failure blocks the gate. Zizmor remains advisory.
+This reduces elapsed time at the cost of one extra setup/install when lint is selected.
+Use PR Gate's manual `static` dry-run to exercise both groups and registration contracts without
+allocating runtime, portable-test or desktop jobs.
 
 ### Merge queue
 
@@ -94,8 +109,8 @@ These fixtures do not certify installed upgrades, OS reboot, real provider proto
 quit/persistence UI; those retain their existing dedicated validation paths.
 
 Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
-(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eight isolated Mac test jobs:
-functional, workspace, presentation (browser/visual/accessibility), delegation, three ordinary
+(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eleven isolated Mac test jobs:
+functional, workspace, presentation (browser/visual/accessibility), delegation, six ordinary
 supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
 fail-fast is disabled so every group can report its own failures. Capacity is selected from the
 same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are
@@ -106,11 +121,11 @@ the scheduled outcome.
 
 Source Regression manual modes `functional`, `workspace`, `presentation`, `regressions`, `capacity`
 and `delegation` select the same production jobs. In `regressions` mode, `shard` can select `1`,
-`2`, `3`, or `all`; `full` always runs all three shards regardless of that diagnostic input.
+`2`, `3`, `4`, `5`, `6`, or `all`; `full` always runs all six shards regardless of that diagnostic input.
 Existing focused diagnostic modes remain available and never publish or change scheduled issues.
 PR Gate retains its existing groups and non-capacity selection.
 Windows E2E Regression runs daily at **02:17 Singapore time**
-(Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on three Windows
+(Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on six Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run
 Windows Full Test or Notebook mutation checks. PR Gate manual `windows-e2e-mainline`, `windows-e2e` and the Windows part of `e2e` run all
 mainline groups. The independent regression workflow is the manual entry point for complete
@@ -276,6 +291,13 @@ Shared changes or uncertain evidence retain all package tests. Local `npm test` 
 Registry changes require CI owner review.
 
 Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
+Queue retains isolated builds and all installed-consumer assertions but omits the verifier's source
+Vitest rerun. Source suites run in the portable package shards; when platform policy defers the general
+portable suite, two blocking package-only shards run the trusted selected packages instead. They do
+not allocate host test shards or duplicate an already selected portable job. Scheduled/manual full
+verification retains complete isolated source suites. Isolation-only source failures can therefore
+first appear in scheduled certification. The existing aggregate gate also rejects failed, cancelled
+or unexpectedly skipped selected package-source shards.
 Use the manual package dry-run for focused diagnostics; see [Package workflows](package-workflows.md).
 
 For pure registered-package edits, the default `queue` tier can further omit host tests added only

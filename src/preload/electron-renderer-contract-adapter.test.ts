@@ -9,6 +9,7 @@ import {
   toApplicationCommandErrorEnvelope
 } from '../shared/application-command-contract'
 import { createElectronRendererContractAdapter } from './electron-renderer-contract-adapter'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 
 type MockPort = Readonly<{
   invoke: Mock<(channel: string, ...args: unknown[]) => Promise<unknown>>
@@ -96,6 +97,46 @@ describe('electron renderer contract adapter', () => {
     expect(port.invoke).not.toHaveBeenCalled()
   })
 
+  it('dispatches a Zotero revision and its reviewed result through the shared contract', async () => {
+    const port = createPort()
+    const item = literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Corrected' })
+    const request = {
+      kind: 'zotero-revise',
+      snapshotId: 'original',
+      key: 'ABCDEFGH',
+      item,
+      policy: 'separate'
+    }
+    const result = {
+      snapshotId: 'revised',
+      entries: [
+        {
+          key: 'ABCDEFGH',
+          title: item.title,
+          item,
+          policy: 'separate',
+          pdfCount: 0,
+          identity: { status: 'new', reason: 'new', identifiers: [], matches: [] }
+        }
+      ],
+      savedItemIds: [],
+      failures: [],
+      pdfCount: 0
+    }
+    port.invoke.mockResolvedValue({ ok: true, result })
+    const adapter = createElectronRendererContractAdapter(port)
+    await expect(adapter.invoke('literature.collect', request)).resolves.toEqual(result)
+    expect(port.invoke).toHaveBeenCalledWith('literature:collect', request)
+  })
+  it('dispatches collector requests through the validated application command envelope', async () => {
+    const port = createPort()
+    const result = { entries: [], savedItemIds: ['item-1'], failures: [], pdfCount: 0 }
+    port.invoke.mockResolvedValue({ ok: true, result })
+    const adapter = createElectronRendererContractAdapter(port)
+    const request = { kind: 'zotero-preview' }
+    await expect(adapter.invoke('literature.collect', request)).resolves.toEqual(result)
+    expect(port.invoke).toHaveBeenCalledWith('literature:collect', request)
+  })
   it.each([
     {
       publicPath: 'diagnostics.reportRendererFailure',
@@ -477,4 +518,16 @@ describe('electron renderer contract adapter', () => {
     expect(listener).toHaveBeenCalledWith(payload)
     expect(port.removeListener).toHaveBeenCalledWith(channel, wrappedListener)
   })
+})
+
+it('passes a catalog slug to main without treating it as a dropped File', async () => {
+  const port = createPort()
+  port.invoke.mockResolvedValue({ ok: true, result: null })
+  await createElectronRendererContractAdapter(port).invoke(
+    'sessions.importPackage',
+    {},
+    { useCase: 'research' }
+  )
+  expect(port.getPathForFile).not.toHaveBeenCalled()
+  expect(port.invoke).toHaveBeenCalledWith('sessions:import-package', {}, { useCase: 'research' })
 })

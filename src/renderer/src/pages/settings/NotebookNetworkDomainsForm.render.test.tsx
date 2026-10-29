@@ -53,6 +53,60 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
+  it('applies a deferred grant when pending hostname text is cleared', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, 'unfinished')
+    act(() =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          allowedDomains: ['approved.example.org']
+        }
+      })
+    )
+    expect(container.textContent).not.toContain('approved.example.org')
+    await typeInput(input, '')
+    expect(container.textContent).toContain('approved.example.org')
+    expect(container.textContent).toContain('No unsaved changes')
+  })
+
+  it('refreshes a clean editor after settings hydrate and uses the new save baseline', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const next = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['approved.example.org'] }
+    act(() => useSettingsStore.setState({ notebookNetwork: next }))
+    expect(container.textContent).toContain('approved.example.org')
+    expect(container.textContent).toContain('No unsaved changes')
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      next,
+      next.allowedDomains,
+      []
+    )
+  })
+
+  it('preserves pending domain text and the original baseline on an external grant', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, 'draft.example.org')
+    act(() =>
+      useSettingsStore.setState({
+        notebookNetwork: {
+          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+          allowedDomains: ['approved.example.org']
+        }
+      })
+    )
+    expect(input.value).toBe('draft.example.org')
+    await act(async () => button('Add to list').click())
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['draft.example.org'] },
+      [],
+      []
+    )
+  })
+
   it('does not discard domain edits when a pending save completes', async () => {
     let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
     const save = vi.fn(
@@ -123,19 +177,40 @@ describe('NotebookNetworkDomainsForm', () => {
     ).toBe(true)
 
     const input = container.querySelector('[aria-label="Domain hostname"]') as HTMLInputElement
-    await typeInput(input, 'https://data.example.org/path')
+    await typeInput(input, 'api.*.example.org')
     await act(async () => button('Add').click())
     expect(container.textContent).toContain(
-      'Enter an exact hostname without a scheme, path, port, wildcard, or IP address.'
+      'Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.'
     )
 
-    await typeInput(input, 'data.example.org')
+    await typeInput(input, 'https://data.example.org:8443/path?q=1#part')
     await act(async () => button('Add').click())
     expect(container.textContent).toContain('data.example.org')
 
     await act(async () => button('Save changes').click())
     expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
       expect.objectContaining({ allowedDomains: ['data.example.org'] }),
+      [],
+      []
+    )
+  })
+
+  it('normalizes wildcard input, detects duplicates, and saves only domain rules', async () => {
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+    await typeInput(input, ' https://*.EXAMPLE.org:8443/path?q=1#part ')
+    await act(async () => button('Add to list').click())
+    expect(input.value).toBe('')
+    expect(container.querySelector('[aria-label="Custom public domains"]')!.textContent).toContain(
+      '*.example.org'
+    )
+    await typeInput(input, '*.example.org')
+    await act(async () => button('Add to list').click())
+    expect(container.textContent).toContain('This hostname is already in the list.')
+    await typeInput(input, '')
+    await act(async () => button('Save changes').click())
+    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
+      expect.objectContaining({ allowedDomains: ['*.example.org'] }),
       [],
       []
     )
@@ -177,11 +252,11 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    expect(container.textContent).toContain('The Windows sandbox needs administrator setup.')
+    expect(container.textContent).toContain('Allow administrator access to turn on protection.')
 
-    await act(async () => button('Set up').click())
+    await act(async () => button('Turn on').click())
     expect(install).toHaveBeenCalledOnce()
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
   })
 
   it('keeps setup available when the Windows UAC prompt is cancelled', async () => {
@@ -201,9 +276,9 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Set up').click())
-    expect(container.textContent).toContain('The Windows sandbox needs administrator setup.')
-    expect(button('Set up')).not.toBeUndefined()
+    await act(async () => button('Turn on').click())
+    expect(container.textContent).toContain('Allow administrator access to turn on protection.')
+    expect(button('Turn on')).not.toBeUndefined()
   })
 
   it('shows each Windows setup explanation only once', async () => {
@@ -230,10 +305,10 @@ describe('NotebookNetworkDomainsForm', () => {
     await flush()
 
     expect(
-      container.textContent?.match(/The Windows sandbox needs administrator setup\./g)
+      container.textContent?.match(/Allow administrator access to turn on protection\./g)
     ).toHaveLength(1)
     expect(container.textContent).toContain(
-      'The Windows sandbox gateway port is unavailable. Set up the sandbox again.'
+      'Network port unavailable. Try turning protection on again.'
     )
   })
 
@@ -255,11 +330,35 @@ describe('NotebookNetworkDomainsForm', () => {
 
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await flush()
-    await act(async () => button('Remove…').click())
+    await act(async () => button('Turn off').click())
 
     expect(remove).toHaveBeenCalledOnce()
-    expect(container.textContent).toContain('Status: Not set up')
+    expect(container.textContent).toContain('Status: Off')
     expect(container.textContent).toContain('standard execution')
+  })
+
+  it('uses operation-neutral error copy when turning protection off fails', async () => {
+    const remove = vi.fn().mockRejectedValue(new Error('private backend details'))
+    ;(window as unknown as { api: unknown }).api = {
+      platform: 'win32',
+      settings: {
+        getNotebookNetworkStatus: vi.fn().mockResolvedValue({ kind: 'ready', warnings: [] }),
+        installNotebookNetwork: vi.fn(),
+        removeNotebookNetwork: remove
+      }
+    }
+
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    await flush()
+    await act(async () => button('Turn off').click())
+
+    expect(remove).toHaveBeenCalledOnce()
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+      'Network protection error'
+    )
+    expect(container.textContent).not.toContain('Could not turn on protection.')
+    expect(container.textContent).not.toContain('private backend details')
+    expect(button('Turn off').disabled).toBe(false)
   })
 
   it('shows translated generic copy when saving fails', async () => {
@@ -317,8 +416,8 @@ it('shows the download estimate, progress and cancellation without reporting suc
   })
   try {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    expect(container.textContent).toContain('Missing components may download up to')
-    await act(async () => button('Set up').click())
+    expect(container.textContent).toContain('Downloads up to')
+    await act(async () => button('Turn on').click())
     expect(button('Cancel').disabled).toBe(true)
     current = {
       kind: 'checking',
@@ -343,7 +442,7 @@ it('shows the download estimate, progress and cancellation without reporting suc
     await act(async () => button('Cancel').click())
     expect(cancel).toHaveBeenCalledOnce()
     expect(button('Cancelling…').disabled).toBe(true)
-    expect(container.textContent).not.toContain('Status: Active')
+    expect(container.textContent).not.toContain('Status: On')
     current = {
       kind: 'error',
       reason: 'runtimeFailure',
@@ -351,10 +450,10 @@ it('shows the download estimate, progress and cancellation without reporting suc
     }
     await act(async () => finish(current))
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Preparation cancelled'
+      'Cancelled. Downloads are kept.'
     )
     expect(button('Try again').disabled).toBe(false)
-    expect(button('Remove…').disabled).toBe(false)
+    expect(button('Turn off').disabled).toBe(false)
   } finally {
     vi.useRealTimers()
   }
@@ -421,12 +520,12 @@ it('does not replace completed setup with a late preparation status response', a
   })
   try {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await act(async () => button('Set up').click())
+    await act(async () => button('Turn on').click())
     await act(async () => vi.advanceTimersByTimeAsync(1000))
     await act(async () => complete({ kind: 'ready', warnings: [] }))
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
     await act(async () => stale({ kind: 'checking' }))
-    expect(container.textContent).toContain('Status: Active')
+    expect(container.textContent).toContain('Status: On')
     expect(container.textContent).not.toContain('Checking…')
   } finally {
     vi.useRealTimers()

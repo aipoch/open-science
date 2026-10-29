@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import * as processTree from '../process-tree'
 import { build } from 'esbuild'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   NotebookShellProcessAdapter,
@@ -127,12 +127,199 @@ const runPowerShell = (command: string, version?: '7.6'): ReturnType<typeof runS
     timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
   })
 
+describe.runIf(process.platform === 'win32')(
+  'Windows standard execution without protection setup',
+  () => {
+    it('runs and retains a real PowerShell session through the supervised standard launcher', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-standard-admission-'))
+      const denied = join(root, 'declared-denied')
+      await mkdir(denied)
+      await writeFile(join(denied, 'sentinel.txt'), 'HOST_ACCESS')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getFolderRestrictionEnabled: async () => true,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      const adapter = new NotebookShellProcessAdapter('win32', owner)
+      const wrap = owner.wrap.bind(owner)
+      const launches: string[] = []
+      const wrapping = vi.spyOn(owner, 'wrap').mockImplementation(async (invocation) => {
+        const wrapped = await wrap(invocation)
+        launches.push(wrapped.args[0])
+        return wrapped
+      })
+      try {
+        expect(await owner.windowsProtectionConfigured()).toBe(false)
+        const first = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: '$standardValue = 42; [Console]::Write($standardValue)'
+        })
+        expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0, stdout: '42' })
+        const second = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: '[Console]::Write($standardValue + 1)'
+        })
+        expect(second, JSON.stringify(second)).toMatchObject({ exitCode: 0, stdout: '43' })
+        // Standard supervision is not filesystem isolation, even when callers declare deny roots.
+        // Exercise only synthetic fixtures; protected-mode denial is covered separately below.
+        const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
+        const access = await adapter.execute({
+          ...shellRequest(root),
+          protectedDirs: [denied],
+          command: `[Console]::Write([IO.File]::ReadAllText(${quote(join(denied, 'sentinel.txt'))}))`
+        })
+        expect(access, JSON.stringify(access)).toMatchObject({ exitCode: 0, stdout: 'HOST_ACCESS' })
+        expect(wrapping.mock.calls[0][0].filesystem.deniedReadRoots).toContain(denied)
+        expect(wrapping.mock.calls[0][0].filesystem.readOnlyRoots).toContain(root)
+        expect(launches).toEqual(['supervise'])
+        expect(await owner.windowsProtectionConfigured()).toBe(false)
+      } finally {
+        const shutdown = await adapter.shutdown()
+        await owner.dispose()
+        wrapping.mockRestore()
+        vi.unstubAllEnvs()
+        expect(shutdown).toEqual({ reaped: true })
+        expect(await readdir(join(root, 'commands'))).toEqual([])
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    }, 60_000)
+  }
+)
+
 describe.runIf(process.platform === 'win32')('Windows notebook shell integration', () => {
+  let protectionRoot: string
+  let protectionOwner: NotebookNetworkSandboxOwner
+  const previousStorageRoot = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+  const previousPath = process.env.PATH
+  beforeAll(async () => {
+    // Keep unrelated hosted SDK trees out of recursive AppContainer grants.
+    // Production Shell preparation adds the bundled Node/npm paths.
+    process.env.PATH = [
+      join(process.env.SystemRoot!, 'System32'),
+      join(process.env.SystemRoot!, 'System32', 'Wbem'),
+      join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0')
+    ].join(';')
+    protectionRoot = await mkdtemp(join(tmpdir(), 'shell-protection-'))
+    process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = protectionRoot
+    protectionOwner = new NotebookNetworkSandboxOwner({
+      resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+      temporaryRoot: join(protectionRoot, 'commands'),
+      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      requestDecision: async () => 'deny'
+    })
+    expect(await protectionOwner.installWindows()).toEqual({ cancelled: false })
+  }, 180_000)
+  afterAll(async () => {
+    try {
+      if (protectionOwner) {
+        expect(await protectionOwner.removeWindows()).toEqual({ cancelled: false })
+        await protectionOwner.dispose()
+      }
+      if (protectionRoot) await rm(protectionRoot, { recursive: true, force: true })
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+      if (previousStorageRoot === undefined) delete process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
+      else process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT = previousStorageRoot
+    }
+  }, 180_000)
+
+  it.each(['ro', 'rw'] as const)(
+    'keeps Folder %s authority after native Shell cd and relaunch',
+    async (access) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-folder-authority-'))
+      const workspace = join(root, 'workspace')
+      const granted = join(root, 'granted')
+      const handoffDir = join(workspace, 'handoff')
+      const runtimeRoot = join(root, 'runtime')
+      const file = join(granted, 'data.txt')
+      const outside = join(root, 'ungranted.txt')
+      for (const path of [workspace, granted, handoffDir, runtimeRoot])
+        await mkdir(path, { recursive: true })
+      await writeFile(file, 'original')
+      await writeFile(outside, 'private')
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
+        temporaryRoot: join(workspace, 'commands'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        getGrantedLocalRoots: async () => [
+          { id: 'folder', name: 'granted', path: await fsPromises.realpath(granted), access }
+        ],
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny'
+      })
+      let adapter = new NotebookShellProcessAdapter('win32', owner)
+      const quote = (path: string): string => `'${path.replaceAll("'", "''")}'`
+      const execute = (command: string, cwd = workspace): ReturnType<typeof adapter.execute> =>
+        adapter.execute({
+          command,
+          cwd,
+          notebookSessionRoot: workspace,
+          handoffDir,
+          runtimeRoot,
+          sessionId: 'folder-session',
+          projectId: 'folder-project',
+          runtimeBinding: { kind: 'powershell', version: '7.6' },
+          timeoutMs: POWERSHELL_PROCESS_TIMEOUT_MS
+        })
+      try {
+        const initial = await execute(
+          `Set-Location -LiteralPath ${quote(granted)}; Get-Content -LiteralPath data.txt -Raw`
+        )
+        expect(initial.exitCode).toBe(0)
+        expect(initial.stdout.trim()).toBe('original')
+        for (const restarted of [false, true]) {
+          if (restarted) {
+            expect(await adapter.shutdown()).toEqual({ reaped: true })
+            adapter = new NotebookShellProcessAdapter('win32', owner)
+          }
+          const cwd = restarted ? granted : workspace
+          expect((await execute('Get-Content -LiteralPath data.txt -Raw', cwd)).exitCode).toBe(0)
+          expect(
+            (
+              await execute(
+                'Set-Content -LiteralPath data.txt -Value changed -ErrorAction Stop',
+                cwd
+              )
+            ).exitCode === 0
+          ).toBe(access === 'rw')
+          expect(
+            (await execute(`Get-Content -LiteralPath ${quote(outside)} -ErrorAction Stop`, cwd))
+              .exitCode
+          ).not.toBe(0)
+          expect(
+            (
+              await execute(
+                `Set-Content -LiteralPath ${quote(join(workspace, 'workspace.txt'))} -Value allowed -ErrorAction Stop`,
+                cwd
+              )
+            ).exitCode
+          ).toBe(0)
+        }
+        expect((await readFile(file, 'utf8')).trim()).toBe(access === 'rw' ? 'changed' : 'original')
+      } finally {
+        const stopped = await adapter.shutdown()
+        await owner.dispose()
+        expect(stopped).toEqual({ reaped: true })
+        if (stopped.reaped)
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+      }
+    },
+    120_000
+  )
+
   it.for([false, true])(
     'shares npm tools across live Sessions and retains them after Session deletion (protected: %s)',
     { timeout: 180_000 },
-    async (protectedMode, { skip }) => {
-      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+    async (protectedMode) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-shared-tools-目录 with spaces-'))
       if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       const runtimeRoot = join(root, 'runtime')
@@ -190,7 +377,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           stdout: 'SHARED_TOOL_READY'
         })
         expect(await adapter.shutdown()).toEqual({ reaped: true })
-        await rm(first, { recursive: true, force: true })
+        await rm(first, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
         adapter = new NotebookShellProcessAdapter('win32', owner)
         expect(await adapter.execute(request(second, 'fixture-cli.cmd'))).toMatchObject({
           exitCode: 0,
@@ -203,10 +390,15 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           ).name
         ).toBe('fixture-shared-cli')
       } finally {
-        expect(await adapter.shutdown()).toEqual({ reaped: true })
-        await owner.dispose()
-        vi.unstubAllEnvs()
-        await rm(root, { recursive: true, force: true })
+        const shutdown = await adapter.shutdown()
+        try {
+          await owner.dispose()
+        } finally {
+          vi.unstubAllEnvs()
+        }
+        expect.soft(shutdown).toEqual({ reaped: true })
+        if (shutdown.reaped)
+          await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }
   )
@@ -214,8 +406,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
   it.for([false, true])(
     'separates PowerShell control input through the native owner (protected: %s)',
     { timeout: 60_000 },
-    async (protectedMode, { skip }) => {
-      if (protectedMode && process.env.OPEN_SCIENCE_TEST_PROTECTED_SHELL !== '1') skip()
+    async (protectedMode) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-native-stdin-'))
       if (!protectedMode) vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       await mkdir(join(root, 'workspace'))
@@ -243,20 +434,16 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         runtimeRoot: join(root, 'runtime')
       }
       try {
-        const executable = process.execPath.replaceAll("'", "''")
-        const script = `process.stdout.write(require('node:fs').readFileSync(0,'utf8') || 'eof')`
-        const child = `& '${executable}' -e '${script.replaceAll("'", "''")}'`
         const first = await adapter.execute({
           ...request,
-          command: `$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine()); ${protectedMode ? '' : child}`
+          command: '$value = "kept"; [Console]::Write($null -eq [Console]::ReadLine())'
         })
         expect(first, JSON.stringify(first)).toMatchObject({
-          stdout: protectedMode ? 'True' : 'Trueeof',
+          stdout: 'True',
           exitCode: 0
         })
-        // The installed protected runtime checks IPC without depending on this machine's drive
-        // authorization. The isolated standard fixture also checks native invocation and cwd/state.
-        if (!protectedMode) {
+        // Both modes must preserve variables across control messages.
+        {
           const second = await adapter.execute({
             ...request,
             command: `#${'x'.repeat(24_000)}\n[Console]::Write($value)`
@@ -272,15 +459,14 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         vi.unstubAllEnvs()
         expect(shutdown).toEqual({ reaped: true })
         expect(registry.hasReceipts()).toBe(false)
-        expect(await readdir(join(root, 'commands'))).toEqual([])
-        await rm(root, { recursive: true, force: true })
+        if (launches.length > 0) expect(await readdir(join(root, 'commands'))).toEqual([])
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
       }
     }
   )
 
-  it('persists two real standard REPL commands and releases their native owner on shutdown', async () => {
+  it('persists two real protected REPL commands and releases their native owner on shutdown', async () => {
     const root = await mkdtemp(join(tmpdir(), 'repl-native-persistence-'))
-    vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
       temporaryRoot: join(root, 'commands'),
@@ -318,7 +504,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
           code: 'console.log(persistedNonce + "_FOLLOWING")'
         })
       ).resolves.toMatchObject({ status: 'completed', stdout: `${nonce}_FOLLOWING\n` })
-      expect(launches).toEqual(['supervise'])
+      expect(launches).toEqual(['launch'])
       const persisted = await new NotebookRunRepository(root).loadOrCreate({
         ...scope,
         projectId: 'native-repl',
@@ -361,7 +547,6 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
     'blocks B until A supplies its original native proof, then persists B exactly once (receipt retry: %s)',
     async (receiptRetry) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-native-admission-'))
-      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
       const info = vi.fn()
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: join(process.cwd(), 'packages/notebook-network-sandbox/vendor'),
@@ -394,7 +579,7 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
         .spyOn(NotebookNetworkSandbox.prototype, 'wrap')
         .mockImplementation(async function (this: NotebookNetworkSandbox, request) {
           const wrapped = await launch.call(this, request)
-          expect(wrapped.argv[1]).toBe('supervise')
+          expect(wrapped.argv[1]).toBe('launch')
           expect(wrapped.confirmProcessTreeTermination).toBeTypeOf('function')
           expect(wrapped.confirmProcessState).toBeTypeOf('function')
           const first = proofs.length === 0

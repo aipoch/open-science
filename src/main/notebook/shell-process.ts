@@ -1,7 +1,9 @@
+import { ExecutionDeadline } from './execution-deadline'
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname } from 'node:path'
 import type { NotebookExecutionRecovery } from '../../shared/execution-recovery'
 import { nodeRuntimeEnvironment } from '../node-process-host'
+import { augmentedPathEnv } from '../settings/shell-path'
 import { ShellCellSession } from './shell-cell-session'
 import type { NotebookShellProcessRequest, NotebookShellResult } from './shell-process-contract'
 import type { ShellProcessLaunchOwnership } from './shell-process-ownership.windows-posix'
@@ -32,6 +34,7 @@ import {
 } from './content-limits'
 import { detectManagedRuntimeMutation, protectManagedRuntimeWrites } from './managed-runtime-guard'
 import {
+  NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE,
   withNotebookSandboxProcessState,
   type NotebookProcessSandbox,
   type NotebookSandboxCleanupReason,
@@ -82,6 +85,7 @@ type PreparedShellLaunch = {
   baseEnv: NodeJS.ProcessEnv
   sandboxed?: Awaited<ReturnType<NotebookProcessSandbox['wrap']>>
   endSandboxExecution?: () => void
+  deferExecution?: boolean
 }
 
 const buildShellEnv = (
@@ -92,7 +96,10 @@ const buildShellEnv = (
   workloadCacheEnv?: NodeJS.ProcessEnv,
   binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
 ): NodeJS.ProcessEnv => {
-  const env = buildShellProcessEnvironment(platform, sourceEnv)
+  const env = buildShellProcessEnvironment(
+    platform,
+    platform === 'darwin' ? augmentedPathEnv(sourceEnv) : sourceEnv
+  )
   // Handoff and PowerShell bootstrap variables are the Notebook host's protocol.
   env.OPEN_SCIENCE_HANDOFF_DIR = handoffDir
   if (platform === 'win32' && env.PSModulePath) env.OPEN_SCIENCE_PSMODULEPATH = env.PSModulePath
@@ -302,13 +309,15 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
+  let windowsProtectionRequired: boolean | undefined
   if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
     try {
-      await options.processSandbox?.resolveWindowsRuntime?.({
+      const runtime = await options.processSandbox?.resolveWindowsRuntime?.({
         runtime: 'bash',
         binding: runtimeBinding,
         signal: options.signal
       })
+      if (runtime !== undefined) windowsProtectionRequired = runtime !== null
     } catch (error) {
       throw new ShellPreparationError({
         stdout: '',
@@ -396,6 +405,7 @@ const prepareShellLaunchOptions = async (
           sessionId: options.sessionId,
           projectId: options.projectId,
           runtime: 'bash',
+          ...(windowsProtectionRequired !== undefined ? { windowsProtectionRequired } : {}),
           ...(options.windowsShellControlPipe
             ? { windowsShellControlPipe: options.windowsShellControlPipe }
             : {}),
@@ -422,8 +432,8 @@ const prepareShellLaunchOptions = async (
               ? { optionalReadOnlyRoots: environmentPathRoots(baseEnv, runtimePlatform) }
               : {}),
             readWriteRoots: [
-              options.notebookSessionRoot ?? options.cwd,
-              options.cwd,
+              // A retained Shell cwd must not promote a read-only or ungranted directory.
+              ...(options.notebookSessionRoot ? [options.notebookSessionRoot] : []),
               options.handoffDir,
               notebookWorkloadCacheRoot(options.runtimeRoot),
               shellEnv.NPM_CONFIG_PREFIX!
@@ -500,6 +510,7 @@ const prepareShellLaunchOptions = async (
     invocation,
     baseEnv,
     sandboxed,
+    deferExecution: options.deferExecution,
     endSandboxExecution: options.deferExecution ? undefined : sandboxed?.beginExecution?.()
   }
 }
@@ -758,7 +769,8 @@ const runShellCommand = (
       ): Promise<void> => {
         if (settled) return
         settled = true
-        clearTimeout(timeoutTimer)
+        unsubscribeNetworkWait?.()
+        timeoutTimer.cancel()
         options.signal?.removeEventListener('abort', abort)
         // A receipt is removal authority and recovery evidence. Keep it whenever full-tree teardown
         // cannot be proved so startup recovery can retry and new work remains fenced fail-closed.
@@ -832,7 +844,12 @@ const runShellCommand = (
         } catch {
           complete = false
         }
-        const normalizedResult = { ...result, stderr }
+        const normalizedResult = {
+          ...result,
+          stderr: sandboxed?.networkApprovalRetryRequired?.()
+            ? `${stderr}\n${NOTEBOOK_NETWORK_APPROVAL_RETRY_MESSAGE}`
+            : stderr
+        }
         const completed = complete
           ? normalizedResult
           : withIncompleteCleanup(normalizedResult, 'may-have-run')
@@ -878,7 +895,7 @@ const runShellCommand = (
       const abort = (): void => {
         if (settled || timedOut || cancelled || exited || failed) return
         cancelled = true
-        clearTimeout(timeoutTimer)
+        timeoutTimer.cancel()
         terminateAndFinish(
           {
             stdout,
@@ -892,19 +909,26 @@ const runShellCommand = (
         )
       }
 
-      const timeoutTimer = setTimeout(() => {
-        if (settled || cancelled || exited || failed) return
-        timedOut = true
-        const timeoutResult: NotebookShellResult = {
-          stdout,
-          stderr:
-            stderr +
-            `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
-          exitCode: null,
-          ...(truncated ? { truncated: true } : {})
-        }
-        terminateAndFinish(timeoutResult, 'timeout')
-      }, timeoutMs)
+      const timeoutTimer = new ExecutionDeadline(
+        timeoutMs,
+        () => {
+          if (settled || cancelled || exited || failed) return
+          timedOut = true
+          const timeoutResult: NotebookShellResult = {
+            stdout,
+            stderr:
+              stderr +
+              `${stderr && !stderr.endsWith('\n') ? '\n' : ''}Shell command timed out after ${timeoutMs}ms and was killed.`,
+            exitCode: null,
+            ...(truncated ? { truncated: true } : {})
+          }
+          terminateAndFinish(timeoutResult, 'timeout')
+        },
+        prepared.deferExecution === true
+      )
+      const unsubscribeNetworkWait = prepared.deferExecution
+        ? undefined
+        : sandboxed?.onNetworkWaitChange?.((waiting) => timeoutTimer.setPaused(waiting))
 
       options.signal?.addEventListener('abort', abort, { once: true })
       if (options.signal?.aborted) abort()
@@ -947,7 +971,7 @@ const runShellCommand = (
       child.once('error', (error) => {
         if (timedOut || cancelled || exited || failed) return
         failed = true
-        clearTimeout(timeoutTimer)
+        timeoutTimer.cancel()
         void terminateShellOnTimeout(child, platform, options.terminateTree).then(({ reaped }) => {
           void finish(
             {
@@ -971,7 +995,7 @@ const runShellCommand = (
       child.once('exit', (code) => {
         if (timedOut || cancelled || exited || failed) return
         exited = true
-        clearTimeout(timeoutTimer)
+        timeoutTimer.cancel()
         if (sandboxed?.confirmProcessTreeTermination) {
           // The helper has already stopped its Job Object. Its proof, not an absent/reused PID or
           // a successful leader exit, establishes full-tree termination in finish().
@@ -1000,7 +1024,7 @@ const runShellCommand = (
         })
       })
       if (options.onProcess) {
-        clearTimeout(timeoutTimer)
+        timeoutTimer.cancel()
         options.onProcess(child)
       }
     })
@@ -1115,9 +1139,19 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
               },
               ...this.ownershipClaim(cell)
             }),
-            beginExecution: (command) =>
-              preparedLaunch.sandboxed?.beginExecution?.({ commandText: command }) ??
-              (() => undefined),
+            beginExecution: (request, onNetworkWaitChange) => {
+              const end = preparedLaunch.sandboxed?.beginExecution?.({
+                commandText: request.command,
+                executionReference: request.executionReference,
+                signal: request.signal,
+                onNetworkWaitChange
+              })
+              return async () => {
+                end?.()
+                await preparedLaunch.sandboxed?.waitForNetworkApprovals?.()
+                return preparedLaunch.sandboxed?.networkApprovalRetryRequired?.()
+              }
+            },
             retryCleanup: async () => (await retryCleanup?.()) ?? false
           }
         },

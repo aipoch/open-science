@@ -34,12 +34,12 @@
   },
   "dependencies": {
     "@aipoch/notebook-syntax": "0.1.0",
-    "zod": "^4.6.5"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
+    "vitest": "^4.1.12",
     "web-tree-sitter": "^0.26.13"
   }
 }

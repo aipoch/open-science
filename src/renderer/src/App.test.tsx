@@ -1168,8 +1168,9 @@ describe('App startup routing', () => {
     expect(document.querySelector('[data-testid="update-dialog"]')).not.toBeNull()
   })
 
-  it('keeps update presentation active through planned runtime shutdown', async () => {
+  it('retains the update owner through planned service shutdown and handoff failure while lifecycle sync stays paused', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.update.isDialogOpen = true
     mocks.update.status.state = 'applying'
     await render()
@@ -1183,11 +1184,18 @@ describe('App startup routing', () => {
 
     mocks.update.status.state = 'error'
     await act(async () => root.render(<App />))
-    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
+    expect(
+      container.querySelector('[data-testid="workspace-page"]')?.closest('[inert]')
+    ).not.toBeNull()
+    expect(mocks.update.closeDialog).not.toHaveBeenCalled()
   })
 
-  it('prioritizes unexpected runtime disconnection even while applying an update', async () => {
+  it('retains the update owner during unexpected service disconnection and resumes lifecycle sync only after recovery', async () => {
     mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
     mocks.update.isDialogOpen = true
     mocks.update.status.state = 'applying'
     await render()
@@ -1196,7 +1204,19 @@ describe('App startup routing', () => {
     await act(async () => {
       useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: false })
     })
-    expect(mocks.presentationProps.update?.active).toBe(false)
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
+    expect(mocks.presentationProps.workspace?.isPreviewPresentationActive).toBe(false)
+    expect(
+      container.querySelector('[data-testid="workspace-page"]')?.closest('[inert]')
+    ).not.toBeNull()
+    expect(mocks.update.closeDialog).not.toHaveBeenCalled()
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: true })
+    expect(mocks.presentationProps.update?.active).toBe(true)
   })
 
   it('closes the update dialog before underlying surfaces', async () => {
@@ -2240,6 +2260,102 @@ describe('App startup routing', () => {
     "No handler registered for 'notifications:peek-pending-open-session'",
     "Error invoking remote method 'notifications:peek-pending-open-session': Error: Desktop is recovering. This operation was not submitted."
   ]
+
+  it.each(['peek', 'take'] as const)(
+    'does not retry notification %s when the runtime starts shutting down',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        mocks.settings.isLoaded = true
+        mocks.sessions = [{ id: 's-late' }]
+        const target = { sessionId: 's-late', token: 5 }
+        mocks.notifications.peekPendingOpenSession.mockResolvedValue(target)
+        const command =
+          operation === 'peek'
+            ? mocks.notifications.peekPendingOpenSession
+            : mocks.notifications.takePendingOpenSession
+        command.mockRejectedValue(
+          new Error(
+            `Error invoking remote method 'notifications:${operation}-pending-open-session': ApplicationCommandError: Desktop runtime is shutting down.`
+          )
+        )
+        await render()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(command).toHaveBeenCalledOnce()
+        expect(mocks.openSessionById).not.toHaveBeenCalled()
+      } finally {
+        await act(async () => root.unmount())
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('does not poll rejected notification commands throughout a desktop disconnection', async () => {
+    vi.useFakeTimers()
+    try {
+      mocks.settings.isLoaded = true
+      mocks.notifications.peekPendingOpenSession.mockRejectedValue(
+        new Error('Desktop is recovering. This operation was not submitted.')
+      )
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1, closing: false })
+      await render()
+      const initialCalls = mocks.notifications.peekPendingOpenSession.mock.calls.length
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(mocks.notifications.peekPendingOpenSession.mock.calls.length).toBe(initialCalls)
+    } finally {
+      await act(async () => root.unmount())
+      vi.useRealTimers()
+    }
+  })
+
+  it.each(['peek', 'take'] as const)(
+    'resumes a suspended notification %s once desktop reconciliation finishes',
+    async (operation) => {
+      vi.useFakeTimers()
+      try {
+        mocks.settings.isLoaded = true
+        mocks.sessions = [{ id: 's-late' }]
+        const target = { sessionId: 's-late', token: 5 }
+        mocks.notifications.peekPendingOpenSession.mockResolvedValue(target)
+        mocks.notifications.takePendingOpenSession.mockResolvedValue(target)
+        const command =
+          operation === 'peek'
+            ? mocks.notifications.peekPendingOpenSession
+            : mocks.notifications.takePendingOpenSession
+        command.mockImplementationOnce(async () => {
+          useDesktopRuntimeRecoveryStore.setState({
+            phase: 'disconnected',
+            epoch: 1,
+            closing: false
+          })
+          throw new Error('Desktop is recovering. This operation was not submitted.')
+        })
+        await render()
+        const calls = mocks.notifications.peekPendingOpenSession.mock.calls.length
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(calls)
+        await act(async () => {
+          useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+          await vi.advanceTimersByTimeAsync(1000)
+        })
+        expect(mocks.openSessionById).not.toHaveBeenCalled()
+        await act(async () => {
+          useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+        })
+        expect(mocks.notifications.peekPendingOpenSession).toHaveBeenCalledTimes(calls + 1)
+        expect(mocks.openSessionById).toHaveBeenCalledExactlyOnceWith('s-late', 'notification')
+      } finally {
+        await act(async () => root.unmount())
+        vi.useRealTimers()
+      }
+    }
+  )
 
   it.each([
     ...notificationUnavailableErrors.map((message) => ['peek', message]),

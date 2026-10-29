@@ -1,7 +1,18 @@
+import {
+  getPublicationCheckDoi,
+  literaturePublicationCheckSnapshotSchema,
+  type LiteraturePublicationCheckSnapshot
+} from '@aipoch/literature-discovery/contracts'
 import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
 import {
   LibraryTransaction,
   canonicalJson,
+  importIdentityMap,
+  importIdentity,
+  rememberImportIdentity,
+  supplementLiteratureMetadata,
+  type ImportIdentityRecord,
+  type ImportIdentityIndex,
   mergeLiteratureDuplicates,
   normalizeIdentifier,
   normalizeSpace,
@@ -20,6 +31,7 @@ import {
 import { bindLiteraturePdfVersion } from '../pdf-annotations/source-bindings'
 import { deletePdfAnnotations, readAnnotations } from '../pdf-annotations/repository'
 import type { ContentRepository } from '../storage/content-repository'
+import { withDataRootWrite } from '../storage/migration-state'
 import type { JournalAttributes } from './journal-attributes'
 import { boundedLiteraturePage } from './response-page'
 import type { LiteratureScreening } from './screening-adapter'
@@ -30,6 +42,16 @@ import { findLiteratureDuplicateGroups } from '@aipoch/literature-library'
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { normalizeLiteratureSearchTextV1 as normalizeSearchText } from '../../shared/literature-search-text'
 import { searchTitleRank } from '../../shared/search-text'
+import {
+  collectedReferenceSchema,
+  collectedCollectionPathsSchema,
+  type CollectedReference,
+  type CollectedIdentity,
+  ZOTERO_PREVIEW_CHANGED,
+  ZOTERO_BATCH_POLICY_CONFLICT,
+  ZOTERO_FILL_TYPE_CONFLICT
+} from '../../shared/literature-collector'
+import { ensureTag } from '../tags/tag-write'
 
 import {
   normalizeLiteratureIdentifierValue,
@@ -38,9 +60,12 @@ import {
 } from '@aipoch/literature-citations/contracts'
 import {
   LITERATURE_COLLECTION_NAME_CONFLICT,
+  LITERATURE_IMPORT_IDENTITY_CONFLICT,
+  literatureDuplicatePolicySchema,
   literatureCandidateInputSchema,
   literatureCandidateOriginSchema,
   literaturePdfProvenanceSchema,
+  literatureReadingStatusSchema,
   type LiteratureCandidateInput,
   type LiteratureCatalogCommand,
   type LiteratureCatalogReceipt,
@@ -88,6 +113,9 @@ type LiteratureCatalogClient = Pick<
   | 'pdfAnnotationSourceBinding'
   | 'pdfAnnotation'
 >
+
+// Kept in the main-process preview snapshot, never accepted from the renderer.
+export type CollectedReferenceInspection = CollectedIdentity & { reviewedTargets: string[] }
 
 const log = createLogger('literature-catalog')
 
@@ -146,11 +174,12 @@ const searchIdentifiers = (
     ['issn', /^\d{7}[\dX]$/u]
   ]
   return forms.flatMap(([scheme, pattern]) => {
+    const value = scheme === 'doi' ? text : normalizeSpace(text)
     // A bare number denotes a PMID, not an implicitly prefixed PMCID.
-    if (scheme === 'pmcid' && /^\d+$/u.test(text)) return []
+    if (scheme === 'pmcid' && /^\d+$/u.test(value)) return []
     // ISBN/ISSN normalization strips arbitrary characters; admit only explicit numeric forms.
-    if ((scheme === 'isbn' || scheme === 'issn') && !/^[\dX\s-]+$/iu.test(text)) return []
-    const normalizedValue = normalizeIdentifier(scheme, text)
+    if ((scheme === 'isbn' || scheme === 'issn') && !/^[\dX\s-]+$/iu.test(value)) return []
+    const normalizedValue = normalizeIdentifier(scheme, value)
     return pattern.test(normalizedValue) ? [{ scheme, normalizedValue }] : []
   })
 }
@@ -269,6 +298,7 @@ const toItemView = (row: LiteratureItemRow): LiteratureItemView => ({
   })),
   projectIds: row.projects.map(({ projectId }) => projectId),
   collectionIds: row.collections.map(({ collectionId }) => collectionId),
+  readingStatus: literatureReadingStatusSchema.parse(row.readingStatus),
   metadataRevision: row.metadataRevision,
   createdAt: row.createdAt.getTime(),
   updatedAt: row.updatedAt.getTime(),
@@ -327,7 +357,153 @@ const attachProjectIfPresent = async (
   })
 }
 
-// Include all owners, including Trash and explicitly independent duplicates.
+const restoreExistingItem = (
+  transaction: Prisma.TransactionClient,
+  itemId: string
+): Promise<{ count: number }> =>
+  transaction.literatureItem.updateMany({
+    where: { id: itemId },
+    data: { deletedAt: null }
+  })
+
+const identityKey = (scheme: string, value: string): string => `${scheme}:${value}`
+
+const identityItemSelect = {
+  id: true,
+  title: true,
+  identifiers: true,
+  deletedAt: true,
+  itemType: true,
+  metadataRevision: true,
+  issuedYear: true,
+  issuedText: true,
+  containerTitle: true,
+  creators: { orderBy: { ordinal: 'asc' }, include: { creator: true } }
+} satisfies Prisma.LiteratureItemSelect
+
+const storedImportIdentity = (
+  row: Prisma.LiteratureItemGetPayload<{ select: typeof identityItemSelect }>
+): ImportIdentityRecord => ({
+  title: row.title,
+  itemType: row.itemType as LiteratureItemInput['itemType'],
+  metadataRevision: row.metadataRevision,
+  inTrash: row.deletedAt !== null,
+  issuedYear: row.issuedYear ?? undefined,
+  issuedText: row.issuedText,
+  containerTitle: row.containerTitle,
+  creators: row.creators.map(({ creator, creatorType }) =>
+    creator.nameMode === 'organization'
+      ? { nameMode: 'organization', literalName: creator.literalName, creatorType }
+      : {
+          nameMode: 'person',
+          givenName: creator.givenName,
+          familyName: creator.familyName,
+          creatorType
+        }
+  ),
+  identifiers: row.identifiers.map((identifier) => ({
+    scheme: identifier.scheme as LiteratureIdentifierScheme,
+    value: identifier.rawValue,
+    isPrimary: identifier.isPrimary
+  }))
+})
+
+const creatorIdentity = (creators: readonly LiteratureCreatorInput[] = []): string =>
+  JSON.stringify(
+    creators.map((creator) =>
+      creator.nameMode === 'organization'
+        ? [creator.creatorType, normalizeSearchText(creator.literalName)]
+        : [
+            creator.creatorType,
+            normalizeSearchText(creator.familyName),
+            normalizeSearchText(creator.givenName)
+          ]
+    )
+  )
+
+const readImportIdentityRecords = async (
+  transaction: Prisma.TransactionClient,
+  identifiers: Parameters<LibraryStore['importIdentityRecords']>[0]
+): Promise<{ id: string; item: ImportIdentityRecord }[]> => {
+  if (!identifiers.length) return []
+  const rows = await transaction.literatureItem.findMany({
+    where: {
+      mergedIntoItemId: null,
+      identifiers: {
+        some: {
+          OR: identifiers.map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
+        }
+      }
+    },
+    select: identityItemSelect
+  })
+  return rows.map((row) => ({ id: row.id, item: storedImportIdentity(row) }))
+}
+
+const collectedTargetProof = (index: ImportIdentityIndex, itemId: string): string => {
+  const record = index.records.get(itemId)!
+  return createHash('sha256')
+    .update(
+      JSON.stringify([
+        itemId,
+        record.title,
+        record.inTrash ?? false,
+        record.metadataRevision,
+        record.itemType,
+        creatorIdentity(record.creators),
+        record.issuedYear,
+        record.issuedText ?? '',
+        record.containerTitle ?? '',
+        normalizedIdentifiers(record.identifiers)
+          .map(({ scheme, normalizedValue }) => identityKey(scheme, normalizedValue))
+          .sort()
+      ])
+    )
+    .digest('hex')
+}
+
+const collectedIdentity = async (
+  tx: Prisma.TransactionClient,
+  reference: CollectedReference,
+  previous?: ImportIdentityIndex,
+  sourceTarget?: string | number
+): Promise<{
+  index: ImportIdentityIndex
+  resolution: ReturnType<typeof importIdentity>
+  sourceMatch: boolean
+}> => {
+  const { item, source } = reference
+  if (!source.externalId) throw new Error('Collector source identity is required.')
+  const sourceRecords = await tx.literatureSourceRecord.findMany({
+    where: {
+      provider: source.provider,
+      externalId: source.externalId,
+      item: { mergedIntoItemId: null }
+    },
+    select: { itemId: true, item: { select: identityItemSelect } },
+    orderBy: { fetchedAt: 'asc' }
+  })
+  const owners = sourceRecords.flatMap(({ item, itemId }) =>
+    item && itemId ? [{ itemId, item }] : []
+  )
+  const prior = owners[0]
+  const identities = await importIdentityMap(
+    { importIdentityRecords: (identifiers) => readImportIdentityRecords(tx, identifiers) },
+    [item]
+  )
+  for (const owner of owners)
+    rememberImportIdentity(identities, owner.itemId, storedImportIdentity(owner.item))
+  if (previous)
+    for (const [target, record] of previous.records)
+      rememberImportIdentity(identities, target, record)
+  const resolution = importIdentity(
+    identities,
+    item,
+    prior?.itemId ?? sourceTarget,
+    owners.map(({ itemId }) => itemId)
+  )
+  return { index: identities, resolution, sourceMatch: !!prior || sourceTarget !== undefined }
+}
 
 // Plan the entire batch before any write. Virtual targets retain input indexes,
 // so bridges between earlier rows are checked identically in preview and commit.
@@ -346,6 +522,7 @@ const createItem = async (
       normalizedTitle: normalizeSearchText(item.title),
       normalizedAbstract: normalizeSearchText(item.abstract),
       normalizedContainerTitle: normalizeSearchText(item.containerTitle),
+      normalizedPersonalNote: normalizeSearchText(item.personalNote ?? ''),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear,
@@ -431,6 +608,7 @@ const replaceItemMetadata = async (
       normalizedTitle: normalizeSearchText(item.title),
       normalizedAbstract: normalizeSearchText(item.abstract),
       normalizedContainerTitle: normalizeSearchText(item.containerTitle),
+      normalizedPersonalNote: normalizeSearchText(item.personalNote ?? ''),
       abstract: item.abstract,
       issuedText: item.issuedText,
       issuedYear: item.issuedYear ?? null,
@@ -857,9 +1035,10 @@ class LiteratureCatalog {
         contains(Prisma.sql`i."normalizedTitle"`, text),
         contains(Prisma.sql`i."normalizedAbstract"`, text),
         contains(Prisma.sql`i."normalizedContainerTitle"`, text),
+        contains(Prisma.sql`i."normalizedPersonalNote"`, text),
         creatorMatches(text)
       ]
-      const identifiers = searchIdentifiers(normalizeSpace(text))
+      const identifiers = searchIdentifiers(text)
       if (identifiers.length)
         alternatives.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "LiteratureIdentifier" identifier WHERE identifier."itemId" = i.id AND (
@@ -903,6 +1082,8 @@ class LiteratureCatalog {
       predicates.push(
         Prisma.sql`EXISTS (SELECT 1 FROM "TagAssignment" t WHERE t."resourceType" = 'literature.item' AND t."resourceId" = i.id AND t."tagId" = ${tagId})`
       )
+    if (filter?.readingStatus !== undefined)
+      predicates.push(Prisma.sql`i."readingStatus" = ${filter.readingStatus}`)
     if (filter?.itemTypes?.length)
       predicates.push(Prisma.sql`i."itemType" IN (${Prisma.join(filter.itemTypes)})`)
     if (filter?.yearFrom !== undefined)
@@ -1314,6 +1495,58 @@ class LiteratureCatalog {
         ? undefined
         : requested
     return row ? (await this.itemViews([row]))[0] : undefined
+  }
+
+  async savePublicationCheck(
+    input: {
+      itemId: string
+      expectedMetadataRevision: number
+      snapshot: LiteraturePublicationCheckSnapshot
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const snapshot = literaturePublicationCheckSnapshotSchema.parse(input.snapshot)
+    await withDataRootWrite(async () => {
+      signal?.throwIfAborted()
+      const client = await this.getClient()
+      await client.$transaction(
+        async (transaction) => {
+          // Do not resolve merged IDs here: the request must still own its original reference.
+          const row = await transaction.literatureItem.findUnique({
+            where: { id: input.itemId },
+            include: { identifiers: true }
+          })
+          if (!row || row.deletedAt || row.mergedIntoItemId) {
+            throw new Error('Literature Item is unavailable.')
+          }
+          const doi = getPublicationCheckDoi(
+            row.identifiers.map(({ scheme, rawValue }) => ({ scheme, value: rawValue }))
+          )
+          if (row.metadataRevision !== input.expectedMetadataRevision || doi !== snapshot.doi) {
+            throw new Error('Literature Item revision conflict.')
+          }
+          signal?.throwIfAborted()
+          await this.attachSource(transaction, {
+            itemId: input.itemId,
+            source: {
+              provider: 'crossref-publication-check',
+              externalId: snapshot.doi,
+              sourceUrl: `https://api.crossref.org/works/${encodeURIComponent(snapshot.doi)}`,
+              rawMetadata: snapshot
+            }
+          })
+          signal?.throwIfAborted()
+        },
+        { maxWait: 30_000 }
+      )
+      // This source-only write does not change screening evidence or metadata. In particular,
+      // publishChanged/commit would unnecessarily schedule automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: [input.itemId], revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed publication check', { error })
+      }
+    })
   }
 
   async sources(itemId: string): Promise<LiteratureSourceRecordView[]> {
@@ -1743,6 +1976,8 @@ class LiteratureCatalog {
         return this.setProjectItem(command)
       case 'set-project-items':
         return this.setProjectItems(command)
+      case 'set-reading-status':
+        return this.setReadingStatus(command)
       case 'set-item-lifecycle':
         return this.setItemLifecycle(command)
       case 'delete-items-permanently':
@@ -1769,6 +2004,289 @@ class LiteratureCatalog {
       }),
       { timeout: 60_000 }
     ).finally(() => duplicateGroups.delete(client))
+  }
+
+  // Read-only identity analysis uses the same resolver as the committing transaction.
+  async inspectCollectedReferences(
+    inputs: readonly CollectedReference[]
+  ): Promise<CollectedReferenceInspection[]> {
+    if (inputs.length > 1000) throw new Error('Select at most 1,000 references.')
+    const references = inputs.map((input) => collectedReferenceSchema.parse(input))
+    const client = await this.getClient()
+    return client.$transaction(
+      async (tx) => {
+        let previous: ImportIdentityIndex | undefined
+        const sources = new Map<string, string | number>()
+        const result: CollectedReferenceInspection[] = []
+        for (const [inputIndex, reference] of references.entries()) {
+          const sourceKey = JSON.stringify([reference.source.provider, reference.source.externalId])
+          const { index, resolution, sourceMatch } = await collectedIdentity(
+            tx,
+            reference,
+            previous,
+            sources.get(sourceKey)
+          )
+          previous = index
+          const target = resolution.target
+          const matches = resolution.conflict
+            ? resolution.conflict.matches.map((match) =>
+                index.records.get(match.itemId ?? match.inputIndex!)!
+              )
+            : target === undefined
+              ? []
+              : [index.records.get(target)!]
+          const titleChanged = matches.some(
+            (match) =>
+              normalizeSearchText(match.title) !== normalizeSearchText(reference.item.title)
+          )
+          const metadataChanged = matches.some(
+            (match) =>
+              (match.creators?.length &&
+                reference.item.creators.length &&
+                creatorIdentity(match.creators) !== creatorIdentity(reference.item.creators)) ||
+              (match.issuedYear !== undefined &&
+                reference.item.issuedYear !== undefined &&
+                match.issuedYear !== reference.item.issuedYear) ||
+              (match.issuedText &&
+                reference.item.issuedText &&
+                normalizeSearchText(match.issuedText) !==
+                  normalizeSearchText(reference.item.issuedText)) ||
+              (match.containerTitle &&
+                reference.item.containerTitle &&
+                normalizeSearchText(match.containerTitle) !==
+                  normalizeSearchText(reference.item.containerTitle))
+          )
+          const inTrash = matches.some((match) => match.inTrash)
+          result.push({
+            status: resolution.conflict
+              ? 'conflict'
+              : target === undefined
+                ? 'new'
+                : titleChanged || metadataChanged || inTrash
+                  ? 'review'
+                  : 'reuse',
+            reason: resolution.conflict
+              ? 'conflict'
+              : target === undefined
+                ? 'new'
+                : inTrash
+                  ? 'trash'
+                  : titleChanged
+                    ? 'title'
+                    : metadataChanged
+                      ? 'metadata'
+                      : sourceMatch
+                        ? 'source'
+                        : 'identifier',
+            identifiers: reference.item.identifiers,
+            matches: matches.map(
+              ({
+                title,
+                identifiers,
+                itemType,
+                creators,
+                issuedYear,
+                issuedText,
+                containerTitle
+              }) => ({
+                title,
+                identifiers,
+                itemType,
+                creators,
+                issuedYear,
+                issuedText,
+                containerTitle
+              })
+            ),
+            reviewedTargets: (resolution.conflict
+              ? resolution.conflict.matches.flatMap(({ itemId }) => (itemId ? [itemId] : []))
+              : typeof target === 'string'
+                ? [target]
+                : []
+            )
+              .map((itemId) => collectedTargetProof(index, itemId))
+              .sort()
+          })
+          if (!resolution.conflict) {
+            const owner = target ?? inputIndex
+            const existing = index.records.get(owner)
+            rememberImportIdentity(index, owner, existing ?? reference.item)
+            sources.set(sourceKey, owner)
+          }
+        }
+        return result
+      },
+      { timeout: 60_000 }
+    )
+  }
+
+  // Metadata and organization commit atomically; PDF failures are handled separately.
+  async collectReferences(
+    inputs: readonly CollectedReference[],
+    collectionPaths: readonly string[][] = [],
+    reviewed?: readonly CollectedReferenceInspection[],
+    policies: readonly LiteratureDuplicatePolicy[] = []
+  ): Promise<{ itemIds: string[]; metadataRevisions: number[] }> {
+    if (inputs.length > 1000 || (inputs.length === 0 && collectionPaths.length === 0))
+      throw new Error('Select references or collections to import.')
+    const references = inputs.map((input) => collectedReferenceSchema.parse(input))
+    if (reviewed && reviewed.length !== references.length) throw new Error(ZOTERO_PREVIEW_CHANGED)
+    if (policies.length && policies.length !== references.length)
+      throw new Error('Collector policies are invalid.')
+    const modes = references.map((_, index) =>
+      literatureDuplicatePolicySchema.parse(policies[index] ?? 'reuse')
+    )
+    if (!reviewed && modes.some((policy) => policy !== 'reuse'))
+      throw new Error('Preview is required for collector policies.')
+    const paths = collectedCollectionPathsSchema.parse(collectionPaths)
+    const client = await this.getClient()
+    const receipt = await this.commit(
+      client,
+      async (tx) => {
+        const itemIds: string[] = []
+        const createdIds = new Set<string>()
+        const verifiedTargets = new Map<string, string>()
+        const collections = new Map<string, string>()
+        const ensurePath = async (path: readonly string[]): Promise<string> => {
+          let parentId: string | null = null
+          for (const rawName of path) {
+            const name = normalizeSpace(rawName)
+            const nameKey = name.toLowerCase()
+            const key = JSON.stringify([parentId, nameKey])
+            const cached = collections.get(key)
+            if (cached) {
+              parentId = cached
+              continue
+            }
+            const existing: { id: string; smart: { collectionId: string } | null } | null =
+              await tx.literatureCollection.findFirst({
+                where: { parentId, nameKey },
+                select: { id: true, smart: { select: { collectionId: true } } }
+              })
+            if (existing?.smart) throw new Error('Use an explicit smart collection override.')
+            const collection: { id: string } =
+              existing ??
+              (await tx.literatureCollection.create({
+                data: { name, nameKey, parentId },
+                select: { id: true }
+              }))
+            parentId = collection.id
+            collections.set(key, parentId)
+          }
+          return parentId!
+        }
+        for (const path of paths) await ensurePath(path)
+        for (const [inputIndex, reference] of references.entries()) {
+          const { item, source } = reference
+          const { index, resolution } = await collectedIdentity(tx, reference)
+          const policy = modes[inputIndex]
+          if (resolution.conflict && policy !== 'separate') {
+            const changedByBatch = resolution.conflict.matches.some(
+              ({ itemId }) => itemId && (createdIds.has(itemId) || verifiedTargets.has(itemId))
+            )
+            throw new Error(
+              changedByBatch
+                ? ZOTERO_BATCH_POLICY_CONFLICT
+                : reviewed
+                  ? ZOTERO_PREVIEW_CHANGED
+                  : LITERATURE_IMPORT_IDENTITY_CONFLICT
+            )
+          }
+          const existingId =
+            policy !== 'separate' && typeof resolution.target === 'string'
+              ? resolution.target
+              : undefined
+          if (reviewed) {
+            const localTargets = resolution.conflict
+              ? resolution.conflict.matches.flatMap(({ itemId }) => (itemId ? [itemId] : []))
+              : typeof resolution.target === 'string'
+                ? [resolution.target]
+                : []
+            const proofs = localTargets
+              .filter((id) => !createdIds.has(id))
+              .map((id) => ({
+                id,
+                proof: verifiedTargets.get(id) ?? collectedTargetProof(index, id)
+              }))
+            const expected = reviewed[inputIndex]
+            if (
+              (expected.status === 'conflict' && policy !== 'separate') ||
+              JSON.stringify(proofs.map(({ proof }) => proof).sort()) !==
+                JSON.stringify(expected.reviewedTargets)
+            )
+              throw new Error(
+                localTargets.some((id) => verifiedTargets.has(id))
+                  ? ZOTERO_BATCH_POLICY_CONFLICT
+                  : ZOTERO_PREVIEW_CHANGED
+              )
+            // Our own restore/fill operations do not invalidate another reviewed row in this batch.
+            for (const { id, proof } of proofs) verifiedTargets.set(id, proof)
+          }
+          if (
+            existingId &&
+            policy === 'fill-missing' &&
+            index.records.get(existingId)?.itemType !== item.itemType
+          )
+            throw new Error(ZOTERO_FILL_TYPE_CONFLICT)
+          const itemId = existingId ?? (await createItem(tx, item))
+          if (!existingId) createdIds.add(itemId)
+          if (existingId) {
+            await restoreExistingItem(tx, existingId)
+            if (policy === 'fill-missing') {
+              const current = await tx.literatureItem.findUniqueOrThrow({
+                where: { id: existingId },
+                include: await activeItemInclude(tx)
+              })
+              const existing = toItemView(current)
+              const supplemented = supplementLiteratureMetadata(existing.item, item).item
+              if (canonicalJson(existing.item) !== canonicalJson(supplemented))
+                await replaceItemMetadata(tx, existingId, existing.metadataRevision, supplemented)
+            }
+          }
+          await this.attachSource(tx, { itemId, source })
+          itemIds.push(itemId)
+          for (const path of reference.collectionPaths) {
+            const collectionId = await ensurePath(path)
+            await tx.literatureCollectionItem.upsert({
+              where: { collectionId_itemId: { collectionId, itemId } },
+              create: { collectionId, itemId },
+              update: {}
+            })
+          }
+          for (const rawName of reference.tags) {
+            const tag = await ensureTag(tx, rawName)
+            await tx.tagAssignment.upsert({
+              where: {
+                tagId_resourceType_resourceId: {
+                  tagId: tag.id,
+                  resourceType: 'literature.item',
+                  resourceId: itemId
+                }
+              },
+              create: { tagId: tag.id, resourceType: 'literature.item', resourceId: itemId },
+              update: {}
+            })
+          }
+        }
+        const items = await tx.literatureItem.findMany({
+          where: { id: { in: [...new Set(itemIds)] } },
+          select: { id: true, metadataRevision: true }
+        })
+        const revisions = new Map(items.map(({ id, metadataRevision }) => [id, metadataRevision]))
+        return {
+          itemIds,
+          metadataRevisions: itemIds.map((id) => {
+            const revision = revisions.get(id)
+            if (revision === undefined) throw new Error('Literature Item is unavailable.')
+            return revision
+          })
+        }
+      },
+      ({ itemIds }) => ({ itemIds }),
+      { timeout: 60_000 }
+    ).finally(() => duplicateGroups.delete(client))
+    if (references.some(({ tags }) => tags.length)) await this.publishTagAssignmentsChanged()
+    return receipt
   }
 
   async inspectImportItems(
@@ -1949,6 +2467,25 @@ class LiteratureCatalog {
     const client = await this.getClient()
     return this.commit(client, (tx) => this.domain(tx).setProjectItems(command), {
       itemIds: [...new Set(command.itemIds)]
+    })
+  }
+
+  private async setReadingStatus(
+    command: Extract<LiteratureCatalogCommand, { kind: 'set-reading-status' }>
+  ): Promise<LiteratureCatalogReceipt> {
+    return withDataRootWrite(async () => {
+      const client = await this.getClient()
+      const receipt = await client.$transaction((tx) => this.domain(tx).setReadingStatus(command), {
+        maxWait: 30_000
+      })
+      // Personal reading state is not metadata or screening evidence. Publish after commit
+      // without invalidating duplicate groups or scheduling automatic AI screening.
+      try {
+        this.onChanged?.({ itemIds: receipt.itemIds!, revision: ++this.revision })
+      } catch (error) {
+        log.warn('Could not publish committed literature reading status', { error })
+      }
+      return receipt
     })
   }
 
@@ -2170,31 +2707,7 @@ class LiteratureCatalog {
           orderBy: [{ deletedAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
           select: { id: true, identifiers: true }
         }),
-      importIdentityRecords: async (identifiers) => {
-        if (!identifiers.length) return []
-        const rows = await transaction.literatureItem.findMany({
-          where: {
-            mergedIntoItemId: null,
-            identifiers: {
-              some: {
-                OR: identifiers.map(({ scheme, normalizedValue }) => ({ scheme, normalizedValue }))
-              }
-            }
-          },
-          select: { id: true, title: true, identifiers: true }
-        })
-        return rows.map((row) => ({
-          id: row.id,
-          item: {
-            title: row.title,
-            identifiers: row.identifiers.map((id) => ({
-              scheme: id.scheme as LiteratureIdentifierScheme,
-              value: id.rawValue,
-              isPrimary: id.isPrimary
-            }))
-          }
-        }))
-      },
+      importIdentityRecords: (identifiers) => readImportIdentityRecords(transaction, identifiers),
       collection: async (id) => {
         const row = await transaction.literatureCollection.findUnique({
           where: { id },
@@ -2391,6 +2904,13 @@ class LiteratureCatalog {
           where: { projectId, itemId: { in: [...ids] } }
         })
       },
+      setReadingStatus: async (ids, readingStatus) =>
+        (
+          await transaction.literatureItem.updateMany({
+            where: { id: { in: [...ids] }, deletedAt: null, mergedIntoItemId: null },
+            data: { readingStatus }
+          })
+        ).count,
       setLifecycle: async (ids, state) =>
         (
           await transaction.literatureItem.updateMany({

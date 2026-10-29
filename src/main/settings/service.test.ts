@@ -212,6 +212,7 @@ const createService = (
     userSkills?: UserSkillRepositoryType
     log?: Logger
     installCoordinator?: SettingsInstallCoordinator
+    withNotebookFolderPolicyChange?: SettingsServiceOptions['withNotebookFolderPolicyChange']
     wslSetup?: SettingsServiceOptions['wslSetup']
     getNotebookNetworkStatus?: SettingsServiceOptions['getNotebookNetworkStatus']
     wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
@@ -219,6 +220,7 @@ const createService = (
 ): InstanceType<typeof SettingsService> =>
   new SettingsService({
     repository,
+    withNotebookFolderPolicyChange: options.withNotebookFolderPolicyChange,
     log: options.log ?? silentLog,
     configRoot: storageRoot,
     // Point at a non-existent user Claude dir so tests never read the real ~/.claude. The same
@@ -1265,18 +1267,6 @@ describe('SettingsService: providers', () => {
         type: 'codex-isolated',
         name,
         apiEndpoints: ['responses'],
-        models: [
-          'gpt-5.6-sol',
-          'gpt-6-astra',
-          'gpt-6.1-sol',
-          'gpt-6-sol',
-          'gpt-6-luna',
-          'gpt-5.6-terra',
-          'gpt-5.6-luna',
-          'gpt-5.5',
-          'gpt-5.4',
-          'gpt-5.4-mini'
-        ],
         hasKey: false
       })
     ])
@@ -9009,3 +8999,94 @@ describe('Notebook protection Shell capability switch', () => {
 })
 
 await configureTestElectronHost(await import('electron'))
+
+describe('Notebook folder restriction settings', () => {
+  it('defaults legacy settings to enabled and persists only after process shutdown succeeds', async () => {
+    const lifecycle = vi.fn(async (commit: () => Promise<void>) => {
+      expect((await repository.getSettings()).notebookFolderRestrictionEnabled).toBeUndefined()
+      await commit()
+    })
+    const service = createService(undefined, { withNotebookFolderPolicyChange: lifecycle })
+    expect(await service.getNotebookFolderRestrictionEnabled()).toBe(true)
+    await service.setNotebookFolderRestrictionEnabled(false)
+    expect(lifecycle).toHaveBeenCalledOnce()
+    expect(
+      (await new SettingsRepository(storageRoot).getSettings()).notebookFolderRestrictionEnabled
+    ).toBe(false)
+    expect(await service.getNotebookFolderRestrictionEnabled()).toBe(false)
+    await service.setNotebookFolderRestrictionEnabled(false)
+    expect(lifecycle).toHaveBeenCalledOnce()
+  })
+
+  it('preserves the prior policy when shutdown fails and rejects untyped values', async () => {
+    const service = createService(undefined, {
+      withNotebookFolderPolicyChange: async () => {
+        throw new Error('unreaped process')
+      }
+    })
+    await expect(service.setNotebookFolderRestrictionEnabled(false)).rejects.toThrow(
+      'unreaped process'
+    )
+    expect(await service.getNotebookFolderRestrictionEnabled()).toBe(true)
+    expect(() =>
+      service.setNotebookFolderRestrictionEnabled('false' as unknown as boolean)
+    ).toThrow('Invalid Notebook folder restriction flag')
+  })
+})
+
+describe('Global network grant publication', () => {
+  it('publishes only after the durable grant has finalized', async () => {
+    const calls: string[] = []
+    const publish = vi.fn(async () => {
+      expect((await repository.getSettings()).notebookNetwork?.allowedDomains).toContain(
+        'data.example.org'
+      )
+      calls.push('publish')
+    })
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      applyNotebookNetwork: async () => {
+        calls.push('apply')
+      },
+      onNotebookNetworkDomainAllowed: publish,
+      log: silentLog
+    })
+    await service.allowNotebookNetworkDomain('data.example.org', undefined, async () => {
+      calls.push('finalize')
+    })
+    expect(calls).toEqual(['apply', 'finalize', 'publish'])
+  })
+
+  it('does not publish a grant whose finalization rolls back', async () => {
+    const publish = vi.fn()
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      onNotebookNetworkDomainAllowed: publish,
+      log: silentLog
+    })
+    await expect(
+      service.allowNotebookNetworkDomain('data.example.org', undefined, async () => {
+        throw new Error('cancelled')
+      })
+    ).rejects.toThrow('cancelled')
+    expect(publish).not.toHaveBeenCalled()
+    expect((await service.getNotebookNetwork()).allowedDomains).not.toContain('data.example.org')
+  })
+
+  it('keeps committed consent when publication fails', async () => {
+    const service = new SettingsService({
+      repository,
+      configRoot: storageRoot,
+      onNotebookNetworkDomainAllowed: async () => {
+        throw new Error('offline')
+      },
+      log: silentLog
+    })
+    await expect(service.allowNotebookNetworkDomain('data.example.org')).resolves.toMatchObject({
+      allowedDomains: ['data.example.org']
+    })
+    expect((await service.getNotebookNetwork()).allowedDomains).toContain('data.example.org')
+  })
+})

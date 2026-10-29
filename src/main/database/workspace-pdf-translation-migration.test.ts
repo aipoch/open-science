@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, expect, it } from 'vitest'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { createProjectDbClient } from '../projects/prisma-client'
-import { migrateApplicationDatabase } from './migration-service'
+import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 import { removeUnreferencedPdfDocument } from '../pdf-documents/identity'
 
 let root: string
@@ -22,20 +23,28 @@ async function setup(): Promise<void> {
   })
 }
 it('upgrades the prior translation schema without changing its saved records and is idempotent', async () => {
-  await setup()
+  root = await mkdtemp(join(tmpdir(), 'workspace-translation-migration-'))
+  client = createProjectDbClient(root)
+  await createDatabaseAtReleasedManifest(
+    client,
+    MIGRATION_MANIFEST.filter(({ id }) => id < '0050_literature_translation')
+  )
+  await client.pdfDocument.create({
+    data: { id: 'document', checksum: 'a'.repeat(64), sizeBytes: 10n }
+  })
   const before = await client.$queryRawUnsafe(
     'SELECT id, checksum FROM "_open_science_migrations" WHERE id < ? ORDER BY id',
     '0050_literature_translation'
   )
-  await client.$executeRawUnsafe('DROP TABLE "PdfTranslationBlock"')
-  await client.$executeRawUnsafe(
-    'DELETE FROM "_open_science_migrations" WHERE id = ?',
-    '0050_literature_translation'
-  )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0050_literature_translation',
-    applied: ['0050_literature_translation']
+    to: '0053_literature_doi_identity',
+    applied: [
+      '0050_literature_translation',
+      '0051_literature_reading_status',
+      '0052_literature_personal_note_search',
+      '0053_literature_doi_identity'
+    ]
   })
   expect(
     await client.$queryRawUnsafe(

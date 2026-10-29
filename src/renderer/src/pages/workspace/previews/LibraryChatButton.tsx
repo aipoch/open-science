@@ -1,10 +1,16 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
 import { ChevronDown, MessageSquare, Plus, Search } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useSessionStore } from '@/stores/session-store'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import type { LiteratureReference } from '../../../../../shared/session-persistence'
@@ -51,7 +57,7 @@ function ConversationPicker({
 
   return (
     <>
-      <div className="relative m-2">
+      <div className="relative m-2 shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden="true"
@@ -92,7 +98,7 @@ function ConversationPicker({
         id={listId}
         role="listbox"
         aria-label={t('Conversations')}
-        className="max-h-60 overflow-y-auto px-1"
+        className="min-h-0 max-h-60 shrink overflow-y-auto px-1"
       >
         {visible.map((session, index) => (
           <div
@@ -134,7 +140,7 @@ function ConversationPicker({
           {t('Load more')}
         </Button>
       )}
-      <div className="mt-1 border-t border-border p-1">
+      <div className="mt-1 shrink-0 border-t border-border p-1">
         <Button
           variant="ghost"
           size="sm"
@@ -179,85 +185,85 @@ export function LibraryChatButton({
     actions.add(references, sessionId)
   }
   return (
-    <div className="inline-flex shrink-0 rounded-md border border-border bg-background">
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="rounded-[inherit] rounded-r-none border-0"
-            disabled={!actions?.canAddToCurrent || !references.length}
-            onClick={() => add(actions?.currentSessionId ?? null)}
-          >
-            {t('Add to chat')}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{t('Add references to the current conversation draft')}</TooltipContent>
-      </Tooltip>
-      <Popover
-        open={open}
-        onOpenChange={(value) => {
-          cancelHover()
-          selected.current = false
-          setOpen(value)
-        }}
-      >
-        <PopoverTrigger asChild>
-          <Button
-            ref={triggerRef}
-            variant="ghost"
-            size="xs"
-            className="rounded-[inherit] rounded-l-none border-0 border-l border-l-border px-1.5"
-            disabled={!actions || !references.length}
-            aria-label={t('Choose another conversation')}
-            onPointerEnter={(event) => {
-              cancelHover()
-              if (event.pointerType === 'touch' || !actions || !references.length || open) return
-              hoverTimer.current = setTimeout(() => {
-                selected.current = false
-                openedByHover.current = true
-                setOpen(true)
-              }, 120)
-            }}
-            onPointerLeave={closeHoveredPicker}
-            onClick={(event) => {
-              cancelHover()
-              // Match the PDF mark-style picker: clicking a hover-open panel pins it.
-              if (open && openedByHover.current) {
-                event.preventDefault()
-                contentRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus()
-              }
-              openedByHover.current = false
-            }}
-          >
-            <ChevronDown aria-hidden="true" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent
-          ref={contentRef}
-          align="end"
-          onPointerEnter={cancelHover}
-          onPointerLeave={closeHoveredPicker}
-          onFocusCapture={() => {
+    <SplitButton
+      kind="popover"
+      open={open}
+      onOpenChange={(value) => {
+        cancelHover()
+        selected.current = false
+        setOpen(value)
+      }}
+    >
+      <SplitButtonGroup className="border border-border bg-background">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SplitButtonPrimary
+              variant="ghost"
+              size="xs"
+              className="border-0"
+              disabled={!actions?.canAddToCurrent || !references.length}
+              onClick={() => add(actions?.currentSessionId ?? null)}
+            >
+              {t('Add to chat')}
+            </SplitButtonPrimary>
+          </TooltipTrigger>
+          <TooltipContent>{t('Add references to the current conversation draft')}</TooltipContent>
+        </Tooltip>
+        <SplitButtonTrigger
+          ref={triggerRef}
+          variant="ghost"
+          size="xs"
+          className="border-0 px-1.5"
+          disabled={!actions || !references.length}
+          aria-label={t('Choose another conversation')}
+          onPointerEnter={(event) => {
             cancelHover()
+            if (event.pointerType === 'touch' || !actions || !references.length || open) return
+            hoverTimer.current = setTimeout(() => {
+              selected.current = false
+              openedByHover.current = true
+              setOpen(true)
+            }, 120)
+          }}
+          onPointerLeave={closeHoveredPicker}
+          onClick={(event) => {
+            cancelHover()
+            // Match the PDF mark-style picker: clicking a hover-open panel pins it.
+            if (open && openedByHover.current) {
+              event.preventDefault()
+              contentRef.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus()
+            }
             openedByHover.current = false
           }}
-          onInteractOutside={(event) => {
-            // Pinning through the trigger is not an outside dismissal; keep Radix focus return.
-            if (triggerRef.current?.contains(event.target as Node)) event.preventDefault()
-          }}
-          onOpenAutoFocus={(event) => {
-            if (openedByHover.current) event.preventDefault()
-          }}
-          aria-label={t('Choose another conversation')}
-          className="z-[130] w-80 max-w-[calc(100vw-2rem)] border border-border bg-popover p-0 text-popover-foreground shadow-menu"
-          onCloseAutoFocus={(event) => {
-            if (selected.current || openedByHover.current) event.preventDefault()
-          }}
         >
-          {open && <ConversationPicker onSelect={add} />}
-        </PopoverContent>
-      </Popover>
-    </div>
+          <ChevronDown aria-hidden="true" />
+        </SplitButtonTrigger>
+      </SplitButtonGroup>
+      <SplitButtonContent
+        ref={contentRef}
+        style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+        align="end"
+        onPointerEnter={cancelHover}
+        onPointerLeave={closeHoveredPicker}
+        onFocusCapture={() => {
+          cancelHover()
+          openedByHover.current = false
+        }}
+        onInteractOutside={(event) => {
+          // Pinning through the trigger is not an outside dismissal; keep Radix focus return.
+          if (triggerRef.current?.contains(event.target as Node)) event.preventDefault()
+        }}
+        onOpenAutoFocus={(event) => {
+          if (openedByHover.current) event.preventDefault()
+        }}
+        aria-label={t('Choose another conversation')}
+        className="z-[130] w-80 max-w-[calc(100vw-2rem)] border border-border bg-popover p-0 text-popover-foreground shadow-menu"
+        onCloseAutoFocus={(event) => {
+          if (selected.current || openedByHover.current) event.preventDefault()
+        }}
+      >
+        <ConversationPicker onSelect={add} />
+      </SplitButtonContent>
+    </SplitButton>
   )
 }

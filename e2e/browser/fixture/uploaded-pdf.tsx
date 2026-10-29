@@ -6,20 +6,18 @@ import { PdfPreviewRenderer } from '@/pages/workspace/previews/renderers/PdfPrev
 import type { ParsePdfStructureRequest } from '../../../src/shared/pdf-structure'
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
+// Two pages retain the full reader; single-page PDFs intentionally use image-style previews.
 // Real PDF.js preview and production reader UI; extraction/IPC are controlled fixtures.
 const content =
   'BT /F1 22 Tf 50 740 Td (Uploaded PDF) Tj /F1 12 Tf 0 -40 Td (Sample    Value) Tj 0 -20 Td (A             42) Tj ET'
-const navigationFixture = new URLSearchParams(location.search).has('navigation')
 const objects = [
   '<< /Type /Catalog /Pages 2 0 R >>',
-  navigationFixture
-    ? '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>'
-    : '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+  '<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 >>',
   '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
   `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'
 ]
-if (navigationFixture) objects.push(objects[2])
 let pdf = '%PDF-1.4\n'
 const offsets = objects.map((object, index) => {
   const offset = pdf.length
@@ -35,7 +33,7 @@ const result: PdfStructureResult = {
   engineFingerprint: 'a'.repeat(64),
   sourceChecksum: 'b'.repeat(64),
   sourceSizeBytes: bytes.length,
-  pageCount: 1,
+  pageCount: 2,
   requestedPages: [1],
   processedPages: [1],
   pages: [{ page: 1, width: 612, height: 792, rotation: 0 }],
@@ -71,7 +69,7 @@ const result: PdfStructureResult = {
 }
 const audit = { requests: [] as ParsePdfStructureRequest[] }
 Object.assign(window, { uploadedPdfAudit: audit })
-let cached: PdfStructureResult | undefined
+const cached = new Map<number, PdfStructureResult>()
 window.api = {
   previewResources: {
     acquire: async () => ({
@@ -97,13 +95,20 @@ window.api = {
     })
   },
   pdfStructure: {
-    readCached: async () => cached,
+    readCached: async ({ page }: { page: number }) => cached.get(page),
     parse: async (request: ParsePdfStructureRequest) => {
       if (!('source' in request) || request.source.sourceKind !== 'upload-version')
         throw new Error('Expected an uploaded version')
       audit.requests.push(request)
-      cached = result
-      return result
+      const pageResult: PdfStructureResult = {
+        ...result,
+        requestedPages: [request.page],
+        processedPages: [request.page],
+        pages: [{ page: request.page, width: 612, height: 792, rotation: 0 }],
+        elements: request.page === 1 ? result.elements : []
+      }
+      cached.set(request.page, pageResult)
+      return pageResult
     },
     cancel: async () => {}
   }

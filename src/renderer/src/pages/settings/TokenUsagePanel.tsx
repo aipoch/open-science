@@ -450,7 +450,7 @@ function TokenUsagePanel({
                     <span className="font-medium text-foreground">{t('Refreshing…')}</span>
                     {lastRefreshedAt ? (
                       <span className="truncate">
-                        ·{' '}
+                        {' '}
                         {t('Updated {{time}}', {
                           time: formatRelative(lastRefreshedAt, relativeTimeNow)
                         })}

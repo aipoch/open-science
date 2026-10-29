@@ -126,7 +126,6 @@ const AttachmentPreview = ({
           {version ? <span>{formatBytes(version.sizeBytes)}</span> : null}
           {!pending ? (
             <>
-              <span aria-hidden="true">·</span>
               <span
                 className={version?.availability === 'unavailable' ? 'text-danger-000' : undefined}
               >

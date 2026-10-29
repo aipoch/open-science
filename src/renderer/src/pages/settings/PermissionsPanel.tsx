@@ -14,6 +14,7 @@ import type {
   PermissionGrantScope,
   PermissionGrantView
 } from '../../../../shared/permission-grants'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import {
   dialogCancelButtonClassName,
@@ -148,7 +149,7 @@ const PermissionRow = ({
       ? `${grant.connectorDisplayName} (${grant.connectorServerId})`
       : grant.connectorServerId
   const title = connectorName
-    ? `${connectorName} · ${grant.connectorToolName ?? grant.capabilityLabel}`
+    ? `${connectorName} / ${grant.connectorToolName ?? grant.capabilityLabel}`
     : t(grant.capabilityLabel)
   const qualifierLabel =
     grant.qualifierKind === 'any'
@@ -175,7 +176,7 @@ const PermissionRow = ({
     grant.qualifierKind === 'command_group' ? createdLabel : undefined
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join(' / ')
   const policyHint =
     grant.effectiveState === 'blocked_by_policy'
       ? t('Blocked in Connectors; this permission is currently inactive')
@@ -283,6 +284,26 @@ const PermissionsPanel = ({
   const restoreDefaultsState = usePermissionGrantsStore((state) => state.restoreDefaultsState)
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const setDefaultPermissionProfile = useSettingsStore((state) => state.setDefaultPermissionProfile)
+  const restrictFolders = useSettingsStore(
+    (state) => state.notebookFolderRestrictionEnabled !== false
+  )
+  const setFolderRestriction = useSettingsStore(
+    (state) => state.setNotebookFolderRestrictionEnabled
+  )
+  const [folderPolicyBusy, setFolderPolicyBusy] = useState(false)
+  const [folderPolicyError, setFolderPolicyError] = useState(false)
+  const [confirmFolderAccess, setConfirmFolderAccess] = useState(false)
+  const saveFolderPolicy = async (enabled: boolean): Promise<void> => {
+    setFolderPolicyBusy(true)
+    setFolderPolicyError(false)
+    try {
+      await setFolderRestriction(enabled)
+    } catch {
+      setFolderPolicyError(true)
+    } finally {
+      setFolderPolicyBusy(false)
+    }
+  }
   const [filter, setFilter] = useState<ScopeFilter>('all')
   const [confirmFullAccess, setConfirmFullAccess] = useState(false)
   const defaultsComplete = missingDefaultGlobalGrantCount === 0
@@ -388,6 +409,80 @@ const PermissionsPanel = ({
             </div>
           ) : null}
         </SettingsSection>
+
+        <SettingsSection title={t('Notebook and Shell folder access')} className="pt-5">
+          <SettingsRow
+            label={
+              window.api.platform === 'win32'
+                ? t('Restrict WSL2 Shell folders')
+                : t('Restrict Notebook and Shell folders')
+            }
+            description={t(
+              'Allow workspace and approved folders, plus files required by tools. This does not control agent-native tools or remote computers.'
+            )}
+          >
+            <Switch
+              aria-label={
+                window.api.platform === 'win32'
+                  ? t('Restrict WSL2 Shell folders')
+                  : t('Restrict Notebook and Shell folders')
+              }
+              checked={restrictFolders}
+              disabled={folderPolicyBusy}
+              onCheckedChange={(enabled) =>
+                enabled ? void saveFolderPolicy(true) : setConfirmFolderAccess(true)
+              }
+            />
+          </SettingsRow>
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t(
+              'Changing this setting stops running Notebook and Shell processes and clears their in-memory variables.'
+            )}
+          </p>
+          {window.api.platform === 'win32' ? (
+            <InlineNotice className="mt-3">
+              {t(
+                'Windows native runtimes can run in standard mode without folder restrictions. Protected mode enforces folder restrictions. This switch applies only to WSL2 Shell.'
+              )}
+            </InlineNotice>
+          ) : null}
+          {folderPolicyError ? (
+            <ErrorNotice
+              description={t(
+                'Could not confirm the folder restriction change. Reload Settings and try again.'
+              )}
+            />
+          ) : null}
+        </SettingsSection>
+        <AlertDialog.Root open={confirmFolderAccess} onOpenChange={setConfirmFolderAccess}>
+          <AlertDialog.Portal>
+            <AlertDialog.Overlay className={dialogOverlayClassName} />
+            <AlertDialog.Content
+              className={dialogPanelClassName('w-[min(440px,calc(100vw-2rem))] p-0')}
+            >
+              <div className="px-5 py-4">
+                <AlertDialog.Title className={dialogTitleClassName}>
+                  {t('Allow broader folder access?')}
+                </AlertDialog.Title>
+                <AlertDialog.Description className={dialogDescriptionClassName}>
+                  {t(
+                    'Code can read and change other folders accessible to your account. Network rules and protected application paths remain enforced.'
+                  )}
+                </AlertDialog.Description>
+              </div>
+              <div className={dialogFooterClassName}>
+                <AlertDialog.Cancel asChild>
+                  <Button variant="ghost">{t('Cancel')}</Button>
+                </AlertDialog.Cancel>
+                <AlertDialog.Action asChild>
+                  <Button onClick={() => void saveFolderPolicy(false)}>
+                    {t('Allow broader folder access')}
+                  </Button>
+                </AlertDialog.Action>
+              </div>
+            </AlertDialog.Content>
+          </AlertDialog.Portal>
+        </AlertDialog.Root>
 
         <div className="sticky top-0 z-10 -mx-5 mt-5 mb-2 bg-card px-5 py-5">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

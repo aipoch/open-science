@@ -68,7 +68,7 @@ export const importRisFields = (
   const literalNames: { tag: string; index: number; literal: string }[] = []
   const editorTag = entry.type === 'book' ? 'A3' : 'A2'
   for (const line of input.split(/\r?\n/u)) {
-    const match = /^[ \t]*([A-Z0-9]{2})[ \t]+-[ \t]*(.*)$/u.exec(line)
+    const match = /^[ \t]*([A-Z0-9]{2})[ \t]+-(.*)$/u.exec(line)
     if (!match) continue
     const [, tag, raw] = match
     if (tag === 'ER') break

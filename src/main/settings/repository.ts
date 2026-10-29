@@ -697,6 +697,10 @@ class SettingsRepository {
     })
   }
 
+  async setNotebookFolderRestrictionEnabled(enabled: boolean): Promise<StoredSettings> {
+    return this.mutate((settings) => ({ ...settings, notebookFolderRestrictionEnabled: enabled }))
+  }
+
   async setNotebookNetwork(value: NotebookNetworkSettings): Promise<StoredSettings> {
     const notebookNetwork = normalizeNotebookNetworkSettings(value)
     return this.mutate((settings) => ({ ...settings, notebookNetwork }))
@@ -1116,6 +1120,12 @@ class SettingsRepository {
 
   // Sets or clears the OpenAlex API-key reference. Plaintext is encrypted by the Connector settings
   // owner before this repository boundary.
+  async setSemanticScholarCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
+    return this.mutateConnectors((connectors) => {
+      connectors.semanticScholarApiKeyRef = apiKeyRef || undefined
+    })
+  }
+
   async setOpenAlexCredential(apiKeyRef: string | undefined): Promise<StoredSettings> {
     return this.mutateConnectors((connectors) => {
       connectors.openAlexApiKeyRef = apiKeyRef || undefined

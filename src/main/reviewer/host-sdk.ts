@@ -717,8 +717,8 @@ export class ReviewerHostServer {
             sizeBytes: managedLease!.size,
             sample,
             observation: {
-              device: 0,
-              inode: 0,
+              device: '0',
+              inode: '0',
               sizeBytes: managedLease!.size,
               modifiedAtMs: 0,
               changedAtMs: 0

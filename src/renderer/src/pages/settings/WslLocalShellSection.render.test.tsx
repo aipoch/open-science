@@ -264,7 +264,7 @@ describe('WslLocalShellSection', () => {
     await act(async () => root.render(<WslLocalShellSection developmentPreview />))
     await flush()
 
-    expect(container.textContent).toContain('Local Shell · WSL2 Bash Development Preview')
+    expect(container.textContent).toContain('Local Shell: WSL2 Bash Development Preview')
   })
 
   it('checks WSL2 once when no prior setup snapshot exists and reuses that snapshot on reopen', async () => {
@@ -315,6 +315,34 @@ describe('WslLocalShellSection', () => {
 
     expect(switchToPowerShell).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('Future Shell commands will use PowerShell')
+  })
+
+  it('explains the Windows prerequisite and PowerShell alternative after a mirrored-network check fails', async () => {
+    const snapshot: WslSetupSnapshot = {
+      state: 'failed',
+      distros: [{ name: 'Ubuntu', version: 2, isDefault: true }],
+      selection: { distro: 'Ubuntu', user: 'scientist' },
+      readiness: {
+        wsl2: true,
+        home: true,
+        bash: true,
+        bwrap: true,
+        python3: true,
+        mirroredNetworking: false
+      },
+      errorCode: 'wsl_network_mode_unsupported',
+      operationReference: 'issue3943'
+    }
+    probe.mockResolvedValue(snapshot)
+
+    await renderAndCheck()
+
+    const notice = container.querySelector('[role="alert"]')
+    expect(notice).not.toBeNull()
+    expect.soft(notice?.textContent).toContain('Windows 11 22H2')
+    expect.soft(notice?.textContent).toContain('PowerShell')
+    expect(useWsl2Bash).not.toHaveBeenCalled()
+    expect(switchToPowerShell).not.toHaveBeenCalled()
   })
 
   it('explicitly switches only future Shell commands to PowerShell and never retries failed work', async () => {
@@ -504,7 +532,7 @@ describe('WslLocalShellSection', () => {
 
     expect(install).toHaveBeenCalledOnce()
     expect(container.textContent).toContain('installation was cancelled')
-    expect(container.textContent).toContain('wsl_install_uac_cancelled · feedface')
+    expect(container.textContent).toContain('wsl_install_uac_cancelled / feedface')
     expect(container.textContent).toContain('keep using PowerShell')
   })
 
@@ -613,7 +641,7 @@ describe('WslLocalShellSection', () => {
     })
     await renderAndCheck()
 
-    expect(container.textContent).toContain('wsl_workspace_not_ntfs · a1b2c3d4')
+    expect(container.textContent).toContain('wsl_workspace_not_ntfs / a1b2c3d4')
     expect(container.textContent).toContain(
       'Move the Open-Science data folder to a local NTFS drive'
     )

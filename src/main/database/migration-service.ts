@@ -5,7 +5,16 @@ import { sessionReplayMigration } from './migrations/0047-session-replay'
 import { literatureSmartCollectionsMigration } from './migrations/0044-literature-smart-collections'
 import { literatureSmartPauseRunMigration } from './migrations/0045-literature-smart-pause-run'
 import { literatureTranslationMigration } from './migrations/0050-literature-translation'
+import { literatureReadingStatusMigration } from './migrations/0051-literature-reading-status'
+import {
+  literaturePersonalNoteSearchMigration,
+  backfillLiteraturePersonalNoteSearch
+} from './migrations/0052-literature-personal-note-search'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
+import {
+  literatureDoiIdentityMigration,
+  backfillLiteratureDoiIdentity
+} from './migrations/0053-literature-doi-identity'
 import { literatureCollectionRevisionMigration } from './migrations/0040-literature-collection-revision'
 import { bookmarksMigration } from './migrations/0041-bookmarks'
 import { pdfAnnotationsMigration } from './migrations/0043-pdf-annotations'
@@ -250,10 +259,21 @@ const checksumMigrationPayload = (
   return hash.digest('hex')
 }
 
+const LITERATURE_DOI_IDENTITY_CHECKSUM = checksumMigrationPayload(
+  literatureDoiIdentityMigration.id,
+  literatureDoiIdentityMigration.statements,
+  literatureDoiIdentityMigration.verifiers
+)
 const LITERATURE_SEARCH_TEXT_CHECKSUM = checksumMigrationPayload(
   literatureSearchTextMigration.id,
   literatureSearchTextMigration.statements,
   literatureSearchTextMigration.verifiers
+)
+const LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM = checksumMigrationPayload(
+  literaturePersonalNoteSearchMigration.id,
+  literaturePersonalNoteSearchMigration.statements,
+  literaturePersonalNoteSearchMigration.verifiers,
+  literaturePersonalNoteSearchMigration.operations
 )
 const BASELINE_CHECKSUM = checksumMigrationPayload(
   BASELINE_ID,
@@ -936,6 +956,29 @@ const MIGRATION_MANIFEST = [
     ),
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...literatureReadingStatusMigration,
+    checksum: checksumMigrationPayload(
+      literatureReadingStatusMigration.id,
+      literatureReadingStatusMigration.statements,
+      literatureReadingStatusMigration.verifiers,
+      literatureReadingStatusMigration.operations
+    ),
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literaturePersonalNoteSearchMigration,
+    checksum: LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...literatureDoiIdentityMigration,
+    checksum: LITERATURE_DOI_IDENTITY_CHECKSUM,
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1339,6 +1382,8 @@ const currentApplicationSchemaExtensions = {
 const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<void> => {
   await verifyCurrentRuntimeSchema(client, currentApplicationSchemaExtensions)
   await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
+  await runMigrationVerifiers(client, literatureReadingStatusMigration.verifiers)
+  await runMigrationVerifiers(client, literaturePersonalNoteSearchMigration.verifiers)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(
@@ -1752,7 +1797,10 @@ const classifyDatabaseFailure = (
   if (validationFailure) {
     return new DatabaseMigrationError(
       'database_validation_failed',
-      'The existing database does not satisfy the required schema contract.',
+      error instanceof DatabaseValidationError &&
+        error.data.kind === 'literature-doi-identity-alias-conflict'
+        ? error.message
+        : 'The existing database does not satisfy the required schema contract.',
       false,
       migrationId,
       { cause: error }
@@ -2046,6 +2094,18 @@ const applyManifestMigration = async (
           migration.checksum === LITERATURE_SEARCH_TEXT_CHECKSUM
         ) {
           await backfillLiteratureSearchText(transaction)
+        }
+        if (
+          migration.id === literaturePersonalNoteSearchMigration.id &&
+          migration.checksum === LITERATURE_PERSONAL_NOTE_SEARCH_CHECKSUM
+        ) {
+          await backfillLiteraturePersonalNoteSearch(transaction)
+        }
+        if (
+          migration.id === literatureDoiIdentityMigration.id &&
+          migration.checksum === LITERATURE_DOI_IDENTITY_CHECKSUM
+        ) {
+          await backfillLiteratureDoiIdentity(transaction)
         }
         if (options.repairVisionEvidenceReference && !contractAlreadySatisfied) {
           // The upstream history created VisionEvidence before this immutable migration. Rebuild it

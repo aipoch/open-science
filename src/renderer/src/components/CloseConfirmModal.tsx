@@ -23,7 +23,7 @@ import {
   pendingWorkspaceQueueTarget,
   subscribeWorkspaceQueueChanges
 } from '@/pages/workspace/workspace-message-queue-owner'
-import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../../../shared/storage'
+import { type ActiveSessionInfo } from '../../../shared/storage'
 import type {
   CloseConfirmChoice,
   CloseConfirmRequest,
@@ -99,18 +99,11 @@ export const CloseConfirmModal = ({
   const isPersistenceFailure = dialogRequest.variant === 'persistence-failed'
   const hasUnsentQueue = isPersistenceFailure && queuedCount > 0
   const hasSessions = dialogRequest.sessions.length > 0
-  const hasDelegatedWork = hasDelegatedActiveSession(dialogRequest.sessions)
   const title = hasUnsentQueue
     ? t('Queued messages have not been sent')
     : isPersistenceFailure
       ? t('Saving is not finished', { ns: 'common' })
-      : t(
-          hasDelegatedWork
-            ? 'Subagents are still running'
-            : isQuitVariant
-              ? 'Quit Open-Science?'
-              : 'Minimize or quit?'
-        )
+      : t(isQuitVariant ? 'Quit Open-Science?' : 'Minimize or quit?')
   const description = hasUnsentQueue
     ? t(
         'Unsent messages: {{number}}. Quitting discards them. Return to the conversation to send, edit or remove them.',
@@ -121,13 +114,12 @@ export const CloseConfirmModal = ({
           'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
           { ns: 'common' }
         )
-      : t(
-          hasDelegatedWork
-            ? 'Return to the listed tasks and stop their subagents before quitting Open-Science.'
-            : isQuitVariant
-              ? 'Work is still running and will be interrupted if you quit.'
-              : 'This app can keep running in the tray, or you can quit.'
-        )
+      : isQuitVariant
+        ? t(
+            'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.',
+            { ns: 'common' }
+          )
+        : t('This app can keep running in the tray, or you can quit.')
 
   return (
     <AlertDialog.Root
@@ -238,10 +230,6 @@ export const CloseConfirmModal = ({
                   {t('Force quit', { ns: 'common' })}
                 </Button>
               </>
-            ) : hasDelegatedWork && isQuitVariant ? (
-              <AlertDialog.Cancel asChild>
-                <Button type="button">{t('Return to tasks')}</Button>
-              </AlertDialog.Cancel>
             ) : isQuitVariant ? (
               <AlertDialog.Cancel asChild>
                 <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
@@ -253,7 +241,7 @@ export const CloseConfirmModal = ({
                 {t('Minimize to tray')}
               </Button>
             )}
-            {!hasDelegatedWork && !isPersistenceFailure ? (
+            {!isPersistenceFailure ? (
               <Button type="button" onClick={() => reply('quit')}>
                 {t('Quit', { context: 'verb', ns: 'common' })}
               </Button>

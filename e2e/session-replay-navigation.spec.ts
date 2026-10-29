@@ -352,6 +352,8 @@ test('replaces the discussion Session without replacing the draft or changing so
         path: testInfo.outputPath(`discuss-source-${source.id}-${width}.png`)
       })
     }
+    // Leave the hit-tested remove control before restoring geometry beneath the pointer.
+    await editor.hover()
     await discussion.evaluate((node) => {
       ;(node as HTMLElement).style.width = ''
     })
@@ -362,7 +364,7 @@ test('replaces the discussion Session without replacing the draft or changing so
     await expect(page.getByRole('tooltip')).toHaveCount(0)
     await stepChip.getByRole('button').first().hover()
     const tip = page.locator('[data-session-discussion-tooltip]')
-    await expect(tip).toContainText(`View replay · ${source.title}`)
+    await expect(tip).toContainText(`View replay: ${source.title}`)
     expect((await tip.boundingBox())!.height).toBeLessThan(72)
     await page.screenshot({ path: testInfo.outputPath(`replay-reference-${source.id}.png`) })
     await editor.hover()

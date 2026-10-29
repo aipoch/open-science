@@ -193,7 +193,7 @@ describe('ComputeHostDetail', () => {
     // Exactly one Edit action remains — the header one; the old bottom-right duplicate is gone.
     expect(editButtons).toHaveLength(1)
     expect(authenticationSections[0]?.textContent).toContain('Update')
-    expect(authenticationSections[0]?.textContent).toContain('Configured · cannot be viewed')
+    expect(authenticationSections[0]?.textContent).toContain('Configured: cannot be viewed')
     expect(authenticationSections[0]?.querySelector('input[type="radio"]')).toBeNull()
     expect(
       authenticationSections[0]?.querySelector('[aria-label="Collapse configuration"]')

@@ -1,3 +1,5 @@
+import type { AddSkillSourceRequest, RemoveSkillSourceRequest } from '../../shared/skill-sources'
+import type { SetSemanticScholarCredentialRequest } from '../../shared/settings'
 import type { SettingsFileCommands } from './file-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
@@ -91,6 +93,7 @@ import {
   readGitHubToken,
   readConversationSkillImportEnabled,
   readIsolatedClaudeToken,
+  readNotebookFolderRestrictionEnabled,
   readNotificationsEnabled,
   readShowNotificationContent,
   readProjectFilesFilter,
@@ -243,6 +246,13 @@ const registerSettingsIpcHandlers = ({
     }
   )
   ipcMainHandle(
+    'settings:set-notebook-folder-restriction-enabled',
+    async (_event, request: { enabled: boolean }) =>
+      snapshotCommits.currentSnapshotAfter(
+        service.setNotebookFolderRestrictionEnabled(readNotebookFolderRestrictionEnabled(request))
+      )
+  )
+  ipcMainHandle(
     'settings:set-show-notification-content',
     async (_event, request: SetShowNotificationContentRequest) => {
       const enabled = readShowNotificationContent(request)
@@ -393,6 +403,13 @@ const registerSettingsIpcHandlers = ({
   )
   ipcMainHandle('settings:remove-notebook-network', () => service.removeNotebookNetwork())
 
+  ipcMainHandle('settings:list-skill-sources', () => service.listSkillSources())
+  ipcMainHandle('settings:add-skill-source', (_event, request: AddSkillSourceRequest) =>
+    service.addSkillSource(request)
+  )
+  ipcMainHandle('settings:remove-skill-source', (_event, request: RemoveSkillSourceRequest) =>
+    service.removeSkillSource(request)
+  )
   ipcMainHandle('settings:list-skills', () => service.listSkills())
   ipcMainHandle(
     'settings:list-skill-marketplace',
@@ -562,6 +579,11 @@ const registerSettingsIpcHandlers = ({
     'settings:disconnect-device-credential',
     (_event, request: DeviceCredentialAuthenticationRequest) =>
       workflows.connectors.disconnectDeviceCredential(request)
+  )
+  ipcMainHandle(
+    'settings:set-semantic-scholar-credential',
+    (_event, request: SetSemanticScholarCredentialRequest) =>
+      workflows.connectors.setSemanticScholarCredential(request)
   )
   ipcMainHandle(
     'settings:set-openalex-credential',

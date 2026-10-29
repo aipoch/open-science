@@ -39,6 +39,26 @@ describe('provider registry', () => {
     expect(getVendorModelContextWindow(vendorId, model)).toBe(1_000_000)
   })
 
+  it.each(['kimi-k3.1-pro', 'kimi-k3.1-pro-highspeed'])(
+    'offers %s with published capabilities and preserves the Kimi default',
+    (model) => {
+      expect(getVendorModelIds('kimi')).toContain(model)
+      expect(getVendorModelIds('kimi')[0]).toBe('kimi-k3')
+      expect(getVendorModelContextWindow('kimi', model)).toBe(1_048_576)
+      expect(getVendorModelReasoningCapability('kimi', model)).toEqual({
+        supported: true,
+        values: ['low', 'high', 'max']
+      })
+      expect(isVendorModelMultimodal('kimi', model)).toBe(true)
+      expect(resolveVendorModelApiEndpoints('kimi', model)).toEqual([
+        'messages',
+        'chat-completions'
+      ])
+      expect(isVendorModelResponsesSupported('kimi', model)).toBe(false)
+      expect(getVendorModelIds('kimiforcode')).not.toContain(model)
+    }
+  )
+
   it('offers GPT-6.1 Sol with its published capabilities and preserves the default', () => {
     expect(getVendorModelIds('openai')).toContain('gpt-6.1-sol')
 
@@ -46,6 +66,19 @@ describe('provider registry', () => {
     expect(isVendorModelMultimodal('openai', 'gpt-6.1-sol')).toBe(true)
     expect(resolveVendorModelApiEndpoints('openai', 'gpt-6.1-sol')).toEqual(['responses'])
     expect(getVendorModelReasoningCapability('openai', 'gpt-6.1-sol')).toEqual({
+      supported: true,
+      values: ['low', 'medium', 'high', 'xhigh', 'max']
+    })
+  })
+
+  it('offers GPT-6.1 Terra with published capabilities without changing the default', () => {
+    const model = 'gpt-6.1-terra'
+    expect(getVendorModelIds('openai')).toContain(model)
+    expect(getVendorModelIds('openai')[0]).toBe('gpt-5.6-sol')
+    expect(getVendorModelContextWindow('openai', model)).toBe(1_050_000)
+    expect(isVendorModelMultimodal('openai', model)).toBe(true)
+    expect(resolveVendorModelApiEndpoints('openai', model)).toEqual(['responses'])
+    expect(getVendorModelReasoningCapability('openai', model)).toEqual({
       supported: true,
       values: ['low', 'medium', 'high', 'xhigh', 'max']
     })
@@ -1412,7 +1445,7 @@ describe('provider registry', () => {
       expect(isVendorModelMultimodal('minimax', 'MiniMax-M2.5')).toBe(false)
     })
 
-    it('returns true only for Kimi k3 model', () => {
+    it('returns true only for declared Kimi vision models', () => {
       expect(isVendorModelMultimodal('kimi', 'kimi-k3')).toBe(true)
       expect(isVendorModelMultimodal('kimi', 'kimi-k2.7-code')).toBe(false)
       expect(isVendorModelMultimodal('kimi', 'kimi-k2.6')).toBe(false)

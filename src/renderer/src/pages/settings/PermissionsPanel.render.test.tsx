@@ -96,6 +96,46 @@ const setPermissionApi = (api: Partial<Window['api']['permissions']>): void => {
 }
 
 describe('PermissionsPanel', () => {
+  it('explains optional native Windows protection separately from the WSL2 folder switch', async () => {
+    setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
+    Object.defineProperty(window.api, 'platform', { value: 'win32', configurable: true })
+    await act(async () => root.render(<PermissionsPanel />))
+    expect(container.textContent).toContain(
+      'Windows native runtimes can run in standard mode without folder restrictions. Protected mode enforces folder restrictions.'
+    )
+    expect(
+      container.querySelector('[role="switch"][aria-label="Restrict WSL2 Shell folders"]')
+    ).not.toBeNull()
+  })
+
+  it('requires confirmation before relaxing folders and reports a rejected settings write', async () => {
+    setPermissionApi({ list: vi.fn().mockResolvedValue(snapshot) })
+    const save = vi.fn().mockRejectedValue(new Error('shutdown failed'))
+    const previous = useSettingsStore.getState().setNotebookFolderRestrictionEnabled
+    useSettingsStore.setState({
+      notebookFolderRestrictionEnabled: true,
+      setNotebookFolderRestrictionEnabled: save
+    })
+    try {
+      await act(async () => root.render(<PermissionsPanel />))
+      const toggle = container.querySelector(
+        '[role="switch"][aria-label="Restrict Notebook and Shell folders"]'
+      ) as HTMLButtonElement
+      expect(toggle.getAttribute('aria-checked')).toBe('true')
+      await act(async () => toggle.click())
+      expect(save).not.toHaveBeenCalled()
+      const confirm = [...document.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Allow broader folder access'
+      )!
+      await act(async () => confirm.click())
+      expect(save).toHaveBeenCalledWith(false)
+      expect(toggle.getAttribute('aria-checked')).toBe('true')
+      expect(container.textContent).toContain('Could not confirm the folder restriction change')
+    } finally {
+      useSettingsStore.setState({ setNotebookFolderRestrictionEnabled: previous })
+    }
+  })
+
   it('PG01 distinguishes active same-name tools and opens each owning Connector', async () => {
     const servers = [
       { id: 'chemistry', name: 'chemistry-tools', displayName: 'Chemistry lab', enabled: true },
@@ -506,7 +546,7 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('any call')
     expect(document.body.textContent).toContain('Project: Example project')
     expect(
-      document.body.querySelector('[aria-label="Revoke python · Project: Example project"]')
+      document.body.querySelector('[aria-label="Revoke python / Project: Example project"]')
     ).not.toBeNull()
     expect(document.body.querySelector('h3')?.className).toContain('text-[17px]')
     const permissionRow = document.body.querySelector<HTMLElement>('[data-slot="permission-row"]')
@@ -545,7 +585,7 @@ describe('PermissionsPanel', () => {
     expect(document.body.textContent).toContain('Session: Analyze samples')
     expect(document.body.textContent).toContain('Also allowed for this project')
     expect(
-      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+      document.body.querySelector('[aria-label="Revoke Shell / Session: Analyze samples"]')
     ).not.toBeNull()
   })
 
@@ -580,7 +620,7 @@ describe('PermissionsPanel', () => {
 
     await act(async () => {
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell / Session: Analyze samples"]')
         ?.click()
     })
 
@@ -601,14 +641,14 @@ describe('PermissionsPanel', () => {
 
     await act(async () => {
       document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell · Session: Analyze samples"]')
+        .querySelector<HTMLButtonElement>('[aria-label="Revoke Shell / Session: Analyze samples"]')
         ?.click()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain('database locked')
     expect(document.body.textContent).toContain('Shell')
     expect(
-      document.body.querySelector('[aria-label="Revoke Shell · Session: Analyze samples"]')
+      document.body.querySelector('[aria-label="Revoke Shell / Session: Analyze samples"]')
     ).not.toBeNull()
   })
 
@@ -662,7 +702,7 @@ describe('PermissionsPanel', () => {
     ).toBe(true)
     expect(
       document.body.querySelector<HTMLButtonElement>(
-        '[aria-label="Revoke Shell · Session: Analyze samples"]'
+        '[aria-label="Revoke Shell / Session: Analyze samples"]'
       )?.disabled
     ).toBeFalsy()
   })

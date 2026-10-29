@@ -25,3 +25,35 @@ No state/schema changes are required: batch indexes v1/v2/v3 remain readable and
 
 Run `npm run build` and `npm test` inside this package. The repository's isolation check packs the
 package, installs its declared sibling tarball and validates consumption outside the checkout.
+
+## Single-paper citation discovery
+
+`LiteratureRelatedFinder` resolves an existing catalog reference through the Semantic Scholar
+Graph API and pages its references or citing papers. A title-only match requires explicit caller
+confirmation using an expiring, reference-bound token. The host injects the catalog, transport,
+and optional API-key reader; the finder never writes catalog records. UI selections use the
+existing Library candidate-review workflow. Provider full names remain literal creator names.
+
+Requests use a fixed HTTPS origin, a shared one-request-per-second admission schedule, bounded
+responses and timeouts. HTTP 429 respects a capped Retry-After cooldown. Resolution tokens are
+bounded in memory and expire after 15 minutes. Relationship pages contain at most 20 records and each next offset must advance. Returned content is attributed to Semantic
+Scholar; upstream coverage and content rights still apply. See the official
+[Graph API documentation](https://api.semanticscholar.org/api-docs/graph) and
+[API license](https://www.semanticscholar.org/product/api/license).
+
+## Manual publication checks
+
+`LiteraturePublicationChecker` checks an existing reference's exact, unambiguous DOI.
+`get` restores a saved result without making a network request; `check` explicitly queries
+Crossref's fixed HTTPS `/works/{doi}` endpoint. The `updated-by` reverse edges identify
+notices about that work. `update-to` points in the opposite direction and is not used.
+See [Crossref's production API guidance](https://www.crossref.org/labs/retraction-watch/).
+
+Results preserve each notice's DOI, raw type, source and available full date, including self
+updates, unknown types and reinstatement notices. They are observations of source metadata,
+not an inferred integrity verdict: an empty result does not prove that a work is unaffected.
+Crossref/Retraction Watch coverage, especially for corrections, concerns and reinstatements,
+is incomplete. The host must atomically recheck active item identity, metadata revision and
+DOI when saving a snapshot. A failed check never replaces the previous successful snapshot.
+Network responses are limited to 2 MiB and 100 notices, with a 15-second deadline and capped
+429 cooldown. Checks do not modify bibliographic metadata or screening decisions.

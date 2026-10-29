@@ -62,7 +62,7 @@ import {
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
 import { connectorDescription } from './connector-copy'
 import { ConnectorsNavIcon } from './connector-icons'
-import { SettingsIconAction } from './SettingsLayout'
+import { SettingsIconAction, type SettingsEditorLeaveState } from './SettingsLayout'
 import { SettingsPanelHeader } from './SettingsPanelHeader'
 import { SettingsSearchInput } from './SettingsSearchInput'
 import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
@@ -95,7 +95,7 @@ const literatureResourceRow = (item: LiteratureItemView): TagResourceRow => ({
   resourceId: item.id,
   title: item.item.title,
   subtitle:
-    [item.item.issuedYear, item.item.containerTitle].filter(Boolean).join(' · ') || undefined,
+    [item.item.issuedYear, item.item.containerTitle].filter(Boolean).join(' / ') || undefined,
   literatureReference: {
     itemId: item.id,
     metadataRevision: item.metadataRevision,
@@ -146,17 +146,22 @@ const colorLabel = (t: ReturnType<typeof useTranslation>['t'], key: TagColorKey)
 const TagForm = ({
   tag,
   onCancel,
-  onSaved
+  onSaved,
+  onLeaveStateChange
 }: {
   tag?: CustomTagView
   onCancel(): void
   onSaved(tagId: string): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const createTag = useTagStore((state) => state.create)
   const updateTag = useTagStore((state) => state.update)
   const loadTags = useTagStore((state) => state.load)
   const [baseVersion, setBaseVersion] = useState(tag?.updatedAt)
+  const [baselineDraft, setBaselineDraft] = useState<TagDraft>(
+    tag ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey } : EMPTY_DRAFT
+  )
   const [draft, setDraft] = useState<TagDraft>(
     tag ? { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey } : EMPTY_DRAFT
   )
@@ -165,6 +170,15 @@ const TagForm = ({
   const conflicted = tag !== undefined && tag.updatedAt !== baseVersion
   const LatestIcon = tag ? TAG_ICONS[tag.iconKey] : undefined
   const canSubmit = Boolean(draft.name.trim()) && !saving && !conflicted
+  const dirty =
+    draft.name !== baselineDraft.name ||
+    draft.iconKey !== baselineDraft.iconKey ||
+    draft.colorKey !== baselineDraft.colorKey
+
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty, busy: saving })
+  }, [dirty, saving, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
 
   const save = async (): Promise<void> => {
     if (!canSubmit) return
@@ -173,9 +187,12 @@ const TagForm = ({
     try {
       if (tag) {
         await updateTag({ id: tag.id, expectedUpdatedAt: baseVersion!, ...draft })
+        onLeaveStateChange?.(null)
         onSaved(tag.id)
       } else {
-        onSaved(await createTag(draft))
+        const tagId = await createTag(draft)
+        onLeaveStateChange?.(null)
+        onSaved(tagId)
       }
     } catch {
       setFormError(t('Could not save Tag.'))
@@ -209,7 +226,9 @@ const TagForm = ({
               label: t('Load latest version'),
               description: t('Replace your draft with the latest values.'),
               onClick: () => {
-                setDraft({ name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey })
+                const latestDraft = { name: tag.name, iconKey: tag.iconKey, colorKey: tag.colorKey }
+                setDraft(latestDraft)
+                setBaselineDraft(latestDraft)
                 setBaseVersion(tag.updatedAt)
                 setFormError(undefined)
               },
@@ -237,73 +256,77 @@ const TagForm = ({
                 {tag.name}
               </span>
               <span className="text-xs text-muted-foreground">
-                {t('Icon')}: {iconLabel(t, tag.iconKey)} · {t('Color')}:{' '}
+                {t('Icon')}: {iconLabel(t, tag.iconKey)} / {t('Color')}:{' '}
                 {colorLabel(t, tag.colorKey)}
               </span>
             </div>
           </ErrorNotice>
         </div>
       ) : null}
-      <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
-        <span>
-          {t('Name')}
-          <RequiredMark />
-        </span>
-        <Input
-          id="tag-form-name"
-          name="tag-name"
-          autoFocus
-          required
-          value={draft.name}
-          maxLength={64}
-          aria-invalid={formError ? true : undefined}
-          onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
-        />
-      </label>
-      <fieldset className="space-y-1.5">
-        <legend className="text-sm font-medium">{t('Icon')}</legend>
-        <div className="flex flex-wrap gap-2">
-          {TAG_ICON_KEYS.map((key) => {
-            const Icon = TAG_ICONS[key]
-            return (
-              <Button
+      <fieldset disabled={saving} className="contents">
+        <label className="space-y-1.5 text-sm font-medium" htmlFor="tag-form-name">
+          <span>
+            {t('Name')}
+            <RequiredMark />
+          </span>
+          <Input
+            id="tag-form-name"
+            name="tag-name"
+            autoFocus
+            required
+            value={draft.name}
+            maxLength={64}
+            aria-invalid={formError ? true : undefined}
+            onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))}
+          />
+        </label>
+        <fieldset className="space-y-1.5">
+          <legend className="text-sm font-medium">{t('Icon')}</legend>
+          <div className="flex flex-wrap gap-2">
+            {TAG_ICON_KEYS.map((key) => {
+              const Icon = TAG_ICONS[key]
+              return (
+                <Button
+                  key={key}
+                  type="button"
+                  variant="outline"
+                  size="icon-lg"
+                  aria-label={iconLabel(t, key)}
+                  aria-pressed={draft.iconKey === key}
+                  onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
+                  className={cn(
+                    'active:translate-y-px [@media(pointer:coarse)]:size-11',
+                    draft.iconKey === key &&
+                      'border-primary bg-primary/10 text-primary hover:bg-primary/10'
+                  )}
+                >
+                  <Icon className="size-4" aria-hidden="true" />
+                </Button>
+              )
+            })}
+          </div>
+        </fieldset>
+        <fieldset className="space-y-1.5">
+          <legend className="text-sm font-medium">{t('Color')}</legend>
+          <div className="flex flex-wrap gap-2">
+            {TAG_COLOR_KEYS.map((key) => (
+              <button
                 key={key}
                 type="button"
-                variant="outline"
-                size="icon-lg"
-                aria-label={iconLabel(t, key)}
-                aria-pressed={draft.iconKey === key}
-                onClick={() => setDraft((value) => ({ ...value, iconKey: key }))}
+                aria-label={colorLabel(t, key)}
+                aria-pressed={draft.colorKey === key}
+                onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
                 className={cn(
-                  'active:translate-y-px [@media(pointer:coarse)]:size-11',
-                  draft.iconKey === key &&
-                    'border-primary bg-primary/10 text-primary hover:bg-primary/10'
+                  'size-8 rounded-full border-2 outline-none transition-transform active:translate-y-px focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:size-11',
+                  TAG_COLORS[key],
+                  draft.colorKey === key
+                    ? 'ring-2 ring-primary ring-offset-2'
+                    : 'border-transparent'
                 )}
-              >
-                <Icon className="size-4" aria-hidden="true" />
-              </Button>
-            )
-          })}
-        </div>
-      </fieldset>
-      <fieldset className="space-y-1.5">
-        <legend className="text-sm font-medium">{t('Color')}</legend>
-        <div className="flex flex-wrap gap-2">
-          {TAG_COLOR_KEYS.map((key) => (
-            <button
-              key={key}
-              type="button"
-              aria-label={colorLabel(t, key)}
-              aria-pressed={draft.colorKey === key}
-              onClick={() => setDraft((value) => ({ ...value, colorKey: key }))}
-              className={cn(
-                'size-8 rounded-full border-2 outline-none transition-transform active:translate-y-px focus-visible:ring-3 focus-visible:ring-ring/50 motion-reduce:transition-none [@media(pointer:coarse)]:size-11',
-                TAG_COLORS[key],
-                draft.colorKey === key ? 'ring-2 ring-primary ring-offset-2' : 'border-transparent'
-              )}
-            />
-          ))}
-        </div>
+              />
+            ))}
+          </div>
+        </fieldset>
       </fieldset>
       {formError ? (
         <InlineNotice level="error" role="alert">
@@ -536,7 +559,7 @@ const TagsList = ({
         resourceId: connector.id,
         title: connector.displayName,
         subtitle: connector.description?.trim()
-          ? `${connector.name} · ${connector.description.trim()}`
+          ? `${connector.name} / ${connector.description.trim()}`
           : connector.name,
         accessibleTitle:
           connector.displayName === connector.name
@@ -1173,12 +1196,14 @@ const TagsPanel = ({
   view,
   onNavigate,
   onOpenResource,
-  onSelectedTagChange
+  onSelectedTagChange,
+  onLeaveStateChange
 }: {
   view: TagsView
   onNavigate(view: TagsView): void
   onOpenResource(reference: TagResourceRef): void
   onSelectedTagChange?(tagId: string): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }): React.JSX.Element => {
   const tags = useTagStore((state) => state.tags)
   const status = useTagStore((state) => state.status)
@@ -1198,6 +1223,7 @@ const TagsPanel = ({
       <TagForm
         onCancel={() => onNavigate({ kind: 'list' })}
         onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     )
   }
@@ -1209,6 +1235,7 @@ const TagsPanel = ({
         tag={editTag}
         onCancel={() => onNavigate({ kind: 'list', tagId: editTag.id })}
         onSaved={(tagId) => onNavigate({ kind: 'list', tagId })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     )
   }

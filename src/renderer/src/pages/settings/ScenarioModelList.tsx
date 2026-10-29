@@ -181,7 +181,7 @@ const ScenarioRowCluster = ({ summary }: { summary: ScenarioSummary }): React.JS
       return (
         <>
           <span className="truncate text-sm text-muted-foreground">
-            {summary.model} · {t('Unavailable')}
+            {summary.model} / {t('Unavailable')}
           </span>
           <FixedEffortBadge label={summary.effortLabel} />
           <ProviderTail

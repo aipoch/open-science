@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { groupPageLines } from './literature-pdf-caption-group.mjs'
 import { intersection, area } from './literature-pdf-page-geometry.mjs'
+import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 
 // A crop can cross the first line of the final panel description. An earlier
 // complete description and two aligned plot rows prove this narrow paragraph
@@ -167,6 +168,131 @@ export function completeNativePanelParagraphs(page, figure, captions, tables, to
     graphics.some((g) => g.rect[1] >= last.bottom && intersection(g.rect, extension) > 0) ||
     tokens.some(
       (t) => finite(t.rect) && intersection(t.rect, extension) > 0 && !allSource.includes(t)
+    )
+  )
+    return
+  return [crop[0], crop[1], crop[2], bottom]
+}
+
+// Final raster bounds can already contain both parent labels while omitting
+// their wrapped last line. This only completes those labels; it grants no
+// source ownership to the whole figure or permission to translate its text.
+export function completeNativePairedPanelTails(page, figure, captions, tables, tokens, context) {
+  const finite = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && area(r) > 0
+  const contains = (a, b) => b.every((v, i) => (i < 2 ? v >= a[i] - 0.02 : v <= a[i] + 0.02))
+  const crop = figure?.rect,
+    caption = figure?.caption
+  if (
+    !finite(crop) ||
+    !finite(caption?.rect) ||
+    caption.page !== page.pageNumber ||
+    page.invalidGraphicsBounds ||
+    !context
+  )
+    return
+  const inventory = nativePageTextPacketInventory(page, tokens, context, true)
+  if (!inventory) return
+  const records = inventory.records.filter((r) => r.r.str.trim()).sort((a, b) => a.index - b.index)
+  const parents = records.filter((r) => /^\([ab]\)\s+\S/u.test(r.r.str) && contains(crop, r.rect))
+  if (
+    parents.length !== 2 ||
+    !parents[0].r.str.startsWith('(a)') ||
+    !parents[1].r.str.startsWith('(b)') ||
+    parents[0].rect[2] >= parents[1].rect[0]
+  )
+    return
+  const owned = [...parents],
+    carriers = [],
+    tails = []
+  for (const parent of parents) {
+    const em = parent.r.height
+    const images = inventory.evidence.images.filter((image) => {
+      const graphic = page.graphicsBounds?.find(
+        (g) => g.kind === 'image' && g.operationIndex === image.operationIndex
+      )
+      const painted = graphic?.paintedNormalizedRect?.map(
+        (v, i) => v * (i % 2 ? page.height : page.width)
+      )
+      return (
+        finite(painted) &&
+        contains(crop, painted) &&
+        parent.rect[0] >= image.rect[0] - em &&
+        parent.rect[2] <= image.rect[2] + em &&
+        image.rect[3] <= parent.rect[3] &&
+        parent.rect[1] - image.rect[3] <= em * 1.5 &&
+        image.rect[3] > crop[1] &&
+        image.rect[2] > parent.rect[0]
+      )
+    })
+    if (!(em > 0) || images.length !== 1 || carriers.includes(images[0])) return
+    carriers.push(images[0])
+    const next = records[records.indexOf(parent) + 1]
+    if (!next || /^\([a-z]\)\s/u.test(next.r.str)) continue
+    const a = parent.r,
+      b = next.r
+    if (
+      /[.!?]$/u.test(a.str) ||
+      !/^\p{Ll}/u.test(b.str) ||
+      a.fontName !== b.fontName ||
+      a.transform.slice(0, 4).some((v, i) => Math.abs(v - b.transform[i]) > 0.0001) ||
+      Math.abs(parent.rect[0] - next.rect[0]) > 0.02 ||
+      next.rect[2] > parent.rect[2] + 0.02 ||
+      next.rect[1] - parent.rect[1] < em * 1.1 ||
+      next.rect[1] - parent.rect[1] > em * 1.5
+    )
+      return
+    // A third adjacent line is a longer paragraph, outside this two-line
+    // proof. Do not publish another partial crop by taking its first tail.
+    if (
+      records.some(
+        (r) =>
+          r !== next &&
+          r.r.fontName === b.fontName &&
+          Math.abs(r.rect[0] - next.rect[0]) <= 0.02 &&
+          r.rect[1] > next.rect[1] &&
+          r.rect[1] - next.rect[1] <= em * 1.5
+      )
+    )
+      return
+    owned.push(next)
+    tails.push(next)
+  }
+  if (
+    !tails.length ||
+    tails.every((r) => contains(crop, r.rect)) ||
+    carriers[0].rect[2] >= carriers[1].rect[0]
+  )
+    return
+  const labelBounds = owned.map((r) => {
+    const alias = tokens.find(
+      (t) =>
+        t.sourceItem?.pageNumber === page.pageNumber &&
+        t.sourceItem.index === r.index &&
+        t.sourceItem.text === r.r.str
+    )
+    return alias?.nativeLabelRect
+  })
+  if (labelBounds.some((r) => !finite(r))) return
+  const ownedGlyphs = new Set(owned.flatMap((r) => r.part.map((p) => p.g)))
+  const bottom = Math.max(
+    crop[3],
+    ...labelBounds.map((r) => r[3]),
+    ...owned.flatMap((r) => r.part.map((p) => p.g.ink[3]))
+  )
+  if (bottom <= crop[3] || labelBounds.some((r) => r[0] < crop[0] - 0.02 || r[2] > crop[2] + 0.02))
+    return
+  const extension = [crop[0], crop[3], crop[2], bottom]
+  if (
+    tables.some((r) => intersection(r, extension) > 0) ||
+    captions.some((c) => c.page === page.pageNumber && intersection(c.rect, extension) > 0) ||
+    inventory.glyphs.some((g) => !ownedGlyphs.has(g) && intersection(g.ink, extension) > 0) ||
+    (page.graphicsBounds ?? []).some(
+      (g) =>
+        intersection(
+          extension,
+          g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+        ) > 0
     )
   )
     return

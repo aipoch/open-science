@@ -6,13 +6,13 @@
 
 <p align="center">
   <a href="https://aipoch.com/open-science/download">
-    <img alt="下載" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
+    <img alt="下載 AIPOCH Open-Science" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
-    <img alt="版本" src="https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=flat&color=4dabf7">
+    <img alt="AIPOCH Open-Science 最新版本" src="https://img.shields.io/github/v/release/aipoch/open-science?label=Version&style=flat&color=4dabf7">
   </a>
   <a href="https://doi.org/10.5281/zenodo.22252246">
-    <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
+    <img alt="AIPOCH Open-Science Zenodo DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science arXiv 預印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **AIPOCH Open-Science v1.0.2** _（2026 年 10 月更新）_。這個修補版新增五個全新科學連接器，並加強 GDC 與 Ensembl 支援、答案卡片上誠實的單選/多選標籤、不再跳動的工作階段套件對話框、更快的工作階段載入，以及一批工作階段、Notebook 與憑證復原修正，此外也包含 Node 執行環境安全性修補程式與 CLI 首次發行至 npm。詳情請參閱 [1.0.2 發行說明](../../release-notes/1.0.2/zh-Hant.md)。下載仍以[最新已發佈版本](https://github.com/aipoch/open-science/releases/latest)為準。
+> 💡 **[AIPOCH Open-Science v1.0.5 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 10 月）_。這個修補版為科學連接器新增原生來源 API 與官方檔案探索功能，為文獻資料庫新增支援篩選與批次更新的閱讀狀態追蹤，將工作階段套件的匯出與匯入帶入 Web UI，並讓本機服務的存續時間取決於明確的保持執行要求。它還新增可顯示安裝程式的手動更新入口、設定中的安全性政策連結，並修正網路權限、OpenCode 2.x 相容性、macOS Notebook 工具探索，以及 Windows Notebook 啟動等待的問題。詳情請參閱 [v1.0.5 發行說明](../../release-notes/1.0.5/zh-Hant.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -69,6 +69,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 - [資料、權限與信任](#資料權限與信任)
 - [開發與封裝](#開發與封裝)
 - [常見問題](#常見問題)
+- [貢獻者](#貢獻者)
 - [參與專案](#參與專案)
 - [授權條款](#授權條款)
 
@@ -181,6 +182,8 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 
 將已完成的研究會話匯出為可攜式 `.science` 包，用於審閱、交接與封存。選擇要納入的對話分支、檔案版本、Notebook 記錄與驗證證據，然後將包匯入其他專案或電腦。
 
+桌面應用程式、本機 Web 工作階段與無介面 CLI 均支援匯出和匯入。遠端 Web 工作階段無法從任意本機路徑讀取或寫入 `.science` 包。
+
 **匯出 → 傳遞 → 檢查**
 
 1. 匯出已完成的會話，並選擇要納入的內容。
@@ -220,21 +223,41 @@ arXiv 預印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交於 2026 �
 
 ## 基準測試表現
 
-以下為 2026 年 8—10 月報告的歷史成績，並非針對 v1.0.0 進行的新評測。
+AstaBench、ASI-Bench 與 BiomniBench-DA 是三套相互獨立的基準，任務、資料集與評分方式不同，結果分別報告，不能直接橫向比較。
 
-來源報告: [9 月 29 日](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10 月 12 日](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (可能需要存取權限).
+### 🏆 AstaBench：LitQA2 Test 並列最高展示分數，90.67% Recall@30
 
-### 🏆 AstaBench LitQA2-FullText-Search：10/10全部命中
+AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75題 LitQA2-FullText-Search Test 題集的本機評測中取得 **90.67% Recall@30（68/75）**。在10月26日報告快照收錄的27筆結果中，這項本機 Test 成績與 Asta Paper Finder 和 Asta v0 **並列最高**，三者均為90.67%。該成績來自官方 Test 題集的本機評測，尚未作為官方榜單結果提交，也不代表取得官方榜單名次。
 
-AIPOCH Open-Science 使用 **DeepSeek v4-flash（max）**，結合文獻檢索專家與技能，在官方10題驗證集上取得 **100% recall@30**：每道題所需的目標論文均出現在回傳結果的前30篇中。該成績高於報告所列的3筆公開驗證集成績，較其中最高的 **80%高20個百分點**。本次報告記錄了3次本機重複測試，呈現系統在這組科研問題中的文獻定位能力。
+**ScholarQA-CS2：** AIPOCH Open-Science 使用 **deepseek-v4-flash**，在 **100題 Validation 題集**上取得 **0.9289/1的綜合得分**。報告所列的官方 Test 最高參考分數為 **0.9192**，來自不同題集，因此兩項結果不構成直接排名。
 
-![AIPOCH Open-Science 在 AstaBench LitQA2驗證集取得100% recall@30、10/10目標論文命中；圖中test與validation使用不同題目](../images/readme/astabench-litqa2.png)
+![AIPOCH Open-Science 的 AstaBench 概覽：LitQA2 Test 題集 Recall@30 為90.67%，ScholarQA-CS2 Validation 綜合得分為0.9289；本機結果與官方參考記錄分開呈現](../images/readme/astabench-literature-research-overview.jpg)
 
-圖中同時列出test與validation記錄，排序僅為數值對照；100%指論文檢索命中率，不是科學問答正確率。
+<details>
+<summary><strong>LitQA2-FullText-Search 結果對照</strong></summary>
 
-### 🏆 ASI-Bench B1–B4：四項測試成績均居所列對照首位
+![AIPOCH Open-Science 在75題 LitQA2 Test 題集上取得90.67% Recall@30，與報告快照中的最高展示分數並列；該結果並非官方榜單提交](../images/readme/astabench-litqa2-test.jpg)
 
-AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，結合領域專家與技能，在 ASI-Bench B1、B2、B3、B4 四項測試中分別取得 **79.35、56.11、59.67和59.46分**，均為報告所列對照中的最高展示分數。四個檔位依次考察**執行完整科研方案、組織研究流程、自主選擇方法，以及在干擾資訊下完成自主研究**，涵蓋從方法實作到自主科研執行的不同任務條件。
+該本機測試於2026年10月23日執行。圖中包含1筆 AIPOCH Open-Science 本機 Test 結果及26筆官方參考記錄。同分結果使用等長長條，列序不區分同分名次。AIPOCH 的本機成本未統一核算，因此該圖無法支持成本效率比較。
+
+先前使用 **DeepSeek v4-flash (max)** 的本機評測在另一組10題 Validation 題集上取得 **100% Recall@30（10/10）**，報告記錄了該結果的3次本機重複測試。Test 與 Validation 使用不同題目，分別報告。
+
+</details>
+
+<details>
+<summary><strong>ScholarQA-CS2 Validation 結果與 Test 參考</strong></summary>
+
+![AIPOCH Open-Science 在100題 ScholarQA-CS2 Validation 題集上取得0.9289的綜合得分；官方 Test 參考記錄使用不同題目，不構成直接比較排名](../images/readme/astabench-scholarqa-cs2.jpg)
+
+圖中將1筆本機 Validation 結果與41筆官方 Test 參考記錄分開呈現。報告正文另提及 `gpt-5.6-sol` 的一項 Validation 得分0.7905，但原始表格未列出該筆資料，也未說明題數。
+
+</details>
+
+Recall@30 衡量目標論文是否出現在提交結果的前30篇中，不是科學問答正確率。ScholarQA-CS2 得分衡量回答的綜合品質，不是全部答對的問題所占比例。
+
+### 🏆 ASI-Bench B1–B4：報告所列四項對照均為最高展示分數
+
+AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，結合領域專家與技能，在 ASI-Bench B1、B2、B3、B4 四項測試中分別取得 **79.35、56.11、59.67和59.46分**，均為報告所列對照中的最高展示分數。四種評測條件依次考察**執行完整科研方案、組織研究流程、自主選擇方法，以及在干擾資訊下完成自主研究**，涵蓋從方法實作到自主科研執行的不同任務條件。
 
 同模型、同名推理強度的本機 Codex 對照分別為74.78、56.09、58.12和55.45分，我方數值分別高 **4.57、0.02、1.55和4.01分**。B1、B2報告完成3次本機重複測試；B3、B4均為每輪60題、3次本機測試的平均值。
 
@@ -242,7 +265,7 @@ AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，結合領域專�
 
 本機測試採用seed31415；B1有效計分59項，1項因報告所述評分器異常排除。B3/B4採用v0.32.0及替代裁判。公開參照的任務實例、設定和裁判條件不同；B2的0.02分僅為數值差異。
 
-### 🏆 BiomniBench-DA Public 50：所列對照第1，79.05分
+### 🏆 BiomniBench-DA Public 50：所彙總對照中的最高展示分數，79.05分
 
 AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在標記為 BiomniBench-DA Public 50 的50項生物醫學資料分析任務內部評測中取得 **79.05分**，為所彙整對照中的最高展示分數。成績由 Gemini 3.1 Pro 裁判的 **81.04分**與 DeepSeek v4-pro 裁判的 **77.06分**等權平均得到，反映該設定在生物醫學資料分析過程中的綜合表現。詳見[評測報告](https://aipoch.com/blog/open-science-biomnibench-da)。
 
@@ -250,26 +273,30 @@ AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在標記為 BiomniBench
 
 該對照混合了不同裁判涵蓋範圍的記錄，不能視為統一裁判條件下的正式排名。
 
-**評測說明：**以上為自行報告的本機或內部成績，所列對照首位不代表官方榜單第一名，也不代表已透過統計檢定確認提升。
+**評測說明：**以上為 AIPOCH Open-Science 於2026年8—10月自行報告的本機或內部評測結果，使用所註明的資料集及劃分，未針對目前發佈版本重新執行。在官方 Test 題集上進行本機測試，不代表已提交官方榜單或取得榜單名次。參考數值來自歷史報告快照，並非即時排名；Validation 與 Test 結果不能直接比較。任務實例、模型設定、裁判涵蓋範圍與成本核算方式的差異，限制了跨系統比較。數值持平或存在差距，不代表具有統計顯著性的提升。
 
 ## 核心能力
 
 AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智能體執行、Python 與 R Notebook、科學資料連接器、帶溯源的不可變產物版本，以及受權限控制的人工參與機制。持續變動的目錄、封裝細節及新增選項應以已安裝應用程式和[最新版本說明](https://github.com/aipoch/open-science/releases/latest)為準。
 
-| 領域                           | 核心能力                                                                                                                                                                                                                                                              |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **科學技能**                   | 提供 **23 個內建技能**，並可從 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安裝 **525 個技能**，支援一鍵安裝與更新。可透過對話或已完成的工作建立技能，匯入技能套件及 GitHub 來源。市集投稿經審核後發布，本機匯入不會自動上架。      |
-| **連接器**                     | 透過 **36 個內建連接器** 存取科學資源，也可新增自訂本機或遠端 MCP 連接器。支援工具層級權限管理，以及連接器設定的匯入與匯出。                                                                                                                                          |
-| **專家與委派**                 | 從 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安裝 **10 個專家**，或建立和自訂個人專家，由主智能體委派工作。專家套件支援匯入與匯出；市集投稿經審核後發布，本機匯入不會自動上架。                                          |
-| **模型與智能體後端**           | 連接雲端模型、相容的自訂閘道，或使用 Claude、Codex 訂閱登入。支援 Claude Code、OpenCode、Codex 和 CodeBuddy 四種智能體後端，並提供模型連線檢查、圖片輸入及推理強度設定。                                                                                              |
-| **專案、會話與 `.science` 包** | 管理專案，支援會話置頂、訊息分支、側邊對話及歷史復原。將會話匯出為**可攜式 `.science` 包**，並匯入其他專案或電腦，攜帶對話分支、所選檔案版本、Notebook 記錄與驗證證據。匯入結果為唯讀歷史，不執行程式碼或還原憑證；側邊對話與書籤不隨包匯出，檔案範圍取決於匯出選擇。 |
-| **審閱智能體**                 | 按需開啟自動審閱，在獨立脈絡中核對智能體已完成回合的回覆、執行紀錄及相關檔案證據。產生附有依據的通過、警告或失敗檢查項目，發現問題後可觸發主智能體修正，並在有限回合內複審。保留審閱日誌與問題處理狀態，審閱範圍限於該回合可用紀錄。                                  |
-| **Python、R、Notebook 與 HPC** | 使用受管理環境或自訂直譯器，在本機執行 Python、R、Notebook 和 Shell 工作，支援背景執行與歷史記錄。也可透過 SSH 連接遠端主機或使用 Slurm 提交工作；遠端運算需具備下方 FAQ 所述的主機、軟體、資源與權限。                                                               |
-| **文獻庫**                     | 匯入與管理文獻及 PDF，支援合集、標籤、專案關聯、筆記及重複條目合併。尋找開放取用全文，閱讀 PDF 並擷取圖表，在會話中使用庫內文獻輔助分析。依所選引用樣式產生參考文獻，並匯出為 BibTeX 或 RIS。                                                                         |
-| **科學檔案與預覽**             | 單一上傳檔案最大 **10 GiB**，支援專案檔案管理及科學資料、PDF、Office 文件、圖片、程式碼和分子結構預覽。這是上傳大小限制，不代表模型可讀取全部內容；模型上下文、附件解析和預覽各有限制。大型檔案通常需要透過程式碼分塊讀取或分析。                                     |
-| **產物與溯源**                 | 保留不可變的產物版本及可用的產生程式碼、輸入、執行歷史、環境資訊與審閱證據。在桌面端，可使用完整執行配方、必要輸入及可用執行環境重播符合條件的版本，比較輸出並匯出驗證記錄。證據缺失可能阻止驗證，重播檢查不證明科學結論有效。                                        |
+| 領域                           | 核心能力                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **科學技能**                   | 提供 **24 個內建技能**，並可從 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安裝 **525 個技能**，支援一鍵安裝與更新。可透過對話或已完成的工作建立技能，匯入技能套件及 GitHub 來源，並將 GitHub 儲存庫存為匯入來源供後續重複使用；此操作不會安裝其中的技能。市集投稿經審核後發布，本機匯入不會自動上架。                                                                                                                                                                                                                                         |
+| **連接器**                     | 透過 **48 個內建連接器** 存取科學資源，也可新增自訂本機或遠端 MCP 連接器。部分內建資料來源預設關閉，需要按資料來源明確啟用。支援工具層級權限管理，以及連接器設定的匯入與匯出。                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **專家與委派**                 | 從 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安裝 **10 個專家**，或建立和自訂個人專家，由主智能體委派工作。專家套件支援匯入與匯出；市集投稿經審核後發布，本機匯入不會自動上架。                                                                                                                                                                                                                                                                                                                                                     |
+| **模型與智能體後端**           | 連接雲端模型、相容的自訂閘道，或使用 Claude、Codex 訂閱登入。支援 Claude Code、OpenCode、Codex 和 CodeBuddy 四種智能體後端，並提供模型連線檢查、圖片輸入及推理強度設定。                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **專案、會話與 `.science` 包** | 管理專案，支援會話置頂、訊息分支、側邊對話及歷史復原。將會話匯出為**可攜式 `.science` 包**，並匯入其他專案或電腦，攜帶對話分支、所選檔案版本、Notebook 記錄與驗證證據。匯入結果為唯讀歷史，不執行程式碼或還原憑證；側邊對話與書籤不隨包匯出，檔案範圍取決於匯出選擇。                                                                                                                                                                                                                                                                                                            |
+| **審閱智能體**                 | 按需開啟自動審閱，在獨立脈絡中核對智能體已完成回合的回覆、執行紀錄及相關檔案證據。產生附有依據的通過、警告或失敗檢查項目，發現問題後可觸發主智能體修正，並在有限回合內複審。保留審閱日誌與問題處理狀態，審閱範圍限於該回合可用紀錄。                                                                                                                                                                                                                                                                                                                                             |
+| **Python、R、Notebook 與 HPC** | 使用受管理環境或自訂直譯器，在本機執行 Python、R、Notebook 和 Shell 工作，支援背景執行與歷史記錄。也可透過 SSH 連接遠端主機或使用 Slurm 提交工作；遠端運算需具備下方 FAQ 所述的主機、軟體、資源與權限。                                                                                                                                                                                                                                                                                                                                                                          |
+| **文獻庫**                     | 匯入與管理文獻及 PDF，支援合集、標籤、專案關聯、筆記及重複條目合併。透過 Semantic Scholar 探索論文的參考文獻與引用文獻，下載和預覽補充附件，並拖放匯入 PDF 或書目檔案。尋找開放取用全文，閱讀 PDF 並擷取圖表，在會話中使用庫內文獻輔助分析。對於 DOI 有效的文獻，可手動透過 Crossref 檢查已知撤稿或更正；檢查會將 DOI 傳送給 Crossref，且涵蓋範圍並不完整，因此沒有提示不代表論文未受影響。產生參考文獻，將文獻匯出為 BibTeX 或 RIS，並將 Smart Screening 判定匯出為 CSV。 手動設定未讀、閱讀中或已讀狀態，支援批次設定所選文獻並依狀態篩選。 可在現有文獻搜尋框中搜尋個人備註。 |
+| **科學檔案與預覽**             | 單一上傳檔案最大 **10 GiB**，支援專案檔案管理及科學資料、PDF、Office 文件、圖片、程式碼和分子結構預覽。這是上傳大小限制，不代表模型可讀取全部內容；模型上下文、附件解析和預覽各有限制。大型檔案通常需要透過程式碼分塊讀取或分析。                                                                                                                                                                                                                                                                                                                                                |
+| **產物與溯源**                 | 保留不可變的產物版本及可用的產生程式碼、輸入、執行歷史、環境資訊與審閱證據。可從已授權資料夾匯入產物；AIPOCH Open-Science 會將每個匯入檔案複製到受管理的產物儲存空間。在桌面端，可使用完整執行配方、必要輸入及可用執行環境重播符合條件的版本，比較輸出並匯出驗證記錄。證據缺失可能阻止驗證，重播檢查不證明科學結論有效。                                                                                                                                                                                                                                                         |
+
+可從同一部電腦上執行的 Zotero 10 或更新版本匯入文獻記錄、標籤、合集和來源連結，也可選擇複製本機 PDF 附件。匯入僅為單向，不會修改 Zotero。
 
 支援持久化 PDF 註記與文件筆記。設定篩選模型後，智慧合集可依納入／排除標準評估文獻；AI 判斷與人工判斷分開記錄，用於輔助人工審閱。
+
+翻譯版 PDF 可選擇將正文和圖說重排為單欄、內容優先的版面，同時保留原始圖像、表格、公式和參考文獻，並提供來源檔與輸出檔的頁碼對應，方便比較。新安裝中，Notebook 與 Shell 資料夾限制預設開啟，將這些執行環境限制在工作區、已核准的資料夾和工具所需檔案內；此設定不控制智能體原生工具或遠端電腦。
 
 桌面端也可將產物溯源匯出為 RO-Crate 1.1。與版本綁定的環境包只有在擷取內容完整且相容於目標平台時，才能用於建立受管理環境；這不等於完整電腦備份。
 
@@ -343,7 +370,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 原始碼開發需要 Node.js 24。已發布的 npm 套件與本機建置的獨立 tarball 均需要 Node.js >=22.13.0。Release 壓縮檔、Homebrew Formula 與桌面命令啟動器均內含執行環境。
 
-桌面與瀏覽器共用同一服務。結束桌面只會停止它自行啟動的後端；若連接的是 CLI 啟動的服務，則只中斷桌面連線。
+桌面與瀏覽器共用同一服務。在 v1.0.4 中，結束桌面只會停止它自行啟動的後端；若連接的是 CLI 啟動的服務，則只中斷桌面連線。在目前的 `main`（原始碼建置）中，應用程式連線及 `open-science start` 的明確保持執行要求會維持服務運作；結束最後一個應用程式時，只有沒有明確的保持執行要求，服務才會停止。
 
 [CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
@@ -359,6 +386,8 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 - [CLI 指南](../../packages/open-science/CLI.md) — 安裝、服務生命週期、任務自動化、產物、輸出格式與結束代碼
 - [SDK 套件概覽](../../packages/open-science/README.md) — Node.js 快速開始與套件進入點
+
+獨立 CLI 可透過 `open-science mcp` 向外部 MCP 用戶端提供研究工具。請先啟動並完成所選設定檔對應服務的驗證。介接程式沿用該設定檔的現有權限，並不是獨立沙箱或唯讀檢視，因此已連線的用戶端可以寫入變更並產生模型費用。它不提供任意 Shell 或 RPC 存取、憑證管理、檔案匯入或匯出、下載至指定路徑，也不提供遠端 HTTP MCP 端點。
 
 ## 常見問題
 
@@ -405,6 +434,14 @@ open-science artifacts download <artifact-id> --output ./report.md
 ### 能否修改較早的請求而不失去後續對話？
 
 答：可以。編輯已完成的使用者訊息並重新傳送，從該位置新增分支。原有後續輪次仍可使用，訊息旁的修訂箭頭可在不同路徑間切換。
+
+## 貢獻者
+
+感謝所有為 AIPOCH Open-Science 貢獻程式碼、文件、翻譯、錯誤回報及社群支援的朋友。
+
+[查看 GitHub 貢獻者](https://github.com/aipoch/open-science/graphs/contributors)
+
+[![AIPOCH Open-Science 貢獻者](https://contrib.rocks/image?repo=aipoch/open-science)](https://github.com/aipoch/open-science/graphs/contributors)
 
 ## 參與專案
 

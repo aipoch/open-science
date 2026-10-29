@@ -41,6 +41,21 @@ const suites = [
   ['e2e_workspace_windows', 'test:e2e:workspace', 3]
 ] as const
 
+it.each([
+  ['PR mainlines', pr.jobs.windows_e2e, 'Run mainline journeys'],
+  ['scheduled regression', workflow.jobs.windows_e2e_setup, 'Pack E2E setup']
+])('builds the candidate native sandbox after staging dependencies for %s', (_, job, consumer) => {
+  const build = step(job, 'Build Windows sandbox native host')
+  expect(build).toEqual({
+    name: 'Build Windows sandbox native host',
+    run: 'node packages/notebook-network-sandbox/vendor/windows/build.mjs x64'
+  })
+  expect(job.steps.indexOf(build)).toBeGreaterThan(
+    job.steps.indexOf(step(job, 'Build Electron application'))
+  )
+  expect(job.steps.indexOf(build)).toBeLessThan(job.steps.indexOf(step(job, consumer)))
+})
+
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
   expect(workflow.on.schedule).toEqual([{ cron: '17 18 * * *' }])
   expect(workflow.on.workflow_dispatch).toEqual({
@@ -60,7 +75,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
       'fail-fast': false,
       matrix: {
         shard:
-          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3]') }}"
+          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}"
       }
     }
   })
@@ -97,7 +112,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
     )
     expect(run.run).toContain(`npm run ${command} --`)
     expect(run.run).toContain('--workers=1')
-    expect(run.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(run.run).toContain('--shard=${{ matrix.shard }}/6')
     expect(run.run).toContain('--fail-on-flaky-tests')
     expect(run.run).not.toContain('--grep')
     expect(run.run).not.toContain('--pass-with-no-tests')
@@ -115,10 +130,10 @@ it('budgets complete serial journeys and teardown within the shard job', () => {
     return Number(run.match(/--global-timeout=(\d+)/)![1])
   })
   expect(budgets).toEqual([420000, 900000, 900000])
-  // Leave time for restore, Chromium installation, uploads and teardown beyond suite budgets.
+  // Include the one permitted browser resource-exhaustion retry, then reserve setup/teardown.
   expect(
-    execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0)
-  ).toBeGreaterThanOrEqual(180000)
+    execution['timeout-minutes']! * 60000 - budgets.reduce((a, b) => a + b, 0) - budgets[0]
+  ).toBeGreaterThanOrEqual(600000)
 })
 
 it('fails a scheduled shard when setup or any required suite does not succeed', () => {
@@ -155,7 +170,7 @@ it('isolates manual workspace diagnostics while retaining full scheduled coverag
     for (const pattern of ['', 'finds offscreen cells']) {
       const focused = event === 'workflow_dispatch' && pattern !== ''
       expect(evaluate(String(execution.strategy!.matrix.shard), event, pattern)).toEqual(
-        focused ? [1] : [1, 2, 3]
+        focused ? [1] : [1, 2, 3, 4, 5, 6]
       )
       expect(evaluate(diagnostic.if!, event, pattern)).toBe(focused)
       expect(evaluate(diagnosticGate.if!, event, pattern)).toBe(focused)

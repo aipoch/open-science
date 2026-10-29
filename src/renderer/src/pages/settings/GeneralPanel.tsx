@@ -264,9 +264,6 @@ const GeneralPanel = (): React.JSX.Element => {
       <SettingsSection
         data-settings-anchor="general.appearance"
         title={t('Appearance')}
-        description={t(
-          'Choose how the app looks and reads. System follows your device; the other choices stay fixed. Your selection is remembered on this device.'
-        )}
         aria-label={t('Appearance')}
       >
         <SettingsRow

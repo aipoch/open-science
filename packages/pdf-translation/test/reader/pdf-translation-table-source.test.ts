@@ -12,6 +12,156 @@ import { bindPdfTranslation, createPdfTranslationSource } from '../../src/reader
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
 
+describe('unreliable mathematical source witnesses', () => {
+  const fixture = () => {
+    const f = setup()
+    f.items[0].str = 'b'
+    f.items[1].str = 'β'
+    f.items.push({ ...f.items[0], str: 'Min.', transform: [10, 0, 0, 10, 70, 80] })
+    f.context.extraction = {
+      ...f.extraction,
+      source: createPdfTranslationSource({
+        ...f.extraction.source,
+        units: [
+          {
+            ...f.extraction.source.units[0],
+            source: 'b β',
+            fragments: [
+              {
+                ...f.extraction.source.units[0].fragments[0],
+                items: [
+                  { index: 0, text: 'b' },
+                  { index: 1, text: 'β' }
+                ]
+              }
+            ]
+          },
+          f.extraction.source.units[1],
+          {
+            id: 'label',
+            source: 'Min.',
+            fragments: [{ pageNumber: 1, rect: f.rect(0.7), items: [{ index: 3, text: 'Min.' }] }]
+          }
+        ]
+      }),
+      coverage: { ...f.extraction.coverage, textItemCount: 4, includedItemCount: 4 }
+    }
+    const table = f.cached.elements[0].table!
+    table.columnCount = 1
+    table.cells = [
+      {
+        ...table.cells[0],
+        text: 'Min. βb',
+        sourceItems: [
+          { pageNumber: 1, index: 0, text: 'b' },
+          { pageNumber: 1, index: 1, text: 'β' },
+          { pageNumber: 1, index: 3, text: 'Min.' }
+        ],
+        regions: [...table.cells.flatMap((c) => c.regions), { page: 1, ...f.rect(0.7) }]
+      }
+    ]
+    table.issues = [{ code: 'native-table-structure-ambiguous', detail: 'Distorted accent' }]
+    f.cached.elements[0].regions[0].width = 0.8
+    table.unreliableMathSourceItems = structuredClone(table.cells[0].sourceItems!.slice(0, 2))
+    return f
+  }
+  const independent = (f: ReturnType<typeof fixture>) => {
+    const element = structuredClone(f.cached.elements[0])
+    element.id = 'independent'
+    element.regions = [{ page: 1, ...f.rect(0.1, 0.6) }]
+    element.table = {
+      rowCount: 1,
+      columnCount: 1,
+      issues: [],
+      unassignedText: [],
+      cells: [
+        {
+          row: 0,
+          column: 0,
+          rowSpan: 1,
+          columnSpan: 1,
+          text: 'Prose',
+          sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }],
+          regions: structuredClone(element.regions)
+        }
+      ]
+    }
+    f.cached.elements.push(element)
+    return element
+  }
+  it.each(['alone', 'independent', 'shared-owner', 'late-fallback'] as const)(
+    'protects the complete affected owner while preserving literal, identity and independent mapping: %s',
+    async (mode) => {
+      const f = fixture()
+      if (mode === 'independent' || mode === 'late-fallback') {
+        const other = independent(f)
+        if (mode === 'late-fallback') other.table!.cells[0].regions[0].x += 0.01
+      }
+      if (mode === 'shared-owner') {
+        const shared = structuredClone(f.cached.elements[0])
+        shared.id = 'shared'
+        shared.table!.issues = []
+        delete shared.table!.unreliableMathSourceItems
+        shared.table!.cells[0].sourceItems = [{ pageNumber: 1, index: 1, text: 'β' }]
+        shared.table!.cells[0].regions = [{ page: 1, ...f.rect(0.4) }]
+        shared.table!.cells[0].text = 'β'
+        f.cached.elements.push(shared)
+      }
+      const before = structuredClone(f.cached),
+        source = f.context.extraction.source
+      expect(() => parsePdfStructureResult(f.cached, f.cached)).not.toThrow()
+      const result = await applyCachedPdfTableSources(f.context)
+      expect(result.source.units.find((u) => u.id === 'group')).toEqual({
+        ...source.units[0],
+        sourceOnly: true
+      })
+      expect(result.source.units.find((u) => u.id === 'label')).toEqual(source.units[2])
+      if (mode === 'independent') {
+        expect(
+          result.source.units.some((u) => u.id.startsWith('table-source:') && u.source === 'Prose')
+        ).toBe(true)
+      } else expect(result.source.units.find((u) => u.id === 'prose')).toEqual(source.units[1])
+      expect(
+        result.source.units.filter((u) => u.id.includes(':table-1:') || u.id.includes(':shared:'))
+      ).toEqual([])
+      expect(result.source.originalRegions).toBeUndefined()
+      expect(result.coverage.warnings).toContainEqual({
+        unitId: 'group',
+        reasons: ['table-layout', 'table-structure-unreliable']
+      })
+      expect(f.cached).toEqual(before)
+    }
+  )
+  it('keeps legacy ordinary conflict eligibility without an explicit mathematical witness', async () => {
+    const f = fixture()
+    delete f.cached.elements[0].table!.unreliableMathSourceItems
+    const result = await applyCachedPdfTableSources(f.context)
+    expect(result.source).toEqual(f.context.extraction.source)
+  })
+  it.each(['member', 'page', 'literal', 'native', 'geometry', 'whole-owner'] as const)(
+    'does not protect or modify source on an invalid mathematical proof: %s',
+    async (mutation) => {
+      const f = fixture(),
+        table = f.cached.elements[0].table!
+      const origins = table.unreliableMathSourceItems!
+      if (mutation === 'member') origins[0].index = 2
+      if (mutation === 'page') origins[0].pageNumber = 2
+      if (mutation === 'literal') origins[0].text = 'other'
+      if (mutation === 'native') f.items[0].str = 'other'
+      if (mutation === 'geometry') table.cells[0].regions[0].x += 0.01
+      if (mutation === 'whole-owner') {
+        table.cells[0].sourceItems = [origins[0]]
+        table.cells[0].regions = [table.cells[0].regions[0]]
+        origins.splice(1)
+        f.items[1].str = 'other'
+      }
+      const before = structuredClone(f.cached)
+      expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+      expect(f.cached).toEqual(before)
+    }
+  )
+})
+
 function setup() {
   const sourceIdentity = { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
   const item = (str: string, x: number, y = 80) => ({
@@ -158,6 +308,89 @@ function incompleteComponentSetup() {
 }
 
 describe('transactional fallback for incomplete whole-unit allocations', () => {
+  it('retains clipped native owners and linked tables without disabling an independent table', async () => {
+    const f = setup()
+    f.items[0].transform[4] = 90
+    f.page.getViewport.mockReturnValue({
+      width: 100,
+      height: 100,
+      transform: [1, 0, 0, -1, 0, 100],
+      convertToViewportPoint: (x: number, y: number) => [x, 100 - y]
+    })
+    f.page.getTextContent.mockResolvedValue({
+      items: f.items,
+      styles: { f: { vertical: false, ascent: 0.8, descent: -0.2 } }
+    })
+    const source = createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          id: 'clip',
+          source: 'Row',
+          sourceOnly: true,
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.9, y: 0.12, width: 1 - 0.9, height: 0.12 + 0.1 - 0.12 },
+              unclippedRect: { x: 0.9, y: 0.12, width: 0.2, height: 0.1 },
+              items: [{ index: 0, text: 'Row' }]
+            }
+          ]
+        },
+        {
+          id: 'value',
+          source: '10',
+          fragments: [{ pageNumber: 1, rect: f.rect(0.4), items: [{ index: 1, text: '10' }] }]
+        },
+        f.extraction.source.units[1]
+      ]
+    })
+    f.context.extraction = {
+      ...f.extraction,
+      source,
+      coverage: {
+        ...f.extraction.coverage,
+        warnings: [{ unitId: 'clip', reasons: ['partially-outside-page'] }]
+      }
+    }
+    const linked = structuredClone(f.cached.elements[0])
+    linked.id = 'linked'
+    linked.table!.columnCount = 1
+    linked.table!.cells = [{ ...linked.table!.cells[1], column: 0 }]
+    const independent = structuredClone(linked)
+    independent.id = 'independent'
+    independent.table!.cells = [
+      {
+        ...independent.table!.cells[0],
+        text: 'Prose',
+        regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+        sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+      }
+    ]
+    f.cached.elements.push(linked, independent)
+    const actual = await applyCachedPdfTableSources(f.context)
+    expect(actual.source.units.find((u) => u.id === 'clip')).toEqual(source.units[0])
+    expect(actual.source.units.find((u) => u.id === 'value')).toEqual(source.units[1])
+    expect(actual.coverage.warnings).toContainEqual({
+      unitId: 'clip',
+      reasons: ['partially-outside-page', 'table-structure-unreliable']
+    })
+    expect(actual.coverage.warnings).toContainEqual({
+      unitId: 'value',
+      reasons: ['table-structure-unreliable']
+    })
+    expect(actual.source.units.some((u) => u.id === 'prose')).toBe(false)
+    expect(actual.source.units.find((u) => u.source === 'Prose')?.sourceOnly).toBe(true)
+    f.cached.elements.push({
+      id: 'figure',
+      kind: 'figure',
+      issues: [],
+      regions: [{ page: 1, x: 0.9, y: 0.1, width: 0.1, height: 0.2 }],
+      sourceItems: [{ pageNumber: 1, index: 0, text: 'Row' }]
+    })
+    const figureApplied = await applyCachedPdfFigureSources({ ...f.context, extraction: actual })
+    expect(figureApplied.source.units.find((u) => u.id === 'clip')).toEqual(source.units[0])
+  })
   it.each([false, true])(
     'retains an unmeasured multi-region shared source without disabling independent tables, reverse: %s',
     async (reverse) => {
@@ -543,6 +776,10 @@ describe('transactional fallback for incomplete whole-unit allocations', () => {
 describe('cached PDF table source ownership', () => {
   it('preserves page-only font advisories through actual table replacements and figure ownership', async () => {
     const f = setup()
+    f.page.getTextContent.mockResolvedValue({
+      items: f.items,
+      styles: { f: { vertical: false, ascent: 0.8, descent: -0.2 } }
+    })
     const prior = await applyCachedPdfTableSources(f.context)
     const diagnostics = [{ pageNumber: 1, reason: 'unreliable-font-unicode' as const }]
     f.context.extraction = {
@@ -915,9 +1152,18 @@ describe('cached PDF table source ownership', () => {
     'outside-unit',
     'missing-caption',
     'uncertain-figure',
-    'unsafe-figure'
+    'unsafe-figure',
+    'generic-strip',
+    'uncertain-group',
+    'horizontal-missing-proof',
+    'horizontal-partial-unit',
+    'horizontal-uncertain'
   ])('keeps prose when figure ownership is not complete: %s', async (variant) => {
     const fixture = setup()
+    fixture.page.getTextContent.mockResolvedValue({
+      items: fixture.items,
+      styles: { f: { vertical: false, ascent: 0.8, descent: -0.2 } }
+    })
     const figure: PdfStructureResult['elements'][number] = {
       id: 'figure-1',
       kind: 'figure',
@@ -933,6 +1179,15 @@ describe('cached PDF table source ownership', () => {
       ]
     }
     fixture.cached.elements = [figure]
+    if (variant.startsWith('horizontal-')) {
+      figure.issues = [
+        { code: 'native-raster-horizontal-array', detail: 'native-raster-horizontal-array' }
+      ]
+      if (variant === 'horizontal-missing-proof') delete figure.sourceItems
+      if (variant === 'horizontal-partial-unit') figure.sourceItems!.pop()
+      if (variant === 'horizontal-uncertain')
+        figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
+    }
     if (variant === 'missing-proof') delete figure.sourceItems
     if (variant === 'partial-unit') figure.sourceItems!.pop()
     if (variant === 'wrong-literal') figure.sourceItems![0].text = 'Different'
@@ -954,6 +1209,13 @@ describe('cached PDF table source ownership', () => {
       figure.issues.push({ code: 'uncertain', detail: 'Unproved' })
     if (variant === 'unsafe-figure')
       figure.issues.push({ code: 'text-dominant-graphics', detail: 'text-dominant-graphics' })
+    if (variant === 'generic-strip')
+      figure.issues = [{ code: 'native-raster-vector-strip', detail: 'native-raster-vector-strip' }]
+    if (variant === 'uncertain-group')
+      figure.issues = [
+        { code: 'native-disjoint-mixed-group', detail: 'native-disjoint-mixed-group' },
+        { code: 'uncertain', detail: 'Unproved' }
+      ]
     expect(await applyCachedPdfFigureSources(fixture.context)).toBe(fixture.extraction)
     expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
   })
@@ -966,17 +1228,26 @@ describe('cached PDF table source ownership', () => {
     await expect(applyCachedPdfFigureSources(fixture.context)).rejects.toThrow()
   })
 
-  it.each([false, true])(
+  it.each([
+    '',
+    'native-raster-composite-grid',
+    'native-disjoint-mixed-group',
+    'native-raster-horizontal-array',
+    'native-raster-side-by-side',
+    'native-raster-quad'
+  ])(
     'retains proved figure text with informational recovery %s while keeping prose and captions eligible',
     async (informational) => {
       const fixture = setup()
+      fixture.page.getTextContent.mockResolvedValue({
+        items: fixture.items,
+        styles: { f: { vertical: false, ascent: 1.2, descent: -1.2 } }
+      })
       fixture.cached.elements = [
         {
           id: 'figure-1',
           kind: 'figure',
-          issues: informational
-            ? [{ code: 'native-raster-composite-grid', detail: 'native-raster-composite-grid' }]
-            : [],
+          issues: informational ? [{ code: informational, detail: informational }] : [],
           regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
           caption: {
             text: 'Figure 1. Measured signals.',
@@ -997,6 +1268,46 @@ describe('cached PDF table source ownership', () => {
       expect(fixture.extraction.source.units[0].sourceOnly).toBeUndefined()
       expect(fixture.document.destroy).not.toHaveBeenCalled()
       expect(fixture.page.cleanup).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['missing', 'nonfinite', 'zero-ascent', 'positive-descent'] as const)(
+    'does not substitute guessed figure font metrics when native metrics are %s',
+    async (fault) => {
+      for (const mechanism of [
+        'native-raster-composite-grid',
+        'native-disjoint-mixed-group',
+        'native-raster-horizontal-array',
+        'native-raster-side-by-side',
+        'native-raster-quad'
+      ]) {
+        const f = setup()
+        f.cached.elements = [
+          {
+            id: 'figure',
+            kind: 'figure',
+            issues: [{ code: mechanism, detail: mechanism }],
+            regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
+            caption: {
+              text: 'Figure 1. Complete measurements.',
+              regions: [{ page: 1, x: 0.05, y: 0.4, width: 0.7, height: 0.1 }]
+            },
+            sourceItems: [
+              { pageNumber: 1, index: 0, text: 'Row' },
+              { pageNumber: 1, index: 1, text: '10' }
+            ]
+          }
+        ]
+        const metrics = { vertical: false, ascent: 0.8, descent: -0.2 }
+        if (fault === 'nonfinite') metrics.ascent = Number.NaN
+        if (fault === 'zero-ascent') metrics.ascent = 0
+        if (fault === 'positive-descent') metrics.descent = 0.2
+        f.page.getTextContent.mockResolvedValue({
+          items: f.items,
+          styles: fault === 'missing' ? {} : { f: metrics }
+        })
+        expect(await applyCachedPdfFigureSources(f.context)).toBe(f.extraction)
+      }
     }
   )
 
@@ -1078,6 +1389,10 @@ describe('cached PDF table source ownership', () => {
 
   it('keeps cached ownership when graphic regions are added before choosing content-first', async () => {
     const f = setup()
+    f.page.getTextContent.mockResolvedValue({
+      items: f.items,
+      styles: { f: { vertical: false, ascent: 0.8, descent: -0.2 } }
+    })
     f.cached.elements = [
       {
         id: 'figure-1',
@@ -2436,3 +2751,448 @@ it.each([false, true])(
     expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
   }
 )
+
+function sourceFreePageSetup() {
+  const f = setup()
+  const second = structuredClone(f.cached)
+  second.extractionId = 'cached-2'
+  second.requestedPages = [2]
+  second.processedPages = [2]
+  second.pages[0].page = 2
+  second.elements[0].regions[0].page = 2
+  for (const cell of second.elements[0].table!.cells) {
+    cell.regions[0].page = 2
+    delete cell.sourceItems
+  }
+  f.cached.pageCount = second.pageCount = f.document.numPages = 2
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      pages: [
+        { width: 100, height: 100 },
+        { width: 100, height: 100 }
+      ],
+      units: [
+        ...f.extraction.source.units,
+        ...f.extraction.source.units.map((unit) => ({
+          ...unit,
+          id: `second-${unit.id}`,
+          fragments: unit.fragments.map((fragment) => ({ ...fragment, pageNumber: 2 }))
+        }))
+      ]
+    }),
+    coverage: {
+      ...f.extraction.coverage,
+      pageCount: 2,
+      textItemCount: 6,
+      includedItemCount: 6
+    }
+  }
+  f.readCached.mockImplementation(async ({ page }: { page: number }) =>
+    page === 1 ? f.cached : second
+  )
+  return { ...f, second }
+}
+
+describe('source-free worker page isolation', () => {
+  it('does not turn overlapping read-only context into shared table ownership', async () => {
+    const f = sourceFreePageSetup()
+    f.cached.auxiliaryPages = [2]
+    f.cached.pages.push({ page: 2, width: 100, height: 100, rotation: 0 })
+    f.second.auxiliaryPages = [1]
+    f.second.pages.unshift({ page: 1, width: 100, height: 100, rotation: 0 })
+    const result = await applyCachedPdfTableSources(f.context)
+    expect(
+      result.source.units
+        .filter((unit) => unit.id.startsWith('table-source:'))
+        .map((unit) => unit.source)
+    ).toEqual(['Row', '10'])
+    expect(result.source.units.filter((unit) => unit.id.startsWith('second-'))).toEqual(
+      f.context.extraction.source.units.filter((unit) => unit.id.startsWith('second-'))
+    )
+  })
+
+  it('retains a complete overlapping worker batch when one of its pages is source-free', async () => {
+    const f = sourceFreePageSetup()
+    f.cached.requestedPages = [1, 2]
+    f.cached.processedPages = [1, 2]
+    f.cached.pages.push({ page: 2, width: 100, height: 100, rotation: 0 })
+    expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+  })
+
+  it('retains a source-free page while applying an independently verified table on another page', async () => {
+    const f = sourceFreePageSetup()
+    const result = await applyCachedPdfTableSources(f.context)
+    expect(
+      result.source.units
+        .filter((unit) => unit.id.startsWith('table-source:'))
+        .map((unit) => unit.source)
+    ).toEqual(['Row', '10'])
+    expect(result.source.units.filter((unit) => unit.id.startsWith('second-'))).toEqual(
+      f.context.extraction.source.units.filter((unit) => unit.id.startsWith('second-'))
+    )
+    expect({ ...result.coverage, warnings: [] }).toEqual({
+      ...f.context.extraction.coverage,
+      warnings: []
+    })
+    expect(result.coverage.warnings).toEqual(
+      result.source.units
+        .filter((unit) => unit.id.startsWith('table-source:'))
+        .map((unit) => ({ unitId: unit.id, reasons: ['table-layout'] }))
+    )
+  })
+
+  it('retains all pages connected by one original unit', async () => {
+    const f = sourceFreePageSetup()
+    const units = f.context.extraction.source.units
+    f.context.extraction = {
+      ...f.context.extraction,
+      source: createPdfTranslationSource({
+        ...f.context.extraction.source,
+        units: [
+          {
+            ...units[0],
+            source: 'Row 10 Row 10',
+            fragments: [...units[0].fragments, ...units[2].fragments]
+          },
+          units[1],
+          units[3]
+        ]
+      })
+    }
+    expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+  })
+
+  it('still rejects a false native claim on the independent page', async () => {
+    const f = sourceFreePageSetup()
+    f.cached.elements[0].table!.cells[0].sourceItems![0].text = 'Foreign'
+    expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+  })
+
+  it('keeps the transactional refusal for a partially missing proof', async () => {
+    const f = sourceFreePageSetup()
+    f.second.elements[0].table!.cells[0].sourceItems = [{ pageNumber: 2, index: 0, text: 'Row' }]
+    expect(await applyCachedPdfTableSources(f.context)).toBe(f.context.extraction)
+  })
+})
+
+function canonicalAccentSetup(kind: string) {
+  const f = setup(),
+    canonical = kind === 'native-order' ? '˜A' : 'A˜'
+  Object.assign(f.items[0], {
+    str: '˜',
+    width: 10,
+    transform: [10, 0, 0, 10, 15, kind === 'baseline-mark' ? 80 : 83]
+  })
+  Object.assign(f.items[1], { str: 'A', width: 20, transform: [10, 0, 0, 10, 10, 80] })
+  f.page.getTextContent.mockResolvedValue({
+    items: f.items,
+    styles: { f: { ascent: 0.8, descent: -0.2, vertical: false } }
+  })
+  const origins = [
+    { pageNumber: 1, index: 0, text: '˜' },
+    { pageNumber: 1, index: 1, text: 'A' }
+  ]
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          ...f.extraction.source.units[0],
+          source: canonical,
+          ...(kind !== 'ordinary' ? { sourceOnly: true } : {}),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.07, width: 0.2, height: 0.13 },
+              items: origins.map(({ index, text }) => ({ index, text }))
+            }
+          ]
+        },
+        f.extraction.source.units[1]
+      ]
+    })
+  }
+  const element = f.cached.elements[0],
+    table = element.table!
+  element.regions = [{ page: 1, x: 0.1, y: 0.07, width: 0.2, height: 0.13 }]
+  table.columnCount = 1
+  table.cells = [
+    {
+      ...table.cells[0],
+      text: canonical,
+      sourceItems: origins,
+      regions: [
+        { page: 1, x: 0.15, y: kind === 'baseline-mark' ? 0.1 : 0.07, width: 0.1, height: 0.1 },
+        { page: 1, x: 0.1, y: 0.1, width: 0.2, height: 0.1 }
+      ]
+    }
+  ]
+  return f
+}
+it.each(['canonical', 'ordinary', 'native-order', 'baseline-mark'])(
+  'preserves only a completely witnessed canonical accent order: %s',
+  async (kind) => {
+    const f = canonicalAccentSetup(kind),
+      before = structuredClone(f.cached),
+      result = await applyCachedPdfTableSources(f.context)
+    if (kind === 'canonical') {
+      expect(result.source.units).toEqual(f.context.extraction.source.units)
+      expect(result.coverage.warnings).toContainEqual({
+        unitId: 'group',
+        reasons: ['table-layout', 'table-structure-unreliable']
+      })
+    } else {
+      expect(
+        result.source.units.filter((u) => u.id.startsWith('table-source:')).map((u) => u.source)
+      ).toEqual(['˜ A'])
+      expect(result.coverage.warnings.flatMap((w) => w.reasons)).not.toContain(
+        'table-structure-unreliable'
+      )
+    }
+    expect(f.cached).toEqual(before)
+  }
+)
+
+it.each(['complete', 'detached', 'wide-mark', 'other-order-change'])(
+  'retains an agreed mathematical accent owner with a bounded native overhang: %s',
+  async (kind) => {
+    const f = canonicalAccentSetup('canonical'),
+      cell = f.cached.elements[0].table!.cells[0]
+    Object.assign(f.items[0], {
+      width: kind === 'wide-mark' ? 24 : 10,
+      transform: [10, 0, 0, 10, kind === 'detached' ? 34 : 24, 83]
+    })
+    cell.regions[0] = {
+      page: 1,
+      x: kind === 'detached' ? 0.34 : 0.24,
+      y: 0.07,
+      width: kind === 'wide-mark' ? 0.24 : 0.1,
+      height: 0.1
+    }
+    f.cached.elements[0].regions[0].width = 0.48
+    if (kind === 'other-order-change') {
+      const units = f.context.extraction.source.units
+      f.context.extraction = {
+        ...f.context.extraction,
+        source: createPdfTranslationSource({
+          ...f.context.extraction.source,
+          units: [{ ...units[0], source: 'A˜B' }, units[1]]
+        })
+      }
+      cell.text = 'A˜B'
+    }
+    const cachedBefore = structuredClone(f.cached),
+      result = await applyCachedPdfTableSources(f.context)
+    if (kind === 'complete') {
+      expect(result.source.units).toEqual(f.context.extraction.source.units)
+      expect(result.coverage.warnings).toContainEqual({
+        unitId: 'group',
+        reasons: ['table-layout', 'table-structure-unreliable']
+      })
+    } else {
+      expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe('˜ A')
+      expect(result.coverage.warnings.flatMap((w) => w.reasons)).not.toContain(
+        'table-structure-unreliable'
+      )
+    }
+    expect(f.cached).toEqual(cachedBefore)
+    expect({ ...result.coverage, warnings: [] }).toEqual({
+      ...f.context.extraction.coverage,
+      warnings: []
+    })
+  }
+)
+
+function scientificOwnerSetup(kind: string) {
+  const f = setup()
+  const values = ['1', '.', '5', '×', '10', '−', '2']
+  const positions = [10, 14, 16, 23, 32, 40, 44]
+  const widths = [4, 2, 4, 6, 8, 4, 3]
+  f.items.splice(
+    0,
+    f.items.length,
+    ...values.map((str, index) => ({
+      str,
+      dir: 'ltr',
+      fontName: 'f',
+      transform: [
+        index < 5 ? 10 : 6,
+        0,
+        0,
+        index < 5 ? 10 : 6,
+        positions[index],
+        index < 5 || kind === 'flat-native' ? 80 : 84
+      ],
+      width: widths[index],
+      height: index < 5 ? 10 : 6,
+      hasEOL: index === 6
+    })),
+    {
+      str: 'Prose',
+      dir: 'ltr',
+      fontName: 'f',
+      transform: [10, 0, 0, 10, 10, 30],
+      width: 20,
+      height: 10,
+      hasEOL: true
+    }
+  )
+  f.page.getTextContent.mockResolvedValue({
+    items: f.items,
+    styles: { f: { ascent: 0.8, descent: -0.2, vertical: false } }
+  })
+  const claims = values.map((text, index) => ({ pageNumber: 1, index, text }))
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({
+      ...f.extraction.source,
+      units: [
+        {
+          id: 'scientific',
+          source: '1.5 × 10⁻²' + (kind === 'partial-owner' ? ' Prose' : ''),
+          ...(kind !== 'ordinary-owner' ? { sourceOnly: true } : {}),
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.1, width: 0.37, height: kind === 'partial-owner' ? 0.6 : 0.1 },
+              items: (kind === 'partial-owner'
+                ? [...claims, { pageNumber: 1, index: 7, text: 'Prose' }]
+                : claims
+              ).map(({ index, text }) => ({ index, text }))
+            }
+          ]
+        },
+        ...(kind === 'partial-owner'
+          ? []
+          : [
+              {
+                ...f.extraction.source.units[1],
+                fragments: [
+                  {
+                    pageNumber: 1,
+                    rect: { x: 0.1, y: 0.6, width: 0.2, height: 0.1 },
+                    items: [{ index: 7, text: 'Prose' }]
+                  }
+                ]
+              }
+            ])
+      ]
+    }),
+    coverage: {
+      ...f.extraction.coverage,
+      textItemCount: 8,
+      includedItemCount: 8,
+      warnings: [{ unitId: 'scientific', reasons: ['table-layout'] }]
+    }
+  }
+  const element = f.cached.elements[0]
+  element.regions = [{ page: 1, x: 0.1, y: 0.09, width: 0.37, height: 0.12 }]
+  element.table!.columnCount = 1
+  element.table!.issues = []
+  element.table!.cells = [
+    {
+      row: 0,
+      column: 0,
+      rowSpan: 1,
+      columnSpan: 1,
+      text: '1.5 × 10−' + (kind === 'wrong-script' ? '3' : '2'),
+      ...(kind === 'missing-runs'
+        ? {}
+        : {
+            textRuns: [
+              { text: '1.5 × 10', position: 'normal' as const },
+              {
+                text: '−' + (kind === 'wrong-script' ? '3' : '2'),
+                position: 'superscript' as const
+              }
+            ]
+          }),
+      sourceItems: claims,
+      regions: values.map((_, i) => ({
+        page: 1,
+        x: positions[i] / 100,
+        y: 1 - (f.items[i].transform[5] + f.items[i].height) / 100,
+        width: widths[i] / 100,
+        height: f.items[i].height / 100
+      }))
+    }
+  ]
+  return f
+}
+
+it.each([
+  'complete',
+  'missing-runs',
+  'flat-native',
+  'wrong-script',
+  'partial-owner',
+  'ordinary-owner'
+])(
+  'preserves a canonical scientific owner only with complete native script evidence: %s',
+  async (kind) => {
+    const f = scientificOwnerSetup(kind),
+      before = structuredClone(f.cached)
+    const result = await applyCachedPdfTableSources(f.context)
+    if (kind === 'complete') {
+      expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe(
+        '1.5 × 10⁻²'
+      )
+      expect(result.source.units.find((u) => u.id === 'prose')).toEqual(
+        f.context.extraction.source.units[1]
+      )
+    } else if (kind === 'partial-owner') {
+      expect(result.source.units).toEqual(f.context.extraction.source.units)
+    } else {
+      expect(result.source.units.find((u) => u.id.startsWith('table-source:'))?.source).toBe(
+        '1 . 5 × 10 − 2'
+      )
+    }
+    expect(f.cached).toEqual(before)
+    expect({ ...result.coverage, warnings: [] }).toEqual({
+      ...f.context.extraction.coverage,
+      warnings: []
+    })
+  }
+)
+
+it.each([
+  'split-base',
+  'many-normal',
+  'mixed-format',
+  'wrong-order',
+  'missing-native',
+  'split-script'
+])('preserves scientific spelling across equivalent normal run packets: %s', async (kind) => {
+  const f = scientificOwnerSetup('complete'),
+    cell = f.cached.elements[0].table!.cells[0]
+  cell.textRuns = [
+    ...(kind === 'many-normal' ? ['1', '.', '5', ' ×', ' 10'] : ['1.5', ' ×', ' 10']).map(
+      (text) => ({ text, position: 'normal' as const })
+    ),
+    { text: '−2', position: 'superscript' }
+  ]
+  if (kind === 'mixed-format') cell.textRuns[1].position = 'subscript'
+  if (kind === 'wrong-order')
+    [cell.textRuns[0], cell.textRuns[1]] = [cell.textRuns[1], cell.textRuns[0]]
+  if (kind === 'missing-native') Object.assign(f.items[4], { fontName: '' })
+  if (kind === 'split-script')
+    cell.textRuns.splice(
+      -1,
+      1,
+      { text: '−', position: 'superscript' },
+      { text: '2', position: 'superscript' }
+    )
+  const before = structuredClone(f.cached),
+    result = await applyCachedPdfTableSources(f.context),
+    mapped = result.source.units.find((u) => u.id.startsWith('table-source:'))
+  if (kind === 'split-base' || kind === 'many-normal') expect(mapped?.source).toBe('1.5 × 10⁻²')
+  else expect(mapped?.source).not.toBe('1.5 × 10⁻²')
+  expect(f.cached).toEqual(before)
+  expect({ ...result.coverage, warnings: [] }).toEqual({
+    ...f.context.extraction.coverage,
+    warnings: []
+  })
+})

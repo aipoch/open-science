@@ -71,14 +71,11 @@ export const PackageImportSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
-          <p className="text-sm leading-5 text-muted-foreground">
-            {t('Import creates a new read-only Session. No code runs automatically.')}
-          </p>
           {preview ? (
             <>
               {preview.title ? (
@@ -86,13 +83,7 @@ export const PackageImportSelection = ({
                   <PackageOpen className="size-6 shrink-0 text-primary" aria-hidden="true" />
                   <div className="min-w-0 space-y-1">
                     <p className="break-words text-sm font-medium">{preview.title}</p>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {t('{{branches}} branches · {{messages}} messages · {{files}} files', {
-                        branches: preview.branchCount,
-                        messages: preview.messageCount,
-                        files: preview.fileCount
-                      })}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{t('Read-only')}</p>
                   </div>
                 </div>
               ) : null}
@@ -116,15 +107,26 @@ export const PackageImportSelection = ({
                   </dd>
                 </div>
               </dl>
-              {!preview.title ? (
-                <p className="text-xs text-muted-foreground">
-                  {t('{{branches}} branches · {{messages}} messages · {{files}} files', {
-                    branches: preview.branchCount,
-                    messages: preview.messageCount,
-                    files: preview.fileCount
-                  })}
-                </p>
-              ) : null}
+              <dl className="grid grid-cols-3 gap-3 text-xs text-muted-foreground">
+                <div className="space-y-1">
+                  <dt>{t('Branches')}</dt>
+                  <dd className="text-sm font-medium tabular-nums text-foreground">
+                    {preview.branchCount}
+                  </dd>
+                </div>
+                <div className="space-y-1">
+                  <dt>{t('Messages')}</dt>
+                  <dd className="text-sm font-medium tabular-nums text-foreground">
+                    {preview.messageCount}
+                  </dd>
+                </div>
+                <div className="space-y-1">
+                  <dt>{t('Files')}</dt>
+                  <dd className="text-sm font-medium tabular-nums text-foreground">
+                    {preview.fileCount}
+                  </dd>
+                </div>
+              </dl>
               {preview.omissions.length ? (
                 <details className="border-t border-border pt-4 text-sm">
                   <summary className="w-fit cursor-pointer rounded-sm py-1 focus-visible:outline-2 focus-visible:outline-ring">
@@ -186,9 +188,6 @@ export const PackageImportSelection = ({
                   className={`${dialogFormInputClassName} h-9 px-3 text-sm`}
                 />
               </div>
-              <p className="text-xs leading-5 text-muted-foreground">
-                {t('Created when you confirm the import.')}
-              </p>
             </form>
           ) : (
             <>

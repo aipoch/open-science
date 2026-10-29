@@ -1,5 +1,6 @@
 import { verifiedPdfStructureRegions } from './structure-regions.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { nativePartialNavigation } from './native-source-geometry.js'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import type { TextItem, TextStyle } from 'pdfjs-dist/types/src/display/api.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
@@ -136,6 +137,84 @@ function nativeCellText(
   return candidate.trim().replace(/\s+/gu, ' ') === cellText.trim().replace(/\s+/gu, ' ')
     ? candidate
     : original
+}
+
+// Keep the extractor's canonical spelling only when the whole native owner and
+// the worker's independent script runs agree on the same scientific number.
+function canonicalScientificSource(
+  source: string,
+  claims: readonly NativeClaimText[],
+  runs: readonly { text: string; position: string }[] | undefined
+): boolean {
+  const normalRuns = runs?.slice(0, -1) ?? [],
+    exponent = runs?.at(-1),
+    normalText = normalRuns.map((run) => run.text).join('')
+  if (
+    !normalRuns.length ||
+    normalRuns.some((run) => run.position !== 'normal' || !run.text.trim()) ||
+    exponent?.position !== 'superscript' ||
+    !/^[+−-]?\d+(?:\.\d+)?\s*×\s*10$/u.test(normalText) ||
+    !/^[+−-]?\d+$/u.test(exponent.text)
+  )
+    return false
+  const script = [...exponent.text]
+    .map((c) => ('0123456789'.includes(c) ? '⁰¹²³⁴⁵⁶⁷⁸⁹'[Number(c)] : c === '+' ? '⁺' : '⁻'))
+    .join('')
+  if (normalizeSourceText(source) !== normalizeSourceText(normalText + script)) return false
+  let start = claims.length,
+    suffixLength = 0
+  while (start > 0 && suffixLength < exponent.text.length)
+    suffixLength += normalizeSourceText(claims[--start].originText).length
+  if (
+    suffixLength !== exponent.text.length ||
+    normalizeSourceText(
+      claims
+        .slice(start)
+        .map((c) => c.originText)
+        .join('')
+    ) !== exponent.text
+  )
+    return false
+  const base = claims[start - 1]?.native,
+    suffix = claims.slice(start)
+  if (
+    start < 1 ||
+    claims[start - 1].originText !== '10' ||
+    !base ||
+    !suffix.length ||
+    normalizeSourceText(claims.map((c) => c.originText).join('')) !==
+      normalizeSourceText(normalText + exponent.text)
+  )
+    return false
+  const h = base.height,
+    first = suffix[0].native
+  return (
+    claims.every(
+      ({ native: n }) =>
+        !!n.fontName &&
+        n.dir === 'ltr' &&
+        [...n.transform, n.width, n.height].every(Number.isFinite) &&
+        n.width > 0 &&
+        n.height > 0 &&
+        n.transform[0] > 0 &&
+        n.transform[3] > 0 &&
+        n.transform[1] === 0 &&
+        n.transform[2] === 0
+    ) &&
+    claims
+      .slice(0, start)
+      .every(({ native: n }) => Math.abs(n.transform[5] - base.transform[5]) < h * 0.01) &&
+    first.transform[4] >= base.transform[4] + base.width - h * 0.1 &&
+    first.transform[4] <= base.transform[4] + base.width + h * 0.25 &&
+    suffix.every(
+      ({ native: n }) =>
+        n.height >= h * 0.5 &&
+        n.height < h * 0.85 &&
+        n.transform[5] - base.transform[5] > h * 0.1 &&
+        n.transform[5] - base.transform[5] < h * 0.8 &&
+        Math.abs(n.transform[5] - first.transform[5]) < h * 0.01
+    )
+  )
 }
 
 // Independent native advance boxes, not glyph masks or regions safe to paint over.
@@ -386,6 +465,7 @@ export async function applyCachedPdfTableSources({
     const ids = new Set<string>(),
       removed = new Set<string>(),
       boundaryConflicts = new Set<string>()
+    const clippedOwners = new Map<string, PdfTranslationFragment>()
     const replacements: PdfTranslationExtraction['source']['units'][number][] = []
     for (const unit of source.units) {
       if (ids.has(unit.id)) return extraction
@@ -396,7 +476,62 @@ export async function applyCachedPdfTableSources({
           if (owners.has(key)) return extraction
           owners.set(key, item.text)
           originalUnits.set(key, unit)
+          if (fragment.unclippedRect) {
+            if (
+              !unit.sourceOnly ||
+              unit.fragments.length !== 1 ||
+              fragment.items.length !== 1 ||
+              unit.source !== item.text
+            )
+              return extraction
+            clippedOwners.set(key, fragment)
+          }
         }
+    }
+    // The worker may omit all optional origins when their decoding budget is
+    // exceeded. Nothing on those pages may be consumed without evidence, but
+    // this absence says nothing about a separate, fully verified page batch.
+    // Partial proofs still take the transactional validation path below.
+    const sourceFreePages = new Set<number>()
+    for (const result of results) {
+      const tables = result.elements.flatMap(
+        (element) =>
+          element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+      )
+      if (
+        tables.some((table) => table.cells.some((cell) => cell.text.trim())) &&
+        result.elements.every((element) => !element.sourceItems && !element.nativeBody) &&
+        tables.every((table) =>
+          table.cells.every((cell) => !cell.sourceItems && !cell.sourceSegments)
+        )
+      )
+        for (const page of result.processedPages) sourceFreePages.add(page)
+    }
+    if (sourceFreePages.size) {
+      // A native unit and a worker batch are indivisible. Auxiliary pages only
+      // provide read-only context; schema-checked table origins belong to the
+      // processed pages. Including context would connect every adjacent batch.
+      const groups = [
+        ...source.units.map((unit) => unit.fragments.map((fragment) => fragment.pageNumber)),
+        ...results.map((result) => result.processedPages)
+      ]
+      let expanded = true
+      while (expanded) {
+        expanded = false
+        for (const pages of groups) {
+          if (!pages.some((page) => sourceFreePages.has(page))) continue
+          for (const page of pages)
+            if (!sourceFreePages.has(page)) {
+              sourceFreePages.add(page)
+              expanded = true
+            }
+        }
+      }
+      const independent = results.filter(
+        (result) => !result.processedPages.some((page) => sourceFreePages.has(page))
+      )
+      results.splice(0, results.length, ...independent)
+      if (!results.length) return retainOriginal()
     }
     const originalJoins = originalNativeJoins(source)
     // Structural uncertainty is not a source failure. Keep the image/cache and
@@ -412,7 +547,8 @@ export async function applyCachedPdfTableSources({
       'native-table-structure-ambiguous'
     ])
     const tableOrigins = new Map<string, Set<string>>()
-    const blockedTables = new Set<string>()
+    const blockedTables = new Set<string>(),
+      unreliableMathUnits = new Set<string>()
     for (const result of results)
       for (const element of result.elements) {
         const tables =
@@ -430,6 +566,10 @@ export async function applyCachedPdfTableSources({
             )
           )
           if ([...element.issues, ...table.issues].some((issue) => conflictCodes.has(issue.code)))
+            blockedTables.add(tableKey)
+          // A visible navigation intersection is not a complete cell boundary.
+          // Block before linked-owner propagation, retaining every whole native claim.
+          if ([...tableOrigins.get(tableKey)!].some((key) => clippedOwners.has(key)))
             blockedTables.add(tableKey)
           // A shared native string can cross cell boundaries without carrying
           // measured ranges. If its cell text has no unique partition, the
@@ -561,6 +701,24 @@ export async function applyCachedPdfTableSources({
       const expected = result?.pages.find((p) => p.page === origin.pageNumber),
         sourcePage = source.pages[origin.pageNumber - 1],
         raw = page.content.items[origin.index]
+      const clipped = clippedOwners.get(`${origin.pageNumber}:${origin.index}`)
+      if (clipped) {
+        if (!raw || !('str' in raw)) return false
+        const proof = nativePartialNavigation(
+          raw,
+          page.content.styles?.[raw.fontName],
+          page.viewport
+        )
+        if (
+          !proof ||
+          (['rect', 'unclippedRect'] as const).some((key) =>
+            (['x', 'y', 'width', 'height'] as const).some(
+              (axis) => proof[key][axis] !== clipped[key]![axis]
+            )
+          )
+        )
+          return false
+      }
       return !!(
         sourcePage &&
         (!result ||
@@ -603,6 +761,69 @@ export async function applyCachedPdfTableSources({
       const proved = await proveBlockedUnits()
       current()
       if (!proved) return retainOriginal()
+      // Typed cell evidence identifies only the affected mathematical sources.
+      // Verify their complete native geometry before protecting whole owners;
+      // ordinary structural conflicts retain their existing eligibility.
+      for (const result of results)
+        for (const element of result.elements) {
+          const tables =
+            element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
+          for (const [part, table] of tables.entries()) {
+            if (!table.unreliableMathSourceItems) continue
+            if (!blockedTables.has(`${result.extractionId}:${element.id}:${part}`))
+              return extraction
+            const evidence = new Set(
+              table.unreliableMathSourceItems.map(
+                (origin) => `${origin.pageNumber}:${origin.index}`
+              )
+            )
+            for (const cell of table.cells) {
+              if (
+                !cell.sourceItems?.some((origin) =>
+                  evidence.has(`${origin.pageNumber}:${origin.index}`)
+                )
+              )
+                continue
+              const remaining = [...cell.regions]
+              for (const origin of cell.sourceItems) {
+                if (!(await proveOrigin(origin, result))) return extraction
+                const page = pages.get(origin.pageNumber)!,
+                  raw = page.content.items[origin.index]
+                if (!raw || !('str' in raw)) return extraction
+                const rect = nativeRect(raw, page.content.styles[raw.fontName], page.viewport),
+                  matched =
+                    rect &&
+                    findNativeRegionGroup(
+                      remaining.map((region, index) => ({ region, index })),
+                      rect,
+                      origin.pageNumber
+                    )
+                if (!matched?.length) return extraction
+                for (const index of [...matched].sort((a, b) => b - a)) remaining.splice(index, 1)
+                if (!evidence.has(`${origin.pageNumber}:${origin.index}`)) continue
+                const unit = originalUnits.get(`${origin.pageNumber}:${origin.index}`)
+                if (!unit || !blockedUnits.has(unit.id)) return extraction
+                unreliableMathUnits.add(unit.id)
+              }
+              if (remaining.length) return extraction
+            }
+          }
+        }
+      for (const unit of source.units) {
+        if (!unreliableMathUnits.has(unit.id)) continue
+        for (const fragment of unit.fragments)
+          for (const item of fragment.items) {
+            const page = pages.get(fragment.pageNumber)!,
+              raw = page.content.items[item.index]
+            if (
+              !raw ||
+              !('str' in raw) ||
+              !nativeRect(raw, page.content.styles[raw.fontName], page.viewport)
+            )
+              return extraction
+          }
+      }
+      current()
       const warnings = new Map(
         extraction.coverage.warnings.map((warning) => [warning.unitId, new Set(warning.reasons)])
       )
@@ -612,6 +833,16 @@ export async function applyCachedPdfTableSources({
       }
       warningOnly = Object.freeze({
         ...extraction,
+        ...(unreliableMathUnits.size
+          ? {
+              source: createPdfTranslationSource({
+                ...source,
+                units: source.units.map((unit) =>
+                  unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+                )
+              })
+            }
+          : {}),
         coverage: Object.freeze({
           ...extraction.coverage,
           warnings: Object.freeze(
@@ -843,7 +1074,7 @@ export async function applyCachedPdfTableSources({
             if (ids.has(id)) return retainOriginal()
             ids.add(id)
             const replacementIndex = replacements.length
-            const replacementText = nativeCellText(
+            let replacementText = nativeCellText(
               primaryClaims,
               cell.text,
               origins.length,
@@ -853,6 +1084,83 @@ export async function applyCachedPdfTableSources({
               originalKeys = originalUnit?.fragments.flatMap((fragment) =>
                 fragment.items.map((item) => `${fragment.pageNumber}:${item.index}`)
               )
+            if (
+              originalUnit?.sourceOnly &&
+              origins.length === primaryClaims.length &&
+              originalKeys?.length === primaryClaims.length &&
+              primaryClaims.every(
+                (claim, index) =>
+                  !claim.split && !claim.measured && claim.key === originalKeys[index]
+              ) &&
+              canonicalScientificSource(originalUnit.source, primaryClaims, cell.textRuns)
+            )
+              replacementText = originalUnit.source
+            // Preserve a complete already canonical mathematical accent owner.
+            // Native paint order must not replace its agreed base/accent order.
+            if (
+              originalUnit?.sourceOnly &&
+              originalUnit.source === cell.text &&
+              normalizeSourceText(replacementText) !== normalizeSourceText(originalUnit.source) &&
+              originalKeys?.length === primaryClaims.length &&
+              primaryClaims.every(
+                (claim, index) =>
+                  !claim.split && !claim.measured && claim.key === originalKeys[index]
+              ) &&
+              primaryClaims.some((claim, index) => {
+                const base = primaryClaims[index + 1],
+                  a = claim.native,
+                  b = base?.native
+                return (
+                  b &&
+                  /^[˜ˆˉ¯]$/u.test(claim.originText) &&
+                  /^\p{L}$/u.test(base.originText) &&
+                  base.pageNumber === claim.pageNumber &&
+                  base.index === claim.index + 1 &&
+                  !!a.fontName &&
+                  !!b.fontName &&
+                  a.transform[0] === b.transform[0] &&
+                  a.transform[3] === b.transform[3] &&
+                  a.transform[1] === 0 &&
+                  a.transform[2] === 0 &&
+                  b.transform[1] === 0 &&
+                  b.transform[2] === 0 &&
+                  a.transform[5] > b.transform[5] &&
+                  a.transform[5] < b.transform[5] + b.height &&
+                  a.transform[4] >= b.transform[4] &&
+                  (a.transform[4] + a.width <= b.transform[4] + b.width ||
+                    // An advance may slightly overhang the base without changing
+                    // its already agreed source spelling. Require a bounded,
+                    // overlapping mark and prove that this single adjacent swap
+                    // explains the whole canonical owner; do not infer new text.
+                    (a.width > 0 &&
+                      a.width <= b.width &&
+                      a.transform[4] + a.width / 2 < b.transform[4] + b.width &&
+                      primaryClaims.filter((part) => /^[˜ˆˉ¯]$/u.test(part.originText)).length ===
+                        1 &&
+                      replacementText.replace(/\s/gu, '') ===
+                        primaryClaims
+                          .map((part) => part.originText)
+                          .join('')
+                          .replace(/\s/gu, '') &&
+                      originalUnit.source.replace(/\s/gu, '') ===
+                        primaryClaims
+                          .map((part, at) =>
+                            at === index
+                              ? base.originText
+                              : at === index + 1
+                                ? claim.originText
+                                : part.originText
+                          )
+                          .join('')
+                          .replace(/\s/gu, ''))) &&
+                  countSubstring(
+                    normalizeSourceText(originalUnit.source),
+                    base.originText + claim.originText
+                  ) === 1
+                )
+              })
+            )
+              boundaryConflicts.add(tableKey)
             // The original extractor can prove a stacked fraction from native
             // layout. A table's space-joined digit stream does not carry that
             // expression. Keep its complete original component rather than
@@ -1139,7 +1447,14 @@ export async function applyCachedPdfTableSources({
         ...(originalRegions.length
           ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
           : {}),
-        units: [...source.units.filter((u) => !removed.has(u.id)), ...replacements]
+        units: [
+          ...source.units
+            .filter((u) => !removed.has(u.id))
+            .map((unit) =>
+              unreliableMathUnits.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+            ),
+          ...replacements
+        ]
       })
     })
   } catch {

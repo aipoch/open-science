@@ -38,6 +38,7 @@ import type {
 
 import type {
   DeleteSessionRequest,
+  DeleteSessionRecoveryFileRequest,
   DelegationPolicy,
   EditSessionDetailsRequest,
   FilterSessionPdfContextCandidatesRequest,
@@ -80,6 +81,7 @@ import {
   ELECTRON_EVENT,
   WEB,
   RUNTIME_VALIDATED,
+  LOCAL,
   MAPPED_ELECTRON,
   POSITIONAL,
   EVENT,
@@ -149,34 +151,32 @@ export const sessionsDeleteSessionContracts = {
     (request: SessionPackageRequest) => Promise<SessionPackageRequest | null>
   >()('sessions', ['sessions:fork', MAPPED_ELECTRON, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.exportPackage': callable<
-    (request: SessionPackageRequest) => Promise<SessionPackageExportResult>
-  >()('sessions', [
-    'sessions:export-package',
-    MAPPED_ELECTRON,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ]),
+    (
+      request: SessionPackageRequest,
+      destinationPath?: string
+    ) => Promise<SessionPackageExportResult>
+  >()('sessions', ['sessions:export-package', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.importPackage': callable<
-    (request?: SessionPackageImportRequest, file?: File) => Promise<SessionPackageImportResult>
+    (
+      request?: SessionPackageImportRequest,
+      file?: File | string | import('../use-cases').UseCaseSource,
+      options?: { readonly nonInteractive: true }
+    ) => Promise<SessionPackageImportResult>
   >()('sessions', [
     'sessions:import-package',
-    MAPPED_ELECTRON,
+    LOCAL,
     'session-package-import-file',
     POSITIONAL,
     RUNTIME_VALIDATED
   ]),
+  'sessions.useCaseCatalog': callable<
+    (mode: 'cached' | 'refreshed') => Promise<import('../use-cases').UseCase[]>
+  >()('sessions', ['sessions:use-case-catalog', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.packageOperation': callable<
     (
       request: import('../session-package').PackageOperationRequest
     ) => Promise<import('../session-package').PackageOperationSnapshot | null>
-  >()('sessions', [
-    'sessions:package-operation',
-    MAPPED_ELECTRON,
-    undefined,
-    undefined,
-    RUNTIME_VALIDATED
-  ]),
+  >()('sessions', ['sessions:package-operation', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.onPackageOperation': callable<
     (
       listener: (snapshot: import('../session-package').PackageOperationSnapshot) => void
@@ -226,6 +226,9 @@ export const sessionsDeleteSessionContracts = {
   'sessions.openRecoveryFolder': callable<
     (request: OpenSessionRecoveryFolderRequest) => Promise<void>
   >()('sessions', ['sessions:open-recovery-folder', MAPPED_ELECTRON], { optionalMember: true }),
+  'sessions.deleteRecoveryFile': callable<
+    (request: DeleteSessionRecoveryFileRequest) => Promise<void>
+  >()('sessions', ['sessions:delete-recovery-file', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'sessions.onCreated': callable<(listener: AcpListener<SessionUpsertEvent>) => RemoveListener>()(
     'sessions',
     ['session:created', EVENT]

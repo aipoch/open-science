@@ -35,6 +35,15 @@ Useful commands:
 
 Packaged output is written under `dist/`.
 
+Windows x64 installers generate extraction lists from the final application archive during
+NSIS compilation, including files electron-builder adds after signing hooks. The build runs
+`build/prepare-windows-extraction.cjs` with Node from the build environment's PATH and the
+host 7-Zip tool selected by the locked electron-builder dependency. List generation or coverage
+validation failures stop packaging; no manually prepared lists are needed. Lists under
+`out/windows-installer/x64/extraction/` are embedded only in the installer. On native AMD64,
+the installer creates archive directories first, then waits for both file extractors to succeed
+before publishing the payload. Other architectures retain single-process extraction.
+
 [README](../README.md)
 
 `npm run build:backend` builds the Node entry; `npm run pack:backend` builds the target-specific
@@ -85,9 +94,14 @@ Build scheduling and selected isolation checks are described in
 [Package workflows](package-workflows.md).
 
 Development reuses the pinned native credential helpers without rebuilding or re-signing them.
-Changing native sources requires publishing updated components; see the
+Changing their native sources requires publishing updated components; see the
 [native component workflow](native-components.md). On macOS, an explicit source rebuild can
 change the helper's identity and require Keychain authorization again.
+
+Windows development also rebuilds the Notebook AppContainer host with Cargo before building the
+backend, so an older checked-in executable cannot outlive changes to its source or launch protocol.
+Install Rust and the MSVC C++ build tools for this step. Cargo reuses unchanged build outputs;
+a compilation failure stops startup instead of falling back to an obsolete host.
 
 Windows standard-mode development does not require a separate Notebook runtime.
 Enabling Notebook protection prepares verified Node and PowerShell components on demand:

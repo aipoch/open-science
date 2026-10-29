@@ -14,9 +14,21 @@ export const primaryBrowserTransfer = (
 // Project only the display: queue actions, retries and cleanup still address the original owner.
 export const packageOperationPresentation = (
   operation: PackageOperationSnapshot | null,
-  receipt?: BrowserPackageTransfer
+  receipt?: BrowserPackageTransfer,
+  showUseCaseDownload = false
 ): PackageOperationSnapshot | null => {
   if (!operation) return null
+  if (operation.useCaseDownload) {
+    if (!showUseCaseDownload && !operation.cleanupPending) return null
+    operation = {
+      ...operation,
+      progress: {
+        ...operation.progress,
+        completedBytes: operation.useCaseDownload.completedBytes,
+        totalBytes: operation.useCaseDownload.totalBytes
+      }
+    }
+  }
   const live =
     operation.browserTransfers?.filter(
       (transfer) => unsettled(transfer) || transfer.cleanupPending

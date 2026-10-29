@@ -17,7 +17,7 @@ test('prepares PDF text and area evidence before the first conversation message'
   await page.getByRole('button', { name: 'Citate', exact: true }).click()
   await expect(page.locator('[data-annotation-draft-chip]')).toHaveCount(1)
   await page.getByRole('button', { name: 'Select area for Agent', exact: true }).click()
-  const area = page.locator('[data-pdf-region-selection]')
+  const area = page.locator('[data-page-number="1"] [data-pdf-region-selection]')
   await expect(area).toBeVisible()
   const region = (await area.boundingBox())!
   await page.mouse.move(region.x + 30, region.y + 130)
@@ -61,7 +61,7 @@ test('floats notes by reader width while preserving drafts and the PDF layout', 
   await page.goto('/modal-library-close.html?preview=new-conversation')
   const reader = page.getByRole('region', { name: 'PDF preview', exact: true })
   const original = reader.locator('[data-pdf-original-view]')
-  await expect(original.locator('canvas')).toBeVisible()
+  await expect(original.locator('[data-page-number="1"] canvas')).toBeVisible()
   const originalWidth = (await original.boundingBox())!.width
   await reader.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
   const notes = reader.getByRole('complementary', { name: 'Notes & Annotations' })

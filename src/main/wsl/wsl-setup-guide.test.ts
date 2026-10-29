@@ -17,6 +17,20 @@ describe('WSL setup guide', () => {
     expect(guide.markdown).toContain('wsl_setup_diagnostics({})')
   })
 
+  it('explains the Windows prerequisite before recommending mirrored networking changes', async () => {
+    const guide = await loadWslSetupGuide(resolveWslSetupGuideCandidates(undefined))
+
+    expect(guide.status).toBe('available')
+    expect(guide.markdown).toContain('Windows 11 22H2')
+    expect(guide.markdown).toContain('windows.build')
+    expect(guide.markdown).toContain(
+      'On older Windows, direct the user to **Switch to PowerShell**'
+    )
+    expect(guide.markdown!.indexOf('Windows 11 22H2')).toBeLessThan(
+      guide.markdown!.indexOf('setting `networkingMode=mirrored`')
+    )
+  })
+
   it('diagnoses a missing guide and a strict version mismatch', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wsl-guide-'))
     const wrong = join(root, 'wrong.md')

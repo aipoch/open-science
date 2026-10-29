@@ -1,6 +1,9 @@
 import { LiteratureProviderError } from './provider-error.js'
 import { z } from 'zod'
-import { normalizeLiteratureIdentifierValue } from '@aipoch/literature-citations/contracts'
+import {
+  normalizeLiteratureIdentifierKey,
+  createLiteratureIdentifierUrl
+} from '@aipoch/literature-citations/contracts'
 import { type LiteratureFullTextCandidate } from './contracts.js'
 import { fullTextUrl } from './full-text-download.js'
 
@@ -56,7 +59,7 @@ export const findUnpaywallPdfs = async (
   email: string,
   fetcher?: typeof fetch
 ): Promise<Candidate[]> => {
-  doi = normalizeLiteratureIdentifierValue('doi', doi).toLowerCase()
+  doi = normalizeLiteratureIdentifierKey('doi', doi)
   const url = new URL(`https://api.unpaywall.org/v2/${encodeURIComponent(doi)}`)
   url.searchParams.set('email', z.string().email().parse(email))
   const raw = await readFullTextProvider(url.href, fetcher)
@@ -68,14 +71,14 @@ export const findUnpaywallPdfs = async (
       oa_locations: z.array(unpaywallLocation).optional()
     })
     .parse(JSON.parse(raw))
-  if (normalizeLiteratureIdentifierValue('doi', work.doi).toLowerCase() !== doi) return []
+  if (normalizeLiteratureIdentifierKey('doi', work.doi) !== doi) return []
   return [work.best_oa_location, ...(work.oa_locations ?? [])].flatMap((entry): Candidate[] => {
     if (!entry?.url_for_pdf) return []
     return [
       {
         provider: 'unpaywall',
         url: entry.url_for_pdf,
-        sourceUrl: entry.url_for_landing_page || `https://doi.org/${doi}`,
+        sourceUrl: entry.url_for_landing_page || createLiteratureIdentifierUrl('doi', doi),
         source: entry.repository_institution || 'Unpaywall',
         license: entry.license || undefined,
         version:
@@ -93,10 +96,7 @@ export const findUnpaywallPdfs = async (
 
 const matches = (expected: Identifiers, actual: Identifiers): boolean => {
   const pairs = [
-    [
-      expected.doi,
-      actual.doi ? normalizeLiteratureIdentifierValue('doi', actual.doi).toLowerCase() : undefined
-    ],
+    [expected.doi, actual.doi ? normalizeLiteratureIdentifierKey('doi', actual.doi) : undefined],
     [expected.pmid, actual.pmid],
     [expected.pmcid?.toUpperCase(), actual.pmcid?.toUpperCase()]
   ]
@@ -119,7 +119,7 @@ export const findPmcPdfs = async (
   if (identifiers.doi) {
     identifiers = {
       ...identifiers,
-      doi: normalizeLiteratureIdentifierValue('doi', identifiers.doi).toLowerCase()
+      doi: normalizeLiteratureIdentifierKey('doi', identifiers.doi)
     }
   }
   let pmcid = identifiers.pmcid?.toUpperCase()

@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
-import { createCanvas } from '@napi-rs/canvas'
+import { createCanvas, Path2D } from '@napi-rs/canvas'
 import { expect, it } from 'vitest'
 
 const {
@@ -1634,6 +1634,76 @@ it('captures each same-render font glyph path once and retains only isolated num
   )
   expect(matched.glyphBounds).toEqual(snapshot.glyphBounds)
 })
+it.each([
+  'ordinary',
+  'unencoded-space',
+  'unknown-space-flag',
+  'type3',
+  'invalid-font',
+  'missing-file',
+  'non-space',
+  'unknown-font-flags'
+])('binds renderer-skipped spaces to the exact native show instance: %s', (mode) => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  const glyph = {
+    fontChar: mode === 'unencoded-space' ? '!' : ' ',
+    unicode: mode === 'non-space' ? '?' : ' ',
+    width: 250,
+    isSpace: mode === 'unencoded-space' ? false : mode === 'unknown-space-flag' ? undefined : true,
+    isInFont: false
+  }
+  const at = ops.fnArray.length
+  ops.fnArray.push(OPS.setFont, OPS.showText, OPS.showText)
+  ops.argsArray.push(['first-font', 10], [[glyph]], [[{ ...glyph, isInFont: true }]])
+  const bounds = [0.1, 0, 0.6, 0.8]
+  const objects = {
+    get: (name: string): unknown => ({
+      loadedName: name,
+      missingFile: mode === 'missing-file',
+      isType3Font: mode === 'type3',
+      isInvalidPDFjsFont: mode === 'unknown-font-flags' ? undefined : mode === 'invalid-font',
+      getPathGenerator: (): unknown => ({ getBounds: (): number[] => bounds })
+    })
+  }
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum,
+    objects
+  )
+  const expected =
+    mode === 'ordinary' || mode === 'unencoded-space'
+      ? [
+          {
+            operationIndex: at + 1,
+            glyphIndex: 0,
+            fontName: 'first-font',
+            fontChar: glyph.fontChar,
+            width: 250,
+            ...(mode === 'unencoded-space' ? { isSpace: false } : {})
+          }
+        ]
+      : undefined
+  expect(snapshot.skippedSpaceGlyphs).toEqual(expected)
+  if (mode === 'ordinary' || mode === 'unencoded-space') {
+    // A painted instance of the same font character keeps its nonempty outline.
+    expect(snapshot.glyphBounds[0].glyphs[0].bounds).toEqual(bounds)
+    expect(
+      matchNativeFigureRenderContext(
+        snapshot,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      ).skippedSpaceGlyphs
+    ).toEqual(expected)
+  }
+})
 it.each(['missing-font', 'invalid-bounds', 'over-budget'])(
   'leaves the legacy snapshot intact when optional glyph proof is %s',
   (failure) => {
@@ -1727,5 +1797,162 @@ it.each(['type3-glyph', 'missing-font', 'invalid-glyph'])(
     )
     expect(malformed.glyphBounds).toBeUndefined()
     expect(malformed.partialFontGlyphBounds).toBeUndefined()
+  }
+)
+
+const type3RenderContextInput = (): ReturnType<typeof JSON.parse> => {
+  const f = renderContextInput(),
+    path = new Path2D()
+  path.rect(0, 0, 400, 700)
+  f.content.items[0].str = 'A A '
+  delete f.content.styles['first-font'].vertical
+  const glyph = {
+    fontChar: '',
+    operatorListId: 'unit',
+    unicode: 'A',
+    width: 500,
+    isInFont: true,
+    isSpace: false
+  }
+  const space = {
+    fontChar: '',
+    operatorListId: 'space',
+    unicode: ' ',
+    width: 250,
+    isInFont: true,
+    isSpace: true
+  }
+  f.render._internalRenderTask.operatorList = {
+    fnArray: [OPS.beginText, OPS.setFont, OPS.showText, OPS.endText],
+    argsArray: [[], ['first-font', 10], [[glyph, space, { ...glyph }, { ...space }]], []]
+  }
+  const font = {
+    loadedName: 'first-font',
+    missingFile: false,
+    isType3Font: true,
+    isInvalidPDFjsFont: false,
+    vertical: undefined,
+    remeasure: undefined,
+    fontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+    getPathGenerator: () => ({ getBounds: () => [0, 0, 0, 0] }),
+    charProcOperatorList: {
+      unit: {
+        fnArray: [OPS.setCharWidthAndBounds, OPS.constructPath],
+        argsArray: [
+          [500, 0, 0, 0, 400, 700],
+          [OPS.fill, [path], new Float32Array([0, 0, 400, 700])]
+        ]
+      },
+      space: { fnArray: [OPS.constructPath], argsArray: [[OPS.fill, [new Path2D()], null]] }
+    }
+  }
+  return { ...f, font, objects: new Map([['first-font', font]]) }
+}
+
+it('captures complete native Type3 programs separately from ordinary font glyph bounds', () => {
+  const f = type3RenderContextInput(),
+    snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum,
+      f.objects
+    )
+  expect(snapshot.glyphBounds).toBeUndefined()
+  expect(snapshot.partialFontGlyphBounds).toBeUndefined()
+  expect(snapshot.type3GlyphPrograms).toEqual([
+    {
+      fontName: 'first-font',
+      fontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+      sourceIndices: [0],
+      glyphs: [
+        {
+          operatorListId: 'unit',
+          unicode: 'A',
+          width: 500,
+          kind: 'filled-path',
+          bounds: [0, 0, 400, 700],
+          clip: [0, 0, 400, 700],
+          paint: OPS.fill,
+          occurrences: [
+            { operationIndex: 2, glyphIndex: 0 },
+            { operationIndex: 2, glyphIndex: 2 }
+          ]
+        },
+        {
+          operatorListId: 'space',
+          unicode: ' ',
+          width: 250,
+          kind: 'empty-space',
+          bounds: [0, 0, 0, 0],
+          clip: null,
+          paint: OPS.fill,
+          occurrences: [
+            { operationIndex: 2, glyphIndex: 1 },
+            { operationIndex: 2, glyphIndex: 3 }
+          ]
+        }
+      ]
+    }
+  ])
+  const next = structuredClone(f.content)
+  next.styles = { renamed: next.styles['first-font'] }
+  next.items[0].fontName = 'renamed'
+  expect(
+    matchNativeFigureRenderContext(snapshot, f.page, next, f.viewport, f.graphics, f.checksum)
+      .type3GlyphPrograms
+  ).toEqual(snapshot.type3GlyphPrograms)
+  next.items[0].str = 'Changed source'
+  expect(
+    matchNativeFigureRenderContext(snapshot, f.page, next, f.viewport, f.graphics, f.checksum)
+  ).toBeUndefined()
+})
+
+it.each([
+  'extra operation',
+  'clip mismatch',
+  'width conflict',
+  'Unicode conflict',
+  'source closure',
+  'matrix shear',
+  'unavailable native path',
+  'painted space'
+])(
+  'keeps unsupported Type3 evidence unavailable without changing native content: %s',
+  (failure) => {
+    const f = type3RenderContextInput(),
+      program = f.font.charProcOperatorList.unit,
+      glyphs = f.render._internalRenderTask.operatorList.argsArray[2][0]
+    if (failure === 'extra operation') {
+      program.fnArray.push(OPS.setFillRGBColor)
+      program.argsArray.push(['#000000'])
+    }
+    if (failure === 'clip mismatch') program.argsArray[0][4] = 399
+    if (failure === 'width conflict') glyphs[2].width = 501
+    if (failure === 'Unicode conflict') glyphs[2].unicode = 'B'
+    if (failure === 'source closure') f.content.items[0].fontName = 'unbound-font'
+    if (failure === 'matrix shear') f.font.fontMatrix[1] = 0.1
+    if (failure === 'unavailable native path')
+      program.argsArray[1][1][0] = {
+        getBounds: () => [0, 0, 400, 700],
+        computeTightBounds: () => [0, 0, 400, 700]
+      }
+    if (failure === 'painted space')
+      f.font.charProcOperatorList.space.argsArray[0][1][0].rect(0, 0, 1, 1)
+    const before = structuredClone(f.content),
+      snapshot = captureNativeFigureRenderContext(
+        f.render,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum,
+        f.objects
+      )
+    expect(snapshot).toBeDefined()
+    expect(snapshot.type3GlyphPrograms).toBeUndefined()
+    expect(snapshot.content).toEqual(before)
   }
 )

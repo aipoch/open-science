@@ -1,3 +1,4 @@
+import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { isDeepStrictEqual } from 'node:util'
 import type { AcpRuntimeEvent } from '../../shared/acp'
@@ -368,6 +369,7 @@ const isParkedTurn = (
       })
     )
   }
+  if (hasPendingSandboxNetworkApproval(session)) return true
   const permission = session.runtimeContext?.permission
   if (permission?.state === 'continuing') {
     return permission.originatingPromptMessageId === scope.promptMessageId
@@ -390,6 +392,8 @@ const isParkedTurn = (
     session.conversationGraph?.activities.some(
       (activity) =>
         activity.elicitation?.durable?.kind === 'agent-user-choice' &&
+        (session.runtimeTranscriptOwner !== 'main' ||
+          activity.elicitation.continuationPending === true) &&
         activity.promptMessageId === scope.promptMessageId &&
         activity.agentFrameId === scope.agentFrameId &&
         activity.messageBranchId === scope.messageBranchId &&
@@ -1174,8 +1178,13 @@ export class RuntimeSessionOwner {
               turn.elicitationReceipts.get(activity.id) !== activity.elicitation.respondedAt
             )
               return activity
-            const { continuationPending: _pending, ...elicitation } = activity.elicitation
+            const {
+              continuationPending: _pending,
+              continuationRecovery: _recovery,
+              ...elicitation
+            } = activity.elicitation
             void _pending
+            void _recovery
             return { ...activity, elicitation }
           }
           if (next.conversationGraph) {

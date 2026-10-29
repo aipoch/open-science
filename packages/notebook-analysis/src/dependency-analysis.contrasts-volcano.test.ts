@@ -26,7 +26,7 @@ it.each(cells)('analyzes contrast cell $index with its preparation', async (cell
     return
   }
   expect(facts.state === 'unknown' ? facts.reasons : [], JSON.stringify(facts)).toEqual([
-    'external-state'
+    ...(cell.index === 3 ? ['external-state', 'opaque-call'] : ['external-state'])
   ])
 })
 
@@ -57,7 +57,8 @@ it('keeps finite-filtered contrast plots uncertified while retaining known file 
     for (const index of [3, 4, 5, 6]) {
       if (index === 3) {
         expect(projection.stalenessByRunId[String(index)], JSON.stringify(projection)).toEqual({
-          state: 'clear'
+          state: 'unknown',
+          reasons: ['external-state', 'opaque-call']
         })
       } else {
         expect(
@@ -80,14 +81,17 @@ it('keeps finite-filtered contrast plots uncertified while retaining known file 
       expect(
         await analyzeNotebookSourceFileAccess('r', cells[index].script, context)
       ).toMatchObject({
-        readState: index === 3 ? 'complete' : 'partial',
-        writeState: index === 4 || index === 5 ? 'partial' : 'complete',
-        externalState: index === 4 || index === 5 ? 'partial' : 'complete',
+        // apply's input comes from a CSV-derived matrix. Table ownership alone
+        // does not close coercion or the callback's scientific dispatch. Plot
+        // labels also round an unproved value, so output completeness stays partial.
+        readState: 'partial',
+        writeState: 'partial',
+        externalState: 'partial',
         reads: index === 3 ? ['inputs/expression-matrix-444444444444.csv'] : [],
         writes: index === 6 ? ['diagonal_volcano.pdf', 'diagonal_volcano.png'] : []
       })
     }
-    expect(projection.dependenciesByRunId?.['3']).toEqual([])
+    expect(projection.dependenciesByRunId?.['3']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

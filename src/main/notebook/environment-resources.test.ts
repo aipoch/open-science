@@ -1,4 +1,6 @@
-import { rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -39,3 +41,23 @@ it('maps product overrides and an explicit runtime root to the package inputs', 
     resourcesPath: '/application/resources'
   })
 })
+
+it.each(['darwin', 'linux', 'win32'] as const)(
+  'resolves the backend micromamba without an Electron root copy (%s)',
+  async (platform) => {
+    const { resolveNotebookMicromamba } = await import('./environment-resources')
+    const root = mkdtempSync(join(tmpdir(), 'backend-micromamba-'))
+    tmpRoots.push(root)
+    const resourcesPath = join(root, 'backend', 'resources')
+    mkdirSync(resourcesPath, { recursive: true })
+    const name = platform === 'win32' ? 'micromamba.exe' : 'micromamba'
+    const binary = join(resourcesPath, name)
+    writeFileSync(binary, 'backend runner')
+    const deps = { env: {}, platform, resourcesPath }
+    expect(resolveNotebookMicromamba(deps)).toBe(binary)
+    writeFileSync(join(root, name), 'unused Electron copy')
+    expect(resolveNotebookMicromamba(deps)).toBe(binary)
+    rmSync(binary)
+    expect(resolveNotebookMicromamba(deps)).toBeUndefined()
+  }
+)

@@ -25,11 +25,18 @@ type OperationDiagnostic = { operation: 'resume'; detail: string; message: strin
 // Operation failures belong to the initiating surface, never to the durable Session projection.
 // Keep the Session identity so an asynchronous rejection cannot appear in another conversation.
 const useWorkspaceOperationErrors = create<{
+  contextResets: Record<string, boolean>
   errors: Record<string, string>
   providerValidations: Record<string, ProviderValidationSnapshot>
   providerTargets: Record<string, ProviderTarget | undefined>
   diagnostics: Record<string, OperationDiagnostic>
-}>(() => ({ errors: {}, providerValidations: {}, providerTargets: {}, diagnostics: {} }))
+}>(() => ({
+  contextResets: {},
+  errors: {},
+  providerValidations: {},
+  providerTargets: {},
+  diagnostics: {}
+}))
 
 const reportWorkspaceOperationError = (
   sessionId: string,

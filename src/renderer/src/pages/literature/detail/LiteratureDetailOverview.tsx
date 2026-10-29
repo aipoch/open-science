@@ -3,17 +3,15 @@ import type { LiteraturePreviewItem } from '../renderer-host'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type {
   LiteratureCollectionView,
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { Search } from 'lucide-react'
+import { Search, BookOpen, Quote } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
-import { ResourceTagSummary } from '../../settings/ResourceTagControls'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../../shared/literature-attachment-reference'
 import {
   SmartCollectionAssessment,
@@ -41,8 +39,6 @@ export function LiteratureDetailOverview({
   pendingDecisions,
   smartRunningCollection,
   confirmSmartDecision,
-  itemTypeLabels,
-  handleDetailTagMenuOpenChange,
   activeProjects,
   projectLinkError,
   projectsLoaded,
@@ -50,6 +46,7 @@ export function LiteratureDetailOverview({
   displayCollections,
   collectionLinkError,
   setCollectionLink,
+  onRelated,
   changeDetailMode,
   isAddingPdf,
   pdfInputRef,
@@ -77,8 +74,6 @@ export function LiteratureDetailOverview({
     itemIds?: string[],
     singleRecord?: boolean
   ) => Promise<void>
-  itemTypeLabels: Record<LiteratureItemType, string>
-  handleDetailTagMenuOpenChange: (open: boolean) => void
   activeProjects: React.ComponentProps<typeof LiteratureDetailLinkList>['entries']
   projectLinkError: string | undefined
   projectsLoaded: boolean
@@ -86,6 +81,7 @@ export function LiteratureDetailOverview({
   displayCollections: LiteratureCollectionView[]
   collectionLinkError: string | undefined
   setCollectionLink: (targetCollectionId: string, included: boolean) => Promise<boolean>
+  onRelated: (direction: 'references' | 'citations') => void
   changeDetailMode: ReturnType<typeof useLiteratureMetadata>['changeMode']
   isAddingPdf: boolean
   pdfInputRef: React.RefObject<HTMLInputElement | null>
@@ -151,23 +147,33 @@ export function LiteratureDetailOverview({
           </p>
         </section>
       )}
-      <LiteratureBibliographicDetails selectedItem={selectedItem} itemTypeLabels={itemTypeLabels} />
-      <div className="py-4">
-        <ResourceTagSummary
-          reference={{
-            resourceType: 'literature.item',
-            resourceId: selectedItem.id
-          }}
-          onMenuOpenChange={handleDetailTagMenuOpenChange}
-          keepMenuOpenOnSelect
-        />
-      </div>
+      <LiteratureBibliographicDetails selectedItem={selectedItem} />
+      <section className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <h3 className="font-medium">{t('Citation discovery')}</h3>
+        <div className="ml-auto flex shrink-0 gap-2">
+          <Button
+            data-related-entry="references"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('references')}
+          >
+            <BookOpen className="size-4" aria-hidden="true" />
+            {t('References')}
+          </Button>
+          <Button
+            data-related-entry="citations"
+            size="sm"
+            variant="outline"
+            onClick={() => onRelated('citations')}
+          >
+            <Quote className="size-4" aria-hidden="true" />
+            {t('Cited by')}
+          </Button>
+        </div>
+      </section>
       <div className="grid divide-y divide-border-300/80 sm:grid-cols-2 sm:divide-x sm:divide-y-0">
         <section className="min-w-0 py-4 sm:pr-4">
           <h3 className="font-medium">{t('Projects')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t('Use this reference in projects.')}
-          </p>
           <LiteratureDetailLinkList
             key={`${selectedItem.id}:projects`}
             checkedIds={selectedItem.projectIds}
@@ -180,9 +186,6 @@ export function LiteratureDetailOverview({
         </section>
         <section className="py-4 sm:pl-4">
           <h3 className="font-medium">{t('Collections')}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t('Use this reference in collections.')}
-          </p>
           <LiteratureDetailLinkList
             key={`${selectedItem.id}:collections`}
             checkedIds={selectedItem.collectionIds}

@@ -1,3 +1,5 @@
+import type { UseCaseCatalog } from './session-package/use-case-catalog'
+import { useCaseCatalogContract, type UseCase } from '../shared/use-cases'
 import type { OfficePreviewCommands } from './office-preview/application-commands'
 import type { FileSaveCommands } from './file-save'
 import type { ArtifactReproducibilityCommands } from './artifacts/artifact-reproducibility-commands'
@@ -100,6 +102,7 @@ type PreviewApplicationCommandOwner = Readonly<{
 }>
 
 type SessionApplicationCommandOwner = Omit<SessionPersistenceHandlers, 'deleteSession'> & {
+  deleteRecoveryFile(request: SessionPersistence.DeleteSessionRecoveryFileRequest): Promise<void>
   bindTaskSession(
     request: SessionPersistence.BindTaskSessionRequest
   ): Promise<SessionPersistence.PersistedChatSession>
@@ -159,11 +162,13 @@ type ElectronDataContentApplicationCommandAdapter = InvocationOwner<{
     request: SessionPackage.SessionPackageRequest
   ) => Promise<SessionPackage.SessionPackageRequest | null>
   exportSessionPackage: (
-    request: SessionPackage.SessionPackageRequest
+    request: SessionPackage.SessionPackageRequest,
+    destinationPath?: string
   ) => Promise<SessionPackage.SessionPackageExportResult>
   importSessionPackage: (
     request?: SessionPackage.SessionPackageImportRequest,
-    sourcePath?: string
+    sourcePath?: string | import('../shared/use-cases').UseCaseSource,
+    options?: { readonly nonInteractive: true }
   ) => Promise<SessionPackage.SessionPackageImportResult>
   sessionPackageOperation: (
     request: SessionPackage.PackageOperationRequest
@@ -207,6 +212,7 @@ type UploadApplicationCommandOwner = InvocationOwner<{
 type DataRootWrite = <Result>(operation: () => Promise<Result>) => Promise<Result>
 
 type DataContentApplicationCommandDependencies = Readonly<{
+  useCaseCatalog: UseCaseCatalog
   officePreviewCommands: OfficePreviewCommands
   fileSaveCommands: FileSaveCommands
   reproducibility: ArtifactReproducibilityCommands
@@ -238,6 +244,11 @@ const electronCommand = invocationCommandFor<ElectronDataContentApplicationComma
 const uploadCommand = invocationCommandFor<UploadApplicationCommandOwner>()
 
 const dataContentApplicationCommands = Object.freeze({
+  useCaseCatalog: defineApplicationCommand<
+    'sessions:use-case-catalog',
+    readonly ['cached' | 'refreshed'],
+    UseCase[]
+  >('sessions:use-case-catalog', useCaseCatalogContract),
   officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
   officePreviewAttachFrame: invocationCommandFor<OfficePreviewCommands>()(
     'office-preview:attach-frame',
@@ -469,6 +480,11 @@ const dataContentApplicationCommands = Object.freeze({
     'deleteSession',
     SessionPersistence.sessionApplicationCommandContracts.delete
   ),
+  sessionDeleteRecoveryFile: sessionCommand(
+    'sessions:delete-recovery-file',
+    'deleteRecoveryFile',
+    SessionPersistence.sessionApplicationCommandContracts.deleteRecoveryFile
+  ),
   sessionEditDetails: sessionCommand(
     'sessions:edit-details',
     'editDetails',
@@ -676,6 +692,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('sessions', [
     dataContentApplicationCommands.sessionOpenRecoveryFolder,
     dataContentApplicationCommands.sessionDelete,
+    dataContentApplicationCommands.sessionDeleteRecoveryFile,
     dataContentApplicationCommands.sessionEditDetails,
     dataContentApplicationCommands.sessionExportConversation,
     dataContentApplicationCommands.sessionInspectDiagnostics,
@@ -685,6 +702,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionExportPackage,
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
+    dataContentApplicationCommands.useCaseCatalog,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
     dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
@@ -774,6 +792,19 @@ const assertElectronCaller = (
   if (invocation.callerContext.surface !== 'electron') {
     throw new Error(`Channel only available from the Electron app: ${name}`)
   }
+}
+
+// Package export/import/operation are exposed to local Web callers (CLI over loopback Web RPC).
+// Remote browsers are stopped by the rejecting-stub surface and the local-only RPC gate; this
+// repeats that boundary at the handler so a dispatcher regression cannot widen it.
+const assertElectronOrLocalWebCaller = (
+  invocation: ApplicationInvocation<readonly unknown[]>,
+  name: string
+): void => {
+  const { surface, location } = invocation.callerContext
+  if (surface === 'electron') return
+  if (surface === 'web' && location === 'local') return
+  throw new Error(`Channel only available from the desktop app or local Web session: ${name}`)
 }
 
 const assertSessionDelegationPolicyCaller = (
@@ -963,6 +994,8 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.openRecoveryFolder(invocation)
       },
+      'sessions:delete-recovery-file': ({ args }) =>
+        dependencies.withDataRootWrite(() => dependencies.sessions.deleteRecoveryFile(args[0])),
       'sessions:delete-session': async ({ args }) => {
         const result = await dependencies.sessions.deleteSession(args[0])
         if (result.status === 'deleted') {
@@ -1026,15 +1059,27 @@ const registerDataContentApplicationCommands = (
         return dependencies.electron.forkSession(invocation)
       },
       'sessions:export-package': (invocation) => {
-        assertElectronCaller(invocation, dataContentApplicationCommands.sessionExportPackage.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.sessionExportPackage.name
+        )
         return dependencies.electron.exportSessionPackage(invocation)
       },
       'sessions:import-package': (invocation) => {
-        assertElectronCaller(invocation, dataContentApplicationCommands.sessionImportPackage.name)
+        assertElectronOrLocalWebCaller(
+          invocation,
+          dataContentApplicationCommands.sessionImportPackage.name
+        )
         return dependencies.electron.importSessionPackage(invocation)
       },
+      'sessions:use-case-catalog': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.useCaseCatalog.name)
+        return invocation.args[0] === 'cached'
+          ? dependencies.useCaseCatalog.cached()
+          : dependencies.useCaseCatalog.refresh()
+      },
       'sessions:package-operation': (invocation) => {
-        assertElectronCaller(
+        assertElectronOrLocalWebCaller(
           invocation,
           dataContentApplicationCommands.sessionPackageOperation.name
         )

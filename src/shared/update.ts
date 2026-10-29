@@ -21,6 +21,14 @@ export type UpdateBlocker = 'agent' | 'delegated' | 'notebook' | 'reviewer' | 's
 // Call intent stays transient and transport-neutral. Desktop callers omit these options; headless
 // callers use them to avoid native dialogs and desktop relaunches.
 export type UpdateDownloadOptions = { nonInteractive?: boolean }
+// Read-only description of the current, completed update artifact. Paths remain owned by main;
+// revealing this artifact never accepts a renderer-provided path or starts the installer.
+export type UpdateInstaller = {
+  fileName: string
+  format: 'zip' | 'dmg' | 'exe' | 'deb' | 'appimage' | 'unknown'
+  platform: NodeJS.Platform
+}
+export type UpdateInstallerRevealResult = 'revealed' | 'missing' | 'unavailable'
 export type LegacyShellRecovery = { token: string; count: number }
 export type UpdateApplyOptions = {
   relaunch?: boolean
@@ -45,6 +53,9 @@ export type UpdateStatus = {
   downloadProgress?: import('@aipoch/resilient-download').DownloadProgress
   artifactSha512?: string // provider checksum of the downloaded installer; rechecked before extraction
   localPath?: string // set when state === 'ready'
+  // A previously confirmed current artifact disappeared or changed. Separate from lifecycle errors
+  // so read-only inspection can report it without hiding an existing install/recovery failure.
+  installerMissing?: boolean
   // Terminal lifecycle failure, or retryable action feedback while a ready installer remains usable.
   error?: string
   canForce?: boolean

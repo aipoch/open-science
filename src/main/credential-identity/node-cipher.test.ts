@@ -37,6 +37,135 @@ const fixtures: Array<{ identity: CredentialIdentity; prefix: string; hex: strin
 ]
 
 describe('Node OSCrypt-compatible cipher', () => {
+  it.each([
+    { delay: 0, scale: 1 },
+    { delay: 31_000, scale: 1 },
+    { delay: 240_000, scale: 100 }
+  ])(
+    'decrypts legacy ciphertext after $delay ms authorization (time scale $scale)',
+    async ({ delay, scale }) => {
+      const actual =
+        await vi.importActual<typeof import('node:child_process')>('node:child_process')
+      vi.mocked(createRequire).mockReturnValue((() => ({
+        secretExecutablePath: process.execPath
+      })) as unknown as NodeJS.Require)
+      // Scale the long authorization and timeout together at the existing subprocess boundary.
+      vi.mocked(spawnSync).mockImplementation((executable, args, options) => {
+        expect(args).toEqual(['read-key', 'Open Science'])
+        return actual.spawnSync(
+          executable,
+          [
+            '-e',
+            `setTimeout(() => process.stdout.write('fixture-vault-password'), ${delay / scale})`
+          ],
+          { ...options, timeout: (options?.timeout ?? 0) / scale }
+        )
+      })
+      const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+      try {
+        const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+        expect(cipher.decryptString(ciphertext)).toBe('fixture-科学-secret')
+      } finally {
+        cipher.dispose()
+        vi.mocked(createRequire).mockRestore()
+        vi.mocked(spawnSync).mockRestore()
+      }
+    },
+    40_000
+  )
+  it('retains a non-secret timeout diagnostic when reading existing legacy credentials', () => {
+    vi.mocked(createRequire).mockReturnValue((() => ({
+      secretExecutablePath: process.execPath
+    })) as unknown as NodeJS.Require)
+    vi.mocked(spawnSync).mockReturnValue({
+      error: Object.assign(new Error('private path must not be exposed'), { code: 'ETIMEDOUT' }),
+      status: null,
+      signal: 'SIGTERM',
+      pid: 1,
+      output: [],
+      stderr: Buffer.alloc(0),
+      stdout: Buffer.alloc(0)
+    } as ReturnType<typeof spawnSync>)
+    const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+    try {
+      const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+      let failure: unknown
+      try {
+        cipher.decryptString(ciphertext)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({ diagnostic: { systemCode: 'ETIMEDOUT' } })
+      expect(JSON.stringify(failure)).not.toContain('private path')
+    } finally {
+      cipher.dispose()
+      vi.mocked(createRequire).mockRestore()
+      vi.mocked(spawnSync).mockRestore()
+    }
+  })
+
+  it.each([
+    {
+      result: { error: Object.assign(new Error('PRIVATE'), { code: 'ENOENT' }) },
+      code: 'secret-start-failed'
+    },
+    { result: { status: 1 }, code: 'secret-exit-failed' },
+    { result: { status: null, signal: 'SIGTERM' }, code: 'secret-signalled' },
+    { result: { status: 0 }, code: 'secret-empty-response' }
+  ])(
+    'classifies $code without replacing the existing key, then permits a fresh read',
+    ({ result, code }) => {
+      vi.mocked(createRequire).mockReturnValue((() => ({
+        secretExecutablePath: process.execPath
+      })) as unknown as NodeJS.Require)
+      vi.mocked(spawnSync)
+        .mockReturnValueOnce({
+          pid: 1,
+          output: [],
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.alloc(0),
+          status: null,
+          signal: null,
+          ...result
+        } as ReturnType<typeof spawnSync>)
+        .mockReturnValueOnce({
+          pid: 2,
+          output: [],
+          stderr: Buffer.alloc(0),
+          stdout: Buffer.from('fixture-vault-password'),
+          status: 0,
+          signal: null
+        })
+      const cipher = createNodeSecureStorageCipher(fixtures[0].identity, '/unused')
+      const ciphertext = Buffer.concat([Buffer.from('v10'), Buffer.from(fixtures[0].hex, 'hex')])
+      const original = Buffer.from(ciphertext)
+      try {
+        let failure: unknown
+        try {
+          cipher.decryptString(ciphertext)
+        } catch (error) {
+          failure = error
+        }
+        expect(failure).toMatchObject({
+          reason: 'native-secret-operation-failed',
+          diagnostic: { code }
+        })
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE')
+        expect(cipher.decryptString(ciphertext)).toBe('fixture-科学-secret')
+        expect(ciphertext).toEqual(original)
+        expect(spawnSync).toHaveBeenLastCalledWith(
+          process.execPath,
+          ['read-key', 'Open Science'],
+          expect.objectContaining({ input: Buffer.alloc(0) })
+        )
+      } finally {
+        cipher.dispose()
+        vi.mocked(createRequire).mockRestore()
+        vi.mocked(spawnSync).mockRestore()
+      }
+    }
+  )
+
   it('launches the packaged DPAPI helper outside app.asar', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'node-cipher-packaged-'))
     const executable = join(directory, 'app.asar', 'native', 'credential_secret.exe')
@@ -135,6 +264,39 @@ describe('Node OSCrypt-compatible cipher', () => {
     } finally {
       key.fill(0)
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('converts legacy DPAPI binary plaintext using Electron string semantics', () => {
+    const plaintext = Buffer.from([0xff, 0x61])
+    const cipher = createNodeSecureStorageCipher(
+      { backend: 'windows-dpapi', appName: 'Open-Science' },
+      '/unused',
+      { readPassword: vi.fn(), unprotect: () => Buffer.from(plaintext) }
+    )
+    try {
+      expect(cipher.decryptString(Buffer.from('legacy-dpapi-fixture'))).toBe('\ufffda')
+    } finally {
+      cipher.dispose()
+    }
+  })
+
+  it('retains the Linux legacy-key fallback when the selected key produces non-UTF-8 bytes with valid padding', () => {
+    // Fixed independently generated v11 record encrypted using Chromium's legacy empty password.
+    // The selected password deliberately decrypts it to non-UTF-8 bytes with valid CBC padding.
+    const encrypted = Buffer.from(
+      '76313135072aab3a3a50ff49513b81d93df001bcb6de1e08c5fba755645b7b2a898769',
+      'hex'
+    )
+    const cipher = createNodeSecureStorageCipher(
+      { backend: 'linux-secret-service', appName: 'Open Science', exists: true },
+      '/unused',
+      { readPassword: () => Buffer.from('wrong-vault-22'), unprotect: vi.fn() }
+    )
+    try {
+      expect(cipher.decryptString(encrypted)).toBe('fixture-legacy-secret')
+    } finally {
+      cipher.dispose()
     }
   })
 })

@@ -143,6 +143,7 @@ const englishOf = (key: string): string => key.split('_')[0]
 
 const PLURAL_CATEGORIES = new Set(['zero', 'one', 'two', 'few', 'many', 'other'])
 const CONTEXT_SUFFIXES = new Set([
+  'readingStatus',
   'ago',
   'duration',
   'files',
@@ -680,9 +681,8 @@ describe('process catalog boundaries', () => {
     const sharedCloseConfirmKeys = [
       "Don't ask again",
       'Minimize to tray',
-      'Return to tasks',
-      'Subagents are still running',
-      'Work is still running and will be interrupted if you quit.'
+      'Quit_verb',
+      'Quitting will interrupt unfinished tasks. Your saved conversations and files will be kept.'
     ]
 
     for (const locale of TRANSLATED) {
@@ -937,7 +937,7 @@ describe('mandatory product glossary', () => {
       keepWaiting: de.native['Keep waiting'],
       quitAnyway: de.native['Quit anyway'],
       moveInProgress: de.native['Move in progress'],
-      model: de.renderer['Default model: grok-4.7 · 500K'],
+      model: de.renderer['Default model: grok-4.7: 500K'],
       archive: de.renderer.Archive_verb,
       block: de.renderer.Block,
       clear: de.renderer.Clear,
@@ -977,7 +977,7 @@ describe('mandatory product glossary', () => {
       keepWaiting: 'Weiter warten',
       quitAnyway: 'Trotzdem beenden',
       moveInProgress: 'Datenverschiebung läuft',
-      model: 'Standardmodell: grok-4.7 · 500K',
+      model: 'Standardmodell: grok-4.7: 500K',
       archive: 'Archivieren',
       block: 'Blockieren',
       clear: 'Löschen',
@@ -2699,8 +2699,8 @@ describe('Russian catalog quality', () => {
       'Базовый URL, ключ и модель для конечной точки Messages или Chat Completions'
     ],
     [
-      'Imported {{imported}} · skipped {{skipped}} · failed {{failed}}',
-      'Импортировано: {{imported}} · пропущено: {{skipped}} · с ошибкой: {{failed}}'
+      'Imported {{imported}}, skipped {{skipped}}, failed {{failed}}',
+      'Импортировано: {{imported}}: пропущено: {{skipped}}: с ошибкой: {{failed}}'
     ],
     [
       'Current local edits are not recoverable after a successful overwrite. A failed atomic install preserves the current version.',
@@ -2778,8 +2778,8 @@ describe('Russian catalog quality', () => {
       'Удаление завершилось ошибкой, и изменения были отменены.'
     ],
     [
-      'Owned Skill · v{{version}} · bundled by default.',
-      'Собственный навык · v{{version}} · включён по умолчанию.'
+      'Owned Skill v{{version}}, bundled by default.',
+      'Собственный навык: v{{version}}: включён по умолчанию.'
     ],
     [
       'Saves a file as an artifact for this conversation.',
@@ -2814,8 +2814,8 @@ describe('Russian catalog quality', () => {
       'Open-Science сопоставляет пять относительных уровней с точными уровнями, поддерживаемыми этой моделью.'
     ],
     [
-      'Installed Skill · v{{version}} · include it to bundle a copy.',
-      'Установленный навык · v{{version}} · включите его, чтобы добавить копию в пакет.'
+      'Installed Skill v{{version}}, include it to bundle a copy.',
+      'Установленный навык: v{{version}}: включите его, чтобы добавить копию в пакет.'
     ],
     [
       'Downloaded {{downloaded}} of {{total}} artifacts. {{failed}} failed.',

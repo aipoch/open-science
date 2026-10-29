@@ -1,6 +1,6 @@
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import type { McpClientManagerDeps } from '@aipoch/connector-mcp-client'
-import { augmentedPathEnv } from '../settings/shell-path'
+import { prepareMcpStdioLaunch } from './mcp-stdio-launch'
 import { netFetchStandard } from '../network-fetch'
 import { createLogger } from '@aipoch/diagnostics/node'
 
@@ -13,6 +13,6 @@ export const mcpHostDependencies: McpClientManagerDeps = {
     '<h1>Open-Science authorization expired</h1><p>You can close this window.</p>',
   fetchImpl: netFetchStandard,
   redactDiagnosticText: redactSensitiveText,
-  prepareEnvironment: (environment) => augmentedPathEnv(environment) as Record<string, string>,
+  prepareStdioLaunch: prepareMcpStdioLaunch,
   logger: createLogger('connectors:mcp-client')
 }

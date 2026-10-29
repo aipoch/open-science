@@ -1,7 +1,10 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { CircleHelp } from 'lucide-react'
 
 import type { SkillView } from '../../../../../shared/settings'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { resolveLocalPath } from '../../../../../shared/local-fs'
 import { cn } from '@/lib/utils'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
@@ -50,7 +53,7 @@ const composerEditorClassName =
 
 // Placeholder overlay aligned to the editor's text start; pointer-events-none lets clicks reach the box.
 const composerPlaceholderClassName =
-  'pointer-events-none absolute inset-x-0 top-0 truncate py-1.5 text-[15px] leading-relaxed text-muted-foreground'
+  'pointer-events-none absolute inset-x-0 top-0 truncate py-1.5 pr-7 text-[15px] leading-relaxed text-muted-foreground'
 
 type ComposerEditorProps = {
   doc: ComposerDoc
@@ -470,6 +473,7 @@ export const ComposerEditor = ({
 
   const editorRef = useRef<HTMLDivElement>(null)
   const [pasteStatus, setPasteStatus] = useState<{ scope: string; message: string }>()
+  const inputHelpDescriptionId = useId()
   const historyDescriptionId = useId()
   const historyStatusId = useId()
   const mentionListboxId = useId()
@@ -943,7 +947,7 @@ export const ComposerEditor = ({
         role="textbox"
         aria-multiline="true"
         aria-label={ariaLabel}
-        aria-describedby={`${historyDescriptionId} ${historyStatusId}`}
+        aria-describedby={`${inputHelpDescriptionId} ${historyDescriptionId} ${historyStatusId}`}
         aria-disabled={disabled || undefined}
         aria-haspopup="listbox"
         aria-controls={mentionPopupOpen ? mentionListboxId : undefined}
@@ -988,6 +992,9 @@ export const ComposerEditor = ({
           {pasteStatus.message}
         </div>
       ) : null}
+      <span id={inputHelpDescriptionId} className="sr-only">
+        {placeholder}
+      </span>
       <span id={historyDescriptionId} className="sr-only">
         {t('At the start of the input, use Up and Down Arrow to browse prompt history.')}
       </span>
@@ -995,9 +1002,30 @@ export const ComposerEditor = ({
         {historyStatus}
       </span>
       {!isComposing && !hasVisibleContent && !hasPastedText ? (
-        <div aria-hidden="true" className={composerPlaceholderClassName}>
-          {placeholder}
-        </div>
+        <>
+          <div aria-hidden="true" className={composerPlaceholderClassName}>
+            {placeholder}
+          </div>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t('Input help')}
+                className="absolute right-0 top-0 size-6 text-muted-foreground"
+              >
+                <CircleHelp className="size-3.5" aria-hidden="true" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent side="top" align="end" className="w-72 max-w-[calc(100vw-2rem)] p-3">
+              <div className="space-y-2">
+                <p className="font-medium">{t('Input help')}</p>
+                <p className="whitespace-normal">{placeholder}</p>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </>
       ) : null}
       {mention.active ? (
         <SkillMentionPopup

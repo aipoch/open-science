@@ -1,5 +1,6 @@
-import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { execFile, spawn, spawnSync } from 'node:child_process'
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
@@ -9,6 +10,7 @@ import {
   windowsLaunch
 } from '../runtime/src/platform/windows-appcontainer.js'
 import { createRuntimeConfig } from './config.js'
+import { isWindowsProtectionConfigured } from '../runtime/src/index.js'
 
 // Opt in on a Windows host with protection already installed. These probes use the public native
 // launch boundary, without changing drive mappings, protection settings, or the application's data.
@@ -31,6 +33,153 @@ const testRuntimeConfig = (): ReturnType<typeof createRuntimeConfig> => {
     ? { ...config, installationId, windowsOwnershipRoot: ownershipRoot }
     : config
 }
+
+it.skipIf(!enabled)(
+  'reads configured protection promptly during real native ACL grants',
+  async () => {
+    const config = testRuntimeConfig()
+    await expect(isWindowsProtectionConfigured(config)).resolves.toBe(true)
+    await mkdir(resolve('tmp'), { recursive: true })
+    const fixture = await mkdtemp(resolve('tmp/notebook-configured-acl-'))
+    const tree = join(fixture, 'tree')
+    for (let directory = 0; directory < 200; directory++) {
+      const root = join(tree, String(directory))
+      await mkdir(root, { recursive: true })
+      await Promise.all(
+        Array.from({ length: 100 }, (_, index) => writeFile(join(root, `${index}.txt`), 'ACL_TEST'))
+      )
+    }
+    const snapshot = async (name: string): Promise<Buffer> => {
+      const path = join(fixture, `${name}.acl`)
+      await promisify(execFile)('icacls.exe', [tree, '/save', path, '/t', '/q'], {
+        windowsHide: true,
+        timeout: 30_000
+      })
+      return readFile(path)
+    }
+    const before = await snapshot('before')
+    const durations: number[] = []
+    for (let trial = 0; trial < 3; trial++) {
+      const launch = windowsLaunch({
+        command: '',
+        executable: 'powershell.exe',
+        args: [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `$ErrorActionPreference='Stop'; if ([IO.File]::ReadAllText('${join(tree, '0/0.txt').replaceAll("'", "''")}') -ne 'ACL_TEST') { throw 'fixture unreadable' }; [Console]::WriteLine('ACL_CHILD_RUNNING')`
+        ],
+        cwd: process.env.SystemRoot ?? 'C:\\Windows',
+        env: { ...process.env, TEMP: fixture, TMP: fixture },
+        hostPath: config.windowsHostPath,
+        installationId: config.installationId,
+        ownershipRoot: config.windowsOwnershipRoot,
+        gatewayPort: 61200,
+        gatewayCredentials: { username: 'unused-offline-probe', password: 'unused-offline-probe' },
+        filesystem: {
+          readOnlyRoots: [tree],
+          readWriteRoots: [],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const child = spawn(launch.argv[0], launch.argv.slice(1), {
+        env: launch.env,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      let stdout = '',
+        stderr = '',
+        closed = false,
+        exited = false
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk
+      })
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk
+      })
+      let exitCode: number | null | undefined
+      let launchError: Error | undefined
+      child.once('exit', () => {
+        exited = true
+      })
+      child.once('error', (error) => {
+        exited = true
+        launchError = error
+      })
+      child.once('close', (code) => {
+        closed = true
+        exitCode = code
+      })
+      const leases = join(config.windowsOwnershipRoot, 'acl-leases')
+      const hasLease = async (): Promise<boolean> => {
+        for (const name of await readdir(leases)) {
+          if (!name.endsWith('.json')) continue
+          const record = await readFile(join(leases, name), 'utf8')
+            .then((text) => JSON.parse(text) as { ownerProcessId: number })
+            .catch(() => undefined)
+          if (record?.ownerProcessId === child.pid) return true
+        }
+        return false
+      }
+      const finishLaunch = async (): Promise<void> => {
+        try {
+          await expect.poll(() => closed, { timeout: 20_000 }).toBe(true)
+        } catch (error) {
+          // Ask the native owner to stop its Job and restore ACLs. A forced fallback cannot prove
+          // ACL restoration: retain this fixture/lease for diagnosis and always fail the trial.
+          const terminated = await launch.requestProcessTreeTermination()
+          await expect
+            .poll(() => closed, { timeout: 5_000 })
+            .toBe(true)
+            .catch(() => undefined)
+          if (!exited && child.pid) {
+            await promisify(execFile)('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+              windowsHide: true,
+              timeout: 5_000
+            }).catch(() => undefined)
+          }
+          await expect.poll(() => closed, { timeout: 5_000 }).toBe(true)
+          throw new Error(
+            `Native ACL trial timed out; retained ${fixture}; process proof: ${terminated}`,
+            { cause: error }
+          )
+        }
+        expect(launchError).toBeUndefined()
+        expect(exitCode, stderr).toBe(0)
+        await expect(launch.confirmProcessState()).resolves.toBe('started-and-reaped')
+        expect(stdout).toContain('ACL_CHILD_RUNNING')
+        expect(await hasLease()).toBe(false)
+      }
+      try {
+        // Synchronize with the real launch receipt, before native ACL propagation. No fake lock
+        // owner or sleeping lock holder: the only work under the mutex is the production launch.
+        await expect
+          .poll(async () => !closed && (await hasLease()), { timeout: 10_000, interval: 5 })
+          .toBe(true)
+        const started = performance.now()
+        await expect(isWindowsProtectionConfigured(config)).resolves.toBe(true)
+        durations.push(performance.now() - started)
+      } finally {
+        await finishLaunch()
+      }
+    }
+    expect((await snapshot('after')).equals(before), 'ACLs must be restored byte-for-byte').toBe(
+      true
+    )
+    // Only remove this run-owned fixture after proving native cleanup restored its permissions.
+    await rm(fixture, { recursive: true, force: true })
+    // Opt-in Windows performance acceptance budget; idle calls take tens of milliseconds.
+    for (const duration of durations)
+      expect(
+        duration,
+        `configured reads queued behind ACL work: ${durations.join(', ')} ms`
+      ).toBeLessThan(500)
+  },
+  // Allow fixture setup plus all bounded trial/cleanup waits to finish before Vitest expires.
+  240_000
+)
 
 it.skipIf(!enabled).each(
   (['commonjs', 'module'] as const).flatMap((parentType) =>

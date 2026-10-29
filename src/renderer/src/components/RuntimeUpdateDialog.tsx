@@ -1,3 +1,4 @@
+import { useManualUpdate, type ManualUpdateController } from './use-manual-update'
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { useNavigationStore } from '@/stores/navigation-store'
 import * as Dialog from '@radix-ui/react-dialog'
@@ -17,20 +18,24 @@ import {
 import { useUpdateStore } from '@/stores/update-store'
 import { DownloadProgressLine } from './DownloadProgressLine'
 import { UpdateReleaseNotes } from './UpdateReleaseNotes'
-import { ExternalTextLink } from './ExternalTextLink'
-import { APP } from '../../../shared/app-config'
+import { ManualUpdateFailure, ManualUpdateGuide, ManualUpdateLinks } from './ManualUpdate'
+import { cn } from '@/lib/utils'
 import { formatBytes } from '../../../shared/update'
 import { RuntimeDiagnostics } from './runtime-diagnostics'
 import { runtimeUpdateCopy } from './runtime-update-copy'
 import { progressStates, recoveryStates, runtimeUpdateState } from './runtime-update-view'
 
-export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): React.JSX.Element => {
+export const RuntimeUpdateDialog = ({
+  active = true,
+  manual: externalManual
+}: {
+  active?: boolean
+  manual?: ManualUpdateController
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const { status, isDialogOpen, apply, cancel, recheck, recover, download, check } =
     useUpdateStore()
   const [legacyToken, setLegacyToken] = useState<string>()
-  const [forceConfirmation, setForceConfirmation] = useState(false)
-  const forceIntent = useRef(false)
   const [cancelPending, setCancelPending] = useState(false)
   const [dismissedCliToken, setDismissedCliToken] = useState<string>()
   const [requestPending, setRequestPending] = useState(false)
@@ -49,6 +54,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     []
   )
   const pendingRef = useRef(false)
+  const contentRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef(false)
   const id = runtimeUpdateState(status)
   const recovery = recoveryStates.has(id)
@@ -79,11 +85,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const cli = status.cliConfirmation
   const cliOpen = Boolean(cli && cli.token !== dismissedCliToken)
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
-  const confirming = cliOpen || forceConfirmation || legacyOpen
+  const confirming = cliOpen || legacyOpen
   const completed = ['S15', 'S27', 'S28'].includes(id)
-  useEffect(() => {
-    if (!isDialogOpen || completed) forceIntent.current = false
-  }, [isDialogOpen, completed])
   const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
@@ -91,6 +94,8 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
+  const ownedManual = useManualUpdate(!externalManual && open)
+  const manual = externalManual ?? ownedManual
   const standardFlow =
     !confirming && !blocked && !recovery && !legacyRecords && !status.error && !checkFailed
   const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
@@ -112,7 +117,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
         : status.state === 'applying'
           ? t('Please wait for the app to close and reopen.')
           : id === 'S01'
-            ? t('Ready to restart; running tasks will be checked.')
+            ? t(
+                'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+              )
             : copy.description
   const request = async (action: () => Promise<void>): Promise<void> => {
     if (pendingRef.current) return
@@ -129,7 +136,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     if (!canCancel || cancelRef.current) return
     cancelRef.current = true
     setCancelPending(true)
-    forceIntent.current = false
     void (async () => {
       try {
         await cancel()
@@ -148,7 +154,6 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     })()
   }
   const cancelConfirmation = (): void => {
-    setForceConfirmation(false)
     setLegacyToken(undefined)
     if (cliOpen && cli) {
       setDismissedCliToken(cli.token)
@@ -183,12 +188,34 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     <Dialog.Root
       open={open}
       onOpenChange={(next) => {
-        if (!next && !recovery && !cliOpen && !forceConfirmation) cancelUpdate()
+        if (!next && manual.guideOpenRef.current) {
+          manual.closeGuide()
+          return
+        }
+        if (!next && !recovery && !cliOpen) cancelUpdate()
       }}
     >
       <Dialog.Portal>
         <Dialog.Overlay className={`${dialogOverlayClassName} z-[60]`} />
         <Dialog.Content
+          ref={contentRef}
+          onOpenAutoFocus={(event) => {
+            if (manual.guideOpenRef.current) return
+            event.preventDefault()
+            // Keep automatic update focus on its existing controls when resource links are added.
+            const control = contentRef.current?.querySelector<HTMLButtonElement>(
+              '[data-testid="manual-update-controls"] button:not(:disabled)'
+            )
+            const focusTarget = control ?? contentRef.current
+            focusTarget?.focus()
+          }}
+          {...(manual.guideOpen
+            ? {
+                'aria-label': t('Installation instructions'),
+                'aria-labelledby': undefined,
+                'aria-describedby': undefined
+              }
+            : {})}
           data-testid="runtime-update-dialog"
           data-runtime-update-state={id}
           className={dialogPanelClassName(
@@ -197,6 +224,10 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
             event.preventDefault()
+            if (manual.guideOpenRef.current) {
+              manual.closeGuide()
+              return
+            }
             if (confirming) {
               cancelConfirmation()
               return
@@ -204,315 +235,327 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
             if (!recovery) cancelUpdate()
           }}
         >
-          <div className={`${dialogHeaderClassName} flex-wrap gap-y-1`}>
-            <Dialog.Title className={dialogTitleClassName}>
-              {confirming ? t('Update Open-Science now?') : t('Update')}
-            </Dialog.Title>
-            <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
-              {status.latest
-                ? t('v{{current}} → v{{latest}}', {
-                    current: status.current,
-                    latest: status.latest
-                  })
-                : status.current}
-            </Dialog.Description>
-          </div>
-          {standardFlow ? (
-            <section
-              data-testid="update-status"
-              className="shrink-0 border-b border-border px-5 py-5"
-            >
-              <div className="flex items-start gap-3" role="status" aria-atomic="true">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                  <StatusIcon
-                    aria-hidden="true"
-                    className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
-                  />
-                </span>
-                <div className="min-w-0 space-y-1">
-                  <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
-                  {statusDescription ? (
-                    <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
-                  ) : null}
-                </div>
-              </div>
-              {downloading ? (
-                <div className="mt-3">
-                  <DownloadProgressLine
-                    progress={
-                      status.downloadProgress ?? {
-                        phase: 'downloading',
-                        transferred: status.downloadedBytes ?? 0,
-                        total: status.totalBytes,
-                        percent: status.progress ?? 0,
-                        bytesPerSecond: 0,
-                        attempt: 0
-                      }
-                    }
-                  />
-                </div>
-              ) : null}
-            </section>
-          ) : null}
-          <div
-            data-testid="update-scroll-body"
-            className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain ${standardFlow ? 'max-h-80' : ''}`}
-          >
-            {confirming ? (
+          {manual.guideOpen ? <ManualUpdateGuide manual={manual} status={status} /> : null}
+          <div hidden={manual.guideOpen} className={manual.guideOpen ? 'hidden' : 'contents'}>
+            <div className={`${dialogHeaderClassName} flex-wrap gap-y-1`}>
+              <Dialog.Title className={dialogTitleClassName}>
+                {confirming ? t('Update Open-Science now?') : t('Update')}
+              </Dialog.Title>
+              <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
+                {status.latest
+                  ? t('v{{current}} → v{{latest}}', {
+                      current: status.current,
+                      latest: status.latest
+                    })
+                  : status.current}
+              </Dialog.Description>
+            </div>
+            {standardFlow ? (
               <section
-                data-runtime-update-state={
-                  cliOpen ? (cli?.source === 'this-installation' ? 'S03' : 'S02') : undefined
-                }
-                data-testid={forceConfirmation ? 'runtime-force-confirmation-S05' : undefined}
-                className="space-y-3 text-sm"
+                data-testid="update-status"
+                className="shrink-0 border-b border-border px-5 py-5"
               >
-                <p>
-                  {legacyOpen
-                    ? t(
-                        'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
-                      )
-                    : t(
-                        'Updating will interrupt running tasks. Unsaved work may be lost. Interrupted tasks will not restart automatically.'
-                      )}
-                </p>
-                {cliOpen ? (
-                  <>
-                    <p>
-                      {t(
-                        'Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.'
-                      )}
-                    </p>
-                    {cli?.source === 'another-installation' ? (
-                      <p>
-                        {t(
-                          'Your separate installation will not be updated. Check data compatibility before using it again.'
-                        )}
-                      </p>
-                    ) : null}
-                    <RuntimeDiagnostics
-                      text={redactSensitiveText(
-                        JSON.stringify(
-                          {
-                            source: cli?.source,
-                            entryPath: cli?.entryPath,
-                            pid: cli?.pid,
-                            port: cli?.port
-                          },
-                          null,
-                          2
-                        )
-                      )}
+                <div className="flex items-start gap-3" role="status" aria-atomic="true">
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <StatusIcon
+                      aria-hidden="true"
+                      className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
                     />
-                  </>
+                  </span>
+                  <div className="min-w-0 space-y-1">
+                    <h3 className="text-base font-semibold leading-6">{statusTitle}</h3>
+                    {statusDescription ? (
+                      <p className="text-xs leading-5 text-muted-foreground">{statusDescription}</p>
+                    ) : null}
+                  </div>
+                </div>
+                {downloading ? (
+                  <div className="mt-3">
+                    <DownloadProgressLine
+                      progress={
+                        status.downloadProgress ?? {
+                          phase: 'downloading',
+                          transferred: status.downloadedBytes ?? 0,
+                          total: status.totalBytes,
+                          percent: status.progress ?? 0,
+                          bytesPerSecond: 0,
+                          attempt: 0
+                        }
+                      }
+                    />
+                  </div>
                 ) : null}
               </section>
-            ) : (
-              <>
-                {!standardFlow && !needsDownload && !checkFailed ? (
-                  <ErrorNotice
-                    role={blocked || recovery ? 'alert' : 'status'}
-                    level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
-                    icon={busy ? LoaderCircle : AlertTriangle}
-                    iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
-                    title={
-                      legacyRecords
-                        ? t('Old Shell launch records are blocking this update.')
-                        : copy.title
-                    }
-                    description={
-                      legacyRecords
-                        ? t(
-                            'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
-                          )
-                        : copy.description
-                    }
-                  />
-                ) : null}
-                {status.error || checkFailed ? (
-                  <ErrorNotice
-                    className="mt-3"
-                    role="alert"
-                    level="warning"
-                    title={checkFailed ? t('Update failed') : undefined}
-                    description={
-                      (needsDownload || checkFailed) && status.error
-                        ? redactSensitiveText(status.error)
-                        : t('The operation could not be completed. Try again.')
-                    }
-                  >
-                    {needsDownload || checkFailed ? (
-                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
-                        {t('Download manually')}
-                      </ExternalTextLink>
-                    ) : null}
-                  </ErrorNotice>
-                ) : null}
-                {recoveryAttempted && recovery && !busy && !status.error ? (
-                  <p role="status" className="mt-3 text-sm">
-                    {t('The app is not ready yet. Try again after completing the action above.')}
+            ) : null}
+            <div
+              data-testid="update-scroll-body"
+              className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain ${standardFlow ? 'max-h-80' : ''}`}
+            >
+              {confirming ? (
+                <section
+                  data-runtime-update-state={
+                    cliOpen ? (cli?.source === 'this-installation' ? 'S03' : 'S02') : undefined
+                  }
+
+                  className="space-y-3 text-sm"
+                >
+                  <p>
+                    {legacyOpen
+                      ? t(
+                          'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+                        )
+                      : t(
+                          'Updating restarts the app and interrupts affected tasks, including work using this service through other connections. Open-Science will save your changes and stop those tasks. Interrupted tasks will not restart automatically.'
+                        )}
                   </p>
-                ) : null}
-                {id === 'S04' && status.blockedTasks?.length ? (
-                  <ul className="mt-3 space-y-2">
-                    {status.blockedTasks.map((task) => (
-                      <li
-                        key={`${task.kind}:${task.sessionId}`}
-                        className="flex items-center justify-between gap-3 text-sm"
-                      >
-                        <span className="min-w-0 break-words">{task.title}</span>
-                        <Button
-                          variant="outline"
-                          disabled={busy}
-                          onClick={() => {
-                            useNavigationStore
-                              .getState()
-                              .openSession(task.projectId, task.sessionId, 'user', () =>
-                                useUpdateStore.setState({ isDialogOpen: false })
-                              )
-                          }}
-                        >
-                          {t('View task')}
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {blocked || recovery || status.error ? (
-                  <RuntimeDiagnostics text={diagnostics} />
-                ) : null}
-                {id === 'S04' && status.canForce === true ? (
-                  <details className="mt-4 text-sm">
-                    <summary>{t('More options')}</summary>
-                    <Button
-                      variant="ghost"
-                      disabled={busy}
-                      onClick={() => setForceConfirmation(true)}
-                    >
-                      {t('Force update…')}
-                    </Button>
-                  </details>
-                ) : null}
-                {!recovery && !checkFailed && !checking ? (
-                  <UpdateReleaseNotes status={status} />
-                ) : null}
-              </>
-            )}
-          </div>
-          {downloading && !standardFlow ? (
-            <div className="shrink-0 px-5 pb-5">
-              <DownloadProgressLine
-                progress={
-                  status.downloadProgress ?? {
-                    phase: 'downloading',
-                    transferred: status.downloadedBytes ?? 0,
-                    total: status.totalBytes,
-                    percent: status.progress ?? 0,
-                    bytesPerSecond: 0,
-                    attempt: 0
-                  }
-                }
-              />
-            </div>
-          ) : null}
-          {confirming ? (
-            <div className={`${dialogFooterClassName} shrink-0`}>
-              <Button variant="ghost" onClick={cancelConfirmation}>
-                {t('Cancel')}
-              </Button>
-              <Button
-                onClick={() => {
-                  if (cliOpen && cli) {
-                    setDismissedCliToken(cli.token)
-                    const force = forceIntent.current
-                    forceIntent.current = false
-                    void request(() => apply({ force, cliConsentToken: cli.token }))
-                  } else if (legacyOpen && legacyToken) {
-                    const token = legacyToken
-                    setLegacyToken(undefined)
-                    void request(() => apply({ legacyShellRecoveryToken: token }))
-                  } else if (forceConfirmation) {
-                    setForceConfirmation(false)
-                    forceIntent.current = true
-                    void request(async () => {
-                      await apply({ force: true })
-                      if (!useUpdateStore.getState().status.cliConfirmation)
-                        forceIntent.current = false
-                    })
-                  }
-                }}
-              >
-                {t('Update')}
-              </Button>
-            </div>
-          ) : !busy || canCancel ? (
-            <div className={`${dialogFooterClassName} shrink-0 flex-wrap [&_button]:min-h-10`}>
-              {recovery && !busy ? (
-                <>
-                  {status.recovery?.canRecover ? (
-                    <Button variant="ghost" onClick={quit}>
-                      {t('Quit', { context: 'verb', ns: 'common' })}
-                    </Button>
+                  {cliOpen ? (
+                    <>
+                      <p>
+                        {t(
+                          'Other connections will close. After updating, closing this app will also stop background work. Your settings and data locations will be kept.'
+                        )}
+                      </p>
+                      {cli?.source === 'another-installation' ? (
+                        <p>
+                          {t(
+                            'Your separate installation will not be updated. Check data compatibility before using it again.'
+                          )}
+                        </p>
+                      ) : null}
+                      <RuntimeDiagnostics
+                        text={redactSensitiveText(
+                          JSON.stringify(
+                            {
+                              source: cli?.source,
+                              entryPath: cli?.entryPath,
+                              pid: cli?.pid,
+                              port: cli?.port
+                            },
+                            null,
+                            2
+                          )
+                        )}
+                      />
+                    </>
                   ) : null}
-                  <Button
-                    disabled={busy}
-                    onClick={() => {
-                      if (!status.recovery?.canRecover) {
-                        quit()
-                        return
-                      }
-                      setRecoveryAttempted(true)
-                      void request(recover)
-                    }}
-                  >
-                    {!status.recovery?.canRecover
-                      ? t('Quit', { context: 'verb', ns: 'common' })
-                      : t('Retry')}
-                  </Button>
-                </>
+                </section>
               ) : (
                 <>
-                  {canCancel && !recovery ? (
-                    <Button variant="ghost" disabled={cancelPending} onClick={cancelUpdate}>
-                      {t('Cancel')}
-                    </Button>
-                  ) : null}
-                  {!progress && !recovery && !checking && id !== 'S29' ? (
-                    <Button
-                      disabled={busy || downloading}
-                      onClick={() => {
-                        if (checkFailed) void request(check)
-                        else if (needsDownload) void request(download)
-                        else if (status.legacyShellRecovery)
-                          setLegacyToken(status.legacyShellRecovery.token)
-                        else if (blocked && !cli) void request(recheck)
-                        else void request(() => apply())
-                      }}
+                  {!standardFlow && !needsDownload && !checkFailed ? (
+                    <ErrorNotice
+                      role={blocked || recovery ? 'alert' : 'status'}
+                      level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
+                      icon={busy ? LoaderCircle : AlertTriangle}
+                      iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
+                      title={
+                        legacyRecords
+                          ? t('Old Shell launch records are blocking this update.')
+                          : copy.title
+                      }
+                      description={
+                        legacyRecords
+                          ? t(
+                              'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
+                            )
+                          : copy.description
+                      }
                     >
-                      {needsDownload
-                        ? downloading || requestPending
-                          ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
-                          : status.totalBytes
-                            ? t('Download update ({{size}})', {
-                                size: formatBytes(status.totalBytes)
-                              })
-                            : t('Download update')
-                        : busy
-                          ? t('Checking…')
-                          : status.legacyShellRecovery
-                            ? t('Continue')
-                            : checkFailed || (blocked && !cli)
-                              ? t('Retry')
-                              : t('Restart to update')}
-                    </Button>
+                      {!status.error ? (
+                        <ManualUpdateFailure manual={manual} status={status} />
+                      ) : null}
+                    </ErrorNotice>
+                  ) : null}
+                  {status.error || checkFailed ? (
+                    <ErrorNotice
+                      className="mt-3"
+                      role="alert"
+                      level="warning"
+                      title={checkFailed ? t('Update failed') : undefined}
+                      description={
+                        (needsDownload || checkFailed) && status.error
+                          ? redactSensitiveText(status.error)
+                          : t('The operation could not be completed. Try again.')
+                      }
+                    >
+                      <ManualUpdateFailure manual={manual} status={status} />
+                    </ErrorNotice>
+                  ) : null}
+                  {recoveryAttempted && recovery && !busy && !status.error ? (
+                    <p role="status" className="mt-3 text-sm">
+                      {t('The app is not ready yet. Try again after completing the action above.')}
+                    </p>
+                  ) : null}
+                  {id === 'S04' && status.blockedTasks?.length ? (
+                    <ul className="mt-3 space-y-2">
+                      {status.blockedTasks.map((task) => (
+                        <li
+                          key={`${task.kind}:${task.sessionId}`}
+                          className="flex items-center justify-between gap-3 text-sm"
+                        >
+                          <span className="min-w-0 break-words">{task.title}</span>
+                          <Button
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => {
+                              useNavigationStore
+                                .getState()
+                                .openSession(task.projectId, task.sessionId, 'user', () =>
+                                  useUpdateStore.setState({ isDialogOpen: false })
+                                )
+                            }}
+                          >
+                            {t('View task')}
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {blocked || recovery || status.error ? (
+                    <RuntimeDiagnostics text={diagnostics} />
+                  ) : null}
+                  {!recovery && !checkFailed && !checking ? (
+                    <UpdateReleaseNotes status={status} />
                   ) : null}
                 </>
               )}
             </div>
-          ) : standardFlow ? (
-            <div className={`${dialogFooterClassName} shrink-0 [&_button]:min-h-10`}>
-              <Button disabled>{copy.title}</Button>
+            {downloading && !standardFlow ? (
+              <div className="shrink-0 px-5 pb-5">
+                <DownloadProgressLine
+                  progress={
+                    status.downloadProgress ?? {
+                      phase: 'downloading',
+                      transferred: status.downloadedBytes ?? 0,
+                      total: status.totalBytes,
+                      percent: status.progress ?? 0,
+                      bytesPerSecond: 0,
+                      attempt: 0
+                    }
+                  }
+                />
+              </div>
+            ) : null}
+            <div
+              data-testid="manual-update-footer"
+              className="shrink-0 border-t border-border-300/90 px-5 py-3.5"
+            >
+              <ManualUpdateLinks manual={manual} align="end" />
+              {confirming ? (
+                <div
+                  data-testid="manual-update-controls"
+                  className={cn(dialogFooterClassName, 'mt-3 border-t-0 px-0 py-0')}
+                >
+                  <Button variant="ghost" onClick={cancelConfirmation}>
+                    {t('Cancel')}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (cliOpen && cli) {
+                        setDismissedCliToken(cli.token)
+                        void request(() => apply({ force: true, cliConsentToken: cli.token }))
+                      } else if (legacyOpen && legacyToken) {
+                        const token = legacyToken
+                        setLegacyToken(undefined)
+                        void request(() => apply({ legacyShellRecoveryToken: token }))
+                      }
+                    }}
+                  >
+                    {t('Update')}
+                  </Button>
+                </div>
+              ) : !busy || canCancel ? (
+                <div
+                  data-testid="manual-update-controls"
+                  className={cn(
+                    dialogFooterClassName,
+                    'mt-3 border-t-0 px-0 py-0 flex-wrap [&_button]:min-h-10'
+                  )}
+                >
+                  {recovery && !busy ? (
+                    <>
+                      {status.recovery?.canRecover ? (
+                        <Button variant="ghost" onClick={quit}>
+                          {t('Quit', { context: 'verb', ns: 'common' })}
+                        </Button>
+                      ) : null}
+                      <Button
+                        disabled={busy}
+                        onClick={() => {
+                          if (!status.recovery?.canRecover) {
+                            quit()
+                            return
+                          }
+                          setRecoveryAttempted(true)
+                          void request(recover)
+                        }}
+                      >
+                        {!status.recovery?.canRecover
+                          ? t('Quit', { context: 'verb', ns: 'common' })
+                          : t('Retry')}
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      {canCancel && !recovery ? (
+                        <Button variant="ghost" disabled={cancelPending} onClick={cancelUpdate}>
+                          {t('Cancel')}
+                        </Button>
+                      ) : null}
+                      {!progress && !recovery && !checking && id !== 'S29' ? (
+                        <Button
+                          disabled={busy || downloading}
+                          onClick={() => {
+                            if (checkFailed) void request(check)
+                            else if (needsDownload) void request(download)
+                            else if (status.legacyShellRecovery)
+                              setLegacyToken(status.legacyShellRecovery.token)
+                            else if (!blocked || (id === 'S04' && status.canForce)) {
+                              void request(async () => {
+                                await apply({ force: true })
+                                const consent = useUpdateStore.getState().status.cliConfirmation
+                                if (consent) {
+                                  setDismissedCliToken(consent.token)
+                                  await apply({ force: true, cliConsentToken: consent.token })
+                                }
+                              })
+                            } else if (blocked && !cli) void request(recheck)
+                            else void request(() => apply())
+                          }}
+                        >
+                          {needsDownload
+                            ? downloading || requestPending
+                              ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
+                              : status.totalBytes
+                                ? t('Download update ({{size}})', {
+                                    size: formatBytes(status.totalBytes)
+                                  })
+                                : t('Download update')
+                            : busy
+                              ? t('Checking…')
+                              : status.legacyShellRecovery
+                                ? t('Continue')
+                                : checkFailed ||
+                                    (blocked && !cli && !(id === 'S04' && status.canForce))
+                                  ? t('Retry')
+                                  : t('Update')}
+                        </Button>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : standardFlow ? (
+                <div
+                  data-testid="manual-update-controls"
+                  className={cn(
+                    dialogFooterClassName,
+                    'mt-3 border-t-0 px-0 py-0 [&_button]:min-h-10'
+                  )}
+                >
+                  <Button disabled>{copy.title}</Button>
+                </div>
+              ) : null}
             </div>
-          ) : null}
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

@@ -16,12 +16,14 @@ it.each([3, 4, 5, 6, 8])('captures reported cell %s', async (index) => {
     ? analyzeRNotebookSource(cell.script)
     : analyzePythonNotebookSource(cell.script))
   for (const reason of ['opaque-call', 'opaque-mutation'])
-    expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain(reason)
+    if ([6, 8].includes(index) && reason === 'opaque-call')
+      expect(facts.state === 'unknown' ? facts.reasons : []).toContain(reason)
+    else expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain(reason)
   const access = await analyzeNotebookSourceFileAccess(cell.language as 'r' | 'python', cell.script)
   expect(access, JSON.stringify(facts)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete'
+    readState: [6, 8].includes(index) ? 'partial' : 'complete',
+    writeState: [6, 8].includes(index) ? 'partial' : 'complete',
+    externalState: [6, 8].includes(index) ? 'partial' : 'complete'
   })
 })
 
@@ -50,8 +52,11 @@ it('replays the self-contained final cell without earlier failed plotting', asyn
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
-    expect(p.stalenessByRunId['8'], JSON.stringify(p)).toEqual({ state: 'clear' })
-    expect(p.dependenciesByRunId?.['8']).toEqual([])
+    expect(p.stalenessByRunId['8'], JSON.stringify(p)).toEqual({
+      state: 'unknown',
+      reasons: ['external-state', 'opaque-call']
+    })
+    expect(p.dependenciesByRunId?.['8']).toBeUndefined()
     expect(await analyzeNotebookSourceFileAccess('r', cells[8].script)).toMatchObject({
       reads: ['inputs/differential-results-333333333333.xlsx'],
       writes: ['diagonal_volcano.png']

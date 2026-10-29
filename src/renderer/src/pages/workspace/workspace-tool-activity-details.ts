@@ -2,6 +2,10 @@ import type { ContentBlock, ToolCallContent, ToolKind } from '@agentclientprotoc
 
 import { formatByteSize } from '@/lib/utils'
 import {
+  readAuthorizedDirectories,
+  type AuthorizedDirectorySnapshot
+} from './authorized-directories-presentation'
+import {
   buildNotebookToolSummary,
   isNotebookSummaryTool,
   readNotebookToolResult,
@@ -14,6 +18,7 @@ import { memoryAgentRememberResultSchema, memoryAgentResultSchema } from '../../
 import type { NotebookRunStatus } from '../../../../shared/notebook'
 import {
   getNotebookMemoryToolDisplayName,
+  isAuthorizedDirectoryTool,
   isNotebookManagePackagesToolName,
   matchNotebookMemoryTool,
   resolveNotebookLanguage,
@@ -65,7 +70,11 @@ type ToolLiteratureSection = {
 
 type ToolSummarySection = { kind: 'summary'; summary: ToolSummary; file?: boolean }
 type ToolDetailSection =
-  ToolCodeSection | ToolDiffSection | ToolLiteratureSection | ToolSummarySection
+  | ToolCodeSection
+  | ToolDiffSection
+  | ToolLiteratureSection
+  | ToolSummarySection
+  | { kind: 'authorized-directories'; snapshot: AuthorizedDirectorySnapshot }
 
 type ToolActivityDetails = {
   codeReview?: NotebookCodeReview
@@ -96,6 +105,42 @@ const TOOL_KIND_LABELS: Record<ToolKind, string> = {
   switch_mode: 'Switch Mode',
   other: 'Tool'
 }
+
+const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
+  ...Object.values(TOOL_KIND_LABELS),
+  'Agent SDK',
+  'Code',
+  'Code risk review',
+  'Command',
+  'Content',
+  'Error',
+  'File',
+  'Input',
+  'Log',
+  'Literature library',
+  'Manage packages',
+  'Memory categories',
+  'Notebook run',
+  'Output',
+  'Packages',
+  'Prompt',
+  'Request',
+  'Result',
+  'Reading',
+  'Save memory',
+  'Search memory',
+  'Shell',
+  'Skill',
+  'Tool output image',
+  'Tool search',
+  'Tools found',
+  'Web Fetch',
+  'Write file'
+])
+
+// Shares the tool row's existing translations with compact group summaries.
+const translateToolDetailCopy = (value: string, t: TranslateClause): string =>
+  TRANSLATABLE_TOOL_DETAIL_COPY.has(value) ? t(value) : value
 
 // Maps common file extensions to Shiki-friendly language ids for diff/read highlighting.
 const EXTENSION_LANGUAGES: Record<string, string> = {
@@ -1265,6 +1310,27 @@ const buildToolActivityDetails = (
       ? { ...details, displayName: 'Skill', subtitle: getLoadedSkillName(activity) }
       : undefined
   }
+  if (isAuthorizedDirectoryTool(activity.providerToolName, activity.title)) {
+    const snapshot =
+      activity.status === 'completed' &&
+      !(isRecord(activity.rawOutput) && activity.rawOutput.isError === true)
+        ? [activity.rawOutput, ...collectToolTexts(activity)]
+            .map((value) => readAuthorizedDirectories(value))
+            .find(Boolean)
+        : undefined
+    return {
+      displayName: t('List authorized directories'),
+      metaLabel: snapshot
+        ? t('{{count}} directories', {
+            count: snapshot.directories.length,
+            defaultValue_one: '{{count}} directory'
+          })
+        : undefined,
+      sections: snapshot
+        ? [{ kind: 'authorized-directories', snapshot }]
+        : (buildGenericDetails(activity)?.sections ?? [])
+    }
+  }
   const literatureDetails = buildLiteratureDetails(activity)
   if (literatureDetails) return literatureDetails
   // Saved files show a metadata summary instead of dumping their (possibly base64) content.
@@ -1327,6 +1393,7 @@ const buildToolActivityDetails = (
 
 export {
   buildToolActivityDetails,
+  translateToolDetailCopy,
   getNotebookRunIdFromActivity,
   getNotebookRunStatusFromActivity,
   getSkillLoadDocument,

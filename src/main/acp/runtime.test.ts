@@ -1,3 +1,4 @@
+import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
 import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'
@@ -2161,6 +2162,114 @@ const PERMISSION_PROJECTION_DECISIONS = [
   ['deny', 'reject-once', 'declined'],
   ['cancel', undefined, 'permission-closed']
 ] as const
+
+describe('host-owned Shell destination approval contract', () => {
+  it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
+    'parks and persists destination allow/deny without provider replay through %s',
+    async (_name, framework, modelRoute, backendId) => {
+      const process = new FakeAgentProcess()
+      const promptGate = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['network-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        onPrompt: () => promptGate.promise
+      })
+      const persisted = materializeSessionConversationGraph({
+        id: 'network-session',
+        projectId: 'project-fixture',
+        cwd: '/workspace',
+        title: 'Destination wait',
+        status: 'running',
+        createdAt: 1,
+        updatedAt: 1,
+        messages: [
+          {
+            id: 'prompt-network',
+            role: 'user',
+            content: 'Run sample client',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      } satisfies PersistedChatSession)
+      let context: SessionRuntimeContext = { version: 1, revision: 0 }
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: async () => context,
+            loadSessionForContinuation: async () => ({ ...persisted, runtimeContext: context }),
+            containsMessageOnActiveBranch: async () => true,
+            patchSessionRuntimeContext: async (command) => {
+              await command.beforePersist?.({ ...persisted, runtimeContext: context })
+              context = { ...context, ...command.patch, revision: context.revision + 1 }
+              return context
+            }
+          }
+        },
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          backendId,
+          modelRoute,
+          executablePath: '/bin/agent',
+          env: {},
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+        })
+      })
+      const session = await runtime.createSession({
+        cwd: '/workspace',
+        projectId: 'project-fixture',
+        permissionProfile: 'ask'
+      })
+      const prompt = runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Run sample client',
+        provenanceContext: { promptMessageId: 'prompt-network' }
+      })
+      try {
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        for (const optionId of ['allow-once', 'deny', undefined]) {
+          const decision = runtime.requestAppPermission({
+            sessionId: session.sessionId,
+            title: 'Network approval',
+            rawInput: {},
+            options: [],
+            networkApproval: {
+              projectId: 'project-fixture',
+              executionId: 'run-fixture',
+              commandFingerprint: 'a'.repeat(64),
+              hostname: 'service.example.test',
+              port: 443,
+              runtime: 'bash'
+            }
+          })
+          await vi.waitFor(() => expect(runtime.getSnapshot().pendingPermissions).toHaveLength(1))
+          const request = runtime.getSnapshot().pendingPermissions[0]
+          expect(context.networkApprovals?.[0].requestId).toBe(request.requestId)
+          await runtime.respondToPermission({
+            requestId: request.requestId,
+            optionId,
+            cancelled: optionId === undefined
+          })
+          await expect(decision).resolves.toBe(optionId)
+          expect(context.networkApprovals).toBeUndefined()
+          expect(fakeAgent.prompts).toHaveLength(1)
+        }
+      } finally {
+        promptGate.resolve()
+        await prompt
+        await runtime.shutdown()
+      }
+    },
+    30_000
+  )
+})
 
 describe('host-owned Notebook code-risk review receipts', () => {
   it.each(PERMISSION_PROJECTION_FRAMEWORKS)(
@@ -7295,7 +7404,14 @@ describe('ACP runtime session management', () => {
     resolveSessionUpload.mockClear()
     await runtime.sendPrompt({ sessionId: session.sessionId, text: 'summarize without context' })
 
-    expect(receivedPrompts).toEqual([[{ type: 'text', text: 'summarize without context' }]])
+    expect(receivedPrompts).toEqual([
+      [
+        {
+          type: 'text',
+          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.\n\nsummarize without context'
+        }
+      ]
+    ])
     expect(JSON.stringify(receivedPrompts)).not.toContain(ambientSecret)
     expect(finalizeUploads).not.toHaveBeenCalled()
     expect(resolveManagedUpload).not.toHaveBeenCalled()
@@ -7369,6 +7485,7 @@ describe('ACP runtime session management', () => {
       [
         { nativeChoice: true, action: 'quit' },
         { nativeChoice: true, action: 'stop' },
+        { nativeChoice: true, action: 'cancel-response' },
         { nativeChoice: false, action: 'quit' }
       ].map((scenario) => ({ name, framework, modelRoute, backendId, ...scenario }))
     )
@@ -7434,6 +7551,12 @@ describe('ACP runtime session management', () => {
         ])
 
         if (action === 'quit') await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+        else if (action === 'cancel-response')
+          await coordinator.respondToElicitation({
+            requestId: request.requestId,
+            request,
+            action: 'cancel'
+          })
         else await coordinator.cancelPrompt({ sessionId: session.sessionId })
 
         const preserved = nativeChoice && action === 'quit'
@@ -8383,6 +8506,66 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  it.each(['mixed', 'all', 'decline', 'legacy', 'literal'] as const)(
+    'delivers explicit per-question outcomes and skip guidance for %s choices',
+    async (scenario) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['skip-semantics-session'])
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process)
+      })
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.requestUserInput({
+        sessionId: session.sessionId,
+        questions: [
+          { question: 'Which stack?', options: [{ label: 'Python' }, { label: 'R' }] },
+          { question: 'Which output?', options: [{ label: 'Report' }, { label: 'Notebook' }] }
+        ]
+      })
+      const [request] = runtime.getSnapshot().pendingElicitations ?? []
+      await runtime.respondToElicitation({
+        requestId: request.requestId,
+        action: scenario === 'decline' ? 'decline' : 'accept',
+        answers:
+          scenario === 'decline'
+            ? undefined
+            : [
+                scenario === 'legacy'
+                  ? { fieldId: 'question_0_custom', value: 'User skipped' }
+                  : scenario === 'literal'
+                    ? { fieldId: 'question_0_custom', status: 'answered', value: 'User skipped' }
+                    : { fieldId: 'question_0', status: 'skipped' },
+                scenario === 'all'
+                  ? { fieldId: 'question_1', status: 'skipped' }
+                  : { fieldId: 'question_1', value: 'Report' }
+              ]
+      })
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      const text = fakeAgent.prompts[0].text
+      expect(text).toContain('Which stack?')
+      expect(text).toContain('Which output?')
+      if (scenario === 'literal') {
+        expect(text).toContain('Answer: User skipped')
+        expect(text).not.toContain('Status: skipped')
+      } else {
+        expect(text.match(/Status: skipped/g)).toHaveLength(
+          scenario === 'all' || scenario === 'decline' ? 2 : 1
+        )
+        expect(text).toContain('The user did not provide a selection')
+        expect(text).toContain('continue using the information already available')
+        expect(text).toContain('do not ask these questions again')
+        expect(text).toContain('does not imply consent or authorization')
+        expect(text).not.toContain('Answer: User skipped')
+      }
+      if (scenario !== 'all' && scenario !== 'decline') expect(text).toContain('Answer: Report')
+      await vi.waitFor(() =>
+        expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
   it('publishes one multi-question choice and continues only after every answer', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['batched-user-choice-session'])
@@ -8507,6 +8690,9 @@ describe('ACP runtime session management', () => {
   it('rehydrates a persisted app-owned choice before silently continuing', async () => {
     const root = await createTemporaryRoot()
     const process = new FakeAgentProcess()
+    let persisted = addPendingRestoredChoice(
+      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+    )
     let artifactContext: Record<string, unknown> | undefined
     const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
       onPrompt: async () => {
@@ -8534,15 +8720,11 @@ describe('ACP runtime session management', () => {
           readSessionRuntimeContext: vi.fn(),
           patchSessionRuntimeContext: vi.fn(),
           containsMessageOnActiveBranch: vi.fn(),
-          loadSessionForContinuation: vi.fn(async () =>
-            addPendingRestoredChoice(
-              createRestoredContinuationSession(
-                'prompt-restored-1',
-                'restored-choice-session',
-                'project-1'
-              )
-            )
-          )
+          loadSessionForContinuation: vi.fn(async () => structuredClone(persisted)),
+          mutateRuntimeSession: async (_scope, mutate) => {
+            persisted = { ...mutate(structuredClone(persisted)), runtimeTranscriptOwner: 'main' }
+            return structuredClone(persisted)
+          }
         }
       }
     })
@@ -8612,90 +8794,383 @@ describe('ACP runtime session management', () => {
     )
   })
 
-  it('rearms a restored answer when continuation admission fails and accepts a retry', async () => {
-    const process = new FakeAgentProcess()
-    const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
-    let persisted = addPendingRestoredChoice(
-      createRestoredContinuationSession('prompt-restored-1', 'restored-choice-session', 'project-1')
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      (['accept', 'decline'] as const).map((action) => ({
+        name,
+        framework,
+        modelRoute,
+        backendId,
+        action
+      }))
     )
-    persisted.runtimeTranscriptOwner = 'main'
-    const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
-      _scope,
-      mutate
-    ) => {
-      persisted = mutate(structuredClone(persisted))
-      return structuredClone(persisted)
-    }
-    const runtimeSessions = new RuntimeSessionOwner({
-      loadSession: async () => structuredClone(persisted),
-      mutateSession: mutateRuntimeSession,
-      finalizeArtifacts: async () => []
-    })
-    vi.spyOn(runtimeSessions, 'begin').mockRejectedValueOnce(
-      new Error('temporary admission failure')
-    )
-    const runtime = new AcpRuntime({
-      appVersion: '0.1.0',
-      defaultCwd: '/workspace',
-      spawnAgent: () => asAgentProcess(process),
-      runtimeSessions,
-      callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
-      permissionWait: {
-        sessions: {
-          readSessionRuntimeContext: vi.fn(),
-          patchSessionRuntimeContext: vi.fn(),
-          containsMessageOnActiveBranch: vi.fn(),
-          loadSessionForContinuation: async () => structuredClone(persisted),
-          mutateRuntimeSession
+  )(
+    'saves and ends a failed $action without attaching the unavailable Specialist through $name',
+    async ({ framework, modelRoute, backendId, action }) => {
+      const commits: PersistedChatSession[] = []
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      persisted.runtimeTranscriptOwner = 'main'
+      const spawnAgent = vi.fn(() => {
+        throw new Error('The bound specialist is unavailable.')
+      })
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        spawnAgent,
+        resolveBackend: () => ({
+          framework,
+          modelRoute,
+          backendId,
+          executablePath: 'unused',
+          env: {}
+        }),
+        permissionWait: {
+          sessions: {
+            sessionProjectId: async () => 'project-1',
+            readSessionRuntimeContext: vi.fn(),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            loadSessionForContinuation: async () => structuredClone(persisted),
+            mutateRuntimeSession: async (_scope, mutate) => {
+              persisted = mutate(structuredClone(persisted))
+              commits.push(structuredClone(persisted))
+              return structuredClone(persisted)
+            }
+          }
+        }
+      })
+      const projection = persisted.activities![0].elicitation!
+      const response = {
+        action: 'cancel' as const,
+        requestId: projection.durable!.requestId,
+        request: {
+          sessionId: persisted.id,
+          toolCallId: persisted.activities![0].id,
+          requestId: projection.durable!.requestId,
+          message: projection.message,
+          fields: projection.fields,
+          durable: projection.durable
         }
       }
-    })
-    await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
-    const request = {
-      requestId: 'choice-restored-1',
-      sessionId: 'restored-choice-session',
-      toolCallId: 'tool-choice-restored-1',
-      message: 'Choose an approach',
-      fields: [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
-      durable: {
-        kind: 'agent-user-choice' as const,
+      const answers =
+        action === 'accept' ? [{ fieldId: 'question_0', value: 'Expanded' }] : undefined
+      await runtime.respondToElicitation({
+        ...response,
+        action,
+        answers,
+        continuationFailure: 'The bound specialist is unavailable.'
+      })
+      expect(commits[0].activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined',
+        continuationRecovery: { error: 'The bound specialist is unavailable.' }
+      })
+      expect(commits).toHaveLength(1)
+      expect(persisted.activities?.[0].elicitation).toMatchObject({
+        state: action === 'accept' ? 'answered' : 'declined',
+        continuationRecovery: { error: 'The bound specialist is unavailable.' }
+      })
+      await expect(runtime.respondToElicitation(response)).resolves.toBeDefined()
+      await expect(runtime.respondToElicitation(response)).resolves.toBeDefined()
+      expect(spawnAgent).not.toHaveBeenCalled()
+      expect(normalizeSessionFile(persisted)).toMatchObject({
+        status: 'idle',
+        activities: [{ elicitation: { state: action === 'accept' ? 'answered' : 'declined' } }]
+      })
+      expect(persisted.activities?.[0].elicitation?.answers).toEqual(answers)
+    }
+  )
+
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap((route) =>
+      [
+        'retry',
+        'repeat-failure',
+        'end-while-running',
+        'timeout',
+        'unknown',
+        'post-dispatch',
+        'prepared',
+        'prepared-restart',
+        'prepared-end',
+        'prepared-rotation'
+      ].flatMap((scenario) =>
+        (['prepared', 'retry', 'repeat-failure'].includes(scenario) ? [false, true] : [false]).map(
+          (mixedSkip) => [...route, scenario, mixedSkip] as const
+        )
+      )
+    )
+  )(
+    'keeps a restored answer in recovery through %s (%s, %s, %s, %s, mixed skip: %s)',
+    async (_name, framework, modelRoute, backendId, scenario, mixedSkip) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-choice-session'], {
+        ...(scenario === 'post-dispatch'
+          ? {
+              onPrompt: () => {
+                throw Object.assign(new Error('temporary provider failure'), { code: 'EAGAIN' })
+              }
+            }
+          : {}),
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {})
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      persisted.runtimeTranscriptOwner = 'main'
+      const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+        _scope,
+        mutate
+      ) => {
+        persisted = mutate(structuredClone(persisted))
+        return structuredClone(persisted)
+      }
+      let failRead = scenario !== 'post-dispatch' && !scenario.startsWith('prepared')
+      const admission = Promise.withResolvers<void>()
+      let admissionEntered = false
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => {
+          if (failRead) {
+            failRead = false
+            if (scenario === 'end-while-running') {
+              admissionEntered = true
+              await admission.promise
+            } else {
+              throw Object.assign(new Error('temporary admission failure'), {
+                code:
+                  scenario === 'timeout'
+                    ? 'ETIMEDOUT'
+                    : scenario === 'unknown'
+                      ? undefined
+                      : 'EAGAIN'
+              })
+            }
+          }
+          return structuredClone(persisted)
+        },
+        mutateSession: mutateRuntimeSession,
+        finalizeArtifacts: async () => []
+      })
+      let runtime!: AcpRuntime
+      let generations = 0
+      const createRuntime = (
+        callbacks: Parameters<ConstructorParameters<typeof AcpRuntimeCoordinator>[0]>[0]
+      ): AcpRuntime => {
+        generations += 1
+        runtime = new AcpRuntime({
+          appVersion: '0.1.0',
+          defaultCwd: '/workspace',
+          resolveBackend: () => ({
+            framework: { ...framework, spawn: () => asAgentProcess(process) },
+            modelRoute,
+            backendId,
+            executablePath: '/bin/agent',
+            env: {},
+            ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+          }),
+          runtimeSessions,
+          callbacks: {
+            ...callbacks,
+            onEvent: (event) => {
+              runtimeSessions.accept(event)
+              callbacks.onEvent?.(event)
+            }
+          },
+          permissionWait: {
+            sessions: {
+              readSessionRuntimeContext: vi.fn(),
+              patchSessionRuntimeContext: vi.fn(),
+              containsMessageOnActiveBranch: vi.fn(),
+              sessionProjectId: async () => 'project-1',
+              loadSessionForContinuation: async () => structuredClone(persisted),
+              mutateRuntimeSession
+            }
+          }
+        })
+        return runtime
+      }
+      let coordinator = new AcpRuntimeCoordinator(createRuntime)
+      const request = {
         requestId: 'choice-restored-1',
-        promptMessageId: 'prompt-restored-1'
+        sessionId: 'restored-choice-session',
+        toolCallId: 'tool-choice-restored-1',
+        message: 'Choose an approach',
+        fields: mixedSkip
+          ? [0, 1].flatMap((index) => [
+              {
+                id: `question_${index}`,
+                label: index === 0 ? 'Approach' : 'Optional detail',
+                kind: 'single-select' as const,
+                options: [
+                  { value: 'Expanded', label: 'Expanded' },
+                  { value: 'Brief', label: 'Brief' }
+                ]
+              },
+              { id: `question_${index}_custom`, label: 'Custom answer', kind: 'text' as const }
+            ])
+          : [{ id: 'question_0', label: 'Approach', kind: 'text' as const }],
+        durable: {
+          kind: 'agent-user-choice' as const,
+          requestId: 'choice-restored-1',
+          promptMessageId: 'prompt-restored-1'
+        }
+      }
+      persisted.activities![0].elicitation!.fields = request.fields
+      persisted.conversationGraph = synchronizeActiveConversationActivities(
+        persisted.conversationGraph!,
+        persisted.activities!,
+        []
+      )
+      const response = {
+        requestId: request.requestId,
+        action: 'accept' as const,
+        answers: [
+          { fieldId: 'question_0', value: 'Expanded' },
+          ...(mixedSkip ? [{ fieldId: 'question_1', status: 'skipped' as const }] : [])
+        ],
+        request
+      }
+      if (scenario.startsWith('prepared')) {
+        await coordinator.respondToElicitation({ ...response, prepareContinuation: true })
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+      }
+      if (scenario === 'prepared-rotation') await coordinator.requestSkillsReload()
+      if (scenario === 'prepared-restart') {
+        persisted = normalizeSessionFile(JSON.parse(JSON.stringify(persisted)))!
+        coordinator = new AcpRuntimeCoordinator(createRuntime)
+      }
+      if (scenario === 'prepared-end')
+        await coordinator.respondToElicitation({
+          requestId: request.requestId,
+          request,
+          action: 'cancel'
+        })
+      await coordinator.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      if (scenario === 'prepared-restart' || scenario === 'prepared-end') {
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow()
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        return
+      }
+      await coordinator.respondToElicitation(response)
+      if (scenario === 'prepared' || scenario === 'prepared-rotation') {
+        if (scenario === 'prepared-rotation') expect(generations).toBe(2)
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        expect(fakeAgent.prompts[0].text).toContain('Expanded')
+        if (mixedSkip) {
+          expect(fakeAgent.prompts[0].text).toContain(
+            'Approach\nStatus: answered\nAnswer: Expanded'
+          )
+          expect(fakeAgent.prompts[0].text).toContain('Optional detail\nStatus: skipped')
+        }
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow()
+        return
+      }
+      if (scenario === 'end-while-running') {
+        await vi.waitFor(() => expect(admissionEntered).toBe(true))
+        await expect(
+          coordinator.respondToElicitation({
+            requestId: request.requestId,
+            request,
+            action: 'cancel'
+          })
+        ).rejects.toThrow('Wait for the current Agent run')
+        admission.resolve()
+        await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+        return
+      }
+      if (scenario === 'post-dispatch') {
+        await vi.waitFor(() =>
+          expect(runtime.getSnapshot().events.some((event) => event.kind === 'error')).toBe(true)
+        )
+        expect(fakeAgent.prompts).toHaveLength(1)
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        return
+      }
+      await vi.waitFor(() => {
+        expect(persisted.status).toBe('waiting-for-user')
+        expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBe(
+          scenario === 'timeout' || scenario === 'unknown' ? undefined : true
+        )
+      })
+      if (scenario === 'timeout' || scenario === 'unknown') {
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
+      }
+      expect(fakeAgent.prompts).toHaveLength(0)
+      expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+      expect(runtime.getSnapshot().events).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          title: 'Could not continue the Agent task',
+          text: 'temporary admission failure',
+          promptMessageId: 'prompt-restored-1',
+          agentFrameId: persisted.conversationGraph!.activeFrameId,
+          messageBranchId: persisted.conversationGraph!.frames.find(
+            ({ id }) => id === persisted.conversationGraph!.activeFrameId
+          )!.activeBranchId
+        })
+      )
+      if (scenario === 'repeat-failure') failRead = true
+      const attempts = await Promise.allSettled([
+        coordinator.respondToElicitation({ ...response, retryContinuation: true }),
+        coordinator.respondToElicitation({ ...response, retryContinuation: true })
+      ])
+      expect(attempts.filter(({ status }) => status === 'fulfilled')).toHaveLength(1)
+      if (scenario === 'repeat-failure') {
+        await vi.waitFor(() =>
+          expect(persisted.activities?.[0].elicitation?.continuationRecovery?.error).toBe(
+            'temporary admission failure'
+          )
+        )
+        expect(
+          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+        ).toBeUndefined()
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        await expect(
+          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+        ).rejects.toThrow('cannot be retried safely')
+        return
+      }
+      await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+      await vi.waitFor(() => {
+        expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
+        expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+      })
+      expect(fakeAgent.prompts[0].text).toContain('Expanded')
+      if (mixedSkip) {
+        expect(fakeAgent.prompts[0].text).toContain('Approach\nStatus: answered\nAnswer: Expanded')
+        expect(fakeAgent.prompts[0].text).toContain('Optional detail\nStatus: skipped')
       }
     }
-    const response = {
-      requestId: request.requestId,
-      action: 'accept' as const,
-      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
-      request
-    }
-    await runtime.respondToElicitation(response)
-    await vi.waitFor(() => {
-      expect(persisted.status).toBe('waiting-for-user')
-      expect(persisted.activities?.[0].elicitation?.state).toBe('pending')
-    })
-    expect(fakeAgent.prompts).toHaveLength(0)
-    expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
-    expect(runtime.getSnapshot().events).toContainEqual(
-      expect.objectContaining({
-        kind: 'error',
-        title: 'Could not continue the Agent task',
-        text: 'temporary admission failure',
-        promptMessageId: 'prompt-restored-1',
-        agentFrameId: persisted.conversationGraph!.activeFrameId,
-        messageBranchId: persisted.conversationGraph!.frames.find(
-          ({ id }) => id === persisted.conversationGraph!.activeFrameId
-        )!.activeBranchId
-      })
-    )
-    await runtime.respondToElicitation(response)
-    await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
-    await vi.waitFor(() => {
-      expect(persisted.activities?.[0].elicitation?.state).toBe('answered')
-      expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
-    })
-    expect(fakeAgent.prompts[0].text).toContain('Expanded')
-  })
+  )
 
   it('validates a revised choice against the durable fork before continuing', async () => {
     const process = new FakeAgentProcess()
@@ -8907,7 +9382,7 @@ describe('ACP runtime session management', () => {
       if (status === 'running') {
         persistedSession.activeRun = { promptMessageId: 'prompt-restored-1', startedAt: 3 }
       }
-      const restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
+      let restored = normalizeSessionFile(JSON.parse(JSON.stringify(persistedSession)))!
       const loadSessionForContinuation = vi.fn(async () => structuredClone(restored))
       const runtime = new AcpRuntime({
         appVersion: '0.1.0',
@@ -8917,7 +9392,11 @@ describe('ACP runtime session management', () => {
             readSessionRuntimeContext: vi.fn(),
             patchSessionRuntimeContext: vi.fn(),
             containsMessageOnActiveBranch: vi.fn(),
-            loadSessionForContinuation
+            loadSessionForContinuation,
+            mutateRuntimeSession: async (_scope, mutate) => {
+              restored = { ...mutate(structuredClone(restored)), runtimeTranscriptOwner: 'main' }
+              return structuredClone(restored)
+            }
           }
         },
         resolveBackend: () => ({
@@ -12582,7 +13061,37 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
   })
 
-  it('passes current granted local roots into backend context and prompt guidance', async () => {
+  it('initializes directory notice baselines on create and resume before the first user send', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(process, ['directory-session'], { supportsResume: true })
+    let revision = 'a'
+    const read = vi.fn(async () => ({ revision, directories: [] }))
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      authorizedDirectories: new AuthorizedDirectoryNotices(read),
+      resolveBackend: () => ({
+        framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
+        executablePath: '/bin/agent',
+        env: {}
+      })
+    })
+    await runtime.createSession({ cwd: '/workspace' })
+    expect(read).toHaveBeenCalledOnce()
+    revision = 'b'
+    await runtime.sendPrompt({ sessionId: 'directory-session', text: 'find the data' })
+    expect(agent.prompts.at(-1)?.text).toContain('Local directory authorization has changed.')
+    await runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    expect(read).toHaveBeenCalledTimes(3)
+    await runtime.sendPrompt({ sessionId: 'restored-session', text: 'continue' })
+    expect(agent.prompts.at(-1)?.text).not.toContain('Local directory authorization has changed.')
+    revision = 'c'
+    await runtime.resumeSession({ sessionId: 'restored-session', cwd: '/workspace' })
+    await runtime.sendPrompt({ sessionId: 'restored-session', text: 'find more data' })
+    expect(agent.prompts.at(-1)?.text).toContain('Local directory authorization has changed.')
+  })
+
+  it('keeps current granted roots in the sandbox context without exposing them in prompts', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['granted-context-session'], {
       modes: {
@@ -12621,12 +13130,11 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     expect(resolvedContext?.grantedLocalRoots).toEqual(grantedLocalRoots)
-    const grantedGuidance = resolvedContext?.systemPromptAppends?.find((append) =>
-      append.includes('<open_science_granted_local_roots>')
-    )
-    expect(grantedGuidance).toContain('D:\\\\Data \\u0026 \\u003cresearch\\u003e')
-    expect(grantedGuidance).toContain('"access":"rw"')
-    expect(grantedGuidance).toContain('"access":"ro"')
+    const guidance = resolvedContext?.systemPromptAppends?.join('\n') ?? ''
+    expect(guidance).toContain('list_authorized_directories')
+    expect(guidance).not.toContain('open_science_granted_local_roots')
+    expect(guidance).not.toContain('ReadOnly')
+    expect(guidance).not.toContain('Data & <research>')
   })
 
   it('forwards resolved Claude session options on create and resume', async () => {
@@ -13547,7 +14055,7 @@ describe('ACP runtime session management', () => {
     }
   })
 
-  it('lets an ACP agent use a folder grant during a real prompt', async () => {
+  it('enforces revocation and read-only changes after an ACP agent has cached the directory list', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
     const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-granted-')))
     const inputPath = join(grantedRoot, 'progress.txt')
@@ -13555,6 +14063,11 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     let readContent = ''
     let filesystemError: unknown
+    let writeError: unknown
+    let currentRoots: Array<{ path: string; access: 'ro' | 'rw' }> = [
+      { path: grantedRoot, access: 'rw' }
+    ]
+    const cachedRoots = structuredClone(currentRoots)
 
     try {
       await writeFile(inputPath, 'authorized progress', 'utf8')
@@ -13582,11 +14095,15 @@ describe('ACP runtime session management', () => {
             return { stopReason: 'end_turn' }
           }
           readContent = input.content
-          await ctx.client.request(acp.methods.client.fs.writeTextFile, {
-            sessionId: 'granted-folder-session',
-            path: outputPath,
-            content: `${input.content} (processed)`
-          })
+          try {
+            await ctx.client.request(acp.methods.client.fs.writeTextFile, {
+              sessionId: 'granted-folder-session',
+              path: outputPath,
+              content: `${input.content} (processed)`
+            })
+          } catch (error) {
+            writeError = error
+          }
           return { stopReason: 'end_turn' }
         })
         .connect(
@@ -13601,8 +14118,8 @@ describe('ACP runtime session management', () => {
         defaultCwd: workspaceRoot,
         spawnAgent: () => asAgentProcess(process),
         grantedRoots: {
-          list: async () => [{ path: grantedRoot, access: 'rw' as const }],
-          resolveRoot: async () => ({ path: grantedRoot, access: 'rw' as const })
+          list: async () => currentRoots,
+          resolveRoot: async () => currentRoots[0]
         }
       })
       const session = await runtime.createSession({ cwd: workspaceRoot })
@@ -13611,6 +14128,23 @@ describe('ACP runtime session management', () => {
 
       expect(filesystemError).toBeUndefined()
       expect(readContent).toBe('authorized progress')
+      await expect(readFile(outputPath, 'utf8')).resolves.toBe('authorized progress (processed)')
+      currentRoots = [{ path: grantedRoot, access: 'ro' }]
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Write using the earlier listing'
+      })
+      expect(writeError).toBeDefined()
+      expect(filesystemError).toBeUndefined()
+      currentRoots = []
+      readContent = ''
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Read using the earlier listing'
+      })
+      expect(filesystemError).toBeDefined()
+      expect(readContent).toBe('')
+      expect(cachedRoots).toEqual([{ path: grantedRoot, access: 'rw' }])
       await expect(readFile(outputPath, 'utf8')).resolves.toBe('authorized progress (processed)')
       await runtime.disconnect()
     } finally {
@@ -13812,11 +14346,26 @@ describe('ACP runtime session management', () => {
     })
     const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'full' })
 
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(true)
+    await runtime.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      permissionProfile: 'full'
+    })
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(true)
+    const accessChanged = vi.fn()
+    const unsubscribe = runtime.subscribeFullAccess(session.sessionId, accessChanged)
     const selectingAsk = runtime.setPermissionProfile({
       sessionId: session.sessionId,
       profile: 'ask'
     })
     await askModeEntered.promise
+    expect(runtime.getSnapshot().permissionProfiles[session.sessionId]?.selectedProfile).toBe(
+      'full'
+    )
+    expect(runtime.hasFullAccess(session.sessionId)).toBe(false)
+    expect(accessChanged).toHaveBeenCalledWith(false)
+    unsubscribe()
     const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
     const permission = await permissionSeen.promise
 
@@ -13993,63 +14542,267 @@ describe('ACP runtime session management', () => {
     await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
   })
 
-  it('lets the latest overlapping profile change commit without releasing pending permission', async () => {
+  it.each(['profile', 'resume'] as const)(
+    'lets the latest overlapping %s change commit without releasing pending permission',
+    async (operation) => {
+      const process = new FakeAgentProcess()
+      const permissionSeen = createDeferred<AcpPermissionRequest>()
+      const fullModeEntered = createDeferred()
+      const releaseFullMode = createDeferred()
+      const modeChanges: string[] = []
+      let permissionResponse: unknown
+      startPermissionProbeAgent(process, {
+        newSessionId: 'live-permission-session',
+        toolCallId: 'live-permission-tool',
+        toolTitle: 'Run command',
+        modes: createModes(['default', 'bypassPermissions']),
+        onSetMode: async ({ modeId }) => {
+          modeChanges.push(modeId)
+          if (modeId === 'bypassPermissions') {
+            fullModeEntered.resolve()
+            await releaseFullMode.promise
+          }
+        },
+        onPermissionResponse: (response) => {
+          permissionResponse = response
+        }
+      })
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        spawnAgent: () => asAgentProcess(process),
+        callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+      })
+      const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
+      const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
+      const permission = await permissionSeen.promise
+
+      const selectingFull =
+        operation === 'profile'
+          ? runtime.setPermissionProfile({ sessionId: session.sessionId, profile: 'full' })
+          : runtime.resumeSession({
+              sessionId: session.sessionId,
+              cwd: '/workspace',
+              permissionProfile: 'full'
+            })
+      const settledFull = selectingFull.then(
+        () => undefined,
+        (error: Error) => error
+      )
+      await fullModeEntered.promise
+      expect(runtime.hasFullAccess(session.sessionId)).toBe(operation === 'profile')
+      const revoked = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(session.sessionId, revoked)
+      const selectingAsk = runtime.setPermissionProfile({
+        sessionId: session.sessionId,
+        profile: 'ask'
+      })
+      expect(runtime.hasFullAccess(session.sessionId)).toBe(false)
+      if (operation === 'profile') expect(revoked).toHaveBeenCalledWith(false)
+      unsubscribe()
+      releaseFullMode.resolve()
+
+      const fullResult = await settledFull
+      if (operation === 'resume') expect(fullResult?.message).toContain('superseded')
+      else expect(fullResult).toBeUndefined()
+      const snapshot = await selectingAsk
+      expect(modeChanges).toEqual(['bypassPermissions', 'default'])
+      expect(permissionResponse).toBeUndefined()
+      expect(snapshot.pendingPermissions).toHaveLength(1)
+      expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
+        selectedProfile: 'ask',
+        effectiveProfile: 'ask',
+        currentModeId: 'default'
+      })
+
+      runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
+      await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    }
+  )
+
+  it('rejects a late provider mode update after detaching a full session', async () => {
     const process = new FakeAgentProcess()
-    const permissionSeen = createDeferred<AcpPermissionRequest>()
-    const fullModeEntered = createDeferred()
-    const releaseFullMode = createDeferred()
-    const modeChanges: string[] = []
-    let permissionResponse: unknown
     startPermissionProbeAgent(process, {
-      newSessionId: 'live-permission-session',
-      toolCallId: 'live-permission-tool',
+      newSessionId: 'full-detached',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+      const projector = (
+        runtime as unknown as {
+          sessionUpdateProjector: { route: (notification: acp.SessionNotification) => void }
+        }
+      ).sessionUpdateProjector
+      // A notification already admitted by the connection can finish projection after detach.
+      const finishQueuedUpdate = (): void =>
+        projector.route({
+          sessionId,
+          update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypassPermissions' }
+        })
+      await runtime.releaseSessionForTransfer(sessionId)
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      const changed = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(sessionId, changed)
+      finishQueuedUpdate()
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(changed).not.toHaveBeenCalledWith(true)
+      unsubscribe()
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
+  it('restores full authority when an attached refresh fails before permission configuration', async () => {
+    const process = new FakeAgentProcess()
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-preflight',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions'])
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      await expect(
+        runtime.resumeSession({
+          sessionId,
+          cwd: '/workspace',
+          specialistBindingPending: true
+        })
+      ).rejects.toThrow('A pending Specialist binding')
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+    } finally {
+      await runtime.disconnect()
+    }
+  })
+
+  it('keeps full network authority revoked after an attached refresh times out', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    let holdMode = false
+    let fireTimeout: (() => void) | undefined
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-timeout',
+      toolCallId: 'unused',
       toolTitle: 'Run command',
       modes: createModes(['default', 'bypassPermissions']),
-      onSetMode: async ({ modeId }) => {
-        modeChanges.push(modeId)
-        if (modeId === 'bypassPermissions') {
-          fullModeEntered.resolve()
-          await releaseFullMode.promise
+      onSetMode: async () => {
+        if (holdMode) {
+          modeEntered.resolve()
+          await releaseMode.promise
         }
-      },
-      onPermissionResponse: (response) => {
-        permissionResponse = response
       }
     })
     const runtime = new AcpRuntime({
       appVersion: '0.1.0',
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
-      callbacks: { onPermissionRequest: (request) => permissionSeen.resolve(request) }
+      resumeTimeoutMs: 1000,
+      setTimer: (callback) => {
+        fireTimeout = callback
+        return 0 as unknown as ReturnType<typeof setTimeout>
+      },
+      clearTimer: () => {}
     })
-    const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
-    const prompting = runtime.sendPrompt({ sessionId: session.sessionId, text: 'run a command' })
-    const permission = await permissionSeen.promise
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+      holdMode = true
+      const refresh = runtime.resumeSession({
+        sessionId,
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      const rejected = expect(refresh).rejects.toThrow(/timed out.*permission.*unknown/i)
+      await modeEntered.promise
+      fireTimeout?.()
+      await rejected
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(runtime.getSnapshot().permissionProfiles[sessionId].selectedProfile).toBe('full')
+      holdMode = false
+      releaseMode.resolve()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      await runtime.resumeSession({ sessionId, cwd: '/workspace', permissionProfile: 'full' })
+      expect(runtime.hasFullAccess(sessionId)).toBe(true)
+    } finally {
+      releaseMode.resolve()
+      await runtime.disconnect()
+    }
+  })
 
-    const selectingFull = runtime.setPermissionProfile({
-      sessionId: session.sessionId,
-      profile: 'full'
+  it('does not restore full authority when a superseded attached refresh rejects', async () => {
+    const process = new FakeAgentProcess()
+    const modeEntered = createDeferred()
+    const releaseMode = createDeferred()
+    let rejectRefresh = false
+    startPermissionProbeAgent(process, {
+      newSessionId: 'full-refresh-rejected',
+      toolCallId: 'unused',
+      toolTitle: 'Run command',
+      modes: createModes(['default', 'bypassPermissions']),
+      onSetMode: async () => {
+        if (rejectRefresh) {
+          rejectRefresh = false
+          modeEntered.resolve()
+          await releaseMode.promise
+          throw new Error('mode rejected')
+        }
+      }
     })
-    await fullModeEntered.promise
-    const selectingAsk = runtime.setPermissionProfile({
-      sessionId: session.sessionId,
-      profile: 'ask'
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
     })
-    releaseFullMode.resolve()
-
-    await expect(selectingFull).resolves.toBeDefined()
-    const snapshot = await selectingAsk
-    expect(modeChanges).toEqual(['bypassPermissions', 'default'])
-    expect(permissionResponse).toBeUndefined()
-    expect(snapshot.pendingPermissions).toHaveLength(1)
-    expect(snapshot.permissionProfiles[session.sessionId]).toMatchObject({
-      selectedProfile: 'ask',
-      effectiveProfile: 'ask',
-      currentModeId: 'default'
-    })
-
-    runtime.respondToPermission({ requestId: permission.requestId, cancelled: true })
-    await expect(prompting).resolves.toMatchObject({ stopReason: 'end_turn' })
+    try {
+      const { sessionId } = await runtime.createSession({
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      rejectRefresh = true
+      const refresh = runtime.resumeSession({
+        sessionId,
+        cwd: '/workspace',
+        permissionProfile: 'full'
+      })
+      const rejected = expect(refresh).rejects.toThrow('Internal error')
+      await modeEntered.promise
+      const changed = vi.fn()
+      const unsubscribe = runtime.subscribeFullAccess(sessionId, changed)
+      const downgrade = runtime.setPermissionProfile({ sessionId, profile: 'ask' })
+      releaseMode.resolve()
+      await rejected
+      await downgrade
+      expect(runtime.hasFullAccess(sessionId)).toBe(false)
+      expect(changed).not.toHaveBeenCalledWith(true)
+      unsubscribe()
+    } finally {
+      releaseMode.resolve()
+      await runtime.disconnect()
+    }
   })
 
   it('logs OpenCode permission failures with canonical identities without routine request logs', async () => {
@@ -26232,7 +26985,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         }),
         permissionWait: {
           sessions: {
-            readSessionRuntimeContext: vi.fn(),
+            readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
             patchSessionRuntimeContext: vi.fn(),
             containsMessageOnActiveBranch: vi.fn(),
             loadSessionForContinuation: loadHistory

@@ -1,7 +1,8 @@
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
+index 243386d..f0a16da 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d.ts
-@@ -16,6 +16,7 @@
+@@ -16,6 +16,7 @@ export interface Logger {
      log: (...args: any[]) => void;
      error: (...args: any[]) => void;
  }
@@ -10,13 +11,21 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.d
      inputTokens: number;
      outputTokens: number;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
+index f11169b..81bd49b 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.js
-@@ -569,6 +569,70 @@
-     extNotification(method, params) {
+@@ -2,6 +2,7 @@ import { agent as acpAgent, methods, ndJsonStream, RequestError, } from "@agentc
+ import { deleteSession, getSessionInfo, getSessionMessages, listSessions, query, } from "@anthropic-ai/claude-agent-sdk";
+ import { GOAL_ACTIONS, GOAL_CONTROL_METHOD, GOAL_EXTENSION_VERSION, goalUpdateFromPrompt, parseGoalRequest, toGoalSnapshot, } from "./goal-extension.js";
+ import { execFile } from "node:child_process";
++import { needsFileConfiguration, spawnWithFileConfiguration } from "./open-science-launch.js";
+ import { randomUUID } from "node:crypto";
+ import { existsSync } from "node:fs";
+ import * as fs from "node:fs/promises";
+@@ -570,6 +571,70 @@ class ClientConnection {
          return this.ctx.notify(method, params);
      }
-+}
+ }
 +// Claude snapshots the available tool set when a model request starts. Wait for every MCP server
 +// supplied by the ACP client before returning session/new so the first prompt cannot race startup.
 +const MCP_STARTUP_TIMEOUT_MS = 10000;
@@ -80,10 +89,11 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
 +        return denial.reason.trim().slice(0, 2048);
 +    }
 +    return fallback;
- }
++}
  export class ClaudeAcpAgent {
      sessions;
-@@ -1972,6 +2036,7 @@
+     client;
+@@ -1972,6 +2037,7 @@ export class ClaudeAcpAgent {
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "Compacting..." },
@@ -91,7 +101,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -1985,6 +2050,7 @@
+@@ -1985,6 +2051,7 @@ export class ClaudeAcpAgent {
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: "\n\nCompacting completed." },
@@ -99,7 +109,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -1996,6 +2062,7 @@
+@@ -1996,6 +2063,7 @@ export class ClaudeAcpAgent {
                                          update: {
                                              sessionUpdate: "agent_message_chunk",
                                              content: { type: "text", text: `\n\nCompacting failed${reason}` },
@@ -107,7 +117,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                                          },
                                      });
                                  }
-@@ -2972,7 +3039,7 @@
+@@ -2972,7 +3040,7 @@ export class ClaudeAcpAgent {
                                      cache_creation_input_tokens: usage.cache_creation_input_tokens ?? prev.cache_creation_input_tokens,
                                  };
                              }
@@ -116,7 +126,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                              if (nextUsage !== lastAssistantTotalUsage) {
                                  lastAssistantTotalUsage = nextUsage;
                                  await sendUpdate({
-@@ -3110,7 +3177,7 @@
+@@ -3110,7 +3178,7 @@ export class ClaudeAcpAgent {
                          // aligned with what the user's current selection is producing.
                          if (message.type === "assistant" && message.parent_tool_use_id === null) {
                              lastAssistantUsage = snapshotFromUsage(message.message.usage);
@@ -125,7 +135,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                              lastAssistantWasUsageLimit = isSyntheticUsageLimitMessage(message.message);
                              if (message.error || lastAssistantWasUsageLimit) {
                                  lastAssistantFailureTitle = assistantMessageText(message.message);
-@@ -3718,7 +3785,16 @@
+@@ -3718,7 +3786,16 @@ export class ClaudeAcpAgent {
          if (this.sessions[params.sessionId]) {
              await this.teardownSession(params.sessionId);
          }
@@ -143,7 +153,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          return {};
      }
      async setSessionMode(params) {
-@@ -4190,7 +4266,7 @@
+@@ -4190,7 +4267,7 @@ export class ClaudeAcpAgent {
                  else {
                      return {
                          behavior: "deny",
@@ -152,7 +162,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                      };
                  }
              }
-@@ -4263,7 +4339,7 @@
+@@ -4263,7 +4340,7 @@ export class ClaudeAcpAgent {
              else {
                  return {
                      behavior: "deny",
@@ -161,7 +171,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
                  };
              }
          };
-@@ -4715,6 +4791,7 @@
+@@ -4715,6 +4792,7 @@ export class ClaudeAcpAgent {
          const input = new Pushable();
          const settingsManager = new SettingsManager(params.cwd, {
              logger: this.logger,
@@ -169,7 +179,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          });
          await settingsManager.initialize();
          const mcpServers = {};
-@@ -4761,7 +4838,7 @@
+@@ -4761,7 +4839,7 @@ export class ClaudeAcpAgent {
                  };
              }
          }
@@ -178,15 +188,31 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
          // Extract options from _meta if provided
          const sessionMeta = params._meta;
          const userProvidedOptions = sessionMeta?.claudeCode?.options;
-@@ -4995,6 +5072,7 @@
+@@ -4988,6 +5066,11 @@ export class ClaudeAcpAgent {
+         if (abortController?.signal.aborted) {
+             throw new Error("Cancelled");
+         }
++        if (needsFileConfiguration(options)) {
++            const stderr = options.stderr ?? (process.env.DEBUG_CLAUDE_AGENT_SDK === "1"
++                ? (chunk) => process.stderr.write(chunk) : undefined);
++            options.spawnClaudeCodeProcess = (spawnOptions) => spawnWithFileConfiguration(spawnOptions, stderr);
++        }
+         const q = query({
+             prompt: input,
+             options,
+@@ -4995,8 +5078,11 @@ export class ClaudeAcpAgent {
          let initializationResult;
          try {
              initializationResult = await q.initializationResult();
 +            await waitForMcpServers(q, Object.keys(mcpServers), undefined, this.logger);
          }
          catch (error) {
++            q.close();
++            settingsManager.dispose();
              if (creationOpts.resume &&
-@@ -5259,15 +5337,10 @@
+                 error instanceof Error &&
+                 (error.message === "Query closed before response received" ||
+@@ -5259,15 +5345,10 @@ function sessionUsage(session) {
              session.accumulatedUsage.cachedWriteTokens,
      };
  }
@@ -206,7 +232,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
  }
  /**
   * Build the `data` payload attached to a `RequestError.internalError` when we
-@@ -5284,7 +5357,7 @@
+@@ -5284,7 +5365,7 @@ function errorKindData(errorKind) {
  }
  /** Project a nullable API usage object into our non-null snapshot shape.
   *  Both SDK message_start and assistant message `usage` have `number | null`
@@ -215,7 +241,108 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/acp-agent.j
   *  NaN. `input_tokens`/`output_tokens` are typed `number` by the SDK but
   *  synthetic or third-party-backend stream events have been observed emitting
   *  them as null/undefined — coerce those too so a malformed upstream event
+diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/open-science-launch.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/open-science-launch.js
+new file mode 100644
+index 0000000..2a0c0cb
+--- /dev/null
++++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/open-science-launch.js
+@@ -0,0 +1,94 @@
++import { spawn } from "node:child_process";
++import { lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
++import { join } from "node:path";
++
++const absentProcess = (pid) => {
++    if (!Number.isSafeInteger(pid) || pid <= 0) return false;
++    try { process.kill(pid, 0); } catch (error) { return error.code === "ESRCH"; }
++    return false;
++};
++
++// Only reclaim complete receipts whose adapter AND CLI are gone. PID reuse or inaccessible
++// processes retain the files; an incomplete receipt may cover a crash during spawn and is retained.
++function recoverLaunchDirectories(root) {
++    for (const entry of readdirSync(root, { withFileTypes: true })) {
++        if (!/^launch-[a-zA-Z0-9]{6}$/.test(entry.name) || !entry.isDirectory() || entry.isSymbolicLink()) continue;
++        const directory = join(root, entry.name);
++        try {
++            const receipt = join(directory, "owner.json");
++            if (!lstatSync(receipt).isFile() || lstatSync(receipt).isSymbolicLink()) continue;
++            const owner = JSON.parse(readFileSync(receipt, "utf8"));
++            if (absentProcess(owner.pid) && absentProcess(owner.childPid)) {
++                rmSync(directory, { recursive: true, force: true });
++            }
++        } catch { /* Preserve uncertain ownership and retry a later launch. */ }
++    }
++}
++
++// Keep the SDK's default transport for ordinary sessions. The conservative threshold leaves room
++// for Windows quoting and the other flags in CreateProcessW's 32,767-character command line.
++export function needsFileConfiguration(options) {
++    if (process.platform !== "win32" || options.spawnClaudeCodeProcess) return false;
++    const servers = Object.fromEntries(Object.entries(options.mcpServers ?? {}).map(([name, server]) =>
++        [name, server.type === "sdk" ? { type: "sdk", name: server.name } : server]));
++    return JSON.stringify(servers).length + JSON.stringify(options.settings ?? {}).length > 8192;
++}
++
++// This is the SDK's supported process-launch hook. Rewrite only JSON-valued flags after the SDK
++// has serialized its MCP servers (including in-process SDK servers); preserve every other argument.
++export function spawnWithFileConfiguration(options, stderr) {
++    let directory;
++    let child;
++    const cleanup = () => {
++        if (!directory) return;
++        try {
++            rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
++        } catch {
++            // A later launch can retry from the ownership receipt. Never log configuration contents.
++        }
++    };
++    try {
++        const args = [...options.args];
++        for (let index = 0; index < args.length - 1; index++) {
++            if (args[index] !== "--mcp-config" && args[index] !== "--settings") continue;
++            const value = args[index + 1];
++            // Existing file paths stay paths. Only the SDK's inline JSON is moved to a file.
++            if (!value.trimStart().startsWith("{")) continue;
++            JSON.parse(value);
++            if (!directory) {
++                const configRoot = options.env.CLAUDE_CONFIG_DIR;
++                if (!configRoot) throw new Error("Claude config directory is required for file configuration.");
++                const root = join(configRoot, ".open-science-launch");
++                mkdirSync(root, { recursive: true, mode: 0o700 });
++                const rootInfo = lstatSync(root);
++                if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error("Invalid Claude launch directory.");
++                recoverLaunchDirectories(root);
++                directory = mkdtempSync(join(root, "launch-"));
++                writeFileSync(join(directory, "owner.json"), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
++            }
++            const file = join(directory, `${index}.json`);
++            writeFileSync(file, value, { encoding: "utf8", flag: "wx", mode: 0o600 });
++            args[++index] = file;
++        }
++        child = spawn(options.command, args, {
++            cwd: options.cwd,
++            env: options.env,
++            signal: options.signal,
++            stdio: ["pipe", "pipe", "pipe"],
++            windowsHide: true,
++        });
++        // The custom-spawn SDK contract leaves stderr ownership to the hook. Always drain it.
++        child.stderr.setEncoding("utf8");
++        child.stderr.on("data", (chunk) => stderr?.(chunk));
++        child.once("close", cleanup);
++        child.once("error", () => { if (!child.pid) cleanup(); });
++        if (directory && child.pid) {
++            writeFileSync(join(directory, "owner.json"), JSON.stringify({ pid: process.pid, childPid: child.pid }), { mode: 0o600 });
++        }
++        return child;
++    } catch (error) {
++        if (child?.pid) child.kill();
++        else cleanup();
++        throw error;
++    }
++}
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
+index d73f5fc..e93e00d 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.ts
 @@ -1,5 +1,6 @@
@@ -226,7 +353,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.
      onChange?: () => void;
      logger?: {
          log: (...args: any[]) => void;
-@@ -20,6 +21,7 @@
+@@ -20,6 +21,7 @@ export declare class SettingsManager {
      private effective;
      private watchers;
      private onChange?;
@@ -235,9 +362,10 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.d.
      private initialized;
      private disposed;
 diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
+index fff1f03..beaf38c 100644
 --- a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
 +++ b/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
-@@ -39,6 +39,7 @@
+@@ -39,6 +39,7 @@ export class SettingsManager {
      effective = {};
      watchers = [];
      onChange;
@@ -245,7 +373,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
      logger;
      initialized = false;
      disposed = false;
-@@ -47,6 +48,7 @@
+@@ -47,6 +48,7 @@ export class SettingsManager {
      constructor(cwd, options) {
          this.cwd = cwd;
          this.onChange = options?.onChange;
@@ -253,7 +381,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
          this.logger = options?.logger ?? console;
      }
      /**
-@@ -75,9 +77,9 @@
+@@ -75,9 +77,9 @@ export class SettingsManager {
       */
      getWatchedPaths() {
          return [
@@ -266,7 +394,7 @@ diff --git a/node_modules/@agentclientprotocol/claude-agent-acp/dist/settings.js
              getManagedSettingsPath(),
          ];
      }
-@@ -87,7 +89,7 @@
+@@ -87,7 +89,7 @@ export class SettingsManager {
       */
      async loadAllSettings() {
          try {

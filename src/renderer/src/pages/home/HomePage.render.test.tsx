@@ -25,6 +25,9 @@ import { createInitialSkillImportState, useSkillImportStore } from '@/stores/ski
 import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import { HomePage } from './HomePage'
 
+// Catalog requests and card interactions have their own suite and browser journey.
+vi.mock('./UseCaseCarousel', () => ({ UseCaseCarousel: () => null }))
+
 vi.mock('@/components/GitHubStarBadge', () => ({ GitHubStarBadge: () => null }))
 vi.mock('@/components/UpdateCapsule', () => ({
   UpdateCapsule: () => (
@@ -646,6 +649,35 @@ describe('HomePage activity overview', () => {
     )
     expect(document.body.textContent).toContain('Save')
     expect(document.body.textContent).not.toContain('Save changes')
+  })
+
+  it('preserves the fine-hover Project action reveal and adds a 44px coarse-pointer target', async () => {
+    useProjectStore.setState({
+      ...createInitialProjectState(),
+      projects: [project],
+      isLoaded: true
+    })
+
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+
+    const action = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open actions for Research project"]'
+    )!
+    expect(action.classList).toContain('size-7')
+    expect(action.classList).toContain('opacity-100')
+    expect(action.classList).toContain('[@media(hover:hover)_and_(pointer:fine)]:opacity-0')
+    expect(action.classList).toContain(
+      '[@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100'
+    )
+    expect(action.classList).toContain('focus-visible:opacity-100')
+    expect(action.classList).toContain('data-[state=open]:opacity-100')
+    expect(action.classList).toContain('[@media(pointer:coarse)]:size-11')
+    expect(action.classList).not.toContain('sm:opacity-0')
+    expect(action.classList).not.toContain('sm:group-hover:opacity-100')
   })
 
   it('explains unavailable archive in menu content without relying on native title', async () => {

@@ -1,7 +1,8 @@
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { open, stat } from 'node:fs/promises'
+import { stat } from 'node:fs/promises'
+import { assertPdfHeader, pdfImportParseError } from './pdf-attachment'
 import { basename, extname } from 'node:path'
 import type { PdfAddToLiteratureRequest, PdfAnnotationSource } from '../../shared/pdf-annotations'
 import {
@@ -62,30 +63,6 @@ const verifySharingBytes = async (path: string, checksum: string, size: number):
   }
   if (length !== size || hash.digest('hex') !== checksum)
     throw new Error('PDF contents do not match.')
-}
-
-const assertPdfHeader = async (path: string): Promise<void> => {
-  const handle = await open(path, 'r')
-  try {
-    const header = Buffer.alloc(5)
-    const { bytesRead } = await handle.read(header, 0, header.byteLength, 0)
-    if (bytesRead !== header.byteLength || header.toString('ascii') !== '%PDF-') {
-      throw new Error('Selected file is not a PDF.')
-    }
-  } finally {
-    await handle.close()
-  }
-}
-
-const pdfImportParseError = (error: unknown): Error => {
-  const name = error && typeof error === 'object' && 'name' in error ? error.name : undefined
-  if (name === 'PasswordException')
-    return new Error('[pdf-password] PDF requires a password.', { cause: error })
-  if (name === 'InvalidPDFException')
-    return new Error('[pdf-invalid] PDF is damaged or invalid.', { cause: error })
-  return new Error('[pdf-unreadable] PDF could not be parsed by this application.', {
-    cause: error
-  })
 }
 
 class LiteraturePdfImporter {
@@ -208,6 +185,7 @@ class LiteraturePdfImporter {
         },
         async (content) => {
           publishedId = content.id
+          if (isPdf) await assertPdfHeader(content.path)
           let pageCount: number | undefined
           let nativeAnnotations: NativePdfAnnotationImportResult | undefined
           let importedCount: number | undefined = 0
@@ -341,11 +319,10 @@ class LiteraturePdfImporter {
       }
       throw error
     } finally {
-      if (publishedId && !attached) {
+      if (publishedId && !attached)
         await this.options.content
           .sweep({ contentIds: [publishedId], createdBefore: new Date(Date.now() + 1) })
           .catch(() => undefined)
-      }
       await this.options.uploads.deleteUpload({ path: attachment.path }).catch(() => undefined)
       this.activeImports.delete(operationId)
     }

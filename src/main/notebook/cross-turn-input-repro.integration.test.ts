@@ -172,13 +172,17 @@ print("saved group_bar.png")`
           runIndex: number
           evidenceJson: string
         }> = []
+        const conservativePlot = reportedPlots === 'base-plots'
         for (const [index, script] of scripts.entries()) {
           expect(await analyzeNotebookSourceFileAccess(language, script)).toMatchObject({
-            readState: 'complete',
-            writeState: 'complete',
-            externalState: 'complete',
+            readState: conservativePlot && index === 2 ? 'partial' : 'complete',
+            writeState: conservativePlot && index === 2 ? 'partial' : 'complete',
+            externalState: conservativePlot && index === 2 ? 'partial' : 'complete',
             reads: index === 0 ? [] : [inputPath],
-            reasonCodes: []
+            reasonCodes:
+              conservativePlot && index === 2
+                ? ['source-analysis-unsupported-call', 'dynamic-path-unresolved']
+                : []
           })
           if (index === 1) {
             for (const path of [
@@ -265,16 +269,26 @@ print("saved group_bar.png")`
           expect(projection.stalenessByRunId).toEqual({
             'run-0': { state: 'clear' },
             'run-1': { state: 'clear' },
-            'run-2': { state: 'clear' }
+            'run-2': conservativePlot
+              ? { state: 'unknown', reasons: ['external-state', 'opaque-call'] }
+              : { state: 'clear' }
           })
-          expect(projection.dependenciesByRunId).toEqual({ 'run-0': [], 'run-1': [], 'run-2': [] })
+          expect(projection.dependenciesByRunId).toEqual(
+            conservativePlot
+              ? { 'run-0': [], 'run-1': [] }
+              : { 'run-0': [], 'run-1': [], 'run-2': [] }
+          )
         }
-        expect(producer.inputFiles).toEqual([
-          expect.objectContaining({
-            inputFileVersionId: input.inputFileVersionId,
-            accessEvidence: 'file-evidence'
-          })
-        ])
+        expect(producer.inputFiles).toEqual(
+          conservativePlot
+            ? []
+            : [
+                expect.objectContaining({
+                  inputFileVersionId: input.inputFileVersionId,
+                  accessEvidence: 'file-evidence'
+                })
+              ]
+        )
         const output = producer.workingFiles.find(
           (file) => file.relativePath === 'data/group_bar.png'
         )!
@@ -290,14 +304,15 @@ print("saved group_bar.png")`
           notebookActivities: activities,
           computeActivities: []
         })
-        expect(graph.completeness).toBe('complete')
-        expect(graph.edges).toContainEqual(
-          expect.objectContaining({
-            kind: 'used',
-            activityId: producer.runId,
-            authority: 'authoritative'
-          })
-        )
+        expect(graph.completeness).toBe(conservativePlot ? 'incomplete' : 'complete')
+        if (!conservativePlot)
+          expect(graph.edges).toContainEqual(
+            expect.objectContaining({
+              kind: 'used',
+              activityId: producer.runId,
+              authority: 'authoritative'
+            })
+          )
         const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: producer.inputFiles ?? [],
@@ -329,14 +344,24 @@ print("saved group_bar.png")`
           recipe,
           'original-inputs'
         )
-        expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
-        expect(plan?.steps.map((step) => step.activityId)).toEqual([producer.runId])
-        expect(plan?.frontier.crossingFiles).toHaveLength(1)
         const replay = join(storageRoot, 'replay')
-        for (const file of plan!.frontier.crossingFiles) {
-          const destination = join(replay, file.materializationPath)
+        if (conservativePlot) {
+          expect(recipe.capture.state).toBe('blocked')
+          expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
+          expect(plan).toBeUndefined()
+          // Explicitly replay known fixture bytes without treating uncertain input lineage as certified.
+          const destination = join(replay, inputPath)
           await mkdir(dirname(destination), { recursive: true })
-          await writeFile(destination, await readFile(join(storageRoot, file.contentStorageKey)))
+          await writeFile(destination, await readFile(join(storageRoot, input.storageKey)))
+        } else {
+          expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
+          expect(plan?.steps.map((step) => step.activityId)).toEqual([producer.runId])
+          expect(plan?.frontier.crossingFiles).toHaveLength(1)
+          for (const file of plan!.frontier.crossingFiles) {
+            const destination = join(replay, file.materializationPath)
+            await mkdir(dirname(destination), { recursive: true })
+            await writeFile(destination, await readFile(join(storageRoot, file.contentStorageKey)))
+          }
         }
         await execute(command!, args(scripts[2]!), {
           cwd: replay,

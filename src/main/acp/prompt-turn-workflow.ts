@@ -1,3 +1,4 @@
+import type { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -66,6 +67,7 @@ type AcpPromptTurnMode =
       promptAttemptId?: string
       planDelivery?: Readonly<{ projectId: string; commandId: string }>
       delegatedMessageId?: string
+      onProviderDispatched?: () => void
     }>
 
 type AcpPromptTurnPlanContext = Readonly<{
@@ -86,6 +88,7 @@ type AcpActivatedPromptTurn = Readonly<{
 }>
 
 type AcpPromptTurnEnvironment = Readonly<{
+  authorizedDirectories?: Pick<AuthorizedDirectoryNotices, 'prepareNotice'>
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -311,6 +314,11 @@ class AcpPromptTurnWorkflow {
       const skillRuntime = backend.session.options?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
         { nativeAllowedNames?: string[]; mainAllowedNames?: string[] } | undefined
       const authorization = this.options.skills.authorize({
+        diagnosticContext: {
+          sessionId: request.sessionId,
+          frameworkId: backend.framework.id,
+          modelRoute: backend.modelRoute
+        },
         frameworkId: backend.framework.id,
         nativeSkillScope: skillRuntime?.nativeAllowedNames,
         mainSkillScope: skillRuntime?.mainAllowedNames,
@@ -532,6 +540,11 @@ class AcpPromptTurnWorkflow {
       const backend = env.backend()
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
+      // Only an explicit user send carries the notice; continuations never consume it.
+      const authorizationNotice =
+        turn.mode.kind === 'user' && !request.continuation && !request.suppressUserMessage
+          ? await env.authorizedDirectories?.prepareNotice(session)
+          : undefined
       prepared = await preparation.prepare({
         request: preparationRequest,
         classificationEnabled:
@@ -555,9 +568,10 @@ class AcpPromptTurnWorkflow {
         ...(planContext
           ? { protectedContext: formatPlanProtectedContext(planContext, turn.plan.source) }
           : {}),
-        ...(request.turnIntent === 'plan-first'
-          ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }
-          : {}),
+        turnPromptReminders: [
+          ...(request.turnIntent === 'plan-first' ? [PLAN_FIRST_TURN_PROMPT_REMINDER] : []),
+          ...(authorizationNotice ? [authorizationNotice.text] : [])
+        ],
         signal: interaction.signal,
         isCurrent: () => this.isCurrent(turn),
         cancellationCheckpoint: () => this.checkpoint(interaction),
@@ -626,7 +640,13 @@ class AcpPromptTurnWorkflow {
               await resumeDispatch()
               deliveryClaimed = true
             }
-            return this.checkpoint(interaction)
+            const dispatch = await this.checkpoint(interaction)
+            // Mark the boundary before calling the adapter: a synchronous throw from
+            // session.prompt cannot prove that no request left the process.
+            if (dispatch !== 'cancelled' && turn.mode.kind === 'app-continuation') {
+              turn.mode.onProviderDispatched?.()
+            }
+            return dispatch
           },
           onDispatched: () => {
             providerDispatched = true
@@ -639,6 +659,7 @@ class AcpPromptTurnWorkflow {
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
+            authorizationNotice?.commit()
             if (resumeAccepted) {
               const accept = resumeAccepted
               resumeAccepted = undefined

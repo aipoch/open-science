@@ -33,6 +33,42 @@ application configuration or authorization implementation. Descriptors provide s
 `exampleArgs` data; consumers render their own invocation syntax. Settings groups and
 application Skill policy belong to the host catalog/document adapters.
 
+## Scientific-data API and file discovery
+
+`./research-datasets`, `./molecular-data` and `./literature-europepmc` expose native
+`ToolDescriptor` arrays using the same `ParserEngine` HTTP context as existing providers.
+HGNC extensions remain in Genes; Cellosaurus RDF/SPARQL/STR/file methods and the openFDA
+bulk manifest extend their existing host routes. Europe PMC has a separate direct-search
+entry; existing PubMed/PMC full-text methods are unchanged. New entries are opt-in.
+
+Research Datasets discovers official NHANES and fixed-version public PhysioNet demo files,
+and supplies declared official access instructions for CHARLS/CHNS/SEER/MIMIC/eICU/GBD
+and FAERS. An access-guidance result never verifies a person's permission. SEER research
+exports and GBD result exports still use their official software/portal. CTD supplies a
+maintained subset of official public report links, explicitly marked as not live-verified;
+it does not implement an undocumented web-query API or bypass browser verification.
+
+File catalogs contain official HTTPS URLs and available upstream metadata, not local
+paths, completed transfers or verified checksums. This scope adds file discovery/download
+links, not a new binary download/import service. Obtain files through supported official
+acquisition routes and use the existing approved file/Notebook workflows for analysis.
+Preserve source terms, citation headers, survey design and declared dataset versions.
+
+These descriptors do not spawn a runtime, install dependencies, create a DuckDB database,
+persist job states, register data directories or take ownership of research files. Results
+stay in the existing caller/session workflow. Existing custom-connector data or any data
+created while trialling the unmerged #3809 implementation is neither migrated nor deleted.
+This is an additive API change with no application database migration or new storage format.
+
+`scientific-data.test.ts` covers schemas, exact request construction, content negotiation,
+pagination/truncation, ambiguous mappings, no-retry enrichment submission, upstream failures
+and access boundaries using the actual engine with fixed HTTP responses. These tests run
+in the ordinary portable suite without Python, accounts or opt-in environment variables.
+After the normal package build, `node scripts/verify-scientific-data-live.mjs` performs
+separate small, live public-service smoke checks. It does not test private/full datasets,
+perform a bulk transfer or claim coverage of every upstream response variant. External
+availability is not a deterministic CI dependency.
+
 Install the `@aipoch/connector-core` peer alongside this package. A shared core
 instance preserves transport error identity (including Cellosaurus 404 fallback).
 Both ESM and CommonJS use the same compiled implementation. Private source and
@@ -138,3 +174,14 @@ or Genes Skills. Existing explicit opt-outs still win over explicit opt-ins.
 All eight methods are read-only, credential-free and limited to 2,000,000 response
 bytes per request. They do not create application data tables, migration state,
 background jobs or persistent caches. Enablement uses existing host settings.
+
+`./structures-pdb` adds `pdb_search_structure_similarity` to the existing Structures
+family. [RCSB structure search](https://search.rcsb.org/) accepts a deposited four-character PDB ID
+and `label_asym_id` (not the author chain ID), returning at most 50 experimental
+chain hits with upstream ranking scores and total/truncation counts. This is a
+structure-informed embedding search with global matching, a predicted TM-score
+cutoff of 0.8 and 10,000 candidates, not a returned alignment or RMSD calculation.
+Hit counts reflect these limits and are not an exhaustive inventory of all PDB chains;
+the query chain can appear among the hits. Invalid or unsupported chains remain errors.
+This tool uses the existing family switch, shared request deadline, cancellation
+and response-size budget; it requires no credentials and adds no persistence.

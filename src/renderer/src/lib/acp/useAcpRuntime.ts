@@ -1,6 +1,7 @@
 import {
   getDesktopRuntimeEpoch,
-  registerDesktopRecoveryReader
+  registerDesktopRecoveryReader,
+  useDesktopRuntimeRecoveryStore
 } from '../../stores/desktop-runtime-recovery-store'
 import type {
   AcpContinueInterruptedTurnRequest,
@@ -20,9 +21,13 @@ import type {
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../../../shared/acp'
+import { DesktopRuntimeDisconnectedError } from '../../../../shared/desktop-runtime-recovery'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
+import {
+  acceptAcpRuntimeSnapshotRevision,
+  getAcpRuntimeSnapshotScope
+} from './runtime-snapshot-revision-owner'
 import {
   createRuntimeEventSubscriptionOwner,
   type RuntimeEventListener
@@ -52,6 +57,20 @@ type PendingSetter = Dispatch<SetStateAction<boolean>>
 const getErrorMessage = (error: unknown): string => {
   if (error instanceof Error) return error.message
   return String(error)
+}
+
+const awaitCurrentEpoch = async <Value>(epoch: number, work: Promise<Value>): Promise<Value> => {
+  const assertCurrent = (): void => {
+    if (epoch !== getDesktopRuntimeEpoch()) throw new DesktopRuntimeDisconnectedError()
+  }
+  try {
+    const value = await work
+    assertCurrent()
+    return value
+  } catch (error) {
+    assertCurrent()
+    throw error
+  }
 }
 
 // Centralizes renderer access to the main-process runtime IPC surface.
@@ -138,6 +157,8 @@ const useAcpRuntime = (): {
   ) => Promise<AcpRuntimeState | undefined>
 } => {
   const [state, setState] = useState<AcpStateSnapshot>(emptyAcpState)
+  const stateRef = useRef(state)
+  const serviceScopeRef = useRef(getAcpRuntimeSnapshotScope())
   const [actionError, setActionError] = useState<string | null>(null)
   const [isConnecting, setIsConnecting] = useState(false)
   const [isDisconnecting, setIsDisconnecting] = useState(false)
@@ -147,6 +168,14 @@ const useAcpRuntime = (): {
   const eventSnapshotInitializedRef = useRef(false)
   const onRuntimeEvent = (window.api.acp as Partial<Pick<typeof window.api.acp, 'onEvent'>>).onEvent
   const subscribeRuntimeEvents = onRuntimeEvent ? runtimeEventOwner.subscribe : undefined
+
+  const prepareServiceSnapshot = useCallback((): void => {
+    const scope = getAcpRuntimeSnapshotScope()
+    if (serviceScopeRef.current === scope) return
+    serviceScopeRef.current = scope
+    runtimeEventOwner.reset()
+    eventSnapshotInitializedRef.current = false
+  }, [runtimeEventOwner])
 
   const normalizeCommandState = useCallback(
     (response: AcpStateCommandResponse | AcpStateSnapshot): AcpStateUpdate => {
@@ -158,32 +187,40 @@ const useAcpRuntime = (): {
 
   const applyStateUpdate = useCallback(
     (update: AcpStateUpdate): void => {
+      prepareServiceSnapshot()
       if (!acceptAcpRuntimeSnapshotRevision(update)) return
       if (update.events) {
         eventSnapshotInitializedRef.current = true
         runtimeEventOwner.observeSnapshot(update.events, update as AcpStateSnapshot)
-        setState(update as AcpStateSnapshot)
+        stateRef.current = update as AcpStateSnapshot
+        setState(stateRef.current)
         return
       }
       // Preserve the explicit synchronization window loaded at startup. It remains the fallback for
       // an older Main without acp:event; current incremental consumers read the event owner instead.
-      setState((current) => ({ ...update, events: current.events }))
+      const snapshot = { ...update, events: stateRef.current.events }
+      if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+      stateRef.current = snapshot
+      setState(snapshot)
     },
-    [runtimeEventOwner]
+    [prepareServiceSnapshot, runtimeEventOwner]
   )
 
   const applySnapshot = useCallback(
     (snapshot: AcpStateSnapshot): void => {
+      prepareServiceSnapshot()
       if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
       eventSnapshotInitializedRef.current = true
       runtimeEventOwner.observeSnapshot(snapshot.events, snapshot)
+      stateRef.current = snapshot
       setState(snapshot)
     },
-    [runtimeEventOwner]
+    [prepareServiceSnapshot, runtimeEventOwner]
   )
 
   const applyInitialSnapshot = useCallback(
     (snapshot: AcpStateSnapshot): void => {
+      prepareServiceSnapshot()
       if (!eventSnapshotInitializedRef.current) {
         // Event initialization is an independent barrier. A newer state-only broadcast may already
         // own the state watermark, but the initial full snapshot must still release queued events.
@@ -191,17 +228,17 @@ const useAcpRuntime = (): {
         runtimeEventOwner.observeInitialSnapshot(snapshot.events, snapshot)
       }
       if (!acceptAcpRuntimeSnapshotRevision(snapshot)) return
+      stateRef.current = snapshot
       setState(snapshot)
     },
-    [runtimeEventOwner]
+    [prepareServiceSnapshot, runtimeEventOwner]
   )
 
   useEffect(
     () =>
       registerDesktopRecoveryReader(async () => {
         const epoch = getDesktopRuntimeEpoch()
-        const snapshot = await window.api.acp.getState()
-        if (epoch !== getDesktopRuntimeEpoch()) throw new Error('Desktop recovery changed.')
+        const snapshot = await awaitCurrentEpoch(epoch, window.api.acp.getState())
         applySnapshot(snapshot)
       }),
     [applySnapshot]
@@ -219,15 +256,16 @@ const useAcpRuntime = (): {
 
     // Pulls current runtime state before any broadcast has arrived.
     const loadInitialState = async (): Promise<void> => {
+      const epoch = getDesktopRuntimeEpoch()
       try {
-        const snapshot = await window.api.acp.getState()
+        const snapshot = await awaitCurrentEpoch(epoch, window.api.acp.getState())
         // Older Main versions do not publish revisions. In that compatibility case, a pushed
         // snapshot received after subscription is the only safe authority over the initial pull.
         if (!hasPushedSnapshot || snapshot.revision !== undefined) {
           if (isMounted) applyInitialSnapshot(snapshot)
         }
       } catch (error) {
-        if (isMounted) {
+        if (isMounted && epoch === getDesktopRuntimeEpoch()) {
           runtimeEventOwner.observeInitialSnapshot([])
           setActionError(getErrorMessage(error))
         }
@@ -240,6 +278,7 @@ const useAcpRuntime = (): {
     })
     const removeEventListener = onRuntimeEvent?.((events: readonly AcpRuntimeEvent[]) => {
       if (!isMounted) return
+      prepareServiceSnapshot()
       runtimeEventOwner.observeEvents(events)
     })
 
@@ -250,7 +289,26 @@ const useAcpRuntime = (): {
       removeStateListener()
       removeEventListener?.()
     }
-  }, [applyInitialSnapshot, applyStateUpdate, onRuntimeEvent, runtimeEventOwner])
+  }, [
+    applyInitialSnapshot,
+    applyStateUpdate,
+    onRuntimeEvent,
+    prepareServiceSnapshot,
+    runtimeEventOwner
+  ])
+
+  useEffect(
+    () =>
+      useDesktopRuntimeRecoveryStore.subscribe((next, previous) => {
+        if (next.epoch === previous.epoch) return
+        actionGenerationRef.current += 1
+        pendingActionCountsRef.current.clear()
+        setIsConnecting(false)
+        setIsDisconnecting(false)
+        setActionError(null)
+      }),
+    []
+  )
 
   const beginAction = useCallback((setPending?: PendingSetter): number => {
     const generation = ++actionGenerationRef.current
@@ -280,17 +338,20 @@ const useAcpRuntime = (): {
       setPending: PendingSetter | undefined,
       action: StateCommandAction
     ): Promise<AcpRuntimeState | undefined> => {
+      const epoch = getDesktopRuntimeEpoch()
       const generation = beginAction(setPending)
 
       try {
-        const state = normalizeCommandState(await action())
+        const response = await awaitCurrentEpoch(epoch, action())
+        const state = normalizeCommandState(response)
         applyStateUpdate(state)
         return state
       } catch (error) {
-        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
+        if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
+          setActionError(getErrorMessage(error))
         return undefined
       } finally {
-        finishPendingAction(setPending)
+        if (epoch === getDesktopRuntimeEpoch()) finishPendingAction(setPending)
       }
     },
     [applyStateUpdate, beginAction, finishPendingAction, normalizeCommandState]
@@ -306,16 +367,22 @@ const useAcpRuntime = (): {
       action: ValueAction<Value>,
       recordActionError = true
     ): Promise<Value> => {
+      const epoch = getDesktopRuntimeEpoch()
       const generation = beginAction(setPending)
 
       try {
-        return await action()
+        const value = await awaitCurrentEpoch(epoch, action())
+        return value
       } catch (error) {
-        if (recordActionError && generation === actionGenerationRef.current)
+        if (
+          recordActionError &&
+          epoch === getDesktopRuntimeEpoch() &&
+          generation === actionGenerationRef.current
+        )
           setActionError(getErrorMessage(error))
         throw error
       } finally {
-        finishPendingAction(setPending)
+        if (epoch === getDesktopRuntimeEpoch()) finishPendingAction(setPending)
       }
     },
     [beginAction, finishPendingAction]
@@ -328,8 +395,10 @@ const useAcpRuntime = (): {
     async (action: StateCommandAction): Promise<AcpRuntimeState> => {
       // Clear on entry so the helper is self-consistent with the other action helpers and does
       // not rely on WorkspacePage's active-session visibility gate to hide a stale actionError.
+      const epoch = getDesktopRuntimeEpoch()
       beginAction()
-      const state = normalizeCommandState(await action())
+      const response = await awaitCurrentEpoch(epoch, action())
+      const state = normalizeCommandState(response)
       // Apply state-sync side-effect before returning, matching runSnapshotAction's contract.
       // Without this, callers that do `void runtime.sendPrompt(...)` would discard the snapshot
       // and the UI would show stale state until the next async IPC event fires.
@@ -532,13 +601,16 @@ const useAcpRuntime = (): {
         cancelled: !optionId,
         ...(restored ? { restored } : {})
       }
+      const epoch = getDesktopRuntimeEpoch()
       const generation = beginAction()
       try {
-        const state = normalizeCommandState(await window.api.acp.respondToPermission(response))
+        const result = await awaitCurrentEpoch(epoch, window.api.acp.respondToPermission(response))
+        const state = normalizeCommandState(result)
         applyStateUpdate(state)
         return state
       } catch (error) {
-        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
+        if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
+          setActionError(getErrorMessage(error))
         throw error
       }
     },
@@ -547,13 +619,16 @@ const useAcpRuntime = (): {
 
   const respondToElicitation = useCallback(
     async (response: ElicitationResponse): Promise<AcpRuntimeState> => {
+      const epoch = getDesktopRuntimeEpoch()
       const generation = beginAction()
       try {
-        const state = normalizeCommandState(await window.api.acp.respondToElicitation(response))
+        const result = await awaitCurrentEpoch(epoch, window.api.acp.respondToElicitation(response))
+        const state = normalizeCommandState(result)
         applyStateUpdate(state)
         return state
       } catch (error) {
-        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
+        if (epoch === getDesktopRuntimeEpoch() && generation === actionGenerationRef.current)
+          setActionError(getErrorMessage(error))
         throw error
       }
     },

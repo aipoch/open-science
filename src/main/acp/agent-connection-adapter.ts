@@ -1,3 +1,4 @@
+import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
 import type {
   AuthenticateRequest,
@@ -16,9 +17,15 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
-import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { AgentFramework, AgentProcessSpawner, ResolvedAgentBackend } from '../agent-framework'
+import {
+  startOpenCodeService,
+  OpenCodeServiceCleanupError,
+  type OpenCodeServiceLease
+} from './opencode-service'
+import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { terminateProcessTree } from '../process-tree'
+import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
   AcpBackendGenerationView
@@ -89,6 +96,8 @@ type AcpAgentConnectionCandidateInput = Readonly<{
   isCurrent: () => boolean
   isShuttingDown: () => boolean
   spawnAgent?: () => ChildProcessWithoutNullStreams
+  spawnProcess?: AgentProcessSpawner
+  registerOpenCodeStoreRelease?: (release: () => void) => void
 }>
 
 type AcpTransferredAgentConnection = Readonly<{
@@ -117,8 +126,24 @@ class AcpAgentConnectionAdapter {
     let bridgeLease: ResponsesTransportLease
     let messagesBridgeLease: MessagesBridgeLease
     let providerTransportLease: ProviderTransportLease
+    let openCodeService: OpenCodeServiceLease | undefined
+    let openCodeStore: OpenCodeStoreLease | undefined
     let backendAttempt: AcpBackendGenerationAttempt | undefined
+    let cleanupUnconfirmed = false
     let framework: AgentFramework['id'] = 'claude-code'
+    let opening = true
+    let storeWriters = 0
+    const releaseRecoveredStore = (): void => {
+      if (!opening && storeWriters === 0) openCodeStore?.release()
+    }
+    const retainStoreWriter = (): (() => void) | undefined => {
+      if (!openCodeStore) return undefined
+      storeWriters++
+      return () => {
+        storeWriters--
+        releaseRecoveredStore()
+      }
+    }
 
     const reportCleanupFailure = (stage: CandidateCleanupStage, error: unknown): void => {
       try {
@@ -128,6 +153,8 @@ class AcpAgentConnectionAdapter {
       }
     }
     const cleanup = async (): Promise<void> => {
+      let reaped = !cleanupUnconfirmed
+      if (!reaped) hooks.onProcessTreeReaped(false)
       try {
         connection?.close()
       } catch (error) {
@@ -139,11 +166,26 @@ class AcpAgentConnectionAdapter {
           const result = await terminateProcessTree(process, undefined, {
             error: (message, error) => hooks.reportProcessTreeError(message, error)
           })
+          reaped = reaped && result.reaped
           hooks.onProcessTreeReaped(result.reaped)
         } catch (error) {
+          reaped = false
+          hooks.onProcessTreeReaped(false)
           reportCleanupFailure('agent-process', error)
         }
       }
+      if (openCodeService) {
+        try {
+          const result = await openCodeService.release()
+          reaped = reaped && result.reaped
+          hooks.onProcessTreeReaped(result.reaped)
+        } catch (error) {
+          reaped = false
+          hooks.onProcessTreeReaped(false)
+          reportCleanupFailure('agent-process', error)
+        }
+      }
+      if (reaped) openCodeStore?.release()
       if (bridgeLease) {
         try {
           await bridgeLease.release()
@@ -168,22 +210,81 @@ class AcpAgentConnectionAdapter {
     }
 
     try {
-      const backend = await input.resolveBackend()
+      let backend = await input.resolveBackend()
       framework = backend.framework.id
       bridgeLease = backend.responsesTransportLease
       messagesBridgeLease = backend.messagesBridgeLease
       providerTransportLease = backend.providerTransportLease
+      if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion) {
+        openCodeStore = await acquireOpenCodeStore(
+          backend.env.XDG_DATA_HOME,
+          backend.opencodeMajorVersion
+        )
+        input.registerOpenCodeStoreRelease?.(openCodeStore.release)
+      }
+      let serviceExited = false
+      if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 2) {
+        const service = await startOpenCodeService(
+          backend,
+          () => {
+            serviceExited = true
+            if (process && input.isCurrent()) {
+              process.emit('error', new Error('OpenCode HTTP service exited unexpectedly.'))
+              process.kill()
+            }
+          },
+          input.spawnProcess,
+          retainStoreWriter()
+        )
+        openCodeService = service
+        backend = { ...backend, opencodeUsageApi: service.api }
+      }
+      if (input.isShuttingDown()) throw new Error('ACP runtime is shutting down.')
+      if (!input.isCurrent()) throw new Error('ACP connection superseded during preparation.')
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
-      process = input.spawnAgent
-        ? input.spawnAgent()
-        : backend.framework.spawn({
-            executablePath: backend.executablePath,
-            env: backend.env,
-            args: backend.args ?? [],
-            proxyEnvironmentMode: backend.proxyEnvironmentMode
-          })
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during preparation.')
+      const writerReaped = retainStoreWriter()
+      const trackWriter = (
+        child: ChildProcessWithoutNullStreams
+      ): ChildProcessWithoutNullStreams => {
+        if (writerReaped) onProcessTreeReaped(child, writerReaped)
+        return child
+      }
+      let spawnAttempted = Boolean(input.spawnAgent)
+      try {
+        process = input.spawnAgent
+          ? trackWriter(input.spawnAgent())
+          : await spawnMainAgentProcess(
+              framework,
+              (spawnProcess) => {
+                spawnAttempted = !spawnProcess
+                return trackWriter(
+                  backend.framework.spawn({
+                    executablePath: backend.executablePath,
+                    env: backend.env,
+                    args: backend.args ?? [],
+                    proxyEnvironmentMode: backend.proxyEnvironmentMode,
+                    spawnProcess: spawnProcess
+                      ? (...args) => {
+                          spawnAttempted = true
+                          return spawnProcess(...args)
+                        }
+                      : undefined
+                  })
+                )
+              },
+              writerReaped
+            )
+      } catch (error) {
+        // A native spawn can throw after recording a starting receipt; only cancel before admission.
+        if (!spawnAttempted) writerReaped?.()
+        else cleanupUnconfirmed = true
+        throw error
+      }
       hooks.onProcessSpawned(framework)
+      if (serviceExited) throw new Error('OpenCode HTTP service exited during spawn.')
       if (input.isShuttingDown() || !input.isCurrent()) {
         throw new Error(
           input.isShuttingDown()
@@ -225,10 +326,16 @@ class AcpAgentConnectionAdapter {
         })
       })
       connection = this.createClientConnection(spawnedProcess, hooks)
+      bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
+      if (error instanceof OpenCodeServiceCleanupError) cleanupUnconfirmed = true
       backendAttempt?.fail()
       await cleanup()
       throw error
+    } finally {
+      // Recovery may settle after this candidate has transferred or failed startup.
+      opening = false
+      releaseRecoveredStore()
     }
 
     const openedProcess = process
@@ -252,7 +359,9 @@ class AcpAgentConnectionAdapter {
           framework,
           bridgeLease,
           messagesBridgeLease,
-          providerTransportLease
+          providerTransportLease,
+          openCodeService,
+          openCodeStore
         })
         state = 'transferred'
         openedConnection.closed.then(() => {

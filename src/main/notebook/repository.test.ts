@@ -119,6 +119,61 @@ afterEach(async () => {
 })
 
 describe('notebook run repository', () => {
+  it.each([
+    { kernelKind: 'bash', exitCode: -1, readable: true },
+    { kernelKind: 'bash', exitCode: -2147483648, readable: true },
+    { kernelKind: 'bash', exitCode: 4294967295, readable: true },
+    { kernelKind: 'bash', exitCode: -1.5, readable: false },
+    { kernelKind: 'bash', exitCode: '-1', readable: false },
+    { kernelKind: 'bash', exitCode: Number.MAX_SAFE_INTEGER + 1, readable: false },
+    { kernelKind: 'python', exitCode: -1, readable: false },
+    { kernelKind: 'r', exitCode: -1, readable: false },
+    { kernelKind: 'repl', exitCode: -1, readable: false },
+    { kernelKind: undefined, exitCode: -1, readable: false }
+  ])(
+    'validates persisted $kernelKind exit code $exitCode without rewriting history',
+    async ({ kernelKind, exitCode, readable }) => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const projectId = 'default-project'
+      const sessionId = 'session-1'
+      const lane = createRootNotebookLane(projectId, sessionId, 'root-frame-session-1')
+      const document = await repository.loadOrCreate({
+        projectId,
+        sessionId,
+        lane,
+        workspaceCwd: '/workspace'
+      })
+      await repository.appendRun({
+        projectId,
+        sessionId,
+        lane,
+        run: admittedRun({
+          kernelKind: 'bash',
+          status: 'failed',
+          endedAt: 2,
+          exitCode: 1
+        })
+      })
+      const path = join(document.notebookSessionRoot, 'run.json')
+      const persisted = JSON.parse(await readFile(path, 'utf8'))
+      persisted.runs[0].kernelKind = kernelKind
+      persisted.runs[0].exitCode = exitCode
+      const before = JSON.stringify(persisted)
+      await writeFile(path, before)
+
+      const reopened = new NotebookRunRepository(root).findExisting(projectId, sessionId)
+      if (readable) {
+        await expect(reopened).resolves.toMatchObject({
+          runs: [expect.objectContaining({ status: 'failed', exitCode })]
+        })
+      } else {
+        await expect(reopened).rejects.toThrow('Notebook document is corrupt.')
+      }
+      expect(await readFile(path, 'utf8')).toBe(before)
+    }
+  )
+
   it('preserves failed runs and optional execution evidence after reopening durable history', async () => {
     const root = await createStorageRoot()
     const repository = new NotebookRunRepository(root)

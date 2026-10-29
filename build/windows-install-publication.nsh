@@ -2,13 +2,27 @@
 !define OPEN_SCIENCE_INSTALL_PUBLICATION_INCLUDED
 !include x64.nsh
 
+!ifdef APP_64
+  # APP_64 is the final archive, including files added after afterSign (elevate.exe).
+  # Generate at compile time for normal and --prepackaged builds; fail closed on errors.
+  !system '"node" "${BUILD_RESOURCES_DIR}/prepare-windows-extraction.cjs" "${APP_64}" "${PROJECT_DIR}/out/windows-installer/x64/extraction"' = 0
+!endif
+
 Var publicationDirectory
 Var publicationState
 Var publicationResult
 Var publicationOutput
+Var publicationPowerShell
 
 !macro runInstallPublication ACTION
-  nsExec::ExecToStack /TIMEOUT=120000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-publication.ps1" -Action ${ACTION} -InstallPath "$INSTDIR" -StatePath "$publicationState"'
+  StrCpy $publicationPowerShell "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  # NSIS is 32-bit: Sysnative avoids WOW64 redirection on native AMD64 Windows.
+  # Keep the existing host on other architectures or when the alias is unavailable.
+  ${If} ${IsNativeAMD64}
+    IfFileExists "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" 0 +2
+      StrCpy $publicationPowerShell "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  nsExec::ExecToStack /TIMEOUT=120000 '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-install-publication.ps1" -Action ${ACTION} -InstallPath "$INSTDIR" -StatePath "$publicationState"'
   Pop $publicationResult
   Pop $publicationOutput
 !macroend
@@ -43,6 +57,11 @@ Var publicationOutput
     ${OrIf} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
       File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
+      File /oname=$PLUGINSDIR\windows-extract-payload.ps1 "${BUILD_RESOURCES_DIR}\windows-extract-payload.ps1"
+      File /oname=$PLUGINSDIR\all-files.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-files.txt"
+      File /oname=$PLUGINSDIR\all-directories.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\all-directories.txt"
+      File /oname=$PLUGINSDIR\files-2-0.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-0.txt"
+      File /oname=$PLUGINSDIR\files-2-1.txt "${PROJECT_DIR}\out\windows-installer\x64\extraction\files-2-1.txt"
     ${Else}
   !endif
   !ifdef APP_32
@@ -68,7 +87,15 @@ Var publicationOutput
   # cancellation errors. Only exit 0 permits publication; a warning is not success.
   # nsExec hides the console and waits for exit. Its optional timeout is output inactivity,
   # not a work budget, so do not kill a valid large extraction merely because it is quiet.
-  nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$publicationDirectory" "${FILE}"'
+  !ifdef APP_64
+    ${If} ${IsNativeAMD64}
+      nsExec::ExecToStack '"$publicationPowerShell" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-extract-payload.ps1" -Extractor "$PLUGINSDIR\7za.exe" -Archive "${FILE}" -Target "$publicationDirectory" -ListDirectory "$PLUGINSDIR"'
+    ${Else}
+  !endif
+      nsExec::ExecToStack '"$PLUGINSDIR\7za.exe" x -y -bd -bso0 -bsp0 -bse1 "-o$publicationDirectory" "${FILE}"'
+  !ifdef APP_64
+    ${EndIf}
+  !endif
   Pop $publicationResult
   Pop $publicationOutput
   StrCmp $publicationResult "0" 0 publication_failed
@@ -81,17 +108,28 @@ Var publicationOutput
   StrCmp $publicationResult "0" 0 publication_failed
   StrCpy $R1 0
   publication_copy:
-    ClearErrors
-    CopyFiles /SILENT "$publicationDirectory\*" "$INSTDIR"
-    IfErrors publication_retry
+    # Shell CopyFiles rejects long destination paths even when extraction succeeded. Robocopy
+    # supports them without changing Windows policy. Copy data/attributes/times only, retaining
+    # destination ACL inheritance and unrelated files (never mirror/purge or use backup mode).
+    # Force same/tweaked/change-time-only files too: matching metadata does not prove the bytes.
+    # The outer loop owns retries; quiet copies must not be killed by an inactivity timeout.
+    nsExec::ExecToStack '"$SYSDIR\robocopy.exe" "$publicationDirectory" "$INSTDIR" /E /COPY:DAT /DCOPY:DA /IS /IT /IM /R:0 /W:0 /XJ /XX /NP /NJH /NJS /NFL /NDL /FP /UNICODE'
+    Pop $publicationResult
+    Pop $publicationOutput
+    # Exact comparisons reject launch errors/timeouts as well as nonzero failure bits. Codes
+    # 0..3 mean successful/no-op copying, possibly with extra destination files. Mismatches
+    # (bit 4) are not acceptable for an application payload, even without the failure bit (8).
+    StrCmp $publicationResult "0" publication_copied
+    StrCmp $publicationResult "1" publication_copied
+    StrCmp $publicationResult "2" publication_copied
+    StrCmp $publicationResult "3" publication_copied publication_retry
+  publication_copied:
     ClearErrors
     Call cleanupInstallPublication
     IfErrors publication_failed
     Goto publication_done
 
   publication_retry:
-    StrCpy $publicationResult "copy-failed"
-    StrCpy $publicationOutput "NSIS CopyFiles could not replace the remaining application files."
     IntOp $R1 $R1 + 1
     # Retain bounded upstream copy retries, but never replace a failed copy with unchecked
     # extraction into the live target. Already moved directories remain available for verification.
@@ -100,7 +138,7 @@ Var publicationOutput
       Goto publication_copy
     ${endif}
     IfSilent publication_failed
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(appCannotBeClosed)" /SD IDCANCEL IDRETRY publication_copy
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Open-Science could not copy its application files.$\r$\n$INSTDIR$\r$\n$\r$\nCopy result: $publicationResult$\r$\n$publicationOutput" /SD IDCANCEL IDRETRY publication_copy
 
   publication_failed:
     DetailPrint "Payload installation failed: $publicationResult $publicationOutput"

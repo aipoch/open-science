@@ -1,3 +1,11 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
+  SplitButtonContent
+} from '@/components/ui/split-button'
+import { SinglePagePdfPreview } from './SinglePagePdfPreview'
 import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { isPdfTranslationLanguageSupported } from '@aipoch/pdf-translation/text'
 import type {
@@ -65,12 +73,7 @@ import { PdfTranslationEditions } from './PdfTranslationEditions'
 
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -679,57 +682,55 @@ const PdfInteractionControls = ({
             </Tooltip>
           ))}
           <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-          <div
-            className="annotation-style-split flex shrink-0 items-center rounded-md"
-            data-open={styleOpen}
+          <SplitButton
+            kind="popover"
+            open={styleOpen}
+            onOpenChange={(open) => {
+              cancelOptionsHover()
+              setStyleOpen(open)
+            }}
           >
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
-                  size="icon-sm"
-                  className={cn(
-                    'annotation-style-apply size-7 rounded-r-none p-0',
-                    !canAnnotateText && 'opacity-50 cursor-not-allowed'
-                  )}
-                  aria-disabled={!canAnnotateText}
-                  aria-label={t('Annotate selected text')}
-                  aria-pressed={mode === 'text-annotation'}
-                  onClick={() => {
-                    if (!canAnnotateText) return
-                    cancelOptionsHover()
-                    setStyleOpen(false)
-                    onModeChange(mode === 'text-annotation' ? 'select' : 'text-annotation')
-                  }}
-                >
-                  <span
-                    className="inline-flex size-6 items-center justify-center rounded-sm text-neutral-900"
-                    style={{
-                      backgroundColor: `var(--color-${textMarkStyle.color === 'yellow' ? 'amber' : textMarkStyle.color === 'pink' ? 'rose' : textMarkStyle.color}-300)`
+            <SplitButtonGroup className="annotation-style-split">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <SplitButtonPrimary
+                    type="button"
+                    variant={mode === 'text-annotation' ? 'secondary' : 'ghost'}
+                    size="icon-sm"
+                    className={cn(
+                      'annotation-style-apply size-7 p-0',
+                      !canAnnotateText && 'opacity-50 cursor-not-allowed'
+                    )}
+                    aria-disabled={!canAnnotateText}
+                    aria-label={t('Annotate selected text')}
+                    aria-pressed={mode === 'text-annotation'}
+                    onClick={() => {
+                      if (!canAnnotateText) return
+                      cancelOptionsHover()
+                      setStyleOpen(false)
+                      onModeChange(mode === 'text-annotation' ? 'select' : 'text-annotation')
                     }}
                   >
-                    <MarkIcon className="size-4" aria-hidden="true" />
-                  </span>
-                </Button>
-              </TooltipTrigger>
-              <PdfToolbarTooltip
-                label={t('Annotate')}
-                plain={!canAnnotateText}
-                description={
-                  canAnnotateText
-                    ? t('Select text to annotate. Press Esc to exit.')
-                    : annotationUnavailableReason
-                }
-              />
-            </Tooltip>
-            <Popover
-              open={styleOpen}
-              onOpenChange={(open) => {
-                cancelOptionsHover()
-                setStyleOpen(open)
-              }}
-            >
+                    <span
+                      className="inline-flex size-6 items-center justify-center rounded-sm text-neutral-900"
+                      style={{
+                        backgroundColor: `var(--color-${textMarkStyle.color === 'yellow' ? 'amber' : textMarkStyle.color === 'pink' ? 'rose' : textMarkStyle.color}-300)`
+                      }}
+                    >
+                      <MarkIcon className="size-4" aria-hidden="true" />
+                    </span>
+                  </SplitButtonPrimary>
+                </TooltipTrigger>
+                <PdfToolbarTooltip
+                  label={t('Annotate')}
+                  plain={!canAnnotateText}
+                  description={
+                    canAnnotateText
+                      ? t('Select text to annotate. Press Esc to exit.')
+                      : annotationUnavailableReason
+                  }
+                />
+              </Tooltip>
               <Tooltip>
                 <TooltipTrigger
                   asChild
@@ -737,40 +738,38 @@ const PdfInteractionControls = ({
                     if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
                   }}
                 >
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        'annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground',
-                        !canAnnotateText && 'opacity-50 cursor-not-allowed'
-                      )}
-                      aria-disabled={!canAnnotateText}
-                      aria-label={t('Mark style')}
-                      onPointerEnter={(event) => {
-                        cancelOptionsHover()
-                        if (event.pointerType === 'touch' || !canAnnotateText || styleOpen) return
-                        optionsHoverTimer.current = setTimeout(() => {
-                          optionsOpenedByHover.current = true
-                          setStyleOpen(true)
-                        }, 120)
-                      }}
-                      onPointerLeave={closeHoveredOptions}
-                      onClick={(event) => {
-                        if (!canAnnotateText) {
-                          event.preventDefault()
-                          return
-                        }
-                        cancelOptionsHover()
-                        // Clicking an already hover-open panel pins it for keyboard/touch use.
-                        if (styleOpen && optionsOpenedByHover.current) event.preventDefault()
-                        optionsOpenedByHover.current = false
-                      }}
-                    >
-                      <ChevronDown className="size-3" aria-hidden="true" />
-                    </Button>
-                  </PopoverTrigger>
+                  <SplitButtonTrigger
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={cn(
+                      'annotation-style-trigger h-7 w-6 text-muted-foreground',
+                      !canAnnotateText && 'opacity-50 cursor-not-allowed'
+                    )}
+                    aria-disabled={!canAnnotateText}
+                    aria-label={t('Mark style')}
+                    onPointerEnter={(event) => {
+                      cancelOptionsHover()
+                      if (event.pointerType === 'touch' || !canAnnotateText || styleOpen) return
+                      optionsHoverTimer.current = setTimeout(() => {
+                        optionsOpenedByHover.current = true
+                        setStyleOpen(true)
+                      }, 120)
+                    }}
+                    onPointerLeave={closeHoveredOptions}
+                    onClick={(event) => {
+                      if (!canAnnotateText) {
+                        event.preventDefault()
+                        return
+                      }
+                      cancelOptionsHover()
+                      // Clicking an already hover-open panel pins it for keyboard/touch use.
+                      if (styleOpen && optionsOpenedByHover.current) event.preventDefault()
+                      optionsOpenedByHover.current = false
+                    }}
+                  >
+                    <ChevronDown className="size-3" aria-hidden="true" />
+                  </SplitButtonTrigger>
                 </TooltipTrigger>
                 <PdfToolbarTooltip
                   label={t('Mark style')}
@@ -778,90 +777,88 @@ const PdfInteractionControls = ({
                   description={canAnnotateText ? undefined : annotationUnavailableReason}
                 />
               </Tooltip>
-              <PopoverContent
-                align="start"
-                onPointerEnter={cancelOptionsHover}
-                onPointerLeave={closeHoveredOptions}
-                onKeyDownCapture={() => {
-                  optionsOpenedByHover.current = false
-                }}
-                onEscapeKeyDown={(event) => event.stopPropagation()}
-                onOpenAutoFocus={(event) => {
-                  if (optionsOpenedByHover.current) event.preventDefault()
-                }}
-                onCloseAutoFocus={(event) => {
-                  if (optionsOpenedByHover.current) event.preventDefault()
-                }}
-                sideOffset={8}
-                collisionPadding={8}
-                className="annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
-              >
-                <PdfTextMarkControls
-                  value={textMarkStyle}
-                  onChange={(style) => {
-                    onTextMarkStyleChange(style)
-                    onModeChange('text-annotation')
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
-          </div>
-          {canSelectArea || canAnnotateArea ? (
-            <div
-              className="pdf-area-split annotation-style-split flex shrink-0 items-center rounded-md"
-              data-open={areaOpen}
+            </SplitButtonGroup>
+            <SplitButtonContent
+              align="start"
+              onPointerEnter={cancelOptionsHover}
+              onPointerLeave={closeHoveredOptions}
+              onKeyDownCapture={() => {
+                optionsOpenedByHover.current = false
+              }}
+              onEscapeKeyDown={(event) => event.stopPropagation()}
+              onOpenAutoFocus={(event) => {
+                if (optionsOpenedByHover.current) event.preventDefault()
+              }}
+              onCloseAutoFocus={(event) => {
+                if (optionsOpenedByHover.current) event.preventDefault()
+              }}
+              sideOffset={8}
+              collisionPadding={8}
+              className="annotation-popover z-[110] w-fit max-w-[calc(100vw-1rem)] space-y-3 rounded-lg border border-border bg-popover p-2.5 text-popover-foreground shadow-menu"
             >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'}
-                    size="icon-sm"
-                    className="pdf-area-action annotation-style-apply size-7 rounded-r-none p-0"
-                    disabled={!canAnnotateArea && !canSelectArea}
-                    aria-pressed={mode === 'area' || mode === 'area-annotation'}
-                    aria-label={
+              <PdfTextMarkControls
+                value={textMarkStyle}
+                onChange={(style) => {
+                  onTextMarkStyleChange(style)
+                  onModeChange('text-annotation')
+                }}
+              />
+            </SplitButtonContent>
+          </SplitButton>
+          {canSelectArea || canAnnotateArea ? (
+            <SplitButton
+              open={areaOpen}
+              onOpenChange={(open) => {
+                cancelOptionsHover()
+                setOpenOptions(open ? 'area' : undefined)
+              }}
+            >
+              <SplitButtonGroup className="pdf-area-split annotation-style-split">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SplitButtonPrimary
+                      type="button"
+                      variant={
+                        mode === 'area' || mode === 'area-annotation' ? 'secondary' : 'ghost'
+                      }
+                      size="icon-sm"
+                      className="pdf-area-action annotation-style-apply size-7 p-0"
+                      disabled={!canAnnotateArea && !canSelectArea}
+                      aria-pressed={mode === 'area' || mode === 'area-annotation'}
+                      aria-label={
+                        mode === 'area-annotation' || !canSelectArea
+                          ? t('Select area to annotate')
+                          : t('Select area for Agent')
+                      }
+                      onClick={() => {
+                        cancelOptionsHover()
+                        setOpenOptions(undefined)
+                        onModeChange(
+                          mode === 'area-annotation' || !canSelectArea ? 'area-annotation' : 'area'
+                        )
+                      }}
+                    >
+                      {mode === 'area-annotation' || !canSelectArea ? (
+                        <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
+                      ) : (
+                        <Scan className="size-3.5" aria-hidden="true" />
+                      )}
+                    </SplitButtonPrimary>
+                  </TooltipTrigger>
+                  <PdfToolbarTooltip
+                    label={
                       mode === 'area-annotation' || !canSelectArea
                         ? t('Select area to annotate')
                         : t('Select area for Agent')
                     }
-                    onClick={() => {
-                      cancelOptionsHover()
-                      setOpenOptions(undefined)
-                      onModeChange(
-                        mode === 'area-annotation' || !canSelectArea ? 'area-annotation' : 'area'
-                      )
-                    }}
-                  >
-                    {mode === 'area-annotation' || !canSelectArea ? (
-                      <SquareDashedMousePointer className="size-3.5" aria-hidden="true" />
-                    ) : (
-                      <Scan className="size-3.5" aria-hidden="true" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <PdfToolbarTooltip
-                  label={
-                    mode === 'area-annotation' || !canSelectArea
-                      ? t('Select area to annotate')
-                      : t('Select area for Agent')
-                  }
-                  plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
-                  description={
-                    mode === 'area-annotation' || !canSelectArea
-                      ? t('Drag to annotate an area · Esc to cancel')
-                      : t('Drag to send an area to Agent · Esc to cancel')
-                  }
-                />
-              </Tooltip>
-              <DropdownMenu
-                modal={false}
-                open={areaOpen}
-                onOpenChange={(open) => {
-                  cancelOptionsHover()
-                  setOpenOptions(open ? 'area' : undefined)
-                }}
-              >
+                    plain={usesAreaAnnotation ? !canAnnotateArea : !canSelectArea}
+                    description={
+                      mode === 'area-annotation' || !canSelectArea
+                        ? t('Drag to annotate an area · Esc to cancel')
+                        : t('Drag to send an area to Agent · Esc to cancel')
+                    }
+                  />
+                </Tooltip>
                 <Tooltip>
                   <TooltipTrigger
                     asChild
@@ -869,101 +866,97 @@ const PdfInteractionControls = ({
                       if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
                     }}
                   >
-                    <DropdownMenuTrigger
-                      asChild
+                    <SplitButtonTrigger
                       onPointerDown={(event) => {
                         cancelOptionsHover()
                         if (areaOpen && optionsOpenedByHover.current) event.preventDefault()
                         optionsOpenedByHover.current = false
                       }}
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 text-muted-foreground"
+                      aria-label={t('Area selection actions')}
+                      onPointerEnter={(event) => {
+                        cancelOptionsHover()
+                        if (event.pointerType === 'touch' || areaOpen) return
+                        optionsHoverTimer.current = setTimeout(() => {
+                          optionsOpenedByHover.current = true
+                          setOpenOptions('area')
+                        }, 120)
+                      }}
+                      onPointerLeave={closeHoveredOptions}
                     >
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="pdf-area-menu-trigger annotation-style-trigger h-7 w-6 rounded-l-none text-muted-foreground"
-                        aria-label={t('Area selection actions')}
-                        onPointerEnter={(event) => {
-                          cancelOptionsHover()
-                          if (event.pointerType === 'touch' || areaOpen) return
-                          optionsHoverTimer.current = setTimeout(() => {
-                            optionsOpenedByHover.current = true
-                            setOpenOptions('area')
-                          }, 120)
-                        }}
-                        onPointerLeave={closeHoveredOptions}
-                      >
-                        <ChevronDown className="size-3" aria-hidden="true" />
-                      </Button>
-                    </DropdownMenuTrigger>
+                      <ChevronDown className="size-3" aria-hidden="true" />
+                    </SplitButtonTrigger>
                   </TooltipTrigger>
                   <PdfToolbarTooltip label={t('Area selection actions')} />
                 </Tooltip>
-                <DropdownMenuContent
-                  align="start"
-                  sideOffset={8}
-                  collisionPadding={8}
-                  className="annotation-popover z-[110]"
-                  onPointerEnter={cancelOptionsHover}
-                  onPointerLeave={closeHoveredOptions}
-                  onKeyDownCapture={() => {
-                    optionsOpenedByHover.current = false
-                  }}
-                  onEscapeKeyDown={(event) => event.stopPropagation()}
-                  onInteractOutside={(event) => {
-                    if (
-                      event.target instanceof Element &&
-                      event.target.closest('.pdf-area-menu-trigger')
-                    )
-                      event.preventDefault()
-                  }}
-                  onCloseAutoFocus={(event) => {
-                    if (optionsOpenedByHover.current) event.preventDefault()
-                  }}
-                >
-                  {[
-                    {
-                      mode: 'area' as const,
-                      available: canSelectArea,
-                      label: t('Select area for Agent'),
-                      icon: Scan,
-                      reason: areaAgentUnavailableReason
-                    },
-                    {
-                      mode: 'area-annotation' as const,
-                      available: canAnnotateArea,
-                      label: t('Select area to annotate'),
-                      icon: SquareDashedMousePointer,
-                      reason: annotationUnavailableReason
-                    }
-                  ].map(({ mode: actionMode, available, label, icon: Icon, reason }) => (
-                    <Tooltip key={actionMode}>
-                      <TooltipTrigger asChild>
-                        <DropdownMenuItem
-                          aria-disabled={!available}
-                          className={!available ? 'cursor-not-allowed opacity-50' : undefined}
-                          onSelect={(event) => {
-                            if (!available) event.preventDefault()
-                            else onModeChange(actionMode)
-                          }}
-                        >
-                          <Icon className="mr-2 size-4" aria-hidden="true" />
-                          {label}
-                        </DropdownMenuItem>
-                      </TooltipTrigger>
-                      {!available ? (
-                        <PdfToolbarTooltip
-                          label={label}
-                          plain={!available}
-                          description={reason}
-                          side="right"
-                        />
-                      ) : null}
-                    </Tooltip>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
+              </SplitButtonGroup>
+              <SplitButtonContent
+                align="start"
+                sideOffset={8}
+                collisionPadding={8}
+                className="annotation-popover z-[110]"
+                onPointerEnter={cancelOptionsHover}
+                onPointerLeave={closeHoveredOptions}
+                onKeyDownCapture={() => {
+                  optionsOpenedByHover.current = false
+                }}
+                onEscapeKeyDown={(event) => event.stopPropagation()}
+                onInteractOutside={(event) => {
+                  if (
+                    event.target instanceof Element &&
+                    event.target.closest('.pdf-area-menu-trigger')
+                  )
+                    event.preventDefault()
+                }}
+                onCloseAutoFocus={(event) => {
+                  if (optionsOpenedByHover.current) event.preventDefault()
+                }}
+              >
+                {[
+                  {
+                    mode: 'area' as const,
+                    available: canSelectArea,
+                    label: t('Select area for Agent'),
+                    icon: Scan,
+                    reason: areaAgentUnavailableReason
+                  },
+                  {
+                    mode: 'area-annotation' as const,
+                    available: canAnnotateArea,
+                    label: t('Select area to annotate'),
+                    icon: SquareDashedMousePointer,
+                    reason: annotationUnavailableReason
+                  }
+                ].map(({ mode: actionMode, available, label, icon: Icon, reason }) => (
+                  <Tooltip key={actionMode}>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuItem
+                        aria-disabled={!available}
+                        className={!available ? 'cursor-not-allowed opacity-50' : undefined}
+                        onSelect={(event) => {
+                          if (!available) event.preventDefault()
+                          else onModeChange(actionMode)
+                        }}
+                      >
+                        <Icon className="mr-2 size-4" aria-hidden="true" />
+                        {label}
+                      </DropdownMenuItem>
+                    </TooltipTrigger>
+                    {!available ? (
+                      <PdfToolbarTooltip
+                        label={label}
+                        plain={!available}
+                        description={reason}
+                        side="right"
+                      />
+                    ) : null}
+                  </Tooltip>
+                ))}
+              </SplitButtonContent>
+            </SplitButton>
           ) : null}
           <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
           <Tooltip>
@@ -2501,39 +2494,7 @@ const PdfPageCanvas = memo(function PdfPageCanvas({
   )
 })
 
-export const PdfPreviewContent = ({
-  path,
-  name,
-  source = 'local',
-  projectId,
-  sessionId,
-  managedFileId,
-  selectedVersionId,
-  mimeType,
-  size,
-  mtimeMs,
-  onReadingPositionChange,
-  onPdfTranslationChange,
-  pdfProseRegions,
-  pdfProseRegionIdentityKey,
-  onPdfProseRegionsChange,
-  annotationProps,
-  pdfEvidenceSource,
-  pdfBookmarkSource,
-  structureSource,
-  pdfBookmarkSourceUnavailable = false,
-  pdfRevealSource,
-  nativeImportProgress,
-  onCancelNativeImport,
-  presentation = 'reader',
-  translationSource: suppliedTranslationSource,
-  translation: suppliedTranslation,
-  translationLayout,
-  translationExecutor,
-  translationDocumentSource,
-  translationArtifact,
-  onTranslationDocument
-}: {
+type PdfPreviewContentProps = {
   path: string
   name: string
   source?: PreviewFileSource
@@ -2566,6 +2527,207 @@ export const PdfPreviewContent = ({
   translationExecutor?: PdfTranslationExecutor
   translationDocumentSource?: PdfDocumentSource
   onTranslationDocument?: (context: PdfTranslationDocumentContext) => void | Promise<void>
+}
+
+// One resource owner determines presentation before mounting either preview surface.
+export const PdfPreviewContent = (props: PdfPreviewContentProps): React.JSX.Element => {
+  const { t } = useTranslation()
+  const {
+    source = 'local',
+    path,
+    projectId,
+    sessionId,
+    managedFileId,
+    selectedVersionId,
+    mimeType
+  } = props
+  const requestKey = createPreviewResourceKey({ ...props, source })
+  const generation = usePreviewResourceGeneration()
+  const resourceRequestKey = `${requestKey}:${generation}`
+  const [documentState, setDocumentState] = useState<DocumentState | null>(null)
+  const pageDisposersRef = useMemo(
+    () => ({ requestKey: resourceRequestKey, current: new Set<() => void>() }),
+    [resourceRequestKey]
+  )
+  useEffect(() => {
+    if (!desktopRuntimeWritable()) return
+    let canceled = false
+    let document: PdfDocument | undefined
+    let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
+    let resourceId: string | undefined
+    let disposePromise: Promise<void> | undefined
+    const dispose = (): Promise<void> => {
+      disposePromise ??= (async () => {
+        // Cancel page renders before destroying their shared PDF.js document and resource.
+        for (const disposePage of pageDisposersRef.current) disposePage()
+        pageDisposersRef.current.clear()
+
+        try {
+          if (document) await document.destroy()
+          else if (loadingTask) await loadingTask.destroy()
+        } catch (error) {
+          console.error('Failed to destroy PDF preview', error)
+        }
+
+        if (resourceId) {
+          try {
+            await window.api.previewResources.release({ resourceId })
+          } catch (error) {
+            // A disconnected backend has already revoked its preview resources.
+            if (desktopRuntimeWritable()) {
+              console.error('Failed to release PDF preview resource', error)
+            }
+          }
+        }
+      })()
+      return disposePromise
+    }
+
+    void (async () => {
+      try {
+        const resource = await window.api.previewResources.acquire(
+          createManagedPreviewRequest({
+            source,
+            path,
+            projectId,
+            sessionId,
+            managedFileId,
+            selectedVersionId,
+            mimeType
+          })
+        )
+        resourceId = resource.id
+        const sourceIdentity =
+          typeof resource.sourceChecksum === 'string' &&
+          /^[a-f0-9]{64}$/.test(resource.sourceChecksum) &&
+          Number.isSafeInteger(resource.size) &&
+          resource.size > 0
+            ? Object.freeze({
+                sourceChecksum: resource.sourceChecksum,
+                sourceSizeBytes: resource.size
+              })
+            : undefined
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        loadingTask = createManagedPdfLoadingTask(resource)
+        document = await loadingTask.promise
+        if (canceled) {
+          await dispose()
+          return
+        }
+
+        setDocumentState({
+          requestKey: resourceRequestKey,
+          status: 'ready',
+          document,
+          size: resource.size,
+          sourceIdentity
+        })
+      } catch (error: unknown) {
+        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
+        if (!canceled) {
+          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
+          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
+        }
+        await dispose()
+      }
+    })()
+
+    return () => {
+      canceled = true
+      if (resourceId) void dispose()
+    }
+  }, [
+    managedFileId,
+    mimeType,
+    path,
+    projectId,
+    resourceRequestKey,
+    selectedVersionId,
+    sessionId,
+    source,
+    pageDisposersRef
+  ])
+
+  const currentState = documentState?.requestKey === resourceRequestKey ? documentState : null
+  const singlePage = currentState?.status === 'ready' && currentState.document.numPages === 1
+  const onReadingPositionChange = props.onReadingPositionChange
+  useEffect(() => {
+    if (singlePage) onReadingPositionChange?.({ pageNumber: 1, pageCount: 1 })
+  }, [singlePage, resourceRequestKey, onReadingPositionChange])
+  // Keep a multi-page reader mounted during backend recovery so it retains its viewport anchor.
+  const [multiPageKey, setMultiPageKey] = useState<string>()
+  if (
+    currentState?.status === 'ready' &&
+    currentState.document.numPages > 1 &&
+    multiPageKey !== requestKey
+  )
+    setMultiPageKey(requestKey)
+  if (currentState?.status === 'error' && multiPageKey !== requestKey) {
+    return (
+      <PreviewErrorCard
+        name={props.name}
+        error={currentState.error}
+        fallbackMessage={t("This PDF couldn't be rendered for preview")}
+      />
+    )
+  }
+  if (currentState?.status === 'ready' && currentState.document.numPages === 1) {
+    return (
+      <SinglePagePdfPreview
+        key={resourceRequestKey}
+        document={currentState.document}
+        name={props.name}
+        pageDisposersRef={pageDisposersRef}
+      />
+    )
+  }
+  if (!currentState && multiPageKey !== requestKey) return <PreviewLoadingContent />
+  return (
+    <PdfReaderContent {...props} documentState={currentState} pageDisposersRef={pageDisposersRef} />
+  )
+}
+
+const PdfReaderContent = ({
+  path,
+  name,
+  source = 'local',
+  projectId,
+  sessionId,
+  managedFileId,
+  selectedVersionId,
+  mimeType,
+  size,
+  mtimeMs,
+  onReadingPositionChange,
+  onPdfTranslationChange,
+  pdfProseRegions,
+  pdfProseRegionIdentityKey,
+  onPdfProseRegionsChange,
+  annotationProps,
+  pdfEvidenceSource,
+  pdfBookmarkSource,
+  structureSource,
+  pdfBookmarkSourceUnavailable = false,
+  pdfRevealSource,
+  nativeImportProgress,
+  onCancelNativeImport,
+  presentation = 'reader',
+  translationSource: suppliedTranslationSource,
+  translation: suppliedTranslation,
+  translationLayout,
+  translationExecutor,
+  translationDocumentSource,
+  translationArtifact,
+  onTranslationDocument,
+  documentState,
+  pageDisposersRef
+}: PdfPreviewContentProps & {
+  documentState: DocumentState | null
+  pageDisposersRef: React.RefObject<Set<() => void>>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const pdfAnnotations = usePdfAnnotations()
@@ -2613,7 +2775,6 @@ export const PdfPreviewContent = ({
     pendingLinkRef.current = undefined
     pendingAnnotationPageRef.current = undefined
   }, [resourceRequestKey])
-  const [documentState, setDocumentState] = useState<DocumentState | null>(null)
   const [zoom, setZoom] = useState(1)
   const [cursorMode, setCursorMode] = useState<PdfCursorMode>('select')
   const [proseSelection, setProseSelection] = useState(false)
@@ -2777,11 +2938,13 @@ export const PdfPreviewContent = ({
   // overflows the viewport — distinct from the capped fitWidth that sizes a 100% page.
   const [viewportWidth, setViewportWidth] = useState(0)
   const measureRef = useRef<HTMLDivElement | null>(null)
-  const pageDisposersRef = useRef(new Set<() => void>())
-  const registerPageDisposer = useCallback((dispose: () => void): (() => void) => {
-    pageDisposersRef.current.add(dispose)
-    return () => pageDisposersRef.current.delete(dispose)
-  }, [])
+  const registerPageDisposer = useCallback(
+    (dispose: () => void): (() => void) => {
+      pageDisposersRef.current.add(dispose)
+      return () => pageDisposersRef.current.delete(dispose)
+    },
+    [pageDisposersRef]
+  )
   const handleTextLayerRendered = useCallback(() => {
     setTextLayerEpoch((epoch) => epoch + 1)
   }, [])
@@ -2890,108 +3053,6 @@ export const PdfPreviewContent = ({
     if (readerRef.current) observer.observe(readerRef.current)
     return () => observer.disconnect()
   }, [captureViewportAnchor])
-
-  useEffect(() => {
-    if (!desktopRuntimeWritable()) return
-    let canceled = false
-    let document: PdfDocument | undefined
-    let loadingTask: ReturnType<typeof createManagedPdfLoadingTask> | undefined
-    let resourceId: string | undefined
-    let disposePromise: Promise<void> | undefined
-    const dispose = (): Promise<void> => {
-      disposePromise ??= (async () => {
-        // Cancel page renders before destroying their shared PDF.js document and resource.
-        for (const disposePage of pageDisposersRef.current) disposePage()
-        pageDisposersRef.current.clear()
-
-        try {
-          if (document) await document.destroy()
-          else if (loadingTask) await loadingTask.destroy()
-        } catch (error) {
-          console.error('Failed to destroy PDF preview', error)
-        }
-
-        if (resourceId) {
-          try {
-            await window.api.previewResources.release({ resourceId })
-          } catch (error) {
-            // A disconnected backend has already revoked its preview resources.
-            if (desktopRuntimeWritable()) {
-              console.error('Failed to release PDF preview resource', error)
-            }
-          }
-        }
-      })()
-      return disposePromise
-    }
-
-    void (async () => {
-      try {
-        const resource = await window.api.previewResources.acquire(
-          createManagedPreviewRequest({
-            source,
-            path,
-            projectId,
-            sessionId,
-            managedFileId,
-            selectedVersionId,
-            mimeType
-          })
-        )
-        resourceId = resource.id
-        const sourceIdentity =
-          typeof resource.sourceChecksum === 'string' &&
-          /^[a-f0-9]{64}$/.test(resource.sourceChecksum) &&
-          Number.isSafeInteger(resource.size) &&
-          resource.size > 0
-            ? Object.freeze({
-                sourceChecksum: resource.sourceChecksum,
-                sourceSizeBytes: resource.size
-              })
-            : undefined
-        if (canceled) {
-          await dispose()
-          return
-        }
-
-        loadingTask = createManagedPdfLoadingTask(resource)
-        document = await loadingTask.promise
-        if (canceled) {
-          await dispose()
-          return
-        }
-
-        setDocumentState({
-          requestKey: resourceRequestKey,
-          status: 'ready',
-          document,
-          size: resource.size,
-          sourceIdentity
-        })
-      } catch (error: unknown) {
-        // Closing or switching a preview can reject the PDF.js task while cleanup destroys it.
-        if (!canceled) {
-          if (!isUnavailableFileError(error)) console.error('Failed to load PDF preview', error)
-          setDocumentState({ requestKey: resourceRequestKey, status: 'error', error })
-        }
-        await dispose()
-      }
-    })()
-
-    return () => {
-      canceled = true
-      if (resourceId) void dispose()
-    }
-  }, [
-    managedFileId,
-    mimeType,
-    path,
-    projectId,
-    resourceRequestKey,
-    selectedVersionId,
-    sessionId,
-    source
-  ])
 
   const currentDocumentState =
     documentState?.requestKey === resourceRequestKey ? documentState : null

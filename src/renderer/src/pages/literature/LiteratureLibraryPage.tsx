@@ -55,12 +55,17 @@ import type { LiteratureSort } from './list/useLiteratureQuery'
 import { useLiteratureQuery } from './list/useLiteratureQuery'
 import { useLiteratureTable } from './list/useLiteratureTable'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
+import { LiteratureZoteroDialog } from './LiteratureZoteroDialog'
 import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
 import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
 import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
 import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
 import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
 import { useLiteratureExport } from './workflows/useLiteratureExport'
+import {
+  useLiteratureReadingStatus,
+  type LiteratureReadingStatus
+} from './workflows/useLiteratureReadingStatus'
 import { useLiteratureItemEdits } from './workflows/useLiteratureItemEdits'
 import { useLiteratureReading } from './workflows/useLiteratureReading'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
@@ -216,6 +221,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const loadTags = useTagStore((state) => state.load)
   const listenTags = useTagStore((state) => state.listen)
   const tagRevision = useTagStore((state) => state.revision)
+  const [relatedDirection, setRelatedDirection] = useState<'references' | 'citations'>('references')
   const [section, setSection] = useState<LibrarySection>('inbox')
   const [inboxState, setInboxState] = useState<'pending' | 'dismissed'>('pending')
   const [duplicatesOpen, setDuplicatesOpen] = useState(false)
@@ -259,6 +265,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [sortBy, setSortBy] = useState<LiteratureSort>('updated')
   const [filterItemType, setFilterItemType] = useState<LiteratureItemType | 'all'>('all')
   const [filterHasPdf, setFilterHasPdf] = useState<'all' | 'with' | 'without'>('all')
+  const [filterReadingStatus, setFilterReadingStatus] = useState<LiteratureReadingStatus | 'all'>(
+    'all'
+  )
   const [selectionStore] = useState(createLiteratureSelectionStore)
   const clearSelection = useCallback((): void => selectionStore.clear(), [selectionStore])
   const {
@@ -322,6 +331,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const pdfInputRef = useRef<HTMLInputElement>(null)
   const importPdfInputRef = useRef<HTMLInputElement>(null)
   const importRecordsInputRef = useRef<HTMLInputElement>(null)
+  const [zoteroOpen, setZoteroOpen] = useState(false)
   const tableScrollRef = useRef<HTMLDivElement>(null)
   const citationStyleRef = useRef<LiteratureCitationStyle>('apa')
   const detailTagMenuOpenRef = useRef(false)
@@ -563,6 +573,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     filterYearFrom,
     filterYearTo,
     filterHasPdf,
+    filterReadingStatus,
     journalAttributeFilters,
     tableScrollRef,
     setError,
@@ -658,6 +669,19 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
+
+  const { setReadingStatus, readingStatusError, readingStatusPending } = useLiteratureReadingStatus(
+    {
+      scopeKey: entriesKey,
+      selectionStore,
+      resolveSelectedItemIds,
+      isBatching,
+      setIsBatching,
+      detailController,
+      loadEntries,
+      setError
+    }
+  )
 
   const {
     restorePreview,
@@ -803,6 +827,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     !!collectionId &&
     singleReevaluation?.collectionId !== collectionId &&
     !smartDecisionBatch.progress
+
+  const selectionBlocked = smartTableBlocked || readingStatusPending
 
   const selectLibrary = (nextCollectionId?: string): void => {
     setCitationStylesOpen(false)
@@ -1012,6 +1038,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     (yearFilter.from ? 1 : 0) +
     (yearFilter.to ? 1 : 0) +
     (filterHasPdf !== 'all' ? 1 : 0) +
+    (filterReadingStatus !== 'all' ? 1 : 0) +
     journalAttributeFilters.length
 
   const clearFilters = (): void => {
@@ -1019,6 +1046,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setFilterItemType('all')
     yearFilter.clear()
     setFilterHasPdf('all')
+    setFilterReadingStatus('all')
     setJournalAttributeFilters([])
     clearSelection()
   }
@@ -1441,7 +1469,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           defaultValue_one: '{{count}} reference'
         })}
         pageSizeLabel={t('References per page')}
-        disabled={smartTableBlocked}
+        disabled={selectionBlocked}
         loading={entriesLoading}
         onOffsetChange={(offset) => {
           clearSelection()
@@ -1535,6 +1563,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const rowActions = useRef<LiteratureRowActions>({
     openSelectedItemDetail,
     persistInlineItem,
+    setReadingStatus,
     previewFirstAttachment,
     setItemsLifecycle,
     requestPermanentDeletion
@@ -1543,6 +1572,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     rowActions.current = {
       openSelectedItemDetail,
       persistInlineItem,
+      setReadingStatus,
       previewFirstAttachment,
       setItemsLifecycle,
       requestPermanentDeletion
@@ -1680,6 +1710,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                 duplicatesOpen ||
                 isCreatingItem ||
                 recordImport ||
+                zoteroOpen ||
                 pdfBatch ||
                 previewItem
               )
@@ -1704,6 +1735,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               onImportFiles={receiveImportFiles}
               importRecordsInputRef={importRecordsInputRef}
               beginManualImport={beginManualImport}
+              onImportZotero={() => setZoteroOpen(true)}
               query={query}
               searchResetRevision={searchResetRevision}
               setQuery={setQuery}
@@ -2033,6 +2065,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     itemTypeLabels={itemTypeLabels}
                                     filterHasPdf={filterHasPdf}
                                     setFilterHasPdf={setFilterHasPdf}
+                                    filterReadingStatus={filterReadingStatus}
+                                    setFilterReadingStatus={setFilterReadingStatus}
                                     journalFilterDatasets={journalFilterDatasets}
                                     journalAttributeFilters={journalAttributeFilters}
                                     setJournalAttributeFilters={setJournalAttributeFilters}
@@ -2069,6 +2103,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     section={section}
                                     startingReadingProjectId={startingReadingProjectId}
                                     requestReadSelection={requestReadSelection}
+                                    setReadingStatus={setReadingStatus}
                                     batchCollections={batchCollections}
                                     activeProjects={activeProjects}
                                     projectsLoaded={projectsLoaded}
@@ -2382,7 +2417,9 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                         <p className="mt-1 text-sm text-muted-foreground">
                           {inboxState === 'dismissed'
                             ? t('Dismissed references can be restored here.')
-                            : t('New Agent discoveries will appear here for review.')}
+                            : t(
+                                'References discovered by you or Agents will appear here for review.'
+                              )}
                         </p>
                       </div>
                     )
@@ -2391,7 +2428,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                       tableScrollRef={tableScrollRef}
                       tableMinWidth={tableMinWidth}
                       selectedCollection={selectedCollection}
-                      smartTableBlocked={smartTableBlocked}
+                      smartTableBlocked={selectionBlocked}
                       items={items}
                       selectionStore={selectionStore}
                       visibleOrderedTableColumns={visibleOrderedTableColumns}
@@ -2472,6 +2509,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           </Button>
                         ) : (
                           <LiteratureAddMenu
+                            onImportZotero={() => setZoteroOpen(true)}
                             label={t('Add reference')}
                             onAddReference={() => {
                               beginManualImport()
@@ -2520,6 +2558,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }}
           />
         ) : null}
+        {zoteroOpen ? <LiteratureZoteroDialog onClose={() => setZoteroOpen(false)} /> : null}
         {recordImport ? (
           <LiteratureRecordImportDialog
             recordImport={recordImport}
@@ -2563,10 +2602,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         />
 
         <LiteratureDetailDialog
+          setReadingStatus={setReadingStatus}
+          readingStatusError={readingStatusError}
+          isBatching={isBatching}
           detailController={detailController}
           previewItem={previewItem}
           selectedItemDialogRef={selectedItemDialogRef}
           detailTagMenuOpenRef={detailTagMenuOpenRef}
+          handleDetailTagMenuOpenChange={handleDetailTagMenuOpenChange}
           detailSelectOpenRef={detailSelectOpenRef}
           childLayerDismissGuardUntilRef={childLayerDismissGuardUntilRef}
           closeSelectedItemDetail={closeSelectedItemDetail}
@@ -2591,8 +2634,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           citationStyles={citationStyles}
           setJournalsOpen={setJournalsOpen}
           setCitationStylesOpen={setCitationStylesOpen}
+          onOpenInbox={() => {
+            closeSelectedItemDetail()
+            setInboxState('pending')
+            selectSection('inbox')
+          }}
+          relatedDirection={relatedDirection}
           renderOverview={(selectedItem) => (
             <LiteratureDetailOverview
+              onRelated={(direction) => {
+                setRelatedDirection(direction)
+                changeDetailMode('related')
+              }}
               selectedCollection={selectedCollection}
               updateSmartEvidence={updateSmartEvidence}
               isBatching={isBatching}
@@ -2607,8 +2660,6 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               pendingDecisions={pendingDecisions}
               smartRunningCollection={smartRunningCollection}
               confirmSmartDecision={confirmSmartDecision}
-              itemTypeLabels={itemTypeLabels}
-              handleDetailTagMenuOpenChange={handleDetailTagMenuOpenChange}
               activeProjects={activeProjects}
               projectLinkError={projectLinkError}
               projectsLoaded={projectsLoaded}

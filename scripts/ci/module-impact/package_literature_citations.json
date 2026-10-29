@@ -37,7 +37,8 @@
     "packages/literature-citations/tsconfig.json",
     "packages/literature-citations/vitest.config.ts",
     "packages/literature-citations/src/styles.ts",
-    "packages/literature-citations/test/export-roundtrip.test.ts"
+    "packages/literature-citations/test/export-roundtrip.test.ts",
+    "packages/literature-citations/src/doi.ts"
   ],
   "interfacePaths": [
     "packages/literature-citations/src/index.ts",
@@ -46,7 +47,8 @@
     "packages/literature-citations/src/citation-style-library.ts",
     "packages/literature-citations/src/citation-exchange.ts",
     "packages/literature-citations/src/documents.ts",
-    "packages/literature-citations/src/styles.ts"
+    "packages/literature-citations/src/styles.ts",
+    "packages/literature-citations/src/doi.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -1348,5 +1350,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The public DOI identity subpath adds a source beyond the reviewed citations package boundary; retain full CI validation until the expanded public exports and installed-consumer contracts are reviewed."
 }

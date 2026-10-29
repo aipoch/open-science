@@ -19,6 +19,304 @@ function item(str: string, y: number, size = 10, fontName = 'Body', x = 60): Pdf
   }
 }
 
+function supplementaryBibliography(kind: string): PdfLayoutPage[] {
+  const entry = (n: number, y: number): PdfLayoutTextItem[] => {
+    const marker = item(`${n}.`, y)
+    marker.hasEOL = false
+    return [
+      marker,
+      item(
+        'A. Writer. Complete independent publication metadata. Journal 12, 1–8 (2020).',
+        y,
+        10,
+        'Body',
+        78
+      )
+    ]
+  }
+  const pages: PdfLayoutPage[] = [
+    {
+      page: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        item(
+          'The ordinary experimental discussion remains eligible before the final bibliography.',
+          100
+        )
+      ]
+    },
+    {
+      page: 2,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        item(
+          kind === 'ordinary-heading' ? 'Supplementary Results' : 'Supplementary References',
+          100,
+          kind === 'body-heading' ? 10 : 14,
+          kind === 'body-heading' ? 'Body' : 'Section'
+        ),
+        ...entry(1, 130),
+        ...entry(2, 165),
+        item('2', 760, 10, 'Body', 297.75)
+      ]
+    },
+    {
+      page: 3,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [...entry(kind === 'missing-number' ? 4 : 3, 100), item('3', 760, 10, 'Body', 297.75)]
+    }
+  ]
+  if (kind === 'foreign-prose')
+    pages[2].items.splice(
+      2,
+      0,
+      item('An independent experimental paragraph is outside the bibliographic record.', 150)
+    )
+  for (const page of pages.slice(1)) page.items.unshift(page.items.pop()!)
+  return pages
+}
+
+test.each([
+  'complete',
+  'missing-number',
+  'ordinary-heading',
+  'body-heading',
+  'unknown-end',
+  'foreign-prose'
+])('protects only a complete native supplementary bibliography range: %s', (kind) => {
+  const pages = supplementaryBibliography(kind)
+  const result = groupPdfTranslationPages({
+    pages,
+    ...(kind === 'unknown-end' ? {} : { pageCount: pages.length })
+  })
+  const records = result.units.filter((u) => /^\d+\. A\. Writer/u.test(u.source))
+  expect(records).toHaveLength(3)
+  expect(records.every((u) => !!u.sourceOnly)).toBe(kind === 'complete')
+  expect(result.units.find((u) => u.source.startsWith('The ordinary'))?.sourceOnly).not.toBe(true)
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+})
+
+test.each(['unindented continuation', 'detached continuation', 'closed record', 'complete wrap'])(
+  'requires a continuous native hanging range before the bibliography ends: %s',
+  (kind) => {
+    const pages = supplementaryBibliography('complete'),
+      body = pages[2].items.find((i) => i.str.startsWith('A. Writer.'))!
+    if (kind !== 'closed record') body.str = body.str.replace(' (2020).', '')
+    pages[2].items.push(
+      item(
+        kind === 'complete wrap'
+          ? 'Journal of Independent Measurements 15, 20–28 (2021).'
+          : 'The independent experimental paragraph reports complete measurements (2021).',
+        kind === 'detached continuation' ? 180 : 112,
+        10,
+        'Body',
+        kind === 'unindented continuation' ? 60 : 78
+      )
+    )
+    const before = structuredClone(pages),
+      result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+      continuation = result.units.find((u) => u.items.includes(`3:${pages[2].items.length - 1}`))
+    expect(continuation).toBeDefined()
+    expect(!!continuation?.sourceOnly).toBe(kind === 'complete wrap')
+    expect(pages).toEqual(before)
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+    )
+  }
+)
+
+test('keeps an independent native item after a closed same-line publication eligible', () => {
+  const pages = supplementaryBibliography('complete')
+  pages[2].items.push(item('Data 2021.', 100, 10, 'Foreign', 550))
+  const result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+    foreign = result.units.find((u) => u.source === 'Data 2021.')
+  expect(foreign).toBeDefined()
+  expect(foreign?.sourceOnly).not.toBe(true)
+})
+
+test('does not complete an unfinished publication with a detached same-line native field', () => {
+  const pages = supplementaryBibliography('complete'),
+    body = pages[2].items.find((i) => i.str.startsWith('A. Writer.'))!
+  body.str = body.str.replace(' (2020).', '')
+  pages[2].items.push(item('Data 2021.', 100, 10, 'Foreign', 550))
+  const result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+    foreign = result.units.find((u) => u.source === 'Data 2021.')
+  expect(foreign).toBeDefined()
+  expect(foreign?.sourceOnly).not.toBe(true)
+})
+
+function wholeLineCaptionLeaf(kind: string): PdfLayoutPage[] {
+  const pages: PdfLayoutPage[] = [
+    {
+      page: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        ...(kind === 'no-witness'
+          ? [item('An earlier ordinary paragraph contains no caption style witness.', 40)]
+          : [
+              item(
+                'Figure 1: An earlier eligible drawing explains the complete ordinary measurement.',
+                40
+              )
+            ])
+      ]
+    },
+    {
+      page: 2,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        item('References', 110, 14, 'Section'),
+        item('[1] A. Writer. Complete publication details in the preceding bibliography.', 140),
+        item('[2] B. Author. Another complete reference before the separate drawing leaf.', 165)
+      ]
+    },
+    {
+      page: 3,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [
+        item(
+          'Figure 2: A complete drawing caption describes its independent graphical observation,',
+          600
+        ),
+        item('with enough ordinary detail to explain the measured result.', 612),
+        item(kind === 'wrong-footer' ? '8' : '3', 760, 10, 'Body', 297.75)
+      ]
+    }
+  ]
+  if (kind === 'missing-metrics') pages[2].items[0].fontAscent = undefined
+  if (kind === 'foreign-prose')
+    pages[2].items.splice(
+      2,
+      0,
+      item('This independent ordinary prose does not belong to the drawing caption.', 660)
+    )
+  if (kind === 'mixed-references')
+    pages[2].items.splice(
+      2,
+      0,
+      item('[3] C. Author. Bibliographic content shares this page with the drawing.', 660)
+    )
+  return pages
+}
+
+test.each(['bibliography', 'caption'])(
+  'requires the complete native footer font box inside the page for a %s proof',
+  (kind) => {
+    const pages =
+        kind === 'bibliography'
+          ? supplementaryBibliography('complete')
+          : wholeLineCaptionLeaf('complete'),
+      footer = pages[2].items.find((i) => i.str === '3')!
+    footer.transform[5] = 1
+    const before = structuredClone(pages),
+      result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+      target = result.units.find((u) =>
+        u.source.startsWith(kind === 'bibliography' ? '3. A. Writer.' : 'Figure 2:')
+      )
+    expect(target).toBeDefined()
+    expect(!!target?.sourceOnly).toBe(kind === 'caption')
+    expect(pages).toEqual(before)
+  }
+)
+
+test.each([
+  'complete',
+  'wrong-footer',
+  'missing-metrics',
+  'foreign-prose',
+  'mixed-references',
+  'no-witness'
+])('releases only an independently proven whole-line caption leaf: %s', (kind) => {
+  const pages = wholeLineCaptionLeaf(kind),
+    result = groupPdfTranslationPages({ pages, pageCount: pages.length })
+  const caption = result.units.find((u) => u.source.startsWith('Figure 2:'))
+  expect(caption).toBeDefined()
+  expect(!!caption?.sourceOnly).toBe(kind !== 'complete')
+  expect(
+    result.units.find((u) => u.source === (kind === 'wrong-footer' ? '8' : '3'))?.sourceOnly
+  ).toBe(true)
+  expect(result.units.find((u) => u.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+})
+
+test.each([
+  'single-line',
+  'inline-and-wrapped',
+  'foreign-prose',
+  'mixed-references',
+  'missing-panel-metrics',
+  'inconsistent-footer-metrics',
+  'overlapping-panel',
+  'incomplete-caption',
+  'no-witness'
+])('requires an exhaustive native panel/caption/footer leaf: %s', (kind) => {
+  const pages = wholeLineCaptionLeaf(kind),
+    leaf = pages[2],
+    caption =
+      'Figure 2: A complete drawing caption explains independent observations and preserves every ordinary detail.',
+    first = item(caption, 600),
+    panels = [
+      item('(a) Local example', 570, 9, 'Panel', 95),
+      item('(b) Remote example', 570, 9, 'Panel', 340)
+    ]
+  first.width = 470
+  leaf.items = [...panels, first, item('3', 760, 10, 'Body', 297.75)]
+  if (kind === 'inline-and-wrapped') {
+    const prefix = item('Figure 2:', 600),
+      body = item(
+        'A complete drawing caption explains independent observations',
+        600,
+        10,
+        'Body',
+        105
+      ),
+      tail = item('and preserves every ordinary detail.', 612)
+    prefix.width = 40
+    prefix.hasEOL = false
+    prefix.transform[0] = 10.2
+    body.width = 360
+    leaf.items.splice(2, 1, prefix, body, tail)
+  }
+  if (kind === 'foreign-prose' || kind === 'mixed-references')
+    leaf.items.splice(
+      leaf.items.length - 1,
+      0,
+      item(
+        kind === 'mixed-references'
+          ? '[3] C. Author. A complete reference on this same page.'
+          : 'Independent ordinary prose shares this page with the drawing.',
+        660
+      )
+    )
+  if (kind === 'missing-panel-metrics') panels[1].fontAscent = undefined
+  if (kind === 'inconsistent-footer-metrics') leaf.items.at(-1)!.transform[3] = 200
+  if (kind === 'overlapping-panel') panels[1].transform[5] = first.transform[5]
+  if (kind === 'incomplete-caption') first.str = first.str.slice(0, -1)
+  const before = structuredClone(pages),
+    result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+    owner = result.units.find((u) => u.source.startsWith('Figure 2:'))
+  expect(owner).toBeDefined()
+  expect(!!owner?.sourceOnly).toBe(!['single-line', 'inline-and-wrapped'].includes(kind))
+  expect(pages).toEqual(before)
+  expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+    pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
+  )
+  expect(result.units.find((u) => u.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+})
+
 function fixture(title: 'decimal' | 'declarations' | 'supplement'): PdfLayoutPage {
   const items = [
     item('References', 100, 14, 'Section'),

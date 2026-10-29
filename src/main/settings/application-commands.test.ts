@@ -91,12 +91,16 @@ const expectedChannels = [
   'settings:install-recommended-wsl-distro',
   'settings:open-wsl-terminal',
   'settings:refresh-provider-models',
+  'settings:list-skill-sources',
+  'settings:add-skill-source',
+  'settings:remove-skill-source',
   'settings:scan-repo-skills',
   'settings:save-github-token',
   'settings:remove-github-token',
   'settings:set-app-icon-variant',
   'settings:set-close-preference',
   'settings:set-default-permission-profile',
+  'settings:set-notebook-folder-restriction-enabled',
   'settings:set-notifications-enabled',
   'settings:set-show-notification-content',
   'settings:set-package-mirror',
@@ -513,6 +517,12 @@ describe('Settings core application commands', () => {
     await invoke('previewGitHubSkill', [{ url: 'https://github.com/org/repo' }])
     await invoke('previewSkillZip', [{ dataBase64: 'AA==' }])
     await invoke('refreshProviderModels', [{ providerId: 'provider-1' }])
+    await invoke('listSkillSources', [])
+    await invoke('addSkillSource', [{ repository: 'org/repo' }])
+    await invoke('removeSkillSource', [{ id: 'saved' }])
+    expect(serviceMethod('listSkillSources')).toHaveBeenCalledWith()
+    expect(serviceMethod('addSkillSource')).toHaveBeenCalledWith({ repository: 'org/repo' })
+    expect(serviceMethod('removeSkillSource')).toHaveBeenCalledWith({ id: 'saved' })
     await invoke('scanRepoSkills', [{ repo: 'org/repo' }])
     await invoke('setReviewerModel', [{ configuration: { mode: 'inherit' } }])
     await invoke('setSessionDetailsModel', [
@@ -803,4 +813,25 @@ it('keeps native Skill sources and Connector export previews behind desktop auth
     })
     expect(serviceMethod(method)).toHaveBeenCalledExactlyOnceWith(...args)
   }
+})
+
+it('keeps folder isolation writes local and validates them before mutation', async () => {
+  const { dependencies, serviceMethod } = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerCoreSettingsApplicationCommands(router.registrar, dependencies)
+  const command = settingsCoreApplicationCommands.setNotebookFolderRestrictionEnabled
+  await expect(
+    router.dispatcher.invoke(command, invocation([{ enabled: false }] as const, 'remote'))
+  ).rejects.toThrow()
+  await expect(
+    router.dispatcher.invoke(
+      command,
+      invocation([{ enabled: 'false' as unknown as boolean }] as const)
+    )
+  ).rejects.toThrow('Invalid Notebook folder restriction flag')
+  expect(serviceMethod('setNotebookFolderRestrictionEnabled')).not.toHaveBeenCalled()
+  await router.dispatcher.invoke(command, invocation([{ enabled: false }] as const))
+  expect(serviceMethod('setNotebookFolderRestrictionEnabled')).toHaveBeenCalledExactlyOnceWith(
+    false
+  )
 })

@@ -1,7 +1,8 @@
+import { UseCaseCatalog } from '../session-package/use-case-catalog'
 import { createSessionRecoveryFolderCommand } from '../session-persistence/ipc'
 import { createCompletionHandoffCommands } from '../agents/completion-handoff-ipc'
 import type { composeAgentCompletion } from './agent-completion'
-import type { UploadTransferProgress } from '../../shared/uploads'
+import { PENDING_UPLOAD_SESSION_ID, type UploadTransferProgress } from '../../shared/uploads'
 import type { LocalePreferenceOwner } from '../locale/owner'
 import { createNetworkCommandOwner } from '../network-ipc'
 import type { SideChatCommandOwner } from '../side-chat/command-owner'
@@ -57,6 +58,7 @@ export function composeCommandDependencies({
   settingsBootstrap,
   storageStartup,
   managedFileVersionService,
+  uploadRepository,
   runtimeRef,
   sessionFoundation,
   sessionPackages,
@@ -133,6 +135,8 @@ export function composeCommandDependencies({
   reviewerCommandOwner: Awaited<ReturnType<typeof registerReviewerComposition>>
   listAppIconPreviews: (() => import('../../shared/settings').AppIconPreview[]) | undefined
 }): { applicationCommandDependencies: ApplicationCommandCompositionDependencies } {
+  const useCaseCatalog = new UseCaseCatalog(resolveConfigRoot())
+  void useCaseCatalog.refresh()
   const sessionReplay = new SessionReplayService(
     new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
     {
@@ -222,13 +226,16 @@ export function composeCommandDependencies({
       literatureReferenceResolver: researchCatalog.literatureReferenceResolver,
       literatureMetadataEnricher: researchCatalog.literatureMetadataEnricher,
       literatureFullTextFinder: researchCatalog.literatureFullTextFinder,
+      literatureRelatedFinder: researchCatalog.literatureRelatedFinder,
       literatureSupplementFinder: researchCatalog.literatureSupplementFinder,
+      literaturePublicationChecker: researchCatalog.literaturePublicationChecker,
       literatureSupplementAttachments: researchCatalog.literatureSupplementAttachments,
       artifactProvenanceRepository: managedFiles.artifactProvenanceRepository,
       managedFileVersionService,
       literatureCitationDocument: researchCatalog.literatureCitationDocument,
       literatureCatalog: researchCatalog.literatureCatalog,
       literaturePdfImporter: researchCatalog.literaturePdfImporter,
+      literatureCollector: researchCatalog.literatureCollector,
       contentRepository: managedFiles.contentRepository
     }),
     memory: {
@@ -248,6 +255,7 @@ export function composeCommandDependencies({
       clearAll: () => researchCatalog.memoryService.clearAll()
     },
     dataContent: {
+      useCaseCatalog,
       officePreviewCommands,
       fileSaveCommands,
       reproducibility: artifactSurfaces.reproducibilityCommands,
@@ -272,15 +280,48 @@ export function composeCommandDependencies({
         exportSessionPackage: (invocation) =>
           sessionPackageSurfaces.sessionPackageDesktop.export(
             invocation.args[0],
-            invocation.callerContext.clientId
+            invocation.callerContext.clientId,
+            invocation.args[1],
+            // Local Web callers download the staged path from the renderer; CLI callers always
+            // pass an explicit destination and Electron keeps the native save dialog.
+            invocation.callerContext.surface === 'web' && invocation.args[1] === undefined
+              ? { stageDownload: true }
+              : undefined
           ),
-        importSessionPackage: (invocation) =>
-          sessionPackageSurfaces.sessionPackageDesktop.import(
+        importSessionPackage: async (invocation) => {
+          const source = invocation.args[1]
+          const stagedPath =
+            invocation.callerContext.surface === 'web' && typeof source === 'string'
+              ? await uploadRepository.resolveManagedUploadPath(
+                  { path: source },
+                  { sessionId: PENDING_UPLOAD_SESSION_ID }
+                )
+              : undefined
+          return sessionPackageSurfaces.sessionPackageDesktop.import(
             invocation.callerContext.clientId,
             invocation.callerContext.lifecycleClientId,
             invocation.args[0],
-            invocation.args[1]
-          ),
+            stagedPath ?? source,
+            false,
+            {
+              ...invocation.args[2],
+              ...(stagedPath
+                ? {
+                    onReleased: async () => {
+                      await withDataRootWrite(() =>
+                        uploadRepository.deleteUpload({ path: stagedPath })
+                      ).catch((error) =>
+                        createLogger('session-package').warn(
+                          'Could not release staged package upload',
+                          diagnosticErrorFields(error)
+                        )
+                      )
+                    }
+                  }
+                : {})
+            }
+          )
+        },
         exportConversationFromInvokingWindow: (invocation) =>
           sessionPackageSurfaces.conversationExportService.exportConversation(
             invocation.args[0],
@@ -312,6 +353,16 @@ export function composeCommandDependencies({
       projects: projectLifecycle.projectHandlers,
       sessions: {
         ...sessionSurfaces.sessionPersistenceHandlers,
+        deleteRecoveryFile: async (request) => {
+          await projectLifecycle.projectDeletionCoordinator.waitForProjectOperations([
+            request.projectId
+          ])
+          await projectLifecycle.archiveCoordinator.withSessionRecoveryDeletion(
+            request.projectId,
+            request.fileName.slice(0, -5),
+            () => sessionAuthority.sessionPersistenceCoordinator.deleteRecoveryFile(request)
+          )
+        },
         filterPdfContextCandidates: (request) =>
           documentReading.sessionPdfContextOwner.filterCandidates(request),
         linkPdfContext: (request) =>

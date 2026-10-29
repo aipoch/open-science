@@ -31,7 +31,10 @@ const remoteFileStatCommand = (remotePath: string): string => {
 const normalizeRemoteMtimeToken = (value: string): string | undefined => {
   const match = /^(-?\d+)(?:\.(\d+))?$/.exec(value.trim())
   if (!match) return undefined
-  const fraction = match[2]?.replace(/0+$/, '')
+  const digits = match[2] ?? ''
+  let end = digits.length
+  while (end > 0 && digits[end - 1] === '0') end -= 1
+  const fraction = digits.slice(0, end)
   return fraction ? `${match[1]}.${fraction}` : match[1]
 }
 
@@ -39,7 +42,7 @@ const parseRemoteFileStat = (stdout: string): RemoteFileStat => {
   const trimmed = stdout.trim()
   const fileType = trimmed[0] ?? '?'
   if (fileType !== 'f') return { fileType }
-  const match = /^f\s+(\d+)\s+(\d+)\s+(.+)$/.exec(trimmed)
+  const match = /^f\s+(\d+)\s+(\d+)\s+(\S.*)$/.exec(trimmed)
   if (!match) return { fileType: '?' }
   const sizeBytes = Number.parseInt(match[1]!, 10)
   const mtimeToken = normalizeRemoteMtimeToken(match[3]!)

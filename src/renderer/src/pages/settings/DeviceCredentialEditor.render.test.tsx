@@ -353,4 +353,121 @@ describe('DeviceCredentialEditor', () => {
       'This imported Connector requires a client secret entered locally.'
     )
   })
+
+  it.each(['discovery', 'redirect'] as const)(
+    'keeps the leave guard pristine when only the %s disclosure opens',
+    (disclosure) => {
+      const onLeaveStateChange = vi.fn()
+      act(() =>
+        root.render(
+          <DeviceCredentialEditor
+            initialKind="oauth"
+            initialOAuth={disclosure === 'redirect' ? { clientId: 'registered-client' } : undefined}
+            onDone={vi.fn()}
+            onCancel={vi.fn()}
+            onLeaveStateChange={onLeaveStateChange}
+          />
+        )
+      )
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+      const advanced = document.body.querySelector<HTMLButtonElement>(
+        '[aria-controls="credential-oauth-advanced-settings"]'
+      )!
+      if (advanced.getAttribute('aria-expanded') === 'false') act(() => advanced.click())
+      const label =
+        disclosure === 'discovery'
+          ? 'Configure OAuth discovery'
+          : 'Already registered a different callback URI?'
+      act(() =>
+        Array.from(document.body.querySelectorAll<HTMLButtonElement>('button'))
+          .find((button) => button.textContent === label)
+          ?.click()
+      )
+
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    }
+  )
+
+  it.each([false, true])(
+    'returns to pristine after clearing a secret (existing credential: %s)',
+    (existing) => {
+      const onLeaveStateChange = vi.fn()
+      const credential = existing
+        ? {
+            id: 'credential-secret',
+            displayName: 'Lab credential',
+            kind: 'api_key' as const,
+            status: 'connected' as const,
+            needsSecret: false,
+            resourceUri: 'https://mcp.example.test/',
+            transport: 'streamable_http' as const,
+            consumerCount: 1,
+            consumerNames: ['Research'],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        : undefined
+      act(() =>
+        root.render(
+          <DeviceCredentialEditor
+            credential={credential}
+            onDone={vi.fn()}
+            onCancel={vi.fn()}
+            onLeaveStateChange={onLeaveStateChange}
+          />
+        )
+      )
+      const field = container.querySelector<HTMLInputElement>('input[type="password"]')!
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', {
+        value: { getData: vi.fn(() => 'replacement-secret'), setData: vi.fn() }
+      })
+      act(() => field.dispatchEvent(paste))
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+      act(() => {
+        field.setSelectionRange(0, field.value.length)
+        field.dispatchEvent(
+          new InputEvent('beforeinput', {
+            inputType: 'deleteContentBackward',
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    }
+  )
+
+  it('reports credential edits and clears the leave state after saving', async () => {
+    const onDone = vi.fn()
+    const onLeaveStateChange = vi.fn()
+    act(() =>
+      root.render(
+        <DeviceCredentialEditor
+          onDone={onDone}
+          onCancel={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+
+    const [name, secret] = Array.from(container.querySelectorAll<HTMLInputElement>('input'))
+    setInputValue(name!, 'Lab API')
+    const paste = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', {
+      value: { getData: vi.fn(() => 'raw-secret'), setData: vi.fn() }
+    })
+    act(() => secret!.dispatchEvent(paste))
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+
+    const save = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Save'
+    )
+    await act(async () => save?.click())
+
+    expect(onLeaveStateChange).toHaveBeenCalledWith(null)
+    expect(onDone).toHaveBeenCalledOnce()
+  })
 })

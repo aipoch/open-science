@@ -7,11 +7,12 @@ import type { AcpConnectionCapabilities } from './connection-resource-owner'
 //
 // Claude Agent ACP and Codex ACP advertise unofficial `_session/steering` and inject
 // into the live prompt. OpenCode ACP never advertises that method. ACP `session/prompt`
-// drives the v1 SessionPrompt loop. HTTP POST `/api/session/{id}/prompt` with
+// drives the v1 SessionPrompt loop on 1.x. HTTP POST `/api/session/{id}/prompt` with
 // `delivery: "steer"` only admits to the v2 inbox (`admittedSeq`) and never appears
 // in v1 `/session/{id}/message`, so the live ACP turn cannot see it. Persist into that
 // v1 session with POST `/session/{id}/message` `{ parts, noReply: true }` instead —
 // `noReply` skips Runner.ensureRunning so the HTTP abort cannot cancel the ACP turn.
+// OpenCode 2.x uses that public v2 inbox with resume:false, leaving ACP as the runner owner.
 // Overlapping `session/prompt` is not a Send now path: it is queue-and-handoff
 // (Claude 0.60), admit-and-join-runner (OpenCode), or replace-and-interrupt
 // (Codex ACP 1.1.4). This layer never opens a second prompt interaction.
@@ -235,12 +236,38 @@ export const contentBlocksToOpenCodeFollowUpParts = (
 }
 
 export const buildOpenCodeHttpFollowUpBody = (
-  parts: readonly OpenCodeHttpFollowUpPart[]
-): OpenCodeHttpFollowUpBody =>
-  Object.freeze({
+  parts: readonly OpenCodeHttpFollowUpPart[],
+  version?: 2
+):
+  | OpenCodeHttpFollowUpBody
+  | Readonly<{
+      text: string
+      files?: readonly { uri: string; name?: string }[]
+      delivery: 'steer'
+      resume: false
+    }> => {
+  if (version === 2) {
+    const files = parts
+      .filter((part) => part.type === 'file')
+      .map((part) => ({
+        uri: part.url,
+        ...(part.filename ? { name: part.filename } : {})
+      }))
+    return Object.freeze({
+      text: parts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n\n'),
+      ...(files.length ? { files } : {}),
+      delivery: 'steer',
+      resume: false
+    })
+  }
+  return Object.freeze({
     parts: Object.freeze([...parts]),
     noReply: OPENCODE_HTTP_FOLLOW_UP_NO_REPLY
   })
+}
 
 export const firstOpenCodeFollowUpText = (
   parts: readonly OpenCodeHttpFollowUpPart[]
@@ -249,8 +276,10 @@ export const firstOpenCodeFollowUpText = (
   return textPart?.type === 'text' ? textPart.text : undefined
 }
 
-export const openCodeHttpFollowUpPath = (sessionId: string): string =>
-  `/session/${encodeURIComponent(sessionId)}/message`
+export const openCodeHttpFollowUpPath = (sessionId: string, version?: 2): string =>
+  version === 2
+    ? `/api/session/${encodeURIComponent(sessionId)}/prompt`
+    : `/session/${encodeURIComponent(sessionId)}/message`
 
 const followUpRecord = (value: unknown): Record<string, unknown> | undefined => {
   const record = recordValue(value)
@@ -259,9 +288,26 @@ const followUpRecord = (value: unknown): Record<string, unknown> | undefined => 
   return recordValue(record.data) ?? record
 }
 
-export const parseOpenCodeHttpFollowUp = (result: unknown, text?: string): boolean => {
+export const parseOpenCodeHttpFollowUp = (
+  result: unknown,
+  text?: string,
+  version?: 2,
+  sessionId?: string
+): boolean => {
   const record = followUpRecord(result)
   if (!record) return false
+  if (version === 2) {
+    const payload = recordValue(record.payload)
+    return (
+      record.type === 'user' &&
+      record.delivery === 'steer' &&
+      typeof record.id === 'string' &&
+      record.id.length > 0 &&
+      record.sessionID === sessionId &&
+      Boolean(payload) &&
+      (text === undefined || payload?.text === text)
+    )
+  }
   const info = recordValue(record.info)
   if (info?.role !== 'user') return false
   const parts = record.parts

@@ -2,7 +2,9 @@ import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
   LiteratureBatchJobs,
   LiteratureFullTextFinder,
+  LiteratureRelatedFinder,
   LiteratureSupplementFinder,
+  LiteraturePublicationChecker,
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
@@ -15,12 +17,23 @@ import type { ContentRepository } from '../storage/content-repository'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureCommandOwner } from './application-commands'
 import type { LiteratureCatalog } from './catalog'
+import type { LiteratureCollector } from './collector'
 import type { LiteratureSupplementAttachments } from './supplement-attachments'
 import type { LiteratureCitationDocument } from './citation-document'
 import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
 import type { LiteraturePdfImporter } from './pdf-importer'
 import { transactLiterature } from './transact'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ZOTERO_BATCH_POLICY_CONFLICT,
+  ZOTERO_FILL_TYPE_CONFLICT,
+  ZOTERO_COLLECTION_CONFLICT,
+  ZOTERO_PREVIEW_CHANGED,
+  ZOTERO_CONNECTION_FAILED,
+  ZOTERO_REQUEST_TIMED_OUT,
+  ZOTERO_LOCAL_API_DISABLED
+} from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
   journalAttributes: Pick<JournalAttributes, 'run'>
@@ -31,7 +44,9 @@ type LiteratureCommandServices = Readonly<{
   >
   literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
+  literatureRelatedFinder: Pick<LiteratureRelatedFinder, 'run'>
   literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
+  literaturePublicationChecker: Pick<LiteraturePublicationChecker, 'run'>
   literatureSupplementAttachments: Pick<LiteratureSupplementAttachments, 'run' | 'progress'>
   literatureFullTextFinder: Pick<LiteratureFullTextFinder<LiteratureItemView>, 'run'>
   artifactProvenanceRepository: {
@@ -57,6 +72,7 @@ type LiteratureCommandServices = Readonly<{
     | 'transact'
     | 'contentBlobIdsForItems'
   >
+  literatureCollector: Pick<LiteratureCollector, 'run'>
   literaturePdfImporter: Pick<LiteraturePdfImporter, 'import' | 'cancelImport' | 'addToLiterature'>
   contentRepository: Pick<ContentRepository, 'sweep'>
 }>
@@ -68,15 +84,38 @@ export const createLiteratureCommandOwner = ({
   literatureReferenceResolver,
   literatureMetadataEnricher,
   literatureFullTextFinder,
+  literatureRelatedFinder,
   literatureSupplementFinder,
+  literaturePublicationChecker,
   literatureSupplementAttachments,
   artifactProvenanceRepository,
   managedFileVersionService,
   literatureCitationDocument,
   literatureCatalog,
   literaturePdfImporter,
+  literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  collect: async (request, signal) => {
+    try {
+      return await literatureCollector.run(request, signal)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          ZOTERO_BATCH_POLICY_CONFLICT,
+          ZOTERO_FILL_TYPE_CONFLICT,
+          ZOTERO_COLLECTION_CONFLICT,
+          ZOTERO_PREVIEW_CHANGED,
+          ZOTERO_CONNECTION_FAILED,
+          ZOTERO_REQUEST_TIMED_OUT,
+          ZOTERO_LOCAL_API_DISABLED
+        ].includes(error.message)
+      )
+        throw new ApplicationCommandError('command-failed', error.message)
+      throw error
+    }
+  },
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
@@ -92,7 +131,9 @@ export const createLiteratureCommandOwner = ({
   supplementAttachmentProgress: (request) => literatureSupplementAttachments.progress(request),
   supplementAttachment: (request, signal) =>
     literatureSupplementAttachments.run(request, signal ?? new AbortController().signal),
+  related: (request, signal) => literatureRelatedFinder.run(request, signal),
   supplements: (request, signal) => literatureSupplementFinder.run(request, signal),
+  publicationCheck: (request, signal) => literaturePublicationChecker.run(request, signal),
   fullText: (request) => literatureFullTextFinder.run(request),
   formatDocument: async (request) => {
     const literature = await artifactProvenanceRepository.getVersionLiterature({

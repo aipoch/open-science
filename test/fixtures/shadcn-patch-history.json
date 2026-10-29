@@ -60,5 +60,45 @@
       [15827, 12, "syncPosition"],
       [16653, 12, "syncPosition"]
     ]
+  },
+  {
+    "commit": "e4b6d48fa",
+    "sha256": "395b69a31d0aa9a32c33753b36aeb763692ae59223f7a3e629433cda460ec5c1",
+    "edits": [
+      [397, 0, "r?.hidden===true?n.scrollHeight:"],
+      [8822, 0, "W.getAttribute(\"data-scrollable\")!==(O||null)&&("],
+      [8895, 0, ")"]
+    ]
+  },
+  {
+    "commit": "98799d397",
+    "sha256": "2414956c835d1acb02599358aa6cd33ce68ced2aa3d7be52b75bcc3826835caa",
+    "edits": [
+      [8660, 0, ",pausedScrollTop=g.useRef(0),pausedAnchorStyle=g.useRef(null)"],
+      [
+        8757,
+        1,
+        ";if(T&&u.current!==\"paused-by-interaction\"&&pausedAnchorStyle.current!==null){T.style.overflowAnchor=pausedAnchorStyle.current;pausedAnchorStyle.current=null;}let "
+      ],
+      [9124, 0, "&&u.current!==\"paused-by-interaction\""],
+      [11360, 0, "u.current===\"following-bottom\"&&"],
+      [
+        13138,
+        0,
+        "stopAutoScroll=g.useCallback(()=>{u.current=\"paused-by-interaction\";C.current=true;S.current=null;Y.current=null;if(x.current!==null){window.cancelAnimationFrame(x.current);x.current=null;}if(E.current!==null){window.clearTimeout(E.current);E.current=null;}d.current=false;L.current=c.current?.scrollTop??0;pausedScrollTop.current=L.current;if(c.current){/* Keep native anchoring from impersonating user scroll during a layout change. */if(pausedAnchorStyle.current===null)pausedAnchorStyle.current=c.current.style.overflowAnchor;c.current.style.overflowAnchor=\"none\";}c.current?.scrollTo({top:L.current,behavior:\"instant\"});F();w();Z();},[F,w,Z]),"
+      ],
+      [13161, 0, "u.current===\"paused-by-interaction\"||"],
+      [
+        13517,
+        0,
+        "if(u.current===\"paused-by-interaction\"&&c.current){let top=c.current.scrollTop;if(top>pausedScrollTop.current+J)u.current=\"free-scrolling\";pausedScrollTop.current=top;}"
+      ],
+      [13559, 0, "stopAutoScroll,"],
+      [13910, 0, "stopAutoScroll,"],
+      [14952, 0, ",stopAutoScroll:s"],
+      [15028, 0, ",stopAutoScroll:s"],
+      [15037, 0, ",s"]
+    ],
+    "pauseApi": true
   }
 ]

@@ -142,7 +142,7 @@ it.each([
           readState: 'partial',
           writeState: 'partial',
           externalState: 'partial',
-          reasonCodes: ['source-analysis-unsupported-call']
+          reasonCodes: ['source-analysis-unsupported-call', 'dynamic-path-unresolved']
         })
         expect(analysis.reads).toEqual(['inputs/edge-weights-222222222222.xlsx'])
         expect(analysis.writes.slice().sort()).toEqual(filenames.slice().sort())

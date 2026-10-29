@@ -1,7 +1,7 @@
+import { agentUserChoiceOutcomes, USER_CHOICE_SKIP_GUIDANCE } from './elicitation-owner'
 import type {
   ActiveSession,
   ClientConnection,
-  CreateElicitationResponse,
   PromptResponse,
   SessionConfigOption
 } from '@agentclientprotocol/sdk'
@@ -174,34 +174,6 @@ const errorMessage = (error: unknown): string => {
 
 const log = createLogger('acp')
 
-const safePromptJson = (value: unknown): string =>
-  JSON.stringify(value)
-    .replaceAll('<', '\\u003c')
-    .replaceAll('>', '\\u003e')
-    .replaceAll('&', '\\u0026')
-
-const grantedLocalRootsSystemPromptAppend = (
-  roots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
-): string | undefined => {
-  const normalized = [
-    ...new Map(
-      roots
-        .map(({ path, access }) => ({ path: path.trim(), access }))
-        .filter(({ path }) => path.length > 0)
-        .map((root) => [`${root.access}\0${root.path}`, root] as const)
-    ).values()
-  ].sort(
-    (left, right) => left.path.localeCompare(right.path) || left.access.localeCompare(right.access)
-  )
-  if (normalized.length === 0) return undefined
-
-  return [
-    '<open_science_granted_local_roots>',
-    'The user has authorized the following local roots for this session. Access mode "ro" permits reads only; "rw" permits reads and writes. Use the exact paths when the task requires them. These entries grant no access beyond the stated root and access mode.',
-    `Authorized roots (JSON): ${safePromptJson(normalized)}`,
-    '</open_science_granted_local_roots>'
-  ].join('\n')
-}
 const literatureLog = createLogger('literature-reading-context')
 
 const PERMISSION_DENIED_CONTINUATION_TEXT =
@@ -309,6 +281,7 @@ class AcpRuntime {
     }>
   >()
   private readonly durableContinuationContext: AcpRuntimeSessionOwners['durableContinuationContext']
+  private readonly sandboxNetworkApprovalOwner: AcpRuntimeSessionOwners['sandboxNetworkApprovalOwner']
   private readonly permissionWaitOwner: AcpRuntimeSessionOwners['permissionWaitOwner']
   private readonly planDeliveryOwner: SessionPlanDeliveryOwner | undefined
   private durablePermissionContinuations?: Map<string, RestoredPermissionContinuation>
@@ -398,6 +371,7 @@ class AcpRuntime {
       options.hasPendingCredentialRequest?.(sessionId) === true
 
     this.durableContinuationContext = session.durableContinuationContext
+    this.sandboxNetworkApprovalOwner = session.sandboxNetworkApprovalOwner
     this.permissionWaitOwner = session.permissionWaitOwner
     this.planDeliveryOwner = options.plan
       ? new SessionPlanDeliveryOwner(options.plan.sessions)
@@ -882,7 +856,12 @@ class AcpRuntime {
 
   // Creates a protocol session, injects artifact tooling, and uses the returned id as the app session id.
   async createSession(request: AcpCreateSessionRequest = {}): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(() => this.providerSessionCreator.create(request))
+    return this.withOperationLease(async () => {
+      const created = await this.providerSessionCreator.create(request)
+      const session = this.activeSessionFor(created.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
+      return created
+    })
   }
 
   getSessionReasoningEffort(sessionId: string): ResolvedReasoningEffort | undefined {
@@ -932,8 +911,12 @@ class AcpRuntime {
     request: AcpResumeSessionRequest,
     writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
-    return this.withOperationLease(async () => {
-      const resumed = await this.providerSessionResumer.resume(request, writerTransfer)
+    const resume = async (
+      isCurrent: () => boolean = () => true
+    ): Promise<AcpCreateSessionResponse> => {
+      const resumed = await this.providerSessionResumer.resume(request, writerTransfer, isCurrent)
+      const session = this.activeSessionFor(request.sessionId)
+      if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()
@@ -949,7 +932,14 @@ class AcpRuntime {
       return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
         ? { ...resumed, contextReset: true }
         : resumed
-    })
+    }
+    return this.withOperationLease(() =>
+      this.activeSessionFor(request.sessionId)
+        ? this.enqueuePermissionChange(request.sessionId, (state, revision) =>
+            resume(() => state.revision === revision)
+          )
+        : resume()
+    )
   }
 
   captureSessionResumeCleanup(response: AcpCreateSessionResponse): () => Promise<void> {
@@ -1093,6 +1083,14 @@ class AcpRuntime {
     return this.withOperationLease(() => this.contextCompactionWorkflow.compact(request))
   }
 
+  hasFullAccess(sessionId: string): boolean {
+    return this.permissionContext.hasFullAccess(sessionId)
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    return this.permissionContext.subscribeFullAccess(sessionId, listener)
+  }
+
   // Serializes changes per Session and coalesces queued requests so only the latest selection can
   // commit or release a pending provider request. The operation lease covers time spent in the queue.
   async setPermissionProfile(request: AcpSetPermissionProfileRequest): Promise<AcpStateSnapshot> {
@@ -1102,25 +1100,51 @@ class AcpRuntime {
   private enqueuePermissionProfileChange(
     request: AcpSetPermissionProfileRequest
   ): Promise<AcpStateSnapshot> {
-    const state = this.permissionProfileChanges.get(request.sessionId) ?? {
+    const attachment = this.sessionRegistry.lookup(request.sessionId)?.attachment
+    const connection = this.connection
+    return this.enqueuePermissionChange(request.sessionId, async (state, revision) => {
+      try {
+        return await this.setPermissionProfileOperation(request, state, revision)
+      } catch (error) {
+        const entry = this.sessionRegistry.lookup(request.sessionId)
+        const profile = entry?.aggregate.snapshot().permissionProfile
+        if (
+          state.revision === revision &&
+          this.connection === connection &&
+          attachment &&
+          entry?.attachment === attachment &&
+          profile
+        ) {
+          this.permissionContext.setLivePermissionProfile(request.sessionId, {
+            ...profile,
+            availableModeIds: [...profile.availableModeIds]
+          })
+        }
+        throw error
+      }
+    })
+  }
+
+  private enqueuePermissionChange<Result>(
+    sessionId: string,
+    work: (state: { revision: number }, revision: number) => Promise<Result>
+  ): Promise<Result> {
+    const state = this.permissionProfileChanges.get(sessionId) ?? {
       revision: 0,
       tail: Promise.resolve()
     }
     const revision = ++state.revision
-    const operation = state.tail.then(() =>
-      this.setPermissionProfileOperation(request, state, revision)
-    )
+    // Revoke before queueing: an earlier provider mode request may never settle.
+    this.permissionContext.invalidatePermissionProfile(sessionId)
+    const operation = state.tail.then(() => work(state, revision))
     state.tail = operation.then(
       () => undefined,
       () => undefined
     )
-    this.permissionProfileChanges.set(request.sessionId, state)
+    this.permissionProfileChanges.set(sessionId, state)
     void state.tail.then(() => {
-      if (
-        this.permissionProfileChanges.get(request.sessionId) === state &&
-        state.revision === revision
-      ) {
-        this.permissionProfileChanges.delete(request.sessionId)
+      if (this.permissionProfileChanges.get(sessionId) === state && state.revision === revision) {
+        this.permissionProfileChanges.delete(sessionId)
       }
     })
 
@@ -1380,7 +1404,6 @@ class AcpRuntime {
           } catch (error) {
             log.warn('granted local roots unavailable for backend context', errorLogFields(error))
           }
-          const grantedRootsAppend = grantedLocalRootsSystemPromptAppend(grantedLocalRoots)
           const backend: ResolvedAgentBackend | undefined = this.options.resolveBackend
             ? await this.options.resolveBackend({
                 forcedSkillIds: [...this.turnSkills.backendPreparation().forcedSkillIds],
@@ -1388,8 +1411,7 @@ class AcpRuntime {
                   ? { skillWhitelist: [...this.turnSkills.backendPreparation().skillWhitelist!] }
                   : {}),
                 systemPromptAppends: [
-                  ...(await this.sessionEnvironment.backendSystemPromptAppends()),
-                  ...(grantedRootsAppend ? [grantedRootsAppend] : [])
+                  ...(await this.sessionEnvironment.backendSystemPromptAppends())
                 ],
                 grantedLocalRoots
               })
@@ -1402,7 +1424,11 @@ class AcpRuntime {
         prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
         isCurrent: () => identity.epoch === this.connectionGeneration,
         isShuttingDown: () => this.connectionResources.isShuttingDown,
-        ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {})
+        ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {}),
+        ...(this.options.spawnProcess ? { spawnProcess: this.options.spawnProcess } : {}),
+        ...(this.options.registerOpenCodeStoreRelease
+          ? { registerOpenCodeStoreRelease: this.options.registerOpenCodeStoreRelease }
+          : {})
       },
       hooks
     )
@@ -1436,6 +1462,11 @@ class AcpRuntime {
     )
     const livePrompt = this.sessionInteractions.current(request.sessionId)
     const presented = await this.turnSkills.presentFollowUp({
+      diagnosticContext: {
+        sessionId: request.sessionId,
+        frameworkId: this.framework.id,
+        modelRoute: this.backendGeneration.current.modelRoute
+      },
       frameworkId: this.framework.id,
       text: request.text,
       selectedSkillIds: request.forcedSkillIds ?? [],
@@ -1560,7 +1591,8 @@ class AcpRuntime {
     promptAttemptId?: string,
     planDelivery?: Readonly<{ projectId: string; commandId: string }>,
     delegatedMessageId?: string,
-    permissionContinuation?: RestoredPermissionContinuation
+    permissionContinuation?: RestoredPermissionContinuation,
+    onProviderDispatched?: () => void
   ): Promise<PromptResponse> {
     // A parked continuation itself blocks reconnect. Enter the generation directly so it can finish
     // before that barrier is released instead of waiting on the barrier it intentionally holds.
@@ -1569,6 +1601,7 @@ class AcpRuntime {
         request,
         {
           kind: 'app-continuation',
+          onProviderDispatched,
           ...(promptAttemptId === undefined ? {} : { promptAttemptId }),
           ...(planDelivery ? { planDelivery } : {}),
           ...(delegatedMessageId ? { delegatedMessageId } : {})
@@ -1618,6 +1651,7 @@ class AcpRuntime {
           promptAttemptId?: string
           planDelivery?: Readonly<{ projectId: string; commandId: string }>
           delegatedMessageId?: string
+          onProviderDispatched?: () => void
         }>,
     onPromptAdmitted?: () => Promise<AcpPromptRequest['provenanceContext']>
   ): Promise<PromptResponse> {
@@ -1672,6 +1706,10 @@ class AcpRuntime {
 
     if (!interactionInFlight && !durablePermission) {
       try {
+        await this.sandboxNetworkApprovalOwner.cancel(
+          this.sessionEnvironment.projectId(request.sessionId),
+          request.sessionId
+        )
         const permissionRequestId = await this.permissionWaitOwner.cancelPendingSession(
           request.sessionId
         )
@@ -1760,6 +1798,10 @@ class AcpRuntime {
       onAccepted()
     }
     if (cancellationAccepted) {
+      await this.sandboxNetworkApprovalOwner.cancel(
+        this.sessionEnvironment.projectId(request.sessionId),
+        request.sessionId
+      )
       await this.settleCancelledDurablePermissionContinuation(request.sessionId)
       this.emitState()
     }
@@ -1784,6 +1826,15 @@ class AcpRuntime {
       .getPendingRequests()
       .find((request) => request.requestId === response.requestId)
     if (!permissionRequest && response.restored) {
+      if (
+        await this.sandboxNetworkApprovalOwner.respondRestored(
+          response,
+          this.sessionEnvironment.projectId(response.restored.sessionId)
+        )
+      ) {
+        this.emitState()
+        return this.getSnapshot()
+      }
       return this.respondToRestoredPermission(response)
     }
     const selectedOption = permissionRequest?.options.find(
@@ -1795,6 +1846,7 @@ class AcpRuntime {
     const promptInteraction = interaction?.kind === 'prompt' ? interaction : undefined
     const continueAfterProviderCancellation = Boolean(
       permissionRequest &&
+      !permissionRequest.appOwned &&
       promptInteraction &&
       this.getSessionFramework(permissionRequest.sessionId) === 'claude-code' &&
       !response.cancelled &&
@@ -2014,9 +2066,94 @@ class AcpRuntime {
     return this.getSnapshot()
   }
 
-  async respondToElicitation(response: ElicitationResponse): Promise<AcpStateSnapshot> {
+  async respondToElicitation(
+    response: ElicitationResponse,
+    continuePrepared = false
+  ): Promise<AcpStateSnapshot> {
     if (response.request && response.request.requestId !== response.requestId) {
       throw new Error('Restored structured input request id does not match the response')
+    }
+    if (
+      response.retryContinuation &&
+      (!response.request?.durable || response.replacePreviousAnswer)
+    ) {
+      throw new Error('Invalid question continuation retry.')
+    }
+    if (response.continuationFailure !== undefined || response.prepareContinuation) {
+      const request = response.request
+      if (
+        (!response.prepareContinuation &&
+          (typeof response.continuationFailure !== 'string' ||
+            !response.continuationFailure.trim())) ||
+        !request?.durable ||
+        response.action === 'cancel' ||
+        response.replacePreviousAnswer ||
+        this.sessionInteractions.current(request.sessionId)
+      ) {
+        throw new Error('Invalid failed question continuation.')
+      }
+      const projectId =
+        (await this.options.permissionWait?.sessions.sessionProjectId?.(request.sessionId)) ??
+        this.sessionEnvironment.projectId(request.sessionId)
+      if (!projectId) throw new Error('Durable continuation Session authority is not available.')
+      await this.durableContinuationContext.prepareElicitation({
+        projectId,
+        sessionId: request.sessionId,
+        requestId: request.requestId,
+        toolCallId: request.toolCallId,
+        action: response.action,
+        answers: response.answers,
+        retryContinuation: response.retryContinuation,
+        continuePrepared: !response.prepareContinuation && continuePrepared,
+        recovery: {
+          error:
+            response.continuationFailure?.slice(0, 4_000) ??
+            'The task could not continue. Your response is saved.'
+        }
+      })
+      return this.getSnapshot()
+    }
+    if (
+      response.action === 'cancel' &&
+      response.request?.durable?.kind === 'agent-user-choice' &&
+      !response.replacePreviousAnswer &&
+      // A live request must receive its existing cancel response through the elicitation owner.
+      !this.elicitationOwner
+        .getPendingRequests()
+        .some(({ requestId }) => requestId === response.requestId)
+    ) {
+      const request = response.request
+      if (this.sessionInteractions.current(request.sessionId)) {
+        throw new Error('Wait for the current Agent run to finish before ending this wait.')
+      }
+      const projectId =
+        (await this.options.permissionWait?.sessions.sessionProjectId?.(request.sessionId)) ??
+        this.sessionEnvironment.projectId(request.sessionId)
+      if (!projectId) throw new Error('Durable continuation Session authority is not available.')
+      if (request.durable?.promptMessageId) {
+        await this.options.runtimeSessions?.flush(
+          request.sessionId,
+          request.durable.promptMessageId
+        )
+      }
+      await this.durableContinuationContext.prepareElicitation({
+        projectId,
+        sessionId: request.sessionId,
+        requestId: response.requestId,
+        toolCallId: request.toolCallId,
+        action: 'cancel'
+      })
+      this.appContinuations.delete(request.sessionId)
+      if (
+        this.elicitationOwner
+          .getPendingRequests()
+          .some(({ requestId }) => requestId === response.requestId)
+      ) {
+        this.elicitationOwner.respond(response)
+      }
+      this.userChoiceProvenanceContexts.delete(response.requestId)
+      this.emitState()
+      return this.getSnapshot()
     }
     let restoredContinuation:
       | Awaited<
@@ -2024,9 +2161,11 @@ class AcpRuntime {
         >
       | undefined
     if (
-      !this.elicitationOwner
-        .getPendingRequests()
-        .some((request) => request.requestId === response.requestId) &&
+      (continuePrepared ||
+        response.retryContinuation ||
+        !this.elicitationOwner
+          .getPendingRequests()
+          .some((request) => request.requestId === response.requestId)) &&
       response.request
     ) {
       if (!this.activeSessionFor(response.request.sessionId)) {
@@ -2040,6 +2179,8 @@ class AcpRuntime {
         action: response.action,
         answers: response.answers,
         replacePreviousAnswer: response.replacePreviousAnswer,
+        retryContinuation: response.retryContinuation,
+        continuePrepared,
         ...(this.restoredContinuationContextResetSessionIds?.has(response.request.sessionId)
           ? {
               replay: {
@@ -2049,18 +2190,32 @@ class AcpRuntime {
             }
           : {})
       })
-      if (!this.elicitationOwner.restoreDetached(restoredContinuation.request)) {
+      if (
+        !continuePrepared &&
+        !response.retryContinuation &&
+        !this.elicitationOwner.restoreDetached(restoredContinuation.request)
+      ) {
         throw new Error('Invalid restored structured input request')
       }
     }
 
     const livePromptContext = this.userChoiceProvenanceContexts.get(response.requestId)
-    const resolution = this.elicitationOwner.respond(response)
+    const resolution =
+      (continuePrepared || response.retryContinuation) && restoredContinuation
+        ? {
+            request: restoredContinuation.request,
+            decision: {
+              action: response.action,
+              answers: response.answers
+            },
+            detached: true
+          }
+        : this.elicitationOwner.respond(response)
     this.userChoiceProvenanceContexts.delete(response.requestId)
     if (resolution.detached) {
       const continuation = this.userChoiceContinuation(
         resolution.request,
-        resolution.response,
+        resolution.decision,
         restoredContinuation?.historyReplay,
         restoredContinuation?.provenanceContext ?? livePromptContext?.provenanceContext,
         restoredContinuation?.memoryEnabled ?? livePromptContext?.memoryEnabled,
@@ -2070,7 +2225,7 @@ class AcpRuntime {
         this.appContinuations.set(resolution.request.sessionId, {
           request: continuation,
           condition: 'always',
-          onUnaccepted: async () => {
+          onUnaccepted: async (error, retryable) => {
             const promptMessageId = resolution.request.durable?.promptMessageId
             if (!promptMessageId) return
             await this.options.runtimeSessions?.flush(resolution.request.sessionId, promptMessageId)
@@ -2079,7 +2234,13 @@ class AcpRuntime {
               sessionId: resolution.request.sessionId,
               promptMessageId,
               requestId: resolution.request.requestId,
-              toolCallId: resolution.request.toolCallId
+              toolCallId: resolution.request.toolCallId,
+              recovery: {
+                error: error
+                  ? errorMessage(error)
+                  : 'The task could not continue. Your response is saved.',
+                ...(retryable && !response.retryContinuation ? { retryable: true as const } : {})
+              }
             })
           }
         })
@@ -2232,54 +2393,28 @@ class AcpRuntime {
 
   private userChoiceContinuation(
     request: PendingElicitationRequest,
-    response: CreateElicitationResponse,
+    response: Pick<ElicitationResponse, 'action' | 'answers'>,
     historyReplay?: ElicitationResponse['historyReplay'],
     provenanceContext?: AcpPromptRequest['provenanceContext'],
     memoryEnabled?: boolean,
     referencedSessions?: AcpPromptRequest['referencedSessions']
   ): AcpPromptRequest | undefined {
     if (response.action === 'cancel') return undefined
-    const content =
-      response.action === 'accept'
-        ? (response.content as Record<string, unknown> | undefined)
-        : undefined
-    const answeredQuestions = request.fields.flatMap((field) => {
-      if (!/^question_\d+$/u.test(field.id)) return []
-      const customAnswer = content?.[`${field.id}_custom`]
-      const selectedAnswer = content?.[field.id]
-      const answer =
-        typeof customAnswer === 'string' && customAnswer.trim()
-          ? customAnswer.trim()
-          : typeof selectedAnswer === 'string' && selectedAnswer.trim()
-            ? selectedAnswer.trim()
-            : Array.isArray(selectedAnswer) &&
-                selectedAnswer.every((value): value is string => typeof value === 'string')
-              ? JSON.stringify(selectedAnswer)
-              : undefined
-      return answer
-        ? [
-            {
-              question:
-                field.description ??
-                (request.fields.length === 1 ? request.message : (field.label ?? request.message)),
-              answer
-            }
-          ]
-        : []
-    })
-    const text = (() => {
-      if (response.action === 'decline' || answeredQuestions.length === 0) {
-        return `The user skipped the pending question: ${request.message}\nChoose the best reasonable option and continue the current task without asking the same question again.`
-      }
-      if (answeredQuestions.length === 1) {
-        const [{ question, answer }] = answeredQuestions
-        return `The user answered the pending question: ${question}\nAnswer: ${answer}\nContinue the current task using this answer without asking the same question again.`
-      }
-      const answers = answeredQuestions
-        .map(({ question, answer }, index) => `${index + 1}. ${question}\nAnswer: ${answer}`)
-        .join('\n\n')
-      return `The user answered the pending questions:\n${answers}\nContinue the current task using these answers without asking the same questions again.`
-    })()
+    const outcomes = agentUserChoiceOutcomes(request, response)
+    const results = outcomes
+      .map(({ question, status, answer }, index) => {
+        const value = Array.isArray(answer) ? JSON.stringify(answer) : String(answer ?? '')
+        return `${index + 1}. ${question}\nStatus: ${status}${status === 'answered' ? `\nAnswer: ${value}` : ''}`
+      })
+      .join('\n\n')
+    const text = [
+      'The user responded to the pending questions:',
+      results,
+      'Continue the current task using the provided answers without asking the same questions again.',
+      ...(outcomes.some((outcome) => outcome.status === 'skipped')
+        ? [USER_CHOICE_SKIP_GUIDANCE]
+        : [])
+    ].join('\n')
     const continuationProvenance =
       provenanceContext ??
       (request.durable?.promptMessageId
@@ -2609,6 +2744,8 @@ class AcpRuntime {
     const durablePermission = this.durablePermissionContinuations?.get(sessionId)
     let completed = false
     let cancelled = false
+    let continuationError: unknown
+    let providerDispatched = false
     try {
       const request = continuation.beforeSend
         ? await continuation.beforeSend()
@@ -2620,11 +2757,15 @@ class AcpRuntime {
         planDelivery?.commandId,
         planDelivery,
         undefined,
-        durablePermission
+        durablePermission,
+        () => {
+          providerDispatched = true
+        }
       )
       cancelled = response.stopReason === 'cancelled'
       completed = !this.durablePlanDeliveries?.has(sessionId) || !cancelled
     } catch (error) {
+      continuationError = error
       this.pushEvent({
         kind: 'error',
         level: 'error',
@@ -2637,7 +2778,19 @@ class AcpRuntime {
     } finally {
       if (continuation.onUnaccepted) {
         try {
-          await continuation.onUnaccepted()
+          const code =
+            continuationError &&
+            typeof continuationError === 'object' &&
+            'code' in continuationError
+              ? continuationError.code
+              : undefined
+          // These structured system errors are transient only before provider dispatch. Text,
+          // unknown failures and timeouts never establish that it is safe to send work again.
+          const retryable =
+            !providerDispatched &&
+            typeof code === 'string' &&
+            ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
           this.pushEvent({
             kind: 'error',
@@ -2808,6 +2961,26 @@ class AcpRuntime {
   }
 
   async requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
+    if (input.networkApproval) {
+      const scope = this.sessionInteractions.current(input.sessionId)
+      if (
+        scope?.kind !== 'prompt' ||
+        scope.permissionPrompts === 'none' ||
+        this.sessionInteractions.isCancellationAccepted(scope)
+      )
+        return undefined
+      if (this.sessionEnvironment.projectId(input.sessionId) !== input.networkApproval.projectId)
+        return undefined
+      return this.sandboxNetworkApprovalOwner.request(
+        input,
+        scope.promptMessageId,
+        (request) => this.permissionContext.requestAppPermission(request),
+        () =>
+          !input.signal?.aborted &&
+          this.sessionInteractions.current(input.sessionId) === scope &&
+          !this.sessionInteractions.isCancellationAccepted(scope)
+      )
+    }
     return this.permissionContext.requestAppPermission(input)
   }
 

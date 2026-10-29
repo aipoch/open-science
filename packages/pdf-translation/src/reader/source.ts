@@ -4,6 +4,7 @@ import {
   type PdfTranslationBlockFailure
 } from '../contracts.js'
 import { getPdfTranslationTextContent } from './text-content.js'
+import { nativePartialNavigation } from './native-source-geometry.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 export type PdfRendition = 'original' | 'translated' | 'compare'
@@ -11,6 +12,8 @@ export type PdfTranslationFragment = Readonly<{
   pageNumber: number
   // Normalized, top-left coordinates in the default PDF.js viewport.
   rect: Readonly<{ x: number; y: number; width: number; height: number }>
+  /** Complete native metric bounds; rect is only its visible navigation intersection. */
+  unclippedRect?: Readonly<{ x: number; y: number; width: number; height: number }>
   items: readonly Readonly<{ index: number; text: string }>[]
 }>
 export type PdfTranslationUnit = Readonly<{
@@ -47,6 +50,8 @@ type PdfTranslationSourceData = Readonly<{
       /** Text owned by an original picture/diagram, never a translation request. */
       figure?: true
       preserve?: 'formula' | 'code' | 'literal' | 'reference'
+      /** The local layout proved the end of a preceding bibliography at this unit. */
+      referenceBoundary?: true
     }
   >[]
 }>
@@ -106,15 +111,17 @@ export function createPdfTranslationSource(input: PdfTranslationSourceData): Pdf
         }
       : {}),
     units: Object.freeze(
-      input.units.map(({ id, source, fragments, sourceOnly, figure, preserve }) =>
-        Object.freeze({
+      input.units.map((unit) => {
+        const { id, source, fragments, sourceOnly, figure, preserve } = unit
+        return Object.freeze({
           id,
           source,
           ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
           ...(figure === true ? { figure: true as const } : {}),
           ...(preserve ? { preserve } : {}),
+          ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
           fragments: Object.freeze(
-            fragments.map(({ pageNumber, rect, items }) =>
+            fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
               Object.freeze({
                 pageNumber,
                 rect: Object.freeze({
@@ -123,12 +130,22 @@ export function createPdfTranslationSource(input: PdfTranslationSourceData): Pdf
                   width: rect.width,
                   height: rect.height
                 }),
+                ...(unclippedRect
+                  ? {
+                      unclippedRect: Object.freeze({
+                        x: unclippedRect.x,
+                        y: unclippedRect.y,
+                        width: unclippedRect.width,
+                        height: unclippedRect.height
+                      })
+                    }
+                  : {}),
                 items: Object.freeze(items.map(({ index, text }) => Object.freeze({ index, text })))
               })
             )
           )
         })
-      )
+      })
     )
   })
 }
@@ -297,6 +314,14 @@ async function verifyPdfTranslationSource(
     for (const fragment of unit.fragments) {
       const { pageNumber, rect, items } = fragment
       if (
+        fragment.unclippedRect &&
+        (!unit.sourceOnly ||
+          unit.fragments.length !== 1 ||
+          items.length !== 1 ||
+          unit.source !== items[0].text)
+      )
+        return false
+      if (
         !Number.isInteger(pageNumber) ||
         pageNumber < 1 ||
         pageNumber > document.numPages ||
@@ -345,6 +370,29 @@ async function verifyPdfTranslationSource(
       for (const item of fragment.items) {
         const current = content.items[item.index]
         if (!current || !('str' in current) || current.str !== item.text) return false
+        const proved = nativePartialNavigation(
+          current,
+          content.styles?.[current.fontName],
+          viewport
+        )
+        // A persisted hint can be removed. Discover real overflow from the PDF
+        // independently, retaining the same page-edge tolerance as ordinary sources.
+        if (!fragment.unclippedRect && proved) {
+          const r = proved.unclippedRect
+          if (r.x < 0 || r.y < 0 || r.x + r.width > 1.000001 || r.y + r.height > 1.000001)
+            return false
+        }
+        if (fragment.unclippedRect) {
+          if (
+            !proved ||
+            (['rect', 'unclippedRect'] as const).some((key) =>
+              (['x', 'y', 'width', 'height'] as const).some(
+                (axis) => proved[key][axis] !== fragment[key]![axis]
+              )
+            )
+          )
+            return false
+        }
       }
   }
   return !signal.aborted

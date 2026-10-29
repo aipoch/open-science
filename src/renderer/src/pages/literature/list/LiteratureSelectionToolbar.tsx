@@ -1,4 +1,13 @@
+import { LiteratureReadingStatusLabel } from '../LiteratureReadingStatusLabel'
 import type { LiteratureProject, LiteratureProjectCreation } from '../renderer-host'
+import type { LiteratureReadingStatus } from '../workflows/useLiteratureReadingStatus'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -49,6 +58,7 @@ export function LiteratureSelectionToolbar({
   section,
   startingReadingProjectId,
   requestReadSelection,
+  setReadingStatus,
   batchCollections,
   activeProjects,
   projectsLoaded,
@@ -90,6 +100,7 @@ export function LiteratureSelectionToolbar({
   section: 'library' | 'trash'
   startingReadingProjectId: string | undefined
   requestReadSelection: () => Promise<void>
+  setReadingStatus: (status: LiteratureReadingStatus) => Promise<void>
   batchCollections: LiteratureCollectionView[]
   activeProjects: LiteratureProject[]
   projectsLoaded: boolean
@@ -201,6 +212,28 @@ export function LiteratureSelectionToolbar({
             </>
           )
         )}
+        {section === 'library' ? (
+          <Select
+            value=""
+            disabled={isBatching}
+            onValueChange={(value) => void setReadingStatus(value as LiteratureReadingStatus)}
+          >
+            <SelectTrigger aria-label={t('Set reading status')} className="w-44 shrink-0">
+              <SelectValue placeholder={t('Set reading status')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="unread">
+                <LiteratureReadingStatusLabel status="unread" />
+              </SelectItem>
+              <SelectItem value="reading">
+                <LiteratureReadingStatusLabel status="reading" />
+              </SelectItem>
+              <SelectItem value="read">
+                <LiteratureReadingStatusLabel status="read" />
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
         <Popover>
           <PopoverTrigger asChild>
             <Button variant="outline" size="sm" className="ml-auto shrink-0" disabled={isBatching}>

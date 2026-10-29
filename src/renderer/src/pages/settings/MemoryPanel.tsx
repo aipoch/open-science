@@ -55,6 +55,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useMemoryStore } from '@/stores/memory-store'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
 
 export type { MemoryView } from '../../lib/settings-navigation'
 
@@ -62,6 +63,7 @@ type MemoryPanelProps = {
   view: MemoryView
   onNavigate(view: MemoryView): void
   onOpenProject?(projectId: string): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }
 
 type CustomMemoryCategoryView = Extract<MemoryCategoryView, { name: string }>
@@ -186,11 +188,13 @@ const RequiredMark = (): React.JSX.Element => (
 const CategoryForm = ({
   category,
   customCount,
-  onCancel
+  onCancel,
+  onLeaveStateChange
 }: {
   category?: Extract<MemoryCategoryView, { name: string }>
   customCount: number
   onCancel(): void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const createCategory = useMemoryStore((state) => state.createCategory)
@@ -202,6 +206,15 @@ const CategoryForm = ({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const canSubmit = Boolean(name.trim() && guidance.trim()) && !saving
+  const dirty =
+    name !== (baseline?.name ?? '') ||
+    guidance !== (baseline?.guidance ?? '') ||
+    autoRecall !== (baseline?.autoRecall ?? true)
+
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty, busy: saving })
+  }, [dirty, saving, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
 
   const submit = async (): Promise<void> => {
     if (!canSubmit) return
@@ -219,6 +232,7 @@ const CategoryForm = ({
       } else {
         await createCategory({ name, guidance, autoRecall })
       }
+      onLeaveStateChange?.(null)
       onCancel()
     } catch (failure) {
       setError(translateMemoryError(t, failure))
@@ -511,9 +525,6 @@ const EntryRow = ({
           className="mt-1 flex min-h-5 flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
         >
           {entry.origin === 'agent' ? <span>{t('auto')}</span> : null}
-          {entry.origin === 'agent' && (categoryLabel || projectLabel) ? (
-            <span aria-hidden="true">·</span>
-          ) : null}
           {categoryLabel ? (
             <span className="max-w-52 truncate rounded-md bg-muted px-1.5 py-0.5 text-foreground/80">
               {categoryLabel}
@@ -884,7 +895,12 @@ const MemoryList = ({
   )
 }
 
-const MemoryPanel = ({ view, onNavigate, onOpenProject }: MemoryPanelProps): React.JSX.Element => {
+const MemoryPanel = ({
+  view,
+  onNavigate,
+  onOpenProject,
+  onLeaveStateChange
+}: MemoryPanelProps): React.JSX.Element => {
   const categories = useMemoryStore((state) => state.categories)
   const status = useMemoryStore((state) => state.status)
   const customCategories = categories.filter(
@@ -911,6 +927,7 @@ const MemoryPanel = ({ view, onNavigate, onOpenProject }: MemoryPanelProps): Rea
         category={editing}
         customCount={customCategories.length}
         onCancel={() => onNavigate({ kind: 'list' })}
+        onLeaveStateChange={onLeaveStateChange}
       />
     )
   }

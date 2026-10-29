@@ -45,6 +45,7 @@ import { extractProviderToolName } from './runtime-events'
 type PendingPermission = {
   request: AcpPermissionRequest
   appOwned?: true
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   decisionAuthority?: PermissionDiagnostic['authority']
   automaticRequest?: RequestPermissionRequest
   policyContext?: PermissionPolicyContext
@@ -65,6 +66,19 @@ type PendingPermission = {
 type EmitPermissionRequest = (request: AcpPermissionRequest) => void
 
 type AppPermissionRequest = Readonly<{
+  requestId?: string
+  durable?: true
+  networkApproval?: Readonly<{
+    projectId: string
+    executionId: string
+    commandFingerprint: string
+    hostname: string
+    port: number
+    runtime: 'bash'
+  }>
+  onAdmitted?: () => void
+  canResume?: () => boolean
+  beforeRespond?: (optionId: string | undefined) => Promise<void>
   sessionId: string
   title: string
   rawInput: unknown
@@ -837,6 +851,45 @@ class AcpPermissionBroker {
     }
   >()
 
+  private readonly fullAccessListeners = new Map<string, Set<() => void>>()
+
+  hasFullAccess(sessionId: string): boolean {
+    const live = this.livePermissionProfiles.get(sessionId)
+    return live?.profile.selectedProfile === 'full' && live.isCurrent()
+  }
+
+  subscribeFullAccess(sessionId: string, listener: (allowed: boolean) => void): () => void {
+    let previous = this.hasFullAccess(sessionId)
+    const notify = (): void => {
+      const allowed = this.hasFullAccess(sessionId)
+      if (allowed === previous) return
+      previous = allowed
+      listener(allowed)
+    }
+    const listeners = this.fullAccessListeners.get(sessionId) ?? new Set()
+    listeners.add(notify)
+    this.fullAccessListeners.set(sessionId, listeners)
+    return () => {
+      listeners.delete(notify)
+      if (!listeners.size) this.fullAccessListeners.delete(sessionId)
+    }
+  }
+
+  invalidatePermissionProfile(sessionId: string): void {
+    const live = this.livePermissionProfiles.get(sessionId)
+    if (live)
+      this.livePermissionProfiles.set(sessionId, {
+        ...live,
+        isCurrent: () => false,
+        providerUpdatesBlocked: true
+      })
+    this.notifyFullAccess(sessionId)
+  }
+
+  private notifyFullAccess(sessionId: string): void {
+    for (const notify of this.fullAccessListeners.get(sessionId) ?? []) notify()
+  }
+
   // Accepts the callback used to publish new permission requests to listeners.
   constructor(
     private readonly emitPermissionRequest: EmitPermissionRequest,
@@ -886,6 +939,7 @@ class AcpPermissionBroker {
       isCurrent,
       providerUpdatesBlocked: false
     })
+    this.notifyFullAccess(sessionId)
   }
 
   beginPermissionProfileTransition(
@@ -894,6 +948,7 @@ class AcpPermissionBroker {
     isCurrent: () => boolean
   ): void {
     this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked: true })
+    this.notifyFullAccess(sessionId)
   }
 
   // A user-requested transition remains authoritative until its runtime operation commits or rolls
@@ -902,13 +957,15 @@ class AcpPermissionBroker {
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
   ): boolean {
-    if (this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked) return false
-    this.setLivePermissionProfile(sessionId, profile)
+    const live = this.livePermissionProfiles.get(sessionId)
+    if (!live || !live.isCurrent() || live.providerUpdatesBlocked) return false
+    this.setLivePermissionProfile(sessionId, profile, live.isCurrent)
     return true
   }
 
   clearLivePermissionProfile(sessionId: string): void {
     this.livePermissionProfiles.delete(sessionId)
+    this.notifyFullAccess(sessionId)
   }
 
   async applyPermissionProfile(
@@ -919,6 +976,7 @@ class AcpPermissionBroker {
     const providerUpdatesBlocked =
       this.livePermissionProfiles.get(sessionId)?.providerUpdatesBlocked ?? false
     this.livePermissionProfiles.set(sessionId, { profile, isCurrent, providerUpdatesBlocked })
+    this.notifyFullAccess(sessionId)
     const resolvedRequestIds: string[] = []
     for (const [requestId, pending] of Array.from(this.pendingRequests)) {
       if (!isCurrent()) break
@@ -1074,8 +1132,9 @@ class AcpPermissionBroker {
   // the broker's renderer projection, response validation, and Session cancellation lifecycle.
   requestAppPermission(input: AppPermissionRequest): Promise<string | undefined> {
     if (input.signal?.aborted) return Promise.resolve(undefined)
-    const requestId = randomUUID()
+    const requestId = input.requestId ?? randomUUID()
     const request: AcpPermissionRequest = {
+      ...(input.durable ? { durable: true } : {}),
       requestId,
       sessionId: input.sessionId,
       toolCallId: `app-approval:${requestId}`,
@@ -1086,14 +1145,19 @@ class AcpPermissionBroker {
       options: input.options.map((option) => ({ ...option }))
     }
 
-    const response = this.enqueuePermissionRequest({
-      requestId,
-      request,
-      appOwned: true,
-      ...(input.permissionPrompts
-        ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
-        : {})
-    }).then((result) =>
+    const response = this.enqueuePermissionRequest(
+      {
+        requestId,
+        request,
+        appOwned: true,
+        durablePersisted: input.durable === true,
+        beforeRespond: input.beforeRespond,
+        ...(input.permissionPrompts
+          ? { policyContext: { profile: 'ask', permissionPrompts: input.permissionPrompts } }
+          : {})
+      },
+      input.onAdmitted
+    ).then((result) =>
       result.outcome.outcome === 'selected' ? result.outcome.optionId : undefined
     )
     const abort = (): void => {
@@ -1456,7 +1520,8 @@ class AcpPermissionBroker {
   }
 
   private enqueuePermissionRequest(
-    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string }
+    pending: Omit<PendingPermission, 'resolve' | 'reject'> & { requestId: string },
+    onAdmitted?: () => void
   ): Promise<RequestPermissionResponse> {
     if (pending.policyContext?.permissionPrompts === 'none') {
       this.trace(pending, {
@@ -1533,7 +1598,13 @@ class AcpPermissionBroker {
     if (stored.capability) void this.releaseGrantedRequests()
 
     if (!stored.durableCandidate || !this.permissionWaitHooks) {
-      this.emitPermissionRequest(entry.request)
+      try {
+        this.emitPermissionRequest(entry.request)
+        onAdmitted?.()
+      } catch (error) {
+        this.pendingRequests.delete(requestId)
+        this.rejectPending(stored, error, 'cancelled')
+      }
       return response
     }
 
@@ -1644,6 +1715,15 @@ class AcpPermissionBroker {
     // Keep the claimed request cancellable until its provider decision is released.
     this.respondingRequests.set(response.requestId, pending)
     try {
+      if (pending.beforeRespond) {
+        const optionId =
+          !response.cancelled &&
+          pending.request.options.some((option) => option.optionId === response.optionId)
+            ? response.optionId
+            : undefined
+        await pending.beforeRespond(optionId)
+        if (pending.settled) return true
+      }
       if (response.cancelled || !response.optionId) {
         const persistence = this.persistLiveSettlement(pending)
         if (persistence) await persistence
@@ -1759,6 +1839,12 @@ class AcpPermissionBroker {
 
       return true
     } catch (error) {
+      // A durable app decision that failed to commit still owns its live wait. Keep it actionable
+      // and do not release privileged work as if the human had denied the request.
+      if (pending.beforeRespond && !pending.settled) {
+        this.pendingRequests.set(response.requestId, pending)
+        throw error
+      }
       this.trace(pending, {
         stage: 'decision',
         authority: pending.decisionAuthority,
@@ -1925,6 +2011,7 @@ class AcpPermissionBroker {
   abandonAllPending(): void {
     this.cancellationGeneration += 1
     this.livePermissionProfiles.clear()
+    for (const sessionId of this.fullAccessListeners.keys()) this.notifyFullAccess(sessionId)
     this.restoredAllowOnceBySession.clear()
     this.restoredContinuations.clear()
     this.durableRequestQueues.clear()
@@ -1951,6 +2038,7 @@ class AcpPermissionBroker {
     this.cancellationGeneration += 1
     this.sessionCancellationTokens.clear()
     this.livePermissionProfiles.clear()
+    for (const sessionId of this.fullAccessListeners.keys()) this.notifyFullAccess(sessionId)
     this.restoredAllowOnceBySession.clear()
     this.restoredContinuations.clear()
     const pendingRequests = Array.from(this.pendingRequests.keys())
@@ -2002,6 +2090,7 @@ class AcpPermissionBroker {
   clearSession(sessionId: string): void {
     this.cancelForSession(sessionId)
     this.livePermissionProfiles.delete(sessionId)
+    this.notifyFullAccess(sessionId)
     this.conversationGrants.clear(sessionId)
   }
 }

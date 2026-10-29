@@ -1,3 +1,9 @@
+import {
+  SplitButton,
+  SplitButtonGroup,
+  SplitButtonPrimary,
+  SplitButtonTrigger
+} from '@/components/ui/split-button'
 import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
@@ -9,7 +15,6 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
-import { Popover, PopoverAnchor } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
@@ -1080,92 +1085,77 @@ const PermissionApprovalCard = ({
             Styled like the shared Button (default size, including flex centering so the label baseline
             matches the neighboring Button primitives) but kept as two segments so the chevron
             stays a separate tab stop with its own aria-haspopup semantics. */}
-        <Popover
-          open={embedded && scopeOpen}
+        <SplitButton
+          kind="popover"
+          disabled={disabled || isSubmitting}
+          hideMenu={!hasScopePicker}
+          open={scopeOpen}
           onOpenChange={(open) => {
-            if (!open) closeScopeMenu()
+            setScopeOpen(open)
           }}
         >
-          <div className="relative flex items-stretch overflow-visible rounded-lg">
-            {hasScopePicker && scopeOpen && (
-              <ScopeDropdown
-                selected={effectiveScope}
-                available={availableScopes}
-                onSelect={setScope}
-                onClose={closeScopeMenu}
-                portaled={embedded}
-                onceDescription={
-                  networkRuntime && networkRuntime !== 'bash'
-                    ? t('Next matching execution')
-                    : undefined
-                }
-              />
-            )}
-            <PopoverAnchor asChild>
-              <div className="flex items-stretch overflow-hidden rounded-lg">
-                <button
-                  ref={allowPrimaryRef}
+          <SplitButtonGroup>
+            <SplitButtonPrimary
+              ref={allowPrimaryRef}
+              type="button"
+              data-testid="allow-primary"
+              className={cn(
+                'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap border-0 px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
+                isDeleteRequest
+                  ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/80'
+              )}
+              disabled={disabled || !allowOptionId || isSubmitting}
+              onClick={() => {
+                if (!allowOptionId) return
+                respondOnce(allowOptionId)
+              }}
+            >
+              {isFixedOnce ? (
+                <span className="font-semibold">{t('Allow')}</span>
+              ) : isDeleteRequest ? (
+                <span className="font-semibold">{t('Delete')}</span>
+              ) : (
+                <span className="font-semibold">{allowLabel[effectiveScope]}</span>
+              )}
+            </SplitButtonPrimary>
+            {hasScopePicker ? (
+              <>
+                <SplitButtonTrigger
+                  ref={scopeTriggerRef}
                   type="button"
-                  data-testid="allow-primary"
+                  data-testid="scope-chevron"
+                  aria-label={t('Choose authorization scope')}
+                  aria-expanded={scopeOpen}
+                  aria-haspopup="menu"
                   className={cn(
-                    'inline-flex h-8 select-none items-center justify-center gap-1 whitespace-nowrap px-3 text-sm outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50',
+                    'inline-flex h-8 select-none items-center justify-center border-0 px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
                     isDeleteRequest
                       ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
                       : 'bg-primary text-primary-foreground hover:bg-primary/80'
                   )}
-                  disabled={disabled || !allowOptionId || isSubmitting}
-                  onClick={() => {
-                    if (!allowOptionId) return
-                    respondOnce(allowOptionId)
-                  }}
+                  disabled={isSubmitting}
                 >
-                  {isFixedOnce ? (
-                    <span className="font-semibold">{t('Allow')}</span>
-                  ) : isDeleteRequest ? (
-                    <span className="font-semibold">{t('Delete')}</span>
-                  ) : (
-                    <span className="font-semibold">{allowLabel[effectiveScope]}</span>
-                  )}
-                </button>
-                {hasScopePicker ? (
-                  <>
-                    <div
-                      className={cn(
-                        'w-px',
-                        isDeleteRequest
-                          ? 'bg-destructive-foreground/25'
-                          : 'bg-primary-foreground/25'
-                      )}
-                    />
-                    <button
-                      ref={scopeTriggerRef}
-                      type="button"
-                      data-testid="scope-chevron"
-                      aria-label={t('Choose authorization scope')}
-                      aria-expanded={scopeOpen}
-                      aria-haspopup="menu"
-                      className={cn(
-                        'inline-flex h-8 select-none items-center justify-center px-2 outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
-                        isDeleteRequest
-                          ? 'bg-destructive text-destructive-foreground hover:bg-destructive/80'
-                          : 'bg-primary text-primary-foreground hover:bg-primary/80'
-                      )}
-                      disabled={isSubmitting}
-                      onClick={(e) => {
-                        // Stop propagation so this click doesn't reach the dropdown's document
-                        // click-listener and immediately re-close the menu it just opened.
-                        e.stopPropagation()
-                        setScopeOpen((o) => !o)
-                      }}
-                    >
-                      <ChevronDown className="size-4" />
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            </PopoverAnchor>
-          </div>
-        </Popover>
+                  <ChevronDown className="size-4" />
+                </SplitButtonTrigger>
+              </>
+            ) : null}
+          </SplitButtonGroup>
+          {hasScopePicker && (
+            <ScopeDropdown
+              selected={effectiveScope}
+              available={availableScopes}
+              onSelect={setScope}
+              onClose={closeScopeMenu}
+              portaled={embedded}
+              onceDescription={
+                networkRuntime && networkRuntime !== 'bash'
+                  ? t('Next matching execution')
+                  : undefined
+              }
+            />
+          )}
+        </SplitButton>
         {/* Fallback buttons for any protocol option the Allow/Deny controls can't reach, so an
             unrecognized or ambiguous same-kind option stays selectable rather than disappearing.
             Provider-controlled labels can be long: override the Button's shrink-0/whitespace-nowrap

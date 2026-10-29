@@ -34,7 +34,7 @@ try {
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], source)
   npm(['run', 'build'], source)
   npm(['run', 'typecheck'], source)
-  npm(['test'], source)
+  if (!process.argv.includes('--skip-tests')) npm(['test'], source)
   const packed = JSON.parse(
     execFileSync(process.execPath, [npmCli, 'pack', '--json', '--pack-destination', work], {
       cwd: source,

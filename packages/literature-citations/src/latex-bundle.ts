@@ -33,6 +33,28 @@ type PreparedLatexBundle = Readonly<{
 const sha256 = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex')
 
+const hasLatexCommand = (content: string, command: string, argument: string): boolean => {
+  const prefix = `\\${command}`
+  let closingOption = -1
+  for (
+    let start = content.indexOf(prefix);
+    start >= 0;
+    start = content.indexOf(prefix, start + 1)
+  ) {
+    let end = start + prefix.length
+    if (content[end] === '[') {
+      // Reuse the next closing bracket when nested candidate commands share an option block.
+      if (closingOption < end) {
+        closingOption = content.indexOf(']', end + 1)
+        if (closingOption < 0) closingOption = content.length
+      }
+      end = closingOption + 1
+    }
+    if (content.startsWith(`{${argument}}`, end)) return true
+  }
+  return false
+}
+
 class LiteratureLatexBundle {
   constructor(
     private readonly catalog: LatexBundleCatalog,
@@ -72,10 +94,10 @@ class LiteratureLatexBundle {
     if (new Set(keysByItemId.values()).size !== keysByItemId.size) {
       throw new Error('Selected Literature Items have duplicate citation keys.')
     }
-    if (!/\\usepackage(?:\[[^\]]*\])?\{biblatex\}/u.test(request.content)) {
+    if (!hasLatexCommand(request.content, 'usepackage', 'biblatex')) {
       throw new Error('LaTeX document must load the biblatex package.')
     }
-    if (!/\\addbibresource(?:\[[^\]]*\])?\{references\.bib\}/u.test(request.content)) {
+    if (!hasLatexCommand(request.content, 'addbibresource', 'references.bib')) {
       throw new Error('LaTeX document must add references.bib as its bibliography resource.')
     }
 
