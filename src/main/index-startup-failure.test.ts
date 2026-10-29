@@ -582,7 +582,14 @@ it.each([false, true])(
   }
 )
 
-it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configuration-only'] as const)(
+it.each([
+  'matching',
+  'changed',
+  'invalid',
+  'installation-recovery',
+  'configuration-only',
+  'cold-repair'
+] as const)(
   'consumes a startup retry once and checks its successor authorization (%s)',
   async (mode) => {
     const argv = process.argv
@@ -601,6 +608,7 @@ it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configurati
       port: 49123,
       host: '127.0.0.1'
     }
+    vi.spyOn(f.app.commandLine, 'getSwitchValue').mockReturnValue(options.passwordStore)
     const argument =
       '--desktop-startup-retry=' +
       (mode === 'invalid'
@@ -635,6 +643,7 @@ it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configurati
     f.launch.mockImplementation(async (request) => {
       await request.beforeLaunch?.()
       spawned = true
+      if (mode === 'cold-repair') f.readLifetime.mockResolvedValue(undefined)
       return {}
     })
     f.connect.mockResolvedValue({
@@ -646,6 +655,8 @@ it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configurati
       startupState: () => ({ phase: 'checking' }),
       close: vi.fn()
     })
+    if (mode === 'cold-repair')
+      f.connect.mockRejectedValueOnce(new Error('Backend exited before Desktop attached.'))
     f.lifecycle.mockReturnValue({
       showMainWindow: vi.fn(),
       getMainWindow: () => undefined,
@@ -654,7 +665,7 @@ it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configurati
     })
     try {
       await import('./index')
-      if (mode === 'matching' || mode === 'configuration-only') {
+      if (mode === 'matching' || mode === 'configuration-only' || mode === 'cold-repair') {
         await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalledOnce())
         expect(spawned).toBe(true)
         expect(f.inventory).toHaveBeenCalledWith({
@@ -669,7 +680,15 @@ it.each(['matching', 'changed', 'invalid', 'installation-recovery', 'configurati
             args: ['--credential-store=os', '--password-store=gnome-libsecret', '--serve=49123']
           })
         )
-        const connection = f.connect.mock.calls[0][0]
+        if (mode === 'cold-repair') {
+          expect(f.launch).toHaveBeenCalledTimes(2)
+          expect(f.launch.mock.calls[1][0].args).toEqual([
+            '--credential-store=os',
+            '--serve=49123',
+            '--password-store=gnome-libsecret'
+          ])
+        }
+        const connection = f.connect.mock.calls.at(-1)![0]
         const request = { request: { operation: 'runtime-relaunch' } }
         expect(await connection.onNativeRequest(request, new AbortController().signal)).toBe(true)
         connection.onNativeResponseSent(request, true)

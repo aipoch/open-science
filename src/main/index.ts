@@ -1242,6 +1242,15 @@ async function startDesktop(): Promise<void> {
     if (endpoint) launch = { endpoint }
     else {
       if (config) validatePreservedConfiguration(config)
+      const options: DesktopStartupRetry['options'] = {
+        configRoot,
+        profilePath,
+        credentialStore: config?.credentialStore ?? getCredentialStore(),
+        passwordStore:
+          (config?.passwordStore ?? app.commandLine.getSwitchValue('password-store')) || undefined,
+        port: config?.port ?? startupRetry?.options.port ?? 0,
+        host: '127.0.0.1'
+      }
       launch = await startOrAttachDesktopBackend({
         configRoot,
         profilePath,
@@ -1258,16 +1267,6 @@ async function startDesktop(): Promise<void> {
               updateCommitted || plannedRelaunch
             )
           } else {
-            const options: DesktopStartupRetry['options'] = {
-              configRoot,
-              profilePath,
-              credentialStore: config?.credentialStore ?? getCredentialStore(),
-              passwordStore:
-                (config?.passwordStore ?? app.commandLine.getSwitchValue('password-store')) ||
-                undefined,
-              port: config?.port ?? startupRetry?.options.port ?? 0,
-              host: '127.0.0.1'
-            }
             const stop = await reviewStartupRestart(repairAuthorization, options)
             // Chromium now owns Cookies. Re-enter bootstrap instead of reading that open profile
             // or reusing a credential inventory whose original 60-second lifetime may have expired.
@@ -1275,9 +1274,9 @@ async function startDesktop(): Promise<void> {
           }
         },
         args: [
-          `--credential-store=${config?.credentialStore ?? getCredentialStore()}`,
-          `--serve=${config?.port ?? 0}`,
-          ...(config?.passwordStore ? [`--password-store=${config?.passwordStore}`] : [])
+          `--credential-store=${options.credentialStore}`,
+          `--serve=${options.port}`,
+          ...(options.passwordStore ? [`--password-store=${options.passwordStore}`] : [])
         ]
       })
       startedBackend = launch.startedProcess
