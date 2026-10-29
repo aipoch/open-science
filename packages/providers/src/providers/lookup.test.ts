@@ -128,6 +128,7 @@ describe('provider registry', () => {
     expect(isOfficialVendorId('tencenttokenplan')).toBe(true)
     expect(isOfficialVendorId('nvidia')).toBe(true)
     expect(isOfficialVendorId('requesty')).toBe(true)
+    expect(isOfficialVendorId('runcrate')).toBe(true)
     expect(isOfficialVendorId(undefined)).toBe(false)
     expect(isOfficialVendorId(42)).toBe(false)
   })
@@ -794,6 +795,30 @@ describe('provider registry', () => {
       values: ['none', 'low', 'medium', 'high', 'xhigh']
     })
     expect(getVendorModelReasoningCapability('requesty', 'anthropic/claude-haiku-4-5')).toEqual({
+      supported: false
+    })
+  })
+
+  it('routes Runcrate through Messages after Requesty with a curated catalog', () => {
+    const requestyIndex = OFFICIAL_VENDORS.findIndex((vendor) => vendor.id === 'requesty')
+
+    expect(OFFICIAL_VENDORS[requestyIndex + 1]?.id).toBe('runcrate')
+    expect(resolveVendorApiEndpoints('runcrate')).toEqual(['messages'])
+    expect(resolveVendorModelApiEndpoints('runcrate', 'deepseek-ai/DeepSeek-V4.1-Flash')).toEqual([
+      'messages'
+    ])
+    expect(resolveVendorBaseUrl('runcrate')).toBe('https://api.runcrate.ai')
+    expect(resolveVendorApiKeyUrl('runcrate')).toBe('https://www.runcrate.ai/dashboard/api-keys')
+    expect(resolveVendorModelsUrl('runcrate')).toBeUndefined()
+    expect(usesVendorMessagesApiKeyHeader('runcrate')).toBe(false)
+
+    expect(getVendorModelIds('runcrate')[0]).toBe('deepseek-ai/DeepSeek-V4.1-Flash')
+    expect(getVendorModelContextWindow('runcrate', 'Qwen/Qwen3.8-Flash')).toBe(1_000_000)
+    expect(getVendorModelContextWindow('runcrate', 'openai/gpt-oss-120b')).toBe(131_072)
+    expect(isVendorModelMultimodal('runcrate', 'deepseek-ai/DeepSeek-V4.1-Flash')).toBe(true)
+    expect(isVendorModelMultimodal('runcrate', 'zai-org/GLM-5.3')).toBe(false)
+    expect(isVendorModelMultimodal('runcrate', 'somevendor/unknown-model')).toBe(false)
+    expect(getVendorModelReasoningCapability('runcrate', 'zai-org/GLM-5.3')).toEqual({
       supported: false
     })
   })

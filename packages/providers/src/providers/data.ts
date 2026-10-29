@@ -1730,6 +1730,36 @@ const definitions: readonly OfficialVendor[] = [
         'xai/grok-4.6'
       ]
     }
+  },
+  // Runcrate serves open-weight models from many labs, so it follows the other gateways at the end
+  // of the picker.
+  {
+    id: 'runcrate',
+    label: 'Runcrate',
+    // Reasoning controls differ per open-weight model, so effort stays hidden.
+    reasoningEffort: { supported: false },
+    // Anthropic /v1/messages at the API root, so Claude Code and OpenCode connect directly and
+    // CodeBuddy uses the Chat compatibility transport. The live catalog lists every hosted model, so
+    // ship a short curated set of tool-capable chat models (no modelsListUrl).
+    apiEndpoints: ['messages'],
+    baseUrl: 'https://api.runcrate.ai',
+    apiKeyUrl: 'https://www.runcrate.ai/dashboard/api-keys',
+    // Ids, context windows, and vision from https://api.runcrate.ai/v1/models (2026-10-29).
+    models: [
+      { id: 'deepseek-ai/DeepSeek-V4.1-Flash', contextWindow: 1_048_576 },
+      { id: 'zai-org/GLM-5.3', contextWindow: 1_048_576 },
+      { id: 'zai-org/GLM-5.3-Flash', contextWindow: 1_048_576 },
+      { id: 'moonshotai/Kimi-K3', contextWindow: 1_048_576 },
+      { id: 'Qwen/Qwen3.8-Flash', contextWindow: 1_000_000 },
+      { id: 'openai/gpt-oss-120b', contextWindow: 131_072 }
+    ],
+    multimodal: {
+      multimodalModels: [
+        'deepseek-ai/DeepSeek-V4.1-Flash',
+        'zai-org/GLM-5.3-Flash',
+        'moonshotai/Kimi-K3'
+      ]
+    }
   }
 ]
 
