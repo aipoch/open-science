@@ -791,8 +791,8 @@ const AgentPanel = ({
           {isOnboarding ? null : <ModelFrameworkCompatibilityAlert />}
           {installedFrameworks.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {t('Installed')} / {installedFrameworks.length}
+              <p className="text-xs font-medium text-muted-foreground">
+                {t('Installed')} ({installedFrameworks.length})
               </p>
               <div
                 role="radiogroup"
@@ -806,8 +806,8 @@ const AgentPanel = ({
           ) : null}
           {availableFrameworks.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                {t('Available')} / {availableFrameworks.length}
+              <p className="text-xs font-medium text-muted-foreground">
+                {t('Available')} ({availableFrameworks.length})
               </p>
               <div className="space-y-3">{availableFrameworks.map(renderFrameworkCard)}</div>
             </div>

@@ -540,7 +540,7 @@ export const RemoteControlPanel: RemoteControlPanelComponent = () => {
           description={
             <>
               <Trans
-                i18nKey="Choose who can reach this computer's Open-Science workspace. All projects, agents, files, and notebook runtimes continue to run on this computer. Install and sign in to the Remote.It desktop app before enabling access. <lnk>Download Remote.It App</lnk>"
+                i18nKey="Choose who can reach your workspace. Projects, agents, files, and runtimes stay on this computer. Install and sign in to Remote.It first. <lnk>Download Remote.It App</lnk>"
                 components={{
                   lnk: (
                     <ExternalTextLink

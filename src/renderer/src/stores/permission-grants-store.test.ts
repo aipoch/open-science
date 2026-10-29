@@ -105,7 +105,7 @@ describe('permission grants store', () => {
 
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       token: 'undo-1',
-      messageKey: 'Revoked {{family}} · {{capability}}',
+      messageKey: 'Revoked {{family}}: {{capability}}',
       messageParams: { family: 'Local compute', capability: 'Shell' },
       translatedMessageParams: ['family', 'capability']
     })
@@ -125,7 +125,7 @@ describe('permission grants store', () => {
 
     expect(usePermissionGrantsStore.getState().undo).toMatchObject({
       messageKey:
-        'Revoked {{family}} · {{capability}}; {{conflictCount}} changed before it could be revoked',
+        'Revoked {{family}}: {{capability}}; {{conflictCount}} changed before it could be revoked',
       messageParams: { family: 'Local compute', capability: 'Shell', conflictCount: 1 }
     })
   })

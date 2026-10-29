@@ -108,9 +108,7 @@ describe('NetworkProxyForm', () => {
     act(() => root.render(<NetworkProxyForm onDone={vi.fn()} />))
 
     expect(container.textContent).toContain('System')
-    expect(container.textContent).toContain(
-      'Browser and operating-system proxy settings may differ'
-    )
+    expect(container.textContent).toContain('System uses backend defaults.')
     expect(container.textContent).toContain('Existing agent sessions')
     expect(container.textContent).toContain('New requests and processes use the saved setting.')
   })

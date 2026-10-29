@@ -63,8 +63,8 @@ const revokeUndoMessage = (
     return {
       messageKey:
         conflictCount > 0
-          ? 'Revoked {{family}} · {{capability}}; {{conflictCount}} changed before it could be revoked'
-          : 'Revoked {{family}} · {{capability}}',
+          ? 'Revoked {{family}}: {{capability}}; {{conflictCount}} changed before it could be revoked'
+          : 'Revoked {{family}}: {{capability}}',
       messageParams: {
         family: FAMILY_LABELS[revoked[0].family],
         capability: revoked[0].capabilityLabel,

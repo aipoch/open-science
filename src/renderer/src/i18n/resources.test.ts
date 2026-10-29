@@ -1590,7 +1590,7 @@ describe('mandatory product glossary', () => {
       resendOnBranch: de.renderer['Resend on a new branch?'],
       runtimeSwitch:
         de.renderer[
-          "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+          'Switching starts a fresh agent session and replays open conversation transcripts to the selected backend.'
         ],
       stick: de.renderer.Stick,
       storage: de.renderer.Storage,
@@ -1616,7 +1616,7 @@ describe('mandatory product glossary', () => {
       providerConnection: 'Die Verbindung zum Anbieter konnte nicht getestet werden.',
       resendOnBranch: 'In einem neuen Branch erneut senden?',
       runtimeSwitch:
-        'Wählen Sie das Coding-Agent-Backend für Ihre Sitzungen aus. Wählen Sie zum Wechseln eine Karte aus. Dabei wird eine neue Agentensitzung gestartet und das Transkript offener Konversationen im neuen Backend wiedergegeben. Die aktive Laufzeit kann nicht deinstalliert werden; wechseln Sie zuerst zur anderen Laufzeit.',
+        'Der Wechsel startet eine neue Agentensitzung und gibt die Transkripte offener Konversationen im ausgewählten Backend wieder.',
       stick: 'Stäbchen',
       storage: 'Speicher',
       unpinProject: 'Projekt nicht mehr anheften',
@@ -2088,7 +2088,7 @@ describe('mandatory product glossary', () => {
     const runtimeEnvironmentKeys = [
       'Agent runtime',
       'Agent runtime repair issues',
-      "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first.",
+      'Switching starts a fresh agent session and replays open conversation transcripts to the selected backend.',
       'Could not change that runtime.',
       'Could not check whether that runtime is in use, so it was not disabled.',
       'Could not load runtimes.',
@@ -3241,10 +3241,6 @@ describe('Korean safety copy', () => {
       '새로운 대화에서는 먼저 묻지 않고 명령을 실행하고, 파일을 변경하고, Notebook 코드를 실행하고, 네트워크에 액세스할 수 있습니다. 기존 대화에는 영향을 주지 않습니다.'
     ],
     [
-      "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears.",
-      '알림은 다른 앱을 사용하는 동안에만 표시됩니다. 사용자가 취소한 작업과 앱이 자동으로 다시 시도하는 실패는 알림을 표시하지 않습니다. 알림이 처음 표시될 때 운영 체제에서 알림 권한을 요청할 수 있습니다.'
-    ],
-    [
       'Remote.It is a third-party service. Open-Science only calls its user-installed desktop CLI and does not include, redistribute, register, or create an account for it.',
       'Remote.It은 제3자 서비스입니다. Open-Science는 사용자가 설치한 데스크톱 CLI를 호출할 뿐이며, 이를 포함하거나 재배포하지 않고 등록하거나 계정을 생성하지도 않습니다.'
     ],
@@ -3610,8 +3606,8 @@ describe('Korean binding terminology', () => {
     ['Add interpreter…', '인터프리터 추가…'],
     ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
     [
-      'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.',
-      'Notebook과 에이전트가 사용할 Python 및 R 환경을 선택합니다. 앱 관리 환경은 기본적으로 활성화됩니다.'
+      'Python and R environments for notebooks and the Agent. App-managed environments are enabled by default.',
+      'Notebook과 에이전트를 위한 Python 및 R 환경입니다. 앱 관리 환경은 기본적으로 활성화됩니다.'
     ],
     ['Token usage for this response', '이 응답의 토큰 사용량'],
     ['Token usage unavailable for this response', '이 응답의 토큰 사용량을 확인할 수 없습니다.'],

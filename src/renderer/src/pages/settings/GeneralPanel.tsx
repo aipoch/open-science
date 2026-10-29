@@ -268,26 +268,14 @@ const GeneralPanel = (): React.JSX.Element => {
       >
         <SettingsRow
           label={t('Theme')}
-          description={
-            isMac
-              ? t(
-                  'Follow the system setting, or force light or dark. The Dock icon follows the resolved theme.'
-                )
-              : t('Follow the system setting, or force light or dark.')
-          }
-
+          description={isMac ? t('The Dock icon follows the resolved theme.') : undefined}
           className="pt-0"
         >
           <ThemeSegmentedControl />
         </SettingsRow>
 
         {showInterfaceScale ? (
-          <SettingsRow
-            label={t('Interface scale')}
-            description={t(
-              'Adjust the size of text and controls across the app. Changes apply immediately.'
-            )}
-          >
+          <SettingsRow label={t('Interface scale')}>
             <Select
               value={String(interfaceScale)}
               onValueChange={(value) => {
@@ -314,9 +302,9 @@ const GeneralPanel = (): React.JSX.Element => {
         <SettingsRow
           data-settings-anchor="general.language"
           label={t('Language')}
-          description={t(
-            'Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.'
-          )}
+          description={t('Device language changes take effect after restarting {{appName}}.', {
+            appName: APP.name
+          })}
         >
           <LanguageSelect />
         </SettingsRow>
@@ -369,20 +357,11 @@ const GeneralPanel = (): React.JSX.Element => {
         data-settings-anchor="general.notifications"
         title={t('Notifications')}
         description={t(
-          "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app."
+          "Get notified when a task finishes, fails, or needs approval while you're away."
         )}
         aria-label={t('Notifications')}
       >
-        <SettingsRow
-          label={t('Task notifications')}
-          description={t(
-            'Selecting a notification brings {{appName}} back to the front and opens the task.',
-            {
-              appName: APP.name
-            }
-          )}
-          className="pt-0"
-        >
+        <SettingsRow label={t('Task notifications')} className="pt-0">
           <SettingsToggle
             enabled={notificationsEnabled}
             aria-label={t('Toggle task notifications')}
@@ -391,10 +370,8 @@ const GeneralPanel = (): React.JSX.Element => {
         </SettingsRow>
 
         <SettingsRow
-          label={t('Show task content in system notifications')}
-          description={t(
-            'Include task names and request details. Provider errors are always hidden.'
-          )}
+          label={t('Show task content')}
+          description={t('Task names and request details. Provider errors stay hidden.')}
         >
           <SettingsToggle
             enabled={showNotificationContent}
@@ -456,12 +433,6 @@ const GeneralPanel = (): React.JSX.Element => {
             </div>
           </div>
         </SettingsRow>
-
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(
-            "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears."
-          )}
-        </p>
       </SettingsSection>
 
       {/* macOS uses the adaptive build/icon.icon for the installed app and binds its live Dock icon
@@ -471,9 +442,6 @@ const GeneralPanel = (): React.JSX.Element => {
       <SettingsSection
         data-settings-anchor="general.diagnostics"
         title={t('Diagnostics')}
-        description={t(
-          "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
-        )}
         aria-label={t('Diagnostics')}
       >
         <SettingsRow label={t('Log file')} className="pt-0">
@@ -565,7 +533,7 @@ const GeneralPanel = (): React.JSX.Element => {
           {/* Trans clones each component and injects the translated text as its children, so the
               empty string here is only satisfying the required prop — it never renders. */}
           <Trans
-            i18nKey="Something not working? <docsLink>Open an issue on GitHub</docsLink> and attach the log above. It stays on this device and is never sent automatically; it may contain local file paths, so review it before sharing."
+            i18nKey="Need help? <docsLink>Open an issue</docsLink> and attach the log. Logs stay on this device; review local paths before sharing."
             components={{
               // Named docsLink, not link: <link> is a void HTML element, so the parser Trans uses
               // self-closes it and the label would render as a sibling of an empty anchor.
@@ -578,12 +546,6 @@ const GeneralPanel = (): React.JSX.Element => {
       <SettingsSection
         data-settings-anchor="general.cli"
         title={t('Command line tool')}
-        description={
-          <Trans
-            i18nKey="Install the <code>open-science</code> command so you can start, stop, and check the backend from a terminal, then use it entirely from your browser."
-            components={{ code: <code className="font-mono" /> }}
-          />
-        }
         aria-label={t('Command line tool')}
       >
         <SettingsRow label={t('open-science')} className="pt-0">
@@ -638,17 +600,15 @@ const GeneralPanel = (): React.JSX.Element => {
 
         <p className="mt-3 text-xs text-muted-foreground">
           <Trans
-            i18nKey="Once installed, run <code>open-science start</code> to launch the backend and open the authenticated URL, then <code>open-science stop</code> to shut it down. <code>status</code> and <code>url</code> are also available."
+            i18nKey="Commands: <code>start</code>, <code>stop</code>, <code>status</code>, and <code>url</code>."
             components={{ code: <code className="font-mono" /> }}
           />
         </p>
       </SettingsSection>
 
       <SettingsSection
-        title={t('Enjoying {{appName}}?', { appName: APP.name })}
-        description={t(
-          "It's free and open source. Star it on GitHub to help others find it, and come build in public with us on Discord and X. Thanks for being here."
-        )}
+        title={t('Community')}
+        description={t('Free and open source.')}
         aria-label={t('Community')}
       >
         <div className="flex flex-wrap items-center gap-2">

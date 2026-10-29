@@ -77,18 +77,10 @@ const NetworkProxyForm = ({ onDone }: NetworkProxyFormProps): React.JSX.Element 
 
   return (
     <div className="space-y-5 p-5">
-      <SettingsSection
-        title={t('Proxy')}
-        description={t(
-          'Choose how Open-Science reaches the internet. Changes apply to new app requests and processes.'
-        )}
-        aria-label={t('Proxy settings')}
-      >
+      <SettingsSection title={t('Proxy')} aria-label={t('Proxy settings')}>
         <SettingsRow
           label={t('Mode')}
-          description={t(
-            'System uses the proxy configuration available to the backend. Browser and operating-system proxy settings may differ; choose Manual to set a fixed proxy.'
-          )}
+          description={t('System uses backend defaults. Choose Manual for a fixed proxy.')}
           className="pt-0"
         >
           <Select

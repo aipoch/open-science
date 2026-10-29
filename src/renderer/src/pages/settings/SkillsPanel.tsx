@@ -923,7 +923,6 @@ const SkillsPanel = ({
       <SettingsSection
         data-settings-anchor="skills.conversation-imports"
         title={t('Conversation imports')}
-        description={t('Choose what conversations can import into Open-Science.')}
         aria-label={t('Conversation imports')}
         className="mt-8 border-t border-border pt-4"
         contentClassName="mt-1"
@@ -932,9 +931,7 @@ const SkillsPanel = ({
           label={t('Skill packages')}
           description={
             <span className="line-clamp-2">
-              {t(
-                'Let the agent detect attached .zip and .skill packages and ask before importing them.'
-              )}
+              {t('Detect attached .zip and .skill packages and ask before importing.')}
             </span>
           }
           className="min-h-0 py-1.5"

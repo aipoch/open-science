@@ -441,11 +441,8 @@ describe('SkillsPanel (list view)', () => {
     })
 
     expect(document.body.textContent).toContain('Conversation imports')
-    expect(document.body.textContent).toContain(
-      'Choose what conversations can import into Open-Science.'
-    )
     expect(document.body.textContent).toContain('Skill packages')
-    expect(document.body.textContent).toContain('ask before importing them')
+    expect(document.body.textContent).toContain('ask before importing.')
     const section = document.body.querySelector<HTMLElement>(
       '[data-slot="settings-section"][aria-label="Conversation imports"]'
     )

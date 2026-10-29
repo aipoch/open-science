@@ -5858,8 +5858,8 @@ describe('SettingsPage Codex framework', () => {
     await openAgentPanel()
 
     // Two ready runtimes land in the Installed group; Codex/CodeBuddy (not ready) in Available.
-    expect(document.body.textContent).toContain('Installed / 2')
-    expect(document.body.textContent).toContain('Available / 2')
+    expect(document.body.textContent).toContain('Installed (2)')
+    expect(document.body.textContent).toContain('Available (2)')
     // Claude is renamed in this panel only.
     expect(document.body.textContent).toContain('Claude Agent')
 
@@ -5911,8 +5911,8 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    expect(document.body.textContent).toContain('Installed / 2')
-    expect(document.body.textContent).toContain('Available / 2')
+    expect(document.body.textContent).toContain('Installed (2)')
+    expect(document.body.textContent).toContain('Available (2)')
     expect(document.body.textContent).toContain('CodeBuddy')
     expect(document.body.textContent).toContain('v2.138.0')
     expect(document.body.textContent).toContain(
@@ -6058,8 +6058,8 @@ describe('SettingsPage Codex framework', () => {
     })
     await openAgentPanel()
 
-    expect(document.body.textContent).toContain('Installed / 2')
-    expect(document.body.textContent).toContain('Available / 2')
+    expect(document.body.textContent).toContain('Installed (2)')
+    expect(document.body.textContent).toContain('Available (2)')
     expect(document.body.textContent).toContain('Update required')
     expect(document.body.querySelector('[aria-label="Update Codex"]')).not.toBeNull()
     const frameworkRadios = Array.from(

@@ -534,10 +534,7 @@ const InstalledSpecialistsPanel = ({
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-              {t('Import ZIP')}
-            </p>
-            <h2 className="mt-1 text-xl font-semibold">{t('Import a Specialist package')}</h2>
+            <h2 className="text-xl font-semibold">{t('Import a Specialist package')}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               {t('Choose one ZIP containing exactly one Specialist.')}
             </p>
@@ -611,10 +608,7 @@ const InstalledSpecialistsPanel = ({
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-              {t('Export ZIP')}
-            </p>
-            <h2 className="mt-1 text-xl font-semibold">
+            <h2 className="text-xl font-semibold">
               {exportPreview ? t('Choose Skills to include') : t('Preparing export…')}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -882,10 +876,7 @@ const InstalledSpecialistsPanel = ({
       <div className="p-5">
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-              {packagePreview ? t('Import ZIP: Preview') : t('Import ZIP')}
-            </p>
-            <h2 className="mt-1 text-xl font-semibold">
+            <h2 className="text-xl font-semibold">
               {packagePreview
                 ? canInstallPackage
                   ? t('Ready to continue')
@@ -1578,9 +1569,6 @@ const InstalledSpecialistsPanel = ({
             </DropdownMenu>
           </div>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t('Manage Specialists available on this device.')}
-        </p>
       </div>
       {/* Toolbar */}
       {items.length > 0 ? (
@@ -1649,15 +1637,10 @@ const InstalledSpecialistsPanel = ({
           {/* Marketplace-managed Specialists are installed packages, not editable custom drafts. */}
           {visibleMarketplaceItems.length > 0 ? (
             <div data-slot="specialists-source-group" data-source="marketplace">
-              <div className="flex flex-col items-start gap-0.5">
-                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  {t('Marketplace')}
-                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
-                    {visibleMarketplaceItems.length}
-                  </span>
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {t('Installed from Marketplace and managed by its publisher.')}
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                {t('Marketplace')}
+                <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                  {visibleMarketplaceItems.length}
                 </span>
               </div>
               <ul className="mt-2 flex flex-col divide-y divide-border">
@@ -1855,14 +1838,11 @@ const InstalledSpecialistsPanel = ({
           {/* Custom specialists group */}
           {visibleCustomItems.length > 0 ? (
             <div data-slot="specialists-source-group" data-source="custom">
-              <div className="flex flex-col items-start gap-0.5">
-                <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  {t('Custom')}
-                  <span className="text-xs font-normal tabular-nums text-muted-foreground">
-                    {visibleCustomItems.length}
-                  </span>
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                {t('Custom')}
+                <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                  {visibleCustomItems.length}
                 </span>
-                <span className="text-xs text-muted-foreground">{t('Created by you.')}</span>
               </div>
 
               <ul className="mt-2 flex flex-col divide-y divide-border">

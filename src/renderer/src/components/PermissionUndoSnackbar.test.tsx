@@ -111,7 +111,7 @@ describe('PermissionUndoSnackbar', () => {
       undo: {
         token: 'undo-1',
         expiresAt: Date.now() + 8_000,
-        messageKey: 'Revoked {{family}} · {{capability}}',
+        messageKey: 'Revoked {{family}}: {{capability}}',
         messageParams: { family: 'Local compute', capability: 'Shell' },
         translatedMessageParams: ['family', 'capability']
       },
@@ -163,13 +163,13 @@ describe('PermissionUndoSnackbar', () => {
 
   it('retranslates a permission notice when the language changes', async () => {
     await act(async () => root.render(<PermissionUndoSnackbar />))
-    expect(container.textContent).toContain('Revoked Local compute · Shell')
+    expect(container.textContent).toContain('Revoked Local compute: Shell')
 
     await act(async () => {
       await i18next.changeLanguage('zh-Hans')
     })
 
-    expect(container.textContent).toContain('已撤销 本地算力 · 命令行')
+    expect(container.textContent).toContain('已撤销 本地算力：命令行')
     expect(container.textContent).not.toContain('Revoked Local compute')
   })
 
@@ -500,7 +500,7 @@ describe('PermissionUndoSnackbar', () => {
 
     const snackbars = container.querySelectorAll('[data-testid="permission-undo-snackbar"]')
     expect(snackbars).toHaveLength(4)
-    expect(container.textContent).toContain('Revoked Local compute · Shell')
+    expect(container.textContent).toContain('Revoked Local compute: Shell')
     expect(container.textContent).toContain('Revoked Python')
     expect(container.textContent).toContain('Revoked Shell')
     expect(container.textContent).toContain('Revoked Connector')

@@ -247,13 +247,7 @@ const NetworkPanel = ({
   return (
     <div className="space-y-6 p-5">
       {!isConfiguring ? (
-        <SettingsSection
-          title={t('Network status')}
-          description={t(
-            'Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.'
-          )}
-          aria-label={t('Network status')}
-        >
+        <SettingsSection title={t('Network status')} aria-label={t('Network status')}>
           <div className="rounded-xl border border-border px-4">
             <div className="flex flex-wrap items-center gap-3 py-4">
               <ul className="min-w-0 flex-1 basis-64 [&>li]:py-0" aria-live="polite">
@@ -303,9 +297,6 @@ const NetworkPanel = ({
       {!isConfiguring && notebookNetworkAvailable ? (
         <SettingsSection
           title={t('Notebook network access')}
-          description={t(
-            'Manage public domains and trusted private services for protected Notebook and Shell execution.'
-          )}
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
         >
@@ -341,9 +332,6 @@ const NetworkPanel = ({
       {!isConfiguring ? (
         <SettingsSection
           title={t('Proxy')}
-          description={t(
-            'How Open-Science, ACP agents, notebook runtimes, and installers reach the internet.'
-          )}
           aria-label={t('Proxy')}
           data-settings-anchor="network.proxy"
         >
@@ -377,9 +365,6 @@ const NetworkPanel = ({
 
       <SettingsSection
         title={t('Package mirror')}
-        description={t(
-          'Where the notebook environment fetches conda and Python packages from when installing or updating.'
-        )}
         aria-label={t('Package mirror')}
         data-settings-anchor="network.mirror"
       >

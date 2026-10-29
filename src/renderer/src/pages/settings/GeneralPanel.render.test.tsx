@@ -647,8 +647,5 @@ describe('GeneralPanel appearance scale', () => {
     )
     expect(trigger).toBeDefined()
     expect(trigger?.textContent).toContain('100%')
-    expect(container.textContent).toContain(
-      'Adjust the size of text and controls across the app. Changes apply immediately.'
-    )
   })
 })

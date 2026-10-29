@@ -2173,7 +2173,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <RuntimesPanel
                         title={t('Notebook runtimes')}
                         description={t(
-                          'Choose which Python and R environments notebooks and the Agent can use. App-managed environments are enabled by default.'
+                          'Python and R environments for notebooks and the Agent. App-managed environments are enabled by default.'
                         )}
                         onOpenNetworkProtection={
                           notebookNetworkAvailable
@@ -2200,7 +2200,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <AgentPanel
                         title={t('Agent framework')}
                         description={t(
-                          "Choose which coding-agent backend drives your sessions. Select a card to switch; switching starts a fresh agent session, and open conversations have their transcript replayed to the new backend. The active runtime can't be uninstalled — switch to the other one first."
+                          'Switching starts a fresh agent session and replays open conversation transcripts to the selected backend.'
                         )}
                       />
                     ) : isProviderFormOpen ? (

@@ -87,10 +87,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
         : t('Not installed')
   return (
     <div className="space-y-6 p-5">
-      <SettingsSection
-        title={t('Local parsing models')}
-        description={t('Manage optional local capabilities. Download their resources when needed.')}
-      >
+      <SettingsSection title={t('Local parsing models')}>
         {requestFailed || error ? (
           <div className="mb-4">
             <ErrorNotice
