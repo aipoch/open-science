@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
+import type { NotebookRunRecord, NotebookSessionRequest } from '../../src/shared/notebook'
 import { runWithCleanup, test } from '../fixtures/electron-app'
 import { createProjectViaUi } from '../fixtures/project'
 import { submitPromptViaUi } from '../fixtures/conversation'
@@ -18,6 +19,12 @@ type Scenario = {
   expectedRemotePath?: string
   injection?: string
 }
+
+const completedReplPing = (run: NotebookRunRecord): boolean =>
+  run.kernelKind === 'repl' &&
+  run.status === 'completed' &&
+  (run.text.stdout.split(/\r?\n/).some((line) => line.trim() === 'PING') ||
+    run.outputs.some((output) => output.type === 'display' && output.data['text/plain'] === 'PING'))
 
 const liveSettings = process.env.OPEN_SCIENCE_E2E_LIVE_SETTINGS
 const liveModel = process.env.OPEN_SCIENCE_E2E_LIVE_MODEL
@@ -67,6 +74,7 @@ test('initializes the configured real model for Slurm acceptance', async ({ app 
   const prepareProtection =
     process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_PREPARE_PROTECTION === '1'
   let protectionAttempted = false
+  let notebookScope: NotebookSessionRequest | undefined
   await runWithCleanup(
     async () => {
       if (prepareProtection) {
@@ -106,19 +114,23 @@ test('initializes the configured real model for Slurm acceptance', async ({ app 
         if (prepareProtection) {
           const session = await sessionFor(page, prompt)
           const runs = await app.readNotebookFixtureRuns(session.projectId, session.id)
+          const replRun = runs.find((run) => run.kernelKind === 'repl')
+          if (replRun) {
+            const workspaceCwd = replRun.cwdBefore
+            if (!workspaceCwd)
+              throw new Error('The REPL run has no workspace identity for cleanup.')
+            notebookScope = {
+              projectId: session.projectId,
+              sessionId: session.id,
+              workspaceCwd
+            }
+          }
           await writeFile(
             join(evidenceRoot, 'repl-readiness.json'),
             JSON.stringify(runs, null, 2),
             'utf8'
           )
-          expect(
-            runs.some(
-              (run) =>
-                run.kernelKind === 'repl' &&
-                run.status === 'completed' &&
-                run.text.stdout.includes('PING')
-            )
-          ).toBe(true)
+          expect(runs.some(completedReplPing)).toBe(true)
         }
       } finally {
         await testInfo.attach('main-log', {
@@ -128,10 +140,20 @@ test('initializes the configured real model for Slurm acceptance', async ({ app 
       }
     },
     async () => {
-      if (protectionAttempted)
-        expect(
-          await page.evaluate(() => window.api.settings.removeNotebookNetwork())
-        ).toMatchObject({ kind: 'setupRequired' })
+      await runWithCleanup(
+        async () => {
+          if (notebookScope)
+            expect(
+              await page.evaluate((scope) => window.api.notebook.shutdown(scope), notebookScope)
+            ).toMatchObject({ status: 'shutdown' })
+        },
+        async () => {
+          if (protectionAttempted)
+            expect(
+              await page.evaluate(() => window.api.settings.removeNotebookNetwork())
+            ).toMatchObject({ kind: 'setupRequired' })
+        }
+      )
     }
   )
 })
@@ -152,6 +174,7 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
       process.env.OPEN_SCIENCE_E2E_LIVE_PROFILE
     )
     let protectionAttempted = false
+    let notebookScope: NotebookSessionRequest | undefined
     await runWithCleanup(
       async () => {
         if (process.platform === 'win32') {
@@ -199,18 +222,23 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
           .toBe(true)
         const session = await sessionFor(page, initialization)
         const readinessRuns = await app.readNotebookFixtureRuns(session.projectId, session.id)
+        const replRun = readinessRuns.find((run) => run.kernelKind === 'repl')
+        if (replRun) {
+          const workspaceCwd = replRun.cwdBefore
+          if (!workspaceCwd) throw new Error('The REPL run has no workspace identity for cleanup.')
+          notebookScope = {
+            projectId: session.projectId,
+            sessionId: session.id,
+            workspaceCwd
+          }
+        }
         await writeFile(
           join(evidenceRoot, `${name}-repl-readiness.json`),
           JSON.stringify(readinessRuns, null, 2),
           'utf8'
         )
         expect(
-          readinessRuns.some(
-            (run) =>
-              run.kernelKind === 'repl' &&
-              run.status === 'completed' &&
-              run.text.stdout.includes('PING')
-          ),
+          readinessRuns.some(completedReplPing),
           'The real application REPL must execute before sampling remote-compute behavior.'
         ).toBe(true)
         const providerId = await page.evaluate(
@@ -342,13 +370,23 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
         }
       },
       async () => {
-        if (protectionAttempted) {
-          // The production removal owner verifies this isolated profile's receipt and reverts its
-          // own grants. Failure leaves the receipt/profile intact via the standard fixture audit.
-          expect(
-            await page.evaluate(() => window.api.settings.removeNotebookNetwork())
-          ).toMatchObject({ kind: 'setupRequired' })
-        }
+        await runWithCleanup(
+          async () => {
+            if (notebookScope)
+              expect(
+                await page.evaluate((scope) => window.api.notebook.shutdown(scope), notebookScope)
+              ).toMatchObject({ status: 'shutdown' })
+          },
+          async () => {
+            if (protectionAttempted) {
+              // Stop persistent kernels before removing this profile's protection. The production
+              // owner verifies its receipt and reverts its grants; the fixture audits leftovers.
+              expect(
+                await page.evaluate(() => window.api.settings.removeNotebookNetwork())
+              ).toMatchObject({ kind: 'setupRequired' })
+            }
+          }
+        )
       }
     )
   })
