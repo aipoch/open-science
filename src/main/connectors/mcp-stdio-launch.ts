@@ -33,6 +33,9 @@ export const prepareMcpStdioLaunch = (launch: McpStdioLaunch): McpStdioLaunch =>
   const bare = launchers.includes(command)
   // Only the current bundle's own explicit launchers need its Node on their child PATH.
   // Other installations and broken explicit paths retain their original launch behavior.
+  // desktopBackendPaths/startOrAttachDesktopBackend launch node-entry under ordinary Node;
+  // Electron only forwards Connector commands to that backend. The bundled CLI uses Node too.
+  // npm is staged beside this executable; a system Node installation has no app bundle here.
   const runtime = dirname(process.execPath)
   const explicit = !bare
     ? launchers.find((name) => {
@@ -57,8 +60,6 @@ export const prepareMcpStdioLaunch = (launch: McpStdioLaunch): McpStdioLaunch =>
     }
   }
 
-  // The desktop backend (and bundled CLI archive) runs under this ordinary Node executable.
-  // npm is staged beside it; an ordinary system Node installation has no app bundle here.
   const cli = join(
     runtime,
     'node_modules',
