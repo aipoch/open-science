@@ -1,9 +1,14 @@
 diff --git a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 --- a/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
 +++ b/node_modules/app-builder-lib/templates/nsis/include/installUtil.nsh
-@@ -209,34 +209,20 @@ Function uninstallOldVersion
+@@ -209,34 +209,24 @@ Function uninstallOldVersion
    StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\old-uninstaller.exe"
-   !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
+-  !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
++  !ifmacrodef customCopyUninstaller
++    !insertmacro customCopyUninstaller
++  !else
++    !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"
++  !endif
 
 -  # Retry counter
 -  StrCpy $R5 0
