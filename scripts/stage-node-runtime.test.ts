@@ -92,23 +92,27 @@ it('rejects a corrupted cache rather than executing or silently replacing it', a
   const sha = createHash('sha256').update('tampered').digest('hex')
   await expect(verifyNodeArchive(archive, sha)).resolves.toBeUndefined()
 })
-it('extracts Unix Node and trimmed npm while retaining runtime data and licenses', async () => {
-  const directory = await temporary()
-  const name = `node-v${nodeRuntime.version}-darwin-arm64`
-  await mkdir(join(directory, name, 'bin'), { recursive: true })
-  await writeFile(join(directory, name, 'bin/node'), 'node-fixture')
-  await writeFile(join(directory, name, 'bin/npm'), 'not-shipped')
-  await writeFile(join(directory, name, 'LICENSE'), 'license')
-  await writeNpmFixture(join(directory, name))
-  const archive = join(directory, 'node.tar.gz')
-  await createTar({ cwd: directory, file: archive, gzip: true }, [name])
-  const output = join(directory, 'output')
-  await extractNodeRuntime(archive, output, 'darwin', 'arm64')
-  expect(await readFile(join(output, 'node'), 'utf8')).toBe('node-fixture')
-  await assertNpmFixture(output)
-  expect(await readFile(join(output, 'LICENSE'), 'utf8')).toBe('license')
-  await expect(readFile(join(output, 'bin/npm'))).rejects.toMatchObject({ code: 'ENOENT' })
-})
+// Unix launchers require file symlinks, which ordinary Windows accounts cannot create.
+it.skipIf(process.platform === 'win32')(
+  'extracts Unix Node and trimmed npm while retaining runtime data and licenses',
+  async () => {
+    const directory = await temporary()
+    const name = `node-v${nodeRuntime.version}-darwin-arm64`
+    await mkdir(join(directory, name, 'bin'), { recursive: true })
+    await writeFile(join(directory, name, 'bin/node'), 'node-fixture')
+    await writeFile(join(directory, name, 'bin/npm'), 'not-shipped')
+    await writeFile(join(directory, name, 'LICENSE'), 'license')
+    await writeNpmFixture(join(directory, name))
+    const archive = join(directory, 'node.tar.gz')
+    await createTar({ cwd: directory, file: archive, gzip: true }, [name])
+    const output = join(directory, 'output')
+    await extractNodeRuntime(archive, output, 'darwin', 'arm64')
+    expect(await readFile(join(output, 'node'), 'utf8')).toBe('node-fixture')
+    await assertNpmFixture(output)
+    expect(await readFile(join(output, 'LICENSE'), 'utf8')).toBe('license')
+    await expect(readFile(join(output, 'bin/npm'))).rejects.toMatchObject({ code: 'ENOENT' })
+  }
+)
 it('extracts the Windows executable and license and rejects incomplete archives', async () => {
   const directory = await temporary()
   const name = `node-v${nodeRuntime.version}-win-x64`
@@ -138,9 +142,11 @@ it('rejects unsupported targets before downloading', async () => {
   )
 })
 
-it.each(['darwin', 'win32'])(
+it.for(['darwin', 'win32'])(
   'reuses verified %s output and repairs stale or corrupt staging',
-  async (platform) => {
+  async (platform, { skip }) => {
+    if (platform === 'darwin' && process.platform === 'win32')
+      skip('Unix runtime launchers require file symlink privileges on Windows.')
     const directory = await temporary()
     const arch = 'x64'
     const key = `${platform}-${arch}`

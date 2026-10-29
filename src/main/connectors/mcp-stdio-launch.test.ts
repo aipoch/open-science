@@ -56,6 +56,69 @@ it.each(['npm', 'npx'])('preserves the installed %s and environment', async (com
   })
 })
 
+const bundledLaunchers = [
+  'npm',
+  'npx',
+  ...(process.platform === 'win32' ? ['npm.cmd', 'npx.cmd'] : [])
+]
+it.each(bundledLaunchers)(
+  'keeps explicit bundled %s and supplies Node to its children',
+  async (name) => {
+    const command = join(dirname(node), name)
+    await writeFile(command, 'bundled launcher')
+    await chmod(command, 0o755)
+    const env = { PATH: bin, npm_config_cache: join(root, 'cache') }
+    const result = launch(command, env)
+    expect(result).toEqual({
+      command,
+      args: ['--yes', 'package name', 'a&b', '$(literal)'],
+      env: { ...env, PATH: [dirname(node), bin].join(delimiter) }
+    })
+    expect(env.PATH).toBe(bin)
+  }
+)
+
+it.each(['launcher', 'receipt', 'cli'] as const)(
+  'does not repair an explicit bundled path with a missing %s',
+  async (missing) => {
+    const command = join(dirname(node), process.platform === 'win32' ? 'npx.cmd' : 'npx')
+    await writeFile(command, 'bundled launcher')
+    await chmod(command, 0o755)
+    const paths = {
+      launcher: command,
+      receipt: join(dirname(node), 'version.json'),
+      cli: join(dirname(node), 'node_modules/npm/bin/npx-cli.js')
+    }
+    await rm(paths[missing])
+    expect(launch(command)).toEqual({
+      command,
+      args: ['--yes', 'package name', 'a&b', '$(literal)'],
+      env: { PATH: bin }
+    })
+  }
+)
+
+it('preserves other explicit npm installations and their PATH', async () => {
+  const command = join(bin, process.platform === 'win32' ? 'npx.cmd' : 'npx')
+  await writeFile(command, 'user launcher')
+  expect(launch(command)).toEqual({
+    command,
+    args: ['--yes', 'package name', 'a&b', '$(literal)'],
+    env: { PATH: bin }
+  })
+})
+
+it.runIf(process.platform === 'win32')(
+  'recognizes explicit bundled paths regardless of casing',
+  async () => {
+    const command = join(dirname(node), 'npx.cmd')
+    await writeFile(command, 'bundled launcher')
+    const result = launch(command.toUpperCase().replaceAll('\\', '/'))
+    expect(result.command).toBe(command.toUpperCase().replaceAll('\\', '/'))
+    expect(result.env.PATH.split(delimiter)).toEqual([dirname(node), bin])
+  }
+)
+
 it('never replaces explicit paths or unrelated commands', () => {
   for (const command of [join(root, 'missing', 'npx'), './npx', '../npm', 'uvx', 'node'])
     expect(launch(command).command).toBe(command)
