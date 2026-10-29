@@ -3,7 +3,6 @@ import type { ChatSession } from '@/stores/session-store-contract'
 
 export type SideChatAction = 'open' | 'transfer' | 'send'
 export type SideChatBlock =
-  | 'framework-unsupported'
   | 'parent-unavailable'
   | 'parent-pending'
   | 'parent-read-only'
@@ -41,7 +40,6 @@ export function sideChatBlock(input: {
     return 'parent-unavailable'
   if (parent.isPending) return 'parent-pending'
   if (parent.packageOrigin) return 'parent-read-only'
-  if (parent.agentFrameworkId === 'pi') return 'framework-unsupported'
   if (!parent.messages.some((message) => message.role === 'user' && !message.relayedFrom))
     return 'history-unavailable'
   if (action === 'open') return undefined
@@ -63,8 +61,6 @@ export function sideChatBlockMessage(
   hydrationError?: string
 ): string | undefined {
   switch (block) {
-    case 'framework-unsupported':
-      return t('Side chat is not available with Pi yet.')
     case 'parent-unavailable':
       return t('The parent Session is unavailable.')
     case 'parent-pending':

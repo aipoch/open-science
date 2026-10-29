@@ -209,6 +209,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       const currentAttachment = entry?.attachment
       const scope = base.sessionInteractions.current(appSessionId)
       const capability = base.sessionCapabilities.piPermissionCapabilitiesFor(appSessionId)
+      // Side chat turns are not Main messages and carry no prompt message id; their interaction
+      // sequence identifies the turn instead.
+      const promptMessageId =
+        scope?.kind !== 'prompt'
+          ? undefined
+          : (scope.promptMessageId ??
+            (capability?.role === 'side-chat' ? `side-chat-turn-${scope.sequence}` : undefined))
       if (
         !entry ||
         !currentAttachment ||
@@ -216,14 +223,14 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         currentAttachment.generation !== generation ||
         String(entry.aggregate.snapshot().frameworkId) !== 'pi' ||
         scope?.kind !== 'prompt' ||
-        !scope.promptMessageId ||
+        !promptMessageId ||
         !capability
       )
         return undefined
       return {
         appSessionId,
         providerSessionId,
-        promptMessageId: scope.promptMessageId,
+        promptMessageId,
         interactionSequence: scope.sequence,
         capabilityRevision: capability.revision,
         mcpServerNames: capability.mcpServerNames,

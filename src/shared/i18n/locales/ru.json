@@ -945,7 +945,6 @@
     "Attachment": "Вложение",
     "Attachments": "Вложения",
     "Attachments are unavailable in Side chat": "Вложения недоступны в боковом чате",
-    "Side chat is not available with Pi yet.": "Боковой чат пока недоступен с Pi.",
     "Authentication": "Аутентификация",
     "Authentication failed. Check the API key.": "Ошибка аутентификации. Проверьте API-ключ.",
     "Authentication imported into Open-Science": "Учётные данные аутентификации импортированы в Open-Science",

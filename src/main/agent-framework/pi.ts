@@ -208,35 +208,47 @@ const spawnPi = (input: AgentSpawnInput, host: PiFrameworkHost): ChildProcessWit
   )
 }
 
-// A delegated Attempt gets its own Pi home, agent directory, and session store under the Attempt
-// runtime home. It reuses the generation's model catalog; the bridge key still arrives over ACP.
-const preparePiDelegatedSpawn = async (
+// Delegated Attempts and restricted runtimes get their own Pi home, agent directory, and session
+// store under an app-owned root, so they never share Main's native sessions. They reuse the
+// generation's model catalog; the bridge key still arrives over ACP.
+export const isolatePiProfile = async (
   backend: ResolvedAgentBackend,
-  runtimeHome: string
-): Promise<AgentSpawnInput> => {
+  root: string
+): Promise<Pick<ResolvedAgentBackend, 'args' | 'env'>> => {
   const args = backend.args ?? []
   const sourceAgent = args[1]
-  if (args[0] !== '--agent-dir' || !sourceAgent || !isAbsolute(runtimeHome)) {
-    throw new Error('Pi delegated launch configuration is invalid.')
+  if (args[0] !== '--agent-dir' || !sourceAgent || !isAbsolute(root)) {
+    throw new Error('Pi isolated launch configuration is invalid.')
   }
-  const profile = join(runtimeHome, 'pi')
+  const profile = join(root, 'pi')
   const home = join(profile, 'home')
   const agent = join(profile, 'agent')
   const sessions = join(profile, 'sessions')
   await mkdir(agent, { recursive: true, mode: 0o700 })
   await copyFile(join(sourceAgent, 'models.json'), join(agent, 'models.json'))
-  const delegatedArgs = [...args]
-  delegatedArgs[1] = agent
-  delegatedArgs[3] = sessions
+  const isolatedArgs = [...args]
+  isolatedArgs[1] = agent
+  isolatedArgs[3] = sessions
   return {
-    executablePath: backend.executablePath,
-    args: delegatedArgs,
+    args: isolatedArgs,
     env: {
       ...backend.env,
       HOME: home,
       PI_CODING_AGENT_DIR: agent,
       PI_ACP_SESSION_DIR: sessions
-    },
+    }
+  }
+}
+
+const preparePiDelegatedSpawn = async (
+  backend: ResolvedAgentBackend,
+  runtimeHome: string
+): Promise<AgentSpawnInput> => {
+  const { args, env } = await isolatePiProfile(backend, runtimeHome)
+  return {
+    executablePath: backend.executablePath,
+    args: args ?? [],
+    env,
     proxyEnvironmentMode: backend.proxyEnvironmentMode
   }
 }

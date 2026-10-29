@@ -24,15 +24,6 @@ const parent: ChatSession = {
 }
 
 describe('independent Side chat admission', () => {
-  it.each(['open', 'transfer', 'send'] as const)(
-    'gates unsupported Pi Side chat before %s',
-    (action) => {
-      expect(sideChatBlock({ action, parent: { ...parent, agentFrameworkId: 'pi' } })).toBe(
-        'framework-unsupported'
-      )
-    }
-  )
-
   it.each([
     'idle',
     'running',

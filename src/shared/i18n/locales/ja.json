@@ -907,7 +907,6 @@
     "Attachment": "アタッチメント",
     "Attachments": "添付ファイル",
     "Attachments are unavailable in Side chat": "サイドチャットでは添付ファイルを使用できません",
-    "Side chat is not available with Pi yet.": "Pi ではサイドチャットをまだ使用できません。",
     "Authentication": "認証",
     "Authentication failed. Check the API key.": "認証に失敗しました。API キーを確認してください。",
     "Authentication imported into Open-Science": "Open-Science にインポートされた認証",

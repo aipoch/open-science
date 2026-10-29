@@ -43,7 +43,10 @@ import {
   createPlanMcpServerConfig,
   type PlanMcpEnvironment
 } from '../session-plan/plan-mcp-server'
-import { HOST_MESSAGE_MCP_SERVER_NAME } from '../side-chat/host-message-mcp-server'
+import {
+  HOST_MESSAGE_MCP_SERVER_NAME,
+  HOST_SEND_MESSAGE_TOOL_NAME
+} from '../side-chat/host-message-mcp-server'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import {
   captureShellRuntimeBinding,
@@ -1269,14 +1272,19 @@ export class AcpSessionCapabilityOwner {
   // alongside the Main owner of the corresponding capability and its real permission checks.
   piPermissionCapabilitiesFor(appSessionId: string):
     | Readonly<{
+        role: 'primary' | 'side-chat'
         revision: object
         mcpServerNames: readonly string[]
         allowedToolIdentities: ReadonlySet<string>
       }>
     | undefined {
     const descriptor = this.descriptors.get(appSessionId)
-    if (!descriptor || descriptor.role !== 'primary') return undefined
+    if (!descriptor || (descriptor.role !== 'primary' && descriptor.role !== 'side-chat'))
+      return undefined
     const allowed = new Set<string>()
+    // The side-chat policy admits only host-message, so a Side chat binds only its relay tool.
+    if (descriptor.capabilities.includes('host-message'))
+      allowed.add(`${HOST_MESSAGE_MCP_SERVER_NAME}/${HOST_SEND_MESSAGE_TOOL_NAME}`)
     const ownedServers = new Set<string>()
     if (descriptor.capabilities.includes('notebook')) {
       for (const tool of NOTEBOOK_RPC_TOOLS) allowed.add(`${NOTEBOOK_MCP_SERVER_NAME}/${tool.name}`)
@@ -1297,6 +1305,7 @@ export class AcpSessionCapabilityOwner {
       allowed.add(`${SKILL_RUNTIME_MCP_SERVER_NAME}/${LOAD_SKILL_TOOL_NAME}`)
     }
     return {
+      role: descriptor.role,
       revision: descriptor,
       mcpServerNames: descriptor.canonicalMcpServerNames,
       allowedToolIdentities: allowed

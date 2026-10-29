@@ -933,7 +933,6 @@
     "Attachment": "Pièce jointe",
     "Attachments": "Pièces jointes",
     "Attachments are unavailable in Side chat": "Les pièces jointes ne sont pas disponibles dans le chat secondaire",
-    "Side chat is not available with Pi yet.": "Le chat secondaire n’est pas encore disponible avec Pi.",
     "Authentication": "Authentification",
     "Authentication failed. Check the API key.": "L'authentification a échoué. Vérifiez la clé API.",
     "Authentication imported into Open-Science": "Authentification importée dans Open-Science",

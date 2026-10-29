@@ -3,6 +3,7 @@ import { join } from 'node:path'
 
 import type { ResolvedAgentBackend } from '../agent-framework'
 import { isolateCodeBuddyEnvironment } from '../agent-framework/codebuddy'
+import { isolatePiProfile } from '../agent-framework/pi'
 import { CODEX_SUBSCRIPTION_PROVIDER_ID } from '../../shared/settings'
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
@@ -214,6 +215,21 @@ const prepareCodeBuddyBackend = async (
   }
 }
 
+// The app-owned Pi adapter already disables native tools, extensions, and Skills; app MCP tools
+// still pass the permission guard and the session capability policy. Keep Main's native sessions
+// and Skill runtime out of this profile.
+const preparePiBackend = async (
+  backend: ResolvedAgentBackend,
+  profileRoot: string,
+  profile: RestrictedRuntimeProfile
+): Promise<ResolvedAgentBackend> => ({
+  ...backend,
+  ...(await isolatePiProfile(backend, profileRoot)),
+  sessionOptions: removeSkillRuntimeCapability(backend.sessionOptions),
+  systemPromptAppends: [profile.systemPrompt],
+  persistentSystemPrompt: undefined
+})
+
 const prepareRestrictedBackend = (
   backend: ResolvedAgentBackend,
   profileRoot: string,
@@ -226,9 +242,7 @@ const prepareRestrictedBackend = (
   if (backend.framework.id === 'codebuddy') {
     return prepareCodeBuddyBackend(backend, profileRoot, profile)
   }
-  if (backend.framework.id === 'pi') {
-    return Promise.reject(new Error('Restricted inference is not yet available for Pi.'))
-  }
+  if (backend.framework.id === 'pi') return preparePiBackend(backend, profileRoot, profile)
   return prepareClaudeBackend(backend, profileRoot, profile)
 }
 

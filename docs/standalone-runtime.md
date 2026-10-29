@@ -506,9 +506,23 @@ ESLint/Prettier, module-consumer validation, the Electron build and macOS packag
 integration test cases were added; existing interface inventories and live Pi harness installation
 setup were updated. Windows/Linux runtime execution and the full test suite were not run.
 
-This change does not close the separately reported fork/missing-history recovery, post-restart tool
-discovery, Side chat, Plan-review timeout, numeric Calls telemetry, malformed ask-user argument or
-intermittent streaming-table findings. Those remain follow-up work.
+This installation change alone did not close the separately reported interaction and recovery
+findings; later PR revisions address them individually.
+
+### Side chat with Pi
+
+Side chat uses the restricted Pi profile. Each Side chat gets its own Pi home, agent directory and
+session store under its per-chat profile, copies only the generation's model catalog, and never
+shares Main's native session. The Skill runtime server and Main-specific prompt appends are
+removed; the Side chat system prompt and host-message-only capability policy are unchanged. Pi's
+permission correlation admits exactly `open-science-host-message/send_message` for a Side chat
+and identifies each Side chat turn by its interaction sequence, because Side chat prompts are not
+Main messages. Restricted inference and Artifact code reconstruction reuse the same tool-less
+profile.
+
+No settings, database rows, enum values or permission scopes are added. Side chat Pi session files
+live under the existing temporary Side chat profile and are removed with it; restart discards Side
+chats as before.
 
 ## Historical compatibility requiring review
 
