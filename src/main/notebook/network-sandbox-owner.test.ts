@@ -209,18 +209,27 @@ afterEach(async () => {
 describe('NotebookNetworkSandboxOwner', () => {
   it.skipIf(!rTemporaryTestParent).each([
     { platform: 'win32' as const, runtime: 'r' as const, wsl: false, fallback: true },
+    {
+      platform: 'win32' as const,
+      runtime: 'r' as const,
+      wsl: false,
+      fallback: true,
+      temporaryParent: 'Temp With Spaces'
+    },
     { platform: 'win32' as const, runtime: 'python' as const, wsl: false, fallback: false },
     { platform: 'linux' as const, runtime: 'r' as const, wsl: false, fallback: false },
     { platform: 'win32' as const, runtime: 'r' as const, wsl: true, fallback: false }
-  ])('selects and cleans R temporary storage for $platform/$runtime/wsl=$wsl', async (testCase) => {
+  ])('selects and cleans R temporary storage for %j', async (testCase) => {
     await mkdir(rTemporaryTestParent!, { recursive: true })
     const root = await mkdtemp(join(rTemporaryTestParent!, 'os-r-temp-policy-'))
     fixtureDirectories.push(root)
     const configured = join(root, 'Test User', 'commands')
+    const temporaryParent = join(root, testCase.temporaryParent ?? '')
+    await mkdir(temporaryParent, { recursive: true })
     const unavailable = join(root, 'not-a-directory')
     await writeFile(unavailable, 'preserve')
     vi.stubEnv('TMPDIR', unavailable)
-    vi.stubEnv('TMP', root)
+    vi.stubEnv('TMP', temporaryParent)
     vi.stubEnv('TEMP', join(root, 'Other User'))
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: root,
@@ -255,7 +264,10 @@ describe('NotebookNetworkSandboxOwner', () => {
       expect(directory).toMatch(new RegExp('command-[0-9a-f-]+$'))
       expect(
         directory.startsWith(
-          join(testCase.fallback ? join(root, 'open-science-notebook') : configured, 'command-')
+          join(
+            testCase.fallback ? join(temporaryParent, 'open-science-notebook') : configured,
+            'command-'
+          )
         )
       ).toBe(true)
       expect(command.env.TMP).toBe(directory)
@@ -264,7 +276,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       const failure = "Fatal error: 'R_TempDir' contains space"
       expect(wrapped.annotateStderr(failure)).toBe(
         testCase.fallback
-          ? `${failure}\nR requires a writable temporary directory without spaces. Set TMPDIR, TMP, or TEMP to such a directory and restart Open-Science.`
+          ? `${failure}\nR could not use the selected temporary directory. Set TMPDIR to a writable directory without spaces and restart Open-Science.`
           : failure
       )
       backend.cleanup.mockResolvedValueOnce({
@@ -296,14 +308,47 @@ describe('NotebookNetworkSandboxOwner', () => {
         !process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX ||
         !rTemporaryTestParent
     )
-    .each(['plain', 'Test User'])(
-    'verifies real R when the managed command temporary root is under %s',
-    async (parentName) => {
+    .for([
+      { managedParent: 'plain', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: false },
+      { managedParent: 'Test User', spacedHostTemp: true }
+    ])(
+    'verifies real R under $managedParent with spaced host temp=$spacedHostTemp',
+    async ({ managedParent, spacedHostTemp }, context) => {
       const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX!
       await mkdir(rTemporaryTestParent!, { recursive: true })
       const root = await mkdtemp(join(rTemporaryTestParent!, 'r-temp-spaces-'))
       fixtureDirectories.push(root)
-      vi.stubEnv('TMPDIR', root)
+      let temporaryParent = root
+      if (spacedHostTemp) {
+        // The system volume may provide short names even when the app-data volume does not.
+        temporaryParent = await mkdtemp(join(tmpdir(), 'R Temp With Spaces '))
+        fixtureDirectories.push(temporaryParent)
+        try {
+          const { stdout } = await promisify(execFile)(
+            join(prefix, 'Lib', 'R', 'bin', 'Rscript.exe'),
+            ['--vanilla', '-e', 'cat(1 + 1)'],
+            {
+              env: {
+                ...process.env,
+                PATH: `${join(prefix, 'Library', 'bin')};${process.env.PATH ?? ''}`,
+                TMPDIR: temporaryParent,
+                TMP: temporaryParent,
+                TEMP: temporaryParent
+              },
+              windowsHide: true,
+              timeout: 15_000
+            }
+          )
+          expect(stdout.trim()).toBe('2')
+        } catch (error) {
+          if ((error as { stderr?: string }).stderr?.includes("'R_TempDir' contains space")) {
+            context.skip('The host filesystem does not provide an R-compatible spaced temp path')
+          }
+          throw error
+        }
+      }
+      for (const key of ['TMPDIR', 'TMP', 'TEMP']) vi.stubEnv(key, temporaryParent)
       backend.getWindowsRuntimeAccess.mockResolvedValue({ authorized: false, registered: false })
       // Keep the real owner, environment and R process. Only native containment is replaced;
       // no administrator setup or persistent runtime authorization is needed for this path test.
@@ -323,7 +368,7 @@ describe('NotebookNetworkSandboxOwner', () => {
       )
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: root,
-        temporaryRoot: join(root, parentName, 'notebook-command-temp'),
+        temporaryRoot: join(root, managedParent, 'notebook-command-temp'),
         platform: 'win32',
         getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
         persistAlwaysAllow: vi.fn(),
@@ -384,11 +429,13 @@ describe('NotebookNetworkSandboxOwner', () => {
           sessionId: 'r-temp-guidance'
         })
       ).rejects.toMatchObject({
-        message: expect.stringContaining('Set TMPDIR, TMP, or TEMP'),
+        message: expect.stringContaining('Set TMPDIR to a writable directory without spaces'),
         cause: expect.objectContaining({ code: 2, stderr })
       })
       const commandRoot = backend.wrap.mock.calls[0]![0].env.TMPDIR as string
-      expect(commandRoot.startsWith(join(configured, 'command-'))).toBe(true)
+      expect(commandRoot.startsWith(join(configured, 'open-science-notebook', 'command-'))).toBe(
+        true
+      )
       expect(existsSync(commandRoot)).toBe(false)
       expect(existsSync(`${commandRoot}.receipt`)).toBe(false)
       expect(backend.setWindowsRuntimeAccess).not.toHaveBeenCalled()

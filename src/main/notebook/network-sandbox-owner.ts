@@ -110,7 +110,7 @@ const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
 
 const annotateRTemporaryDirectoryError = (text: string): string =>
   text.includes("Fatal error: 'R_TempDir' contains space")
-    ? `${text}\nR requires a writable temporary directory without spaces. Set TMPDIR, TMP, or TEMP to such a directory and restart Open-Science.`
+    ? `${text}\nR could not use the selected temporary directory. Set TMPDIR to a writable directory without spaces and restart Open-Science.`
     : text
 
 // A required runtime root can fail before the contained probe starts when Windows refuses the
@@ -1799,10 +1799,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       runtime === 'r' &&
       /\s/u.test(ownerRoot)
     ) {
-      // R rejects whitespace when Windows cannot supply a short path. Honor an existing
-      // host temp-directory workaround without exposing its shared parent to the child.
+      // Follow R's host temp-directory order without exposing the shared parent to the child.
+      // Leave whitespace handling to R: it can use Windows short names during startup.
       for (const parent of new Set([process.env.TMPDIR, process.env.TMP, process.env.TEMP])) {
-        if (!parent || !isAbsolute(parent) || /\s/u.test(parent)) continue
+        if (!parent || !isAbsolute(parent)) continue
         try {
           if (!(await stat(parent)).isDirectory()) continue
           return await this.createCommandTemporaryRootAt(
