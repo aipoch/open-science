@@ -175,8 +175,8 @@ const bindRuntimeToolSchema = {
 }
 
 const userChoiceOptionSchema = z.object({
-  label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS),
-  description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).optional()
+  label: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).regex(/\S/),
+  description: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS).regex(/\S/).optional()
 })
 
 const userChoiceQuestionSchema = z.object({
@@ -185,8 +185,9 @@ const userChoiceQuestionSchema = z.object({
     .trim()
     .min(1)
     .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .regex(/\S/)
     .describe('NEVER mention selection mode/count in any language ("可多选"); UI labels kind.'),
-  header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
+  header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).regex(/\S/).optional(),
   kind: z
     .enum(['single-select', 'multi-select'])
     .default('single-select')

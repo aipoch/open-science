@@ -38,6 +38,7 @@ import {
 import type { AppGeneratedArtifactProducer } from '../../shared/artifact-provenance'
 import type { ArtifactFile } from '../../shared/artifacts'
 import {
+  AGENT_USER_CHOICE_REQUEST_CONTRACT,
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
   type AgentUserChoiceResult,
@@ -2253,7 +2254,10 @@ class AcpRuntime {
 
   async requestUserInput(input: AgentUserChoiceRequest): Promise<AgentUserChoiceResult> {
     const request = sanitizeAgentUserChoiceRequest(input)
-    if (!request) throw new Error('Invalid user choice request.')
+    if (!request)
+      throw new Error(
+        `Invalid user choice request: expected ${AGENT_USER_CHOICE_REQUEST_CONTRACT}.`
+      )
     if (!this.activeSessionFor(request.sessionId)) return { action: 'cancelled' }
     if (this.getPermissionPrompts(request.sessionId) === 'none') return { action: 'cancelled' }
 
