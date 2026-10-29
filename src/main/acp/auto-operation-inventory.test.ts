@@ -154,10 +154,10 @@ describe('Auto operation completeness against real tool registrations', () => {
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
-        // Reviewed: authorized-folder import guidance only; strict inputs and the
-        // allow-once disposition remain unchanged. Source access is checked by the artifact owner.
+        // Reviewed: 401 publication errors now explain recovery without dropping provenance.
+        // Strict inputs, allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
-          '0150b09ce68441eefcfafd751f6c52039e068a62d5d55e0bc0beca8343a61cc2',
+          'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
         // Reviewed: desktop regions come only from the message snapshot; strict tool inputs
