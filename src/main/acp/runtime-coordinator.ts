@@ -5,6 +5,7 @@ import {
 } from '../lifecycle-settlement'
 import type { ActiveSession } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
   AcpCancelPromptRequest,
@@ -51,6 +52,8 @@ import {
 import type { AcpRuntimeActivity, AcpRuntimeActivityOptions } from './runtime-activity'
 import type { AcpRuntimeCallbacks } from './runtime-contract'
 import { projectPermissionRequest } from './runtime-publication-owner'
+
+const log = createLogger('acp')
 
 const QUIT_PREPARATION_TIMEOUT_MS = 4_000
 const SETTLEMENT_GRACE_MS = 3_000
@@ -655,7 +658,10 @@ class AcpRuntimeCoordinator {
           ? capabilityCleanup.then(() => this.retireUnusedTargetedRuntime(runtime))
           : this.retireUnusedTargetedRuntime(runtime)
       ).catch((cleanupError) => {
-        console.warn('Agent runtime cleanup after creation failure failed', cleanupError)
+        log.warn(
+          'Agent runtime cleanup after creation failure failed',
+          diagnosticErrorFields(cleanupError)
+        )
       })
       retainSessionCreationCleanup(error, cleanup)
       throw error
