@@ -162,6 +162,12 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
   const isCancelling = latestJob.cancellation_status === 'cancelling'
   const isStatusUnavailable =
     latestJob.status === 'error' && latestJob.error_code === 'job_status_unavailable'
+  const hasCancellationFailure =
+    latestJob.cancellation_status === 'failed' && (isActive || isStatusUnavailable)
+  const cancellationFailureTitle =
+    latestJob.cancellation_error?.code === 'cancel_confirmation_failed'
+      ? t('Unable to confirm cancellation')
+      : t('Cancellation failed')
   const cancelJob = useCallback(async (): Promise<void> => {
     if (!latestJob.project_id) return
     setIsCancellingRequest(true)
@@ -413,26 +419,38 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
         </div>
       ) : null}
 
-      {latestJob.cancellation_status === 'failed' && (isActive || isStatusUnavailable) ? (
+      {isStatusUnavailable || hasCancellationFailure ? (
         <div
           role="alert"
           className="flex justify-center border-b border-border p-5"
-          data-testid="job-cancellation-failed"
+          data-testid={isStatusUnavailable ? 'job-status-unavailable' : 'job-cancellation-failed'}
         >
           <ErrorNotice
             icon={TriangleAlert}
-            tone="amber"
-            title={
-              latestJob.cancellation_error?.code === 'cancel_confirmation_failed'
-                ? t('Unable to confirm cancellation')
-                : t('Cancellation failed')
-            }
+            tone={isStatusUnavailable ? 'red' : 'amber'}
+            title={isStatusUnavailable ? t('Unable to get job status') : cancellationFailureTitle}
             description={
-              isActive
-                ? t('The cancellation attempt ended. The job is still being tracked.')
-                : undefined
+              isStatusUnavailable
+                ? t(
+                    'The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.'
+                  )
+                : t('The cancellation attempt ended. The job is still being tracked.')
             }
-            errorCode={latestJob.cancellation_error?.message}
+            content={
+              isStatusUnavailable && hasCancellationFailure ? (
+                <p>{cancellationFailureTitle}</p>
+              ) : undefined
+            }
+            errorCode={
+              isStatusUnavailable
+                ? [
+                    latestJob.error_message,
+                    hasCancellationFailure ? latestJob.cancellation_error?.message : undefined
+                  ]
+                    .filter(Boolean)
+                    .join('\n\n') || undefined
+                : latestJob.cancellation_error?.message
+            }
             diagnosticsLabel={t('Diagnostics')}
             primaryButton={
               isActive
@@ -443,25 +461,6 @@ function JobDetailView({ job, onBack, onOpenFileBrowser }: JobDetailViewProps): 
                   }
                 : undefined
             }
-          />
-        </div>
-      ) : null}
-
-      {isStatusUnavailable ? (
-        <div
-          role="alert"
-          className="flex justify-center border-b border-border p-5"
-          data-testid="job-status-unavailable"
-        >
-          <ErrorNotice
-            icon={TriangleAlert}
-            tone="red"
-            title={t('Unable to get job status')}
-            description={t(
-              'The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.'
-            )}
-            errorCode={latestJob.error_message}
-            diagnosticsLabel={t('Diagnostics')}
           />
         </div>
       ) : null}

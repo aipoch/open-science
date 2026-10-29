@@ -207,6 +207,9 @@ describe('JobDetailModal — detail view', () => {
     )
     expect(container.querySelector('[data-testid="job-status-badge"]')?.textContent).toBe('Running')
     expect(container.textContent).toContain('Cancellation failed')
+    expect(container.querySelectorAll('[data-notice-level]')).toHaveLength(1)
+    expect(container.querySelectorAll('details')).toHaveLength(1)
+    expect(container.querySelector('details')?.textContent).toContain('Scheduler permission denied')
     expect(
       (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
     ).toBe(false)
@@ -242,6 +245,38 @@ describe('JobDetailModal — detail view', () => {
     expect(container.textContent).not.toContain('Open-Science will check again')
     expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
   })
+
+  it.each([
+    { code: 'cancel_request_rejected', label: 'Cancellation failed' },
+    { code: 'cancel_confirmation_failed', label: 'Unable to confirm cancellation' }
+  ] as const)(
+    'combines unavailable status and $code in one notice with both diagnostics',
+    async ({ code, label }) => {
+      const { JobDetailModal } = await import('./JobDetailModal')
+      const job = makeJob({
+        status: 'error',
+        error_code: 'job_status_unavailable',
+        error_message: 'No scheduler result is available for job 1042.',
+        cancellation_status: 'failed',
+        cancellation_error: { code, message: 'Cancellation attempt could not be confirmed.' }
+      })
+      act(() =>
+        root.render(<JobDetailModal open sessionId="sess-1" initialJob={job} onClose={vi.fn()} />)
+      )
+      const notices = container.querySelectorAll('[data-notice-level]')
+      expect(notices).toHaveLength(1)
+      expect(notices[0].querySelector('h2')?.textContent).toBe('Unable to get job status')
+      expect(notices[0].textContent).toContain(label)
+      expect(notices[0].textContent).toContain('remote process may still be running')
+      const diagnostics = notices[0].querySelectorAll('details')
+      expect(diagnostics).toHaveLength(1)
+      expect(diagnostics[0].querySelector('summary')?.textContent).toBe('Diagnostics')
+      expect(diagnostics[0].textContent).toContain(job.error_message)
+      expect(diagnostics[0].textContent).toContain(job.cancellation_error?.message)
+      expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
+      expect(container.querySelector('[data-testid="job-cancel"]')).toBeNull()
+    }
+  )
 
   it('projects an external scheduler cancellation consistently in detail, list, and row', async () => {
     const { JobDetailModal } = await import('./JobDetailModal')

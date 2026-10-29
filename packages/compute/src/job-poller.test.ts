@@ -459,6 +459,209 @@ describe('JobPoller', () => {
     expect(harvestFn).not.toHaveBeenCalled()
   })
 
+  it.each(['controller', 'accounting', 'tail'] as const)(
+    'persists known Slurm states while a sibling %s query is still pending',
+    async (slowSource) => {
+      const jobs = ['1', '2'].map((id) =>
+        makeJob({
+          job_id: `job-${id}`,
+          status: 'submitted',
+          execution_mode: 'slurm',
+          remote_workdir: `~/.openscience/jobs/job-${id}`,
+          remote_handle: JSON.stringify({
+            driver: 'slurm',
+            version: 1,
+            scheduler_job_id: id,
+            workdir: `~/.openscience/jobs/job-${id}`,
+            stdout_path: `~/.openscience/jobs/job-${id}/stdout`,
+            stderr_path: `~/.openscience/jobs/job-${id}/stderr`
+          })
+        })
+      )
+      const updateIfStatus = vi.fn(
+        async (id: string, _statuses: unknown, updates: Record<string, unknown>) =>
+          ({
+            ...jobs.find((job) => job.job_id === id)!,
+            status: updates.status ?? 'submitted'
+          }) as ComputeJob
+      )
+      let release!: () => void
+      let started!: () => void
+      const pending = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const slowStarted = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => {
+          const isSlow =
+            slowSource === 'controller'
+              ? command.includes('scontrol ')
+              : slowSource === 'accounting'
+                ? command.startsWith('sacct ')
+                : command.includes('tail -c ')
+          if (isSlow) {
+            started()
+            await pending
+          }
+          return {
+            exitCode: 0,
+            timedOut: false,
+            truncated: false,
+            stderr: '',
+            stdout: command.startsWith('squeue ')
+              ? '1|RUNNING|None\n'
+              : command.includes('scontrol ') && slowSource === 'tail'
+                ? 'JobId=2 JobState=COMPLETED ExitCode=0:0\n'
+                : ''
+          }
+        })
+      }
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {
+          findNonTerminal: async () => jobs,
+          findTerminalUnharvested: async () => [],
+          findNotificationReadyUnnotified: async () => [],
+          get: async (id: string) => jobs.find((job) => job.job_id === id),
+          updateIfStatus
+        } as unknown as ComputeJobRepository,
+        harvestFn: vi.fn(async () => {
+          if (slowSource === 'tail') {
+            started()
+            await pending
+          }
+        })
+      })
+      let tickFinished = false
+      const tick = poller.tick().then(() => {
+        tickFinished = true
+      })
+      try {
+        await slowStarted
+        expect(updateIfStatus).toHaveBeenCalledWith(
+          'job-1',
+          ['submitted'],
+          expect.objectContaining({ status: 'running' })
+        )
+        if (slowSource === 'tail') {
+          expect(updateIfStatus).toHaveBeenCalledWith(
+            'job-2',
+            ['submitted', 'running'],
+            expect.objectContaining({ status: 'success', exitCode: 0 })
+          )
+          await vi.waitFor(() => expect(tickFinished).toBe(true))
+          expect(runner.run).not.toHaveBeenCalledWith(
+            expect.anything(),
+            expect.stringContaining('tail -c '),
+            expect.anything()
+          )
+        }
+      } finally {
+        release()
+        await tick
+      }
+    }
+  )
+
+  it.each([2, 21])(
+    'does not serialize controller timeouts for %s jobs and recovers them next tick',
+    async (count) => {
+      vi.useFakeTimers()
+      const jobs = Array.from({ length: count }, (_, index) => {
+        const id = String(index + 1)
+        return makeJob({
+          job_id: `job-${id}`,
+          status: 'submitted',
+          execution_mode: 'slurm',
+          remote_workdir: `~/.openscience/jobs/job-${id}`,
+          remote_handle: JSON.stringify({
+            driver: 'slurm',
+            version: 1,
+            scheduler_job_id: id,
+            workdir: `~/.openscience/jobs/job-${id}`,
+            stdout_path: `~/.openscience/jobs/job-${id}/stdout`,
+            stderr_path: `~/.openscience/jobs/job-${id}/stderr`
+          })
+        })
+      })
+      let recovering = false
+      const runner: SshRunner = {
+        run: vi.fn(async (_target, command) => {
+          if (command.includes('scontrol ')) {
+            await new Promise((resolve) => setTimeout(resolve, 30_000))
+            return {
+              exitCode: null,
+              timedOut: true,
+              truncated: false,
+              stdout: '',
+              stderr: 'controller timed out'
+            }
+          }
+          return {
+            exitCode: command.startsWith('sacct ') ? 1 : 0,
+            timedOut: false,
+            truncated: false,
+            stdout: command.startsWith('squeue ')
+              ? recovering
+                ? jobs.map((_, index) => `${index + 1}|RUNNING|None\n`).join('')
+                : '1|RUNNING|None\n'
+              : '',
+            stderr: command.startsWith('sacct ') ? 'Accounting storage is disabled' : ''
+          }
+        })
+      }
+      const poller = new JobPoller({
+        connectionBroker: brokerFromRunner(runner),
+        hostRepository: {} as ComputeHostRepository,
+        jobRepository: {
+          findNonTerminal: async () => jobs,
+          findTerminalUnharvested: async () => [],
+          findNotificationReadyUnnotified: async () => [],
+          get: async (id: string) => jobs.find((job) => job.job_id === id),
+          updateIfStatus: async (
+            id: string,
+            statuses: string[],
+            updates: Record<string, unknown>
+          ) => {
+            const job = jobs.find((job) => job.job_id === id)!
+            if (!statuses.includes(job.status)) return undefined
+            if (updates.status) job.status = updates.status as ComputeJob['status']
+            if ('lastPollError' in updates)
+              job.last_poll_error = updates.lastPollError as string | undefined
+            return job
+          }
+        } as unknown as ComputeJobRepository
+      })
+      let finished = false
+      const tick = poller.tick().then(() => {
+        finished = true
+      })
+      try {
+        await vi.advanceTimersByTimeAsync(0)
+        expect(jobs[0].status).toBe('running')
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect(finished).toBe(true)
+        expect(jobs.at(-1)?.status).toBe('submitted')
+        expect(jobs.at(-1)?.last_poll_error).toContain('controller timed out')
+        recovering = true
+        await poller.tick()
+        expect(jobs.every((job) => job.status === 'running' && job.last_poll_error === null)).toBe(
+          true
+        )
+        expect(
+          vi.mocked(runner.run).mock.calls.filter(([, command]) => command.includes('scontrol '))
+        ).toHaveLength(1)
+      } finally {
+        await vi.runAllTimersAsync()
+        await tick
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it.each([
     ['0:15', 143],
     ['124:0', 124]

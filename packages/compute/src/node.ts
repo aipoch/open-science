@@ -81,6 +81,7 @@ export {
   SlurmDriverError,
   hasLeadingSlurmDirective,
   parseSbatchJobId,
+  readSlurmJobTails,
   recoverSlurmJob,
   validateSlurmCommand
 } from './slurm-driver'

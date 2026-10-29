@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
+import { isComputeJobCancelled } from '@aipoch/compute'
 import type { SessionPackageRequest } from '../../shared/session-package'
 import { FileTaskRunJournal } from '../tasks/task-run-journal'
 import { ComputeJobRepository } from '../compute/job-repository'
@@ -40,7 +41,7 @@ export const capturePackageHistory = async (
     computeJobs: jobs.map((job) => ({
       id: job.job_id,
       status: job.status,
-      cancelled: job.cancellation_status === 'cancelled',
+      cancelled: isComputeJobCancelled(job),
       shape: job.shape,
       intent: job.intent,
       command: job.command,

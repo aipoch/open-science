@@ -8,6 +8,7 @@ import {
 } from './connection'
 import type { ComputeJob } from './model'
 import { toBase64, type SlurmRemoteHandle } from './remote-job-contract'
+import { parseRemoteJobHandle } from './remote-job-handle'
 import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
 
 const SLURM_TIMEOUT_MS = 120_000
@@ -455,23 +456,78 @@ const mergeSchedulerRow = (item: JobQueryEvidence, row: SchedulerRow): void => {
   item.row = row
 }
 
+// scontrol show job accepts a single ID, not an ID list. Filter its table on the host so
+// unrelated jobs cannot exhaust our output cap. Carry the real command status through awk;
+// a successful filter is not evidence that the scheduler query succeeded.
+const querySlurmSnapshot = async (
+  source: 'scontrol' | 'squeue',
+  ids: string[],
+  connection: ComputeConnectionLease
+): Promise<Query> => {
+  const marker = 'OPEN_SCIENCE_QUERY_EXIT:'
+  const select =
+    source === 'scontrol'
+      ? `id=""; state=""; code="";
+       if ($1 ~ /^JobId=/) { id=$1; sub(/^JobId=/, "", id) }
+       for (i=2; i<=NF; i++) {
+         if (state == "" && $i ~ /^JobState=/) state=$i;
+         if (code == "" && $i ~ /^ExitCode=/) code=$i;
+       }
+       if (wanted[id]) print "JobId=" id, state, code;
+       else if (id == "" && NF && $0 !~ /^No jobs? in the system/) print "UNRECOGNIZED_SCONTROL_ROW";`
+      : `split($0, fields, "|"); if (wanted[fields[1]]) print; else if (NF && index($0, "|") == 0) print;`
+  const filter = `BEGIN { n=split("${ids.join(',')}", ids, ","); for (i=1; i<=n; i++) wanted[ids[i]]=1 }
+    /^${marker}/ { print; next }
+    { ${select} }`
+  const command =
+    source === 'scontrol'
+      ? 'scontrol show jobs --all --oneliner'
+      : "squeue --noheader --states=all --all --format='%i|%T|%r'"
+  const response = await query(
+    connection,
+    `( ${command}; printf '\\n${marker}%s\\n' "$?" ) | awk ${shellSingleQuote(filter)}`,
+    ids.length * 16 * 1024
+  )
+  if (!response.result) return response
+  const status = response.result.stdout.match(new RegExp(`(?:^|\\n)${marker}(\\d+)\\s*$`))
+  if (!status) return { diagnostic: `${source} snapshot was incomplete.`, disconnected: false }
+  return {
+    result: {
+      ...response.result,
+      stdout: response.result.stdout.slice(0, status.index),
+      exitCode: Number(status[1])
+    }
+  }
+}
+
+type SlurmObservationListener = (id: string, observation: SlurmObservation) => Promise<void>
+
 // Keep source evidence separate from the observation. Only successful/recognized absence from
 // both live sources plus disabled accounting proves that this query path has no remaining result.
 const querySlurmJobs = async (
   jobs: SlurmEntry[],
-  connection: ComputeConnectionLease
+  connection: ComputeConnectionLease,
+  onObservation?: SlurmObservationListener
 ): Promise<{
   observations: Map<string, SlurmObservation>
   evidence: Map<string, JobQueryEvidence>
   disconnectedDiagnostic?: string
 }> => {
   const observations = new Map<string, SlurmObservation>()
+  const published = new Set<string>()
+  const publish = async (id: string, observation: SlurmObservation): Promise<void> => {
+    observations.set(id, observation)
+    if (!published.has(id) && onObservation) {
+      await onObservation(id, observation)
+      published.add(id)
+    }
+  }
   const evidence = new Map<string, JobQueryEvidence>()
   if (jobs.length === 0) return { observations, evidence }
   const ids = jobs.map(({ handle }) => handle.scheduler_job_id)
   for (const id of ids)
     evidence.set(id, { queueMissing: false, controllerMissing: false, diagnostics: [] })
-  const queue = await query(
+  let queue = await query(
     connection,
     `squeue --noheader --states=all -j ${ids.join(',')} --format='%i|%T|%r'`,
     jobs.length * 1024
@@ -483,18 +539,42 @@ const querySlurmJobs = async (
   }
   let queueMalformed = false
   const malformedQueueIds = new Set<string>()
-  if (queue.result) {
-    for (const line of queue.result.stdout.split(/\r?\n/).filter((line) => line.trim())) {
+  const parseQueue = (response: Query): void => {
+    if (!response.result) return
+    for (const line of response.result.stdout.split(/\r?\n/).filter((line) => line.trim())) {
       const [id, rawState, reason] = line.trim().split('|')
       const item = id ? evidence.get(id) : undefined
       const state = normalizeState(rawState ?? '')
+      // Jobs already observed active need no fallback in this tick. A full-table retry
+      // for expired siblings must not replace their published observation underneath them.
+      if (id && observations.get(id)?.kind === 'active') continue
       if (!item || !knownState(state)) {
-        queueMalformed = true
+        if (!item) queueMalformed = true
         if (item && id) malformedQueueIds.add(id)
         continue
       }
-      item.row = { state, reason: reason || undefined }
+      mergeSchedulerRow(item, { state, reason: reason || undefined })
     }
+  }
+  parseQueue(queue)
+  // Publish even the valid rows of a rejected ID batch before its fallback can block.
+  for (const [id, item] of evidence) {
+    if (item.row && activeStates.has(item.row.state))
+      await publish(id, { kind: 'active', ...item.row })
+  }
+  // A list containing an expired ID can reject the entire lookup. One complete table
+  // query establishes absence without N individual queue timeouts (or starving later IDs).
+  if (jobs.length > 1 && queue.result && noSuchJob(queue.result.stderr)) {
+    queue = await querySlurmSnapshot('squeue', ids, connection)
+    queueMalformed = false
+    parseQueue(queue)
+  }
+  if (!queue.result && queue.disconnected) {
+    for (const id of ids) {
+      if (!observations.has(id))
+        observations.set(id, { kind: 'unknown', diagnostic: queue.diagnostic })
+    }
+    return { observations, evidence, disconnectedDiagnostic: queue.diagnostic }
   }
   const queueSucceeded = queue.result?.exitCode === 0 && !queueMalformed
   const queueRejectedId = queue.result !== undefined && noSuchJob(queue.result.stderr)
@@ -508,7 +588,7 @@ const querySlurmJobs = async (
       !malformedQueueIds.has(id) &&
       (queueSucceeded || (queueRejectedId && jobs.length === 1))
     if (item.row && activeStates.has(item.row.state)) {
-      observations.set(id, { kind: 'active', ...item.row })
+      await publish(id, { kind: 'active', ...item.row })
       continue
     }
     if (!queueSucceeded && !item.row)
@@ -518,58 +598,78 @@ const querySlurmJobs = async (
           'squeue returned an unrecognized response.'
       )
     candidates.push(entry)
-    if (disconnectedDiagnostic) {
-      item.diagnostics.push(disconnectedDiagnostic)
-      continue
+  }
+  const control =
+    candidates.length > 1
+      ? await querySlurmSnapshot(
+          'scontrol',
+          candidates.map(({ handle }) => handle.scheduler_job_id),
+          connection
+        )
+      : candidates.length === 1
+        ? await query(
+            connection,
+            `scontrol show job ${candidates[0].handle.scheduler_job_id} --oneliner`,
+            16 * 1024
+          )
+        : undefined
+  const controllerRows = new Map<string, SchedulerRow>()
+  let malformedController = false
+  const malformedControllerIds = new Set<string>()
+  if (control?.result) {
+    for (const line of control.result.stdout.split(/\r?\n/).filter((line) => line.trim())) {
+      if (/^\s*No jobs? in the system\s*$/i.test(line)) continue
+      const id = line.match(/(?:^|\s)JobId=(\S+)/)?.[1]
+      const state = line.match(/(?:^|\s)JobState=(\S+)/)?.[1]
+      if (!id || !state || !knownState(normalizeState(state))) {
+        if (id) malformedControllerIds.add(id)
+        else malformedController = true
+        continue
+      }
+      controllerRows.set(id, {
+        state: normalizeState(state),
+        exitCode: parseExitCode(line.match(/(?:^|\s)ExitCode=(\S+)/)?.[1])
+      })
     }
-    const control = await query(connection, `scontrol show job ${id} --oneliner`, 16 * 1024)
+  }
+  for (const { handle } of candidates) {
+    const id = handle.scheduler_job_id
+    const item = evidence.get(id)!
+    if (!control) continue
     if (!control.result) {
       item.diagnostics.push(control.diagnostic)
       if (control.disconnected) disconnectedDiagnostic = control.diagnostic
       continue
     }
     const result = control.result
-    if (noSuchJob(result.stderr) || /^\s*No jobs? in the system\s*$/i.test(result.stdout)) {
+    const row = controllerRows.get(id)
+    if (
+      !row &&
+      !malformedController &&
+      !malformedControllerIds.has(id) &&
+      ((candidates.length > 1 && result.exitCode === 0) ||
+        (candidates.length === 1 &&
+          (noSuchJob(result.stderr) || /^\s*No jobs? in the system\s*$/i.test(result.stdout))))
+    ) {
       item.controllerMissing = true
-      // A batch containing an expired ID can fail before looking up its siblings. Confirm this
-      // missing Job individually instead of treating every omitted row as an empty queue.
-      if (queueRejectedId && jobs.length > 1 && !item.row && !malformedQueueIds.has(id)) {
-        const single = await query(
-          connection,
-          `squeue --noheader --states=all -j ${id} --format='%i|%T|%r'`,
-          1024
-        )
-        if (single.disconnected) disconnectedDiagnostic = single.diagnostic
-        item.queueMissing =
-          single.result !== undefined &&
-          ((single.result.exitCode === 0 && !single.result.stdout.trim()) ||
-            (!single.result.stdout.trim() && noSuchJob(single.result.stderr)))
-        if (!item.queueMissing)
-          item.diagnostics.push(
-            single.diagnostic ?? single.result?.stderr ?? 'squeue absence was not confirmed.'
-          )
-      }
       continue
     }
-    const state = result.stdout.match(/(?:^|\s)JobState=(\S+)/)?.[1]
-    const returnedId = result.stdout.match(/(?:^|\s)JobId=(\S+)/)?.[1]
-    if (
-      result.exitCode !== 0 ||
-      returnedId !== id ||
-      !state ||
-      !knownState(normalizeState(state))
-    ) {
+    if (result.exitCode !== 0 || !row) {
       item.diagnostics.push(result.stderr.trim() || 'scontrol returned an unrecognized response.')
       continue
-    }
-    const row = {
-      state: normalizeState(state),
-      exitCode: parseExitCode(result.stdout.match(/(?:^|\s)ExitCode=(\S+)/)?.[1])
     }
     // An already observed terminal state cannot be replaced by a stale active record.
     mergeSchedulerRow(item, row)
     if (item.row && activeStates.has(item.row.state))
-      observations.set(id, { kind: 'active', ...item.row })
+      await publish(id, { kind: 'active', ...item.row })
+    else if (item.row && item.row.exitCode !== undefined)
+      await publish(id, {
+        kind: 'terminal',
+        ...item.row,
+        stdout: '',
+        stderr: '',
+        ...(item.diagnostics.length > 0 ? { diagnostic: item.diagnostics.join(' ') } : {})
+      })
   }
   const accountingCandidates = candidates.filter(({ handle }) => {
     const row = evidence.get(handle.scheduler_job_id)!.row
@@ -604,9 +704,9 @@ const querySlurmJobs = async (
     const item = evidence.get(id)!
     const row = item.row
     if (row && usableRow(row)) {
-      if (activeStates.has(row.state)) observations.set(id, { kind: 'active', ...row })
+      if (activeStates.has(row.state)) await publish(id, { kind: 'active', ...row })
       else
-        observations.set(id, {
+        await publish(id, {
           kind: 'terminal',
           state: row.state,
           exitCode: row.exitCode,
@@ -618,7 +718,7 @@ const querySlurmJobs = async (
     }
     const disabled = accounting?.result !== undefined && accountingDisabled(accounting.result)
     if (item.queueMissing && item.controllerMissing && disabled && !row) {
-      observations.set(id, {
+      await publish(id, {
         kind: 'unavailable',
         diagnostic: `Unable to obtain the final status of Slurm job ${id}: squeue and scontrol report no record, and accounting is unavailable (${accounting!.result!.stderr.trim()}). Automatic status checks have ended. The remote process may still be running; inspect the scheduler and output files before deciding what to do next.`
       })
@@ -626,7 +726,7 @@ const querySlurmJobs = async (
     }
     const accountingDiagnostic =
       disconnectedDiagnostic ?? accounting?.diagnostic ?? accounting?.result?.stderr.trim()
-    observations.set(id, {
+    await publish(id, {
       kind: 'unknown',
       ...(row ? { state: row.state } : {}),
       diagnostic: [
@@ -647,8 +747,9 @@ const readSlurmTails = async (
   observation: Extract<SlurmObservation, { kind: 'terminal' }>,
   handle: SlurmRemoteHandle,
   connection: ComputeConnectionLease
-): Promise<string | undefined> => {
+): Promise<{ disconnectedDiagnostic?: string; stdoutTail?: string; stderrTail?: string }> => {
   const diagnostics: string[] = []
+  const tails: { stdoutTail?: string; stderrTail?: string } = {}
   let disconnectedDiagnostic: string | undefined
   for (const [key, path] of [
     ['stdout', handle.stdout_path],
@@ -659,8 +760,10 @@ const readSlurmTails = async (
       `tail -c ${TAIL_BYTES} ${quoteRemotePath(path)}`,
       TAIL_BYTES
     )
-    if (tail.result?.exitCode === 0) observation[key] = tail.result.stdout
-    else
+    if (tail.result?.exitCode === 0) {
+      observation[key] = tail.result.stdout
+      tails[key === 'stdout' ? 'stdoutTail' : 'stderrTail'] = tail.result.stdout
+    } else
       diagnostics.push(
         tail.diagnostic || tail.result?.stderr.trim() || 'Slurm output tail could not be read.'
       )
@@ -671,15 +774,41 @@ const readSlurmTails = async (
   }
   if (diagnostics.length > 0)
     observation.diagnostic = [observation.diagnostic, ...diagnostics].filter(Boolean).join(' ')
-  return disconnectedDiagnostic
+  return { ...tails, disconnectedDiagnostic }
+}
+
+/** Bounded logs belong to the existing harvest execution, after scheduler facts are persisted. */
+export const readSlurmJobTails = async (
+  job: ComputeJob,
+  connection: ComputeConnectionLease
+): Promise<{ stdoutTail?: string; stderrTail?: string }> => {
+  const handle = parseRemoteJobHandle(job.remote_handle, job.remote_workdir)
+  if (handle?.driver !== 'slurm') return {}
+  const observation = { kind: 'terminal' as const, state: '', stdout: '', stderr: '' }
+  const { stdoutTail, stderrTail } = await readSlurmTails(observation, handle, connection)
+  const schedulerDiagnostic = job.stderr_tail?.match(/Slurm scheduler state: [A-Z_]+\.$/)?.[0]
+  return {
+    ...(stdoutTail === undefined ? {} : { stdoutTail }),
+    ...(stderrTail === undefined
+      ? {}
+      : {
+          stderrTail: schedulerDiagnostic
+            ? `${stderrTail}${stderrTail && !stderrTail.endsWith('\n') ? '\n' : ''}${schedulerDiagnostic}`.slice(
+                -TAIL_BYTES
+              )
+            : stderrTail
+        })
+  }
 }
 
 export const pollSlurmJobs = async (
   jobs: SlurmEntry[],
-  connection: ComputeConnectionLease
+  connection: ComputeConnectionLease,
+  options: { onObservation?: SlurmObservationListener; readTails?: boolean } = {}
 ): Promise<Map<string, SlurmObservation>> => {
-  const queried = await querySlurmJobs(jobs, connection)
+  const queried = await querySlurmJobs(jobs, connection, options.onObservation)
   const { observations } = queried
+  if (options.readTails === false) return observations
   let disconnectedDiagnostic = queried.disconnectedDiagnostic
   for (const { handle } of jobs) {
     const observation = observations.get(handle.scheduler_job_id)
@@ -688,7 +817,9 @@ export const pollSlurmJobs = async (
         observation.diagnostic = [observation.diagnostic, disconnectedDiagnostic]
           .filter(Boolean)
           .join(' ')
-      else disconnectedDiagnostic = await readSlurmTails(observation, handle, connection)
+      else
+        disconnectedDiagnostic = (await readSlurmTails(observation, handle, connection))
+          .disconnectedDiagnostic
     }
   }
   return observations

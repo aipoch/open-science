@@ -1,3 +1,6 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ComputeConnectionLease } from './connection'
 import type { ComputeJob } from './model'
@@ -32,6 +35,175 @@ const success = (stdout: string): Awaited<ReturnType<ComputeConnectionLease['run
   exitCode: 0,
   timedOut: false,
   truncated: false
+})
+
+// Exercise the generated POSIX filter even on Windows when Git Bash is installed.
+const gitBinary =
+  process.platform === 'win32'
+    ? spawnSync('where.exe', ['git'], { encoding: 'utf8' }).stdout?.split(/\r?\n/)[0]
+    : undefined
+const gitBash = gitBinary ? resolve(dirname(gitBinary), '../bin/bash.exe') : undefined
+const bash =
+  process.platform !== 'win32' ? 'bash' : gitBash && existsSync(gitBash) ? gitBash : undefined
+const snapshotEntries = [
+  entry,
+  {
+    job: { ...entry.job, job_id: 'second-job' },
+    handle: { ...handle, scheduler_job_id: '456' }
+  }
+]
+const shellConnection = (script: string, queue = success('')): ComputeConnectionLease =>
+  ({
+    run: async (command, options) => {
+      if (command.startsWith('squeue ')) return queue
+      if (command.startsWith('sacct '))
+        return { ...success(''), exitCode: 1, stderr: 'Slurm accounting storage is disabled' }
+      if (command.startsWith('tail ')) return success('')
+      const result = spawnSync(bash!, ['-c', `${script}\n${command}`], {
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 5000
+      })
+      if (result.error) throw result.error
+      const output = Buffer.from(result.stdout)
+      const cap = options.maxOutputBytes ?? output.length
+      return {
+        ...success(output.subarray(0, cap).toString('utf8')),
+        stderr: result.stderr,
+        exitCode: result.status,
+        truncated: output.length > cap,
+        stdoutTruncated: output.length > cap
+      }
+    }
+  }) as ComputeConnectionLease
+
+describe.skipIf(!bash)('Slurm snapshot POSIX protocol', () => {
+  it('filters thousands of unrelated controller rows before the transport cap and includes hidden jobs', async () => {
+    const connection = shellConnection(`
+      scontrol() {
+        case " $* " in *" --all "*) ;; *) return 13;; esac
+        awk 'BEGIN {
+          for (i=1000; i<6000; i++) print "JobId=" i " JobState=FUTURE_STATE ExitCode=unknown WorkDir=/unrelated/" i;
+          print "JobId=123 JobState=RUNNING ExitCode=0:0 WorkDir=/retained/first";
+          print "JobId=456 JobState=COMPLETED ExitCode=0:0 WorkDir=/retained/last";
+        }'
+      }
+    `)
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'active', state: 'RUNNING' })
+    expect(result.get('456')).toMatchObject({ kind: 'terminal', state: 'COMPLETED', exitCode: 0 })
+  })
+
+  it('filters thousands of unrelated queue rows before the transport cap and includes hidden jobs', async () => {
+    const connection = shellConnection(
+      `squeue() {
+        case " $* " in *" --all "*) ;; *) return 13;; esac
+        awk 'BEGIN {
+          for (i=1000; i<6000; i++) print i "|FUTURE_STATE|unrelated job";
+          print "123|RUNNING|None";
+          print "456|PENDING|Resources";
+        }'
+      }`,
+      { ...success(''), exitCode: 1, stderr: 'Invalid job id specified' }
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'active', state: 'RUNNING' })
+    expect(result.get('456')).toMatchObject({ kind: 'active', state: 'PENDING' })
+  })
+
+  it('preserves a controller query failure even when the awk filter exits successfully', async () => {
+    const connection = shellConnection(
+      `scontrol() { printf 'controller denied\\n' >&2; return 17; }`
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    for (const id of ['123', '456'])
+      expect(result.get(id)).toMatchObject({
+        kind: 'unknown',
+        diagnostic: expect.stringContaining('controller denied')
+      })
+  })
+
+  it('preserves a queue table query failure even when the awk filter exits successfully', async () => {
+    const connection = shellConnection(
+      `squeue() { printf 'queue denied\\n' >&2; return 17; }
+       scontrol() { printf 'No jobs in the system\\n'; }`,
+      { ...success(''), exitCode: 1, stderr: 'Invalid job id specified' }
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    for (const id of ['123', '456'])
+      expect(result.get(id)).toMatchObject({
+        kind: 'unknown',
+        diagnostic: expect.stringContaining('queue denied')
+      })
+  })
+
+  it('isolates an unknown target controller state from a genuinely absent sibling', async () => {
+    const connection = shellConnection(
+      `scontrol() { printf 'JobId=123 JobState=FUTURE_STATE ExitCode=unknown\\n'; }`
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'unknown' })
+    expect(result.get('456')).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('does not adopt a target identity embedded in unrelated controller metadata', async () => {
+    const connection = shellConnection(
+      `scontrol() { printf 'JobId=9001 JobName=unrelated JobId=123 JobState=COMPLETED ExitCode=0:0 Comment=metadata\\n'; }`
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'unavailable' })
+    expect(result.get('456')).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('keeps the first controller state and exit code when metadata repeats field names', async () => {
+    const connection = shellConnection(
+      `scontrol() {
+        printf 'JobId=123 JobState=RUNNING ExitCode=0:0 Comment=notes JobState=COMPLETED ExitCode=7:0\\n';
+        printf 'JobId=456 JobState=COMPLETED ExitCode=7:0 Comment=notes JobState=FAILED ExitCode=0:0\\n';
+      }`
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'active', state: 'RUNNING' })
+    expect(result.get('456')).toMatchObject({ kind: 'terminal', state: 'COMPLETED', exitCode: 7 })
+  })
+
+  it('does not turn an unknown target queue state into confirmed absence', async () => {
+    const connection = shellConnection(
+      `squeue() { printf '123|FUTURE_STATE|None\\n456|RUNNING|None\\n'; }
+       scontrol() { printf 'No jobs in the system\\n'; }`,
+      { ...success(''), exitCode: 1, stderr: 'Invalid job id specified' }
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'unknown' })
+    expect(result.get('456')).toMatchObject({ kind: 'active', state: 'RUNNING' })
+  })
+
+  it('isolates a malformed known queue target from a genuinely absent sibling', async () => {
+    const connection = shellConnection(
+      `scontrol() { printf 'No jobs in the system\\n'; }`,
+      success('123|FUTURE_STATE|None\n')
+    )
+    const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+    expect(result.get('123')).toMatchObject({ kind: 'unknown' })
+    expect(result.get('456')).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it.each(['queue', 'controller'])(
+    'keeps absence uncertain for every target when a %s snapshot row has no identifiable owner',
+    async (source) => {
+      const connection =
+        source === 'queue'
+          ? shellConnection(
+              `squeue() { printf 'unrecognized scheduler output\\n'; }
+               scontrol() { printf 'No jobs in the system\\n'; }`,
+              { ...success(''), exitCode: 1, stderr: 'Invalid job id specified' }
+            )
+          : shellConnection(`scontrol() { printf 'unrecognized scheduler output\\n'; }`)
+      const result = await pollSlurmJobs(snapshotEntries, connection, { readTails: false })
+      expect(result.get('123')).toMatchObject({ kind: 'unknown' })
+      expect(result.get('456')).toMatchObject({ kind: 'unknown' })
+    }
+  )
 })
 
 describe('Slurm lifecycle boundaries', () => {

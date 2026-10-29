@@ -11,6 +11,7 @@ const ok = (stdout = ''): ConnectionRunResult => ({
   truncated: false
 })
 const failed = (stderr: string): ConnectionRunResult => ({ ...ok(), stderr, exitCode: 1 })
+const snapshot = (stdout = ''): ConnectionRunResult => ok(`${stdout}\nOPEN_SCIENCE_QUERY_EXIT:0\n`)
 const entry = (id: string): Parameters<typeof pollSlurmJobs>[0][number] => ({
   job: { job_id: id } as ComputeJob,
   handle: {
@@ -26,13 +27,197 @@ const connection = (
   run: (command: string) => ConnectionRunResult | Promise<ConnectionRunResult>
 ): ComputeConnectionLease => ({ run: vi.fn(run) }) as unknown as ComputeConnectionLease
 const unavailable = (command: string): ConnectionRunResult =>
-  command.startsWith('scontrol ')
-    ? failed('slurm_load_jobs error: Invalid job id specified')
-    : command.startsWith('sacct ')
-      ? failed('Slurm accounting storage is disabled')
-      : ok()
+  command.startsWith('( scontrol ') || command.startsWith('( squeue ')
+    ? snapshot()
+    : command.startsWith('scontrol ')
+      ? failed('slurm_load_jobs error: Invalid job id specified')
+      : command.startsWith('sacct ')
+        ? failed('Slurm accounting storage is disabled')
+        : ok()
 
 describe('Slurm reliability without accounting', () => {
+  it('bounds twenty controller timeouts to one shared query and recovers the first and last job next poll', async () => {
+    vi.useFakeTimers()
+    try {
+      const jobs = Array.from({ length: 20 }, (_, index) => entry(String(index + 1)))
+      let recovered = false
+      const lease = connection((command) => {
+        if (command.includes('scontrol show jobs '))
+          return recovered
+            ? snapshot(
+                jobs
+                  .map(({ handle }) =>
+                    ['1', '20'].includes(handle.scheduler_job_id)
+                      ? `JobId=${handle.scheduler_job_id} JobState=COMPLETED ExitCode=0:0`
+                      : `JobId=${handle.scheduler_job_id} JobState=RUNNING ExitCode=0:0`
+                  )
+                  .join('\n')
+              )
+            : new Promise((resolve) =>
+                setTimeout(() => resolve({ ...ok(), timedOut: true }), 30_000)
+              )
+        return command.startsWith('sacct ') ? failed('Slurm accounting storage is disabled') : ok()
+      })
+      let settled = false
+      const polling = pollSlurmJobs(jobs, lease, { readTails: false }).then((result) => {
+        settled = true
+        return result
+      })
+      await vi.advanceTimersByTimeAsync(29_999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      const uncertain = await polling
+      expect([...uncertain.values()].every((observation) => observation.kind === 'unknown')).toBe(
+        true
+      )
+      expect(
+        vi.mocked(lease.run).mock.calls.filter(([command]) => command.includes('scontrol '))
+      ).toHaveLength(1)
+      recovered = true
+      const result = await pollSlurmJobs(jobs, lease, { readTails: false })
+      expect(result.get('1')).toMatchObject({ kind: 'terminal', state: 'COMPLETED', exitCode: 0 })
+      expect(result.get('20')).toMatchObject({ kind: 'terminal', state: 'COMPLETED', exitCode: 0 })
+      expect(
+        vi.mocked(lease.run).mock.calls.filter(([command]) => command.includes('scontrol '))
+      ).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('publishes a valid row from a rejected queue batch before its table fallback completes', async () => {
+    let resolveSnapshot!: (result: ConnectionRunResult) => void
+    const pendingSnapshot = new Promise<ConnectionRunResult>((resolve) => {
+      resolveSnapshot = resolve
+    })
+    const onObservation = vi.fn<(id: string, observation: unknown) => Promise<void>>(
+      async () => undefined
+    )
+    const lease = connection((command) =>
+      command.startsWith('squeue ')
+        ? { ...failed('Invalid job id specified'), stdout: '1|RUNNING|None\n' }
+        : command.startsWith('( squeue ')
+          ? pendingSnapshot
+          : unavailable(command)
+    )
+    let settled = false
+    const polling = pollSlurmJobs([entry('1'), entry('2')], lease, {
+      readTails: false,
+      onObservation
+    }).then((result) => {
+      settled = true
+      return result
+    })
+    await vi.waitFor(() =>
+      expect(onObservation).toHaveBeenCalledWith(
+        '1',
+        expect.objectContaining({ kind: 'active', state: 'RUNNING' })
+      )
+    )
+    expect(settled).toBe(false)
+    resolveSnapshot(snapshot())
+    const result = await polling
+    expect(result.get('2')).toMatchObject({ kind: 'unavailable' })
+    expect(onObservation.mock.calls.filter(([id]) => id === '1')).toHaveLength(1)
+  })
+
+  it('publishes a complete controller terminal observation while a sibling accounting query is pending', async () => {
+    let resolveAccounting!: (result: ConnectionRunResult) => void
+    const pendingAccounting = new Promise<ConnectionRunResult>((resolve) => {
+      resolveAccounting = resolve
+    })
+    const onObservation = vi.fn<(id: string, observation: unknown) => Promise<void>>(
+      async () => undefined
+    )
+    const lease = connection((command) =>
+      command.includes('scontrol show jobs ')
+        ? snapshot('JobId=1 JobState=COMPLETED ExitCode=0:0')
+        : command.startsWith('sacct ')
+          ? pendingAccounting
+          : ok()
+    )
+    let settled = false
+    const polling = pollSlurmJobs([entry('1'), entry('2')], lease, {
+      readTails: false,
+      onObservation
+    }).then((result) => {
+      settled = true
+      return result
+    })
+    await vi.waitFor(() =>
+      expect(onObservation).toHaveBeenCalledWith(
+        '1',
+        expect.objectContaining({ kind: 'terminal', state: 'COMPLETED', exitCode: 0 })
+      )
+    )
+    expect(settled).toBe(false)
+    resolveAccounting(failed('Slurm accounting storage is disabled'))
+    expect((await polling).get('2')).toMatchObject({ kind: 'unavailable' })
+  })
+
+  it('keeps default driver callers supplied with terminal output tails after a controller batch', async () => {
+    const lease = connection((command) =>
+      command.includes('scontrol show jobs ')
+        ? snapshot('JobId=1 JobState=COMPLETED ExitCode=0:0\nJobId=2 JobState=FAILED ExitCode=7:0')
+        : command.startsWith('tail ')
+          ? ok(command.includes('/stdout') ? 'retained output' : 'retained stderr')
+          : ok()
+    )
+    const result = await pollSlurmJobs([entry('1'), entry('2')], lease)
+    expect(result.get('1')).toMatchObject({
+      kind: 'terminal',
+      state: 'COMPLETED',
+      exitCode: 0,
+      stdout: 'retained output',
+      stderr: 'retained stderr'
+    })
+    expect(result.get('2')).toMatchObject({
+      kind: 'terminal',
+      state: 'FAILED',
+      exitCode: 7,
+      stdout: 'retained output',
+      stderr: 'retained stderr'
+    })
+  })
+
+  it.each([
+    ok(''),
+    ok('OPEN_SCIENCE_QUERY_EXIT:invalid\n'),
+    { ...snapshot(), truncated: true },
+    { ...snapshot(), timedOut: true }
+  ])('does not treat an incomplete controller snapshot as absence: %j', async (control) => {
+    const result = await pollSlurmJobs(
+      [entry('1'), entry('2')],
+      connection((command) =>
+        command.includes('scontrol show jobs ') ? control : unavailable(command)
+      ),
+      { readTails: false }
+    )
+    expect(result.get('1')).toMatchObject({ kind: 'unknown' })
+    expect(result.get('2')).toMatchObject({ kind: 'unknown' })
+  })
+
+  it.each([
+    ok(''),
+    ok('OPEN_SCIENCE_QUERY_EXIT:invalid\n'),
+    { ...snapshot(), truncated: true },
+    { ...snapshot(), timedOut: true }
+  ])('does not treat an incomplete queue snapshot as absence: %j', async (queue) => {
+    const result = await pollSlurmJobs(
+      [entry('1'), entry('2')],
+      connection((command) =>
+        command.startsWith('squeue ')
+          ? failed('Invalid job id specified')
+          : command.startsWith('( squeue ')
+            ? queue
+            : unavailable(command)
+      ),
+      { readTails: false }
+    )
+    expect(result.get('1')).toMatchObject({ kind: 'unknown' })
+    expect(result.get('2')).toMatchObject({ kind: 'unknown' })
+  })
+
   it('stops source queries after a real disconnect and keeps all valid queue observations', async () => {
     const lease = connection((command) =>
       command.startsWith('squeue ')
@@ -50,8 +235,8 @@ describe('Slurm reliability without accounting', () => {
     const lease = connection((command) =>
       command.startsWith('squeue ')
         ? ok('1|COMPLETED|None\n')
-        : command.includes('show job 1 ')
-          ? ok('JobId=1 JobState=COMPLETED ExitCode=0:0')
+        : command.includes('scontrol show jobs ')
+          ? snapshot('JobId=1 JobState=COMPLETED ExitCode=0:0')
           : { ...failed('Connection closed'), exitCode: 255 }
     )
     const result = await pollSlurmJobs([entry('1'), entry('2'), entry('3')], lease)
@@ -68,9 +253,9 @@ describe('Slurm reliability without accounting', () => {
     const lease = connection((command) =>
       command.startsWith('squeue ')
         ? ok('1|COMPLETED|None\n2|COMPLETED|None\n')
-        : command.startsWith('scontrol ')
-          ? ok(
-              `JobId=${command.includes('show job 1 ') ? '1' : '2'} JobState=COMPLETED ExitCode=0:0`
+        : command.includes('scontrol show jobs ')
+          ? snapshot(
+              'JobId=1 JobState=COMPLETED ExitCode=0:0\nJobId=2 JobState=COMPLETED ExitCode=0:0'
             )
           : { ...failed('Connection closed'), exitCode: 255 }
     )
@@ -82,7 +267,7 @@ describe('Slurm reliability without accounting', () => {
       exitCode: 0,
       diagnostic: expect.stringContaining('Connection closed')
     })
-    expect(lease.run).toHaveBeenCalledTimes(4)
+    expect(lease.run).toHaveBeenCalledTimes(3)
   })
 
   it.each(['No such file or directory', 'Permission denied'])(
@@ -255,8 +440,8 @@ describe('Slurm reliability without accounting', () => {
       connection((command) =>
         command.startsWith('squeue ')
           ? failed('squeue: command not found')
-          : command.includes('show job 1 ')
-            ? ok('JobId=1 JobState=RUNNING ExitCode=0:0')
+          : command.includes('scontrol show jobs ')
+            ? snapshot('JobId=1 JobState=RUNNING ExitCode=0:0')
             : unavailable(command)
       )
     )

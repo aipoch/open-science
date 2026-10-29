@@ -26,6 +26,7 @@ import {
   classifyConnectionFailure,
   ComputeConnectionError,
   isConnectionStdoutTruncated,
+  readSlurmJobTails,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from '@aipoch/compute/node'
@@ -297,7 +298,7 @@ export type HarvestDeps = {
    * Injected as undefined in tests that don't need notification assertions.
    */
   broadcast?: (summary: JobSummary) => void
-  /** Publishes non-final harvest state, such as a retryable connection failure. */
+  /** Publishes persisted harvest state independently of the once-only final notification. */
   publishJobUpdated?: (job: ComputeJob) => void
 }
 
@@ -529,6 +530,9 @@ const harvestJobUnchecked = async (
         })
       )
     }
+    // Cancellation can notify before collection finishes. Its notification claim must stay intact,
+    // while ordinary updates still publish the completed collection or its final failure to the UI.
+    deps.publishJobUpdated?.(updated)
     return updated
   }
 
@@ -576,6 +580,14 @@ const harvestJobUnchecked = async (
     intent: 'job_harvest',
     signal: deps.signal
   })
+
+  // Keep log I/O inside the existing bounded harvest scheduler rather than the scheduler poll.
+  // Tails use their own byte bound even when the output-file download budget is zero.
+  const tails = await readSlurmJobTails(job, connection)
+  deps.signal?.throwIfAborted()
+  if (tails.stdoutTail !== undefined || tails.stderrTail !== undefined) {
+    await jobRepository.update(job.job_id, tails)
+  }
 
   const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
 

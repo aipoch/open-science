@@ -130,30 +130,53 @@ it('shows unknown facts for legacy snapshots and separates failed scratch from s
 })
 
 describe('ComputeHostDetail', () => {
-  it('shows accounting as a non-blocking diagnostic beside the independent Slurm checks', async () => {
-    useComputeStore.setState({
-      hosts: [
-        host({
-          executionMode: 'slurm',
-          probeResult: {
-            ok: true,
-            probedAt: '2026-10-28T00:00:00Z',
-            exitCode: 0,
-            errorTail: null,
-            detectedScheduler: 'slurm',
-            schedulerAvailable: true,
-            controllerAvailable: true,
-            accountingAvailable: false
-          }
-        })
-      ]
-    })
-    await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
-    expect(container.textContent).toContain('Slurm controller query')
-    expect(container.textContent).toContain('Slurm accounting query')
-    expect(container.textContent).toContain('Jobs can still use the queue and controller')
-    expect(container.textContent).not.toContain('A connection check failed')
-  })
+  it.each([true, false, undefined])(
+    'keeps the original four connection checks without accounting warnings (controller %s)',
+    async (controllerAvailable) => {
+      useComputeStore.setState({
+        hosts: [
+          host({
+            executionMode: 'slurm',
+            probeResult: {
+              ok: true,
+              probedAt: '2026-10-28T00:00:00Z',
+              exitCode: 0,
+              errorTail: null,
+              detectedScheduler: 'slurm',
+              sshConnected: true,
+              commandExecutable: true,
+              scratchWritable: true,
+              schedulerAvailable: true,
+              controllerAvailable,
+              accountingAvailable: false
+            }
+          })
+        ]
+      })
+      await act(async () => root.render(<ComputeHostDetail providerId="ssh:biowulf" />))
+      const checks = Array.from(container.querySelectorAll('section')).find(
+        (section) => section.querySelector('h3')?.textContent === 'Recent connection checks'
+      )!
+      expect(Array.from(checks.querySelectorAll('dt'), (label) => label.textContent)).toEqual([
+        'SSH connection',
+        'Command execution',
+        'Scratch write check',
+        'Slurm query'
+      ])
+      expect(Array.from(checks.querySelectorAll('dd'), (value) => value.textContent)).toEqual([
+        'Passed',
+        'Passed',
+        'Passed',
+        'Passed'
+      ])
+      expect(checks.querySelector('[data-notice-level]')).toBeNull()
+      expect(container.textContent).not.toContain('Slurm controller query')
+      expect(container.textContent).not.toContain('Slurm accounting query')
+      expect(container.textContent).not.toContain('History query unavailable')
+      expect(container.textContent).not.toContain('Slurm history queries are optional')
+      expect(container.textContent).not.toContain('A connection check failed')
+    }
+  )
   it('keeps ordinary Settings sections uncarded while retaining the resource status surface', () => {
     useComputeStore.setState({
       hosts: [
@@ -1200,7 +1223,10 @@ describe('ComputeHostDetail', () => {
             ok: false,
             probedAt: new Date().toISOString(),
             exitCode: 255,
-            errorTail: 'offline'
+            errorTail: 'offline',
+            sshConnected: false,
+            controllerAvailable: false,
+            accountingAvailable: false
           }
         })
       ],
@@ -1214,6 +1240,10 @@ describe('ComputeHostDetail', () => {
     const failure = container.querySelector<HTMLElement>('[role="alert"]')
     expect(failure?.closest('section')?.className).toContain('border-border')
     expect(failure?.closest('section')?.className).toContain('bg-card')
+    expect(failure?.textContent).toContain(
+      'The Compute Host connection failed. Check the Host and network, then try again.'
+    )
+    expect(container.textContent).toContain('Retry probe')
   })
 
   it('calls saveDetails with author=user when Save is clicked in details editor', async () => {

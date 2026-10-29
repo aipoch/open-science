@@ -1482,6 +1482,75 @@ it('keeps terminal Task and Compute results as evidence without installing jobs 
   await expect(target.client.computeJob.count()).resolves.toBe(0)
 })
 
+it('exports scheduler cancellation as cancelled evidence without a local cancel operation', async () => {
+  const source = await createProvenanceTestFixture()
+  initDataRoot(source.storageRoot)
+  fixtures.push(source)
+  await source.client.project.create({ data: { id: 'project-1', name: 'Scheduler results' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'session-1',
+    projectId: 'project-1',
+    title: 'Scheduler results',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 2
+  })
+  for (const [id, errorCode] of [
+    ['cancelled-externally', 'job_cancelled'],
+    ['execution-failed', 'job_failed']
+  ]) {
+    await source.client.computeJob.create({
+      data: {
+        id,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        providerId: 'ssh:cluster',
+        shape: 'scheduler_cluster',
+        executionMode: 'slurm',
+        status: 'failed',
+        errorCode,
+        intent: 'Collect scheduler results',
+        command: 'analysis',
+        commandHash: sha256('analysis'),
+        sensitiveDataEncrypted: false,
+        finishedAt: new Date(2)
+      }
+    })
+  }
+  expect(await source.client.computeJobOperation.count()).toBe(0)
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  try {
+    const archive = join(source.storageRoot, 'scheduler-results.science')
+    await exporter.exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    const expanded = join(source.storageRoot, 'scheduler-results-expanded')
+    await readPackageArchive(archive, expanded)
+    const records = JSON.parse(await readFile(join(expanded, 'records.json'), 'utf8'))
+    expect(records.history.computeJobs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'cancelled-externally',
+          status: 'failed',
+          cancelled: true,
+          error: 'job_cancelled'
+        }),
+        expect.objectContaining({
+          id: 'execution-failed',
+          status: 'failed',
+          cancelled: false,
+          error: 'job_failed'
+        })
+      ])
+    )
+  } finally {
+    await exporter.close()
+  }
+})
+
 it('does not remove an unclaimed directory when recovering an interrupted import', async () => {
   const target = await createProvenanceTestFixture()
   initDataRoot(target.storageRoot)
