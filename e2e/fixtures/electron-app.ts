@@ -450,7 +450,9 @@ const launchEnvironment = (
       'kde_session_version'
     ])
     if (process.platform === 'win32')
-      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432']) osInputs.add(key)
+      // Native OpenSSH requires ProgramData during initialization, even for version/config queries.
+      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432', 'programdata'])
+        osInputs.add(key)
     for (const key of Object.keys(environment)) {
       if (
         !osInputs.has(key.toLowerCase()) &&

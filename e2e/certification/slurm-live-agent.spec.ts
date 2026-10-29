@@ -336,12 +336,13 @@ for (const name of ['unavailable', 'cancel-rejected'] as const) {
             framework: observed.framework,
             messages: observed.messages,
             approvals: observed.approvals,
-            runs: runs.map(({ runId, kernelKind, status, script, text }) => ({
+            runs: runs.map(({ runId, kernelKind, status, script, text, outputs }) => ({
               runId,
               kernelKind,
               status,
               script,
-              text
+              text,
+              outputs
             })),
             acceptanceJudgment:
               'Review actual agent reasoning and tool evidence; passing this harness alone is not a semantic acceptance verdict.'
