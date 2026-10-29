@@ -18,6 +18,88 @@ public static class InstallDirectory {
   static extern bool CreateDirectory(string path, IntPtr security);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
   static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path, uint length, uint flags);
+  [StructLayout(LayoutKind.Sequential)] struct BasicInformation {
+    public long Creation; public long Access; public long Write; public long Change;
+    public uint Attributes;
+  }
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, ref byte disposition, uint size);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, ref BasicInformation information, uint size);
+  sealed class PendingRemoval {
+    public SafeFileHandle Handle;
+    public SafeFileHandle AttributeHandle;
+    public uint OriginalAttributes;
+    public bool Marked;
+  }
+  static void SetAttributes(SafeFileHandle handle, uint attributes) {
+    var info = new BasicInformation();
+    info.Attributes = attributes == 0 ? 0x80 : attributes;
+    if (!SetFileInformationByHandle(handle, 0, ref info, (uint)Marshal.SizeOf(info)))
+      throw new Win32Exception(Marshal.GetLastWin32Error());
+  }
+  static IEnumerable<string> ProgramLeaves(string directory) {
+    foreach (var path in Directory.GetFileSystemEntries(directory)) {
+      var attributes = File.GetAttributes(path);
+      if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == FileAttributes.Directory) {
+        foreach (var child in ProgramLeaves(path)) yield return child;
+      } else yield return path;
+    }
+  }
+  // Only the caller's freshly staged program tree is accepted. No configured data is staged.
+  // Classic FileDispositionInfo remains reversible until the handles close. Do not substitute
+  // DELETE_ON_CLOSE or POSIX unlink: either would defeat cancellation after a later failure.
+  public static void RemoveStagedProgramFiles(string directory) {
+    using (Hold(directory)) {
+      var pending = new List<PendingRemoval>();
+      try {
+        try {
+          foreach (var path in ProgramLeaves(directory)) {
+            var entry = new PendingRemoval();
+            pending.Add(entry);
+            // Exclusive data/delete sharing; OPEN_REPARSE_POINT removes links, never targets.
+            entry.Handle = CreateFile(path, 0x10080, 0, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (entry.Handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+            Information info;
+            if (!GetFileInformationByHandle(entry.Handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+            if ((info.Attributes & 0x410) == 0x10) throw new IOException("Program entry became a directory: " + path);
+            if ((info.Attributes & 1) != 0) {
+              // Attribute-only access is compatible with the exclusive deletion handle.
+              entry.AttributeHandle = CreateFile(path, 0x100, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+              if (entry.AttributeHandle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+              SetAttributes(entry.AttributeHandle, info.Attributes & ~1u);
+              entry.OriginalAttributes = info.Attributes;
+            }
+            byte remove = 1;
+            if (!SetFileInformationByHandle(entry.Handle, 4, ref remove, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), path);
+            entry.Marked = true;
+          }
+        } catch (Exception failure) {
+          var errors = new List<Exception>();
+          errors.Add(failure);
+          // Cancel every pending deletion before releasing any handle or restoring attributes.
+          foreach (var entry in pending) {
+            if (!entry.Marked) continue;
+            byte keep = 0;
+            if (!SetFileInformationByHandle(entry.Handle, 4, ref keep, 1))
+              errors.Add(new Win32Exception(Marshal.GetLastWin32Error(), "Could not cancel program deletion."));
+          }
+          foreach (var entry in pending) {
+            if (entry.OriginalAttributes == 0) continue;
+            try { SetAttributes(entry.AttributeHandle, entry.OriginalAttributes); }
+            catch (Exception error) { errors.Add(error); }
+          }
+          throw new AggregateException("Program cleanup failed before commit.", errors);
+        }
+      } finally {
+        // Closing commits only after all entries are marked, or after cancellation on failure.
+        foreach (var entry in pending) {
+          if (entry.AttributeHandle != null) entry.AttributeHandle.Dispose();
+          if (entry.Handle != null) entry.Handle.Dispose();
+        }
+      }
+    }
+  }
   public static string CanonicalPath(string path) {
     var missing = new Stack<string>();
     var current = Path.GetFullPath(path);

@@ -11,12 +11,12 @@ Var programConfigRoot
 Var programConfigTarget
 Var programDataRoot
 Var programDataTarget
-Var programRemoveEmptyOnly
 
 Function un.loadProgramDataPaths
   InitPluginsDir
   SetOutPath $PLUGINSDIR
   File "${BUILD_RESOURCES_DIR}\windows-program-data-paths.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-program-cleanup.ps1"
   # The shared managed helper is AnyCPU, including in universal installers.
   !ifdef APP_64
     File "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
@@ -161,20 +161,17 @@ Function un.moveProgramTree
     Exch $R0
 FunctionEnd
 
-# NSIS RMDir /r follows directory junctions. Traverse owned program trees explicitly, removing
-# reparse entries themselves without descending into their targets (which may hold research).
-Function un.removeProgramTree
+# Remove only empty scaffolding. Never delete a file or follow a reparse entry here.
+Function un.removeEmptyProgramDirectories
   Exch $R0
   Push $R1
   Push $R2
   Push $R3
   Push $R4
-  ${if} $programRemoveEmptyOnly == "1"
-    !insertmacro returnIfProgramDataPath "$R0" $programConfigRoot programTree_done
-    !insertmacro returnIfProgramDataPath "$R0" $programConfigTarget programTree_done
-    !insertmacro returnIfProgramDataPath "$R0" $programDataRoot programTree_done
-    !insertmacro returnIfProgramDataPath "$R0" $programDataTarget programTree_done
-  ${endif}
+  !insertmacro returnIfProgramDataPath "$R0" $programConfigRoot programTree_done
+  !insertmacro returnIfProgramDataPath "$R0" $programConfigTarget programTree_done
+  !insertmacro returnIfProgramDataPath "$R0" $programDataRoot programTree_done
+  !insertmacro returnIfProgramDataPath "$R0" $programDataTarget programTree_done
   System::Call 'kernel32::GetFileAttributes(t R0) i.R3 ?e'
   Pop $R4
   ${if} $R3 == -1
@@ -188,11 +185,8 @@ Function un.removeProgramTree
   ${endif}
   IntOp $R3 $R3 & 0x400
   ${if} $R3 != 0
-    ${if} $programRemoveEmptyOnly == "1"
-      StrCpy $R3 0
-      Goto programTree_done
-    ${endif}
-    Goto programTree_removeDirectory
+    StrCpy $R3 0
+    Goto programTree_done
   ${endif}
   FindFirst $R1 $R2 "$R0\*.*"
   programTree_next:
@@ -203,17 +197,10 @@ Function un.removeProgramTree
     IntOp $R3 $R3 & 0x10
     ${if} $R3 != 0
       Push "$R0\$R2"
-      Call un.removeProgramTree
+      Call un.removeEmptyProgramDirectories
       Pop $R3
     ${else}
-      ClearErrors
-      ${if} $programRemoveEmptyOnly != "1"
-        Delete "$R0\$R2"
-      ${endif}
       StrCpy $R3 0
-      ${if} ${Errors}
-        StrCpy $R3 "$R0\$R2"
-      ${endif}
     ${endif}
     ${if} $R3 != 0
       FindClose $R1
@@ -224,15 +211,9 @@ Function un.removeProgramTree
       Goto programTree_next
   programTree_close:
     FindClose $R1
-  programTree_removeDirectory:
     ClearErrors
     RMDir "$R0"
     StrCpy $R3 0
-    ${if} ${Errors}
-      ${if} $programRemoveEmptyOnly != "1"
-        StrCpy $R3 $R0
-      ${endif}
-    ${endif}
   programTree_done:
     StrCpy $R0 $R3
     Pop $R4
@@ -300,30 +281,35 @@ FunctionEnd
   !insertmacro stageProgramEntry vulkan-1.dll
   !insertmacro stageProgramEntry uninstallerIcon.ico
   !insertmacro stageProgramEntry "${APP_EXECUTABLE_FILENAME}"
-  # Data roots stay in the source tree. Remove only empty program scaffolding around them.
-  StrCpy $programRemoveEmptyOnly "1"
-  Push "$INSTDIR\resources"
-  Call un.removeProgramTree
-  Pop $R0
-  Push "$INSTDIR\locales"
-  Call un.removeProgramTree
-  Pop $R0
-  StrCpy $programRemoveEmptyOnly "0"
-  Push $programStagingDirectory
-  Call un.removeProgramTree
+  !insertmacro stageProgramEntry "${UNINSTALL_FILENAME}"
+  # Hold all deletion dispositions until the complete program payload can be removed. A late
+  # access/sharing failure cancels earlier dispositions, leaving every byte available to restore.
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-program-cleanup.ps1" -StagingPath "$programStagingDirectory"'
   Pop $R0
   ${if} $R0 != 0
-    DetailPrint `Could not delete staged application file: $R0`
+    DetailPrint `Could not commit program cleanup: $R0`
     Goto programCleanup_rollback
   ${endif}
-  # Keep the installed retry entrypoint until all other cleanup has succeeded. Its scripts are
-  # embedded, so ordinary uninstall can retry even if part of the payload was already deleted.
-  ClearErrors
-  Delete "$INSTDIR\${UNINSTALL_FILENAME}"
-  ${if} ${Errors}
-    SetErrorLevel 2
-    Abort
-  ${endif}
+  # Data roots stay in the source tree. Remove only empty program scaffolding around them.
+  Push "$INSTDIR\resources"
+  Call un.removeEmptyProgramDirectories
+  Pop $R0
+  Push "$INSTDIR\locales"
+  Call un.removeEmptyProgramDirectories
+  Pop $R0
+  StrCpy $R5 10
+  programCleanup_removeEmptyStaging:
+    Push $programStagingDirectory
+    Call un.removeEmptyProgramDirectories
+    Pop $R0
+    IfFileExists "$programStagingDirectory" 0 programCleanup_removedStaging
+    IntOp $R5 $R5 - 1
+    ${if} $R5 > 0
+      Sleep 100
+      Goto programCleanup_removeEmptyStaging
+    ${endif}
+    DetailPrint `Program files removed; empty staging directories remain: $programStagingDirectory`
+  programCleanup_removedStaging:
   # Remove an empty installation directory only. A directory containing user data is retained.
   RMDir "$INSTDIR"
   ClearErrors
@@ -332,8 +318,7 @@ FunctionEnd
   programCleanup_rollback:
     StrCpy $programSourceRoot $programStagingDirectory
     StrCpy $programTargetRoot $INSTDIR
-    # A just-deleted program file can briefly retain a handle or temporary directory entry.
-    # Retry only this run's remaining files; never discover or sweep another run's staging.
+    # Retry only this run's staged files; never discover or sweep another run's staging.
     StrCpy $R5 10
     programCleanup_restoreAttempt:
       Push ""
@@ -341,8 +326,10 @@ FunctionEnd
       Pop $R0
       ${if} $R0 == 0
         Push $programStagingDirectory
-        Call un.removeProgramTree
+        Call un.removeEmptyProgramDirectories
         Pop $R0
+        IfFileExists "$programStagingDirectory" 0 +2
+        StrCpy $R0 $programStagingDirectory
       ${endif}
       ${if} $R0 != 0
         IntOp $R5 $R5 - 1

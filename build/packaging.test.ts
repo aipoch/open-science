@@ -422,7 +422,8 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
         expect(compiled.status, compiled.stderr || compiled.stdout).toBe(0)
         const run = spawnSync(executable, ['/S'], {
           windowsHide: true,
-          timeout: 30_000,
+          // The probe runs repeated native uninstall/PowerShell processes for fault and retry cases.
+          timeout: 60_000,
           env: {
             ...powershellEnv,
             OPEN_SCIENCE_E2E_STORAGE_ROOT: '',
@@ -517,8 +518,20 @@ ${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileR
   FileWriteUTF16LE $9 "|cleanup-failed=$0"
   IfFileExists "${join(install, 'Uninstall open-science.exe')}" 0 +2
   FileWriteUTF16LE $9 "|uninstaller-retained"
+${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|restored-${index}=$7"`).join('\n')}
   ExecWait '"${powershell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${restoreAcl}"' $0
   FileWriteUTF16LE $9 "|acl-restored=$0"
+  # Start the entrypoint fault with a complete payload even on the unfixed baseline. The byte
+  # observations above still capture the earlier failure independently.
+  CreateDirectory "$INSTDIR\\resources"
+${[['open-science.exe', 'old application'], ...retryFiles.map((file, index) => [file, `retry-payload-${index}`])].map(([file, bytes]) => `FileOpen $8 "${join(install, file)}" w\nFileWrite $8 "${bytes}"\nFileClose $8`).join('\n')}
+  System::Call 'kernel32::CreateFile(t "${join(install, 'Uninstall open-science.exe')}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|uninstaller-locked=$0"
+${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|entrypoint-restored-${index}=$7"`).join('\n')}
+  System::Call 'kernel32::CloseHandle(p R6)'
+  # An ordinary read-only program file remains removable when attribute access is allowed.
+  SetFileAttributes "${lateProgramFile}" READONLY
   ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|first-uninstall=$0"
   # Match the updater's existing one-retry budget. A standalone uninstall can truthfully fail
@@ -553,7 +566,17 @@ SectionEnd
       }
       paths.forEach((_, index) => expect(result).toContain(`|in-place-${index}`))
       expect(result).toContain('|locked=2|still-locked=2|application-retained')
-      expect(result).toContain('|cleanup-failed=2|uninstaller-retained|acl-restored=0')
+      expect(result).toContain('|cleanup-failed=2|uninstaller-retained')
+      expect(result).toContain('|acl-restored=0')
+      expect(result).toContain('|restored-0=old application')
+      expect(result).toContain('|uninstaller-locked=2')
+      expect(result).toContain('|entrypoint-restored-0=old application')
+      retryFiles.forEach((_, index) =>
+        expect(result).toContain(`|restored-${index + 1}=retry-payload-${index}`)
+      )
+      retryFiles.forEach((_, index) =>
+        expect(result).toContain(`|entrypoint-restored-${index + 1}=retry-payload-${index}`)
+      )
       retryFiles.forEach((_, index) =>
         expect(result).toContain(`|retry-${index}=retry-payload-${index}`)
       )
@@ -583,7 +606,7 @@ SectionEnd
       rmSync(root, { recursive: true, force: true })
     }
   },
-  60_000
+  90_000
 )
 
 describe('packaging config', () => {
