@@ -113,6 +113,11 @@ bundle = replaceOne(
 )
 bundle = replaceOne(
   bundle,
+  '        model: `${assistant.provider}/${assistant.model}`',
+  '        model: `${assistant.provider}/${assistant.model}`,\n        usage: assistant.usage'
+)
+bundle = replaceOne(
+  bundle,
   '    const mcp = planAcpMcpServers(options.mcpServers);',
   `    const mcp = planAcpMcpServers(options.mcpServers);
     const discovered = new Set();
