@@ -7,6 +7,7 @@ import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
@@ -3443,8 +3444,66 @@ if (process.argv.includes('--version')) {
     })
     .onRequest(acp.methods.agent.session.close, () => ({}))
 
-  const connection = app.connect(
-    acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
-  )
-  await connection.closed
+  // OpenCode 1.x exposes native message metadata alongside ACP. Register each emitted
+  // reply before delivery so the application's compaction guard can classify it.
+  const nativeMessages = new Map()
+  const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
+  const writer = stream.writable.getWriter()
+  const portIndex = process.argv.indexOf('--port')
+  const server =
+    portIndex === -1
+      ? undefined
+      : createServer((request, response) => {
+          const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+          if (request.headers.authorization !== authorization) {
+            response.writeHead(401).end()
+            return
+          }
+          const url = new URL(request.url, 'http://127.0.0.1')
+          const match = /^\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname)
+          const sessionId = match && decodeURIComponent(match[1])
+          const messageId = match && decodeURIComponent(match[2])
+          const info = nativeMessages.get(JSON.stringify([sessionId, messageId]))
+          if (
+            request.method !== 'GET' ||
+            !info ||
+            sessionRoutes.get(sessionId)?.cwd !== url.searchParams.get('directory')
+          ) {
+            response.writeHead(404).end()
+            return
+          }
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ info, parts: [] }))
+        })
+  if (server) {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1', resolve)
+    })
+  }
+  try {
+    const connection = app.connect({
+      readable: stream.readable,
+      writable: new WritableStream({
+        write(message) {
+          const params = message.method === 'session/update' ? message.params : undefined
+          const update = params?.update
+          if (['agent_message_chunk', 'agent_thought_chunk'].includes(update?.sessionUpdate)) {
+            nativeMessages.set(JSON.stringify([params.sessionId, update.messageId]), {
+              id: update.messageId,
+              sessionID: params.sessionId,
+              role: 'assistant',
+              summary: false
+            })
+          }
+          return writer.write(message)
+        },
+        close: () => writer.close(),
+        abort: (reason) => writer.abort(reason)
+      })
+    })
+    await connection.closed
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve))
+  }
 }
