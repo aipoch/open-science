@@ -64,14 +64,14 @@ FunctionEnd
   ${endif}
 !macroend
 
-!macro returnIfProgramDataAncestor CANDIDATE ROOT
+!macro returnIfProgramDataAncestor CANDIDATE ROOT DONE
   StrLen $R4 "${CANDIDATE}"
   StrCpy $R3 "${ROOT}" $R4
   ${if} $R3 == "${CANDIDATE}"
     StrCpy $R3 "${ROOT}" 1 $R4
     ${if} $R3 == "\"
       StrCpy $R3 0
-      Goto programMove_done
+      Goto ${DONE}
     ${endif}
   ${endif}
 !macroend
@@ -82,8 +82,8 @@ Function un.onUninstSuccess
   SetErrorLevel 0
 FunctionEnd
 
-# Move individual program files on the installation volume before deleting any of them. A busy
-# file can then abort with the old payload restored. Directory links move as entries, never targets.
+# Stage on the installation volume before deleting anything. Unprotected directory subtrees can
+# move together; data ancestors require selective traversal. Links move as entries, never targets.
 Function un.moveProgramTree
   Exch $R0
   Push $R1
@@ -111,15 +111,30 @@ Function un.moveProgramTree
   ${if} $R4 != 0
   ${andIf} $programSourceRoot == $INSTDIR
     # Keep a junction needed to reach a configured descendant, even if its target is external.
-    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigRoot
-    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigTarget
-    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataRoot
-    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataTarget
+    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigRoot programMove_done
+    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigTarget programMove_done
+    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataRoot programMove_done
+    !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataTarget programMove_done
     # The comparison macros use $R3, so reload attributes before selecting directory traversal.
     System::Call 'kernel32::GetFileAttributes(t "$programSourceRoot\$R0") i.R3'
   ${endif}
   IntOp $R3 $R3 & 0x410
   ${if} $R3 == 16
+    ${if} $programSourceRoot == $INSTDIR
+      !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigRoot programMove_recurse
+      !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programConfigTarget programMove_recurse
+      !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataRoot programMove_recurse
+      !insertmacro returnIfProgramDataAncestor "$programSourceRoot\$R0" $programDataTarget programMove_recurse
+    ${endif}
+    # Same-volume Rename is also used during rollback: an open descendant need not be renamed
+    # individually to restore its containing directory. Existing targets use the selective path.
+    ClearErrors
+    Rename "$programSourceRoot\$R0" "$programTargetRoot\$R0"
+    ${ifNot} ${Errors}
+      StrCpy $R3 0
+      Goto programMove_done
+    ${endif}
+    programMove_recurse:
     ClearErrors
     CreateDirectory "$programTargetRoot\$R0"
     ${if} ${Errors}

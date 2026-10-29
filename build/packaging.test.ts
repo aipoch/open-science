@@ -347,6 +347,9 @@ it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as
       writeFileSync(join(configRoot, 'settings.json'), JSON.stringify({ dataRoot }))
       const applicationFile = join(install, 'open-science.exe')
       writeFileSync(applicationFile, 'old application')
+      const nestedProgramFile = join(install, 'resources/program-subtree/held.data')
+      mkdirSync(join(install, 'resources/program-subtree'), { recursive: true })
+      writeFileSync(nestedProgramFile, 'nested program bytes')
       mkdirSync(join(install, 'resources'), { recursive: true })
       const retryFiles = [
         'resources/windows-update-handoff-uninstall.ps1',
@@ -522,6 +525,17 @@ ${selection}
   FileWriteUTF16LE $9 "|application-retained"
 ${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|retry-${index}=$7"`).join('\n')}
   System::Call 'kernel32::CloseHandle(p R6)'
+  # A directory rename can succeed while its descendant is open. Rollback must restore that
+  # entire subtree without trying to rename the locked descendant out of it.
+  System::Call 'kernel32::CreateFile(t "${nestedProgramFile}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|nested-locked=$0"
+  StrCpy $7 "missing"
+  FileOpen $8 "${nestedProgramFile}" r
+  FileRead $8 $7
+  FileClose $8
+  FileWriteUTF16LE $9 "|nested-restored=$7"
+  System::Call 'kernel32::CloseHandle(p R6)'
   ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
   FileWriteUTF16LE $9 "|cleanup-failed=$0"
   IfFileExists "${join(install, 'Uninstall open-science.exe')}" 0 +2
@@ -591,6 +605,7 @@ SectionEnd
       }
       paths.forEach((_, index) => expect(result).toContain(`|in-place-${index}`))
       expect(result).toContain('|locked=2|still-locked=2|application-retained')
+      expect(result).toContain('|nested-locked=2|nested-restored=nested program bytes')
       expect(result).toContain('|cleanup-failed=2|uninstaller-retained')
       expect(result).toContain('|acl-restored=0')
       expect(result).toContain('|restored-0=old application')
