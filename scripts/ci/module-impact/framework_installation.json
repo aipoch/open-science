@@ -7,7 +7,6 @@
     "src/main/settings/managed-codex.ts",
     "src/main/settings/managed-opencode.test.ts",
     "src/main/settings/managed-opencode.ts",
-    "src/main/settings/managed-pi.ts",
     "src/main/settings/process-tree.test.ts",
     "src/main/settings/process-tree.ts",
     "src/main/settings/codex-authentication-status.test.ts",
@@ -19,7 +18,6 @@
     "src/main/settings/managed-claude.ts",
     "src/main/settings/managed-codex.ts",
     "src/main/settings/managed-opencode.ts",
-    "src/main/settings/managed-pi.ts",
     "src/main/settings/process-tree.ts"
   ],
   "testFiles": {
