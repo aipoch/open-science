@@ -169,7 +169,7 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     'pako@0.2.9': /^dist\/[^/]+\.js(?:\.map)?$/,
     'pako@1.0.11': /^dist\/[^/]+\.js(?:\.map)?$/
   }[`${manifest.name}@${manifest.version}`]
-  const zod = manifest.name === 'zod' && manifest.version === '4.6.5'
+  const zod = manifest.name === 'zod' && ['4.6.5', '4.6.7'].includes(manifest.version)
   const runtimeEntries = []
   const collect = (value) => {
     if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))

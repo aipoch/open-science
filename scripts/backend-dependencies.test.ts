@@ -677,44 +677,48 @@ describe('desktop-only dependency contents', () => {
       expect(desktop(file, false)).toBe(true)
   })
 
-  it('keeps Zod runtime subpaths without shipping its opt-in development sources or locale types', () => {
-    const manifest = JSON.parse(readFileSync('node_modules/zod/package.json', 'utf8'))
-    expect(manifest.version).toBe('4.6.5')
-    const desktop = createDesktopDependencyFilter(manifest)
-    for (const separator of ['/', '\\']) {
-      for (const file of [
-        'src/index.ts',
-        'src/v4/core/core.ts',
-        'v4/locales/en.d.cts',
-        'v4/locales/en.d.ts'
-      ]) {
-        const path = file.replaceAll('/', separator)
-        expect(desktop(path, false)).toBe(false)
-        expect(backendDependencyIncludes(manifest, path)).toBe(true)
-        expect(createDesktopDependencyFilter({ ...manifest, version: '99' })(path, false)).toBe(
-          true
-        )
+  it.each(['4.6.5', '4.6.7'])(
+    'keeps Zod %s runtime subpaths without shipping its opt-in development sources or locale types',
+    (version) => {
+      const installed = JSON.parse(readFileSync('node_modules/zod/package.json', 'utf8'))
+      expect(['4.6.5', '4.6.7']).toContain(installed.version)
+      const manifest = { ...installed, version }
+      const desktop = createDesktopDependencyFilter(manifest)
+      for (const separator of ['/', '\\']) {
+        for (const file of [
+          'src/index.ts',
+          'src/v4/core/core.ts',
+          'v4/locales/en.d.cts',
+          'v4/locales/en.d.ts'
+        ]) {
+          const path = file.replaceAll('/', separator)
+          expect(desktop(path, false)).toBe(false)
+          expect(backendDependencyIncludes(manifest, path)).toBe(true)
+          expect(createDesktopDependencyFilter({ ...manifest, version: '99' })(path, false)).toBe(
+            true
+          )
+        }
+        for (const file of [
+          'index.cjs',
+          'index.js',
+          'compile.js',
+          'v3/index.cjs',
+          'v4/core/index.js',
+          'v4/locales/en.js',
+          'v4/locales/en.cjs',
+          'src/LICENSE'
+        ])
+          expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
       }
-      for (const file of [
-        'index.cjs',
-        'index.js',
-        'compile.js',
-        'v3/index.cjs',
-        'v4/core/index.js',
-        'v4/locales/en.js',
-        'v4/locales/en.cjs',
-        'src/LICENSE'
-      ])
-        expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
+      // A new runtime export into src is not the audited development-only condition.
+      const exports = { ...manifest.exports, './runtime': './src/runtime.js' }
+      expect(createDesktopDependencyFilter({ ...manifest, exports })('src/runtime.js', false)).toBe(
+        true
+      )
+      const additionalCondition = { ...manifest, exports: { '.': { unknown: './src/index.ts' } } }
+      expect(createDesktopDependencyFilter(additionalCondition)('src/index.ts', false)).toBe(true)
     }
-    // A new runtime export into src is not the audited development-only condition.
-    const exports = { ...manifest.exports, './runtime': './src/runtime.js' }
-    expect(createDesktopDependencyFilter({ ...manifest, exports })('src/runtime.js', false)).toBe(
-      true
-    )
-    const additionalCondition = { ...manifest, exports: { '.': { unknown: './src/index.ts' } } }
-    expect(createDesktopDependencyFilter(additionalCondition)('src/index.ts', false)).toBe(true)
-  })
+  )
 
   it('runs schema and binary consumers from isolated pruned dependency trees', async () => {
     const root = await mkdtemp(join(tmpdir(), 'desktop-pruned-schemas-'))
