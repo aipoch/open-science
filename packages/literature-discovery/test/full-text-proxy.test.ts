@@ -161,6 +161,59 @@ it.each([
   expect(fixture.tunnel).not.toHaveBeenCalled()
 })
 
+it('tunnels by hostname when local DNS only returns fake-ip placeholders', async () => {
+  fixture.lookup.mockResolvedValue([
+    { address: '198.18.6.119', family: 4 },
+    { address: '198.18.6.137', family: 4 }
+  ])
+  await expect(
+    downloadFullText(
+      'https://journal.example/paper.pdf',
+      100,
+      undefined,
+      async () => 'http://127.0.0.1:1086'
+    )
+  ).resolves.toEqual(Buffer.from('%PDF-test'))
+  expect(fixture.tunnel).toHaveBeenCalledWith(
+    new URL('http://127.0.0.1:1086'),
+    'journal.example',
+    443,
+    undefined,
+    expect.any(AbortSignal)
+  )
+  expect(fixture.tls).toHaveBeenCalledWith(
+    expect.objectContaining({ servername: 'journal.example', socket: { pinned: true } })
+  )
+})
+
+it.each([
+  [
+    [
+      { address: '198.18.6.119', family: 4 },
+      { address: '10.0.0.1', family: 4 }
+    ],
+    'fake-ip mixed with a private answer'
+  ],
+  [
+    [
+      { address: '198.18.6.119', family: 4 },
+      { address: '8.8.8.8', family: 4 }
+    ],
+    'fake-ip mixed with a public answer'
+  ]
+])('refuses ambiguous %s before opening any proxy tunnel', async (answers) => {
+  fixture.lookup.mockResolvedValue(answers)
+  await expect(
+    downloadFullText(
+      'https://journal.example/paper.pdf',
+      100,
+      undefined,
+      async () => 'http://127.0.0.1:1086'
+    )
+  ).rejects.toThrow('public address')
+  expect(fixture.tunnel).not.toHaveBeenCalled()
+})
+
 it('resolves proxy and validates DNS again after a redirect', async () => {
   fixture.status = 302
   fixture.location = 'https://redirect.example/paper.pdf'
