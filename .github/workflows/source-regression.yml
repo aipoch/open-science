@@ -30,7 +30,7 @@ on:
         description: Regression shard for a focused regressions dry-run
         type: choice
         default: all
-        options: [all, '1', '2', '3']
+        options: [all, '1', '2', '3', '4', '5', '6']
       test_pattern:
         description: Optional Playwright title regex for the scheduled-fixes diagnostic only
         type: string
@@ -118,10 +118,10 @@ jobs:
           const diagnostics = ['scheduled-fixes', 'workspace-images', 'presentation-screening']
           const { MODE: mode, SHARD: shard } = process.env
           if (!['full', ...groups, ...diagnostics].includes(mode)) throw new Error('Invalid Mac scope')
-          if (!['all', '1', '2', '3'].includes(shard)) throw new Error('Invalid regression shard')
+          if (!['all', '1', '2', '3', '4', '5', '6'].includes(shard)) throw new Error('Invalid regression shard')
           const selected = mode === 'full' ? groups : [mode]
           const include = selected.flatMap(group => group === 'regressions'
-            ? (mode === 'regressions' && shard !== 'all' ? [Number(shard)] : [1, 2, 3]).map(shard => ({ group, shard }))
+            ? (mode === 'regressions' && shard !== 'all' ? [Number(shard)] : [1, 2, 3, 4, 5, 6]).map(shard => ({ group, shard }))
             : [{ group, shard: 1 }])
           appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
       - name: Checkout
@@ -260,7 +260,7 @@ jobs:
         with:
           group: ${{ matrix.group }}
           include-capacity: 'false'
-          shard: ${{ matrix.group == 'regressions' && format('{0}/3', matrix.shard) || '' }}
+          shard: ${{ matrix.group == 'regressions' && format('{0}/6', matrix.shard) || '' }}
       - name: Run supplemental delegation
         id: delegation
         if: ${{ matrix.group == 'delegation' }}

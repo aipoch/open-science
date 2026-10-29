@@ -75,7 +75,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
       'fail-fast': false,
       matrix: {
         shard:
-          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3]') }}"
+          "${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.workspace_test_pattern != '' && '[1]' || '[1,2,3,4,5,6]') }}"
       }
     }
   })
@@ -112,7 +112,7 @@ it('schedules independent complete Windows E2E and keeps the manual full entry p
     )
     expect(run.run).toContain(`npm run ${command} --`)
     expect(run.run).toContain('--workers=1')
-    expect(run.run).toContain('--shard=${{ matrix.shard }}/3')
+    expect(run.run).toContain('--shard=${{ matrix.shard }}/6')
     expect(run.run).toContain('--fail-on-flaky-tests')
     expect(run.run).not.toContain('--grep')
     expect(run.run).not.toContain('--pass-with-no-tests')
@@ -170,7 +170,7 @@ it('isolates manual workspace diagnostics while retaining full scheduled coverag
     for (const pattern of ['', 'finds offscreen cells']) {
       const focused = event === 'workflow_dispatch' && pattern !== ''
       expect(evaluate(String(execution.strategy!.matrix.shard), event, pattern)).toEqual(
-        focused ? [1] : [1, 2, 3]
+        focused ? [1] : [1, 2, 3, 4, 5, 6]
       )
       expect(evaluate(diagnostic.if!, event, pattern)).toBe(focused)
       expect(evaluate(diagnosticGate.if!, event, pattern)).toBe(focused)
