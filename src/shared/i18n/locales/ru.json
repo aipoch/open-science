@@ -193,6 +193,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "Запуск остановлен при обращении к системным учётным данным. Существующие учётные данные и данные профиля сохранены. Устраните проблему с разрешением доступа и повторите запуск."
   },
   "renderer": {
+    "Skipped {{key}}: use at most 100 tags of 64 characters each.": "{{key}} пропущен: используйте не более 100 тегов длиной до 64 символов каждый.",
     "Only .science packages can be imported.": "Можно импортировать только пакеты .science.",
     "Read the security policy and report vulnerabilities.": "Ознакомьтесь с политикой безопасности и сообщите об уязвимостях.",
     "Security": "Безопасность",

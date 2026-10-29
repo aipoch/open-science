@@ -17,6 +17,7 @@ export const ZOTERO_PREVIEW_CHANGED = 'ZOTERO_PREVIEW_CHANGED'
 export const ZOTERO_CONNECTION_FAILED = 'ZOTERO_CONNECTION_FAILED'
 export const ZOTERO_REQUEST_TIMED_OUT = 'ZOTERO_REQUEST_TIMED_OUT'
 export const ZOTERO_LOCAL_API_DISABLED = 'ZOTERO_LOCAL_API_DISABLED'
+export const ZOTERO_TAG_LIMIT = 'ZOTERO_TAG_LIMIT'
 
 const name = z.string().trim().min(1).max(64)
 export const collectedCollectionPathsSchema = z

@@ -16,6 +16,7 @@ import {
   ZOTERO_PREVIEW_CHANGED,
   ZOTERO_REQUEST_TIMED_OUT,
   ZOTERO_LOCAL_API_DISABLED,
+  ZOTERO_TAG_LIMIT,
   type CollectedReference,
   type CollectorRequest,
   type CollectorResult
@@ -32,6 +33,7 @@ type Entry = { key: string; reference: CollectedReference; pdfKeys: string[] }
 type Snapshot = {
   expires: number
   entries: Entry[]
+  failures: CollectorResult['failures']
   server: string
   collectionPaths: string[][]
   reviews: CollectedReferenceInspection[]
@@ -187,20 +189,29 @@ export class LiteratureCollector {
       }
       return path
     }
-    const collectionPaths = collections
-      .filter(({ key }) => {
-        if (!collectionKey) return true
-        const seen = new Set<string>()
-        while (key && !seen.has(key)) {
-          if (key === collectionKey) return true
-          seen.add(key)
-          key = text(byKey.get(key)?.parentCollection)
-        }
-        return false
-      })
-      .map(({ key }) => collectionPath(key))
-    const items = await read(collectionKey ? `collections/${collectionKey}/items` : 'items')
+    if (collectionKey && !byKey.has(collectionKey)) throw new Error(ZOTERO_PREVIEW_CHANGED)
+    const selectedCollections = collections.filter(({ key }) => {
+      if (!collectionKey) return true
+      const seen = new Set<string>()
+      while (key && !seen.has(key)) {
+        if (key === collectionKey) return true
+        seen.add(key)
+        key = text(byKey.get(key)?.parentCollection)
+      }
+      return false
+    })
+    const collectionPaths = selectedCollections.map(({ key }) => collectionPath(key))
+    const itemsByKey = new Map<string, ZoteroItem>()
+    const paths = collectionKey
+      ? selectedCollections.map(({ key }) => `collections/${key}/items`)
+      : ['items']
+    for (const path of paths) {
+      for (const item of await read(path)) itemsByKey.set(item.key, item)
+    }
+    const items = [...itemsByKey.values()]
     const entries: Entry[] = []
+    const failures: CollectorResult['failures'] = []
+    let referenceCount = 0
     for (const { key, data } of items) {
       const standalonePdf =
         data.itemType === 'attachment' && data.contentType === 'application/pdf' && !data.parentItem
@@ -209,8 +220,18 @@ export class LiteratureCollector {
         (data.itemType === 'attachment' && !standalonePdf)
       )
         continue
-      if (entries.length >= 1000)
+      if (++referenceCount > 1000)
         throw new Error('Select at most 1,000 Zotero references per import.')
+      const tags = collectedReferenceSchema.shape.tags.safeParse(
+        z
+          .array(z.object({ tag: z.string() }))
+          .parse(data.tags ?? [])
+          .map(({ tag }) => tag)
+      )
+      if (!tags.success) {
+        failures.push({ key, message: ZOTERO_TAG_LIMIT })
+        continue
+      }
       const type = text(data.itemType)
       const creators = z
         .array(z.record(z.string(), z.unknown()))
@@ -280,10 +301,7 @@ export class LiteratureCollector {
           sourceUrl: `zotero://select/library/items/${key}`,
           rawMetadata: data
         },
-        tags: z
-          .array(z.object({ tag: z.string() }))
-          .parse(data.tags ?? [])
-          .map(({ tag }) => tag),
+        tags: tags.data,
         collectionPaths: z
           .array(keySchema)
           .parse(data.collections ?? [])
@@ -298,7 +316,15 @@ export class LiteratureCollector {
       if (standalonePdf) pdfKeys.unshift(key)
       entries.push({ key, reference, pdfKeys })
     }
-    return this.createPreview(entries, server!, collectionPaths, signal)
+    return this.createPreview(
+      entries,
+      server!,
+      collectionPaths,
+      signal,
+      undefined,
+      undefined,
+      failures
+    )
   }
 
   private async createPreview(
@@ -307,7 +333,8 @@ export class LiteratureCollector {
     collectionPaths: string[][],
     signal?: AbortSignal,
     policies: LiteratureDuplicatePolicy[] = entries.map(() => 'reuse'),
-    replacedId?: string
+    replacedId?: string,
+    failures: CollectorResult['failures'] = []
   ): Promise<CollectorResult> {
     signal?.throwIfAborted()
     const identities = await this.options.catalog.inspectCollectedReferences(
@@ -323,6 +350,7 @@ export class LiteratureCollector {
     const snapshotId = randomUUID()
     this.snapshots.set(snapshotId, {
       entries,
+      failures,
       policies,
       reviews: identities,
       expires: now + 10 * 60_000,
@@ -332,6 +360,7 @@ export class LiteratureCollector {
     return {
       ...emptyResult(),
       snapshotId,
+      failures,
       collectionCount: collectionPaths.length,
       entries: entries.map(({ key, reference, pdfKeys }, index) => ({
         key,
@@ -407,7 +436,8 @@ export class LiteratureCollector {
           snapshot.collectionPaths,
           signal,
           policies,
-          request.snapshotId
+          request.snapshotId,
+          snapshot.failures
         )
         return result
       } finally {

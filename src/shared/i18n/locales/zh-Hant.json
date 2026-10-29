@@ -190,6 +190,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "啟動在存取系統憑證時停止。現有憑證和設定檔資料已保留。解決授權問題後，請重試啟動。"
   },
   "renderer": {
+    "Skipped {{key}}: use at most 100 tags of 64 characters each.": "已略過 {{key}}：最多支援 100 個標籤，每個標籤不超過 64 個字元。",
     "Only .science packages can be imported.": "只能匯入 .science 套件。",
     "Read the security policy and report vulnerabilities.": "查看安全政策並回報漏洞。",
     "Security": "安全",

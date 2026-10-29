@@ -190,6 +190,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "システム認証情報へのアクセス中に起動が停止しました。既存の認証情報とプロファイルデータは保持されています。アクセス許可の問題を解決してから起動を再試行してください。"
   },
   "renderer": {
+    "Skipped {{key}}: use at most 100 tags of 64 characters each.": "{{key}} をスキップしました：タグは最大 100 個、各タグは 64 文字以内にしてください。",
     "Only .science packages can be imported.": ".science パッケージのみインポートできます。",
     "Read the security policy and report vulnerabilities.": "セキュリティポリシーの確認と脆弱性の報告。",
     "Security": "セキュリティ",

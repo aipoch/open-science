@@ -17,6 +17,7 @@ import {
   ZOTERO_BATCH_POLICY_CONFLICT,
   ZOTERO_FILL_TYPE_CONFLICT,
   ZOTERO_LOCAL_API_DISABLED,
+  ZOTERO_TAG_LIMIT,
   ZOTERO_REQUEST_TIMED_OUT,
   type CollectorRequest,
   type CollectorResult
@@ -194,7 +195,9 @@ export function LiteratureZoteroDialog({ onClose }: { onClose: () => void }): Re
             disabled={
               busy ||
               (selected.length === 0 &&
-                (preview?.entries.length !== 0 || !preview?.collectionCount)) ||
+                (preview?.entries.length !== 0 ||
+                  !preview?.collectionCount ||
+                  !!preview?.failures.length)) ||
               !preview?.snapshotId ||
               (!!result && result.failures.length === 0)
             }
@@ -261,6 +264,17 @@ export function LiteratureZoteroDialog({ onClose }: { onClose: () => void }): Re
                 onClick: () => void run(error.request)
               }}
             />
+          ) : null}
+          {preview?.failures.length ? (
+            <ul role="status" className="list-inside list-disc text-sm">
+              {preview.failures.map(({ key, message }) => (
+                <li key={key}>
+                  {message === ZOTERO_TAG_LIMIT
+                    ? t('Skipped {{key}}: use at most 100 tags of 64 characters each.', { key })
+                    : `${key}: ${message}`}
+                </li>
+              ))}
+            </ul>
           ) : null}
           {preview ? (
             <fieldset disabled={busy || !!result} className="space-y-2">

@@ -14,6 +14,49 @@ beforeAll(() => {
 })
 afterEach(cleanup)
 describe('Zotero import dialog', () => {
+  it.each([false, true])(
+    'shows skipped tags and permits importing only valid references (valid: %s)',
+    async (hasValid) => {
+      const collect = vi.fn().mockResolvedValue({
+        snapshotId: 'preview-tags',
+        collectionCount: 1,
+        entries: hasValid
+          ? [
+              {
+                key: 'VALID001',
+                title: 'Valid paper',
+                pdfCount: 0,
+                identity: { status: 'new', reason: 'new', identifiers: [], matches: [] }
+              }
+            ]
+          : [],
+        savedItemIds: [],
+        failures: [{ key: 'BADTAG01', message: 'ZOTERO_TAG_LIMIT' }],
+        pdfCount: 0
+      })
+      Object.defineProperty(window, 'api', {
+        configurable: true,
+        value: { literature: { collect } }
+      })
+      render(<LiteratureZoteroDialog onClose={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Preview Zotero library' }))
+      await screen.findByText('Skipped BADTAG01: use at most 100 tags of 64 characters each.')
+      const button = screen.getByRole('button', { name: 'Import references' }) as HTMLButtonElement
+      expect(button.disabled).toBe(!hasValid)
+      if (hasValid) {
+        fireEvent.click(button)
+        await waitFor(() =>
+          expect(collect).toHaveBeenCalledWith({
+            kind: 'zotero-commit',
+            snapshotId: 'preview-tags',
+            keys: ['VALID001'],
+            includePdfs: true
+          })
+        )
+      }
+    }
+  )
+
   it.each([
     [
       'ZOTERO_COLLECTION_CONFLICT',

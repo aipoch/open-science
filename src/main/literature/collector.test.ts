@@ -85,6 +85,77 @@ function fixture(
   return { collector, catalog, content, fetch }
 }
 describe('Zotero collector', () => {
+  it('includes descendant references and PDFs once without reading unrelated collections', async () => {
+    const f = fixture()
+    const child = { key: 'CHILD001', data: { name: 'Child', parentCollection: 'COLLECT1' } }
+    const other = { key: 'OTHER001', data: { name: 'Other', parentCollection: false } }
+    const nested = {
+      ...record,
+      key: 'NESTED01',
+      data: { ...record.data, collections: ['CHILD001'] }
+    }
+    f.fetch.mockImplementation(async (url) => {
+      const path = new URL(url).pathname
+      const items = path.endsWith('/collections')
+        ? [collection, child, other]
+        : path.endsWith('/COLLECT1/items')
+          ? [record]
+          : path.endsWith('/CHILD001/items')
+            ? [record, nested, pdf]
+            : []
+      return new Response(JSON.stringify(items), {
+        headers: { 'Last-Modified-Version': '1', 'Zotero-Server-ID': 'server-1' }
+      })
+    })
+    const preview = await f.collector.run({ kind: 'zotero-preview', collectionKey: 'COLLECT1' })
+    expect(preview.entries.map(({ key, pdfCount }) => ({ key, pdfCount }))).toEqual([
+      { key: 'ABCDEFGH', pdfCount: 1 },
+      { key: 'NESTED01', pdfCount: 0 }
+    ])
+    expect(preview.collectionCount).toBe(2)
+    expect(f.fetch).toHaveBeenCalledTimes(3)
+    expect(f.fetch.mock.calls.some(([url]) => url.includes('/OTHER001/items'))).toBe(false)
+    await f.collector.run({
+      kind: 'zotero-commit',
+      snapshotId: preview.snapshotId!,
+      keys: ['NESTED01'],
+      includePdfs: false
+    })
+    expect(f.catalog.collectReferences.mock.calls[0][0][0].collectionPaths).toEqual([
+      ['Research', 'Child']
+    ])
+  })
+
+  it.each([
+    [[{ tag: 'x'.repeat(65) }]],
+    [Array.from({ length: 101 }, (_, index) => ({ tag: `tag-${index}` }))]
+  ])(
+    'skips unsupported tags without blocking valid references or losing revision diagnostics',
+    async (tags) => {
+      const f = fixture({
+        items: [{ ...record, key: 'BADTAG01', data: { ...record.data, tags } }, record]
+      })
+      const preview = await f.collector.run({ kind: 'zotero-preview' })
+      expect(preview.failures).toEqual([{ key: 'BADTAG01', message: 'ZOTERO_TAG_LIMIT' }])
+      expect(preview.entries.map(({ key }) => key)).toEqual(['ABCDEFGH'])
+      const revised = await f.collector.run({
+        kind: 'zotero-revise',
+        snapshotId: preview.snapshotId!,
+        key: 'ABCDEFGH',
+        policy: 'reuse'
+      })
+      expect(revised.failures).toEqual(preview.failures)
+      const result = await f.collector.run({
+        kind: 'zotero-commit',
+        snapshotId: revised.snapshotId!,
+        keys: ['ABCDEFGH'],
+        includePdfs: false
+      })
+      expect(f.catalog.collectReferences.mock.calls[0][0]).toHaveLength(1)
+      expect(result.failures).toEqual([])
+    }
+  )
+
   it.each(['request', 'response body'] as const)(
     'propagates caller cancellation during the Zotero %s without continuing the preview',
     async (phase) => {

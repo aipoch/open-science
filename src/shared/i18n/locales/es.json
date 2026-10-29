@@ -192,6 +192,7 @@
     "Startup stopped while accessing system credentials. Existing credentials and profile data have been preserved. Retry startup after resolving the authorization problem.": "El inicio se detuvo al acceder a las credenciales del sistema. Se conservaron las credenciales y los datos del perfil existentes. Vuelva a intentar el inicio después de resolver el problema de autorización."
   },
   "renderer": {
+    "Skipped {{key}}: use at most 100 tags of 64 characters each.": "Se omitió {{key}}: utilice como máximo 100 etiquetas de 64 caracteres cada una.",
     "Only .science packages can be imported.": "Solo se pueden importar paquetes .science.",
     "Read the security policy and report vulnerabilities.": "Consultar la política de seguridad y comunicar vulnerabilidades.",
     "Security": "Seguridad",

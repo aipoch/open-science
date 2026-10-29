@@ -24,6 +24,16 @@ import { withCitationStyleErrors } from './citation-errors'
 import type { JournalAttributes } from './journal-attributes'
 import type { LiteraturePdfImporter } from './pdf-importer'
 import { transactLiterature } from './transact'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
+import {
+  ZOTERO_BATCH_POLICY_CONFLICT,
+  ZOTERO_FILL_TYPE_CONFLICT,
+  ZOTERO_COLLECTION_CONFLICT,
+  ZOTERO_PREVIEW_CHANGED,
+  ZOTERO_CONNECTION_FAILED,
+  ZOTERO_REQUEST_TIMED_OUT,
+  ZOTERO_LOCAL_API_DISABLED
+} from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
   journalAttributes: Pick<JournalAttributes, 'run'>
@@ -86,7 +96,26 @@ export const createLiteratureCommandOwner = ({
   literatureCollector,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
-  collect: (request, signal) => literatureCollector.run(request, signal),
+  collect: async (request, signal) => {
+    try {
+      return await literatureCollector.run(request, signal)
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        [
+          ZOTERO_BATCH_POLICY_CONFLICT,
+          ZOTERO_FILL_TYPE_CONFLICT,
+          ZOTERO_COLLECTION_CONFLICT,
+          ZOTERO_PREVIEW_CHANGED,
+          ZOTERO_CONNECTION_FAILED,
+          ZOTERO_REQUEST_TIMED_OUT,
+          ZOTERO_LOCAL_API_DISABLED
+        ].includes(error.message)
+      )
+        throw new ApplicationCommandError('command-failed', error.message)
+      throw error
+    }
+  },
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
