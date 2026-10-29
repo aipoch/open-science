@@ -111,6 +111,39 @@ bundle = replaceOne(
     if (params.methodId !== 'api-key:open-science') throw invalidParams('Unsupported Pi authentication method');
     const modelRuntime = await this.modelRuntime();`
 )
+bundle = replaceOne(
+  bundle,
+  '    const mcp = planAcpMcpServers(options.mcpServers);',
+  `    const mcp = planAcpMcpServers(options.mcpServers);
+    const discovered = new Set();
+    for (const entry of sessionManager.getBranch()) {
+      if (entry.type !== "message") continue;
+      const message = entry.message;
+      if (message.role === "assistant" && Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (part.type === "toolCall" && typeof part.name === "string")
+            discovered.add(part.name);
+        }
+      }
+      if (message.role === "toolResult" && message.toolName === "tool_search" &&
+          !message.isError && Array.isArray(message.details?.loaded)) {
+        for (const name of message.details.loaded) {
+          if (typeof name === "string") discovered.add(name);
+        }
+      }
+    }
+    for (const server of mcp.servers) {
+      const prefix = \`mcp__\${server.name}__\`.replace(/[^A-Za-z0-9_]/g, "_");
+      const toolExposure = {};
+      for (const name of discovered) {
+        if (!name.startsWith(prefix) || name.length > 64) continue;
+        const tool = name.slice(prefix.length);
+        if (/^[A-Za-z0-9_]+$/.test(tool))
+          Object.defineProperty(toolExposure, tool, { value: "direct", enumerable: true });
+      }
+      server.config.toolExposure = toolExposure;
+    }`
+)
 
 const files = new Map([
   ['package.json', packageJson],

@@ -9,7 +9,7 @@ import { resolveConfigRoot } from '../storage-root'
 
 const EXPECTED = {
   'bin.js': '066e83d7f9b4ccbd475691af05a5be365aec0927574769dcacd21e22abe49382',
-  'chunk-5IXHVFXW.js': '157b28a90398c0e4ff73d014794d7b626a12f253e336e625c7673d558b95f081',
+  'chunk-5IXHVFXW.js': 'b0d693a08f26c5d45da8597967f04c4e06ef7e6b38230cb80f90e472c0938762',
   'permission-guard.mjs': '6498f4b2bf603ff91e9455dfbabc15af7f10e443119a00d9b9c7f685d3242336'
 } as const
 const PACKAGE_HASH = '7b7bd311e494ae6813fb8fb036f4bd75cd37c43e011f7670e753d6ffa723fc9d'
