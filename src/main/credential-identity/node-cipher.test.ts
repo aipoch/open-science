@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCipheriv } from 'node:crypto'
+import { createCipheriv, createHash, pbkdf2Sync } from 'node:crypto'
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -202,6 +202,25 @@ describe('Node OSCrypt-compatible cipher', () => {
       const expected = Buffer.concat([Buffer.from(prefix), Buffer.from(hex, 'hex')])
       expect(cipher.decryptString(expected)).toBe('fixture-科学-secret')
       expect(cipher.encryptString('fixture-科学-secret')).toEqual(expected)
+      // Cookie v24 plaintext begins with a binary domain digest, not UTF-8 text.
+      const plaintext = Buffer.concat([
+        createHash('sha256').update('example.com').digest(),
+        Buffer.from('session-value')
+      ])
+      const key = pbkdf2Sync(
+        'fixture-vault-password',
+        'saltysalt',
+        identity.backend === 'mac-keychain' ? 1003 : 1,
+        16,
+        'sha1'
+      )
+      const producer = createCipheriv('aes-128-cbc', key, Buffer.alloc(16, 0x20))
+      const cookie = Buffer.concat([
+        Buffer.from(prefix),
+        producer.update(plaintext),
+        producer.final()
+      ])
+      expect(cipher.decryptString(cookie)).toBe(plaintext.toString('utf8'))
       expect(readPassword).toHaveBeenCalledWith(identity, false)
       cipher.dispose()
       expect(() => cipher.encryptString('after-close')).toThrow('recovery')
@@ -264,6 +283,20 @@ describe('Node OSCrypt-compatible cipher', () => {
     } finally {
       key.fill(0)
       await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('converts legacy DPAPI binary plaintext using Electron string semantics', () => {
+    const plaintext = Buffer.from([0xff, 0x61])
+    const cipher = createNodeSecureStorageCipher(
+      { backend: 'windows-dpapi', appName: 'Open-Science' },
+      '/unused',
+      { readPassword: vi.fn(), unprotect: () => Buffer.from(plaintext) }
+    )
+    try {
+      expect(cipher.decryptString(Buffer.from('legacy-dpapi-fixture'))).toBe('\ufffda')
+    } finally {
+      cipher.dispose()
     }
   })
 })

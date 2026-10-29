@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createCipheriv, createHash } from 'node:crypto'
 import {
   copyFileSync,
   existsSync,
@@ -17,6 +18,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readCredentialCiphertexts, verifyCredentialCiphertexts } from './ciphertext-inventory'
 import { prepareCredentialValidation, selectStartupCredentialIdentity } from './bootstrap'
 import { CredentialIdentityError } from './selection'
+import { createCredentialAccess } from './access'
+import { createNodeSecureStorageCipher } from './node-cipher'
 import { resolveBootstrapConfigRoot, resolveElectronProfile } from '../storage/electron-profile'
 
 const roots: string[] = []
@@ -33,6 +36,69 @@ const ref = (text: string): string => `enc:${Buffer.from(text).toString('base64'
 afterEach(() => roots.splice(0).forEach((path) => rmSync(path, { recursive: true, force: true })))
 
 describe('read-only ciphertext inventory', () => {
+  it.each([23, 24])(
+    'accepts a valid Windows cookie from Chromium schema v%i at startup',
+    (version) => {
+      const paths = fixture()
+      const identity = { backend: 'windows-dpapi', appName: 'Open-Science' } as const
+      const key = Buffer.alloc(32, 0x63)
+      const nonce = Buffer.alloc(12, 0x42)
+      const host = 'example.com'
+      // Chromium v24 encrypts the binary SHA-256 domain digest before the cookie value.
+      // Produce the record independently of the application's string encryption API.
+      const plaintext = Buffer.concat([
+        ...(version >= 24 ? [createHash('sha256').update(host).digest()] : []),
+        Buffer.from('session-value')
+      ])
+      const producer = createCipheriv('aes-256-gcm', key, nonce)
+      const encrypted = Buffer.concat([
+        Buffer.from('v10'),
+        nonce,
+        producer.update(plaintext),
+        producer.final(),
+        producer.getAuthTag()
+      ])
+      const statePath = join(paths.profilePath, 'Local State')
+      const state = JSON.stringify({
+        os_crypt: { encrypted_key: Buffer.from('DPAPIfixture').toString('base64') }
+      })
+      writeFileSync(statePath, state)
+      const cookiePath = join(paths.profilePath, 'Cookies')
+      const db = new DatabaseSync(cookiePath)
+      db.exec(
+        'CREATE TABLE meta(key TEXT PRIMARY KEY, value INTEGER); CREATE TABLE cookies(host_key TEXT, encrypted_value BLOB)'
+      )
+      db.prepare('INSERT INTO meta VALUES (?, ?)').run('version', version)
+      db.prepare('INSERT INTO cookies VALUES (?, ?)').run(host, encrypted)
+      db.close()
+      const original = readFileSync(cookiePath)
+      // Only the OS key retrieval is injected, using its existing public dependency boundary.
+      const cipher = createNodeSecureStorageCipher(identity, paths.profilePath, {
+        readPassword: vi.fn(),
+        unprotect: () => Buffer.from(key)
+      })
+      const recover = vi.fn()
+      const access = createCredentialAccess({ identity, cipher, probe: vi.fn(), recover })
+      let failure: unknown
+      try {
+        const inventory = readCredentialCiphertexts(paths)
+        expect(inventory).toEqual([encrypted])
+        try {
+          verifyCredentialCiphertexts(inventory, (value) => access.decryptString(value))
+        } catch (error) {
+          failure = error
+        }
+        expect(readFileSync(cookiePath)).toEqual(original)
+        expect(readFileSync(statePath, 'utf8')).toBe(state)
+        expect(failure, 'valid cookie ciphertext must not block startup').toBeUndefined()
+        expect(recover).not.toHaveBeenCalled()
+      } finally {
+        cipher.dispose()
+        key.fill(0)
+      }
+    }
+  )
+
   it('includes the Semantic Scholar credential in startup key validation', () => {
     const paths = fixture()
     writeFileSync(

@@ -171,11 +171,13 @@ export function createNodeSecureStorageCipher(
       return Buffer.concat([Buffer.from(prefix), cipher.update(value, 'utf8'), cipher.final()])
     },
     decryptString(value) {
+      // Match Electron's UTF-8 replacement semantics: cookie plaintext can include a binary
+      // domain digest. Successful decryption must not fail merely because it is not UTF-8 text.
       if (identity.backend === 'windows-dpapi') {
         if (value.subarray(0, 3).toString() !== 'v10') {
           const plaintext = operations.unprotect(value)
           try {
-            return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+            return plaintext.toString('utf8')
           } finally {
             plaintext.fill(0)
           }
@@ -188,7 +190,7 @@ export function createNodeSecureStorageCipher(
           decipher.final()
         ])
         try {
-          return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+          return plaintext.toString('utf8')
         } finally {
           plaintext.fill(0)
         }
@@ -204,7 +206,7 @@ export function createNodeSecureStorageCipher(
         const decipher = createDecipheriv('aes-128-cbc', secret, iv)
         const plaintext = Buffer.concat([decipher.update(value.subarray(3)), decipher.final()])
         try {
-          return new TextDecoder('utf-8', { fatal: true }).decode(plaintext)
+          return plaintext.toString('utf8')
         } finally {
           plaintext.fill(0)
         }
