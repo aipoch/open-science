@@ -205,10 +205,10 @@ export const PackageFileSelection = ({
   return (
     <>
       <div
-        data-package-body
+        data-workflow-body
         className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
-        <div data-package-content className="space-y-4">
+        <div data-workflow-content className="space-y-4">
           {notice}
           <fieldset className="grid gap-2 sm:grid-cols-2">
             <legend className="sr-only">{t('Package contents')}</legend>

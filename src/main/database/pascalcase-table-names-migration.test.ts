@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0052_literature_personal_note_search'
+    to: '0053_literature_doi_identity'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -103,7 +103,8 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
       '0049_pascalcase_table_names',
       '0050_literature_translation',
       '0051_literature_reading_status',
-      '0052_literature_personal_note_search'
+      '0052_literature_personal_note_search',
+      '0053_literature_doi_identity'
     ]
   })
   for (const [index, [, table]] of names.entries())
@@ -169,7 +170,8 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
       '0049_pascalcase_table_names',
       '0050_literature_translation',
       '0051_literature_reading_status',
-      '0052_literature_personal_note_search'
+      '0052_literature_personal_note_search',
+      '0053_literature_doi_identity'
     ]
   })
 })

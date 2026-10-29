@@ -16,6 +16,8 @@ import type {
 import { MAX_ACP_RUNTIME_EVENTS, toAcpStateCommandResponse } from '../../shared/acp'
 import type { AcpSessionAgentTarget } from '../../shared/acp'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { createAcpCreateSessionWorkflow } from './create-session-workflow'
+import { retainSessionCreationCleanup } from './session-creation-cleanup'
 import type { AcpRuntime, AcpRuntimeCallbacks } from './runtime'
 import type { ConversationPermissionGrantStore } from './permission-broker'
 import type { AgentModelChangeTarget } from '../agent-framework'
@@ -8208,4 +8210,54 @@ it('retains a reused runtime while a newly admitted Session is still being creat
   expect(owner.sendPrompt).toHaveBeenCalledOnce()
   await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
   expect(owner.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+})
+
+it('reports a failed cold create before cleanup while retaining the enclosing workspace writer', async () => {
+  const capabilityCleanup = createDeferred()
+  const retirement = createDeferred()
+  const failure = new Error('Original provider startup failure')
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({ frameworkId: 'opencode', sessionIds: [], callbacks })
+    fake.createSession.mockImplementation(async () => {
+      retainSessionCreationCleanup(failure, capabilityCleanup.promise)
+      throw failure
+    })
+    fake.requestRetirement.mockImplementation(() => retirement.promise)
+    created.push(fake)
+    return fake.runtime
+  })
+  let writerActive = false
+  const release = vi.fn(async () => undefined)
+  const workflow = createAcpCreateSessionWorkflow(coordinator, {
+    workspaces: { acquire: async () => ({ cwd: '/workspace', commit: vi.fn(), release }) },
+    withDataRootWrite: async (operation) => {
+      writerActive = true
+      try {
+        return await operation()
+      } finally {
+        writerActive = false
+      }
+    }
+  })
+  await expect(
+    workflow.create({
+      projectId: 'project-1',
+      agentTarget: {
+        frameworkId: 'opencode',
+        providerId: 'provider',
+        model: 'model',
+        reasoningEffort: 'default'
+      }
+    })
+  ).rejects.toBe(failure)
+  expect(writerActive).toBe(true)
+  expect(created.at(-1)!.requestRetirement).not.toHaveBeenCalled()
+  capabilityCleanup.resolve()
+  await vi.waitFor(() => expect(created.at(-1)!.requestRetirement).toHaveBeenCalledOnce())
+  expect(writerActive).toBe(true)
+  expect(release).not.toHaveBeenCalled()
+  retirement.resolve()
+  await vi.waitFor(() => expect(writerActive).toBe(false))
+  expect(release).toHaveBeenCalledOnce()
 })

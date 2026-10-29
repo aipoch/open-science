@@ -771,6 +771,82 @@ describe('workspace conversation controller', () => {
     }
   })
 
+  it.each([false, true])(
+    'restores a stopped draft without overwriting newer input (%s)',
+    async (newerDraft) => {
+      const input = options()
+      let rejected:
+        | NonNullable<Parameters<typeof input.runtime.sendMessage>[0]['onPreparationCancelled']>
+        | undefined
+      input.runtime.sendMessage = vi.fn(async (request) => {
+        rejected = request.onPreparationCancelled
+        return { sessionId: 'session-a', messageId: 'prompt-a' }
+      })
+      let composer!: ReturnType<typeof useWorkspaceComposerController>
+      let controller!: WorkspaceConversationController
+      const root = createRoot(document.createElement('div'))
+      const Harness = (): null => {
+        composer = useWorkspaceComposerController({
+          currentDraftKey: input.currentDraftKey,
+          newConversationDraftKey: input.currentDraftKey,
+          activeProjectId: input.projectId,
+          activeSession: undefined,
+          pendingCustomizePrefill: undefined,
+          onCustomizePrefillApplied: vi.fn(),
+          historyEntries: [],
+          historyPolicy: {
+            catalogSkillIds: new Set(),
+            allowedSkillIds: undefined,
+            skillCatalogReady: true,
+            refreshSkillCatalog: false,
+            specialistCatalogReady: true,
+            specialistId: undefined,
+            loadSkills: vi.fn(),
+            loadSpecialists: vi.fn()
+          },
+          canStageAttachments: true,
+          supportsImageInput: true,
+          uploads: {
+            stageLocalFile: vi.fn(),
+            beginTransfer: vi.fn(),
+            appendTransfer: vi.fn(),
+            getTransferStatus: vi.fn(),
+            finishTransfer: vi.fn(),
+            abortTransfer: vi.fn().mockResolvedValue(undefined),
+            deleteUpload: vi.fn(),
+            onTransferProgress: vi.fn(() => () => undefined)
+          }
+        })
+        controller = useWorkspaceConversationController({ ...input, composer })
+        return null
+      }
+      const render = (): void =>
+        act(() =>
+          root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+        )
+      try {
+        render()
+        act(() => composer.actions.changeDoc(textDoc('Session A rejected draft')))
+        await act(async () => controller.actions.submit.draft({ forcedSkillIds: [] }))
+        if (newerDraft) act(() => composer.actions.changeDoc(textDoc('Newer draft')))
+        input.currentDraftKey = 'session-b'
+        input.activeSession = session({ id: 'session-b' })
+        render()
+        act(() => rejected?.('session-a'))
+        expect(composer.view.error).toBeNull()
+        expect(composer.view.doc).toEqual({ nodes: [] })
+        input.currentDraftKey = 'session-a'
+        input.activeSession = session()
+        render()
+        expect(composer.view.doc).toEqual(
+          textDoc(newerDraft ? 'Newer draft' : 'Session A rejected draft')
+        )
+      } finally {
+        act(() => root.unmount())
+      }
+    }
+  )
+
   it('retries a restored new-conversation snapshot only in its exact existing Session owner', async () => {
     const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
     const snapshot = input.composer.lifecycle.captureSend()

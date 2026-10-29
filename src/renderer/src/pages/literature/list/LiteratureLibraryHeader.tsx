@@ -22,6 +22,7 @@ export function LiteratureLibraryHeader({
   onImportFiles,
   importRecordsInputRef,
   beginManualImport,
+  onImportZotero,
   query,
   searchResetRevision,
   setQuery,
@@ -48,6 +49,7 @@ export function LiteratureLibraryHeader({
   onImportFiles: (files: File[]) => void
   importRecordsInputRef: React.RefObject<HTMLInputElement | null>
   beginManualImport: (resetDraft?: boolean) => void
+  onImportZotero: () => void
   query: string
   searchResetRevision: number
   setQuery: React.Dispatch<React.SetStateAction<string>>
@@ -177,6 +179,7 @@ export function LiteratureLibraryHeader({
               }}
             />
             <LiteratureAddMenu
+              onImportZotero={onImportZotero}
               onAddReference={() => beginManualImport(true)}
               onImportPdf={() => importPdfInputRef.current?.click()}
               onImportReferences={() => importRecordsInputRef.current?.click()}

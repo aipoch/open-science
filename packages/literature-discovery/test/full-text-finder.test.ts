@@ -798,3 +798,42 @@ describe('getFullTextFilename', () => {
     expect(getFullTextFilename(url, title)).toBe(expected)
   })
 })
+
+describe('opaque DOI discovery', () => {
+  it.each([
+    ['10.1000/term.#', 'https://doi.org/10.1000/term.%23'],
+    ['10.1000/term.%23', 'https://doi.org/10.1000/term.%2523']
+  ])(
+    'encodes opaque DOI suffixes in OpenAlex filters and fallback source links: %s',
+    async (doi, resolverUrl) => {
+      const { finder, options, item } = setup()
+      item.item.identifiers = [{ scheme: 'doi', value: doi, isPrimary: true }]
+      options.openAlexKey = vi.fn(async () => 'test-key')
+      const originalFetch = options.fetch!
+      options.fetch = vi.fn(async (input, init) => {
+        const url = new URL(String(input))
+        if (url.hostname === 'api.openalex.org') {
+          expect(url.searchParams.get('filter')).toBe(`doi:${resolverUrl}`)
+          return Response.json({
+            results: [
+              {
+                doi: resolverUrl,
+                best_oa_location: { is_oa: true, pdf_url: 'https://repository.example/opaque.pdf' }
+              }
+            ]
+          })
+        }
+        return originalFetch(input, init)
+      })
+      const result = await finder.run({ mode: 'search', itemId: item.id })
+      if (result.mode !== 'search') throw new Error('Expected search')
+      expect(result.candidates.find(({ provider }) => provider === 'openalex')).toMatchObject({
+        sourceUrl: resolverUrl
+      })
+      expect(options.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('api.openalex.org'),
+        expect.anything()
+      )
+    }
+  )
+})

@@ -1,3 +1,4 @@
+import { toCslItem } from '@aipoch/literature-citations/csl'
 import {
   conflictFreeLiteratureMerge,
   planLiteratureMerge,
@@ -135,5 +136,179 @@ describe('conservative duplicate metadata merging', () => {
     expect(
       supplementLiteratureMetadata(incoming, { ...item, title: 'Different', rating: 2 })
     ).toMatchObject({ conflict: true, item: { title: 'Study', rating: 4 } })
+  })
+  it.each([
+    {
+      name: 'local year only',
+      year: 2020,
+      date: '',
+      incomingYear: 2021,
+      incomingDate: '2021-02-01'
+    },
+    {
+      name: 'local date only',
+      year: undefined,
+      date: '2020-04-05',
+      incomingYear: 2021,
+      incomingDate: ''
+    },
+    {
+      name: 'year 0999 with date 3000',
+      year: 999,
+      date: '',
+      incomingYear: 3000,
+      incomingDate: '3000-02-01'
+    },
+    {
+      name: 'year 3000 with date 0999',
+      year: 3000,
+      date: '',
+      incomingYear: 999,
+      incomingDate: '0999-02-01'
+    },
+    {
+      name: 'date 0999 with year 3000',
+      year: undefined,
+      date: '0999-02-01',
+      incomingYear: 3000,
+      incomingDate: ''
+    },
+    {
+      name: 'date 3000 with year 0999',
+      year: undefined,
+      date: '3000-02-01',
+      incomingYear: 999,
+      incomingDate: ''
+    }
+  ])(
+    'preserves the local issued-date group when years conflict: $name',
+    ({ year, date, incomingYear, incomingDate }) => {
+      const existing = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: year,
+        issuedText: date
+      })
+      const incoming = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: incomingYear,
+        issuedText: incomingDate,
+        abstract: 'An added abstract'
+      })
+      const merged = supplementLiteratureMetadata(existing, incoming)
+      expect(merged.item.issuedYear).toBe(year)
+      expect(merged.item.issuedText).toBe(date)
+      expect(toCslItem('study', merged.item).issued).toEqual(toCslItem('study', existing).issued)
+      expect(merged.item.abstract).toBe('An added abstract')
+      expect(merged.conflict).toBe(true)
+    }
+  )
+  it.each([
+    {
+      name: 'matching date supplements a year-only record',
+      year: 2020,
+      date: '',
+      incomingDate: '2020-02-01',
+      expectedDate: '2020-02-01'
+    },
+    {
+      name: 'matching year supplements a date-only record',
+      year: undefined,
+      date: '2020-04-05',
+      incomingDate: '',
+      expectedDate: '2020-04-05'
+    }
+  ])(
+    'fills a consistent issued-date group: $name',
+    ({ year, date, incomingDate, expectedDate }) => {
+      const existing = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: year,
+        issuedText: date
+      })
+      const incoming = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: 2020,
+        issuedText: incomingDate,
+        abstract: 'An added abstract'
+      })
+      const merged = supplementLiteratureMetadata(existing, incoming)
+      expect(merged.item).toMatchObject({
+        issuedYear: 2020,
+        issuedText: expectedDate,
+        abstract: 'An added abstract'
+      })
+      expect(toCslItem('study', merged.item).issued?.['date-parts'][0][0]).toBe(2020)
+      expect(merged.conflict).toBe(false)
+    }
+  )
+  it('fills both empty issued-date fields together', () => {
+    const existing = literatureItemInputSchema.parse({ ...item, issuedText: '' })
+    const incoming = literatureItemInputSchema.parse({
+      ...item,
+      issuedYear: 2024,
+      issuedText: '2024-02-29',
+      abstract: 'An added abstract'
+    })
+    const merged = supplementLiteratureMetadata(existing, incoming)
+    expect(merged).toMatchObject({
+      conflict: false,
+      item: { issuedYear: 2024, issuedText: '2024-02-29', abstract: 'An added abstract' }
+    })
+    expect(toCslItem('study', merged.item).issued).toEqual({ 'date-parts': [[2024, 2, 29]] })
+    expect(conflictFreeLiteratureMerge([existing, incoming])).toMatchObject({
+      issuedYear: 2024,
+      issuedText: '2024-02-29'
+    })
+  })
+  it.each([
+    {
+      name: 'incoming opaque date',
+      year: 2020,
+      date: '',
+      incomingYear: undefined,
+      incomingDate: 'In press'
+    },
+    {
+      name: 'existing opaque date',
+      year: undefined,
+      date: 'In press',
+      incomingYear: 2020,
+      incomingDate: ''
+    }
+  ])(
+    'fills a missing date component without guessing a year from opaque text: $name',
+    ({ year, date, incomingYear, incomingDate }) => {
+      const existing = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: year,
+        issuedText: date
+      })
+      const incoming = literatureItemInputSchema.parse({
+        ...item,
+        issuedYear: incomingYear,
+        issuedText: incomingDate
+      })
+      const merged = supplementLiteratureMetadata(existing, incoming)
+      expect(merged).toMatchObject({
+        conflict: false,
+        item: { issuedYear: 2020, issuedText: 'In press' }
+      })
+      expect(toCslItem('study', merged.item).issued).toEqual({ 'date-parts': [[2020]] })
+    }
+  )
+  it('preserves an already inconsistent local date pair and rejects conflict-free merging', () => {
+    const existing = literatureItemInputSchema.parse({
+      ...item,
+      issuedYear: 2020,
+      issuedText: '2021-02-01'
+    })
+    const incoming = literatureItemInputSchema.parse({ ...item, abstract: 'An added abstract' })
+    const merged = supplementLiteratureMetadata(existing, incoming)
+    expect(merged).toMatchObject({
+      conflict: true,
+      item: { issuedYear: 2020, issuedText: '2021-02-01', abstract: 'An added abstract' }
+    })
+    expect(conflictFreeLiteratureMerge([existing, incoming])).toBeUndefined()
+    expect(conflictFreeLiteratureMerge([incoming, existing])).toBeUndefined()
   })
 })

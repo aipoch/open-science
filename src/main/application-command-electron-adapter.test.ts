@@ -32,6 +32,7 @@ const validatedChannels = [
   'literature:add-pdf',
   'literature:cancel-pdf-import',
   'literature:citation-styles',
+  'literature:collect',
   'literature:complete-metadata',
   'literature:export-record',
   'literature:format-document',

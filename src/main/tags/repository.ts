@@ -1,3 +1,4 @@
+import { createTag, tagNameIdentity } from './tag-write'
 import { readAnnotations } from '../pdf-annotations/repository'
 import { Prisma, type PrismaClient, type Tag as PrismaTag } from '@prisma/client'
 
@@ -5,7 +6,6 @@ import {
   FAVORITE_TAG_ID,
   FAVORITE_TAG_SYSTEM_KEY,
   type ReorderTagsRequest,
-  TAG_NAME_MAX_LENGTH,
   TAG_TIMESTAMP_MAX,
   type CreateTagRequest,
   type SetTagAssignmentRequest,
@@ -21,10 +21,6 @@ import type { TagResourceCatalogSnapshot } from './resource-contract'
 
 type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment' | 'pdfAnnotation' | '$transaction'>
 type TagClientProvider = () => Promise<TagClient>
-
-const cleanTagName = (input: string): string => input.normalize('NFKC').trim().replace(/\s+/gu, ' ')
-
-const tagNameKey = (name: string): string => cleanTagName(name).toLowerCase()
 
 const toTagView = (row: PrismaTag): TagView => {
   const timestamps = { createdAt: row.createdAt.getTime(), updatedAt: row.updatedAt.getTime() }
@@ -139,35 +135,18 @@ class TagRepository {
   }
 
   async create(request: CreateTagRequest): Promise<void> {
-    const name = cleanTagName(request.name)
-    if (!name) throw new Error('Tag name is required.')
-    if (name.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
-    const nameKey = tagNameKey(name)
-    if (nameKey.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
+    const { name } = tagNameIdentity(request.name)
     try {
       const client = await this.getClient()
       await this.ensureFavorite(client)
-      const lastTag = await client.tag.findFirst({ orderBy: { sortOrder: 'desc' } })
-      await client.tag.create({
-        data: {
-          name,
-          nameKey,
-          iconKey: request.iconKey,
-          colorKey: request.colorKey,
-          sortOrder: (lastTag?.sortOrder ?? 0) + 1
-        }
-      })
+      await createTag(client, { ...request, name })
     } catch (error) {
       duplicateNameError(error)
     }
   }
 
   async update(request: UpdateTagRequest): Promise<void> {
-    const name = cleanTagName(request.name)
-    if (!name) throw new Error('Tag name is required.')
-    if (name.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
-    const nameKey = tagNameKey(name)
-    if (nameKey.length > TAG_NAME_MAX_LENGTH) throw new Error('Tag name is too long.')
+    const { name, nameKey } = tagNameIdentity(request.name)
     const client = await this.getClient()
     const current = await client.tag.findUnique({ where: { id: request.id } })
     if (!current) throw new Error('Tag not found.')
@@ -316,4 +295,5 @@ class TagRepository {
   }
 }
 
-export { TagRepository, cleanTagName, tagNameKey }
+export { TagRepository }
+export { cleanTagName, tagNameKey } from './tag-write'

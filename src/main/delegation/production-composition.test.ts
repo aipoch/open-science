@@ -1237,6 +1237,7 @@ describe('production delegated-work composition', () => {
   )
 
   it('runs same-turn collect and staggered settlement wakes through ACP admission and terminal callbacks', async () => {
+    const realSetTimeout = setTimeout
     vi.useFakeTimers()
     root = await mkdtemp(join(tmpdir(), 'delegated-production-acp-settlement-chain-'))
     const productionDispatch: {
@@ -1249,6 +1250,19 @@ describe('production delegated-work composition', () => {
       undefined,
       { settlementContinuations: { dispatch: (request) => productionDispatch.current!(request) } }
     )
+    // Reproduce filesystem startup exceeding expect.poll's default 1 s on hosted Windows.
+    const startAttemptRuntime = harness.commands.startAttemptRuntime.bind(harness.commands)
+    vi.spyOn(harness.commands, 'startAttemptRuntime').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => realSetTimeout(resolve, 1200))
+      return startAttemptRuntime(...args)
+    })
+    const executionStarted = Promise.withResolvers<void>()
+    const run = harness.execution.run.bind(harness.execution)
+    vi.spyOn(harness.execution, 'run').mockImplementation((...args) => {
+      const handle = run(...args)
+      executionStarted.resolve()
+      return handle
+    })
     const snapshot: AcpStateSnapshot = {
       status: 'connected',
       cwd: '/workspace',
@@ -1353,8 +1367,10 @@ describe('production delegated-work composition', () => {
       text: 'Coordinate and collect',
       provenanceContext: { promptMessageId: harness.caller.originMessageId }
     })
-    await expect.poll(() => sameTurnHandle).toBeDefined()
-    await expect.poll(() => harness.execution.controls()).toHaveLength(1)
+    // Wait for execution readiness within the test budget, not a 1 s filesystem deadline.
+    await executionStarted.promise
+    expect(sameTurnHandle).toBeDefined()
+    expect(harness.execution.controls()).toHaveLength(1)
     harness.execution.control(sameTurnHandle!.attemptId).accept()
     harness.execution.control(sameTurnHandle!.attemptId).complete('same-turn model result')
     await vi.advanceTimersByTimeAsync(100)

@@ -377,6 +377,10 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
           timeout: 30_000
         })
         expect(pack.status, pack.stdout + pack.stderr).toBe(0)
+        // Inject corrupt runtime data while generating selectors from the valid fixture.
+        // Normal builds use the same archive and reject damaged headers at compile time.
+        const manifestArchive = join(f.root, 'manifest.7z')
+        writeFileSync(manifestArchive, readFileSync(archive))
         if (mode === 'truncated') writeFileSync(archive, readFileSync(archive).subarray(0, 40))
         if (mode === 'corrupt') {
           const bytes = readFileSync(archive)
@@ -424,6 +428,18 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         }
         const source = join(f.root, 'fixture.nsi')
         const exe = join(f.root, 'fixture.exe')
+        const resources = join(f.root, 'build')
+        const hostLog = join(f.root, 'publication-host.txt')
+        mkdirSync(resources)
+        for (const file of ['prepare-windows-extraction.cjs', 'windows-extract-payload.ps1'])
+          writeFileSync(join(resources, file), readFileSync(resolve('build', file)))
+        writeFileSync(
+          join(resources, 'windows-install-publication.ps1'),
+          readFileSync(script, 'utf8').replace(
+            '$handles =',
+            `[IO.File]::AppendAllText('${hostLog.replaceAll("'", "''")}', [Environment]::Is64BitProcess.ToString() + [Environment]::NewLine)\n$handles =`
+          )
+        )
         writeFileSync(
           source,
           '\ufeff' +
@@ -434,9 +450,9 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               `OutFile "${exe}"`,
               '!include LogicLib.nsh',
               `!define PROJECT_DIR "${f.root}"`,
-              `!define APP_64 "${archive}"`,
+              `!define APP_64 "${manifestArchive}"`,
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
-              `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
+              `!define BUILD_RESOURCES_DIR "${resources}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
               'FileWriteUTF16LE $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
@@ -450,6 +466,14 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               'LangString appCannotBeClosed 1033 "Cannot replace files"',
               'Section',
               'InitPluginsDir',
+              // Process architecture can be AMD64 under emulation on ARM64 Windows.
+              'FileOpen $0 "$EXEDIR\\native-amd64.txt" w',
+              '${If} ${IsNativeAMD64}',
+              'FileWrite $0 "true"',
+              '${Else}',
+              'FileWrite $0 "false"',
+              '${EndIf}',
+              'FileClose $0',
               'FileOpen $0 "$EXEDIR\\plugin-directory.txt" w',
               'FileWrite $0 "$PLUGINSDIR"',
               'FileClose $0',
@@ -518,6 +542,13 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
             : run.stdout + run.stderr
         ).toBe(success ? 0 : 2)
         expect(existsSync(join(f.root, 'success.txt'))).toBe(success)
+        if (mode === 'valid' && readFileSync(join(f.root, 'native-amd64.txt'), 'utf8') === 'true') {
+          expect(readFileSync(hostLog, 'utf8').trim().split(/\r?\n/)).toEqual([
+            'True',
+            'True',
+            'True'
+          ])
+        }
         expect(
           readdirSync(f.install).filter((name) => name.startsWith('.open-science-install-'))
         ).toEqual([])

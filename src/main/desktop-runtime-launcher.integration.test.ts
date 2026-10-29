@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ChildProcess } from 'node:child_process'
-import { startOrAttachDesktopBackend } from './desktop-runtime-launcher'
+import { build } from 'esbuild'
+import { desktopBackendPaths, startOrAttachDesktopBackend } from './desktop-runtime-launcher'
 import { resolveElectronProfile } from './storage/electron-profile'
 const children = vi.hoisted(() => [] as ChildProcess[])
 vi.mock('node:child_process', async (original) => {
@@ -45,6 +56,73 @@ server.listen(0,'127.0.0.1',()=>fs.writeFileSync(path.join(root,'runtime-owner.j
 process.once('SIGTERM',()=>server.close());
 `
 describe('ordinary Node desktop launcher', () => {
+  it.each([true, false])(
+    'resolves bundled npm in the actual Node backend (packaged: %s)',
+    async (packaged) => {
+      const root = await realpath(await mkdtemp(join(tmpdir(), 'desktop npm 空间-')))
+      roots.push(root)
+      const paths = desktopBackendPaths({
+        applicationPath: join(root, 'application'),
+        resourcesPath: join(root, 'resources'),
+        packaged
+      })
+      const runtime = dirname(paths.command)
+      const npmBin = join(runtime, 'node_modules/npm/bin')
+      await mkdir(npmBin, { recursive: true })
+      await mkdir(dirname(paths.entry), { recursive: true })
+      await copyFile(process.execPath, paths.command)
+      await writeFile(join(runtime, 'version.json'), '{"stagingVersion":2}')
+      for (const name of ['npm', 'npx'])
+        await writeFile(
+          join(npmBin, `${name}-cli.js`),
+          `process.stdout.write(JSON.stringify({node:process.execPath,args:process.argv.slice(2)}))`
+        )
+      const resolver = join(root, 'resolver.cjs')
+      await build({
+        stdin: {
+          contents: `export { prepareMcpStdioLaunch } from './src/main/connectors/mcp-stdio-launch';
+            export { EXTRA_PATH_DIRS } from './src/main/settings/shell-path';`,
+          resolveDir: process.cwd(),
+          loader: 'ts'
+        },
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        outfile: resolver
+      })
+      await writeFile(
+        paths.entry,
+        `const {prepareMcpStdioLaunch,EXTRA_PATH_DIRS}=require(${JSON.stringify(resolver)});
+// Isolate installed-tool discovery only; process.execPath and the resolver are real.
+EXTRA_PATH_DIRS.length=0;
+const results=['npm','npx'].map(command=>{
+ const launch=prepareMcpStdioLaunch({command,args:['space argument','a&b','$(literal)'],env:{...process.env,PATH:${JSON.stringify(join(root, 'empty-bin'))}}});
+ const output=require('node:child_process').execFileSync(launch.command,launch.args,{env:launch.env,encoding:'utf8'});
+ return {command:launch.command,result:JSON.parse(output)};
+});
+require('node:fs').writeFileSync(${JSON.stringify(join(root, 'npm-observed.json'))},JSON.stringify({electron:process.versions.electron??null,node:process.execPath,results}));
+${fixtureSource}`
+      )
+      const launch = await startOrAttachDesktopBackend({
+        configRoot: root,
+        profilePath: root,
+        version: 'test',
+        ...paths,
+        packaged,
+        timeoutMs: 10000
+      })
+      expect(launch.startedProcess?.pid).toBeGreaterThan(0)
+      const observed = JSON.parse(await readFile(join(root, 'npm-observed.json'), 'utf8'))
+      expect(observed).toEqual({
+        electron: null,
+        node: paths.command,
+        results: ['npm', 'npx'].map(() => ({
+          command: paths.command,
+          result: { node: paths.command, args: ['space argument', 'a&b', '$(literal)'] }
+        }))
+      })
+    }
+  )
   it.each(['deadline', 'abort'] as const)(
     'stops abandoned credential startup and its helper after %s',
     async (mode) => {

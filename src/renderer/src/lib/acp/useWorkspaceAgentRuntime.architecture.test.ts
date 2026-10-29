@@ -503,6 +503,7 @@ const hookKeys = [
 ] as const
 const sendIntentKeys = [
   'onPreparationRejected',
+  'onPreparationCancelled',
   'expectedFrameworkId',
   'sessionId',
   'messageId',

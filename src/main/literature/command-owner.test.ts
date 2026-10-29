@@ -8,6 +8,7 @@ vi.mock('../storage/migration-state', () => ({
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { withDataRootWrite } from '../storage/migration-state'
 import { createLiteratureCommandOwner } from './command-owner'
+import { ApplicationCommandError } from '../../shared/application-command-contract'
 
 type Services = Parameters<typeof createLiteratureCommandOwner>[0]
 const request = {
@@ -72,6 +73,45 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it.each([
+    'ZOTERO_BATCH_POLICY_CONFLICT',
+    'ZOTERO_FILL_TYPE_CONFLICT',
+    'ZOTERO_COLLECTION_CONFLICT',
+    'ZOTERO_PREVIEW_CHANGED',
+    'ZOTERO_CONNECTION_FAILED',
+    'ZOTERO_REQUEST_TIMED_OUT',
+    'ZOTERO_LOCAL_API_DISABLED'
+  ])('exposes the safe collector error %s to Web callers', async (message) => {
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run: vi.fn().mockRejectedValue(new Error(message)) }
+    } as unknown as Services)
+    await expect(owner.collect({ kind: 'zotero-preview' })).rejects.toEqual(
+      new ApplicationCommandError('command-failed', message)
+    )
+  })
+
+  it('leaves unexpected collector errors private', async () => {
+    const error = new Error('private database path')
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run: vi.fn().mockRejectedValue(error) }
+    } as unknown as Services)
+    await expect(owner.collect({ kind: 'zotero-preview' })).rejects.toBe(error)
+    expect(error).not.toBeInstanceOf(ApplicationCommandError)
+  })
+
+  it('forwards Zotero collection to its owner under the command write gate', async () => {
+    const result = { kind: 'preview' }
+    const run = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literatureCollector: { run }
+    } as unknown as Services)
+    const request = { kind: 'zotero-preview' as const }
+    const signal = new AbortController().signal
+    await expect(owner.collect(request, signal)).resolves.toBe(result)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+  })
+
   it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
     const run = vi.fn().mockResolvedValue({ records: [] })
     const owner = createLiteratureCommandOwner({

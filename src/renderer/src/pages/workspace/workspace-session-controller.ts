@@ -289,6 +289,9 @@ const useWorkspaceSessionController = ({
       })
   }
   const openDelete = (session: ChatSession): void => {
+    const current =
+      useSessionStore.getState().sessions.find(({ id }) => id === session.id) ?? session
+    if (current.firstPromptDraft || current.isPending) return
     if (isPersistenceHydrated && canDeleteConversations && deletingIdsRef.current.size === 0) {
       setDeleteDialog({
         session,
@@ -300,7 +303,10 @@ const useWorkspaceSessionController = ({
   const confirmDelete = (): void => {
     if (!isPersistenceHydrated || !canDeleteConversations || !deleteDialog) return
     useNavigationStore.getState().recordUserNavigation()
-    const { session } = deleteDialog
+    const session =
+      useSessionStore.getState().sessions.find(({ id }) => id === deleteDialog.session.id) ??
+      deleteDialog.session
+    if (session.firstPromptDraft || session.isPending) return
     const sessionId = session.id
     if (deletingIdsRef.current.has(sessionId) || !beginSessionDeletion(sessionId)) return
     deletingIdsRef.current.add(sessionId)

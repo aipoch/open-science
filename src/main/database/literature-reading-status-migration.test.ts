@@ -54,8 +54,8 @@ it('upgrades the 0050 schema with unread defaults while preserving items, relati
 
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0050_literature_translation',
-    to: '0052_literature_personal_note_search',
-    applied: [migrationId, '0052_literature_personal_note_search']
+    to: '0053_literature_doi_identity',
+    applied: [migrationId, '0052_literature_personal_note_search', '0053_literature_doi_identity']
   })
   expect(await client.$queryRaw`SELECT * FROM "LiteratureItem" WHERE id = 'paper'`).toEqual([
     { ...item, readingStatus: 'unread', normalizedPersonalNote: '' }
@@ -90,8 +90,8 @@ it('persists read status after reconnecting and leaves it unchanged on repeated 
 
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual(item)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    from: '0052_literature_personal_note_search',
-    to: '0052_literature_personal_note_search',
+    from: '0053_literature_doi_identity',
+    to: '0053_literature_doi_identity',
     applied: []
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toEqual(item)
@@ -133,7 +133,7 @@ it('rolls back the added column and ledger entry if migration verification fails
   )
   expect(await client.$queryRaw`PRAGMA foreign_key_check`).toEqual([])
   expect(await migrateApplicationDatabase(client)).toMatchObject({
-    applied: [migrationId, '0052_literature_personal_note_search']
+    applied: [migrationId, '0052_literature_personal_note_search', '0053_literature_doi_identity']
   })
   expect(await client.literatureItem.findUnique({ where: { id: 'paper' } })).toMatchObject({
     readingStatus: 'unread',
