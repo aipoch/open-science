@@ -1,4 +1,5 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { once } from 'node:events'
 import {
   cpSync,
   existsSync,
@@ -925,35 +926,106 @@ describe('NSIS installer include (build/installer.nsh)', () => {
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
     // The real-lock case: a background child running from the install dir (micromamba
     // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
-    // path (Win32_Process has ExecutablePath, NOT Path) and by image name (taskkill fallback),
+    // path (Win32_Process has ExecutablePath, NOT Path),
     // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
     expect(include).toContain('$$_.ExecutablePath')
     expect(include).not.toContain('$$_.Path.')
-    expect(include).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
     expect(include).toContain('$(uninstallFailed): $R0')
     expect(include).toContain('SetErrorLevel 2')
   })
 
-  it('runs the image-name taskkill only as a fallback when the PowerShell sweep cannot run', () => {
-    // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
-    // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
-    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code). micromamba
-    // and the Notebook AppContainer host are included: their image names differ from the app exe,
-    // so the app-exe kill alone cannot cover an in-flight provisioning or sandbox-host lock on
-    // PowerShell-blocked machines.
-    const code = include
-      .split('\n')
-      .filter((line) => !/^\s*#/.test(line))
-      .join('\n')
-    expect(code.match(/taskkill/g) ?? []).toHaveLength(3)
-    // Capture the whole guard block and assert BOTH kills live inside it — asserting only the
-    // first one's position would still pass with micromamba's taskkill moved outside the guard.
-    const guardBlock = code.match(/\$\{if\} \$R1 != 0([\s\S]*?)\$\{endif\}/)?.[1] ?? ''
-    expect(guardBlock).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
-    expect(guardBlock).toContain('taskkill /F /IM micromamba.exe')
-    expect(guardBlock).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
-    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(3)
-  })
+  it.skipIf(!nsisCompiler).each(['missing', 'existing'])(
+    'keeps another installation running when recovery cannot inspect processes (%s target)',
+    async (target) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-process-recovery-'))
+      const name = `${root.split(/[/\\]/).at(-1)}.exe`
+      const portable = join(root, 'portable')
+      const install = join(root, 'target')
+      mkdirSync(portable)
+      mkdirSync(install)
+      if (target === 'existing') writeFileSync(join(install, name), 'target application')
+      const compile = (executable: string, body: string): void => {
+        const source = `${executable}.nsi`
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true\nRequestExecutionLevel user\nSilentInstall silent\nOutFile "${executable}"\n${body}`
+        )
+        const result = spawnSync(nsisCompiler!, ['/V2', source], {
+          windowsHide: true,
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+        expect(result.status, result.stderr || result.stdout).toBe(0)
+      }
+      const executable = join(portable, name)
+      const retry = join(root, 'retry.exe')
+      const receipt = join(root, 'retried.txt')
+      let child: ReturnType<typeof spawn> | undefined
+      let exited: Promise<unknown> | undefined
+      try {
+        compile(executable, 'Section\nSleep 30000\nSectionEnd')
+        compile(
+          retry,
+          `Section\nFileOpen $1 "${receipt}" w\nFileWrite $1 "retried"\nFileClose $1\nSectionEnd`
+        )
+        const recovery = include.match(
+          /!macro uninstallFailureRecoveryAt DIR[\s\S]*?!macroend/
+        )?.[0]
+        expect(recovery).toBeDefined()
+        // Simulate an unavailable process inspector without changing the host's PowerShell.
+        // All image names are unique fixture names: never target real application processes.
+        const isolated = recovery!
+          .replaceAll(
+            '$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe',
+            join(root, 'missing-powershell.exe')
+          )
+          .replaceAll('micromamba.exe', `mamba-${name}`)
+          .replaceAll('notebook-appcontainer-host.exe', `host-${name}`)
+        const probe = join(root, 'probe.exe')
+        compile(
+          probe,
+          `
+!include LogicLib.nsh
+!include FileFunc.nsh
+!define APP_EXECUTABLE_FILENAME "${name}"
+LoadLanguageFile "\${NSISDIR}/Contrib/Language files/English.nlf"
+LangString uninstallFailed 1033 "Fixture retry failed"
+!macro restoreAllNestedDataRoots
+!macroend
+!macro quitFailedUpdate
+SetErrorLevel 2
+Quit
+!macroend
+${isolated}
+Section
+InitPluginsDir
+SetOutPath $PLUGINSDIR
+File /oname=old-uninstaller.exe "${retry}"
+StrCpy $R0 2
+StrCpy $0 ""
+!insertmacro uninstallFailureRecoveryAt "${install}"
+SectionEnd
+`
+        )
+        child = spawn(executable, ['/S'], { windowsHide: true, stdio: 'ignore' })
+        exited = once(child, 'exit')
+        await once(child, 'spawn')
+        const run = spawnSync(probe, ['/S'], { windowsHide: true, timeout: 15_000 })
+        expect(run.error).toBeUndefined()
+        expect(run.status).toBe(0)
+        expect(readFileSync(receipt, 'utf8')).toBe('retried')
+        expect(
+          () => process.kill(child!.pid!, 0),
+          'unrelated installation was terminated'
+        ).not.toThrow()
+      } finally {
+        child?.kill()
+        if (exited) await exited
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    45_000
+  )
 
   it('retries the old uninstaller exactly once', () => {
     // A single follow-up attempt after the kill; the original ExecWait lives in

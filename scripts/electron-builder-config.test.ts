@@ -655,7 +655,6 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain("$installationId = '0f3cd2a44c3d4e4e9f1e2a5b'")
     expect(cleanup.indexOf('$ownershipRoot =')).toBeLessThan(cleanup.indexOf('$HostPath ='))
     expect(cleanup).toContain('-Verb RunAs')
-    expect(include).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
   })
 
   it('does not claim a Windows publisher while packages remain unsigned', () => {

@@ -461,24 +461,14 @@ FunctionEnd
   # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
   # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
   # never interpolated into the script source — so a custom install dir containing an apostrophe
-  # breaks nothing and injects nothing. The image-name taskkills are ONLY a fallback for when
-  # the sweep could not run (PowerShell missing or policy-blocked): they match by exe name in
-  # ANY directory — open-science.exe covers the app and its Electron-as-Node children (the
-  # CLI), micromamba.exe covers in-flight provisioning — so a second install, the portable zip
-  # copy, or an unrelated micromamba would be killed too. Acceptable solely when no path-scoped
-  # option exists. Both are best-effort; the retry is the verdict.
-  # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
+  # breaks nothing and injects nothing. If inspection is unavailable, never widen the target
+  # to executable names: another installation or an unrelated tool may use the same name.
+  # $0 keeps the uninstaller arguments (/currentuser etc.) — nsExec does not touch it.
   nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
   Pop $R1
-  # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
-  # non-zero means the sweep did not run, so only then widen to the image-name kills.
+  # The existing uninstall retry remains the verdict even when process inspection fails.
   ${if} $R1 != 0
-    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
-    Pop $R1
-    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
-    Pop $R1
-    nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "notebook-appcontainer-host.exe"`
-    Pop $R1
+    DetailPrint `Could not inspect installation processes: $R1; retrying without terminating unverified processes.`
   ${endif}
   ClearErrors
   Sleep 1000
