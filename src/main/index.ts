@@ -1175,22 +1175,45 @@ async function startDesktop(): Promise<void> {
         signal,
         beforeLaunch: async () => {
           signal.throwIfAborted()
-          assertDesktopRuntimeRestartAllowed(
-            await (async () => {
-              if (client)
-                return readServiceLifetime(configRoot, !isRuntimeProcessAlive(client.processId()))
-              // A cold repair has no attached process identity. Real directory ownership is the
-              // substitute proof before tolerating malformed historical hints; keep valid stops.
-              const lease = acquireRuntimeDirectorySync(configRoot)
-              try {
-                return await readServiceLifetime(configRoot, true)
-              } finally {
-                lease.release()
+          const intent = await (async () => {
+            if (client)
+              return readServiceLifetime(configRoot, !isRuntimeProcessAlive(client.processId()))
+            // A cold repair has no attached process identity. Real directory ownership is the
+            // substitute proof before tolerating malformed historical hints; keep valid stops.
+            const lease = acquireRuntimeDirectorySync(configRoot)
+            try {
+              return await readServiceLifetime(configRoot, true)
+            } finally {
+              lease.release()
+            }
+          })()
+          try {
+            assertDesktopRuntimeRestartAllowed(
+              intent,
+              repairAuthorization,
+              updateCommitted || plannedRelaunch
+            )
+          } catch (error) {
+            if (client || !intent?.stopping || updateCommitted || plannedRelaunch) throw error
+            // Only the blocked startup's explicit Retry may authorize this observed stop.
+            // The next beforeLaunch still rejects any stop recorded after this snapshot.
+            const reviewed = Object.freeze({ ...intent })
+            throw new DesktopRuntimeStartupError(
+              {
+                reason: 'startup-recovery-required',
+                desktopVersion: app.getVersion(),
+                canStop: false,
+                canRecover: true,
+                diagnostics: error instanceof Error ? error.message : String(error)
+              },
+              'The local service was intentionally stopped.',
+              undefined,
+              async () => {
+                repairAuthorization = reviewed
+                await repairBackend(AbortSignal.timeout(30_000))
               }
-            })(),
-            repairAuthorization,
-            updateCommitted || plannedRelaunch
-          )
+            )
+          }
         },
         args: [
           `--credential-store=${config?.credentialStore ?? getCredentialStore()}`,

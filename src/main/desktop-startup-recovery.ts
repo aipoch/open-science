@@ -74,7 +74,9 @@ export async function connectDesktopRuntimeForStartup(options: {
     await options.repairRuntime?.(AbortSignal.timeout(30_000))
   }
   const attempt = async (): Promise<DesktopRuntimeClient> => {
-    const signal = AbortSignal.timeout(options.timeoutMs ?? 12_000)
+    // A cold backend can spend tens of seconds loading modules after publishing its endpoint.
+    // Give first attachment a startup budget before treating the live process as broken.
+    const signal = AbortSignal.timeout(options.timeoutMs ?? 60_000)
     candidate = await options.connect(signal)
     await waitForDesktopRuntimeControl(candidate, signal)
     return candidate

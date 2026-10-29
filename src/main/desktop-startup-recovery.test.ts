@@ -487,6 +487,39 @@ const fakeClient = (controlReason?: string): DesktopRuntimeClient =>
     close: vi.fn()
   }) as unknown as DesktopRuntimeClient
 
+it('allows a cold runtime to finish loading before canceling its first attachment', async () => {
+  vi.useFakeTimers()
+  // Node's AbortSignal.timeout uses internal timers; put only its clock under test control.
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((milliseconds) => {
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), milliseconds)
+    return controller.signal
+  })
+  const fresh = { ...fakeClient(), runtimeInfo: () => ({ control: 'granted' }) }
+  try {
+    const outcome = connectDesktopRuntimeForStartup({
+      version: 'test',
+      connect: (signal) =>
+        new Promise<DesktopRuntimeClient>((resolve, reject) => {
+          // The reported cold launch spent 22 seconds loading runtime modules.
+          const loaded = setTimeout(() => resolve(fresh as DesktopRuntimeClient), 22_000)
+          signal.addEventListener(
+            'abort',
+            () => {
+              clearTimeout(loaded)
+              reject(new Error('Desktop attachment canceled.'))
+            },
+            { once: true }
+          )
+        })
+    }).catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(22_000)
+    expect(await outcome).toBe(fresh)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('replaces a runtime that is already stopping instead of entering as a spectator', async () => {
   const stopping = fakeClient('runtime-stopping')
   const fresh = { ...fakeClient(undefined), runtimeInfo: () => ({ control: 'granted' }) }

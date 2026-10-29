@@ -17,6 +17,8 @@ const f = vi.hoisted(() => {
     inventory: vi.fn(() => [Buffer.from('synthetic-profile-ciphertext')]),
     key: vi.fn(),
     launch: vi.fn(),
+    discover: vi.fn(),
+    readLifetime: vi.fn(),
     connect: vi.fn(),
     lifecycle: vi.fn(),
     windowCreated: vi.fn(),
@@ -100,7 +102,12 @@ vi.mock('./ipc-handler-registry', () => ({
   ipcMainHandle: (name: string, fn: (...args: unknown[]) => unknown) => f.handlers.set(name, fn)
 }))
 vi.mock('./runtime-ownership', () => ({
-  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease })
+  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease }),
+  acquireRuntimeDirectorySync: () => ({ release: vi.fn() })
+}))
+vi.mock('./local-service-lifetime', async (original) => ({
+  ...(await original<typeof import('./local-service-lifetime')>()),
+  readServiceLifetime: f.readLifetime
 }))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: vi.fn(),
@@ -120,6 +127,7 @@ vi.mock('./storage/electron-profile', () => ({
 }))
 vi.mock('./desktop-runtime-launcher', () => ({
   desktopBackendPaths: () => ({ command: '/test/node', entry: '/test/backend.cjs' }),
+  discoverDesktopBackend: f.discover,
   startOrAttachDesktopBackend: f.launch
 }))
 vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: f.connect }))
@@ -240,6 +248,8 @@ beforeEach(() => {
   })
   f.app.requestSingleInstanceLock.mockReturnValue(true)
   f.launch.mockRejectedValue(new Error('authenticated backend refused the connection'))
+  f.discover.mockResolvedValue(undefined)
+  f.readLifetime.mockResolvedValue(undefined)
   vi.spyOn(process, 'on').mockImplementation(() => process)
 })
 afterEach(() => {
@@ -483,6 +493,75 @@ it.each(['win32', 'linux', 'darwin'] as const)(
     } finally {
       Object.defineProperty(process, 'platform', originalPlatform)
     }
+  }
+)
+
+it.each([false, true])(
+  'retries only the observed startup stop (record changed: %s)',
+  async (changed) => {
+    const { createMainWindow, isMainWindow } = await import('./windows')
+    const { BrowserWindow } = await import('electron')
+    const stopped = {
+      version: 1,
+      generation: '50b27d82-5b48-4bd4-93a3-0e6ec76576a5',
+      explicit: false,
+      stopping: true,
+      reason: 'disconnect'
+    }
+    f.readLifetime.mockResolvedValue(stopped)
+    const client = {
+      ownsRuntime: () => false,
+      processId: () => 123,
+      runtimeInfo: () => ({ generation: 'recovered-startup' }),
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'checking' }),
+      close: vi.fn()
+    }
+    f.lifecycle.mockReturnValue({
+      showMainWindow: vi.fn(),
+      getMainWindow: () => undefined,
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    })
+    f.launch.mockImplementation(async (options) => {
+      await options.beforeLaunch?.()
+      return {}
+    })
+    // Process/socket boundaries only: startup recovery and stop authorization remain real.
+    f.connect
+      .mockRejectedValueOnce(new Error('Desktop connection timed out.'))
+      .mockResolvedValue(client)
+    await import('./index')
+    await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())
+    const window = vi.mocked(createMainWindow).mock.results[0].value
+    vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(window)
+    vi.mocked(isMainWindow).mockReturnValue(true)
+    const frame = {}
+    const event = { sender: { mainFrame: frame }, senderFrame: frame }
+    expect(f.handlers.get('runtime-startup:get-state')!(event)).toMatchObject({
+      phase: 'blocked',
+      issue: { diagnostics: 'The local service was intentionally stopped.' }
+    })
+    if (changed)
+      f.readLifetime.mockResolvedValue({
+        ...stopped,
+        generation: '1e1f1d5f-79b8-43bc-bd73-c24ef73c4dad'
+      })
+    await f.handlers.get('runtime-startup:recover')!(event)
+    if (changed) {
+      expect(f.handlers.get('runtime-startup:get-state')!(event)).toMatchObject({
+        phase: 'blocked'
+      })
+      expect(f.connect).toHaveBeenCalledOnce()
+      expect(f.completedStartup).not.toHaveBeenCalled()
+      // A later stop needs a new explicit click; the first action must not renew its authority.
+      await f.handlers.get('runtime-startup:recover')!(event)
+    }
+    expect(f.handlers.get('runtime-startup:get-state')!(event)).not.toMatchObject({
+      phase: 'blocked'
+    })
+    await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalledOnce())
+    expect(f.handlers.get('runtime-startup:get-state')!(event)).toMatchObject({ phase: 'ready' })
   }
 )
 
