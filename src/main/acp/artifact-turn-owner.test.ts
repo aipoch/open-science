@@ -177,13 +177,15 @@ describe('ArtifactTurnOwner', () => {
     const dataRoot = await createRoot()
     const writes: Array<Record<string, unknown>> = []
     const issuedBindings: Array<Record<string, unknown>> = []
+    const lifetimes = new Map<string, () => boolean>()
     const owner = new ArtifactTurnOwner({
       dataRoot,
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
       now: () => 100,
-      issueRpcCapability: (binding) => {
+      issueRpcCapability: (binding, isOwnerActive) => {
         issuedBindings.push(binding)
+        lifetimes.set(binding.executionId!, isOwnerActive)
         return `capability-${binding.executionId}`
       },
       provenance: {
@@ -229,6 +231,8 @@ describe('ArtifactTurnOwner', () => {
       }
     })
 
+    expect(lifetimes.get('root-execution')!()).toBe(true)
+    expect(lifetimes.get('parallel-execution')!()).toBe(true)
     await Promise.all([
       owner.write(root, { filename: 'root.txt', content: 'root' }),
       owner.write(parallel, {
@@ -245,6 +249,8 @@ describe('ArtifactTurnOwner', () => {
       })
     ])
     await owner.finalize(root)
+    expect(lifetimes.get('root-execution')!()).toBe(false)
+    expect(lifetimes.get('parallel-execution')!()).toBe(true)
     await owner.dispose(root)
 
     expect(owner.snapshot(root)).toMatchObject({
@@ -654,13 +660,17 @@ describe('ArtifactTurnOwner', () => {
     const notebookOwners = new Map<string, string>()
     const revoked: string[] = []
     let capabilitySequence = 0
+    const lifetimes: Array<() => boolean> = []
     let now = 1_000
     const owner = new ArtifactTurnOwner({
       dataRoot,
       repository: new ArtifactRepository(dataRoot),
       runRegistry: new ArtifactRunRegistry(),
       now: () => now,
-      issueRpcCapability: () => `capability-${++capabilitySequence}`,
+      issueRpcCapability: (_binding, isOwnerActive) => {
+        lifetimes.push(isOwnerActive)
+        return `capability-${++capabilitySequence}`
+      },
       revokeRpcCapability: (token) => {
         revoked.push(token)
       },
@@ -683,6 +693,7 @@ describe('ArtifactTurnOwner', () => {
       projectId: 'project-1',
       agentName: 'Codex'
     })
+    expect(lifetimes[0]()).toBe(true)
     now = 1_001
     const replacement = await openRootExecution(owner, {
       appSessionId: 'session-1',
@@ -691,6 +702,7 @@ describe('ArtifactTurnOwner', () => {
       agentName: 'Codex'
     })
 
+    expect(lifetimes.map((isActive) => isActive())).toEqual([false, true])
     await owner.dispose(first)
     const currentRunFile = getArtifactCurrentRunFilePath(dataRoot, 'project-1', 'session-1')
     await expect(readFile(currentRunFile, 'utf8')).resolves.toContain('artifact-run-1001-2')
@@ -698,6 +710,7 @@ describe('ArtifactTurnOwner', () => {
     expect(notebookContexts.at(-1)?.context).not.toBeUndefined()
 
     await owner.dispose(replacement)
+    expect(lifetimes.map((isActive) => isActive())).toEqual([false, false])
     await expect(readFile(currentRunFile, 'utf8')).resolves.toBe('{}\n')
     expect(owner.activeRunIds()).toEqual([])
     expect(notebookContexts.at(-1)).toEqual({ sessionId: 'session-1', context: undefined })

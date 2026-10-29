@@ -772,8 +772,8 @@ const createAcpRuntime = ({
                 provenance: provenanceRepository,
                 managedFileVersions,
                 getRpcConnection: () => notebookRpcServer.ensureStarted(),
-                issueRpcCapability: (binding) =>
-                  notebookRpcServer.issueArtifactRunCapability(binding),
+                issueRpcCapability: (binding, isOwnerActive) =>
+                  notebookRpcServer.issueArtifactRunCapability(binding, undefined, isOwnerActive),
                 revokeRpcCapability: (token) =>
                   notebookRpcServer.revokeArtifactRunCapability(token),
                 ...(delegatedArtifactCurrentRunFile

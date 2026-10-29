@@ -9,13 +9,15 @@ import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-litera
 import * as boundedIo from '../bounded-file-io'
 import { defaultFileDurability } from '@aipoch/durable-files'
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath, rm, truncate, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rm, stat, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createArtifactSaveFixture } from './save-test-fixtures'
 import { writeArtifactFileForCurrentRun } from './mcp-server'
 import { ArtifactProvenanceRepository } from './provenance-repository'
 import { ArtifactWriteBudgetOwner } from './write-budget-owner'
+import { createFrameNotebookLane } from '../notebook/lane-identity'
+import { ArtifactTurnOwner } from '../acp/artifact-turn-owner'
 
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
 const setup = async (): Promise<Awaited<ReturnType<typeof createArtifactSaveFixture>>> => {
@@ -38,6 +40,115 @@ afterEach(async () => {
 const hash = (data: string): string => createHash('sha256').update(data).digest('hex')
 
 describe('complete Artifact save over the production local RPC', () => {
+  it.each([false, true])(
+    'publishes generated files late in an active turn (producerRunId: %s)',
+    async (includeProducer) => {
+      let now = Date.now()
+      vi.spyOn(Date, 'now').mockImplementation(() => now)
+      const f = await setup()
+      const lane = createFrameNotebookLane('project-1', 'session-1', f.binding.agentFrameId)
+      const document = await f.notebookRepository.loadOrCreate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        lane,
+        workspaceCwd: f.storageRoot
+      })
+      const dataDir = join(document.notebookSessionRoot, 'data')
+      await mkdir(dataDir, { recursive: true })
+      const sourcePath = join(dataDir, 'report.md')
+      await writeFile(sourcePath, '# Completed report\n')
+      const sourceStat = await stat(sourcePath)
+      const producerRunId = 'notebook-run-report'
+      await f.notebookRepository.appendRun({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        lane,
+        run: {
+          ...f.binding,
+          runId: producerRunId,
+          cellId: 'report-cell',
+          source: 'agent',
+          kernelKind: 'repl',
+          status: 'completed',
+          startedAt: sourceStat.mtimeMs - 1,
+          endedAt: sourceStat.mtimeMs,
+          script: 'await fs.writeFile("report.md", "# Completed report\\n")',
+          text: { stdout: '', stderr: '', traceback: '', plain: [] },
+          outputs: [],
+          artifacts: [],
+          inputFiles: [],
+          workingFiles: [
+            {
+              path: sourcePath,
+              relativePath: 'data/report.md',
+              kind: 'other',
+              size: sourceStat.size,
+              mtimeMs: sourceStat.mtimeMs,
+              createdByRunId: producerRunId
+            }
+          ]
+        }
+      })
+      const owner = new ArtifactTurnOwner({
+        dataRoot: f.storageRoot,
+        repository: f.compatibilityRepository,
+        runRegistry: new ArtifactRunRegistry(),
+        issueRpcCapability: (binding, isOwnerActive) =>
+          f.server.issueArtifactRunCapability(binding, undefined, isOwnerActive),
+        revokeRpcCapability: (token) => f.server.revokeArtifactRunCapability(token),
+        notebook: f.server,
+        notebookArtifactSourceScope: () => ({
+          notebookSessionId: 'session-1',
+          notebookDataDir: dataDir,
+          notebookSessionRoot: document.notebookSessionRoot
+        })
+      })
+      const turn = await owner.openRootExecution({
+        ...f.binding,
+        executionId: 'active-execution',
+        agentName: 'Test Agent',
+        provenanceContext: {
+          ...f.binding,
+          messageBranchAncestry: [...(f.binding.messageBranchAncestry ?? [])],
+          messageAncestry: [...(f.binding.messageAncestry ?? [])]
+        }
+      })
+      const env = {
+        storageRoot: f.storageRoot,
+        projectId: 'project-1',
+        sessionId: f.binding.artifactStorageSessionId,
+        currentRunFile: owner.handoffFile(turn),
+        allowedImportRoots: [],
+        rpcEndpoint: f.connection.endpoint
+      }
+      const input = {
+        filename: 'report.md',
+        ...(includeProducer ? { producerRunId } : {})
+      }
+      // Establish that this exact file and provenance are valid before the long-running turn.
+      const initial = await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input)
+      expect(initial.producerRunId).toBe(producerRunId)
+      now += 2 * 60 * 60 * 1_000 + 1
+      const outcomes: unknown[] = []
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        outcomes.push(
+          await writeArtifactFileForCurrentRun(f.compatibilityRepository, env, input).then(
+            (artifact) => ({ saved: true, producerRunId: artifact.producerRunId }),
+            (error: Error) => ({ error: error.message })
+          )
+        )
+      }
+      await owner.dispose(turn)
+      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('# Completed report\n')
+      expect(outcomes).toEqual(
+        Array.from({ length: 2 }, () => ({
+          saved: true,
+          producerRunId
+        }))
+      )
+    }
+  )
+
   it.each(['ro', 'rw'] as const)(
     'imports absolute files using current %s folder grants and rejects revoked grants',
     async (access) => {

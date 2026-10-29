@@ -388,6 +388,7 @@ type NotebookLocalRpcServerOptions = {
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
   allowedMethods: Set<ArtifactRpcMethod>
   expiresAt: number
+  isOwnerActive?: () => boolean
   inFlightRequests: number
   drainWaiters: Set<() => void>
 }
@@ -518,8 +519,8 @@ const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactReplayVersion'
 ])
 
-// Capabilities are revoked when the turn ends. This upper bound only limits abandoned tokens, so
-// it must comfortably exceed long notebook executions that remain inside one active turn.
+// Live turn-owned capabilities follow their owner, including long executions. Capabilities issued
+// without an owner remain time-bounded; all capabilities still support explicit revoke and drain.
 const DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS = 2 * 60 * 60 * 1_000
 // Let ordinary RPCs that are already producing a result drain before forcing the transport closed.
 // This remains comfortably inside the application module's one-second disposal budget.
@@ -788,7 +789,8 @@ class NotebookLocalRpcServer {
 
   issueArtifactRunCapability(
     binding: ArtifactRpcCapabilityBinding,
-    ttlMs = DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS
+    ttlMs = DEFAULT_ARTIFACT_RPC_CAPABILITY_TTL_MS,
+    isOwnerActive?: () => boolean
   ): string {
     if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
       throw new Error('Artifact RPC capability lifetime must be positive.')
@@ -808,6 +810,7 @@ class NotebookLocalRpcServer {
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
       expiresAt: this.now() + ttlMs,
+      isOwnerActive,
       inFlightRequests: 0,
       drainWaiters: new Set()
     })
@@ -1778,6 +1781,20 @@ class NotebookLocalRpcServer {
     return this.inputRegistry.registerTurn(request)
   }
 
+  private assertArtifactCapabilityActive(token: string, capability: ArtifactRpcCapability): void {
+    if (capability.isOwnerActive ? capability.isOwnerActive() : capability.expiresAt > this.now()) {
+      return
+    }
+    // Preserve the shared drain promise so teardown still waits for previously admitted requests.
+    void this.revokeArtifactRunCapability(token)
+    throw new RpcHttpError(
+      401,
+      capability.isOwnerActive
+        ? 'Artifact RPC capability is no longer active.'
+        : 'Artifact RPC capability expired.'
+    )
+  }
+
   private acquireArtifactRpcRequest(
     method: ArtifactRpcMethod,
     token: string,
@@ -1785,12 +1802,7 @@ class NotebookLocalRpcServer {
   ): { params: Record<string, unknown>; release: () => void } {
     const capability = this.artifactRpcCapabilities.get(token)
     if (!capability) throw new RpcHttpError(401, 'Invalid Artifact RPC capability.')
-    if (capability.expiresAt <= this.now()) {
-      // Expiry closes admission just like an explicit runtime revoke. Keep the shared drain promise
-      // reachable so a later turn teardown still waits for requests that acquired before expiry.
-      void this.revokeArtifactRunCapability(token)
-      throw new RpcHttpError(401, 'Artifact RPC capability expired.')
-    }
+    this.assertArtifactCapabilityActive(token, capability)
     if (!capability.allowedMethods.has(method)) {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
@@ -1993,12 +2005,7 @@ class NotebookLocalRpcServer {
         ? authorization.slice('Bearer '.length)
         : ''
       const artifactCapability = this.artifactRpcCapabilities.get(bearerToken)
-      if (artifactCapability && artifactCapability.expiresAt <= this.now()) {
-        void this.revokeArtifactRunCapability(bearerToken)
-        closeRequestAfterResponse(request, response)
-        writeJson(response, 401, { error: 'Artifact RPC capability expired.' })
-        return
-      }
+      if (artifactCapability) this.assertArtifactCapabilityActive(bearerToken, artifactCapability)
       const hasKnownToken =
         authorization === `Bearer ${this.token}` ||
         this.sessionRpcCapabilities.has(bearerToken) ||
@@ -2532,6 +2539,7 @@ class NotebookLocalRpcServer {
                 : message
 
       if (
+        !activeRequest.bodyComplete ||
         error instanceof ResourceBudgetExceededError ||
         error instanceof PendingRequestLimitError
       ) {

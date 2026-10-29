@@ -126,7 +126,10 @@ type ArtifactTurnOwnerOptions = {
   runRegistry: ArtifactRunRegistry
   runtimeInstanceId?: string
   now?: () => number
-  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
+  issueRpcCapability?: (
+    binding: ArtifactRpcCapabilityBinding,
+    isOwnerActive: () => boolean
+  ) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
   provenance?: ArtifactTurnProvenance
   writeHandoffFile?: (filePath: string, content: string) => Promise<void>
@@ -223,36 +226,42 @@ class ArtifactTurnOwner {
     return this.withHandoffLock(turn.currentRunFile, async () => {
       let handoffWritten = false
 
-      turn.rpcCapabilityToken = this.options.issueRpcCapability?.({
-        executionId: turn.executionId,
-        projectId: turn.projectId,
-        appSessionId: turn.appSessionId,
-        artifactStorageSessionId: turn.artifactStorageSessionId,
-        artifactRunId: turn.runId,
-        rootFrameId: turn.rootFrameId,
-        agentFrameId: turn.agentFrameId,
-        messageBranchId: turn.messageBranchId,
-        messageBranchAncestry: turn.messageBranchAncestry,
-        messageAncestry: turn.messageAncestry,
-        runtimeSegmentId: turn.runtimeSegmentId,
-        promptMessageId: turn.promptMessageId,
-        agentName: turn.agentName,
-        ...(turn.notebookArtifactSourceScope
-          ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
-          : {}),
-        sourceScope: {
-          allowedImportRoots: [
-            ...(turn.workspaceCwd ? [turn.workspaceCwd] : []),
-            ...(turn.notebookArtifactSourceScope
-              ? [turn.notebookArtifactSourceScope.notebookSessionRoot]
-              : [])
-          ],
-          workspaceCwd: turn.workspaceCwd,
-          notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
-          notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
+      turn.rpcCapabilityToken = this.options.issueRpcCapability?.(
+        {
+          executionId: turn.executionId,
+          projectId: turn.projectId,
+          appSessionId: turn.appSessionId,
+          artifactStorageSessionId: turn.artifactStorageSessionId,
+          artifactRunId: turn.runId,
+          rootFrameId: turn.rootFrameId,
+          agentFrameId: turn.agentFrameId,
+          messageBranchId: turn.messageBranchId,
+          messageBranchAncestry: turn.messageBranchAncestry,
+          messageAncestry: turn.messageAncestry,
+          runtimeSegmentId: turn.runtimeSegmentId,
+          promptMessageId: turn.promptMessageId,
+          agentName: turn.agentName,
+          ...(turn.notebookArtifactSourceScope
+            ? { notebookSessionId: turn.notebookArtifactSourceScope.notebookSessionId }
+            : {}),
+          sourceScope: {
+            allowedImportRoots: [
+              ...(turn.workspaceCwd ? [turn.workspaceCwd] : []),
+              ...(turn.notebookArtifactSourceScope
+                ? [turn.notebookArtifactSourceScope.notebookSessionRoot]
+                : [])
+            ],
+            workspaceCwd: turn.workspaceCwd,
+            notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
+            notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
+          },
+          allowedMethods: ['artifactSaveVersion']
         },
-        allowedMethods: ['artifactSaveVersion']
-      })
+        () =>
+          turn.phase === 'open' &&
+          this.activeTurnsByExecution.get(turn.executionId) === turn &&
+          this.activeTurnsByHandoffFile.get(turn.currentRunFile) === turn
+      )
       if (turn.rpcCapabilityToken) runContext.rpcCapabilityToken = turn.rpcCapabilityToken
 
       try {
