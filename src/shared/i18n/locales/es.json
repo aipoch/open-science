@@ -933,6 +933,7 @@
     "Attachment": "Adjunto",
     "Attachments": "Archivos adjuntos",
     "Attachments are unavailable in Side chat": "Los archivos adjuntos no están disponibles en el chat lateral",
+    "Side chat is not available with Pi yet.": "El chat lateral aún no está disponible con Pi.",
     "Authentication": "Autenticación",
     "Authentication failed. Check the API key.": "Error de autenticación. Verifique la clave API.",
     "Authentication imported into Open-Science": "Autenticación importada a Open-Science",

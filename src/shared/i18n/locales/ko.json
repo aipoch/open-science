@@ -907,6 +907,7 @@
     "Attachment": "첨부파일",
     "Attachments": "첨부파일",
     "Attachments are unavailable in Side chat": "사이드 채팅에서는 첨부 파일을 사용할 수 없습니다.",
+    "Side chat is not available with Pi yet.": "Pi는 아직 사이드 채팅을 지원하지 않습니다.",
     "Authentication": "인증",
     "Authentication failed. Check the API key.": "인증에 실패했습니다. API 키를 확인하세요.",
     "Authentication imported into Open-Science": "Open-Science로 인증을 가져왔습니다.",

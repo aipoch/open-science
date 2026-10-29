@@ -969,6 +969,7 @@
     "Attachment": "附件",
     "Attachments": "附件",
     "Attachments are unavailable in Side chat": "側邊聊天不支援附件",
+    "Side chat is not available with Pi yet.": "Pi 暫不支援側邊聊天。",
     "Authentication": "認證",
     "From SSH configuration": "來自 SSH 設定",
     "SSH alias": "SSH 別名",
