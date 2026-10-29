@@ -292,7 +292,11 @@ SectionEnd
 it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as const)(
   'preserves co-located data in place when replacing an old installation (%s)',
   (layout) => {
-    const root = mkdtempSync(join(tmpdir(), 'nsis-workspace-safety-'))
+    // Leave enough shortenable ancestor characters for the 270-character payload to reach
+    // managed cleanup without first exceeding the existing NSIS staging-directory limit.
+    const root = mkdtempSync(
+      join(tmpdir(), 'nsis-workspace-safety-with-configured-data-and-long-program-path-')
+    )
     const install = join(root, 'Open-Science')
     const longProgramDirectory = 'p'.repeat(
       Math.max(1, 270 - join(install, 'resources', 'index.js').length - 1)
