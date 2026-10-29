@@ -10,6 +10,7 @@
     "src/main/caller-context.ts",
     "src/main/caller-lifecycle.test.ts",
     "src/main/caller-lifecycle.ts",
+    "src/main/desktop-runtime-hydration-capacity.integration.test.ts",
     "src/main/ipc-handler-registry.test.ts",
     "src/main/ipc-handler-registry.ts",
     "src/main/runtime-payload-transfers.ts",
@@ -38,6 +39,7 @@
       "src/main/runtime-payload-transfers.test.ts"
     ],
     "contract": [
+      "src/main/desktop-runtime-hydration-capacity.integration.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
