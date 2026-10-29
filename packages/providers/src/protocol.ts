@@ -35,4 +35,7 @@ export {
   messagesToChatCompletions
 } from './protocols/messages/conversion'
 
-export { encodeChatCompletionsStream } from './protocols/chat-completions/stream'
+export {
+  encodeChatCompletionsStream,
+  bufferChatCompletionsToolNames
+} from './protocols/chat-completions/stream'

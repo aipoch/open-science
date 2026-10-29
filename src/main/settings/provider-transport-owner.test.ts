@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import type { BackendRoutePlan, BackendTransportPlan } from './backend-route-planner'
@@ -589,8 +590,12 @@ describe('ProviderTransportOwner generations', () => {
         : Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }] })
     })
     const owner = new ProviderTransportOwner({
-      createProtocolForwardingBridge: (targets, initialTargetId) =>
-        new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
+      createProtocolForwardingBridge: (targets, initialTargetId) => {
+        expect(
+          targets.every((target) => target.adaptStream === bufferChatCompletionsToolNames)
+        ).toBe(true)
+        return new ProtocolForwardingBridge(targets, initialTargetId, upstreamFetch)
+      }
     })
     const targetA = makeTarget()
     const targetB: ProviderRuntimeTarget = {

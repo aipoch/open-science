@@ -26,7 +26,7 @@ const allowed: Record<string, string[]> = {
 it('keeps internal responsibilities acyclic and independent of host source and facades', () => {
   const edges = new Map<string, string[]>()
   for (const file of files(root)) {
-    const local = relative(root, file),
+    const local = relative(root, file).replaceAll('\\', '/'),
       owner = local.split('/')[0]
     const source = createSourceFile(file, readFileSync(file, 'utf8'), ScriptTarget.Latest, true)
     const imports: string[] = []
@@ -39,7 +39,7 @@ it('keeps internal responsibilities acyclic and independent of host source and f
         continue
       }
       const target = resolve(dirname(file), spec + '.ts'),
-        destination = relative(root, target)
+        destination = relative(root, target).replaceAll('\\', '/')
       expect(destination, local).not.toMatch(/^\.\./)
       if (allowed[owner])
         expect(allowed[owner], `${local} -> ${destination}`).toContain(destination.split('/')[0])

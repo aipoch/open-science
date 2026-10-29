@@ -20,7 +20,11 @@ import {
   providerRequestFingerprint,
   readBoundedProviderErrorBody
 } from './provider-error-replay'
-import { fetchProviderRequest } from '@aipoch/providers/transport'
+import {
+  fetchProviderRequest,
+  readSseRecords,
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES
+} from '@aipoch/providers/transport'
 
 const WIRE_PATH = {
   'chat-completions': '/v1/chat/completions',
@@ -53,6 +57,7 @@ export type ProtocolForwardingBridgeTarget = Readonly<{
   key?: string
   model: string
   adaptRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+  adaptStream?: (records: AsyncIterable<string>) => AsyncIterable<string>
 }>
 
 export type ProtocolForwardingBridgeConnection = Readonly<{
@@ -258,6 +263,15 @@ export class ProtocolForwardingBridge {
       response.end()
       return
     }
-    await pipeline(Readable.from(upstream.body as AsyncIterable<Uint8Array>), response)
+    const stream =
+      target.adaptStream &&
+      parsed.stream === true &&
+      upstream.ok &&
+      upstream.headers.get('content-type')?.split(';')[0].trim() === 'text/event-stream'
+        ? target.adaptStream(
+            readSseRecords(upstream, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, request.signal)
+          )
+        : (upstream.body as AsyncIterable<Uint8Array>)
+    await pipeline(Readable.from(stream), response)
   }
 }

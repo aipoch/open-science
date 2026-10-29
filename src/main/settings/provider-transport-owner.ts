@@ -21,6 +21,7 @@ import {
   normalizeMessagesRootUrl,
   resolveChatCompletionsUrl,
   resolveChatCompletionsBaseUrl,
+  bufferChatCompletionsToolNames,
   type ResponsesNamespacedTool
 } from '@aipoch/providers/protocol'
 import {
@@ -452,6 +453,7 @@ class ProviderTransportOwner {
                       id: targetId,
                       wire: 'chat-completions',
                       endpoint: resolveChatCompletionsUrl(candidate.provider)!,
+                      adaptStream: bufferChatCompletionsToolNames,
                       ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                       model
                     }

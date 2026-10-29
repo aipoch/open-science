@@ -5,6 +5,7 @@ import { gzipSync } from 'node:zlib'
 import { fetch as nodeFetch } from 'undici'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { bufferChatCompletionsToolNames } from '@aipoch/providers/protocol'
 
 import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
 import {
@@ -62,6 +63,63 @@ describe('ProtocolForwardingBridge', () => {
     await Promise.all(bridges.splice(0).map((bridge) => bridge.close()))
     await Promise.all(servers.splice(0).map(close))
   })
+
+  it.each([false, true])(
+    'adapts late tool names only for an opted-in stream (%s)',
+    async (enabled) => {
+      const chunk = (fn: Record<string, unknown>, first = false): string =>
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    ...(first ? { id: 'call-1', type: 'function' } : {}),
+                    function: fn
+                  }
+                ]
+              }
+            }
+          ]
+        })}\n\n`
+      const input =
+        chunk({ arguments: '{' }, true) +
+        chunk({ name: 'lookup', arguments: '}' }) +
+        'data: [DONE]\n\n'
+      const target: ProtocolForwardingBridgeTarget = {
+        id: 'late-name',
+        wire: 'chat-completions',
+        endpoint: 'https://provider.example/v1/chat/completions',
+        model: 'model-a',
+        ...(enabled ? { adaptStream: bufferChatCompletionsToolNames } : {})
+      }
+      const bridge = new ProtocolForwardingBridge(
+        [target],
+        target.id,
+        async () =>
+          new Response(input, { headers: { 'content-type': 'text/event-stream; charset=utf-8' } })
+      )
+      bridges.push(bridge)
+      const connection = await bridge.start()
+      const response = await fetch(`${connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({ messages: [], stream: true })
+      })
+      expect(await response.text()).toBe(
+        enabled
+          ? chunk({ arguments: '{', name: 'lookup' }, true) +
+              chunk({ arguments: '}' }) +
+              'data: [DONE]\n\n'
+          : input
+      )
+    }
+  )
 
   it.each([false, true])(
     'decodes upstream compression when the client accepts zstd (stream=%s)',

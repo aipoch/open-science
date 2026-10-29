@@ -1280,6 +1280,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           id: JSON.stringify(['opencode', 'provider-a', 'model-a']),
           wire: 'chat-completions',
           endpoint: 'https://provider-a.example/v1/chat/completions',
+          adaptStream: expect.any(Function),
           key: 'plain:provider-a-key-ref',
           model: 'model-a'
         }
@@ -1293,6 +1294,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           id: JSON.stringify(['opencode', 'provider-b', 'model-b']),
           wire: 'chat-completions',
           endpoint: 'https://provider-b.example/custom/chat/completions',
+          adaptStream: expect.any(Function),
           key: 'plain:provider-b-key-ref',
           model: 'model-b'
         }
