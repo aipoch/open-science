@@ -449,7 +449,7 @@ test('keeps the download accessible from project navigation and cancels through 
   await card.getByRole('button', { name: 'Import', exact: true }).click()
   await page.getByText('Research project', { exact: true }).click()
   await expect(page.getByTestId('navigation')).toHaveText('workspace:research')
-  const progress = page.getByRole('region', { name: 'Package progress' })
+  const progress = page.getByRole('group', { name: 'Package progress' })
   await expect(progress).toContainText('Downloading 35%')
   await progress.getByRole('button', { name: 'View progress' }).click()
   const dialog = page.getByRole('dialog')

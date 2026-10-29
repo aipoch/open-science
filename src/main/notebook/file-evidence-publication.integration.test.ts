@@ -11,6 +11,11 @@ const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/
 const { createPackageWithOptions } = appBuilderRequire('@electron/asar')
 const workerPath = resolve('resources/notebook/file_evidence_worker.js')
 
+// Each child has a 10 s handshake plus startup/exit time. Allow the initial worker,
+// reader cleanup and optional recovery worker to settle before Vitest tears down the fixture.
+const childTimeoutMs = 15_000
+const publicationTimeoutMs = 3 * childTimeoutMs
+
 // Pause immediately before the real rename so a real Windows reader can acquire its handle.
 // Neither the filesystem call nor its Windows error is mocked.
 const preload = `
@@ -104,6 +109,7 @@ const runChild = (
       ELECTRON_RUN_AS_NODE: '1'
     },
     windowsHide: true,
+    timeout: childTimeoutMs,
     stdio: ['pipe', 'pipe', 'pipe']
   })
   let stdout = ''
@@ -226,36 +232,44 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
     afterAll(async () => {
       if (packageRoot) await rm(packageRoot, { recursive: true, force: true })
     })
-    it('publishes the complete receipt after a reader releases its delete-sharing restriction', async () => {
-      const { result, attempts, receipt } = await exercisePublication(runtime, 350)
-      expect(attempts.length).toBeGreaterThan(0)
-      expect(attempts.every((attempt) => attempt.code === 'EPERM')).toBe(true)
-      expect(attempts.every((attempt) => JSON.parse(attempt.previous).phase === 'prepared')).toBe(
-        true
-      )
-      expect(new Set(attempts.map((attempt) => attempt.source)).size).toBe(1)
-      expect(new Set(attempts.map((attempt) => attempt.next)).size).toBe(1)
-      expect(result).toMatchObject({ code: 0, stderr: '' })
-      expect(JSON.parse(result.stdout)).toEqual({ ok: true, projectOwned: true })
-      expect(receipt.phase).toBe('owned')
-    })
+    it(
+      'publishes the complete receipt after a reader releases its delete-sharing restriction',
+      async () => {
+        const { result, attempts, receipt } = await exercisePublication(runtime, 350)
+        expect(attempts.length).toBeGreaterThan(0)
+        expect(attempts.every((attempt) => attempt.code === 'EPERM')).toBe(true)
+        expect(attempts.every((attempt) => JSON.parse(attempt.previous).phase === 'prepared')).toBe(
+          true
+        )
+        expect(new Set(attempts.map((attempt) => attempt.source)).size).toBe(1)
+        expect(new Set(attempts.map((attempt) => attempt.next)).size).toBe(1)
+        expect(result).toMatchObject({ code: 0, stderr: '' })
+        expect(JSON.parse(result.stdout)).toEqual({ ok: true, projectOwned: true })
+        expect(receipt.phase).toBe('owned')
+      },
+      publicationTimeoutMs
+    )
 
-    it('fails within its retry budget and preserves the old receipt when the reader stays open', async () => {
-      const { result, attempts, receipt, files, recovery } = await exercisePublication(runtime, 0)
-      expect(result.code).toBe(1)
-      expect(JSON.parse(result.stdout)).toMatchObject({
-        ok: false,
-        error: expect.stringContaining('EPERM')
-      })
-      expect(attempts).toHaveLength(7)
-      expect(receipt.phase).toBe('prepared')
-      expect(
-        files.filter((name) => name.startsWith('.receipt-') && name.endsWith('.tmp'))
-      ).toHaveLength(1)
-      expect(recovery?.result).toMatchObject({ code: 0, stderr: '' })
-      expect(JSON.parse(recovery!.result.stdout)).toEqual({ ok: true, projectOwned: true })
-      expect(recovery?.receipt.phase).toBe('owned')
-    })
+    it(
+      'fails within its retry budget and preserves the old receipt when the reader stays open',
+      async () => {
+        const { result, attempts, receipt, files, recovery } = await exercisePublication(runtime, 0)
+        expect(result.code).toBe(1)
+        expect(JSON.parse(result.stdout)).toMatchObject({
+          ok: false,
+          error: expect.stringContaining('EPERM')
+        })
+        expect(attempts).toHaveLength(7)
+        expect(receipt.phase).toBe('prepared')
+        expect(
+          files.filter((name) => name.startsWith('.receipt-') && name.endsWith('.tmp'))
+        ).toHaveLength(1)
+        expect(recovery?.result).toMatchObject({ code: 0, stderr: '' })
+        expect(JSON.parse(recovery!.result.stdout)).toEqual({ ok: true, projectOwned: true })
+        expect(recovery?.receipt.phase).toBe('owned')
+      },
+      publicationTimeoutMs
+    )
 
     it.each(['source', 'destination'])(
       'rejects a changed %s before attempting another replacement',
@@ -268,7 +282,8 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
         })
         expect(attempts).toHaveLength(1)
         expect(receipt.phase).toBe(change === 'destination' ? 'foreign' : 'prepared')
-      }
+      },
+      publicationTimeoutMs
     )
   })
 })

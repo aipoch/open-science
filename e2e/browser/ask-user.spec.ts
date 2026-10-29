@@ -413,30 +413,42 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
     .toBe(0)
   await menu.evaluate((element) => {
     ;(element as HTMLElement).dataset.instance = 'original'
+    // Freeze both the clip and Radix Presence animation partway through the exit.
+    // Driver round trips on a busy CI runner must not consume the 160 ms reversal window.
+    const observer = new MutationObserver(() => {
+      if (element.getAttribute('data-state') !== 'closed') return
+      requestAnimationFrame(() => {
+        if (element.getAttribute('data-state') !== 'closed') return
+        for (const animation of element.getAnimations()) {
+          animation.pause()
+          animation.currentTime = 40
+        }
+      })
+    })
+    observer.observe(element, { attributes: true, attributeFilter: ['data-state'] })
+    element.addEventListener('stop-freezing-exit', () => observer.disconnect(), { once: true })
   })
   await page.keyboard.press('Escape')
   await expect
-    .poll(
-      () =>
-        menu.evaluate(
-          (element) =>
-            element
-              .getAnimations()
-              .find(
-                (animation) =>
-                  animation.effect instanceof KeyframeEffect &&
-                  animation.effect.getKeyframes().some((frame) => 'clipPath' in frame)
-              )
-              ?.effect?.getTiming().duration
-        ),
-      { intervals: [5], timeout: 100 }
+    .poll(() =>
+      menu.evaluate(
+        (element) =>
+          element
+            .getAnimations()
+            .find(
+              (animation) =>
+                animation.effect instanceof KeyframeEffect &&
+                animation.effect.getKeyframes().some((frame) => 'clipPath' in frame) &&
+                animation.playState === 'paused'
+            )
+            ?.effect?.getTiming().duration
+      )
     )
     .toBe(160)
   expect(
     await trigger.locator('svg').evaluate((element) => getComputedStyle(element).transitionDuration)
   ).toBe('0.16s')
-  // Reverse during the 160 ms exit, before Radix Presence removes the node.
-  await page.waitForTimeout(40)
+  // Reopen through the real trigger while the original node is still exiting.
   const before = await menu.evaluate((element) => getComputedStyle(element).clipPath)
   expect(before).not.toBe('inset(0%)')
   await trigger.click()
@@ -456,6 +468,7 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
   await page.keyboard.press('ArrowDown')
   await expect(page.getByRole('menuitem', { name: 'Skip all' })).toBeFocused()
   await expect(menu).toHaveAttribute('data-instance', 'original')
+  await menu.dispatchEvent('stop-freezing-exit')
   await page.getByRole('heading', { name: 'Which outputs?' }).click()
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(menu).toHaveCount(0)

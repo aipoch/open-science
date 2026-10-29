@@ -489,7 +489,7 @@ describe('Windows AppContainer launch', () => {
   })
 
   it('passes managed Skill read grants and write denials to the native Windows host', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'windows-skill-policy-')))
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'windows-skill-policy-')))
     const skills = join(root, 'Application data 科研', 'codex', 'skills')
     mkdirSync(skills, { recursive: true })
     try {

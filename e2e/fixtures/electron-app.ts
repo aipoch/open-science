@@ -829,6 +829,14 @@ const openMainWindow = async (
   onFirstReady?: (page: Page) => Promise<void>
 ): Promise<Page> => {
   const page = await application.firstWindow()
+  if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) {
+    await page.route('https://statics.aipoch.com/open-science/usecases/**/cover.png', (route) =>
+      route.fulfill({
+        contentType: 'image/svg+xml',
+        body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" fill="#e7e5df"/></svg>'
+      })
+    )
+  }
   await applyHiddenWindowPresentation(page, windowMode)
   await rendererFailures.observe(page)
   await waitForRendererReady(page)
