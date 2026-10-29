@@ -6546,8 +6546,7 @@
         "src/main/uploads/attachment-media.ts",
         "src/main/uploads/command-owner.ts",
         "src/main/uploads/ipc.ts",
-        "src/main/uploads/repository.test-utils.ts",
-        "src/main/uploads/pdf-reading-order.ts"
+        "src/main/uploads/repository.test-utils.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -6567,8 +6566,7 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts",
-        "src/main/uploads/pdf-reading-order.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
         "@napi-rs/canvas",

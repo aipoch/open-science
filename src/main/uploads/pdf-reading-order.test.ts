@@ -16,7 +16,10 @@ const item = (str: string, x: number, y: number, width = 210): TextItem => ({
   transform: [10, 0, 0, 10, x, 800 - y],
   hasEOL: true
 })
-const read = (items: TextContent['items'], tree: StructTreeNode | null = null): Promise<string> =>
+const read = (
+  items: TextContent['items'],
+  tree: StructTreeNode | null | Error = null
+): Promise<string> =>
   readPdfPageText({
     rotate: 0,
     view: [0, 0, 600, 800],
@@ -25,7 +28,10 @@ const read = (items: TextContent['items'], tree: StructTreeNode | null = null): 
       styles: { Body: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'serif' } },
       lang: null
     })),
-    getStructTree: vi.fn(async () => tree)
+    getStructTree: vi.fn(async () => {
+      if (tree instanceof Error) throw tree
+      return tree
+    })
   } as unknown as PDFPageProxy)
 
 describe('automatic PDF reading order', () => {
@@ -95,5 +101,25 @@ describe('automatic PDF reading order', () => {
     expect(await read(input, { ...tree, children: [tree.children[0], tree.children[0]] })).toBe(
       'Right column\nLeft column'
     )
+  })
+  it('preserves readable native text when structure is damaged or excessively nested', async () => {
+    const input: TextContent['items'] = [
+      { type: 'beginMarkedContentProps', id: 'right' },
+      item('Right', 330, 120),
+      { type: 'endMarkedContent', id: '' },
+      { type: 'beginMarkedContentProps', id: 'left' },
+      item('Left', 40, 120),
+      { type: 'endMarkedContent', id: '' }
+    ]
+    let tree: StructTreeNode = {
+      role: 'Document',
+      children: [
+        { type: 'content', id: 'left' },
+        { type: 'content', id: 'right' }
+      ]
+    }
+    for (let i = 0; i < 150; i++) tree = { role: 'Div', children: [tree] }
+    expect(await read(input, new Error('Invalid structure tree'))).toBe('Right\nLeft')
+    expect(await read(input, tree)).toBe('Right\nLeft')
   })
 })

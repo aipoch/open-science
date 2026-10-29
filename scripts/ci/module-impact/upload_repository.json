@@ -536,5 +536,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Automatic PDF reading order adds a layout owner beyond the reviewed upload boundary; retain full CI validation until the expanded source boundary and extraction consumers are reviewed."
 }

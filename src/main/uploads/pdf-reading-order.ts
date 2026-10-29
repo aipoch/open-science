@@ -30,16 +30,22 @@ const taggedOrder = (content: TextContent, tree: StructTreeNode): TextItem[][] |
     else stack.push(item.type === 'beginMarkedContentProps' ? item.id : undefined)
   }
   const ordered: TextItem[][] = []
-  const visit = (node: StructTreeNode): void => {
-    for (const child of node.children) {
-      if ('children' in child) visit(child)
-      else if (child.type === 'content') {
-        const group = groups.get(child.id)
-        if (group) ordered.push(group)
-      }
+  const pending: { node: StructTreeNode['children'][number]; depth: number }[] = [
+    { node: tree, depth: 0 }
+  ]
+  let visited = 0
+  while (pending.length) {
+    const { node, depth } = pending.pop()!
+    if (++visited > 10_000 || depth > 128) return undefined
+    if ('children' in node) {
+      if (visited + pending.length + node.children.length > 10_000) return undefined
+      for (let i = node.children.length - 1; i >= 0; i--)
+        pending.push({ node: node.children[i], depth: depth + 1 })
+    } else if (node.type === 'content') {
+      const group = groups.get(node.id)
+      if (group) ordered.push(group)
     }
   }
-  visit(tree)
   const items = ordered.flat().filter((item) => item.str.trim())
   return count > 0 && items.length === count && new Set(items).size === count ? ordered : undefined
 }
@@ -48,11 +54,16 @@ export const readPdfPageText = async (page: PDFPageProxy): Promise<string> => {
   const content = await page.getTextContent({ includeMarkedContent: true })
   const nativeItems = content.items.filter((item): item is TextItem => 'str' in item)
   const native = (): string => joinPdfTextItems(nativeItems)
-  const tree = await page.getStructTree()
-  if (tree) {
-    const ordered = taggedOrder(content, tree)
-    // Incomplete tags must not drop untagged text or silently replace a declared order.
-    return ordered ? joinPdfTextItems(ordered.flat()) : native()
+  try {
+    const tree = await page.getStructTree()
+    if (tree) {
+      const ordered = taggedOrder(content, tree)
+      // Incomplete tags must not drop untagged text or silently replace a declared order.
+      return ordered ? joinPdfTextItems(ordered.flat()) : native()
+    }
+  } catch {
+    // Structure is optional: damaged tags must not make otherwise readable text unavailable.
+    return native()
   }
   if (page.rotate % 360 !== 0) return native()
   const [left, bottom, right, top] = page.view
