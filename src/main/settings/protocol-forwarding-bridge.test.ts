@@ -64,9 +64,13 @@ describe('ProtocolForwardingBridge', () => {
     await Promise.all(servers.splice(0).map(close))
   })
 
-  it.each([false, true])(
-    'adapts late tool names only for an opted-in stream (%s)',
-    async (enabled) => {
+  it.each([
+    [false, 'text/event-stream; charset=utf-8'],
+    [true, 'text/event-stream; charset=utf-8'],
+    [true, 'Text/Event-Stream ; charset=utf-8']
+  ] as const)(
+    'adapts late tool names only for an opted-in stream (%s, %s)',
+    async (enabled, contentType) => {
       const chunk = (fn: Record<string, unknown>, first = false): string =>
         `data: ${JSON.stringify({
           choices: [
@@ -98,8 +102,7 @@ describe('ProtocolForwardingBridge', () => {
       const bridge = new ProtocolForwardingBridge(
         [target],
         target.id,
-        async () =>
-          new Response(input, { headers: { 'content-type': 'text/event-stream; charset=utf-8' } })
+        async () => new Response(input, { headers: { 'content-type': contentType } })
       )
       bridges.push(bridge)
       const connection = await bridge.start()

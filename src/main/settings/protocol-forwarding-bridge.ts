@@ -267,7 +267,8 @@ export class ProtocolForwardingBridge {
       target.adaptStream &&
       parsed.stream === true &&
       upstream.ok &&
-      upstream.headers.get('content-type')?.split(';')[0].trim() === 'text/event-stream'
+      upstream.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ===
+        'text/event-stream'
         ? target.adaptStream(
             readSseRecords(upstream, DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, request.signal)
           )
