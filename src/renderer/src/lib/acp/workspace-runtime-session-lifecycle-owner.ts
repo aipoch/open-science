@@ -11,6 +11,11 @@ import {
 } from './workspace-operation-error'
 import type { AcpRuntimeEvent, AcpSessionAgentTarget } from '../../../../shared/acp'
 import { reportHandledRendererFailure } from '../handled-failure-diagnostics'
+import {
+  acceptAcpRuntimeSnapshotRevision,
+  getAcpRuntimeSnapshotScope,
+  hasAcpRuntimeSessionActivity
+} from './runtime-snapshot-revision-owner'
 import { i18next } from '../../i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
@@ -747,12 +752,46 @@ const cancelWorkspaceRun = async (
 
   const wasCompacting = session?.compacting === true
   if (wasCompacting) cancelledSessionIds?.add(sessionId)
+  const scope = getAcpRuntimeSnapshotScope()
   const snapshot = await runtime.cancel(sessionId)
 
   if (!snapshot) {
     cancelledSessionIds?.delete(sessionId)
     reportWorkspaceOperationError(sessionId, 'Agent cancellation failed')
     throw new Error('Agent cancellation failed')
+  }
+
+  // Cancellation can be a no-op when a hydrated wait outlives its request. Refresh durable
+  // authority explicitly; an empty request list alone cannot settle a durable interaction.
+  // Other sessions may have advanced the global revision before the cancel response arrived.
+  // Use the newest accepted session activity rather than requiring that response to stay newest.
+  if (scope !== getAcpRuntimeSnapshotScope()) return
+  acceptAcpRuntimeSnapshotRevision(snapshot)
+  const source = workspaceSession(sessionId)
+  if (
+    !source?.projectId ||
+    (source.status !== 'waiting-permission' && source.status !== 'waiting-for-user') ||
+    hasAcpRuntimeSessionActivity(sessionId) !== false
+  )
+    return
+
+  const authority = await loadPersistedSession(
+    { projectId: source.projectId, sessionId },
+    window.api.sessions,
+    { bypassCache: true }
+  )
+  // A new request, prompt, or service generation may arrive while the read is in flight.
+  // The projection owner additionally checks source identity and durable revision atomically.
+  if (
+    authority &&
+    scope === getAcpRuntimeSnapshotScope() &&
+    hasAcpRuntimeSessionActivity(sessionId) === false
+  ) {
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: authority,
+      mode: 'cancelled-wait-authority'
+    })
   }
 }
 const processContextOverflowRecovery = (

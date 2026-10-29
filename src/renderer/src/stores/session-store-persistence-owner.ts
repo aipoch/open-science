@@ -1,3 +1,4 @@
+import { projectSessionActionability } from './session-actionability'
 import { hasPendingSandboxNetworkApproval } from '../../../shared/sandbox-network-approval'
 import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
@@ -99,6 +100,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'delegated-authority'
     | 'session-details-authority'
     | 'runtime-transcript-authority'
+    | 'cancelled-wait-authority'
     | 'prompt-rollback-authority'
     | 'archive-authority'
 }
@@ -908,7 +910,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           )
         } as Partial<State>
       }
-      if (mode === 'runtime-transcript-authority') {
+      if (mode === 'runtime-transcript-authority' || mode === 'cancelled-wait-authority') {
+        // Stop may refresh a status-only wait, but cannot overwrite changes delivered during
+        // the read or invent completion while Main still owns running work or an interaction.
+        if (
+          mode === 'cancelled-wait-authority' &&
+          (current !== source || !projectSessionActionability(session).actions.startTurn.allowed)
+        )
+          return state
         // Main lifecycle delivery can trail a direct command/save receipt. Once the live store has
         // observed a newer durable revision, an older transcript projection cannot replace it.
         if (sessionRevision(session) < sessionRevision(current)) return state
@@ -935,6 +944,12 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
         // Recovery aliases follow Main's committed state, including a successful attach with no
         // eligible user anchor. Retaining this renderer-only flag would leave Resume visible.
         projected.interrupted = hydrateSession(authority).interrupted
+        if (mode === 'cancelled-wait-authority') {
+          // Normal save receipts preserve live waits. An explicitly cancelled, unchanged
+          // projection instead adopts the interaction state from the confirmed durable result.
+          projected.interactionState = inferSessionInteractionState(authority)
+          projected.liveInteractionState = undefined
+        }
         if (!authority.activeRun) {
           projected.agentStatus = undefined
           projected.awaitingFirstAgentOutput = undefined

@@ -7654,6 +7654,9 @@
     "Verifying download…": "正在驗證下載檔案…",
     "Example download progress": "案例下載進度",
     "Could not cancel download. Try again.": "無法取消下載，請重試。",
-    "Could not download this example. Try again.": "無法下載此案例，請重試。"
+    "Could not download this example. Try again.": "無法下載此案例，請重試。",
+    "Waiting request unavailable": "等待的請求無法使用",
+    "You can edit your draft while waiting for the request to appear, or stop the current run. Sending remains disabled.": "你可以在等待請求顯示時編輯草稿，或停止目前的執行。在此期間無法傳送訊息。",
+    "Stop waiting": "停止等待"
   }
 }

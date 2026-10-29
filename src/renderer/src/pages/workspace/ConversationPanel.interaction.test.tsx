@@ -4730,10 +4730,16 @@ describe('ConversationPanel composer intake', () => {
       })
 
       expect(container.querySelector('[data-testid="blocked-composer-side-chat"]')).toBeNull()
-      expect(
-        container.querySelector('[data-testid="blocking-composer-overlay"]')?.textContent
-      ).not.toContain('New side chat')
-      expectComposerCoveredByBlockingOverlay()
+      expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+      expect(getComposerForm().hasAttribute('inert')).toBe(false)
+      expect(container.textContent).toContain('Waiting request unavailable')
+      const trigger = container.querySelector<HTMLButtonElement>(
+        '[data-testid="running-side-chat-menu-trigger"]'
+      )!
+      expect(trigger.disabled).toBe(true)
+      const sideChat = container.querySelector<HTMLButtonElement>('[data-testid="menu-side-chat"]')!
+      expect(sideChat.getAttribute('aria-disabled')).toBe('true')
+      act(() => sideChat.click())
       expect(onStartSideChat).not.toHaveBeenCalled()
     }
   )
@@ -10111,6 +10117,201 @@ it('shows the branch source chat number and opens that source session', () => {
   expect(sourceLink).toBeDefined()
   act(() => sourceLink!.click())
   expect(openSession).toHaveBeenCalledWith('branch-source')
+})
+
+it.each(['waiting-permission', 'waiting-for-user'] as const)(
+  'keeps the draft and recovery available when %s has no request',
+  (status) => {
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'investigation-orphaned-wait',
+          projectId: 'project-a',
+          title: 'Approval investigation',
+          cwd: '/workspace',
+          status,
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      permissions: { requests: [] },
+      elicitation: { requests: [] }
+    })
+    expect(container.querySelector('[data-testid="blocking-composer-overlay"]')).toBeNull()
+    expect(getComposerForm().hasAttribute('inert')).toBe(false)
+    expect(getComposerEditor().getAttribute('contenteditable')).toBe('true')
+    expect(container.textContent).toContain('Waiting request unavailable')
+    expect(
+      container.querySelector('[data-testid="missing-interaction-notice"] button')
+    ).not.toBeNull()
+  }
+)
+
+it('keeps an unavailable interaction blocked until authority clears it and allows retrying Stop', async () => {
+  let rejectStop!: (error: Error) => void
+  const cancel = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectStop = reject
+      })
+  )
+  const send = vi.fn()
+  const session: ChatSession = {
+    id: 'missing-wait',
+    projectId: 'project-a',
+    title: 'Missing request',
+    cwd: '/workspace',
+    status: 'waiting-permission',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+  const props: DeepPartial<PanelProps> = {
+    view: { activeSession: session },
+    composer: { view: { doc: docFromText('Preserved draft') } },
+    conversation: {
+      availability: { submit: true },
+      actions: { cancel, submit: { draft: send } }
+    }
+  }
+  renderPanel(props)
+  const notice = container.querySelector('[data-testid="missing-interaction-notice"]')!
+  expect(notice).not.toBeNull()
+  expect(getComposerEditor().textContent).toContain('Preserved draft')
+  act(() =>
+    getComposerEditor().dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    )
+  )
+  expect(send).not.toHaveBeenCalled()
+  const stop = notice.querySelector('button')!
+  act(() => {
+    stop.click()
+    stop.click()
+  })
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(stop.disabled).toBe(true)
+  await act(async () => {
+    rejectStop(new Error('Stop failed'))
+    await Promise.resolve()
+  })
+  expect(stop.disabled).toBe(false)
+  expect(container.textContent).toContain('Stop failed')
+  expect(container.textContent).toContain('Waiting request unavailable')
+  cancel.mockResolvedValueOnce(undefined)
+  await act(async () => {
+    stop.click()
+    await Promise.resolve()
+  })
+  expect(cancel).toHaveBeenCalledTimes(2)
+  // Cancellation acknowledgement is not permission to bypass the authoritative wait.
+  expect(container.textContent).toContain('Waiting request unavailable')
+  renderPanel({ ...props, view: { activeSession: { ...session, status: 'idle' } } })
+  expect(container.querySelector('[data-testid="missing-interaction-notice"]')).toBeNull()
+  expect(getComposerEditor().textContent).toContain('Preserved draft')
+  act(() =>
+    getComposerEditor().dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    )
+  )
+  expect(send).toHaveBeenCalledOnce()
+})
+
+it('replaces missing-request recovery when a live question arrives before its projection', () => {
+  const session: ChatSession = {
+    id: 'late-question',
+    projectId: 'project-a',
+    title: 'Late question',
+    cwd: '/workspace',
+    status: 'waiting-for-user',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    activities: [
+      {
+        id: 'question-tool',
+        kind: 'tool',
+        title: 'Question',
+        status: 'in_progress',
+        eventIds: [],
+        sortIndex: 1,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+  }
+  renderPanel({ view: { activeSession: session } })
+  expect(getComposerForm().hasAttribute('inert')).toBe(false)
+  renderPanel({
+    view: { activeSession: session },
+    elicitation: {
+      requests: [
+        {
+          requestId: 'question-request',
+          sessionId: session.id,
+          toolCallId: 'question-tool',
+          message: 'Confirm outline',
+          fields: [
+            {
+              id: 'choice',
+              label: 'Confirm outline',
+              kind: 'single-select',
+              options: [{ value: 'confirm', label: 'Confirm' }]
+            }
+          ]
+        }
+      ]
+    }
+  })
+  expect(container.querySelector('[data-testid="missing-interaction-notice"]')).toBeNull()
+  expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+  expectComposerCoveredByBlockingOverlay()
+})
+
+it('does not mask a durable question with a status-only permission wait', () => {
+  renderPanel({
+    view: {
+      activeSession: {
+        id: 'investigation-durable-choice',
+        projectId: 'project-a',
+        title: 'Confirm outline',
+        cwd: '/workspace',
+        status: 'waiting-permission',
+        messages: [],
+        activities: [
+          {
+            id: 'outline-choice',
+            kind: 'tool',
+            title: 'Confirm outline',
+            status: 'in_progress',
+            eventIds: [],
+            sortIndex: 1,
+            createdAt: 1,
+            updatedAt: 1,
+            elicitation: {
+              state: 'pending',
+              message: 'Confirm outline',
+              fields: [
+                {
+                  id: 'choice',
+                  label: 'Confirm outline',
+                  kind: 'single-select',
+                  options: [{ value: 'confirm', label: 'Confirm' }]
+                }
+              ],
+              durable: { kind: 'agent-user-choice', requestId: 'outline-request' }
+            }
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    },
+    permissions: { requests: [] },
+    elicitation: { requests: [] }
+  })
+  expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
 })
 
 it.each(['question', 'delegated question', 'plan', 'permission', 'delegated permission'] as const)(

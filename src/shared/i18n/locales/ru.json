@@ -8134,6 +8134,9 @@
     "Verifying download…": "Проверка загрузки…",
     "Example download progress": "Ход загрузки примера",
     "Could not cancel download. Try again.": "Не удалось отменить загрузку. Повторите попытку.",
-    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку."
+    "Could not download this example. Try again.": "Не удалось загрузить этот пример. Повторите попытку.",
+    "Waiting request unavailable": "Ожидаемый запрос недоступен",
+    "You can edit your draft while waiting for the request to appear, or stop the current run. Sending remains disabled.": "Вы можете редактировать черновик, пока запрос не появится, или остановить текущее выполнение. Отправка остаётся отключённой.",
+    "Stop waiting": "Прекратить ожидание"
   }
 }

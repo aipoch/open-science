@@ -7990,6 +7990,9 @@
     "Verifying download…": "Verificando la descarga…",
     "Example download progress": "Progreso de descarga del ejemplo",
     "Could not cancel download. Try again.": "No se pudo cancelar la descarga. Inténtelo de nuevo.",
-    "Could not download this example. Try again.": "No se pudo descargar este ejemplo. Inténtelo de nuevo."
+    "Could not download this example. Try again.": "No se pudo descargar este ejemplo. Inténtelo de nuevo.",
+    "Waiting request unavailable": "Solicitud pendiente no disponible",
+    "You can edit your draft while waiting for the request to appear, or stop the current run. Sending remains disabled.": "Puede editar el borrador mientras espera a que aparezca la solicitud o detener la ejecución actual. El envío sigue deshabilitado.",
+    "Stop waiting": "Dejar de esperar"
   }
 }

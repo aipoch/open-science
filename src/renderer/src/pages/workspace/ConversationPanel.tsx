@@ -933,12 +933,6 @@ const ConversationPanel = ({
   const saveAsSkillDisabledReason = hasRunningSubagents
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
-  const effectiveCanSend =
-    canSendMessage &&
-    !specialistSwitchInFlight &&
-    !pendingInteractionFacts?.rootPermissionPending &&
-    !isStopping &&
-    !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -1175,7 +1169,7 @@ const ConversationPanel = ({
     (pendingElicitationActivity.elicitation.state === 'pending' ||
       pendingElicitationActivity.elicitation.continuationRecovery)
       ? pendingElicitationActivity.elicitation
-      : !pendingElicitationActivity && pendingElicitationRequest
+      : !pendingElicitationActivity?.elicitation && pendingElicitationRequest
         ? {
             message: pendingElicitationRequest.message,
             fields: pendingElicitationRequest.fields,
@@ -1213,19 +1207,32 @@ const ConversationPanel = ({
     pendingInteractionFacts?.rootPermissionPending &&
     rootPermissionRequests.length === 0 &&
     activeSession?.runtimeContext?.permission?.state !== 'pending'
-  const visibleBlockingInteraction =
+  // Permission and question panels require a renderable request. Their wait status can arrive
+  // first or survive a lost request; it still blocks sending, but cannot supply a panel.
+  // Unavailable Plans retain their separate projection-recovery flow.
+  const blockingInteraction =
     rootPermissionRequests.length > 0
       ? 'permission'
       : pendingCredentialRequest
         ? 'credential'
         : pendingElicitation
           ? 'elicitation'
-          : pendingPlan
+          : pendingPlan || actionability?.blockingInteraction === 'plan'
             ? 'plan'
             : undefined
-  const blockingInteraction = permissionInApplicationDialog
-    ? visibleBlockingInteraction
-    : (actionability?.blockingInteraction ?? visibleBlockingInteraction)
+  const missingBlockingInteraction = Boolean(
+    !blockingInteraction &&
+    !permissionInApplicationDialog &&
+    actionability?.blockingInteraction &&
+    actionability.blockingInteraction !== 'plan'
+  )
+  const effectiveCanSend =
+    canSendMessage &&
+    !missingBlockingInteraction &&
+    !specialistSwitchInFlight &&
+    !pendingInteractionFacts?.rootPermissionPending &&
+    !isStopping &&
+    !isResuming
   const hasPendingPermission = blockingInteraction === 'permission'
   const hasPendingCredential = blockingInteraction === 'credential'
   const delegatedQuestion = projectDelegatedQuestionQueue(activeSession)[0]
@@ -1287,6 +1294,7 @@ const ConversationPanel = ({
     }
   }, [canEditDraft, ordinaryComposerBlocked])
   const rootTurnBusy = Boolean(
+    (permissionInApplicationDialog ? blockingInteraction : actionability?.blockingInteraction) ||
     blockingInteraction ||
     actionability?.activity === 'running' ||
     activeSession?.compacting ||
@@ -1474,8 +1482,12 @@ const ConversationPanel = ({
       t
     )
   const canOpenSideChat =
-    !specialistSwitchInFlight && !openSideChatReason && Boolean(sideChatController.createDraft)
-  const canStartSideChat = !specialistSwitchInFlight && !sendSideChatReason
+    !missingBlockingInteraction &&
+    !specialistSwitchInFlight &&
+    !openSideChatReason &&
+    Boolean(sideChatController.createDraft)
+  const canStartSideChat =
+    !missingBlockingInteraction && !specialistSwitchInFlight && !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
   const canOpenSendOptions =
     !specialistSwitchInFlight &&
@@ -2008,6 +2020,24 @@ const ConversationPanel = ({
                     onOpenComputeJob={onOpenJob ?? ((job) => onOpenJobList(job.session_id))}
                     onOpenJobList={onOpenJobList}
                   />
+                ) : null}
+
+                {missingBlockingInteraction && !authenticationRequired && !packageLocked ? (
+                  <div data-testid="missing-interaction-notice" className="mb-2">
+                    <ErrorNotice
+                      icon={AlertTriangle}
+                      tone="amber"
+                      title={t('Waiting request unavailable')}
+                      description={t(
+                        'You can edit your draft while waiting for the request to appear, or stop the current run. Sending remains disabled.'
+                      )}
+                      primaryButton={{
+                        label: t('Stop waiting'),
+                        onClick: handleStop,
+                        loading: isStopping
+                      }}
+                    />
+                  </div>
                 ) : null}
 
                 {/* Keep guidance above this joined strip/composer dock: the negative margin below

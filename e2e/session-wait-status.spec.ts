@@ -1,4 +1,5 @@
 import { expect } from '@playwright/test'
+import type { ElectronApplication } from 'playwright'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { test } from './fixtures/electron-app'
@@ -95,6 +96,36 @@ for (const decision of ['allow', 'deny'] as const) {
         { exact: true }
       )
     ).toBeVisible()
+    // A visible reply does not prove native focus or that the completion notification exists.
+    // Execution can move focus away; restore it after completion and let Main acknowledge the
+    // still-visible conversation before navigating away. Never mark notifications read directly.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async (sessionId) =>
+            (await window.api.notifications.getSnapshot()).items.some(
+              (item) => item.sessionId === sessionId && item.kind === 'task.completed'
+            ),
+          pendingRequest!.sessionId
+        )
+      )
+      .toBe(true)
+    const application = (app as unknown as { application: ElectronApplication }).application
+    await application.evaluate(({ app, BrowserWindow }) => {
+      app.focus({ steal: true })
+      BrowserWindow.getAllWindows()[0].focus()
+    })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          async (sessionId) =>
+            (await window.api.notifications.getSnapshot()).items.find(
+              (item) => item.sessionId === sessionId && item.kind === 'task.completed'
+            )?.readAt,
+          pendingRequest!.sessionId
+        )
+      )
+      .toEqual(expect.any(Number))
     await page.getByRole('button', { name: 'All projects', exact: true }).click()
     await expect(updates.getByRole('button', { name: /, waiting for permission$/ })).toHaveCount(0)
     await expect(page.getByText('1 waiting on you', { exact: true })).toHaveCount(0)

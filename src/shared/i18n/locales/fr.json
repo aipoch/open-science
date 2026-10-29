@@ -7990,6 +7990,9 @@
     "Verifying download…": "Vérification du téléchargement…",
     "Example download progress": "Progression du téléchargement de l’exemple",
     "Could not cancel download. Try again.": "Impossible d’annuler le téléchargement. Réessayez.",
-    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez."
+    "Could not download this example. Try again.": "Impossible de télécharger cet exemple. Réessayez.",
+    "Waiting request unavailable": "Requête en attente indisponible",
+    "You can edit your draft while waiting for the request to appear, or stop the current run. Sending remains disabled.": "Vous pouvez modifier votre brouillon en attendant que la requête apparaisse ou arrêter l’exécution en cours. L’envoi reste désactivé.",
+    "Stop waiting": "Arrêter l’attente"
   }
 }
