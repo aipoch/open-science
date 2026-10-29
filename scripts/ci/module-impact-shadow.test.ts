@@ -38,8 +38,10 @@ describe('module impact shadow', () => {
       { path: 'scripts/pdf-translation-corpus.test.ts', status: 'modified' }
     ])
     expect(report.shadow.mode).toBe('full')
+    // Multiple modules register this corpus test. The first full-validation owner may change;
+    // the contract is that its full reason retains every lane, including Linux certification.
     expect(report.shadow.reasonChains).toContainEqual(
-      expect.stringMatching(/^workspace_previews -> .+ -> full$/)
+      expect.stringMatching(/^[a-z][a-z0-9_]* -> .+ -> full$/)
     )
     expect(report.resolved.mode).toBe('full')
     expect(report.resolved.lanes).toEqual(changeImpactManifest.laneOrder)
