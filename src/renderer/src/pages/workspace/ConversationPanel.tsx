@@ -89,6 +89,7 @@ import {
   ScanEye,
   Square,
   Stethoscope,
+  WandSparkles,
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -3079,35 +3080,7 @@ const ConversationPanel = ({
                               }
                             />
                           ) : null}
-                          <div className="@container/composer flex flex-wrap items-center gap-1">
-                            <div className="flex items-center gap-1 @max-[36rem]/composer:basis-full">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={
-                                  !canEditLocalDraft ||
-                                  !promptOptimization.canOptimize ||
-                                  promptOptimization.pending
-                                }
-                                onClick={() => void promptOptimization.optimize()}
-                              >
-                                {promptOptimization.pending
-                                  ? t('Optimizing…')
-                                  : t('Optimize question')}
-                              </Button>
-                              {promptOptimization.canUndo ? (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={!canEditLocalDraft || promptOptimization.pending}
-                                  onClick={promptOptimization.undo}
-                                >
-                                  {t('Undo optimization')}
-                                </Button>
-                              ) : null}
-                            </div>
+                          <div className="flex flex-wrap items-center gap-1">
                             {/* The + button opens a dropdown for attachments and session actions. */}
                             <DropdownMenu>
                               <>
@@ -3384,6 +3357,57 @@ const ConversationPanel = ({
                               openRequest={agentControlsOpenRequest}
                               computeOpenRequest={computeControlsOpenRequest}
                             />
+
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <button
+                                  type="button"
+                                  className={composerIconButtonClassName}
+                                  aria-label={
+                                    promptOptimization.pending
+                                      ? t('Optimizing…')
+                                      : t('Optimize question')
+                                  }
+                                  aria-busy={promptOptimization.pending}
+                                  disabled={
+                                    !canEditLocalDraft ||
+                                    !promptOptimization.canOptimize ||
+                                    promptOptimization.pending
+                                  }
+                                  onClick={() => void promptOptimization.optimize()}
+                                >
+                                  {promptOptimization.pending ? (
+                                    <Loader2
+                                      className="size-4 animate-spin motion-reduce:animate-none"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <WandSparkles
+                                      className="size-4"
+                                      strokeWidth={2}
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </button>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="text-[11px]">
+                                {promptOptimization.pending
+                                  ? t('Optimizing…')
+                                  : t('Optimize question')}
+                              </TooltipContent>
+                            </Tooltip>
+                            {promptOptimization.canUndo ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={!canEditLocalDraft || promptOptimization.pending}
+                                onClick={promptOptimization.undo}
+                              >
+                                {t('Undo optimization')}
+                              </Button>
+                            ) : null}
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}
