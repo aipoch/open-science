@@ -160,10 +160,10 @@ describe('Auto operation completeness against real tool registrations', () => {
           'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
-        // Reviewed: desktop regions come only from the message snapshot; strict tool inputs
-        // preserve linked-PDF identity, mounted-server checks and single-use authorization.
+        // Reviewed: automatic PDF reading-order guidance only; strict inputs, handlers,
+        // linked-PDF identity, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
+          '936e8dffc17c4407864ed61043b059dadd1ab92290361d37277cb9ba62422c70',
         // Reviewed: Windows Bioconductor installer guidance only; schemas, handlers and Auto
         // operation dispositions are unchanged.
         'notebook/mcp-server.ts':
