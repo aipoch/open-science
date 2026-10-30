@@ -63,9 +63,44 @@ const literatureReadPresentation = (result: unknown): UnknownRecord | undefined 
     result.retrievalMode === 'bm25' || result.retrievalMode === 'fallback'
       ? result.retrievalMode
       : undefined
+  const textCoverage = documents
+    .flatMap((document) => {
+      const total = positiveInteger(document.pageCount)
+      if (!total || !isRecord(document.coverage)) return []
+      const coverage = document.coverage
+      const pages = (value: unknown): number[] =>
+        Array.isArray(value)
+          ? [
+              ...new Set(
+                value.filter(
+                  (page): page is number => Number.isSafeInteger(page) && page > 0 && page <= total
+                )
+              )
+            ]
+          : []
+      const text = pages(coverage.textPages)
+      const ocr = pages(coverage.ocrPages)
+      return [
+        {
+          name: typeof document.name === 'string' ? document.name.trim().slice(0, 512) : '',
+          total,
+          parsed: new Set([...text, ...ocr]).size,
+          ocr: ocr.length,
+          // The card lists at most 20 missing pages; retain one more for its ellipsis.
+          missing: [
+            ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
+          ]
+            .sort((a, b) => a - b)
+            .slice(0, 21),
+          unverified: pages(coverage.unverifiedPages).slice(0, 21)
+        }
+      ]
+    })
+    .slice(0, 3)
   const presentation = {
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
+    ...(textCoverage.length > 0 ? { textCoverage } : {}),
     ...(passages.length > 0 ? { passageCount: passages.length } : {}),
     ...(pageStarts.length > 0 ? { pageStart: Math.min(...pageStarts) } : {}),
     ...(pageEnds.length > 0 ? { pageEnd: Math.max(...pageEnds) } : {}),
@@ -90,7 +125,7 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId. Reading order is resolved automatically from PDF logical structure or page layout, including search and cursor continuation. Ambiguous layouts retain native order. No manual body-region configuration is required.',
+        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId. Reading order is resolved automatically from PDF logical structure or page layout, including search and cursor continuation. Ambiguous layouts retain native order. No manual body-region configuration is required. Local OCR is limited to nonempty pages without selectable text, or raster pages whose only selectable text is a decimal page number; readable native prose is not re-recognized. Inspect document.coverage for unread, unchecked or unverified pages, verify image content against the PDF, and never treat text presence as proof of complete evidence.',
       inputSchema: z
         .object({
           documentId: z.string().trim().min(1).max(512).optional(),

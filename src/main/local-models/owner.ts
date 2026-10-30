@@ -14,7 +14,7 @@ import { PDF_TABLE_MODEL_REVISIONS, type LocalModelRevision } from './catalog'
 import { downloadLocalModelAsset } from './download'
 
 type Dependencies = {
-  namespace?: 'pdf-tables' | 'pdf-translation'
+  namespace?: LocalModelCapability
   dataRoot?: () => string
   acquireWriter?: () => () => void
   revisions?: readonly LocalModelRevision[]
@@ -36,7 +36,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
   for (const revision of revisions) {
     if (!/^[a-z0-9][a-z0-9-]*$/.test(revision.revision)) throw new Error('Invalid model revision.')
     for (const asset of revision.assets) {
-      if (!/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|wasm|txt|json)$/.test(asset.file))
+      if (!/^[a-z0-9][a-z0-9._-]*\.(?:onnx|mjs|wasm|txt|json|traineddata\.gz)$/.test(asset.file))
         throw new Error('Invalid model asset.')
     }
   }
@@ -450,11 +450,13 @@ export type LocalModelOwner = {
 // Both Electron and host commands use the same capability validation and owner routing.
 export const createLocalModelApi = (
   tables: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
-  translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
+  translation: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>,
+  ocr?: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
 ): LocalModelApi => {
   const owner = (capability?: LocalModelCapability): typeof tables => {
     if (capability === undefined || capability === 'pdf-tables') return tables
     if (capability === 'pdf-translation') return translation
+    if (capability === 'ocr' && ocr) return ocr
     throw new Error('Unsupported local model capability.')
   }
   return {

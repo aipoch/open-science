@@ -229,7 +229,9 @@
     "src/main/service-process-recovery.ts",
     "src/main/service-process-recovery.test.ts",
     "src/main/service-process-recovery.integration.test.ts",
-    "src/main/local-service-stop-intent.integration.test.ts"
+    "src/main/local-service-stop-intent.integration.test.ts",
+    "scripts/ocr/build.mjs",
+    "scripts/ocr/worker.mjs"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

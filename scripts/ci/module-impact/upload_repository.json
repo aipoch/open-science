@@ -23,7 +23,12 @@
     "src/main/uploads/repository.test.ts",
     "src/main/uploads/pdf-reading-order.ts",
     "src/main/uploads/pdf-reading-order.test.ts",
-    "src/main/uploads/pdf-text-extraction.ts"
+    "src/main/uploads/pdf-text-extraction.ts",
+    "src/main/uploads/pdf-ocr.ts",
+    "src/main/uploads/pdf-ocr.test.ts",
+    "src/main/uploads/pdf-ocr.integration.test.ts",
+    "test/experiments/pdf-worker-lifetime.test.ts",
+    "test/experiments/pdf-ablation-validation.test.ts"
   ],
   "interfacePaths": [
     "src/main/uploads/repository.ts",
@@ -47,7 +52,11 @@
       "src/main/uploads/attachment-media.sharp.test.ts",
       "src/main/uploads/attachment-media.test.ts",
       "src/main/uploads/caller-cancellation.test.ts",
-      "src/main/uploads/pdf-reading-order.test.ts"
+      "src/main/uploads/pdf-reading-order.test.ts",
+      "src/main/uploads/pdf-ocr.test.ts",
+      "src/main/uploads/pdf-ocr.integration.test.ts",
+      "test/experiments/pdf-worker-lifetime.test.ts",
+      "test/experiments/pdf-ablation-validation.test.ts"
     ],
     "contract": [
       "src/main/uploads/ipc.test.ts",

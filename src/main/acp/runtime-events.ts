@@ -396,9 +396,45 @@ const literaturePresentationText = (value: unknown): string | undefined => {
   const nextOffset = nonNegativeInteger(source.nextOffset)
   const candidateCount = nonNegativeInteger(source.candidateCount)
   const savedCount = nonNegativeInteger(source.savedCount)
+  const textCoverage = Array.isArray(source.textCoverage)
+    ? source.textCoverage.slice(0, 3).flatMap((entry) => {
+        if (!isRecord(entry)) return []
+        const total = positiveInteger(entry.total)
+        const parsed = nonNegativeInteger(entry.parsed)
+        const ocr = nonNegativeInteger(entry.ocr)
+        if (!total || parsed === undefined || ocr === undefined || parsed > total || ocr > parsed)
+          return []
+        const pages = (value: unknown): number[] =>
+          Array.isArray(value)
+            ? [
+                ...new Set(
+                  value.filter(
+                    (page): page is number =>
+                      Number.isSafeInteger(page) && page > 0 && page <= total
+                  )
+                )
+              ].slice(0, 21)
+            : []
+        const name =
+          typeof entry.name === 'string' && !containsControlCharacter(entry.name)
+            ? entry.name.trim().slice(0, 512)
+            : ''
+        return [
+          {
+            name,
+            total,
+            parsed,
+            ocr,
+            missing: pages(entry.missing),
+            unverified: pages(entry.unverified)
+          }
+        ]
+      })
+    : []
   const presentation = {
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
+    ...(textCoverage.length > 0 ? { textCoverage } : {}),
     ...(passageCount ? { passageCount } : {}),
     ...(pageStart ? { pageStart } : {}),
     ...(pageEnd ? { pageEnd } : {}),
@@ -479,6 +515,45 @@ const literatureResultPresentationText = (value: unknown): string | undefined =>
   const pageEnds = passages.flatMap((passage) =>
     typeof passage.pageEnd === 'number' ? [passage.pageEnd] : []
   )
+  const coverageSummary = documents
+    .flatMap((document) => {
+      const total =
+        typeof document.pageCount === 'number' &&
+        Number.isSafeInteger(document.pageCount) &&
+        document.pageCount > 0
+          ? document.pageCount
+          : undefined
+      if (!total || !isRecord(document.coverage)) return []
+      const coverage = document.coverage
+      const pages = (value: unknown): number[] =>
+        Array.isArray(value)
+          ? [
+              ...new Set(
+                value.filter(
+                  (page): page is number => Number.isSafeInteger(page) && page > 0 && page <= total
+                )
+              )
+            ]
+          : []
+      const text = pages(coverage.textPages)
+      const ocr = pages(coverage.ocrPages)
+      return [
+        {
+          name: typeof document.name === 'string' ? document.name.trim().slice(0, 512) : '',
+          total,
+          parsed: new Set([...text, ...ocr]).size,
+          ocr: ocr.length,
+          // The card lists at most 20 missing pages; retain one more for its ellipsis.
+          missing: [
+            ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
+          ]
+            .sort((a, b) => a - b)
+            .slice(0, 21),
+          unverified: pages(coverage.unverifiedPages).slice(0, 21)
+        }
+      ]
+    })
+    .slice(0, 3)
   const presentation = {
     ...(result.retrievalMode === 'bm25' || result.retrievalMode === 'fallback'
       ? { retrievalMode: result.retrievalMode }
@@ -486,6 +561,7 @@ const literatureResultPresentationText = (value: unknown): string | undefined =>
     documentNames: documents.flatMap((document) =>
       typeof document.name === 'string' ? [document.name] : []
     ),
+    ...(coverageSummary.length ? { textCoverage: coverageSummary } : {}),
     ...(result.scope === 'relevant-passages' && passages.length > 0
       ? { passageCount: passages.length }
       : {}),

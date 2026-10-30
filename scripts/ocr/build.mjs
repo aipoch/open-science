@@ -1,0 +1,132 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { build } from 'esbuild'
+import { mkdir, readFile, writeFile, copyFile, readdir, stat } from 'node:fs/promises'
+import { resolve, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { builtinModules } from 'node:module'
+import { createHash } from 'node:crypto'
+
+const root = fileURLToPath(new URL('../../', import.meta.url))
+export async function buildOcr(output = join(root, 'out/ocr')) {
+  await mkdir(output, { recursive: true })
+  const banner =
+    "import {createRequire as __ocrCreateRequire} from 'node:module'; import {fileURLToPath as __ocrFileURLToPath} from 'node:url'; import {dirname as __ocrDirname} from 'node:path'; const require=__ocrCreateRequire(import.meta.url); const __filename=__ocrFileURLToPath(import.meta.url); const __dirname=__ocrDirname(__filename);"
+  const graphs = []
+  for (const [file, entry] of [
+    ['ocr-worker.mjs', 'scripts/ocr/worker.mjs'],
+    ['ocr-engine.mjs', 'node_modules/tesseract.js/src/worker-script/node/index.js']
+  ]) {
+    const result = await build({
+      absWorkingDir: root,
+      entryPoints: [join(root, entry)],
+      outfile: join(output, file),
+      bundle: true,
+      platform: 'node',
+      target: 'node22',
+      format: 'esm',
+      minify: true,
+      metafile: true,
+      banner: { js: banner },
+      logLevel: 'silent',
+      plugins: [
+        {
+          name: 'node-fetch',
+          setup(plugin) {
+            plugin.onResolve({ filter: /^node-fetch$/ }, () => ({
+              path: 'node-fetch',
+              namespace: 'ocr-node-fetch'
+            }))
+            plugin.onLoad({ filter: /.*/, namespace: 'ocr-node-fetch' }, () => ({
+              contents: 'module.exports = (...args) => globalThis.fetch(...args)'
+            }))
+          }
+        }
+      ]
+    })
+    for (const item of Object.values(result.metafile.outputs).flatMap((value) => value.imports))
+      if (item.external && !builtinModules.includes(item.path) && !item.path.startsWith('node:'))
+        throw new Error(`Unexpected OCR runtime dependency: ${item.path}`)
+    graphs.push(result.metafile)
+  }
+  const upstream = new Map()
+  for (const file of (await readdir(join(root, 'node_modules/tesseract.js-core'))).filter((name) =>
+    name.endsWith('.wasm')
+  )) {
+    await copyFile(join(root, 'node_modules/tesseract.js-core', file), join(output, file))
+    upstream.set(file, `https://cdn.jsdelivr.net/npm/tesseract.js-core@6.1.2/${file}`)
+  }
+  for (const code of ['eng', 'chi_sim']) {
+    const file = `${code}.traineddata.gz`
+    await copyFile(
+      join(root, `node_modules/@tesseract.js-data/${code}/4.0.0_best_int/${file}`),
+      join(output, file)
+    )
+    upstream.set(
+      file,
+      `https://cdn.jsdelivr.net/npm/@tesseract.js-data/${code}@1.0.0/4.0.0_best_int/${file}`
+    )
+  }
+  const packages = new Set(
+    graphs.flatMap((graph) =>
+      Object.keys(graph.inputs).flatMap((name) => {
+        const match = name.match(/^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//)
+        return match ? [match[1]] : []
+      })
+    )
+  )
+  for (const code of ['eng', 'chi_sim']) packages.add(`node_modules/@tesseract.js-data/${code}`)
+  let notices = 'Open-Science optional PDF OCR component — third-party notices\n'
+  for (const directory of [...packages].sort()) {
+    const path = join(root, directory)
+    const pkg = JSON.parse(await readFile(join(path, 'package.json'), 'utf8'))
+    notices += `\n===== ${pkg.name}@${pkg.version} (${pkg.license}) =====\n`
+    for (const file of (await readdir(path)).sort())
+      if (/^(license|copying|notice)/i.test(file) && (await stat(join(path, file))).isFile())
+        notices += '\n' + (await readFile(join(path, file), 'utf8'))
+  }
+  await writeFile(join(output, 'licenses.txt'), notices)
+  // First-party URLs are publication targets; a local build does not publish these files.
+  const assets = []
+  for (const file of [
+    'ocr-worker.mjs',
+    'ocr-engine.mjs',
+    'licenses.txt',
+    ...upstream.keys()
+  ].sort()) {
+    const data = await readFile(join(output, file))
+    const sha256 = createHash('sha256').update(data).digest('hex')
+    assets.push({
+      file,
+      url: upstream.get(file) ?? `https://statics.aipoch.com/open-science/ocr/${sha256}/${file}`,
+      size: data.length,
+      sha256
+    })
+  }
+  const revision = `ocr-${createHash('sha256').update(JSON.stringify(assets)).digest('hex').slice(0, 16)}`
+  const catalog = { revision, assets }
+  await writeFile(join(output, 'manifest.json'), JSON.stringify(catalog, null, 2) + '\n')
+  return catalog
+}
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const catalog = await buildOcr()
+  if (process.argv.includes('--catalog')) {
+    const path = join(root, 'src/main/local-models/catalog.ts')
+    const existing = (await readFile(path, 'utf8')).split('\n// Generated by npm run build:ocr')[0]
+    const { format, resolveConfig } = await import('prettier')
+    await writeFile(
+      path,
+      await format(
+        existing +
+          '\n// Generated by npm run build:ocr -- --catalog. Publish first-party assets before release.\nexport const OCR_MODEL_REVISIONS: readonly LocalModelRevision[] = ' +
+          JSON.stringify([catalog]),
+        { ...(await resolveConfig(path)), parser: 'typescript' }
+      )
+    )
+  }
+  console.log(
+    JSON.stringify({
+      revision: catalog.revision,
+      bytes: catalog.assets.reduce((total, asset) => total + asset.size, 0)
+    })
+  )
+}

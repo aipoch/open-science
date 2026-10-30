@@ -135,7 +135,19 @@ describe('Literature MCP server', () => {
       scope: 'relevant-passages',
       retrievalMode: 'bm25',
       documents: [
-        { id: 'private-binding-id', name: 'paper.pdf', checksum: 'checksum', pageCount: 14 }
+        {
+          id: 'private-binding-id',
+          name: 'paper.pdf',
+          checksum: 'checksum',
+          pageCount: 14,
+          coverage: {
+            textPages: [1, 1],
+            ocrPages: [2],
+            unavailablePages: [3],
+            uncheckedPages: [4],
+            unverifiedPages: [2]
+          }
+        }
       ],
       passages: [
         { documentId: 'private-binding-id', pageStart: 3, pageEnd: 3, content: 'a'.repeat(20_000) },
@@ -168,6 +180,9 @@ describe('Literature MCP server', () => {
         openScienceLiteraturePresentation: {
           retrievalMode: 'bm25',
           documentNames: ['paper.pdf'],
+          textCoverage: [
+            { name: 'paper.pdf', total: 14, parsed: 2, ocr: 1, missing: [3, 4], unverified: [2] }
+          ],
           passageCount: 2,
           pageStart: 3,
           pageEnd: 8
