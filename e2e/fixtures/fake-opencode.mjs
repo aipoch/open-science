@@ -1013,14 +1013,23 @@ const verifyNotebookMutationCancellation = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
     const warmup = toolResult(
       'manage_environments',
-      await client.callTool(
-        {
-          name: 'manage_environments',
-          arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
-        },
-        undefined,
-        { timeout: 60_000, resetTimeoutOnProgress: true, onprogress: () => undefined }
-      )
+      await client
+        .callTool(
+          {
+            name: 'manage_environments',
+            arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
+          },
+          undefined,
+          {
+            timeout: 60_000,
+            maxTotalTimeout: 60_000,
+            resetTimeoutOnProgress: true,
+            onprogress: () => undefined
+          }
+        )
+        .catch((error) => {
+          throw new Error(`Mutation warm-up failed: ${String(error)}`, { cause: error })
+        })
     )
     if (warmup.created?.runnable !== true) {
       throw new Error(`Mutation warm-up did not succeed: ${JSON.stringify(warmup)}`)
