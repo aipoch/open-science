@@ -89,6 +89,7 @@ import {
   ScanEye,
   Square,
   Stethoscope,
+  Undo2,
   WandSparkles,
   X
 } from 'lucide-react'
@@ -3074,9 +3075,7 @@ const ConversationPanel = ({
                                     ? t(
                                         'Could not optimize your question. Your draft was kept. Please try again.'
                                       )
-                                    : promptOptimization.notice === 'changed'
-                                      ? t('Your input changed while optimizing. Please try again.')
-                                      : t('Question optimized. You can edit it before sending.')
+                                    : t('Your input changed while optimizing. Please try again.')
                               }
                             />
                           ) : null}
@@ -3398,15 +3397,22 @@ const ConversationPanel = ({
                               </TooltipContent>
                             </Tooltip>
                             {promptOptimization.canUndo ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                disabled={!canEditLocalDraft || promptOptimization.pending}
-                                onClick={promptOptimization.undo}
-                              >
-                                {t('Undo optimization')}
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    className={composerIconButtonClassName}
+                                    aria-label={t('Undo optimization')}
+                                    disabled={!canEditLocalDraft || promptOptimization.pending}
+                                    onClick={promptOptimization.undo}
+                                  >
+                                    <Undo2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="text-[11px]">
+                                  {t('Undo optimization')}
+                                </TooltipContent>
+                              </Tooltip>
                             ) : null}
 
                             <ComposerSpecialistPicker

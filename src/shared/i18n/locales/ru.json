@@ -8173,7 +8173,6 @@
     "Undo optimization": "Отменить оптимизацию",
     "Shorten your question to optimize it (maximum 16,000 characters).": "Сократите вопрос для оптимизации (не более 16 000 символов).",
     "Could not optimize your question. Your draft was kept. Please try again.": "Не удалось оптимизировать вопрос. Черновик сохранён. Повторите попытку.",
-    "Your input changed while optimizing. Please try again.": "Во время оптимизации текст изменился. Повторите попытку.",
-    "Question optimized. You can edit it before sending.": "Вопрос оптимизирован. Его можно изменить перед отправкой."
+    "Your input changed while optimizing. Please try again.": "Во время оптимизации текст изменился. Повторите попытку."
   }
 }

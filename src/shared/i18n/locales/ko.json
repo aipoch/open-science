@@ -7688,7 +7688,6 @@
     "Undo optimization": "최적화 실행 취소",
     "Shorten your question to optimize it (maximum 16,000 characters).": "질문을 줄인 후 최적화하세요(최대 16,000자).",
     "Could not optimize your question. Your draft was kept. Please try again.": "질문을 최적화하지 못했습니다. 초안은 유지됩니다. 다시 시도하세요.",
-    "Your input changed while optimizing. Please try again.": "최적화 중 입력 내용이 변경되었습니다. 다시 시도하세요.",
-    "Question optimized. You can edit it before sending.": "질문이 최적화되었습니다. 보내기 전에 수정할 수 있습니다."
+    "Your input changed while optimizing. Please try again.": "최적화 중 입력 내용이 변경되었습니다. 다시 시도하세요."
   }
 }

@@ -7690,7 +7690,6 @@
     "Undo optimization": "撤销优化",
     "Shorten your question to optimize it (maximum 16,000 characters).": "请缩短提问后再优化（最多 16,000 个字符）。",
     "Could not optimize your question. Your draft was kept. Please try again.": "无法优化提问，已保留原草稿，请重试。",
-    "Your input changed while optimizing. Please try again.": "优化期间输入内容发生了变化，请重新优化。",
-    "Question optimized. You can edit it before sending.": "已优化，你可以继续修改后发送。"
+    "Your input changed while optimizing. Please try again.": "优化期间输入内容发生了变化，请重新优化。"
   }
 }

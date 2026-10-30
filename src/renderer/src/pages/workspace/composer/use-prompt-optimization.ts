@@ -27,7 +27,7 @@ type OptimizationState = {
   sent: () => void
   edited: () => void
   pending: boolean
-  notice?: 'success' | 'changed' | 'failed'
+  notice?: 'changed' | 'failed'
   canUndo: boolean
   tooLong: boolean
   canOptimize: boolean
@@ -50,7 +50,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
   const requestId = useRef(0)
   const busy = useRef(false)
   const [pending, setPending] = useState(false)
-  const [notice, setNotice] = useState<'success' | 'changed' | 'failed'>()
+  const [notice, setNotice] = useState<'changed' | 'failed'>()
   const [previous, setPrevious] = useState<ComposerDoc>()
   const [stateScope, setStateScope] = useState(scope)
   if (stateScope !== scope) {
@@ -135,7 +135,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
       successful.current = { edited: false }
       setPrevious(original)
       current.current.options.onChange(doc)
-      setNotice('success')
+      setNotice(undefined)
     } catch {
       if (id === requestId.current && scope === current.current.scope) setNotice('failed')
     } finally {

@@ -8028,7 +8028,6 @@
     "Undo optimization": "Annuler l’optimisation",
     "Shorten your question to optimize it (maximum 16,000 characters).": "Raccourcissez votre question pour l’optimiser (16 000 caractères maximum).",
     "Could not optimize your question. Your draft was kept. Please try again.": "Impossible d’optimiser votre question. Votre brouillon a été conservé. Veuillez réessayer.",
-    "Your input changed while optimizing. Please try again.": "Votre saisie a changé pendant l’optimisation. Veuillez réessayer.",
-    "Question optimized. You can edit it before sending.": "Question optimisée. Vous pouvez la modifier avant de l’envoyer."
+    "Your input changed while optimizing. Please try again.": "Votre saisie a changé pendant l’optimisation. Veuillez réessayer."
   }
 }

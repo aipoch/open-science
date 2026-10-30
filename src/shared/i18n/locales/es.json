@@ -8028,7 +8028,6 @@
     "Undo optimization": "Deshacer optimización",
     "Shorten your question to optimize it (maximum 16,000 characters).": "Acorte la pregunta para optimizarla (máximo 16.000 caracteres).",
     "Could not optimize your question. Your draft was kept. Please try again.": "No se pudo optimizar la pregunta. Se conservó el borrador. Inténtelo de nuevo.",
-    "Your input changed while optimizing. Please try again.": "El texto cambió durante la optimización. Inténtelo de nuevo.",
-    "Question optimized. You can edit it before sending.": "Pregunta optimizada. Puede editarla antes de enviarla."
+    "Your input changed while optimizing. Please try again.": "El texto cambió durante la optimización. Inténtelo de nuevo."
   }
 }
