@@ -31,11 +31,26 @@ export function DesktopRuntimeRecovery({
   const announcedGeneration = useRef<string | undefined>(undefined)
   const [interrupted, setInterrupted] = useState<{ id: string; projectId: string }[]>([])
   const [diagnosticResult, setDiagnosticResult] = useState<'downloaded' | 'failed' | undefined>()
+  const reconnectPending = useRef(false)
+  const [reconnectingService, setReconnectingService] = useState(false)
   const restartPending = useRef(false)
   const [restartingApp, setRestartingApp] = useState(false)
   const [restartBlocked, setRestartBlocked] = useState(false)
+  const reconnectService = async (): Promise<void> => {
+    if (reconnectPending.current || restartPending.current) return
+    reconnectPending.current = true
+    setReconnectingService(true)
+    try {
+      await window.api.desktopRuntime?.reconnect()
+    } catch {
+      // The recovery notice stays open; a failed IPC request must leave Retry available.
+    } finally {
+      reconnectPending.current = false
+      setReconnectingService(false)
+    }
+  }
   const restartApplication = async (): Promise<void> => {
-    if (restartPending.current) return
+    if (restartPending.current || reconnectPending.current) return
     restartPending.current = true
     setRestartingApp(true)
     setRestartBlocked(false)
@@ -253,16 +268,36 @@ export function DesktopRuntimeRecovery({
               }
             : !connected && !busy && !state.shutdownProgress
               ? {
-                  label: needsAppRestart ? t('Restart Open-Science') : t('Retry'),
-                  loading: restartingApp,
+                  label: t('Retry'),
+                  loading: reconnectingService,
+                  disabled: restartingApp,
                   onClick: () => {
-                    if (needsAppRestart) void restartApplication()
-                    else void window.api.desktopRuntime?.reconnect()
+                    void reconnectService()
                   }
                 }
               : undefined
         }
       >
+        {needsAppRestart && !busy && !state.shutdownProgress ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={restartingApp || reconnectingService}
+            aria-busy={restartingApp || undefined}
+            onClick={() => {
+              void restartApplication()
+            }}
+          >
+            {restartingApp ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {t('Restart Open-Science')}
+          </Button>
+        ) : null}
         {needsAppRestart && restartBlocked ? (
           <p role="alert" className="mt-2 text-sm">
             {t('Open-Science could not restart. Save or copy your work, then try again.')}

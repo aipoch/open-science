@@ -1142,7 +1142,7 @@ it('removes an earlier recovery authorization from a later ordinary runtime rela
     const { readDesktopRecoveryLaunch } = await import('./desktop-recovery-restart')
     expect(
       readDesktopRecoveryLaunch((f.app.relaunch.mock.calls[0][0] as { args: string[] }).args)
-    ).toEqual({ configuration: restartConfiguration })
+    ).toEqual({ configuration: restartConfiguration, mode: 'ordinary' })
   } finally {
     process.argv = argv
   }

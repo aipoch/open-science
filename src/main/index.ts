@@ -3,6 +3,7 @@ import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
 import {
   createDesktopRecoveryRestart,
+  assertDesktopRecoveryLaunchAllowed,
   desktopRecoveryRelaunchArgs,
   desktopOrdinaryRelaunchArgs,
   readDesktopRecoveryLaunch
@@ -961,13 +962,12 @@ async function startDesktop(): Promise<void> {
       packaged: app.isPackaged,
       credentialInventory: startupCredentialCiphertexts,
       credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
-      ...(recoveryLaunch && !preservedStartupOptions
+      ...(recoveryLaunch && recoveryLaunch.mode !== 'ordinary' && !preservedStartupOptions
         ? {
             beforeLaunch: async () =>
-              assertDesktopRuntimeRestartAllowed(
-                await readServiceLifetime(configRoot),
-                recoveryLaunch.authorization,
-                false
+              assertDesktopRecoveryLaunchAllowed(
+                recoveryLaunch,
+                await readServiceLifetime(configRoot)
               )
           }
         : {}),

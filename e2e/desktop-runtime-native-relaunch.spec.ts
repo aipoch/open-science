@@ -480,22 +480,89 @@ const actualRelaunch = async (cookieLock: boolean, testInfo: TestInfo): Promise<
         .toMatchObject({ phase: 'connected' })
     }
 
+    let nextOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+    let nextService = await captureFixtureService(configRoot)
+    if (nextService) capturedServices.push(nextService)
+    expect(nextOwner.pid).not.toBe(firstOwner.pid)
+    expect(nextOwner.desktop.generation).not.toBe(firstOwner.desktop.generation)
+    const expectedDesktopPids = [firstDesktop.pid, successorPid]
+    const recoveredOwner = cookieLock ? nextOwner : undefined
+    if (cookieLock) {
+      // A recovery launch carries configuration on argv. Its next ordinary Runtime-requested
+      // relaunch must retain that profile without treating the new restart stop as stale consent.
+      const recoveredDesktopPid = successorPid!
+      await page
+        .evaluate(
+          async (target) => {
+            const result = await window.api.storage.setDataRootAndRelaunch(target, true)
+            if (!result.ok) throw new Error(JSON.stringify(result))
+          },
+          join(root, 'new-data')
+        )
+        .catch((error) => {
+          if (!/closed|destroyed/.test(String(error))) throw error
+        })
+      await expect.poll(() => exited(recoveredDesktopPid), { timeout: 25000 }).toBe(true)
+      await expect.poll(() => exited(recoveredOwner.pid), { timeout: 10000 }).toBe(true)
+      await expect
+        .poll(
+          async () => {
+            const ids = (await readFile(join(configRoot, 'fixture-desktop-pids'), 'utf8'))
+              .trim()
+              .split('\n')
+              .map(Number)
+            successorPid = ids.find((pid) => !expectedDesktopPids.includes(pid))
+            return Boolean(successorPid)
+          },
+          { timeout: 30000 }
+        )
+        .toBe(true)
+      expectedDesktopPids.push(successorPid)
+      await expect
+        .poll(
+          async () => {
+            try {
+              nextOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
+              return nextOwner.pid !== recoveredOwner.pid
+            } catch {
+              return false
+            }
+          },
+          { timeout: 60000 }
+        )
+        .toBe(true)
+      const ordinaryPort = (await readFile(join(profileRoot, 'DevToolsActivePort'), 'utf8')).split(
+        '\n'
+      )[0]
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${ordinaryPort}`)
+      await expect
+        .poll(() => browser!.contexts().flatMap((context) => context.pages()).length)
+        .toBeGreaterThan(0)
+      page = browser.contexts().flatMap((context) => context.pages())[0]
+      await expect
+        .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), { timeout: 60000 })
+        .toMatchObject({ phase: 'ready' })
+      await expect
+        .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()))
+        .toMatchObject({ phase: 'connected' })
+      expect(
+        await page.evaluate((identity) => window.api.sessions.loadOne(identity), identity)
+      ).toMatchObject({ messages: [{ content: 'Original saved relaunch evidence' }] })
+      expect(nextOwner.desktop.generation).not.toBe(recoveredOwner.desktop.generation)
+      nextService = await captureFixtureService(configRoot)
+      if (nextService) capturedServices.push(nextService)
+    }
     await testInfo.attach('successor-desktop', {
       body: await page.screenshot({ path: join(root, 'successor-desktop.png') }),
       contentType: 'image/png'
     })
-    const nextOwner = JSON.parse(await readFile(join(configRoot, 'runtime-owner.json'), 'utf8'))
-    const nextService = await captureFixtureService(configRoot)
-    if (nextService) capturedServices.push(nextService)
-    expect(nextOwner.pid).not.toBe(firstOwner.pid)
-    expect(nextOwner.desktop.generation).not.toBe(firstOwner.desktop.generation)
     const desktopIdentities = (
       await readFile(join(configRoot, 'fixture-desktop-identities.jsonl'), 'utf8')
     )
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
-    expect(desktopIdentities.map((entry) => entry.pid)).toEqual([firstDesktop.pid, successorPid])
+    expect(desktopIdentities.map((entry) => entry.pid)).toEqual(expectedDesktopPids)
     for (const entry of desktopIdentities) {
       expect(entry).toMatchObject({
         configRoot,
@@ -522,6 +589,7 @@ const actualRelaunch = async (cookieLock: boolean, testInfo: TestInfo): Promise<
       firstDesktop: firstDesktop.pid,
       successorPid,
       firstRuntime: firstOwner.pid,
+      recoveredRuntime: recoveredOwner?.pid,
       nextRuntime: nextOwner.pid,
       firstGeneration: firstOwner.desktop.generation,
       nextGeneration: nextOwner.desktop.generation,
@@ -585,7 +653,7 @@ const actualRelaunch = async (cookieLock: boolean, testInfo: TestInfo): Promise<
 for (const cookieLock of [false, true])
   test(
     cookieLock
-      ? 'actual Electron recovery restart escapes cookie inventory failure and preserves drafts'
+      ? 'actual Electron recovery restart preserves drafts and permits a later ordinary relaunch'
       : 'actual Electron relaunch starts a new Desktop and Runtime and reads the original Session',
     // eslint-disable-next-line no-empty-pattern
     async ({}, testInfo) => {

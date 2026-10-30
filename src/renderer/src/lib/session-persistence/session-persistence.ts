@@ -1007,7 +1007,7 @@ const createOrderedSessionPersistence = (
     if (entry.generation === hydrationGeneration) latestSessionSaveStartedAt = performance.now()
   }
 
-  const acknowledgeSession = (session: PersistedChatSession): void => {
+  const retainSessionReceipt = (session: PersistedChatSession): void => {
     const revision = sessionRevision(session)
     const acknowledged = acknowledgedSessions.get(session.id)
     if (
@@ -1017,11 +1017,17 @@ const createOrderedSessionPersistence = (
     ) {
       return
     }
+    acknowledgedSessions.set(session.id, structuredClone(session))
+  }
+
+  const acknowledgeSession = (session: PersistedChatSession): void => {
+    // Only this queue's successful writes can advance snapshots already waiting in the queue.
+    // A read receipt proves durability, but its fields were never incorporated into those snapshots.
     acknowledgedRevisions.set(
       session.id,
-      Math.max(acknowledgedRevisions.get(session.id) ?? 0, revision)
+      Math.max(acknowledgedRevisions.get(session.id) ?? 0, sessionRevision(session))
     )
-    acknowledgedSessions.set(session.id, structuredClone(session))
+    retainSessionReceipt(session)
   }
 
   const trackConversationCommandOutcome = (
@@ -1228,7 +1234,7 @@ const createOrderedSessionPersistence = (
         acknowledgedSessions.set(session.id, structuredClone(session))
       }
     },
-    acceptSessionAuthority: acknowledgeSession,
+    acceptSessionAuthority: retainSessionReceipt,
     getAcknowledgedSession: (sessionId) => {
       const session = acknowledgedSessions.get(sessionId)
       return session ? structuredClone(session) : undefined
@@ -1384,6 +1390,8 @@ const saveSessionInOrder = async (
   options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
+  // Keep the base paired with the admitted snapshot when later authority arrives during its wait.
+  const base = persistence.getAcknowledgedSession(session.id)
   try {
     const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
@@ -1391,7 +1399,6 @@ const saveSessionInOrder = async (
       saveOptions,
       async (error, submitted, retry) => {
         if (!isSessionRevisionConflictError(error)) throw error
-        const base = persistence.getAcknowledgedSession(submitted.id)
         if (!base) throw error
         return saveAfterSessionRevisionConflict(
           error,

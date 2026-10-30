@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { runtimeStartupOptionsSchema } from './runtime-startup-options'
-import { serviceLifetimeRecordSchema } from './local-service-lifetime'
+import { serviceLifetimeRecordSchema, type ServiceLifetimeRecord } from './local-service-lifetime'
+import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
 
 const ARGUMENT = '--open-science-recovery-launch='
 const launchSchema = z
@@ -12,10 +13,20 @@ const launchSchema = z
       credentialStore: true,
       passwordStore: true
     }),
+    // Older/unmarked arguments are recovery launches, including those with no reviewed stop.
+    mode: z.literal('ordinary').optional(),
     authorization: serviceLifetimeRecordSchema.optional()
   })
   .strict()
 export type DesktopRecoveryLaunch = z.infer<typeof launchSchema>
+
+export function assertDesktopRecoveryLaunchAllowed(
+  launch: DesktopRecoveryLaunch,
+  intent: ServiceLifetimeRecord | undefined
+): void {
+  if (launch.mode !== 'ordinary')
+    assertDesktopRuntimeRestartAllowed(intent, launch.authorization, false)
+}
 
 // Configuration and an exact reviewed stop only. Never transfer a credential inventory or
 // a dataRoot snapshot: the successor reads current persisted configuration and fresh secrets.
@@ -45,7 +56,7 @@ export function desktopRecoveryRelaunchArgs(
 export function desktopOrdinaryRelaunchArgs(args: readonly string[]): string[] {
   const previous = readDesktopRecoveryLaunch(args)
   return previous
-    ? desktopRecoveryRelaunchArgs(args, { configuration: previous.configuration })
+    ? desktopRecoveryRelaunchArgs(args, { configuration: previous.configuration, mode: 'ordinary' })
     : [...args]
 }
 
