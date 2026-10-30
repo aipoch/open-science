@@ -1,3 +1,4 @@
+import { usePromptOptimization } from './composer/use-prompt-optimization'
 import {
   SplitButton,
   SplitButtonGroup,
@@ -773,15 +774,19 @@ const ConversationPanel = ({
   const onSpecialistChange = specialist.actions.selectSpecialist
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
-  const onSendMessage = (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds })
+  const submitOptimizedDraft: typeof submitDraft = (options) => {
+    promptOptimization.sent()
+    submitDraft(options)
+  }
+  const onSendMessage = (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds })
   const onPlanFirst = (forcedSkillIds: string[]): void =>
-    submitDraft({ forcedSkillIds, mode: 'plan-first' })
+    submitOptimizedDraft({ forcedSkillIds, mode: 'plan-first' })
   const onBranchInNewSession = activeSession
-    ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
+    ? (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds, mode: 'branch' })
     : undefined
   const onReconfigureRetry = (): void => {
     if (specialist.actions.retrySpecialistSelection()) return
-    submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+    submitOptimizedDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
   }
 
   const specialistItems = useSpecialistStore((state) => state.items)
@@ -1388,6 +1393,14 @@ const ConversationPanel = ({
     specialistNoticeTarget
   )
 
+  const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
+  const promptOptimization = usePromptOptimization({
+    projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
+    sessionKey: activeSession?.id ?? composerFocusKey ?? 'new',
+    doc: draftDoc,
+    onChange: onValidatedDraftDocChange
+  })
+
   const handleSubmit = (): void => {
     if (canExplainUnavailableSpecialist && activeSession) {
       setSpecialistNoticeVisible(!specialistNoticeTarget)
@@ -1499,8 +1512,10 @@ const ConversationPanel = ({
       : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
     if (!canOpenSideChat) return
-    if (sendsSideChatDraft) onStartSideChat()
-    else sideChatController.createDraft?.()
+    if (sendsSideChatDraft) {
+      promptOptimization.sent()
+      onStartSideChat()
+    } else sideChatController.createDraft?.()
   }
   const sideChatMenuItems = (
     <>
@@ -3020,7 +3035,54 @@ const ConversationPanel = ({
                             />
                           </div>
 
-                          <div className="@container/composer flex items-center gap-1">
+                          {promptOptimization.notice || promptOptimization.tooLong ? (
+                            <ErrorNotice
+                              inline
+                              level={promptOptimization.notice === 'failed' ? 'warning' : 'info'}
+                              description={
+                                promptOptimization.tooLong
+                                  ? t(
+                                      'Shorten your question to optimize it (maximum 16,000 characters).'
+                                    )
+                                  : promptOptimization.notice === 'failed'
+                                    ? t(
+                                        'Could not optimize your question. Your draft was kept. Please try again.'
+                                      )
+                                    : promptOptimization.notice === 'changed'
+                                      ? t('Your input changed while optimizing. Please try again.')
+                                      : t('Question optimized. You can edit it before sending.')
+                              }
+                            />
+                          ) : null}
+                          <div className="@container/composer flex flex-wrap items-center gap-1">
+                            <div className="flex items-center gap-1 @max-[36rem]/composer:basis-full">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                disabled={
+                                  !canEditLocalDraft ||
+                                  !promptOptimization.canOptimize ||
+                                  promptOptimization.pending
+                                }
+                                onClick={() => void promptOptimization.optimize()}
+                              >
+                                {promptOptimization.pending
+                                  ? t('Optimizing…')
+                                  : t('Optimize question')}
+                              </Button>
+                              {promptOptimization.canUndo ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={!canEditLocalDraft || promptOptimization.pending}
+                                  onClick={promptOptimization.undo}
+                                >
+                                  {t('Undo optimization')}
+                                </Button>
+                              ) : null}
+                            </div>
                             {/* The + button opens a dropdown for attachments and session actions. */}
                             <DropdownMenu>
                               <>

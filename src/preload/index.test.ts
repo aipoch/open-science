@@ -550,6 +550,8 @@ describe('preload bridge — public surface inventory', () => {
       'projects.onDeleted',
       'projects.onDeletionCleanupChanged',
       'projects.onUpdated',
+      'projects.optimizePrompt',
+      'projects.recordOptimizationEvent',
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',

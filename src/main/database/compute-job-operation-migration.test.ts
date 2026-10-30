@@ -51,8 +51,8 @@ describe('Compute Job operation migration', () => {
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
     ).resolves.toEqual([
-      { id: '0054_slurm_job_reliability' },
-      { id: '0053_literature_doi_identity' }
+      { id: '0055_project_optimization_prompt' },
+      { id: '0054_slurm_job_reliability' }
     ])
   })
 

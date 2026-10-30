@@ -1,3 +1,4 @@
+import type { PromptOptimizationService } from '../projects/prompt-optimization'
 import type { ComputeJobOwnerLiveness } from '@aipoch/compute/node'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { LIFECYCLE_CHANNELS } from '../../shared/lifecycle-events'
@@ -50,6 +51,7 @@ import { createUploadCommandOwner } from '../uploads/command-owner'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export function composeProjectLifecycle({
+  promptOptimization,
   applicationEvents,
   notificationInbox,
   uploadRepository,
@@ -75,6 +77,7 @@ export function composeProjectLifecycle({
   clearSessionCredentials,
   getNotebookService
 }: {
+  promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   notificationInbox: ReturnType<typeof createNotificationInboxController>
   uploadRepository: ReturnType<typeof createDefaultUploadRepository>
@@ -322,6 +325,7 @@ export function composeProjectLifecycle({
     }
   })
   const projectHandlers = createProjectHandlers(projectRepository, projectDeletionCoordinator, {
+    promptOptimization,
     updateArchive: (request) => archiveCoordinator.updateProjectArchive(request),
     onAgentContextChanged: (projectId) => {
       // Runtime generations capture Project Agent Context during Session setup. Retiring them marks
@@ -378,6 +382,7 @@ export async function composeProjectRecovery({
   modules
 }: {
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
+  promptOptimization?: PromptOptimizationService
   applicationEvents: ApplicationEvents
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
   isComputeJobOwnerLive: ({

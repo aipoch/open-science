@@ -4349,7 +4349,8 @@
         "src/main/projects/preview-repository.ts",
         "src/main/projects/project-owned-data.catalog.ts",
         "src/main/projects/project-runtime-quiescence-owner.ts",
-        "src/main/projects/repository.ts"
+        "src/main/projects/repository.ts",
+        "src/main/projects/prompt-optimization.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -4374,9 +4375,11 @@
         "src/shared/renderer-surface-matrix.test.ts",
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/projects/prompt-optimization.test.ts",
+        "src/main/projects/prompt-optimization-persistence.test.ts"
       ],
-      "externalImports": ["@prisma/client"]
+      "externalImports": ["@prisma/client", "@aipoch/diagnostics/node", "marked", "node:crypto"]
     },
     "providers_package": {
       "sources": [
@@ -8405,7 +8408,8 @@
         "src/renderer/src/pages/workspace/composer/artifact-file-icon.tsx",
         "src/renderer/src/pages/workspace/composer/artifact-thumbnail-reader.ts",
         "src/renderer/src/pages/workspace/composer/message-clipboard.ts",
-        "src/renderer/src/pages/workspace/composer/useMentionTrigger.ts"
+        "src/renderer/src/pages/workspace/composer/useMentionTrigger.ts",
+        "src/renderer/src/pages/workspace/composer/use-prompt-optimization.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -8424,7 +8428,8 @@
         "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
         "src/renderer/src/pages/workspace/composer/message-clipboard.test.ts",
         "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/pages/workspace/composer/use-prompt-optimization.test.tsx"
       ],
       "externalImports": ["lucide-react", "react", "react-i18next"]
     },

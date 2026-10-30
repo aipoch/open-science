@@ -39,7 +39,7 @@ const open = async (): Promise<void> => {
 const seedReleasedDatabase = async (): Promise<void> => {
   await open()
   await createDatabaseAtReleasedManifest(client)
-  await client.project.create({ data: { id: 'project', name: 'Research' } })
+  await client.$executeRaw`INSERT INTO "Project" (id, name, updatedAt) VALUES ('project', 'Research', CURRENT_TIMESTAMP)`
   await client.$executeRaw`INSERT INTO bookmarks (id, projectId, sessionId, kind, sourceKind, sourceId, sourceJson, selectorJson, quote, note, createdAt, updatedAt)
     VALUES ('bookmark', 'project', 'historical-session', 'text', 'agent-message', 'message', '{}', '{}', 'Saved text', 'Keep note', 1234567890000, 1234567891000)`
   await client.$executeRaw`INSERT INTO pdf_documents (id, checksum, sizeBytes) VALUES ('pdf', ${checksum}, 42)`
@@ -77,7 +77,7 @@ it('initializes only canonical table names and reopens without another migration
   client = createProjectDbClient(root)
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     applied: [],
-    to: '0054_slurm_job_reliability'
+    to: '0055_project_optimization_prompt'
   })
   await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
 })
@@ -105,7 +105,8 @@ it('preserves every value, ID, relationship, receipt and unrelated trigger acros
       '0051_literature_reading_status',
       '0052_literature_personal_note_search',
       '0053_literature_doi_identity',
-      '0054_slurm_job_reliability'
+      '0054_slurm_job_reliability',
+      '0055_project_optimization_prompt'
     ]
   })
   for (const [index, [, table]] of names.entries())
@@ -173,7 +174,8 @@ it('rolls back names, records and the ledger on failure and restores FK enforcem
       '0051_literature_reading_status',
       '0052_literature_personal_note_search',
       '0053_literature_doi_identity',
-      '0054_slurm_job_reliability'
+      '0054_slurm_job_reliability',
+      '0055_project_optimization_prompt'
     ]
   })
 })
