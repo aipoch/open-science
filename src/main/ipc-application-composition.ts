@@ -1,3 +1,5 @@
+import { RestrictedInferenceRunner } from './acp/restricted-inference-runner'
+import { PromptOptimizationService } from './projects/prompt-optimization'
 import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
@@ -323,7 +325,27 @@ export const createApplicationModules = async (
     modules,
     settingsService: settingsBootstrap.settingsService
   })
+  const optimizationRunner = new RestrictedInferenceRunner({
+    appVersion: runtimeMetadata().version,
+    configRoot: sessionAuthority.configRoot,
+    profileNamespace: 'prompt-optimization',
+    allowNativeCodexSubscription: true,
+    resolveTarget: (target, context) =>
+      settingsBootstrap.settingsService.resolveExplicitAgentBackend(target, context)
+  })
+  await modules.add({ optimizationRunner }, ({ optimizationRunner: runner }) => ({
+    name: 'prompt-optimization',
+    capability: undefined,
+    start: () => runner.sweepStaleProfiles(),
+    dispose: () => runner.shutdown()
+  }))
+  const promptOptimization = new PromptOptimizationService({
+    getProject: (id) => sessionPackages.projectRepository.get(id),
+    resolveTarget: settingsBootstrap.resolveSessionAgentTarget,
+    runner: optimizationRunner
+  })
   const projectLifecycle = composeProjectLifecycle({
+    promptOptimization,
     applicationEvents,
     ...storageStartup,
     uploadRepository: uploadStorage.uploadRepository,

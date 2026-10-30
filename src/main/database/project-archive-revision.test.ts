@@ -22,12 +22,10 @@ describe('Project archive revision', () => {
     client = createProjectDbClient(root)
     await createDatabaseAtReleasedManifest(client)
     const repository = new ProjectRepository(async () => client!)
-    const active = await repository.create({ name: 'Active' })
-    const archived = await repository.create({ name: 'Archived' })
-    await repository.updateArchive(
-      { id: archived.id, archived: true, expectedArchiveRevision: 0 },
-      1000
-    )
+    const active = { id: 'active' }
+    const archived = { id: 'archived' }
+    await client.$executeRaw`INSERT INTO "Project" (id, name, archivedAt, updatedAt)
+      VALUES (${active.id}, 'Active', NULL, CURRENT_TIMESTAMP), (${archived.id}, 'Archived', ${new Date(1000)}, CURRENT_TIMESTAMP)`
     const before = await client.$queryRawUnsafe(
       'SELECT "id", "archivedAt", "updatedAt" FROM "Project" ORDER BY "id"'
     )
@@ -65,7 +63,8 @@ describe('Project archive revision', () => {
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
-        '0054_slurm_job_reliability'
+        '0054_slurm_job_reliability',
+        '0055_project_optimization_prompt'
       ]
     })
     expect(

@@ -963,3 +963,69 @@ it.each(['finalize', 'policy'] as const)(
     expect(agent.sendPrompt).not.toHaveBeenCalled()
   }
 )
+
+describe('composer prompt admission callback', () => {
+  it.each([false, true])(
+    'reports only successful Main admission, provider rejection=%s',
+    async (rejected) => {
+      mainBoundary()
+      const agent = runtime()
+      if (rejected) agent.sendPrompt.mockRejectedValueOnce(new Error('Admission refused'))
+      const appended = vi.fn()
+      const accepted = vi.fn()
+      await sendWorkspaceMessage(
+        agent,
+        { ...input, onMessageAppended: appended, onPromptAccepted: accepted },
+        { awaitPendingPreparation: true }
+      )
+      await flush()
+      expect(appended).toHaveBeenCalledOnce()
+      expect(accepted).toHaveBeenCalledTimes(rejected ? 0 : 1)
+    }
+  )
+})
+
+it('notifies admission from Main before the model response finishes, exactly once', async () => {
+  mainBoundary()
+  const agent = runtime()
+  const response = gate()
+  agent.sendPrompt.mockImplementationOnce(async () => {
+    await response.promise
+    return snapshot
+  })
+  const accepted = vi.fn()
+  const result = await sendWorkspaceMessage(
+    agent,
+    { ...input, onPromptAccepted: accepted },
+    { awaitPendingPreparation: true }
+  )
+  expect(result).toBeDefined()
+  expect(accepted).not.toHaveBeenCalled()
+  const current = useSessionStore.getState().sessions.find(({ id }) => id === result!.sessionId)!
+  const graph = current.conversationGraph!
+  useSessionStore.setState((state) => ({
+    sessions: state.sessions.map((session) =>
+      session.id === current.id
+        ? {
+            ...session,
+            runtimeSessionAdmissions: [
+              {
+                executionId: 'main-admitted',
+                promptMessageId: result!.messageId,
+                rootFrameId: graph.rootFrameId,
+                agentFrameId: graph.rootFrameId,
+                messageBranchId: graph.frames[0].activeBranchId,
+                runtimeSegmentId: 'admitted-segment',
+                promptRuntimeSegmentId: 'admitted-segment'
+              }
+            ]
+          }
+        : session
+    )
+  }))
+  await flush()
+  expect(accepted).toHaveBeenCalledOnce()
+  response.resolve()
+  await flush()
+  expect(accepted).toHaveBeenCalledOnce()
+})

@@ -7680,6 +7680,17 @@
     "Cancellation failed": "取消失败",
     "The cancellation attempt ended. The job is still being tracked.": "本次取消操作已结束。系统仍在跟踪任务。",
     "Unable to get job status": "无法获取任务状态",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "调度器没有此任务的可用结果。远程进程可能仍在运行。请先检查调度器和远程文件，再决定下一步操作。"
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "调度器没有此任务的可用结果。远程进程可能仍在运行。请先检查调度器和远程文件，再决定下一步操作。",
+    "Optimization prompt": "优化提示词",
+    "Used only when optimizing a question in this project. Leave empty to use the built-in scientific template.": "仅在优化当前项目中的提问时使用。留空则使用内置科研模板。",
+    "Use built-in template": "使用内置模板",
+    "Restore default": "恢复默认",
+    "Optimize question": "优化提问",
+    "Optimizing…": "正在优化…",
+    "Undo optimization": "撤销优化",
+    "Shorten your question to optimize it (maximum 16,000 characters).": "请缩短提问后再优化（最多 16,000 个字符）。",
+    "Could not optimize your question. Your draft was kept. Please try again.": "无法优化提问，已保留原草稿，请重试。",
+    "Your input changed while optimizing. Please try again.": "优化期间输入内容发生了变化，请重新优化。",
+    "Question optimized. You can edit it before sending.": "已优化，你可以继续修改后发送。"
   }
 }

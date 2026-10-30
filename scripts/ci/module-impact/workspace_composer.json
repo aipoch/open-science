@@ -14,7 +14,9 @@
     "src/renderer/src/pages/workspace/composer/message-clipboard.test.ts",
     "src/renderer/src/pages/workspace/composer/message-clipboard.ts",
     "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts",
-    "src/renderer/src/pages/workspace/composer/useMentionTrigger.ts"
+    "src/renderer/src/pages/workspace/composer/useMentionTrigger.ts",
+    "src/renderer/src/pages/workspace/composer/use-prompt-optimization.ts",
+    "src/renderer/src/pages/workspace/composer/use-prompt-optimization.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/composer/ComposerEditor.tsx",
@@ -32,7 +34,8 @@
       "src/renderer/src/pages/workspace/composer/SessionMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/composer/SkillMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/composer/message-clipboard.test.ts",
-      "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts"
+      "src/renderer/src/pages/workspace/composer/useMentionTrigger.test.ts",
+      "src/renderer/src/pages/workspace/composer/use-prompt-optimization.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

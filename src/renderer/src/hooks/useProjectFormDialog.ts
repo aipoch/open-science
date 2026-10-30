@@ -17,6 +17,7 @@ type ProjectFormDialogProps = {
   nameDraft: string
   descriptionDraft: string
   agentContextDraft: string
+  optimizationPromptDraft: string
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -26,6 +27,7 @@ type ProjectFormDialogProps = {
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
+  onOptimizationPromptChange: (value: string) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -59,24 +61,31 @@ const useProjectFormDialog = (
   const [nameDraft, setNameDraft] = useState('')
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [agentContextDraft, setAgentContextDraft] = useState('')
+  const [optimizationPromptDraft, setOptimizationPromptDraft] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorDetail, setErrorDetail] = useState<string>()
   const [conflictProject, setConflictProject] = useState<Project>()
   const [formError, setFormError] = useState<string | undefined>(undefined)
   const [discardConfirmationOpen, setDiscardConfirmationOpen] = useState(false)
-  const initialDraft = useRef({ name: '', description: '', agentContext: '' })
+  const initialDraft = useRef({
+    name: '',
+    description: '',
+    agentContext: '',
+    optimizationPrompt: ''
+  })
 
   const openCreateDialog = useCallback((): void => {
     // A submission is in flight: ignore reopens so the pending mutation keeps its drafts.
     if (isSubmitting) return
 
-    initialDraft.current = { name: '', description: '', agentContext: '' }
+    initialDraft.current = { name: '', description: '', agentContext: '', optimizationPrompt: '' }
     setDiscardConfirmationOpen(false)
     setConflictProject(undefined)
     setFormState({ mode: 'create' })
     setNameDraft('')
     setDescriptionDraft('')
     setAgentContextDraft('')
+    setOptimizationPromptDraft('')
     setFormError(undefined)
     setErrorDetail(undefined)
   }, [isSubmitting])
@@ -89,7 +98,8 @@ const useProjectFormDialog = (
       initialDraft.current = {
         name: project.name,
         description: project.description,
-        agentContext: project.agentContext ?? ''
+        agentContext: project.agentContext ?? '',
+        optimizationPrompt: project.optimizationPrompt ?? ''
       }
       setDiscardConfirmationOpen(false)
       setConflictProject(undefined)
@@ -101,6 +111,7 @@ const useProjectFormDialog = (
       setNameDraft(project.name)
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
+      setOptimizationPromptDraft(project.optimizationPrompt ?? '')
       setFormError(undefined)
       setErrorDetail(undefined)
     },
@@ -119,7 +130,8 @@ const useProjectFormDialog = (
     if (
       nameDraft !== initialDraft.current.name ||
       descriptionDraft !== initialDraft.current.description ||
-      agentContextDraft !== initialDraft.current.agentContext
+      agentContextDraft !== initialDraft.current.agentContext ||
+      optimizationPromptDraft !== initialDraft.current.optimizationPrompt
     ) {
       setDiscardConfirmationOpen(true)
       return
@@ -138,6 +150,7 @@ const useProjectFormDialog = (
 
     const description = descriptionDraft.trim()
     const agentContext = agentContextDraft.trim()
+    const optimizationPrompt = optimizationPromptDraft.trim()
     const isCreate = formState.mode === 'create'
 
     setIsSubmitting(true)
@@ -145,12 +158,13 @@ const useProjectFormDialog = (
     setErrorDetail(undefined)
 
     const request = isCreate
-      ? createProject({ name, description, agentContext })
+      ? createProject({ name, description, agentContext, optimizationPrompt })
       : updateProject({
           id: formState.projectId,
           name,
           description,
           agentContext,
+          optimizationPrompt,
           expectedUpdatedAt: formState.expectedUpdatedAt
         })
 
@@ -218,6 +232,7 @@ const useProjectFormDialog = (
       nameDraft,
       descriptionDraft,
       agentContextDraft,
+      optimizationPromptDraft,
       isSubmitting,
       error: formError,
       errorDetail,
@@ -228,7 +243,8 @@ const useProjectFormDialog = (
             initialDraft.current = {
               name: conflictProject.name,
               description: conflictProject.description,
-              agentContext: conflictProject.agentContext ?? ''
+              agentContext: conflictProject.agentContext ?? '',
+              optimizationPrompt: conflictProject.optimizationPrompt ?? ''
             }
             setFormState({
               mode: 'edit',
@@ -243,6 +259,7 @@ const useProjectFormDialog = (
       onNameChange: setNameDraft,
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,
+      onOptimizationPromptChange: setOptimizationPromptDraft,
       discardConfirmationOpen,
       onKeepEditing: () => setDiscardConfirmationOpen(false),
       onDiscardChanges: closeFormDialog,

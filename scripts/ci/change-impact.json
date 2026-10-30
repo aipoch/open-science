@@ -462,6 +462,7 @@
       "runner": "playwright",
       "paths": [
         "e2e/desktop-composer-draft-restart.spec.ts",
+        "e2e/prompt-optimization.spec.ts",
         "e2e/desktop-runtime-lifetime.spec.ts",
         "e2e/local-service-lifecycle.spec.ts",
         "e2e/desktop-runtime-backpressure.spec.ts",

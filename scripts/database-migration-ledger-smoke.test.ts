@@ -250,6 +250,10 @@ describe('packaged database migration ledger smoke', () => {
       {
         id: '0054_slurm_job_reliability',
         checksum: '1525c308d5403411490596cf7ad4e03a2fc9ae7ee43adf6d3622d0b17d97319b'
+      },
+      {
+        id: '0055_project_optimization_prompt',
+        checksum: '9e1219618247a7b15ab51e2a10f4dc21775880b305e6461463f66b1ad6a5cd9e'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()

@@ -196,6 +196,8 @@ export const WEB_INVOKE_CHANNELS = {
   'projects.get': 'projects:get',
   'projects.list': 'projects:list',
   'projects.listDeletionCleanup': 'projects:list-deletion-cleanup',
+  'projects.optimizePrompt': 'projects:optimize-prompt',
+  'projects.recordOptimizationEvent': 'projects:record-optimization-event',
   'projects.retryDeletionCleanup': 'projects:retry-deletion-cleanup',
   'projects.update': 'projects:update',
   'projects.updateArchive': 'projects:update-archive',

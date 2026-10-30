@@ -175,6 +175,8 @@ const createDependencies = () => {
     updatedAt: 1
   }
   const projects = {
+    optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
+    recordOptimizationEvent: vi.fn(async () => undefined),
     create: vi.fn(async () => project),
     delete: vi.fn(async () => ({ status: 'cleanup-pending' as const })),
     get: vi.fn(async () => project),
@@ -437,6 +439,8 @@ describe('Data and content application commands', () => {
         'project-files:repair-index',
         'project-files:resolve-file',
         'project-files:search-artifacts',
+        'projects:optimize-prompt',
+        'projects:record-optimization-event',
         'projects:create',
         'projects:update-archive',
         'projects:delete',
@@ -832,6 +836,22 @@ describe('Data and content application commands', () => {
         key: 'projectFilesSearchArtifacts',
         args: [request('project-files-search')],
         owner: deps.projectFiles.searchArtifacts
+      },
+      {
+        key: 'projectOptimizePrompt',
+        args: [
+          {
+            projectId: 'project-1',
+            input: 'Research this',
+            agentConfiguration: { providerId: 'test', model: 'test', reasoningEffort: 'default' }
+          }
+        ],
+        owner: deps.projects.optimizePrompt
+      },
+      {
+        key: 'projectRecordOptimizationEvent',
+        args: [{ action: 'undo' }],
+        owner: deps.projects.recordOptimizationEvent
       },
       { key: 'projectGet', args: ['project-1'], owner: deps.projects.get },
       { key: 'projectList', args: [], owner: deps.projects.list },
