@@ -37,14 +37,14 @@ const request = (title: string): RequestPermissionRequest => ({
 
 describe('Library Auto policy', () => {
   it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
-    'keeps new annotation tool %s under the normal permission broker',
+    'auto-approves the verified annotation tool %s once and keeps ask profile approval',
     (name) => {
       const identity = `open-science-literature/${name}`
       const trusted = withTrustedMcpToolIdentity(request(name), identity)
       expect(appMcpToolIdentities()).toContain(identity)
       expect(
         resolveAutomaticPermission(trusted, { profile: 'auto', mcpServerNames: servers })
-      ).toBeUndefined()
+      ).toBe('once')
       expect(
         resolveAutomaticPermission(trusted, { profile: 'ask', mcpServerNames: servers })
       ).toBeUndefined()
@@ -311,6 +311,7 @@ describe('Library Auto policy', () => {
     async (elements) => {
       const server = createLiteratureMcpServer({
         readDocument: vi.fn(),
+        annotations: { list: vi.fn(), locate: vi.fn(), create: vi.fn() },
         ...(elements ? { elements: { list: vi.fn(), read: vi.fn() } } : {})
       })
       const client = new Client({ name: 'inventory', version: '1' })
@@ -325,7 +326,11 @@ describe('Library Auto policy', () => {
             .filter(
               (name) =>
                 name.startsWith('open-science-literature/') &&
-                (elements || name.endsWith('/read_document'))
+                (elements ||
+                  name.endsWith('/read_document') ||
+                  name.endsWith('/list_pdf_annotations') ||
+                  name.endsWith('/locate_pdf_annotation_target') ||
+                  name.endsWith('/create_pdf_annotation'))
             )
             .sort()
         )

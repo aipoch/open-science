@@ -29,10 +29,10 @@ const registrations: Record<
   'literature/mcp-server.ts:LITERATURE_READ_DOCUMENT_TOOL_NAME': 'allow_once',
   "literature/mcp-server.ts:'list_pdf_elements'": 'allow_once',
   "literature/mcp-server.ts:'read_pdf_element'": 'allow_once',
-  // Additive Reading annotations keep the normal permission broker; no Auto allowlist expansion.
-  "literature/mcp-server.ts:'list_pdf_annotations'": 'review',
-  "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'review',
-  "literature/mcp-server.ts:'create_pdf_annotation'": 'review',
+  // Reading annotations use the verified Literature identity and one-call Auto approval.
+  "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
+  "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
+  "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',
   'notebook/mcp-server.ts:definition.name': 'operations',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readTurn': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',

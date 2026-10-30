@@ -321,7 +321,10 @@ const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-library/acquire_pdf',
   'open-science-literature/read_document',
   'open-science-literature/list_pdf_elements',
-  'open-science-literature/read_pdf_element'
+  'open-science-literature/read_pdf_element',
+  'open-science-literature/list_pdf_annotations',
+  'open-science-literature/locate_pdf_annotation_target',
+  'open-science-literature/create_pdf_annotation'
 ])
 
 const APP_INTERACTION_TOOLS = new Set([
