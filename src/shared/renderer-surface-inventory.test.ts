@@ -85,6 +85,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'desktopRuntime.quit',
   'desktopRuntime.reconciled',
   'desktopRuntime.reconnect',
+  'desktopRuntime.restartApp',
   'diagnostics.reportRendererFailure',
   'getRuntimeVersions',
   'handoff.list',

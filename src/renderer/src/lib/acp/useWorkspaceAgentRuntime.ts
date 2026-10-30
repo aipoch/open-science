@@ -59,6 +59,7 @@ import {
   type SendWorkspaceMessageResult
 } from './workspace-runtime-command-owner'
 import {
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart,
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   processVisibleWorkspaceRuntimeEvents,
@@ -669,6 +670,7 @@ const useWorkspaceSubagentRuntimeSession = (
 }
 
 export {
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart,
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,

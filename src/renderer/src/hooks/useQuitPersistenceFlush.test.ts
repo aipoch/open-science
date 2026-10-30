@@ -16,6 +16,7 @@ const {
 }))
 
 vi.mock('../lib/preview-persistence/preview-persistence', () => ({
+  assertPreviewPersistenceSavedForRecoveryRestart: vi.fn(),
   flushPreviewPersistence
 }))
 
@@ -24,9 +25,11 @@ vi.mock('../lib/acp/workspace-events', () => ({
   suppressAutoReviewsForQuit: vi.fn()
 }))
 vi.mock('../lib/acp/useWorkspaceAgentRuntime', () => ({
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart: vi.fn(),
   drainWorkspaceRuntimeEventsForPersistence
 }))
 vi.mock('../lib/session-persistence/session-persistence', () => ({
+  assertSessionPersistenceSavedForRecoveryRestart: vi.fn(),
   flushSessionPersistence
 }))
 
@@ -53,6 +56,39 @@ afterEach(() => {
 })
 
 describe('completeQuitPersistenceFlush', () => {
+  it('retains the window when a recovery restart would lose draft file contents', async () => {
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    writeComposerDraft('project', 'session', {
+      doc: { nodes: [{ type: 'text', text: 'Keep this draft' }] },
+      annotations: [],
+      attachments: [],
+      automaticReadingEnabled: false,
+      attachmentTransfers: [
+        {
+          transferId: 'upload',
+          name: 'unsaved.txt',
+          totalBytes: 10,
+          receivedBytes: 0,
+          status: 'uploading'
+        }
+      ]
+    })
+    const acknowledge = vi.fn()
+    await expect(
+      completeQuitPersistenceFlush(
+        { requestId: 'restart', purpose: 'recovery-restart' },
+        {
+          suppressAutoReviews: vi.fn(),
+          drainRuntimeEvents: async () => {},
+          flushPersistence: async () => {},
+          flushPreviewPersistence: async () => {},
+          acknowledge
+        }
+      )
+    ).rejects.toThrow('attachments')
+    expect(acknowledge).toHaveBeenCalledWith({ requestId: 'restart', status: 'failed' })
+    expect(localStorage.getItem('open-science-composer-drafts-v1')).toContain('Keep this draft')
+  })
   it('refuses orderly quit while unsent queued messages remain and succeeds once handled', async () => {
     const owner = new WorkspaceMessageQueueOwner()
     const pending = vi.spyOn(owner, 'pendingUserCount').mockReturnValue(2)

@@ -84,6 +84,24 @@ if (process.versions.electron) {
   const childPreload = join(__dirname, 'node-runtime-child-preload.cjs')
   process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ?? ''} --require=${JSON.stringify(childPreload)}`
 } else {
+  // Only replacement children in the isolated Cookie recovery scenario inject Windows EBUSY.
+  // Desktop's pre-Chromium inventory scan remains real; the successor uses its fresh handoff.
+  {
+    const fs = require('node:fs')
+    if (fs.existsSync(join(root, 'fixture-cookie-locked'))) {
+      const profile = process.env.OPEN_SCIENCE_USER_DATA
+      if (!profile) throw new Error('Cookie fault requires an isolated profile.')
+      const target = require('node:path').resolve(profile, 'Partitions', 'recovery-lock', 'Cookies')
+      const open = fs.openSync
+      fs.openSync = (...args) => {
+        if (String(args[0]) === target)
+          throw Object.assign(new Error('Fixture Windows cookie sharing violation'), {
+            code: 'EBUSY'
+          })
+        return open(...args)
+      }
+    }
+  }
   require('./session-outcome-preload.cjs')
   if (process.env.OPEN_SCIENCE_E2E_USE_CASE_GATE) require('./use-case-download-preload.cjs')
   if (process.platform === 'darwin') require('./mock-node-credentials.cjs')

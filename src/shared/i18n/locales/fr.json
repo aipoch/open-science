@@ -8018,6 +8018,10 @@
     "Cancellation failed": "Échec de l’annulation",
     "The cancellation attempt ended. The job is still being tracked.": "Cette tentative d’annulation est terminée. Le suivi de la tâche continue.",
     "Unable to get job status": "Impossible d’obtenir l’état de la tâche",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite."
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite.",
+    "Local service could not restart": "Le service local n’a pas pu redémarrer",
+    "Restart Open-Science": "Redémarrer Open-Science",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "L’application vérifie que votre travail est enregistré avant de redémarrer. Les pièces jointes non enregistrées peuvent empêcher le redémarrage.",
+    "Open-Science could not restart. Save or copy your work, then try again.": "Open-Science n’a pas pu redémarrer. Enregistrez ou copiez votre travail, puis réessayez."
   }
 }

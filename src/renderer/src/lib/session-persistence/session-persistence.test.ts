@@ -7,6 +7,7 @@ import { AcpPermissionWaitOwner } from '../../../../main/acp/permission-wait-own
 import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { sanitizeRendererSaveSessionOptions } from '../../../../main/session-persistence/renderer-save-options'
 import { preserveImportedSession } from '../../../../main/session-persistence/imported-session'
+import { resolveRevisionedSessionSave } from '../../../../main/session-persistence/revision-conflict'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
 import { useWorkspaceOperationErrors } from '../acp/workspace-operation-error'
 import {
@@ -66,6 +67,25 @@ const createPersistedSession = (
   createdAt: 1710000000000,
   updatedAt: 1710000000000,
   ...overrides
+})
+
+it('retains a received durable Session receipt across transient Store projections without a write', async () => {
+  useSessionStore.setState(createInitialSessionState())
+  const api = {
+    saveSession: vi.fn(async (session: PersistedChatSession) => session),
+    saveManifest: vi.fn(async () => ({ version: SESSION_MANIFEST_VERSION }))
+  } as unknown as SessionPersistenceApi
+  const persistence = createOrderedSessionPersistence(api)
+  const saver = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+  const durable = createPersistedSession({ id: 'event-read-receipt', revision: 1 })
+  // This is the real full-snapshot boundary used by sessions.onUpdated/onCreated.
+  useSessionStore.getState().upsertPersistedSession(durable)
+  await saver(useSessionStore.getState())
+  useSessionStore.getState().setBranchSwitchBlocked(durable.id, true)
+  useSessionStore.getState().setBranchSwitchBlocked(durable.id, false)
+  await saver(useSessionStore.getState())
+  expect(persistence.getAcknowledgedSession(durable.id)).toEqual(durable)
+  expect(api.saveSession).not.toHaveBeenCalled()
 })
 
 const createCompletedTaskReplyConflict = (
@@ -5304,6 +5324,82 @@ describe('renderer session persistence bridge', () => {
       expect(toPersistedSession(useSessionStore.getState().sessions[0]).messages).toEqual(
         completed.messages
       )
+    }
+  )
+
+  it.each(['published snapshot', 'single-session read'] as const)(
+    'preserves a concurrent preference when a %s overtakes an explicit queued snapshot',
+    async (receipt) => {
+      const base = materializeSessionConversationGraph(
+        createPersistedSession({ id: `queued-${receipt}`, revision: 1, autoReviewEnabled: false })
+      )
+      let durable: PersistedChatSession =
+        receipt === 'published snapshot' ? base : { ...base, revision: 0 }
+      const barrier = createDeferred<void>()
+      const api = createApi({
+        loadOne: vi.fn(async () => structuredClone(durable)),
+        saveSession: vi.fn(async (submitted, options) => {
+          if (submitted.id === 'queue-barrier') {
+            await barrier.promise
+            return { ...submitted, revision: 1 }
+          }
+          const resolved = resolveRevisionedSessionSave(
+            durable,
+            submitted,
+            options?.conflictRebaseFields
+          )
+          durable = structuredClone({
+            ...resolved.session,
+            revision: resolved.expectedRevision + 1
+          })
+          return durable
+        })
+      })
+      vi.stubGlobal('window', { api: { sessions: api } })
+      try {
+        useSessionStore.getState().hydrateSessions([base])
+        const persistence =
+          receipt === 'published snapshot' ? createOrderedSessionPersistence(api) : undefined
+        const saver = persistence
+          ? createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+          : undefined
+        const request = { projectId: base.projectId, sessionId: base.id }
+        if (!persistence) {
+          await saveSessionInOrder(durable)
+          await loadPersistedSession(request)
+          vi.mocked(api.saveSession).mockClear()
+        }
+        const blocking = saveSessionInOrder(
+          createPersistedSession({ id: 'queue-barrier' }),
+          persistence,
+          api
+        )
+        // Bookmark text-source persistence queues the current full snapshot without a field patch.
+        const queued = saveSessionInOrder(base, persistence, api)
+        await flushMicrotasks()
+        durable = { ...base, revision: 2, autoReviewEnabled: true }
+        if (saver) {
+          useSessionStore.getState().upsertPersistedSession(durable)
+          await saver(useSessionStore.getState())
+        } else await loadPersistedSession(request, api, { bypassCache: true })
+
+        barrier.resolve()
+        await blocking
+        await expect(queued).resolves.toMatchObject({ autoReviewEnabled: true })
+        expect(durable.autoReviewEnabled).toBe(true)
+        const submissions = vi
+          .mocked(api.saveSession)
+          .mock.calls.map(([session]) => session)
+          .filter(({ id }) => id === base.id)
+        expect(submissions).toHaveLength(2)
+        expect(submissions[0]).toMatchObject({ revision: 1, autoReviewEnabled: false })
+        expect(submissions[1]).toMatchObject({ revision: 2, autoReviewEnabled: true })
+        if (persistence) await expect(persistence.flush()).resolves.toBeUndefined()
+        else await expect(flushSessionPersistence(`session:${base.id}`)).resolves.toBeUndefined()
+      } finally {
+        barrier.resolve()
+        vi.unstubAllGlobals()
+      }
     }
   )
 

@@ -23,6 +23,7 @@ import type { UploadedAttachment } from '../../../../shared/uploads'
 import { useNavigationStore, type PdfReadingDocument } from '../../stores/navigation-store'
 import { useProjectStore } from '../../stores/project-store'
 import {
+  assertPreviewPersistenceSavedForRecoveryRestart,
   flushPreviewPersistence,
   toPersistedPreviewState,
   toRestoredSlice,
@@ -1262,6 +1263,11 @@ describe('usePreviewPersistence per-project save/restore', () => {
     })
     await flushPreviewPersistence()
     expect(save).toHaveBeenCalledTimes(1)
+    expect(() => assertPreviewPersistenceSavedForRecoveryRestart()).toThrow()
+    load.mockResolvedValue({
+      revision: 1,
+      state: { version: PREVIEW_STATE_VERSION, panelState: 'collapsed', items: [] }
+    })
     await act(async () => {
       useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
     })
@@ -1271,6 +1277,7 @@ describe('usePreviewPersistence per-project save/restore', () => {
     await flushPreviewPersistence()
     expect(save).toHaveBeenCalledTimes(1)
     expect(load.mock.calls.length).toBeGreaterThan(1)
+    expect(() => assertPreviewPersistenceSavedForRecoveryRestart()).not.toThrow()
   })
 
   it('rebases a user change queued after the conflicting snapshot', async () => {

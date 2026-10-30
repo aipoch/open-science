@@ -17,13 +17,95 @@ import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-ow
 import * as runtimeWriterClient from './runtime-writer-client'
 import { createStoreSaver } from '../session-persistence/session-persistence'
 import {
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart,
+  createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   processIncrementalWorkspaceRuntimeEvents,
+  processWorkspaceRuntimeEvents,
   refreshDelegatedWorkSessions,
   resetWorkspaceRuntimeEventOwnerForTests,
   syncWorkspaceInteractionStateFromSnapshot,
   useWorkspaceRuntimeEventIngest
 } from './workspace-runtime-event-owner'
+
+describe('offline runtime event persistence proof', () => {
+  const event: AcpRuntimeEvent = {
+    id: 'offline-event',
+    timestamp: 1,
+    kind: 'system',
+    level: 'info',
+    sessionId: 'offline-session',
+    text: 'Runtime event'
+  }
+
+  afterEach(() => {
+    resetWorkspaceRuntimeEventOwnerForTests()
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+    vi.useRealTimers()
+    vi.restoreAllMocks()
+  })
+
+  it('clears an event failure only after its scheduled retry succeeds', async () => {
+    vi.useFakeTimers()
+    const apply = vi.fn().mockRejectedValueOnce(new Error('temporary')).mockResolvedValue(true)
+    const owner = createWorkspaceRuntimeEventProcessor(apply)
+    await owner.processIncremental([event])
+    expect(() => owner.assertSettled()).toThrow()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(apply).toHaveBeenCalledTimes(2)
+    expect(() => owner.assertSettled()).not.toThrow()
+  })
+
+  it('does not treat quarantined failed events as saved', async () => {
+    vi.useFakeTimers()
+    const apply = vi.fn().mockRejectedValue(new Error('persistent'))
+    const owner = createWorkspaceRuntimeEventProcessor(apply)
+    await owner.processIncremental([event])
+    await vi.advanceTimersByTimeAsync(1250)
+    expect(apply).toHaveBeenCalledTimes(3)
+    expect(() => owner.assertSettled()).toThrow()
+  })
+
+  it.each(['ingress', 'snapshot-ingress', 'processor'] as const)(
+    'retains an event if disconnection happens during %s admission',
+    async (gate) => {
+      vi.useFakeTimers()
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+      resetWorkspaceRuntimeEventOwnerForTests()
+      const admission = Promise.withResolvers<boolean>()
+      const ensure = vi
+        .spyOn(runtimeWriterClient, 'ensureRuntimeWriter')
+        .mockReturnValue(admission.promise)
+      if (gate === 'processor') ensure.mockResolvedValueOnce(true)
+      const processing =
+        gate === 'snapshot-ingress'
+          ? processWorkspaceRuntimeEvents({ events: [event], revision: 1 })
+          : processIncrementalWorkspaceRuntimeEvents([event])
+      await vi.waitFor(() => expect(ensure).toHaveBeenCalledTimes(gate === 'processor' ? 2 : 1))
+      expect(() => assertWorkspaceRuntimeEventsSavedForRecoveryRestart()).toThrow()
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'unavailable', epoch: 1, closing: false })
+      admission.resolve(false)
+      await processing
+      expect(() => assertWorkspaceRuntimeEventsSavedForRecoveryRestart()).toThrow()
+    }
+  )
+
+  it('accepts observer admission only when the connection remained available', async () => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+    resetWorkspaceRuntimeEventOwnerForTests()
+    vi.spyOn(runtimeWriterClient, 'ensureRuntimeWriter').mockResolvedValue(false)
+    await processIncrementalWorkspaceRuntimeEvents([event])
+    expect(() => assertWorkspaceRuntimeEventsSavedForRecoveryRestart()).not.toThrow()
+  })
+
+  it('does not invent unsaved event work from an empty disconnected snapshot', async () => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'unavailable', epoch: 1, closing: false })
+    resetWorkspaceRuntimeEventOwnerForTests()
+    vi.spyOn(runtimeWriterClient, 'ensureRuntimeWriter').mockResolvedValue(false)
+    await processWorkspaceRuntimeEvents({ events: [], revision: 1 })
+    expect(() => assertWorkspaceRuntimeEventsSavedForRecoveryRestart()).not.toThrow()
+  })
+})
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 

@@ -1709,6 +1709,56 @@ describe('session persistence startup', () => {
     expect(reconcilePendingArtifactsApi).not.toHaveBeenCalled()
   })
 
+  it('acknowledges reconnect reads while retaining a failed manifest write for explicit retry', async () => {
+    loadAll
+      .mockReset()
+      .mockResolvedValueOnce({
+        ...emptyLoadResult(),
+        diagnostics: { isComplete: false, warnings: [] }
+      })
+      .mockResolvedValue(emptyLoadResult())
+    saveManifest.mockRejectedValueOnce(new Error('manifest disk full')).mockResolvedValue(undefined)
+    await act(async () => root.render(<Probe />))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+    )
+    expect(saveManifest).toHaveBeenCalledOnce()
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+
+    for (const epoch of [501, 502]) {
+      await act(async () =>
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch })
+      )
+      const acknowledged = vi.fn()
+      void waitForDesktopSessionRecovery(epoch).then(acknowledged)
+      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' }))
+      expect(acknowledged).toHaveBeenCalledOnce()
+      expect(container.querySelector('div')?.dataset.loading).toBe('false')
+      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+      expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    }
+
+    // A storage reload after transport recovery must not erase the outstanding write notice.
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+    )
+    expect(saveManifest).toHaveBeenCalledOnce()
+    expect(container.querySelector('div')?.dataset.ready).toBe('false')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'could not save'
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+    )
+    expect(saveManifest).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('div')?.dataset.ready).toBe('true')
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+      'changes saved'
+    )
+    expect(saveSession).not.toHaveBeenCalled()
+    expect(reconcilePendingArtifactsApi).not.toHaveBeenCalled()
+  })
+
   it('keeps persistence blocked when startup storage recovery is incomplete', async () => {
     loadAll.mockReset().mockResolvedValue({
       ...emptyLoadResult(),

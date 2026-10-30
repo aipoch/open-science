@@ -16,6 +16,7 @@ import type { HistoryReplayDescriptor } from '../../../../shared/history-replay-
 import { useSessionStore } from '../../stores/session-store'
 import {
   assertDesktopRuntimeWrite,
+  desktopRuntimeWritable,
   getDesktopRuntimeEpoch
 } from '../../stores/desktop-runtime-recovery-store'
 import {
@@ -64,6 +65,7 @@ type WorkspaceRuntimeEventProcessor = {
   process: (events: AcpRuntimeEvent[]) => Promise<void>
   processIncremental: (events: readonly AcpRuntimeEvent[]) => Promise<void>
   drain: (sessionId?: string) => Promise<void>
+  assertSettled: () => void
 }
 type WorkspaceRuntimeEventSnapshot = Pick<
   AcpStateSnapshot,
@@ -170,6 +172,7 @@ const createWorkspaceRuntimeEventProcessor = (
   const presentationBuffer = createWorkspaceRuntimePresentationBuffer(options.presentation)
   let latestEventsById = new Map<string, AcpRuntimeEvent>()
   let acceptedEventVersion = 0
+  const unconfirmedEventFailures = new Set<string>()
 
   const getEventLaneKey = (event: AcpRuntimeEvent): string | symbol =>
     event.sessionId ?? unscopedEventLane
@@ -277,12 +280,14 @@ const createWorkspaceRuntimeEventProcessor = (
           try {
             const applied = await apply()
             for (const event of events) {
+              unconfirmedEventFailures.delete(event.id)
               lane.failedEventAttempts.delete(event.id)
               lane.failedEventIds.delete(event.id)
             }
             if (lane.failedEventAttempts.size === 0) cancelLaneRetry(lane)
             return applied
           } catch (error) {
+            for (const event of events) unconfirmedEventFailures.add(event.id)
             let retryAttempt: number | undefined
             let releasedInThisApply = false
             for (const event of events) {
@@ -418,6 +423,18 @@ const createWorkspaceRuntimeEventProcessor = (
   }
 
   return {
+    assertSettled: () => {
+      if (
+        unconfirmedEventFailures.size ||
+        [...eventLanes.values()].some(
+          (lane) =>
+            lane.drainInFlight ||
+            lane.retryTimer ||
+            [...lane.acceptedEvents.keys()].some((id) => !lane.processedEventIds.has(id))
+        )
+      )
+        throw new Error('Received runtime events have not been confirmed saved.')
+    },
     process: (events) => acceptEvents(events, true),
     processIncremental: (events) => acceptEvents(events, false),
     drain: async (sessionId) => {
@@ -471,7 +488,11 @@ const createLiveWorkspaceRuntimeEventProcessor = (): WorkspaceRuntimeEventProces
     async (event) => {
       const startedAt = performance.now()
       try {
-        if (!(await ensureRuntimeWriter()) || !isCurrentService()) return true
+        if (!desktopRuntimeWritable()) throw new Error('Runtime event authority is unavailable.')
+        const epoch = getDesktopRuntimeEpoch()
+        const writer = await ensureRuntimeWriter()
+        assertDesktopRuntimeWrite(epoch)
+        if (!writer || !isCurrentService()) return true
         const permissionLifecycleEvent = isWorkspacePermissionLifecycleEvent(event)
           ? event
           : undefined
@@ -510,7 +531,11 @@ const createLiveWorkspaceRuntimeEventProcessor = (): WorkspaceRuntimeEventProces
       applyEventBatch: async (events) => {
         const startedAt = performance.now()
         try {
-          if (!(await ensureRuntimeWriter()) || !isCurrentService()) return true
+          if (!desktopRuntimeWritable()) throw new Error('Runtime event authority is unavailable.')
+          const epoch = getDesktopRuntimeEpoch()
+          const writer = await ensureRuntimeWriter()
+          assertDesktopRuntimeWrite(epoch)
+          if (!writer || !isCurrentService()) return true
           const token = runtimeWriterSaveOptions()?.runtimeWriterToken
           return applyWorkspaceRuntimeEventBatch(
             events,
@@ -530,6 +555,33 @@ const createLiveWorkspaceRuntimeEventProcessor = (): WorkspaceRuntimeEventProces
 
 let liveWorkspaceRuntimeEventProcessor = createLiveWorkspaceRuntimeEventProcessor()
 let writerBacklog: AcpRuntimeEvent[] = []
+let pendingRuntimeEventIngress = new Set<object>()
+let unconfirmedRuntimeEventIngress = false
+const trackRuntimeEventIngress = async <Value>(
+  events: readonly AcpRuntimeEvent[],
+  apply: (epoch: number) => Promise<Value>
+): Promise<Value> => {
+  const epoch = getDesktopRuntimeEpoch()
+  if (!events.some((event) => event.kind !== 'thought')) return apply(epoch)
+  const pending = pendingRuntimeEventIngress
+  const ticket = {}
+  pending.add(ticket)
+  try {
+    return await apply(epoch)
+  } catch (error) {
+    unconfirmedRuntimeEventIngress = true
+    throw error
+  } finally {
+    if (!desktopRuntimeWritable() || epoch !== getDesktopRuntimeEpoch())
+      unconfirmedRuntimeEventIngress = true
+    pending.delete(ticket)
+  }
+}
+const assertWorkspaceRuntimeEventsSavedForRecoveryRestart = (): void => {
+  if (writerBacklog.length || pendingRuntimeEventIngress.size || unconfirmedRuntimeEventIngress)
+    throw new Error('Received runtime events are still pending.')
+  liveWorkspaceRuntimeEventProcessor.assertSettled()
+}
 setRuntimeWriterActivation(async () => {
   const epoch = getDesktopRuntimeEpoch()
   // Start from durable authority before replaying the bounded host event window. A newly elected
@@ -549,6 +601,7 @@ setRuntimeWriterActivation(async () => {
   assertDesktopRuntimeWrite(epoch)
   writerBacklog = [...snapshot.events]
   liveWorkspaceRuntimeEventProcessor = createLiveWorkspaceRuntimeEventProcessor()
+  unconfirmedRuntimeEventIngress = false
 })
 const drainWriterBacklog = async (): Promise<void> => {
   const backlog = writerBacklog
@@ -654,6 +707,8 @@ const resetWorkspaceRuntimeEventOwnerForTests = (): void => {
   resetAcpRuntimeSnapshotRevisionForTests()
   liveWorkspaceRuntimeEventProcessor = createLiveWorkspaceRuntimeEventProcessor()
   writerBacklog = []
+  pendingRuntimeEventIngress = new Set()
+  unconfirmedRuntimeEventIngress = false
 }
 
 // Accepts Main snapshots once in construction order. This gate is shared by React subscription and
@@ -674,17 +729,19 @@ const ingestWorkspaceRuntimeSnapshot = async (
   snapshot: WorkspaceRuntimeEventSnapshot,
   syncFirstOutput: boolean
 ): Promise<boolean> => {
-  const epoch = getDesktopRuntimeEpoch()
-  if (!acceptWorkspaceRuntimeSnapshot(snapshot) || !(await ensureRuntimeWriter())) return false
-  if (epoch !== getDesktopRuntimeEpoch()) return false
-  await drainWriterBacklog()
-  if (epoch !== getDesktopRuntimeEpoch()) return false
   if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
-  if (syncFirstOutput) {
-    syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
-  }
-  await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
-  return true
+  return trackRuntimeEventIngress(snapshot.events, async (epoch) => {
+    if (!(await ensureRuntimeWriter())) return false
+    if (epoch !== getDesktopRuntimeEpoch()) return false
+    await drainWriterBacklog()
+    if (epoch !== getDesktopRuntimeEpoch()) return false
+    if (!acceptWorkspaceRuntimeSnapshot(snapshot)) return false
+    if (syncFirstOutput) {
+      syncWorkspaceAgentFirstOutputState(snapshot.agentPromptInFlightSessionIds ?? [])
+    }
+    await liveWorkspaceRuntimeEventProcessor.process(snapshot.events)
+    return true
+  })
 }
 
 // Publishes prompt ownership before applying events. Provider stops retain that authority while
@@ -700,7 +757,8 @@ const processIncrementalWorkspaceRuntimeEvents = (
 ): Promise<void> => {
   const startedAt = performance.now()
   const scope = getAcpRuntimeSnapshotScope()
-  return ensureRuntimeWriter().then(async (owner) => {
+  return trackRuntimeEventIngress(events, async () => {
+    const owner = await ensureRuntimeWriter()
     if (!owner || scope !== getAcpRuntimeSnapshotScope()) return
     try {
       await drainWriterBacklog()
@@ -861,6 +919,7 @@ const useWorkspaceRuntimeEventDrain = (
   )
 
 export {
+  assertWorkspaceRuntimeEventsSavedForRecoveryRestart,
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   processIncrementalWorkspaceRuntimeEvents,

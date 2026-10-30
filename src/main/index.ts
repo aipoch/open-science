@@ -1,6 +1,13 @@
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
+import {
+  createDesktopRecoveryRestart,
+  assertDesktopRecoveryLaunchAllowed,
+  desktopRecoveryRelaunchArgs,
+  desktopOrdinaryRelaunchArgs,
+  readDesktopRecoveryLaunch
+} from './desktop-recovery-restart'
 import type { PackageOperationSnapshot } from '../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import {
@@ -35,6 +42,7 @@ import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
 import {
   DESKTOP_RUNTIME_RECOVERY_CHANNELS,
   DesktopRuntimeDisconnectedError,
+  desktopRecoveryNeedsAppRestart,
   isDesktopRuntimeConnectionError
 } from '../shared/desktop-runtime-recovery'
 import { deliverDesktopEvent } from './desktop-event-delivery'
@@ -223,6 +231,7 @@ const buildZoomSafeApplicationMenu = (
 }
 
 async function startDesktop(): Promise<void> {
+  const recoveryLaunch = readDesktopRecoveryLaunch(process.argv)
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
@@ -288,28 +297,29 @@ async function startDesktop(): Promise<void> {
     preservedStartupOptions ??= windowsUpdateStartup?.startupOptions
     windowsUpdateAlreadyConfirmed = windowsUpdateStartup?.confirmed ?? false
   }
-  const credentialArgs = preservedStartupOptions
+  const startupConfiguration = preservedStartupOptions ?? recoveryLaunch?.configuration
+  const credentialArgs = startupConfiguration
     ? [
-        `--credential-store=${preservedStartupOptions.credentialStore}`,
-        ...(preservedStartupOptions.passwordStore
-          ? [`--password-store=${preservedStartupOptions.passwordStore}`]
+        `--credential-store=${startupConfiguration.credentialStore}`,
+        ...(startupConfiguration.passwordStore
+          ? [`--password-store=${startupConfiguration.passwordStore}`]
           : [])
       ]
     : process.argv.filter(
         (arg) => arg.startsWith('--credential-store=') || arg.startsWith('--password-store=')
       )
-  if (preservedStartupOptions?.passwordStore)
-    app.commandLine.appendSwitch('password-store', preservedStartupOptions.passwordStore)
+  if (startupConfiguration?.passwordStore)
+    app.commandLine.appendSwitch('password-store', startupConfiguration.passwordStore)
   configureCredentialStore(credentialArgs, process.platform, false)
   const configRoot =
-    preservedStartupOptions?.configRoot ??
+    startupConfiguration?.configRoot ??
     resolveBootstrapConfigRoot(app.getPath('home'), app.isPackaged)
   const profilePath = resolveElectronProfile({
     appData: app.getPath('appData'),
     configRoot,
     packaged: app.isPackaged,
-    ...(preservedStartupOptions
-      ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: preservedStartupOptions.profilePath } }
+    ...(startupConfiguration
+      ? { env: { ...process.env, OPEN_SCIENCE_USER_DATA: startupConfiguration.profilePath } }
       : {})
   })
   // Selecting paths does not open Chromium databases; scope the lock before credential preflight.
@@ -906,7 +916,7 @@ async function startDesktop(): Promise<void> {
           preservedStartupOptions = failure.startupOptions
         }
         if (initialRecoveryError) {
-          app.relaunch()
+          app.relaunch({ args: desktopOrdinaryRelaunchArgs(process.argv.slice(1)) })
           app.exit(0)
         } else continueStartup?.()
       } catch (error) {
@@ -952,9 +962,20 @@ async function startDesktop(): Promise<void> {
       packaged: app.isPackaged,
       credentialInventory: startupCredentialCiphertexts,
       credentialInventoryCapturedAt: startupCredentialInventoryCapturedAt,
+      ...(recoveryLaunch && recoveryLaunch.mode !== 'ordinary' && !preservedStartupOptions
+        ? {
+            beforeLaunch: async () =>
+              assertDesktopRecoveryLaunchAllowed(
+                recoveryLaunch,
+                await readServiceLifetime(configRoot)
+              )
+          }
+        : {}),
       args: [
         ...credentialArgs,
-        ...(preservedStartupOptions ? [`--serve=${preservedStartupOptions.port}`] : [])
+        ...((preservedStartupOptions ?? recoveryLaunch?.configuration)
+          ? [`--serve=${(preservedStartupOptions ?? recoveryLaunch!.configuration).port}`]
+          : [])
       ]
     })
     startedBackend = launch.startedProcess
@@ -1047,7 +1068,7 @@ async function startDesktop(): Promise<void> {
           .waitForStopped()
           .then((lease) => {
             retainShutdownLease(lease)
-            app.relaunch()
+            app.relaunch({ args: desktopOrdinaryRelaunchArgs(process.argv.slice(1)) })
             app.exit(0)
           })
           .catch((error) => {
@@ -1401,6 +1422,70 @@ async function startDesktop(): Promise<void> {
     )
       throw new Error('Desktop recovery requires the main application frame.')
   }
+  const recoveryWindows = (): BrowserWindow[] =>
+    BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed() && isMainWindow(window))
+  const abortRecoverySave = (failed = true): void => {
+    recovery.setClosing(false)
+    for (const window of recoveryWindows())
+      notifyRendererSessionPersistenceFlushAborted(
+        () => window,
+        failed ? 'renderer-failed' : undefined
+      )
+  }
+  const recoveryRestart = createDesktopRecoveryRestart({
+    prepare: async () => {
+      if (!desktopRecoveryNeedsAppRestart(recovery.state()) || updateCommitted || plannedRelaunch)
+        return false
+      recovery.setClosing(true)
+      try {
+        const windows = recoveryWindows()
+        const outcomes = await Promise.all(
+          windows.map((window) =>
+            createElectronSessionPersistenceFlush(() => window, undefined, 'recovery-restart')()
+          )
+        )
+        if (
+          windows.length > 0 &&
+          outcomes.every((outcome) => outcome === 'completed') &&
+          desktopRecoveryNeedsAppRestart(recovery.state()) &&
+          !updateCommitted &&
+          !plannedRelaunch
+        )
+          return true
+      } catch {
+        /* Failed save checks keep every window open. */
+      }
+      return false
+    },
+    quit: () => app.quit(),
+    relaunch: (args) => app.relaunch({ args })
+  })
+  ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.restartApp, async (event) => {
+    requireRecoveryFrame(event)
+    if (!desktopRecoveryNeedsAppRestart(recovery.state()) || updateCommitted || plannedRelaunch)
+      return 'blocked'
+    const outcome = await recoveryRestart.request(async () => {
+      const config = client!.runtimeInfo().startupOptions
+      const intent = await readServiceLifetime(
+        configRoot,
+        !isRuntimeProcessAlive(client!.processId())
+      )
+      return desktopRecoveryRelaunchArgs(process.argv.slice(1), {
+        configuration: {
+          configRoot,
+          profilePath,
+          port: config?.port ?? 0,
+          credentialStore: config?.credentialStore ?? getCredentialStore(),
+          ...(config?.passwordStore ? { passwordStore: config.passwordStore } : {})
+        },
+        ...(intent?.stopping && intent.generation === client!.runtimeInfo().generation
+          ? { authorization: intent }
+          : {})
+      })
+    })
+    if (outcome === 'blocked' && !recovery.state().shutdownProgress) abortRecoverySave()
+    return outcome
+  })
   ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.getState, (event) => {
     requireRecoveryFrame(event)
     const state = recovery!.state()
@@ -1437,6 +1522,7 @@ async function startDesktop(): Promise<void> {
   )
   ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, (event) => {
     requireRecoveryFrame(event)
+    recoveryRestart.cancel()
     // The normal lifecycle owns local save checks, unsent-message consent and final persistence,
     // even when its remote service is unreachable.
     app.quit()
@@ -1819,6 +1905,7 @@ async function startDesktop(): Promise<void> {
       else admission = Promise.resolve()
       void admission.catch(() => undefined)
       return () => {
+        recoveryRestart.cancel()
         recovery!.setClosing(false)
         if (
           !runtimeStopped &&
@@ -1857,6 +1944,7 @@ async function startDesktop(): Promise<void> {
       return undefined
     },
     abortQuitPreparation: async (reason) => {
+      recoveryRestart.cancel()
       try {
         if (
           !runtimeStopped &&
@@ -1867,10 +1955,26 @@ async function startDesktop(): Promise<void> {
           await client!.lifecycle({ operation: 'abort' })
       } finally {
         recovery!.setClosing(false)
-        notifyRendererSessionPersistenceFlushAborted(() => getMainWindow(), reason)
+        for (const window of recoveryWindows())
+          notifyRendererSessionPersistenceFlushAborted(() => window, reason)
       }
     },
-    flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
+    flushSessionPersistence: async (timeoutMs) => {
+      if (!recoveryRestart.isPending())
+        return createElectronSessionPersistenceFlush(() => getMainWindow())(timeoutMs)
+      const outcomes = await Promise.all(
+        recoveryWindows().map((window) =>
+          createElectronSessionPersistenceFlush(
+            () => window,
+            undefined,
+            'recovery-restart'
+          )(timeoutMs)
+        )
+      )
+      const failure = outcomes.find((outcome) => outcome !== 'completed')
+      if (failure) recoveryRestart.cancel()
+      return failure ?? 'completed'
+    },
     rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
@@ -1891,8 +1995,13 @@ async function startDesktop(): Promise<void> {
     flushLogs,
     requireCleanBackendShutdown: false,
     onShutdownProgress: (active) => recovery.setShutdownProgress(active),
+    onQuitCancelled: () => {
+      recoveryRestart.cancel()
+      abortRecoverySave(false)
+    },
     onQuitError: (error) => {
-      recovery!.setClosing(false)
+      recoveryRestart.cancel()
+      abortRecoverySave()
       reportError(error)
     },
     shutdownBackends: async (deadlineAt) => {
@@ -1907,6 +2016,8 @@ async function startDesktop(): Promise<void> {
     beforeExit: async () => {
       const { completeMacInstallationHandoff } = await import('./mac-installation')
       completeMacInstallationHandoff()
+      if (currentApplicationShutdownTrigger() === 'quit') recoveryRestart.beforeExit()
+      else recoveryRestart.cancel()
     }
   })
   // Install the normal lifecycle and its first window before closing the startup gate.

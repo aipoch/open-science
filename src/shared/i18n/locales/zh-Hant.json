@@ -7680,6 +7680,10 @@
     "Cancellation failed": "取消失敗",
     "The cancellation attempt ended. The job is still being tracked.": "本次取消作業已結束。系統仍在追蹤任務。",
     "Unable to get job status": "無法取得任務狀態",
-    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "排程器沒有此任務的可用結果。遠端程序可能仍在執行。請先檢查排程器和遠端檔案，再決定下一步操作。"
+    "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "排程器沒有此任務的可用結果。遠端程序可能仍在執行。請先檢查排程器和遠端檔案，再決定下一步操作。",
+    "Local service could not restart": "本機服務無法重新啟動",
+    "Restart Open-Science": "重新啟動 Open-Science",
+    "The app checks that your work is saved before restarting. Unsaved attachments can block the restart.": "應用程式會在重新啟動前檢查您的工作是否已儲存。未儲存的附件可能阻止重新啟動。",
+    "Open-Science could not restart. Save or copy your work, then try again.": "無法重新啟動 Open-Science。請儲存或複製您的工作，然後重試。"
   }
 }

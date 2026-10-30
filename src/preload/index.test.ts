@@ -378,6 +378,7 @@ describe('preload bridge — public surface inventory', () => {
       'desktopRuntime.quit',
       'desktopRuntime.reconciled',
       'desktopRuntime.reconnect',
+      'desktopRuntime.restartApp',
       'diagnostics.reportRendererFailure',
       'getArtifactSaveProgress',
       'getRuntimeVersions',

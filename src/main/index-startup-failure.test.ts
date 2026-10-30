@@ -24,6 +24,16 @@ const f = vi.hoisted(() => {
     completedStartup: vi.fn(),
     windowsStartup: vi.fn(),
     verifyRecovery: vi.fn(async () => {}),
+    processAlive: true,
+    mainWindows: [] as import('electron').BrowserWindow[],
+    readLifetime: vi.fn(
+      async () => undefined as import('./local-service-lifetime').ServiceLifetimeRecord | undefined
+    ),
+    flush: vi.fn(
+      async () =>
+        'completed' as import('./session-persistence/flush-protocol').RendererSessionPersistenceFlushOutcome
+    ),
+    completeMacHandoff: vi.fn(),
     report: vi.fn(async () => undefined),
     app: {
       isPackaged: false,
@@ -31,6 +41,7 @@ const f = vi.hoisted(() => {
       setPath: vi.fn(),
       setAppLogsPath: vi.fn(),
       quit: vi.fn(),
+      relaunch: vi.fn(),
       exit: vi.fn(),
       on: vi.fn(),
       once: vi.fn(),
@@ -55,8 +66,8 @@ vi.mock('electron', () => ({
   dialog: f.dialog,
   protocol: f.protocol,
   BrowserWindow: class {
-    static getAllWindows(): [] {
-      return []
+    static getAllWindows(): import('electron').BrowserWindow[] {
+      return f.mainWindows
     }
     static fromWebContents(): null {
       return null
@@ -102,6 +113,14 @@ vi.mock('./ipc-handler-registry', () => ({
 vi.mock('./runtime-ownership', () => ({
   acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease })
 }))
+vi.mock('./runtime-stop-confirmation', async (original) => ({
+  ...(await original<typeof import('./runtime-stop-confirmation')>()),
+  isRuntimeProcessAlive: () => f.processAlive
+}))
+vi.mock('./local-service-lifetime', async (original) => ({
+  ...(await original<typeof import('./local-service-lifetime')>()),
+  readServiceLifetime: f.readLifetime
+}))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: vi.fn(),
   getCredentialStore: () => 'os'
@@ -116,7 +135,8 @@ vi.mock('./credential-identity/ciphertext-inventory', () => ({
 }))
 vi.mock('./storage/electron-profile', () => ({
   resolveBootstrapConfigRoot: () => '/test/config',
-  resolveElectronProfile: () => '/test/profile'
+  resolveElectronProfile: (options: { env?: NodeJS.ProcessEnv }) =>
+    options.env?.OPEN_SCIENCE_USER_DATA ?? '/test/profile'
 }))
 vi.mock('./desktop-runtime-launcher', () => ({
   desktopBackendPaths: () => ({ command: '/test/node', entry: '/test/backend.cjs' }),
@@ -137,7 +157,8 @@ vi.mock('./runtime-network-electron', () => ({ installElectronNetwork: vi.fn() }
 vi.mock('./renderer-broadcast-electron', () => ({ installElectronBroadcast: vi.fn() }))
 vi.mock('./mac-installation', () => ({
   isReadOnlyMacInstallation: () => false,
-  showMacInstallationGuidance: vi.fn()
+  showMacInstallationGuidance: vi.fn(),
+  completeMacInstallationHandoff: f.completeMacHandoff
 }))
 vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (original) => ({
@@ -209,7 +230,7 @@ vi.mock('./notifications/unread-task-ipc', () => ({
 vi.mock('./window-close-confirm', () => ({ createElectronCloseConfirm: vi.fn() }))
 vi.mock('./app-lifecycle', () => ({ installAppLifecycle: f.lifecycle }))
 vi.mock('./session-persistence/renderer-flush', () => ({
-  createElectronSessionPersistenceFlush: vi.fn(() => vi.fn(async () => undefined)),
+  createElectronSessionPersistenceFlush: vi.fn(() => f.flush),
   notifyRendererSessionPersistenceFlushAborted: vi.fn(),
   rendererSessionPersistenceFlushBlocksShutdown: vi.fn()
 }))
@@ -230,6 +251,10 @@ beforeEach(() => {
   vi.stubEnv('OPEN_SCIENCE_ALLOW_MULTI_INSTANCE', '0')
   vi.clearAllMocks()
   f.ready = false
+  f.processAlive = true
+  f.mainWindows = []
+  f.readLifetime.mockResolvedValue(undefined)
+  f.flush.mockResolvedValue('completed')
   f.windowsStartup.mockResolvedValue(undefined)
   f.handlers.clear()
   f.select.mockReturnValue({ backend: 'mac-keychain', appName: 'Open-Science (DEV)', exists: true })
@@ -790,3 +815,335 @@ it.each(['ready', 'checking-to-ready', 'checking-abort'] as const)(
     }
   }
 )
+
+const restartConfiguration = {
+  configRoot: '/test/config',
+  profilePath: '/test/profile',
+  port: 44123,
+  credentialStore: 'os' as const,
+  passwordStore: 'basic'
+}
+const restartGeneration = 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'
+
+type RecoverableDesktopFixture = {
+  window: import('electron').BrowserWindow
+  event: { sender: import('electron').WebContents; senderFrame: object }
+  callbacks: Parameters<typeof import('./desktop-runtime-client').connectDesktopRuntime>[0]
+  lifecycle: import('./app-lifecycle').AppLifecycleDeps
+  getState(): import('../shared/desktop-runtime-recovery').DesktopRuntimeRecoveryState
+  failReplacement(): Promise<void>
+  restart(): Promise<'blocked' | 'restarting'>
+}
+
+const startRecoverableDesktop = async (
+  source: 'cookies' | 'application-database' = 'cookies'
+): Promise<RecoverableDesktopFixture> => {
+  const { BrowserWindow } = await import('electron')
+  const { isMainWindow } = await import('./windows')
+  const { DesktopBackendStartupError } = await import('./backend-startup')
+  const frame = {}
+  const window = {
+    isDestroyed: () => false,
+    webContents: { id: 11, mainFrame: frame, isDestroyed: () => false, send: vi.fn() }
+  } as unknown as import('electron').BrowserWindow
+  f.mainWindows = [window]
+  vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(window)
+  vi.mocked(isMainWindow).mockReturnValue(true)
+  f.lifecycle.mockReturnValue({
+    showMainWindow: vi.fn(),
+    getMainWindow: () => window,
+    isMainWindowHidden: () => false,
+    onSystemShutdown: vi.fn()
+  })
+  const client = {
+    ownsRuntime: () => false,
+    processId: () => 123,
+    runtimeInfo: () => ({
+      generation: restartGeneration,
+      control: 'granted',
+      startupOptions: { ...restartConfiguration, dataRoot: '/test/current-data', host: '127.0.0.1' }
+    }),
+    startupState: () => ({ phase: 'checking' }),
+    invokeHost: async () => ({ locale: 'en' }),
+    close: vi.fn(),
+    waitForStopped: vi.fn(async () => ({ release: vi.fn() }))
+  }
+  let callbacks!: Parameters<typeof import('./desktop-runtime-client').connectDesktopRuntime>[0]
+  f.connect.mockImplementation(async (options) => {
+    callbacks = options
+    return client
+  })
+  f.launch.mockResolvedValue({})
+  await import('./index')
+  await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalledOnce())
+  expect(f.report).not.toHaveBeenCalled()
+  const event = { sender: window.webContents, senderFrame: frame }
+  const getState = (): import('../shared/desktop-runtime-recovery').DesktopRuntimeRecoveryState =>
+    f.handlers.get('desktop-runtime:get-state')!(
+      event
+    ) as import('../shared/desktop-runtime-recovery').DesktopRuntimeRecoveryState
+  const lifecycle = f.lifecycle.mock.calls[0][0] as import('./app-lifecycle').AppLifecycleDeps
+  const failReplacement = async (): Promise<void> => {
+    f.launch.mockRejectedValue(
+      new DesktopBackendStartupError(
+        'Profile inventory is busy.',
+        'credentials',
+        true,
+        '/test/logs',
+        {
+          protocolVersion: 1,
+          attemptId: restartGeneration,
+          stage: 'credentials',
+          kind: 'failed',
+          code: 'credential-unavailable',
+          reason: 'ciphertext-inventory-unavailable',
+          diagnostic: {
+            code: 'inventory-failed',
+            source,
+            stage: 'read-files',
+            reason: 'operation-failed',
+            systemCode: 'EBUSY'
+          }
+        }
+      )
+    )
+    f.processAlive = false
+    callbacks.onDisconnect(new Error('Fixture service exited.'))
+    await vi.waitFor(() => expect(getState().reason).toBe('startup-failed'))
+  }
+  return {
+    window,
+    event,
+    callbacks,
+    lifecycle,
+    getState,
+    failReplacement,
+    restart: () =>
+      f.handlers.get('desktop-runtime:restart-app')!(event) as Promise<'blocked' | 'restarting'>
+  }
+}
+
+it('keeps the desktop open when any recovery restart save fails', async () => {
+  const desktop = await startRecoverableDesktop()
+  await desktop.failReplacement()
+  const second = {
+    isDestroyed: () => false,
+    webContents: { id: 12, mainFrame: {}, isDestroyed: () => false, send: vi.fn() }
+  } as unknown as import('electron').BrowserWindow
+  f.mainWindows.push(second)
+  f.flush.mockResolvedValueOnce('completed').mockResolvedValueOnce('renderer-failed')
+  expect(await desktop.restart()).toBe('blocked')
+  const { createElectronSessionPersistenceFlush } =
+    await import('./session-persistence/renderer-flush')
+  expect(createElectronSessionPersistenceFlush).toHaveBeenCalledWith(
+    expect.any(Function),
+    undefined,
+    'recovery-restart'
+  )
+  expect(f.flush).toHaveBeenCalledTimes(2)
+  expect(f.app.quit).not.toHaveBeenCalled()
+  expect(f.app.relaunch).not.toHaveBeenCalled()
+  expect(desktop.getState().closing).toBe(false)
+  await desktop.lifecycle.beforeExit?.()
+  expect(f.app.relaunch).not.toHaveBeenCalled()
+})
+
+it('admits a saved recovery restart through quit and schedules its successor only before exit', async () => {
+  const desktop = await startRecoverableDesktop()
+  await desktop.failReplacement()
+  const authorization = {
+    version: 1 as const,
+    generation: restartGeneration,
+    explicit: false,
+    stopping: true,
+    reason: 'disconnect' as const
+  }
+  f.readLifetime.mockResolvedValue(authorization)
+  expect(await desktop.restart()).toBe('restarting')
+  expect(f.app.quit).toHaveBeenCalledOnce()
+  expect(f.app.relaunch).not.toHaveBeenCalled()
+  expect(await desktop.lifecycle.flushSessionPersistence()).toBe('completed')
+  expect(f.flush).toHaveBeenCalledTimes(2)
+  await desktop.lifecycle.beforeExit?.()
+  const { readDesktopRecoveryLaunch } = await import('./desktop-recovery-restart')
+  expect(f.app.relaunch).toHaveBeenCalledOnce()
+  const relaunch = f.app.relaunch.mock.calls[0][0] as { args: string[] }
+  expect(readDesktopRecoveryLaunch(relaunch.args)).toEqual({
+    configuration: restartConfiguration,
+    authorization
+  })
+  expect(JSON.stringify(relaunch)).not.toContain('synthetic-profile-ciphertext')
+  expect(JSON.stringify(relaunch)).not.toContain('dataRoot')
+  await desktop.lifecycle.beforeExit?.()
+  expect(f.app.relaunch).toHaveBeenCalledOnce()
+})
+
+it.each(['connected', 'application-database'] as const)(
+  'does not expose application restart for a %s recovery state',
+  async (state) => {
+    const desktop = await startRecoverableDesktop(state === 'connected' ? 'cookies' : state)
+    if (state !== 'connected') await desktop.failReplacement()
+    expect(await desktop.restart()).toBe('blocked')
+    expect(f.flush).not.toHaveBeenCalled()
+    expect(f.app.quit).not.toHaveBeenCalled()
+    expect(f.app.relaunch).not.toHaveBeenCalled()
+  }
+)
+
+it.each(['abort', 'error', 'cancelled', 'admission-release'] as const)(
+  'clears the recovery restart intention after quit %s',
+  async (cancellation) => {
+    const desktop = await startRecoverableDesktop()
+    await desktop.failReplacement()
+    expect(await desktop.restart()).toBe('restarting')
+    if (cancellation === 'abort') await desktop.lifecycle.abortQuitPreparation()
+    else if (cancellation === 'error')
+      desktop.lifecycle.onQuitError?.(new Error('Fixture quit failed.'))
+    else if (cancellation === 'cancelled') desktop.lifecycle.onQuitCancelled?.()
+    else desktop.lifecycle.holdSettingsInstallAdmission()()
+    f.handlers.get('desktop-runtime:quit')!(desktop.event)
+    await desktop.lifecycle.beforeExit?.()
+    expect(f.app.relaunch).not.toHaveBeenCalled()
+    expect(desktop.getState().closing).toBe(false)
+  }
+)
+
+it('honors Quit chosen while recovery restart authorization is still being read', async () => {
+  const desktop = await startRecoverableDesktop()
+  await desktop.failReplacement()
+  let read!: (value: undefined) => void
+  f.readLifetime.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        read = resolve
+      })
+  )
+  const restarting = desktop.restart()
+  f.handlers.get('desktop-runtime:quit')!(desktop.event)
+  read(undefined)
+  expect(await restarting).toBe('blocked')
+  expect(f.app.quit).toHaveBeenCalledOnce()
+  expect(f.flush).not.toHaveBeenCalled()
+  await desktop.lifecycle.beforeExit?.()
+  expect(f.app.relaunch).not.toHaveBeenCalled()
+})
+
+it('cancels the successor when the lifecycle persistence drain fails after restart admission', async () => {
+  const desktop = await startRecoverableDesktop()
+  await desktop.failReplacement()
+  expect(await desktop.restart()).toBe('restarting')
+  f.flush.mockResolvedValueOnce('renderer-failed')
+  expect(await desktop.lifecycle.flushSessionPersistence()).toBe('renderer-failed')
+  await desktop.lifecycle.beforeExit?.()
+  expect(f.app.relaunch).not.toHaveBeenCalled()
+})
+
+it.each(['system', 'update'] as const)(
+  'does not reopen the application during %s shutdown',
+  async (trigger) => {
+    const desktop = await startRecoverableDesktop()
+    await desktop.failReplacement()
+    expect(await desktop.restart()).toBe('restarting')
+    const { markApplicationShutdownTrigger, clearApplicationShutdownTrigger } =
+      await import('./application-shutdown-trigger')
+    markApplicationShutdownTrigger(trigger)
+    await desktop.lifecycle.beforeExit?.()
+    expect(f.app.relaunch).not.toHaveBeenCalled()
+    clearApplicationShutdownTrigger()
+    f.handlers.get('desktop-runtime:quit')!(desktop.event)
+    await desktop.lifecycle.beforeExit?.()
+    expect(f.app.relaunch).not.toHaveBeenCalled()
+  }
+)
+
+it('starts a recovery successor with its reviewed profile and newly captured inventory', async () => {
+  const argv = process.argv
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  const configuration = {
+    ...restartConfiguration,
+    configRoot: '/test/reviewed-config',
+    profilePath: '/test/reviewed-profile',
+    port: 44189
+  }
+  const authorization = {
+    version: 1 as const,
+    generation: restartGeneration,
+    explicit: false,
+    stopping: true,
+    reason: 'disconnect' as const
+  }
+  const launch = { configuration, authorization }
+  process.argv = [
+    'app',
+    '--credential-store=file',
+    '--open-science-recovery-launch=' + Buffer.from(JSON.stringify(launch)).toString('base64url')
+  ]
+  const fresh = Buffer.from('fresh-current-inventory')
+  f.inventory.mockReturnValueOnce([fresh])
+  f.readLifetime.mockResolvedValue(authorization)
+  f.launch.mockImplementation(async (options) => {
+    await options.beforeLaunch?.()
+    throw new Error('Fixture successor launch completed its admission checks.')
+  })
+  try {
+    await import('./index')
+    await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+    expect(f.app.setPath).toHaveBeenCalledWith('userData', configuration.profilePath)
+    expect(f.inventory).toHaveBeenCalledExactlyOnceWith({
+      configRoot: configuration.configRoot,
+      profilePath: configuration.profilePath
+    })
+    expect(f.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configRoot: configuration.configRoot,
+        profilePath: configuration.profilePath,
+        credentialInventory: [fresh],
+        args: ['--credential-store=os', '--password-store=basic', '--serve=44189']
+      })
+    )
+    expect(f.readLifetime).toHaveBeenCalledWith(configuration.configRoot)
+    expect(f.app.commandLine.appendSwitch).toHaveBeenCalledWith('password-store', 'basic')
+    expect(f.inventory.mock.invocationCallOrder[0]).toBeLessThan(
+      f.app.whenReady.mock.invocationCallOrder[0]
+    )
+  } finally {
+    process.argv = argv
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
+it('removes an earlier recovery authorization from a later ordinary runtime relaunch', async () => {
+  const argv = process.argv
+  const authorization = {
+    version: 1 as const,
+    generation: restartGeneration,
+    explicit: false,
+    stopping: true,
+    reason: 'disconnect' as const
+  }
+  process.argv = [
+    'app',
+    '--open-science-recovery-launch=' +
+      Buffer.from(JSON.stringify({ configuration: restartConfiguration, authorization })).toString(
+        'base64url'
+      )
+  ]
+  try {
+    const desktop = await startRecoverableDesktop()
+    const request = { request: { operation: 'runtime-relaunch' } } as Parameters<
+      NonNullable<typeof desktop.callbacks.onNativeRequest>
+    >[0]
+    expect(await desktop.callbacks.onNativeRequest?.(request, new AbortController().signal)).toBe(
+      true
+    )
+    desktop.callbacks.onNativeResponseSent?.(request, true)
+    await vi.waitFor(() => expect(f.app.relaunch).toHaveBeenCalledOnce())
+    const { readDesktopRecoveryLaunch } = await import('./desktop-recovery-restart')
+    expect(
+      readDesktopRecoveryLaunch((f.app.relaunch.mock.calls[0][0] as { args: string[] }).args)
+    ).toEqual({ configuration: restartConfiguration, mode: 'ordinary' })
+  } finally {
+    process.argv = argv
+  }
+})

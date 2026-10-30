@@ -229,7 +229,10 @@
     "src/main/service-process-recovery.ts",
     "src/main/service-process-recovery.test.ts",
     "src/main/service-process-recovery.integration.test.ts",
-    "src/main/local-service-stop-intent.integration.test.ts"
+    "src/main/local-service-stop-intent.integration.test.ts",
+    "src/main/desktop-recovery-restart.ts",
+    "src/main/desktop-recovery-restart.test.ts",
+    "src/main/node-fatal-errors.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -417,7 +420,9 @@
       "scripts/local-service-cleanup.test.ts",
       "src/main/service-process-recovery.test.ts",
       "src/main/service-process-recovery.integration.test.ts",
-      "src/main/local-service-stop-intent.integration.test.ts"
+      "src/main/local-service-stop-intent.integration.test.ts",
+      "src/main/desktop-recovery-restart.test.ts",
+      "src/main/node-fatal-errors.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

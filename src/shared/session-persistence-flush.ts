@@ -4,6 +4,7 @@ export const SESSION_PERSISTENCE_FLUSH_ABORTED_CHANNEL = 'sessions:flush-aborted
 
 export type SessionPersistenceFlushRequest = {
   requestId: string
+  purpose?: 'recovery-restart'
   // Web events are replayed to every connected renderer; this transient identity scopes handoffs
   // to the tab that issued the data-root command. Electron's window-specific IPC omits it.
   targetLifecycleClientId?: string
