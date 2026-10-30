@@ -1,10 +1,16 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { dirname, join } from 'node:path'
+import sharp from 'sharp'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
-import { test } from './fixtures/electron-app'
+import { test, type ElectronApp } from './fixtures/electron-app'
 import { createProject, openProjectSession } from './certification/helpers'
 import { submitPromptViaUi } from './fixtures/conversation'
 import { openSettingsPage } from './fixtures/settings-preferences'
+import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { SideChatSnapshot } from '../src/shared/side-chat'
 
 const liveSettings = process.env.OPEN_SCIENCE_E2E_LIVE_SETTINGS
 const liveModel = process.env.OPEN_SCIENCE_E2E_LIVE_MODEL
@@ -16,17 +22,33 @@ const initialPrompt =
   // Explicit dynamic execution is reviewed in Ask mode; plain analysis would not prompt.
   'Use the Notebook REPL tool repl_execute to execute exactly eval("console.log(\'PI_REPL_OK\')"). Do not use any other tool. After successful execution, reply exactly PI_TURN_OK.'
 
-const selectPi = async (page: Page): Promise<void> => {
+const selectPi = async (page: Page, app?: ElectronApp): Promise<void> => {
+  const runtime = process.env.OPEN_SCIENCE_E2E_PI_RUNTIME
+  if (runtime && app) {
+    const root = dirname(await app.createTestDirectory('pi-runtime-seed'))
+    await cp(runtime, join(root, 'storage/pi-managed'), { recursive: true, errorOnExist: true })
+  }
   const settings = await openSettingsPage(page, 'Agent')
+  if (runtime && app) {
+    await settings.getByRole('button', { name: 'Re-detect', exact: true }).click()
+    await expect(settings.getByRole('button', { name: 'Re-detect', exact: true })).toBeEnabled({
+      timeout: 60_000
+    })
+  }
   const pi = settings.getByRole('radio', { name: 'Use Pi', exact: true })
   const install = settings.getByRole('button', { name: 'Install Pi', exact: true })
+  await expect(pi.or(install)).toBeVisible({ timeout: 60_000 })
   if (await install.isVisible()) {
+    await expect(settings.getByRole('button', { name: 'Re-detect', exact: true })).toBeEnabled()
+    await page.evaluate(() => window.api.settings.getPreflight())
+    console.log('PI_HARNESS installing managed runtime')
     await install.click()
     await page
       .getByRole('menuitem', { name: 'App-managed download (recommended)', exact: true })
       .click()
   }
-  await expect(pi).toBeVisible({ timeout: 180_000 })
+  await expect(pi).toBeVisible({ timeout: 360_000 })
+  console.log('PI_HARNESS selecting Pi')
   await pi.click()
   const confirmation = page.getByRole('alertdialog', { name: 'Switch to Pi?', exact: true })
   await expect(confirmation).toBeVisible()
@@ -341,6 +363,290 @@ test('Pi delegates a task to a Pi Subagent and receives its result', async ({ ap
   ])
   await page.screenshot({ path: testInfo.outputPath('pi-delegation.png'), fullPage: true })
   await testInfo.attach('pi-delegation-run', { body: output, contentType: 'application/json' })
+})
+
+test('Pi sees Notebook images, image uploads and PDF attachments on a visual model', async ({
+  app
+}, testInfo) => {
+  test.skip(
+    !liveSettings || !liveModel,
+    'Requires OPEN_SCIENCE_E2E_LIVE_SETTINGS and OPEN_SCIENCE_E2E_LIVE_MODEL with a real visual provider.'
+  )
+  test.setTimeout(720_000)
+  const image = async (marker: string): Promise<Buffer> =>
+    sharp(
+      Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="240"><rect width="960" height="240" fill="white"/><text x="40" y="150" font-family="sans-serif" font-size="64" fill="black">${marker}</text></svg>`
+      )
+    )
+      .png()
+      .toBuffer()
+  const notebookMarker = `VISION-${randomUUID().slice(0, 8).toUpperCase()}`
+  const uploadMarker = `UPLOAD-${randomUUID().slice(0, 8).toUpperCase()}`
+  const pdfMarker = `PDF-${randomUUID().slice(0, 8).toUpperCase()}`
+  await app.completeOnboarding()
+  let page = await app.configureLiveAgent(liveSettings!, liveModel!)
+  await page.evaluate(() => window.api.settings.setDefaultPermissionProfile({ profile: 'ask' }))
+  await selectPi(page, app)
+  const projectId = await createProject(page, 'Pi visual evidence')
+  const session = async (): Promise<PersistedChatSession | undefined> =>
+    (await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)).find(
+      (candidate) => candidate.projectId === projectId
+    )
+  const turn = async (prompt: string): Promise<void> => {
+    const before =
+      (await session())?.messages.filter((message) => message.role === 'agent').length ?? 0
+    await submitPromptViaUi(page, prompt)
+    await expect
+      .poll(
+        async () => {
+          const current = await session()
+          return (
+            current?.status === 'idle' &&
+            current.messages.filter((message) => message.role === 'agent').length > before
+          )
+        },
+        { timeout: 150_000 }
+      )
+      .toBe(true)
+  }
+  console.log('PI_VISUAL workspace')
+  await turn(
+    'Use repl_execute to run exactly console.log("PI_IMAGE_WORKSPACE_READY"). Then reply READY.'
+  )
+  const current = await session()
+  expect(current?.agentFrameworkId).toBe('pi')
+  const initialRuns = await app.readNotebookFixtureRuns(projectId, current!.id)
+  const workspace = initialRuns.find((run) =>
+    run.script.includes('PI_IMAGE_WORKSPACE_READY')
+  )!.cwdBefore
+  expect(workspace).toEqual(expect.any(String))
+  await writeFile(join(workspace!, 'visual-probe.png'), await image(notebookMarker))
+  console.log('PI_VISUAL host.viewImage')
+  await turn(
+    'Use repl_execute to run exactly await host.viewImage({ path: "visual-probe.png" }). ' +
+      'Then read the code printed inside the returned image and reply only with that code. ' +
+      'Do not open the file with any other tool. If the tool fails, report the error and stop; do not retry.'
+  )
+  const imageRuns = (await app.readNotebookFixtureRuns(projectId, current!.id)).filter((run) =>
+    run.script.includes('host.viewImage(')
+  )
+  expect(imageRuns).toHaveLength(1)
+  expect(imageRuns[0].status, JSON.stringify(imageRuns[0].text)).toBe('completed')
+  await expect(page.getByText(notebookMarker, { exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('pi-notebook-vision.png'), fullPage: true })
+  console.log('PI_VISUAL upload')
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'image-probe.png',
+    mimeType: 'image/png',
+    buffer: await image(uploadMarker)
+  })
+  await turn(
+    'Read the code printed inside the attached image. Reply only with that code. Do not call tools.'
+  )
+  await expect(page.getByText(uploadMarker, { exact: true })).toBeVisible()
+  console.log('PI_VISUAL PDF')
+  const pdf = await PDFDocument.create()
+  const pdfPage = pdf.addPage([600, 300])
+  pdfPage.drawText(pdfMarker, {
+    x: 40,
+    y: 180,
+    size: 32,
+    font: await pdf.embedFont(StandardFonts.Helvetica)
+  })
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'document-probe.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from(await pdf.save())
+  })
+  await turn('Read the code in the attached PDF. Reply only with that code.')
+  await expect(page.getByText(pdfMarker, { exact: true })).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('pi-image-pdf-attachments.png'),
+    fullPage: true
+  })
+  console.log('PI_VISUAL restart')
+  page = await app.restart()
+  await openProjectSession(
+    page,
+    'Pi visual evidence',
+    'Use repl_execute to run exactly console.log'
+  )
+  await turn(
+    'What was the code in the uploaded image (not the Notebook image or PDF)? Reply only with that code. Do not call tools.'
+  )
+  await expect(page.getByText(uploadMarker, { exact: true })).toHaveCount(2)
+  await testInfo.attach('pi-visual-evidence', {
+    body: JSON.stringify(
+      {
+        model: liveModel,
+        notebookMarker,
+        uploadMarker,
+        pdfMarker,
+        imageRuns: imageRuns.map((run) => ({ status: run.status, script: run.script }))
+      },
+      null,
+      2
+    ),
+    contentType: 'application/json'
+  })
+})
+
+test('Pi Side chat changes model with context and is discarded on an in-flight restart', async ({
+  app
+}, testInfo) => {
+  test.skip(
+    !liveSettings || !liveModel || !switchProvider,
+    'Requires live settings and OPEN_SCIENCE_E2E_LIVE_SWITCH_PROVIDER with a second available model.'
+  )
+  test.setTimeout(720_000)
+  const second = JSON.parse(switchProvider!) as {
+    baseUrl: string
+    key: string
+    model: string
+    apiEndpoints: ['chat-completions' | 'responses' | 'messages']
+  }
+  expect(second.model).not.toBe(liveModel)
+  await app.completeOnboarding()
+  let page = await app.configureLiveAgent(liveSettings!, liveModel!)
+  await page.evaluate(async (provider) => {
+    const snapshot = await window.api.settings.upsertProvider({
+      type: 'custom',
+      name: 'Pi Side chat switch target',
+      supportsImageInput: true,
+      ...provider
+    })
+    if (!snapshot.providers.some((item) => item.name === 'Pi Side chat switch target'))
+      throw new Error('The second visual provider was not registered.')
+  }, second)
+  await selectPi(page, app)
+  const projectId = await createProject(page, 'Pi Side chat model and restart')
+  const mainMarker = `MAIN-${randomUUID().slice(0, 8)}`
+  const sideMarker = `SIDE-${randomUUID().slice(0, 8)}`
+  await submitPromptViaUi(page, `Remember ${mainMarker}. Reply only READY. Do not call tools.`)
+  await expect(page.getByText('READY', { exact: true })).toBeVisible({ timeout: 120_000 })
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
+  const parent = (
+    await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  ).find((candidate) => candidate.projectId === projectId)!
+  await page.getByTestId('branch-send-menu-trigger').click()
+  await page.getByTestId('menu-side-chat').click()
+  await page
+    .getByPlaceholder('Follow up…')
+    .fill(`Remember ${sideMarker}. Reply only SIDE_READY. Do not call tools.`)
+  await page.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
+  await expect(page.getByText('SIDE_READY', { exact: true })).toBeVisible({ timeout: 120_000 })
+  const loadChat = async (): Promise<SideChatSnapshot | undefined> =>
+    (await page.evaluate(() => window.api.sideChat.list())).chats.find(
+      (chat) => chat.parentSessionId === parent.id
+    )
+  await expect.poll(async () => (await loadChat())?.running).toBe(false)
+  const side = await loadChat()
+  expect(side?.sideSessionId).toBeTruthy()
+  console.log('PI_SIDE model change')
+  const sidePanel = page.getByRole('tabpanel', { name: 'Side chat', exact: true })
+  await sidePanel.getByRole('button', { name: 'Select model', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^Model/ }).hover()
+  await page.getByRole('menuitemradio', { name: second.model, exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(sidePanel.getByRole('button', { name: 'Select model', exact: true })).toHaveText(
+    second.model
+  )
+  await sidePanel
+    .getByPlaceholder('Follow up…')
+    .fill('What is the SIDE marker from this chat? Reply only with that marker. Do not call tools.')
+  await sidePanel.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
+  await expect
+    .poll(
+      async () => {
+        const chat = await loadChat()
+        return (
+          !chat?.running &&
+          chat?.entries.some(
+            (entry) =>
+              entry.kind === 'message' &&
+              entry.role === 'assistant' &&
+              entry.text.trim() === sideMarker
+          )
+        )
+      },
+      { timeout: 120_000 }
+    )
+    .toBe(true)
+  expect((await loadChat())?.modelSelection?.model).toBe(second.model)
+  const root = dirname(await app.createTestDirectory('side-chat-evidence'))
+  const nativeRoot = join(root, 'storage/runtime-support/side-chat', side!.sideSessionId!)
+  const models = new Set<string>()
+  for (const name of await readdir(nativeRoot, { recursive: true })) {
+    if (!name.endsWith('.jsonl')) continue
+    for (const line of (await readFile(join(nativeRoot, name), 'utf8')).trim().split('\n')) {
+      const entry = JSON.parse(line)
+      if (entry.message?.role === 'assistant' && typeof entry.message.model === 'string')
+        models.add(entry.message.model)
+    }
+  }
+  expect([...models].some((model) => model.includes(`${liveModel}@`))).toBe(true)
+  expect([...models].some((model) => model.includes(`${second.model}@`))).toBe(true)
+  await page.screenshot({
+    path: testInfo.outputPath('pi-side-chat-model-change.png'),
+    fullPage: true
+  })
+  console.log('PI_SIDE in-flight restart')
+  const entriesBeforePrompt = (await loadChat())!.entries.length
+  await sidePanel
+    .getByPlaceholder('Follow up…')
+    .fill('Write a detailed 5000-word essay about statistical inference. Do not call tools.')
+  await sidePanel.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
+  await expect.poll(async () => (await loadChat())?.running).toBe(true)
+  await expect
+    .poll(
+      async () =>
+        (await loadChat())?.entries
+          .slice(entriesBeforePrompt)
+          .some(
+            (entry) =>
+              entry.kind === 'message' && entry.role === 'assistant' && entry.text.length > 0
+          ),
+      { timeout: 120_000 }
+    )
+    .toBe(true)
+  await expect(
+    page.getByRole('button', { name: 'Cancel Side chat response', exact: true })
+  ).toBeVisible()
+  const restarting = app.restart()
+  const confirmQuit = page.getByRole('button', { name: 'Quit', exact: true })
+  await expect(confirmQuit).toBeVisible({ timeout: 5_000 })
+  await confirmQuit.click()
+  page = await restarting
+  expect((await page.evaluate(() => window.api.sideChat.list())).chats).toEqual([])
+  await expect
+    .poll(() => readdir(join(root, 'storage/runtime-support/side-chat')))
+    .not.toContain(side!.sideSessionId)
+  await openProjectSession(page, 'Pi Side chat model and restart', `Remember ${mainMarker}`)
+  await expect(page.getByPlaceholder('Follow up…')).toHaveCount(0)
+  await submitPromptViaUi(page, 'What is the MAIN marker? Reply only with it. Do not call tools.')
+  await expect(page.getByText(mainMarker, { exact: true })).toBeVisible({ timeout: 120_000 })
+  const recovered = (
+    await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  ).find((candidate) => candidate.id === parent.id)!
+  expect(
+    recovered.messages.some(
+      (message) => message.role === 'agent' && message.content.includes(sideMarker)
+    )
+  ).toBe(false)
+  await testInfo.attach('pi-side-chat-evidence', {
+    body: JSON.stringify(
+      {
+        models: [...models],
+        modelSwitchRetainedSideContext: true,
+        restartDuringPrompt: 'discarded',
+        mainHistoryPreserved: true
+      },
+      null,
+      2
+    ),
+    contentType: 'application/json'
+  })
 })
 
 test('Pi stops a running turn and accepts the next prompt', async ({ app }) => {

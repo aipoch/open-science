@@ -524,6 +524,46 @@ No settings, database rows, enum values or permission scopes are added. Side cha
 live under the existing temporary Side chat profile and are removed with it; restart discards Side
 chats as before.
 
+### Image inspection and attachments with Pi
+
+Select a model configured for image input before asking Pi to inspect pixels. The app-owned Pi
+route supports `host.viewImage` in foreground Notebook execution, using the same authorized
+Artifact/Upload versions or workspace-relative paths, crop options and image budgets as the other
+certified backends. Text-only models and mismatched routes remain unavailable. Native Pi filesystem
+and shell tools remain disabled; enabling image inspection does not grant additional file access.
+
+Image uploads use the existing attachment path. PDF attachments use the application's PDF
+preparation/extraction path, not native PDF input to Pi. Reading extracted PDF prose does not certify
+visual interpretation of scanned pages, figures or tables; those require actual image evidence.
+
+### Pi verification boundaries
+
+The macOS source-build checks are not a certification of every model, transport or packaged release.
+Keep these boundaries explicit when evaluating or distributing Pi:
+
+- **Automatic compaction:** full-window long-context compaction followed by native resume/replay is
+  not certified. Preserve native JSONL. Missing-session recovery uses budgeted selected-branch app
+  history and is not lossless reconstruction of Pi's compacted native context.
+- **Remote compute:** shared host/remote-compute contracts are covered, but a live Pi conversation
+  executing on a remote compute host is not certified by those checks.
+- **Windows/Linux and packaged releases:** local macOS Electron checks and package-resource
+  inspection do not establish Windows/Linux installer execution or a launched packaged release.
+  Those require the matching platform lanes and live installer checks; skipped or approval-blocked
+  fork workflows are not passing evidence.
+- **Installer replacement failures:** preparation failure preserves the previous runtime. Rename or
+  disk-full failure during replacement has not been live-verified; do not extend preparation-failure
+  evidence to those cases.
+- **Side chat:** model changes use the chat's own selected target and bounded history. Side chats
+  remain temporary, including during an active prompt: an application/backend restart discards the
+  chat instead of continuing it. A renderer reload is not an application restart. Main history is
+  separate; queued relay is delivered only on Main's next user turn.
+- **Visual scope:** an image-capable model is required. Text-PDF extraction, image uploads and
+  foreground `host.viewImage` are distinct paths; passing one does not certify arbitrary PDFs,
+  every provider wire, or every visual model.
+
+This capability change introduces no database migration, persisted enum, permission scope or
+history-format change. Existing text-only settings and historical conversations remain valid.
+
 ## Historical compatibility requiring review
 
 The [release compatibility policy](compatibility.md) defines stable interfaces and the direction
