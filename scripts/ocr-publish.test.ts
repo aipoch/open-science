@@ -8,7 +8,7 @@ import { publishOcrAssets, validateOcrCatalog, verifyOcrAssets } from './publish
 type Asset = { file: string; url: string; size: number; sha256: string }
 type Workflow = {
   on: { workflow_dispatch: { inputs: { dry_run: { default: boolean } } } }
-  jobs: Record<string, { steps: { name: string; if?: string }[] }>
+  jobs: Record<string, { steps: { name: string; if?: string; with?: { path?: string } }[] }>
 }
 
 const environment = {
@@ -85,6 +85,14 @@ it('keeps publication dry-run by default and verifies after publication', async 
   )
   expect(steps.find((step) => step.name === 'Publish immutable OCR assets')?.if).toBe(
     '${{ !inputs.dry_run }}'
+  )
+  expect(steps.find((step) => step.name === 'Upload verified candidates')?.with).toEqual(
+    expect.objectContaining({
+      path: expect.stringContaining('out/ocr/licenses.txt')
+    })
+  )
+  expect(steps.find((step) => step.name === 'Upload verified candidates')?.with?.path).not.toBe(
+    'out/ocr'
   )
   expect(JSON.stringify(workflow)).not.toContain('contents: write')
 })

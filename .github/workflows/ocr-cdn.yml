@@ -57,7 +57,10 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ocr-cdn-assets
-          path: out/ocr
+          path: |
+            out/ocr/ocr-worker.mjs
+            out/ocr/ocr-engine.mjs
+            out/ocr/licenses.txt
           if-no-files-found: error
           retention-days: 30
       - name: Configure AWS credentials
