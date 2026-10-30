@@ -4,6 +4,7 @@ import { isRecord } from '../value-guards'
 
 type MessageIdentity = { sessionId: string; messageId: string }
 type Classification = { summary: boolean; finished: boolean; succeeded: boolean }
+const MAX_CACHE_ENTRIES = 256
 
 const classificationError = (): Error =>
   new Error(
@@ -94,6 +95,8 @@ export function createOpenCodeCompactionStream(
       const messageId = isRecord(match) && isRecord(match.info) ? match.info.id : undefined
       if (typeof messageId !== 'string' || !messageId.startsWith('msg_'))
         throw classificationError()
+      if (partMessages.size >= MAX_CACHE_ENTRIES)
+        partMessages.delete(partMessages.keys().next().value!)
       partMessages.set(`${identity.sessionId}:${identity.messageId}`, messageId)
       return { ...identity, messageId }
     } catch {
@@ -258,7 +261,7 @@ export function createOpenCodeCompactionStream(
           if (!info) {
             info = await classify(identity)
             // Bound per-connection identity memory; eviction only causes another safe lookup.
-            if (cache.size >= 256) cache.delete(cache.keys().next().value!)
+            if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!)
             cache.set(key, info)
             if (info.summary) {
               controller.enqueue(
