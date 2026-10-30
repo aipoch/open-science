@@ -158,57 +158,6 @@ reply/failure waits and scenario-specific assertions in the caller. The explicit
 `activatePermissionDecisionViaDom` preserves an existing Windows overlay workaround for permission
 state tests; it must not replace real pointer activation in hit-testing or accessibility journeys.
 
-## Live literature-link acceptance
-
-After `npm run build:e2e`, run the opt-in Electron journeys with:
-
-```bash
-OPEN_SCIENCE_LITERATURE_LIVE=1 npx playwright test e2e/literature-client-sync.spec.ts -g 'live literature providers' --workers=1
-```
-
-This uses real Crossref/arXiv services and an isolated desktop profile. It checks that lookup and
-closing the completed metadata review add no library items, focus return, reviewed edits,
-identifier-based reuse, and exact identifiers and edits after a forced restart. A second journey
-opens the same DOI review in two desktop windows and saves from both, waits for both saves to
-finish, then verifies one added item and consistent identities and lists. This exercises concurrent
-user actions, without prescribing a particular internal transaction interleaving.
-
-Cancellation while a lookup is pending remains covered by deterministic browser regressions.
-Provider availability can fail these acceptance runs; they are skipped by default and do not replace
-deterministic browser, parser, or database regressions. Composition events in automated tests do not
-certify a native system input method. For manual IME acceptance, use an isolated desktop profile:
-compose Pinyin, confirm with Enter without triggering lookup validation, select a Chinese candidate,
-then replace it with a valid DOI and confirm that ordinary Enter opens review and Escape restores
-focus to Add. Capture native composition/key events as evidence; avoid interrupting composition with
-screenshots or clipboard operations.
-
-For installer acceptance, copy the application from a freshly built installer into an isolated
-installation directory, then point the same journeys at its executable. For example, on macOS:
-
-```bash
-OPEN_SCIENCE_E2E_EXECUTABLE="/path/to/installed/Open-Science.app/Contents/MacOS/Open-Science" \
-OPEN_SCIENCE_E2E_MACOS_KEYCHAIN="/path/to/disposable/test.keychain-db" \
-OPEN_SCIENCE_LITERATURE_LIVE=1 npx playwright test e2e/literature-client-sync.spec.ts \
-  -g 'live literature providers' --workers=1 --output=test-results/packaged-literature
-```
-
-The fixture verifies and prints the packaged executable identity and `app.asar` path, and uses a
-disposable data profile. Record the installer digest, actual OS/architecture, build overrides and
-results; an older installed release does not validate the current changes. Local ad-hoc packages
-do not certify release signing, notarization or Gatekeeper behavior. Repeat the installed-app and
-native-input checks on each supported desktop platform; unavailable platforms remain unverified.
-
-Packaged macOS tests do not load the source credential mocks. Their isolated HOME has no login
-Keychain, so prepare an unlocked disposable test Keychain containing a random `Open-Science Key`
-under `Open-Science Safe Storage`, with access restricted to the installed executable and its
-bundled backend `credential_secret` helper. Pass its path through `OPEN_SCIENCE_E2E_MACOS_KEYCHAIN`;
-the existing fixture binds it only under the isolated HOME. Create `Library/Preferences` in the
-preparation HOME before configuring its search list. Reuse the same test key across application
-restarts and remove the owned Keychain after all application/backend processes have stopped.
-Check that the operator's normal Keychain search list and default remain unchanged. Without these
-prerequisites, credential startup can fail before the literature page opens; that is not a failed
-literature-import assertion. The CI Keychain wrapper remains restricted to disposable hosted jobs.
-
 ## Fast impact-registration gate
 
 After dependencies are installed, run this fixed registration suite from the repository root:
