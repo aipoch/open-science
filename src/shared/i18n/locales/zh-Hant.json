@@ -7741,7 +7741,8 @@
     "DOI and arXiv links": "DOI 與 arXiv 連結",
     "Review reference details": "核對文獻資訊",
     "Versioned arXiv links use the latest metadata.": "含版本號的 arXiv 連結使用最新的中繼資料。",
-    "Retrieved via {{source}}. Review the reference details before saving.": "已透過 {{source}} 取得文獻資訊，請核對後儲存。",
+    "Retrieved via {{source}}.": "已透過 {{source}} 取得文獻資訊。",
+    "Edit reference details": "編輯文獻資訊",
     "Edit details": "編輯詳細資料",
     "Back to review": "返回確認"
   }

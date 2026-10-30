@@ -73,6 +73,7 @@ export function LiteratureLinkImportDialog({
   }
   return (
     <LiteratureImportDialogFrame
+      className="w-[min(640px,calc(100vw-2rem))]"
       // Metadata lookup is read-only; cancellation remains available while it runs.
       busy={false}
       onClose={close}

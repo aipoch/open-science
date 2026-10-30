@@ -7907,7 +7907,8 @@
     "DOI and arXiv links": "DOI- und arXiv-Links",
     "Review reference details": "Bibliografische Angaben prüfen",
     "Versioned arXiv links use the latest metadata.": "arXiv-Links mit Versionsnummer verwenden die neuesten Metadaten.",
-    "Retrieved via {{source}}. Review the reference details before saving.": "Über {{source}} abgerufen. Prüfen Sie die bibliografischen Angaben vor dem Speichern.",
+    "Retrieved via {{source}}.": "Über {{source}} abgerufen.",
+    "Edit reference details": "Bibliografische Angaben bearbeiten",
     "Edit details": "Details bearbeiten",
     "Back to review": "Zurück zur Überprüfung"
   }

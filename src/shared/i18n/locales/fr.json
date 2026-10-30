@@ -8081,7 +8081,8 @@
     "DOI and arXiv links": "Liens DOI et arXiv",
     "Review reference details": "Vérifier les informations bibliographiques",
     "Versioned arXiv links use the latest metadata.": "Les liens arXiv avec un numéro de version utilisent les métadonnées les plus récentes.",
-    "Retrieved via {{source}}. Review the reference details before saving.": "Informations obtenues via {{source}}. Vérifiez les informations bibliographiques avant l’enregistrement.",
+    "Retrieved via {{source}}.": "Informations obtenues via {{source}}.",
+    "Edit reference details": "Modifier les informations bibliographiques",
     "Edit details": "Modifier les détails",
     "Back to review": "Revenir à la vérification"
   }

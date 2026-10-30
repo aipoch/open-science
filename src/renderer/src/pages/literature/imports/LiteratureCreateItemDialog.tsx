@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog-chrome'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import { LoaderCircle, X } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
@@ -49,6 +50,7 @@ export function LiteratureCreateItemDialog({
   createManualItem: (item?: LiteratureItemInput) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const [editingLinkDetails, setEditingLinkDetails] = useState(false)
   return (
     <Dialog.Root
       open={isCreatingItem}
@@ -69,14 +71,16 @@ export function LiteratureCreateItemDialog({
             <div>
               <Dialog.Title className={dialogTitleClassName}>
                 {dialogItemEditor?.linkSource
-                  ? t('Review reference details')
+                  ? editingLinkDetails
+                    ? t('Edit reference details')
+                    : t('Review reference details')
                   : dialogItemEditor?.file
                     ? t('Import PDF')
                     : t('Add reference')}
               </Dialog.Title>
               <Dialog.Description className={dialogDescriptionClassName}>
                 {dialogItemEditor?.linkSource
-                  ? t('Retrieved via {{source}}. Review the reference details before saving.', {
+                  ? t('Retrieved via {{source}}.', {
                       source: dialogItemEditor.linkSource
                     })
                   : dialogItemEditor?.file
@@ -129,6 +133,7 @@ export function LiteratureCreateItemDialog({
               duplicatePolicy={dialogItemEditor.duplicatePolicy}
               onDuplicatePolicyChange={setDuplicatePolicy}
               onDirtyChange={trackNewMetadataDirty}
+              onEditingChange={setEditingLinkDetails}
               onCancel={closeItemEditor}
               onSave={(item) => {
                 if (isCreatingItem) void createManualItem(item)

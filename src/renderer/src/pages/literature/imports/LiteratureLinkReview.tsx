@@ -27,6 +27,7 @@ export function LiteratureLinkReview({
   duplicatePolicy,
   onDuplicatePolicyChange,
   onDirtyChange,
+  onEditingChange,
   onCancel,
   onSave,
   onRetry
@@ -38,6 +39,7 @@ export function LiteratureLinkReview({
   duplicatePolicy: LiteratureDuplicatePolicy
   onDuplicatePolicyChange: (policy: LiteratureDuplicatePolicy) => void
   onDirtyChange: (dirty: boolean) => void
+  onEditingChange?: (editing: boolean) => void
   onCancel: () => void
   onSave: (item: LiteratureItemInput) => void
   onRetry: () => void
@@ -61,6 +63,10 @@ export function LiteratureLinkReview({
     onDirtyChange(dirty)
     return () => onDirtyChange(false)
   }, [dirty, onDirtyChange])
+  useLayoutEffect(() => {
+    onEditingChange?.(editing)
+    return () => onEditingChange?.(false)
+  }, [editing, onEditingChange])
   useLayoutEffect(() => {
     if (!editing) editButton.current?.focus()
   }, [editing])

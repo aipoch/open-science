@@ -45,8 +45,27 @@ test('linked reference keyboard flow ignores composing Enter and late results af
     await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
   ).toEqual([])
   await review.getByRole('button', { name: 'Edit details', exact: true }).click()
-  await review.getByLabel('Title', { exact: true }).fill('Reviewed browser reference')
-  await review.getByRole('button', { name: 'Back to review', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Edit reference details' })
+  await expect(editor).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(add).toBeFocused()
+  await add.press('Enter')
+  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await input.fill('10.1234/paper')
+  await input.press('Enter')
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+    )
+    .toBe(3)
+  await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(2))
+  await expect(review).toBeVisible()
+  await review.getByRole('button', { name: 'Edit details', exact: true }).click()
+  await expect(editor).toBeVisible()
+  await editor.getByLabel('Title', { exact: true }).fill('Reviewed browser reference')
+  await editor.getByRole('button', { name: 'Back to review', exact: true }).click()
+  await expect(review).toBeVisible()
   await expect(
     review.getByRole('heading', { name: 'Reviewed browser reference', exact: true })
   ).toBeVisible()
@@ -81,6 +100,11 @@ for (const viewport of [
     const add = page.getByRole('button', { name: 'Add', exact: true })
     await add.click()
     await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+    const lookup = page.getByRole('dialog', { name: 'Add from DOI or link' })
+    const lookupWidth = await lookup.evaluate((element) =>
+      parseFloat(getComputedStyle(element).width)
+    )
+    expect(lookupWidth).toBe(Math.min(640, viewport.width - 32))
     await page
       .getByLabel('DOI or arXiv link', { exact: true })
       .fill('https://arxiv.org/abs/2401.12345v2')
@@ -94,9 +118,10 @@ for (const viewport of [
     await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
     const review = page.getByRole('dialog', { name: 'Review reference details' })
     await expect(review).toBeVisible()
-    await expect(
-      review.getByText('Retrieved via arXiv. Review the reference details before saving.')
-    ).toBeVisible()
+    await expect(review.getByText('Retrieved via arXiv.', { exact: true })).toBeVisible()
+    expect(await review.evaluate((element) => parseFloat(getComputedStyle(element).width))).toBe(
+      lookupWidth
+    )
     const title = review.getByRole('heading', {
       name: 'A linked reference with a deliberately long title for reviewing metadata in a narrow window',
       exact: true
@@ -126,7 +151,12 @@ for (const viewport of [
       animations: 'disabled'
     })
     await review.getByRole('button', { name: 'Edit details', exact: true }).click()
-    const doi = review.getByRole('textbox', { name: 'DOI', exact: true })
+    const editor = page.getByRole('dialog', { name: 'Edit reference details' })
+    await expect(editor).toBeVisible()
+    expect(await editor.evaluate((element) => parseFloat(getComputedStyle(element).width))).toBe(
+      lookupWidth
+    )
+    const doi = editor.getByRole('textbox', { name: 'DOI', exact: true })
     await doi.scrollIntoViewIfNeeded()
     expect(await doi.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(
       240
@@ -136,7 +166,8 @@ for (const viewport of [
       path: testInfo.outputPath('linked-reference-dark-narrow-identifiers.png'),
       animations: 'disabled'
     })
-    await review.getByRole('button', { name: 'Back to review', exact: true }).click()
+    await editor.getByRole('button', { name: 'Back to review', exact: true }).click()
+    await expect(review).toBeVisible()
     await expect(title).toBeInViewport({ ratio: 1 })
     await expect(visibleDoi).toBeInViewport({ ratio: 1 })
     await page.keyboard.press('Escape')

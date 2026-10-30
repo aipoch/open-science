@@ -11479,11 +11479,7 @@ describe('LiteratureLibraryPage', () => {
       )
       expect(transact).not.toHaveBeenCalled()
       const dialog = await screen.findByRole('dialog', { name: 'Review reference details' })
-      expect(
-        within(dialog).getByText(
-          `Retrieved via ${source}. Review the reference details before saving.`
-        )
-      ).not.toBeNull()
+      expect(within(dialog).getByText(`Retrieved via ${source}.`)).not.toBeNull()
       expect(within(dialog).queryByLabelText('Title')).toBeNull()
       expect(within(dialog).getByRole('heading', { name: libraryItem.item.title })).not.toBeNull()
       expect(
@@ -11507,6 +11503,7 @@ describe('LiteratureLibraryPage', () => {
         ).not.toBeNull()
       }
       fireEvent.click(within(dialog).getByRole('button', { name: 'Edit details' }))
+      expect(screen.getByRole('dialog', { name: 'Edit reference details' })).toBe(dialog)
       expect((within(dialog).getByLabelText('Title') as HTMLTextAreaElement).value).toBe(
         libraryItem.item.title
       )
@@ -11514,6 +11511,7 @@ describe('LiteratureLibraryPage', () => {
         target: { value: 'Reviewed linked reference' }
       })
       fireEvent.click(within(dialog).getByRole('button', { name: 'Back to review' }))
+      expect(screen.getByRole('dialog', { name: 'Review reference details' })).toBe(dialog)
       expect(transact).not.toHaveBeenCalled()
       expect(
         within(dialog).getByRole('heading', { name: 'Reviewed linked reference' })
@@ -11605,6 +11603,7 @@ describe('LiteratureLibraryPage', () => {
     expect(within(review).queryByRole('button', { name: 'Advanced settings' })).toBeNull()
 
     fireEvent.click(within(review).getByRole('button', { name: 'Edit details' }))
+    expect(screen.getByRole('dialog', { name: 'Edit reference details' })).toBe(review)
     fireEvent.change(within(review).getByLabelText('Title'), {
       target: { value: 'Kept review draft' }
     })
@@ -11616,12 +11615,14 @@ describe('LiteratureLibraryPage', () => {
     )
     expect(transact).not.toHaveBeenCalled()
     fireEvent.click(within(review).getByRole('button', { name: 'Back to review' }))
+    expect(screen.getByRole('dialog', { name: 'Review reference details' })).toBe(review)
     expect(within(review).getByRole('heading', { name: 'Kept review draft' })).not.toBeNull()
     expect(transact).not.toHaveBeenCalled()
     fireEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
     const confirm = await screen.findByRole('alertdialog')
     fireEvent.click(within(confirm).getByRole('button', { name: 'Keep editing' }))
     fireEvent.click(within(review).getByRole('button', { name: 'Edit details' }))
+    expect(screen.getByRole('dialog', { name: 'Edit reference details' })).toBe(review)
     expect((within(review).getByLabelText('Title') as HTMLTextAreaElement).value).toBe(
       'Kept review draft'
     )
@@ -11630,18 +11631,21 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(within(review).getByRole('button', { name: 'Cancel' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }))
     await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: 'Review reference details' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: /^(Review|Edit) reference details$/ })).toBeNull()
     )
     const freshReview = await lookup()
     expect(within(freshReview).getByRole('heading', { name: item.title })).not.toBeNull()
     expect(within(freshReview).queryByLabelText('Title')).toBeNull()
     fireEvent.click(within(freshReview).getByRole('button', { name: 'Edit details' }))
-    fireEvent.click(within(freshReview).getByRole('button', { name: 'Back to review' }))
-    fireEvent.click(within(freshReview).getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByRole('dialog', { name: 'Edit reference details' })).toBe(freshReview)
+    fireEvent.keyDown(freshReview, { key: 'Escape' })
     await waitFor(() =>
-      expect(screen.queryByRole('dialog', { name: 'Review reference details' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: /^(Review|Edit) reference details$/ })).toBeNull()
     )
     expect(screen.queryByRole('alertdialog')).toBeNull()
+    const reopenedReview = await lookup()
+    expect(within(reopenedReview).queryByLabelText('Title')).toBeNull()
+    expect(within(reopenedReview).getByRole('heading', { name: item.title })).not.toBeNull()
     expect(transact).not.toHaveBeenCalled()
   })
 
@@ -11720,8 +11724,10 @@ describe('LiteratureLibraryPage', () => {
     const review = await screen.findByRole('dialog', { name: 'Review reference details' })
     expect(transact).not.toHaveBeenCalled()
     fireEvent.click(within(review).getByRole('button', { name: 'Edit details' }))
+    expect(screen.getByRole('dialog', { name: 'Edit reference details' })).toBe(review)
     fireEvent.change(within(review).getByLabelText('Title'), { target: { value: title } })
     fireEvent.click(within(review).getByRole('button', { name: 'Back to review' }))
+    expect(screen.getByRole('dialog', { name: 'Review reference details' })).toBe(review)
     fireEvent.click(within(review).getByRole('button', { name: 'Save' }))
     const saving = within(review).getByRole('button', { name: 'Saving…' })
     expect(saving.getAttribute('aria-busy')).toBe('true')
