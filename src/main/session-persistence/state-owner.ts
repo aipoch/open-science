@@ -1242,8 +1242,15 @@ class SessionPersistenceStateOwner {
     if (session.runtimeTranscriptOwner === 'main') {
       // Runtime completion has already committed the exact transcript and publication outcome.
       // A superseding turn owns the Session witness as well as its transcript.
-      if (session.activeRun && session.activeRun.promptMessageId !== command.promptMessageId)
+      const runtimeRun = session.activeRun ?? session.runtimeTranscriptLastRun
+      if (
+        runtimeRun &&
+        (runtimeRun.promptMessageId !== command.promptMessageId ||
+          (command.expectedRunStartedAt !== undefined &&
+            runtimeRun.startedAt !== command.expectedRunStartedAt))
+      ) {
         return session
+      }
       if (session.activeRun) {
         if (terminal.status !== 'error')
           throw new Error('Main runtime completion has not committed yet.')
@@ -1252,7 +1259,13 @@ class SessionPersistenceStateOwner {
         return this.mutateRuntimeSession(
           { projectId: session.projectId, sessionId: session.id },
           (latest) => {
-            if (latest.activeRun?.promptMessageId !== command.promptMessageId) return latest
+            if (
+              latest.activeRun?.promptMessageId !== command.promptMessageId ||
+              (command.expectedRunStartedAt !== undefined &&
+                latest.activeRun.startedAt !== command.expectedRunStartedAt)
+            ) {
+              return latest
+            }
             const materialized = materializeSessionConversationGraph(latest)
             const prompt = materialized.conversationGraph?.messages.find(
               ({ id, role }) => id === command.promptMessageId && role === 'user'
@@ -1295,12 +1308,6 @@ class SessionPersistenceStateOwner {
         )
       }
       // Task only records its journal witness for the corresponding completed turn.
-      if (
-        session.runtimeTranscriptLastRun &&
-        session.runtimeTranscriptLastRun.promptMessageId !== command.promptMessageId
-      ) {
-        return session
-      }
       if (session.taskRunCommitId === command.taskRunCommitId) return session
       return this.persistTaskSession({ ...session, taskRunCommitId: command.taskRunCommitId })
     }

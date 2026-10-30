@@ -2175,6 +2175,7 @@ class TaskRunner {
         projectId: completed!.session.projectId,
         sessionId: completed!.session.id,
         promptMessageId: run.promptMessageId,
+        expectedRunStartedAt: acceptedSession.activeRun?.startedAt,
         taskRunCommitId: run.id,
         ...(completed!.runtimeTranscriptOwner === 'main'
           ? { messageId: completed!.messageId, artifacts: [] }
@@ -2258,6 +2259,7 @@ class TaskRunner {
       projectId: session.projectId,
       sessionId: session.id,
       promptMessageId: run.promptMessageId,
+      expectedRunStartedAt: session.activeRun?.startedAt,
       taskRunCommitId: run.id,
       messageId: completed?.messageId,
       artifacts: completed?.persistedArtifacts ?? [],

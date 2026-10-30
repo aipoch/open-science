@@ -188,7 +188,7 @@ describe('Main runtime Session authority', () => {
     expect(h.durable()).toEqual(newer)
   })
 
-  it('accepts an exact hidden Main reply without overwriting a newer completed turn witness', async () => {
+  it.each(['newer-prompt', 'prompt'])('preserves newer %s witness', async (id) => {
     const seed = fixture()
     const prompt = seed.conversationGraph!.messages[0]
     const runScope = {
@@ -219,7 +219,7 @@ describe('Main runtime Session authority', () => {
       }
     ])
     completed.runtimeTranscriptOwner = 'main'
-    completed.runtimeTranscriptLastRun = { promptMessageId: 'newer-prompt', startedAt: 20 }
+    completed.runtimeTranscriptLastRun = { promptMessageId: id, startedAt: 20 }
     completed.taskRunCommitId = 'newer-task'
     completed.messages = []
     const oldReplyId = completed.conversationGraph!.messages.find(
@@ -231,6 +231,7 @@ describe('Main runtime Session authority', () => {
       ...scope,
       promptMessageId: prompt.id,
       taskRunCommitId: 'old-task',
+      expectedRunStartedAt: seed.activeRun!.startedAt,
       messageId: oldReplyId,
       artifacts: [],
       updatedAt: 30
