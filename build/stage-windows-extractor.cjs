@@ -49,9 +49,13 @@ module.exports = async (context) => {
     helper
   )
   await context.packager.signIf(helper)
+  const processes = path.join(directory, 'windows-installation-processes.exe')
+  require('./compile-windows-installation-processes.cjs')(processes)
+  await context.packager.signIf(processes)
   await fs.writeFile(path.join(directory, '7zip-LICENSE.txt'), license)
   const resources = path.join(context.appOutDir, 'resources')
   await fs.mkdir(resources, { recursive: true })
+  await fs.copyFile(processes, path.join(resources, 'windows-installation-processes.exe'))
   await fs.writeFile(path.join(resources, '7zip-LICENSE.txt'), license)
   await fs.writeFile(
     path.join(resources, '7zip-NOTICE.txt'),

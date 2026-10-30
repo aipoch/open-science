@@ -2,7 +2,6 @@ import { readRuntimeExitOutcome } from './runtime-stop-confirmation'
 import { recoverInstallationAfterSystemRestart } from './update/installation-reboot-recovery'
 import type { DebSystemdGate } from './update/deb-systemd-gate'
 import { resumeBoundInstallationExecutor } from './update/installation-executor'
-import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import {
   UpdateLifecycleError,
@@ -31,6 +30,12 @@ import {
   type InstallationUpdateRecord
 } from './update/installation-protection'
 import type { InstallReadiness } from './update/strategy'
+import {
+  attemptUpdateShutdownStep,
+  updateShutdownDeadline,
+  UPDATE_FORCE_RESERVE_MS,
+  UPDATE_STOP_RESERVE_MS
+} from './update/shutdown'
 
 /** A cancelled read must not keep its caller or a subsequent recovery action waiting. */
 async function boundedRead<T>(read: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -68,6 +73,9 @@ export function createDesktopUpdateIntegration(options: {
   preparedDebGate?(): DebSystemdGate | undefined
   verifyInstallerReady?(): Promise<void>
   flushRenderer?(phase: 'preflight' | 'final'): Promise<void>
+  closeOtherInstances?(deadlineAt: number): Promise<void>
+  forceStopRuntime?(deadlineAt: number): Promise<RuntimeDirectoryLease>
+  installationOperation?(deadlineAt?: number): string
   validateConfiguration(config: RuntimeStartupOptions): void
   setClosing(value: boolean): void
   retainLease(lease: RuntimeDirectoryLease): void
@@ -88,7 +96,6 @@ export function createDesktopUpdateIntegration(options: {
 > {
   let record: InstallationUpdateRecord | undefined = inspectInstallationUpdate(options.location)
   let legacy: { config: RuntimeStartupOptions; stopped: boolean } | undefined
-  let consent: { token: string; generation: string } | undefined
   let pending: Promise<unknown> | undefined
   let cancellation = new AbortController()
   let cancelRequested = false
@@ -178,7 +185,6 @@ export function createDesktopUpdateIntegration(options: {
         return result
       }
       if (!record) {
-        consent = undefined
         if (legacy) {
           const active = legacy
           legacy = undefined
@@ -339,6 +345,91 @@ export function createDesktopUpdateIntegration(options: {
       options.setClosing(false)
       return resultStatus
     })
+  const prepareRuntimeStop = async (
+    apply: UpdateApplyOptions | undefined,
+    deadlineAt: number
+  ): Promise<InstallReadiness> => {
+    const gracefulDeadline = deadlineAt - UPDATE_STOP_RESERVE_MS
+    const operationId = options.installationOperation?.(deadlineAt)
+    const diagnostics: NonNullable<InstallReadiness['shutdownDiagnostics']> = []
+    const save = async (phase: 'preflight' | 'final'): Promise<void> => {
+      const outcome =
+        Date.now() >= gracefulDeadline
+          ? { outcome: 'timeout' as const }
+          : await attemptUpdateShutdownStep(
+              () => options.flushRenderer?.(phase) ?? Promise.resolve(),
+              Math.min(gracefulDeadline, Date.now() + 5_000)
+            )
+      diagnostics.push({ step: `renderer-${phase}`, outcome: outcome.outcome })
+      options.onProgress?.({ diagnostics: JSON.stringify(diagnostics, null, 2) })
+    }
+    await save('preflight')
+    const gate = await attemptUpdateShutdownStep(
+      () =>
+        options
+          .client()
+          .invokeHost(operationId ? 'desktop:update-installation-gate' : 'desktop:update-gate', [
+            operationId
+              ? { operationId, shutdownDeadlineAt: deadlineAt }
+              : { ...apply, shutdownDeadlineAt: deadlineAt }
+          ]) as Promise<InstallReadiness>,
+      gracefulDeadline
+    )
+    diagnostics.push({ step: 'backend-shutdown', outcome: gate.outcome })
+    const result = gate.outcome === 'completed' ? gate.value : { completed: false, reaped: false }
+    diagnostics.push(...(result.shutdownDiagnostics ?? []))
+    options.onProgress?.({ diagnostics: JSON.stringify(diagnostics, null, 2) })
+    if (result.reason === 'installation-busy') return result
+    // The local backend owner has already had its normal teardown opportunity. Await native
+    // object-bound cleanup to completion; a caller timeout must not race cancellation/restart.
+    await options.closeOtherInstances?.(deadlineAt)
+    await save('final')
+    // Saving/normal exit are best effort. The authenticated Runtime owner still has to confirm its
+    // process object has stopped, and the installation must subsequently pass the final scan.
+    return { ...result, stopAuthorized: true, shutdownDiagnostics: diagnostics }
+  }
+  const stopRuntimeForUpdate = async (deadlineAt: number): Promise<RuntimeDirectoryLease> => {
+    if (Date.now() >= deadlineAt)
+      throw new UpdateLifecycleError('runtime-stop-timeout', 'The update close deadline expired.')
+    const ownerDeadline = options.forceStopRuntime
+      ? deadlineAt - UPDATE_FORCE_RESERVE_MS
+      : deadlineAt
+    try {
+      if (options.client().runtimeInfo().control !== 'granted') {
+        const operationId = options.installationOperation?.()
+        if (!operationId)
+          throw new UpdateLifecycleError(
+            'runtime-not-controlled',
+            'Installation update close authority is unavailable.'
+          )
+        await attemptUpdateShutdownStep(
+          () =>
+            options
+              .client()
+              .invokeHost('desktop:update-installation-stop', [
+                { operationId, shutdownDeadlineAt: deadlineAt }
+              ]),
+          Math.min(deadlineAt - UPDATE_STOP_RESERVE_MS, Date.now() + 2_000)
+        )
+        return await options
+          .client()
+          .waitForStopped(undefined, false, Math.max(1, ownerDeadline - Date.now()))
+      }
+      return await options.client().stopRuntime('update', {
+        deadlineAt: ownerDeadline,
+        requireCleanExit: false
+      })
+    } catch (error) {
+      if (!(error instanceof RuntimeStopError) || !options.forceStopRuntime) throw error
+      if (Date.now() >= deadlineAt) throw error
+      // Only verified stop failures reach native escalation. Controller/configuration failures
+      // retain their original refusal; the native adapter binds live objects in this installation.
+      options.onProgress?.({
+        diagnostics: JSON.stringify({ step: 'runtime-stop', outcome: error.code }, null, 2)
+      })
+      return options.forceStopRuntime(deadlineAt)
+    }
+  }
   const legacyGate = async (
     active: NonNullable<typeof legacy>,
     apply: UpdateApplyOptions | undefined
@@ -346,19 +437,13 @@ export function createDesktopUpdateIntegration(options: {
     if (active.stopped)
       return { completed: true, reaped: false, runtimeStopped: true, recovery: recovery() }
     options.setClosing(true)
+    const deadlineAt = updateShutdownDeadline()
     try {
-      await options.flushRenderer?.('preflight')
-      checkCancellation()
-      const result = (await options
-        .client()
-        .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
+      const result = await prepareRuntimeStop(apply, deadlineAt)
       if ((!result.completed || !result.reaped) && !result.stopAuthorized) {
         options.setClosing(false)
         return result
       }
-      checkCancellation()
-      await options.flushRenderer?.('final')
-      checkCancellation()
       options.onProgress?.({
         recovery: {
           phase: 'stopping',
@@ -369,7 +454,7 @@ export function createDesktopUpdateIntegration(options: {
           canRetryInstall: false
         }
       })
-      const lease = await options.client().stopRuntime('update')
+      const lease = await stopRuntimeForUpdate(deadlineAt)
       options.retainLease(lease)
       active.stopped = true
       options.onStopped()
@@ -396,7 +481,7 @@ export function createDesktopUpdateIntegration(options: {
     }
   }
   return {
-    prepareInstall: (status, apply = {}) =>
+    prepareInstall: (status) =>
       exclusive(async () => {
         cancelRequested = false
         cancellation = new AbortController()
@@ -442,7 +527,7 @@ export function createDesktopUpdateIntegration(options: {
         }
         const client = options.client()
         const info = client.runtimeInfo()
-        if (info.control !== 'granted')
+        if (info.control !== 'granted' && !options.installationOperation)
           throw new UpdateLifecycleError(
             'runtime-not-controlled',
             'Another Desktop controls this service.',
@@ -458,28 +543,17 @@ export function createDesktopUpdateIntegration(options: {
             }
           )
         options.validateConfiguration(info.startupOptions)
-        if (info.launch === 'cli') {
-          if (
-            !consent ||
-            consent.generation !== info.generation ||
-            apply.cliConsentToken !== consent.token
-          ) {
-            consent = { token: randomUUID(), generation: info.generation }
-            return {
-              cliConfirmation: {
-                token: consent.token,
-                pid: client.processId(),
-                port: info.startupOptions.port,
-                source:
-                  realpathSync(installationRootForEntry(info.entryPath)) ===
-                  realpathSync(options.location.installationRoot)
-                    ? 'this-installation'
-                    : 'another-installation',
-                entryPath: info.entryPath
-              }
-            }
-          }
-        }
+        const runtimeInstallation = realpathSync(installationRootForEntry(info.entryPath))
+        const desktopInstallation = realpathSync(options.location.installationRoot)
+        const sameInstallation =
+          process.platform === 'win32'
+            ? runtimeInstallation.toLowerCase() === desktopInstallation.toLowerCase()
+            : runtimeInstallation === desktopInstallation
+        if (!sameInstallation)
+          throw new UpdateLifecycleError(
+            'runtime-configuration-unsupported',
+            'The connected service belongs to another installation.'
+          )
         if (!status.latest)
           throw new UpdateLifecycleError('install-failed', 'The target version is unavailable.')
         options.onProgress?.({
@@ -494,19 +568,8 @@ export function createDesktopUpdateIntegration(options: {
           }
         })
         if (options.legacyInstall?.(status)) {
-          // Same occupancy proof as a supervised install: never replace files another runtime uses.
-          await inspectInstallationAvailability(
-            {
-              ...options.location,
-              runtime: {
-                pid: client.processId(),
-                generation: info.generation,
-                configRoot: info.startupOptions.configRoot
-              },
-              allowedProcessIds: options.allowedProcessIds()
-            },
-            cancellation.signal
-          )
+          // Existing owners must get their shutdown opportunity before workloads are classified as
+          // residual installation occupancy. The stopped legacy handoff retains the final scan.
           checkCancellation()
           legacy = { config: info.startupOptions, stopped: false }
           return undefined
@@ -530,7 +593,6 @@ export function createDesktopUpdateIntegration(options: {
           },
           cancellation.signal
         )
-        consent = undefined
         publish()
         return undefined
       }),
@@ -557,22 +619,16 @@ export function createDesktopUpdateIntegration(options: {
         checkCancellation()
         options.setClosing(true)
         let stopped = false
+        const deadlineAt = updateShutdownDeadline()
         try {
-          await options.flushRenderer?.('preflight')
-          checkCancellation()
-          const result = (await options
-            .client()
-            .invokeHost('desktop:update-gate', [apply ?? {}])) as InstallReadiness
+          const result = await prepareRuntimeStop(apply, deadlineAt)
           if ((!result.completed || !result.reaped) && !result.stopAuthorized) {
             options.setClosing(false)
             return { ...result, recovery: recovery() }
           }
-          checkCancellation()
-          await options.flushRenderer?.('final')
-          checkCancellation()
           record = advanceInstallationUpdate(options.location, record.operationId, 'stopping')
           publish()
-          const lease = await options.client().stopRuntime('update')
+          const lease = await stopRuntimeForUpdate(deadlineAt)
           options.retainLease(lease)
           const clean =
             (await readRuntimeExitOutcome(
@@ -640,7 +696,7 @@ export function createDesktopUpdateIntegration(options: {
         publish()
       })
     },
-    cancelInstall: async () => {
+    cancelInstall: async (beforeRestart) => {
       cancelRequested = true
       cancellation.abort()
       // Teardown cannot be undone while still settling. Wait for its proof, then restore service.
@@ -648,6 +704,7 @@ export function createDesktopUpdateIntegration(options: {
         await pending.catch(() => undefined)
         await Promise.resolve()
       }
+      beforeRestart?.()
       return recover(true)
     },
     recoverInstall: () => recover(false),
@@ -749,7 +806,7 @@ export function createDesktopUpdateIntegration(options: {
           const client = options.client()
           const info = await boundedRead(client.refreshControl(), checking)
           checking.throwIfAborted()
-          if (info.control !== 'granted')
+          if (info.control !== 'granted' && !options.installationOperation)
             return {
               ...reset,
               reason: 'runtime-not-controlled',
@@ -777,18 +834,19 @@ export function createDesktopUpdateIntegration(options: {
               'The confirmed service changed; cancel this update before checking a replacement service.'
             )
           options.validateConfiguration(info.startupOptions)
-          await inspectInstallationAvailability(
-            {
-              ...options.location,
-              runtime: {
-                pid: client.processId(),
-                generation: info.generation,
-                configRoot: info.startupOptions.configRoot
+          if (!options.installationOperation)
+            await inspectInstallationAvailability(
+              {
+                ...options.location,
+                runtime: {
+                  pid: client.processId(),
+                  generation: info.generation,
+                  configRoot: info.startupOptions.configRoot
+                },
+                allowedProcessIds: options.allowedProcessIds()
               },
-              allowedProcessIds: options.allowedProcessIds()
-            },
-            checking
-          )
+              checking
+            )
           const current = (await boundedRead(
             client.invokeHost('desktop:update-inspect'),
             checking

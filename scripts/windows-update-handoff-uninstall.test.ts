@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
@@ -29,7 +29,11 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       'other-installation',
       'reused-parent',
       'reused-helper',
-      'reused-successor'
+      'reused-successor',
+      'recovery-package',
+      'persistent-launch',
+      'other-persistent-launch',
+      'foreign-persistent-launch'
     ].flatMap((scenario) =>
       ['Open-Science/UpdateHandoffs', 'Open-Science-UpdateHandoffs'].map((storage) => [
         scenario,
@@ -79,6 +83,31 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         })
       )
       if (scenario !== 'partial') writeFileSync(join(directory, 'helper.exe'), 'owned fixture')
+      if (scenario === 'recovery-package') {
+        writeFileSync(join(directory, 'installer.exe'), 'owned cached setup')
+        writeFileSync(join(directory, 'bound-request.json'), '{}')
+      }
+      const launchDirectory = join(
+        operations,
+        'Installations',
+        createHash('sha256').update(install.toLowerCase()).digest('hex')
+      )
+      if (scenario.includes('persistent-launch')) {
+        mkdirSync(launchDirectory, { recursive: true })
+        writeFileSync(
+          join(launchDirectory, 'launch.ini'),
+          '\uFEFF[installation]\r\napplicationPath=' +
+            join(scenario === 'other-persistent-launch' ? root : install, 'application.exe') +
+            '\r\n',
+          'utf16le'
+        )
+        writeFileSync(
+          join(launchDirectory, `setup-${'a'.repeat(64)}.exe`),
+          'owned persistent setup'
+        )
+        if (scenario === 'foreign-persistent-launch')
+          writeFileSync(join(launchDirectory, 'user-file'), 'preserve')
+      }
       writeFileSync(join(directory, 'closed.receipt.tmp'), 'owned partial receipt')
       if (scenario.startsWith('reused-')) {
         // A completed historical PID now belongs to this unrelated Node test process.
@@ -139,8 +168,12 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         scenario === 'no-storage' ||
         scenario === 'unknown' ||
         scenario === 'partial' ||
+        scenario === 'recovery-package' ||
+        scenario.includes('persistent-launch') ||
         scenario.startsWith('reused-')
       expect(existsSync(directory)).toBe(!removed)
+      if (scenario.includes('persistent-launch'))
+        expect(existsSync(launchDirectory)).toBe(scenario !== 'persistent-launch')
       if (removed) {
         const retry = run('idempotent uninstall')
         expect(retry.status, retry.stderr || retry.stdout).toBe(0)

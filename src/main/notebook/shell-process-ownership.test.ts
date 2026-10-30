@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, rename } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, rename, writeFile } from 'node:fs/promises'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -159,7 +159,12 @@ describe('Shell process ownership receipt lifecycle', () => {
         platform: 'win32',
         hosted: true
       }).host!
-      const command = [process.execPath, '-e', 'console.log("ready"); setInterval(() => {}, 1000)']
+      const release = join(root, 'release-fixture')
+      const command = [
+        process.execPath,
+        '-e',
+        `console.log("ready"); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(release)})) process.exit(0) }, 20)`
+      ]
       const child =
         identity === 'owned'
           ? spawn(process.execPath, [host.path, host.pendingPath, host.receiptId, ...command], {
@@ -184,19 +189,19 @@ describe('Shell process ownership receipt lifecycle', () => {
         const restarted = new ShellProcessOwnershipRegistry(root)
         if (identity === 'owned') {
           await restarted.recover()
-          // Windows can retire the owned process object after tree recovery has completed.
-          // Wait only for this fixture's original child handle to report its exit.
-          await expect
-            .poll(() => child.exitCode !== null || child.signalCode !== null, { timeout: 4_000 })
-            .toBe(true)
-          expect(restarted.hasReceipts()).toBe(false)
+          expect(() => process.kill(child.pid!, 0)).toThrow()
         } else {
           await expect(restarted.recover()).rejects.toMatchObject({
             code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
           })
           expect(() => process.kill(child.pid!, 0)).not.toThrow()
           expect(restarted.hasReceipts()).toBe(true)
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+          await writeFile(release, 'release')
+          await closed
         }
+        await restarted.recover()
+        expect(restarted.hasReceipts()).toBe(false)
       } catch (error) {
         console.error(
           'Windows host identity query results',
@@ -214,7 +219,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         )
         throw error
       } finally {
-        if (child.exitCode === null) child.kill()
+        if (child.exitCode === null && child.signalCode === null) {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+          await writeFile(release, 'release')
+          await closed
+        }
       }
     },
     20_000

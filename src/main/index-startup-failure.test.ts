@@ -23,6 +23,7 @@ const f = vi.hoisted(() => {
     diagnostics: vi.fn(),
     completedStartup: vi.fn(),
     windowsStartup: vi.fn(),
+    windowsResume: vi.fn(),
     verifyRecovery: vi.fn(async () => {}),
     report: vi.fn(async () => undefined),
     app: {
@@ -89,7 +90,8 @@ vi.mock('electron', () => ({
 }))
 vi.mock('./update/windows-update-handoff', async (original) => ({
   ...(await original<typeof import('./update/windows-update-handoff')>()),
-  resolveWindowsUpdateStartup: f.windowsStartup
+  prepareWindowsUpdateStartup: f.windowsStartup,
+  resumeInterruptedWindowsUpdate: f.windowsResume
 }))
 vi.mock('./desktop-recovery-readiness', () => ({
   verifyDesktopRecoveryReadiness: f.verifyRecovery
@@ -230,7 +232,8 @@ beforeEach(() => {
   vi.stubEnv('OPEN_SCIENCE_ALLOW_MULTI_INSTANCE', '0')
   vi.clearAllMocks()
   f.ready = false
-  f.windowsStartup.mockResolvedValue(undefined)
+  f.windowsStartup.mockReturnValue(undefined)
+  f.windowsResume.mockResolvedValue(false)
   f.handlers.clear()
   f.select.mockReturnValue({ backend: 'mac-keychain', appName: 'Open-Science (DEV)', exists: true })
   f.validate.mockReturnValue(vi.fn())
@@ -520,13 +523,56 @@ it('rejects a missing update configuration before selecting a fallback profile o
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
   Object.defineProperty(process, 'platform', { value: 'win32' })
   try {
-    f.windowsStartup.mockRejectedValue(new Error('Missing update request'))
+    f.windowsStartup.mockImplementation(() => {
+      throw new Error('Missing update request')
+    })
     await import('./index')
     await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
     expect(f.app.setPath).not.toHaveBeenCalled()
     expect(f.select).not.toHaveBeenCalled()
     expect(f.launch).not.toHaveBeenCalled()
   } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
+it('binds the update profile and initializes its key before waiting for the installer writer', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  let releaseWriter!: () => void
+  const writer = new Promise<void>((resolve) => {
+    releaseWriter = resolve
+  })
+  const settle = vi.fn(() => writer)
+  try {
+    f.select.mockReturnValue({ backend: 'windows-dpapi', appName: 'Open-Science' })
+    f.windowsStartup.mockReturnValue({
+      startupOptions: {
+        configRoot: '/test/original-config',
+        profilePath: '/test/profile',
+        dataRoot: '/test/original-data',
+        port: 44100,
+        host: '127.0.0.1',
+        credentialStore: 'os'
+      },
+      confirmed: false,
+      settle
+    })
+    await import('./index')
+    await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce())
+    expect(f.app.setPath).toHaveBeenCalledWith('userData', '/test/profile')
+    expect(f.inventory).toHaveBeenCalledWith({
+      configRoot: '/test/original-config',
+      profilePath: '/test/profile'
+    })
+    expect(f.key).toHaveBeenCalledWith('/test/profile')
+    expect(f.key.mock.invocationCallOrder[0]).toBeLessThan(settle.mock.invocationCallOrder[0])
+    expect(f.launch).not.toHaveBeenCalled()
+    releaseWriter()
+    await vi.waitFor(() => expect(f.launch).toHaveBeenCalled())
+    await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+  } finally {
+    releaseWriter()
     Object.defineProperty(process, 'platform', platform)
   }
 })
@@ -543,7 +589,11 @@ it('allows a normal relaunch after confirmed upgrade to read newly committed dat
       host: '127.0.0.1',
       credentialStore: 'file'
     }
-    f.windowsStartup.mockResolvedValue({ startupOptions: oldOptions, confirmed: true })
+    f.windowsStartup.mockReturnValue({
+      startupOptions: oldOptions,
+      confirmed: true,
+      settle: async () => {}
+    })
     f.lifecycle.mockReturnValue({
       showMainWindow: vi.fn(),
       getMainWindow: () => ({ isDestroyed: () => false, isVisible: () => true }),

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   readdir: vi.fn(),
   arguments: vi.fn(),
+  direct: vi.fn(),
   warn: vi.fn()
 }))
 vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ warn: mocks.warn }) }))
@@ -33,7 +34,15 @@ vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   spawnSync: mocks.spawnSync
 }))
-vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
+vi.mock('./verification-process', () => ({
+  runVerificationProcess: mocks.run,
+  VerificationProcessUnsettledError: class extends Error {}
+}))
+vi.mock('./windows-installation-processes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./windows-installation-processes')>()),
+  queryWindowsInstallationDirect: mocks.direct,
+  queryWindowsInstallationDirectSync: mocks.direct
+}))
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.readdir.mockReturnValue([])
@@ -247,7 +256,7 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       mocks.spawnSync.mockReturnValueOnce({ status: 1, stdout: '' })
       mocks.run.mockRejectedValueOnce(new Error('inspection failed'))
       await expect(inspect('/installed/app')).rejects.toThrow(
-        mode === 'sync' ? 'could not be inspected' : 'inspection failed'
+        mode === 'sync' || platform === 'win32' ? 'could not be inspected' : 'inspection failed'
       )
     }
   )
@@ -256,6 +265,46 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     output('not JSON')
     await expect(inspect('C:\\Apps\\Science')).rejects.toThrow()
+  })
+
+  it('uses independent inspection after PowerShell or its native launcher fails', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    mocks.spawnSync.mockReturnValueOnce({
+      status: null,
+      stdout: '',
+      stderr: '',
+      error: Object.assign(new Error('missing launcher'), { code: 'ENOENT' })
+    })
+    mocks.run.mockRejectedValueOnce(
+      Object.assign(new Error('native component unavailable'), { code: 'MODULE_NOT_FOUND' })
+    )
+    mocks.direct.mockReturnValue(JSON.stringify({ resourcePids: [42], processes: [] }))
+    expect(await inspect('C:\\Science')).toEqual([42])
+    expect(mocks.direct).toHaveBeenCalledOnce()
+    expect(mocks.warn).toHaveBeenCalledOnce()
+  })
+
+  it('retains known file users when a partial primary response falls back to an empty scan', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    output(JSON.stringify({ resourcePids: [42], processes: null }))
+    mocks.direct.mockReturnValue(JSON.stringify({ resourcePids: [], processes: [] }))
+    expect(await inspect('C:\\Science')).toEqual([42])
+  })
+
+  it('keeps both failure causes when the independent check also fails', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    output('invalid primary response')
+    mocks.direct.mockImplementation(() => {
+      throw new Error('independent check failed')
+    })
+    try {
+      await inspect('C:\\Science')
+      expect.fail('must reject unknown occupancy')
+    } catch (error) {
+      const causes = ((error as Error).cause as AggregateError).errors
+      expect(causes).toHaveLength(2)
+      expect(causes[1].message).toBe('independent check failed')
+    }
   })
 })
 

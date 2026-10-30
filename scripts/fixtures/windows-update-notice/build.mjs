@@ -70,6 +70,9 @@ for (const [directory, version, code, hook] of [
     'windows-install-publication.ps1',
     'prepare-windows-extraction.cjs',
     'windows-app-running.nsh',
+    'windows-installation-launch.nsh',
+    'windows-installation-processes.cs',
+    'compile-windows-installation-processes.cjs',
     'windows-extract-payload.ps1'
   ]) {
     await writeFile(join(projectDir, file), await readFile(`build/${file}`))

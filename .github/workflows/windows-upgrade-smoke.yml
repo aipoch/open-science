@@ -11,7 +11,29 @@ on:
       tag:
         description: Published stable tag to validate
         type: string
-        required: true
+        required: false
+      current_artifact_run_id:
+        description: Build run containing the target windows-x64 package (no release publication)
+        type: string
+        default: ''
+      previous_artifact_run_id:
+        description: Build run containing the source windows-x64 package, including the fix under test
+        type: string
+        default: ''
+      diagnostic_version:
+        description: Build an internal source or target version (for example 1.0.6 or 1.0.7), without publishing
+        type: string
+        default: ''
+      platform_name:
+        description: Native platform for an internal diagnostic build
+        type: choice
+        default: windows-x64
+        options:
+          - windows-x64
+          - macos-arm64
+          - macos-x64
+          - linux-x64
+          - linux-arm64
 
       dry_run:
         description: Test baseline selection and the installer observer without downloading or installing releases
@@ -19,15 +41,47 @@ on:
         default: false
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: windows-upgrade-smoke-${{ github.event.client_payload.tag || inputs.tag }}
+  group: windows-upgrade-smoke-${{ github.event.client_payload.tag || inputs.tag || inputs.current_artifact_run_id || format('{0}-{1}', inputs.platform_name, inputs.diagnostic_version) }}
   cancel-in-progress: false
 
 jobs:
+  diagnostic-inputs:
+    if: ${{ inputs.diagnostic_version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate internal build mode
+        env:
+          DIAGNOSTIC_VERSION: ${{ inputs.diagnostic_version }}
+          TAG: ${{ inputs.tag }}
+          CURRENT_RUN: ${{ inputs.current_artifact_run_id }}
+          PREVIOUS_RUN: ${{ inputs.previous_artifact_run_id }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          [[ "$DIAGNOSTIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] &&
+          [[ -z "$TAG$CURRENT_RUN$PREVIOUS_RUN" ]] && [[ "$DRY_RUN" != true ]]
+  diagnostic-build:
+    needs: diagnostic-inputs
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets: inherit
+    with:
+      platform_name: ${{ inputs.platform_name }}
+      diagnostic_version: ${{ inputs.diagnostic_version }}
+      sign_windows: ${{ inputs.platform_name == 'windows-x64' }}
+  diagnostic-package-smoke:
+    needs: diagnostic-build
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      platform_name: ${{ inputs.platform_name }}
+      require_windows_signing: ${{ inputs.platform_name == 'windows-x64' }}
   windows-upgrade-smoke:
-    if: ${{ !inputs.dry_run }}
+    if: ${{ !inputs.dry_run && !inputs.current_artifact_run_id && !inputs.previous_artifact_run_id && !inputs.diagnostic_version }}
     runs-on: windows-latest
     timeout-minutes: 40
     env:
@@ -219,6 +273,7 @@ jobs:
           path: |
             certification-windows-update.json
             windows-*-certification.log
+            windows-updater-observation.json
           if-no-files-found: error
 
       - name: Report Windows update-drill outcome
@@ -226,6 +281,101 @@ jobs:
           always() && steps.previous.outputs.available == 'true' &&
           (steps.updater.outcome != 'success' || steps.installer.outcome != 'success')
         run: exit 1
+
+  artifact-upgrade:
+    if: ${{ !inputs.dry_run && !inputs.diagnostic_version && (inputs.current_artifact_run_id || inputs.previous_artifact_run_id) }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario:
+          [
+            basic,
+            workload,
+            active-work,
+            downgrade,
+            multi-profile,
+            unresponsive-profile,
+            no-protocol-runtime,
+            missing-exe-recovery,
+            cancel-cleanup,
+            writer-shortcut-wait
+          ]
+    steps:
+      - name: Checkout certification tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate both immutable artifact sources
+        shell: pwsh
+        env:
+          CURRENT_RUN: ${{ inputs.current_artifact_run_id }}
+          PREVIOUS_RUN: ${{ inputs.previous_artifact_run_id }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ($env:RELEASE_TAG -or $env:CURRENT_RUN -notmatch '^\d+$' -or $env:PREVIOUS_RUN -notmatch '^\d+$') {
+            throw 'Artifact certification requires both build run IDs and no release tag.'
+          }
+          $evidence = @()
+          foreach ($run in @($env:PREVIOUS_RUN, $env:CURRENT_RUN)) {
+            $details = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$run" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0 -or $details.conclusion -ne 'success') { throw "Build run $run has not passed." }
+            $evidence += @{ runId=$run; commit=$details.head_sha; branch=$details.head_branch; url=$details.html_url }
+          }
+          $evidence | ConvertTo-Json | Set-Content artifact-builds.json
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Download target package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64
+          path: current
+          run-id: ${{ inputs.current_artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download source package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64
+          path: previous
+          run-id: ${{ inputs.previous_artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Require both internal packages to contain this reviewed commit
+        shell: pwsh
+        env:
+          CURRENT_RUN: ${{ inputs.current_artifact_run_id }}
+          PREVIOUS_RUN: ${{ inputs.previous_artifact_run_id }}
+        run: |
+          foreach ($pair in @(@('previous', $env:PREVIOUS_RUN), @('current', $env:CURRENT_RUN))) {
+            $identity = Get-Content -Raw (Join-Path $pair[0] 'diagnostic-build.json') | ConvertFrom-Json
+            if (-not $identity.internalTestBuild -or $identity.commit -ne $env:GITHUB_SHA -or [string]$identity.runId -ne $pair[1]) {
+              throw "Package $($pair[0]) does not identify this reviewed source commit and build run."
+            }
+          }
+      - name: Certify production Windows update and automatic readiness
+        shell: pwsh
+        env:
+          UPDATE_SCENARIO: ${{ matrix.scenario }}
+        run: |
+          node scripts/windows-updater-certification.mjs --current-dir current --previous-dir previous --scenario $env:UPDATE_SCENARIO --output "windows-updater-$env:UPDATE_SCENARIO-observation.json" 2>&1 | Tee-Object "windows-updater-$env:UPDATE_SCENARIO-certification.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload immutable package evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-artifact-update-certification-${{ matrix.scenario }}
+          retention-days: 7
+          path: |
+            artifact-builds.json
+            windows-updater-*-observation.json
+            windows-updater-*-certification.log
+            test-results/windows-installer-smoke/
+          if-no-files-found: error
 
   baseline-dry-run:
     if: ${{ inputs.dry_run }}

@@ -6,6 +6,18 @@ import { connectDesktopRuntime, type DesktopRuntimeClient } from './desktop-runt
 import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 import { trackLifecycleSettlement } from './lifecycle-settlement'
 import { setTimeout as sleep } from 'node:timers/promises'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  acquireNativeInstallationUpdate,
+  beginNativeInstallationShutdown,
+  assertNativeInstallationUpdateAuthorized,
+  claimNativeInstallationUpdateRecovery,
+  installationStateDirectory,
+  readNativeInstallationUpdate,
+  releaseNativeInstallationUpdate
+} from './update/installation-protection'
 
 const cleanup: Array<() => unknown> = []
 afterEach(async () => {
@@ -68,6 +80,103 @@ it('shares controller across one instance, excludes competitors, and routes life
   await new Promise((resolve) => setTimeout(resolve, 20))
   expect(lifecycle.disconnect).not.toHaveBeenCalled()
   await second.lifecycle({ operation: 'hold' })
+})
+
+it('grants only operation-bound installation close to a spectator while preserving controller ownership', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'installation-close-transport-'))
+  const location = {
+    installationRoot: join(directory, 'installation'),
+    stateRoot: join(directory, 'state')
+  }
+  const otherLocation = { ...location, installationRoot: join(directory, 'other-installation') }
+  mkdirSync(location.installationRoot)
+  mkdirSync(otherLocation.installationRoot)
+  cleanup.push(() => rmSync(directory, { recursive: true, force: true }))
+  const operation = acquireNativeInstallationUpdate(location, {
+    operationId: randomUUID(),
+    handoffDirectory: directory,
+    targetVersion: '2',
+    installerSha512: Buffer.alloc(64).toString('base64'),
+    requestSha256: 'a'.repeat(64)
+  })
+  const shutdownDeadlineAt = Date.now() + 10_000
+  const closingOperation = beginNativeInstallationShutdown(
+    location,
+    operation.operationId,
+    shutdownDeadlineAt
+  )
+  cleanup.push(() => {
+    if (readNativeInstallationUpdate(location))
+      releaseNativeInstallationUpdate(location, operation.operationId, 'installed')
+  })
+  let serviceLocation = location
+  const invoke = vi.fn(async () => ({ completed: true, reaped: true, stopAuthorized: true }))
+  const requestShutdown = vi.fn(async () => {})
+  const host = await startDesktopRuntimeTransport({
+    version: 'test',
+    launch: 'desktop',
+    commands: { commandNames: () => [], invoke: vi.fn() },
+    events: new ApplicationEventHub(),
+    requestShutdown,
+    authorizeInstallationUpdate: (operationId) =>
+      assertNativeInstallationUpdateAuthorized(serviceLocation, operationId),
+    hostCommands: { commandNames: () => ['desktop:update-installation-gate'], invoke }
+  })
+  cleanup.push(host.close)
+  const attach = async (): Promise<Awaited<ReturnType<typeof connectDesktopRuntime>>> => {
+    const client = await connectDesktopRuntime({
+      endpoint: host.endpoint,
+      desktopInstanceId: randomUUID(),
+      onEvent: vi.fn(),
+      onDisconnect: vi.fn()
+    })
+    cleanup.push(client.close)
+    return client
+  }
+  const controller = await attach()
+  const spectator = await attach()
+  expect(spectator.runtimeInfo().control).toBe('held')
+  const request = { operationId: operation.operationId, shutdownDeadlineAt }
+  await expect(
+    spectator.invokeHost('desktop:update-installation-gate', [request])
+  ).resolves.toMatchObject({ stopAuthorized: true })
+  expect(spectator.runtimeInfo().control).toBe('held')
+  expect(controller.runtimeInfo().control).toBe('granted')
+  await expect(spectator.invokeHost('desktop:update-gate', [{}])).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  await expect(
+    spectator.invokeHost('desktop:update-installation-gate', [
+      { ...request, operationId: randomUUID() }
+    ])
+  ).rejects.toMatchObject({ code: 'command-unavailable' })
+  await expect(
+    spectator.invokeHost('desktop:update-installation-gate', [{ ...request, force: true }])
+  ).rejects.toMatchObject({ code: 'command-unavailable' })
+  serviceLocation = otherLocation
+  await expect(
+    spectator.invokeHost('desktop:update-installation-stop', [request])
+  ).rejects.toMatchObject({ code: 'command-unavailable' })
+  serviceLocation = location
+  releaseNativeInstallationUpdate(location, operation.operationId)
+  writeFileSync(
+    join(installationStateDirectory(location), 'windows-update-in-progress.json'),
+    JSON.stringify(closingOperation)
+  )
+  await expect(
+    spectator.invokeHost('desktop:update-installation-gate', [request])
+  ).rejects.toMatchObject({ code: 'command-unavailable' })
+  expect(requestShutdown).not.toHaveBeenCalled()
+  const release = claimNativeInstallationUpdateRecovery(location, operation.operationId)
+  cleanup.push(() => release?.())
+  await expect(
+    spectator.invokeHost('desktop:update-installation-stop', [
+      { ...request, shutdownDeadlineAt: Date.now() + 30_000 }
+    ])
+  ).resolves.toBeNull()
+  await vi.waitFor(() =>
+    expect(requestShutdown).toHaveBeenCalledWith('update', request.shutdownDeadlineAt)
+  )
 })
 it('retains controller until a timed-out underlying teardown really settles', async () => {
   const { attach, lifecycle } = await fixture()

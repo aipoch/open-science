@@ -26,12 +26,16 @@ import { createRuntimeUpdateStrategy } from '../update/runtime-strategy'
 import { createUpdateCommandOwner } from '../update/command-owner'
 import { startUpdateScheduler } from '../update/scheduler'
 import {
-  createActiveResearchSafeInstallGate,
   createDataRootResearchSafeInstallGate,
   createDurableInstallGate,
   canForceUpdateBlockers,
   type InstallReadiness
 } from '../update/strategy'
+import {
+  attemptUpdateShutdownStep,
+  updateShutdownDeadline,
+  UPDATE_STOP_RESERVE_MS
+} from '../update/shutdown'
 import { type ReviewerRuntimeShutdownOwner } from './reviewer'
 
 export async function composeHandoff({
@@ -119,17 +123,24 @@ export async function composeHandoff({
     },
     log: createLogger('shutdown')
   })
-  const durableBackendHandoffGate = createDurableInstallGate(
-    async (options) => {
-      releaseAgentUpdateAdmission ??= runtime.holdUpdateAdmission()
-      return shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+  const durableBackendHandoffGate: import('../update/strategy').InstallGate = async (options) => {
+    const deadlineAt = updateShutdownDeadline(options?.shutdownDeadlineAt) - UPDATE_STOP_RESERVE_MS
+    releaseAgentUpdateAdmission ??= runtime.holdUpdateAdmission()
+    const readiness = await shutdownCoordinator.runForUpdateGate(
+      Math.max(0, deadlineAt - Date.now()),
+      {
         holdSideChatAdmission: true,
         legacyShellRecoveryToken: options?.legacyShellRecoveryToken
-      })
-    },
-    () => confirmRendererDurability(),
-    true
-  )
+      }
+    )
+    const saved = await attemptUpdateShutdownStep(() => confirmRendererDurability(), deadlineAt)
+    const outcome = saved.outcome === 'completed' && !saved.value ? 'failed' : saved.outcome
+    return {
+      ...readiness,
+      stopAuthorized: true,
+      shutdownDiagnostics: [{ step: 'backend-renderer-save', outcome }]
+    }
+  }
   const detectResearchBlockers = (): UpdateBlocker[] => {
     const blockers: UpdateBlocker[] = detectActiveSessions({
       runtime: { getActivePromptSessions: () => runtime.getQuitBlockingPromptSessions() },
@@ -185,13 +196,21 @@ export async function composeHandoff({
       notifyRendererDurabilityAborted()
     }
   }
-  const updateInstallGate = createActiveResearchSafeInstallGate(
-    detectResearchBlockers,
-    durableBackendHandoffGate,
-    () => isMigrationInProgress() || isMigrationPending()
-  )
+  const updateInstallGate: import('../update/strategy').InstallGate = async (options) => {
+    // Applying the update authorizes stopping active research, including work that refuses to save.
+    // An in-progress data/installation transaction still needs its own exclusive handoff to settle.
+    const exclusiveHandoff = (): boolean =>
+      isMigrationInProgress() || isMigrationPending() || settingsService.hasActiveInstall()
+    if (exclusiveHandoff()) return { completed: false, reaped: false, reason: 'installation-busy' }
+    const readiness = await durableBackendHandoffGate(options)
+    return exclusiveHandoff()
+      ? { completed: false, reaped: false, reason: 'installation-busy' }
+      : readiness
+  }
   const inspectDesktopUpdate = async (): Promise<InstallReadiness> => {
-    const blockedBy = [...new Set(detectResearchBlockers())]
+    const blockedBy = [...new Set(detectResearchBlockers())].filter(
+      (blocker) => blocker === 'settings-install'
+    )
     const result: InstallReadiness = {
       completed: blockedBy.length === 0,
       reaped: false,

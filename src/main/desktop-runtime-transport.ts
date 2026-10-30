@@ -40,6 +40,7 @@ import {
 } from './desktop-native-contract'
 import {
   desktopLifecycleRequestSchema,
+  installationUpdateRequestSchema,
   type DesktopLifecycleRequest
 } from './desktop-runtime-lifecycle'
 import { parseRpcJson, stringifyRpcJson } from './rpc-json'
@@ -126,6 +127,7 @@ export async function startDesktopRuntimeTransport(options: {
   hostCommands?: ApplicationCommandByNameDispatcher
   startup?: Pick<DatabaseStartupOwner, 'getState' | 'retry' | 'subscribe'>
   requestShutdown?: (reason?: 'restart' | 'update', deadlineAt?: number) => void | Promise<void>
+  authorizeInstallationUpdate?: (operationId: string) => number
   createLifecycle?: () => {
     request(
       operation: DesktopLifecycleRequest,
@@ -182,6 +184,7 @@ export async function startDesktopRuntimeTransport(options: {
     (request: DesktopNativeOperation, clientId?: string, signal?: AbortSignal) => Promise<unknown>
   >()
   let shutdownRequested = false
+  let installationCloseDeadline: { operationId: string; deadlineAt: number } | undefined
   const isStopping = (): boolean => shutdownRequested || (options.isStopping?.() ?? false)
   const activeSocket = (): WebSocket | undefined =>
     [...(controller?.sockets ?? []), ...connections.keys()].find(
@@ -578,6 +581,43 @@ export async function startDesktopRuntimeTransport(options: {
               )
             return
           }
+          const installationUpdate =
+            request.kind === 'host-invoke' &&
+            ['desktop:update-installation-gate', 'desktop:update-installation-stop'].includes(
+              request.channel
+            )
+          let installationClose: z.infer<typeof installationUpdateRequestSchema> | undefined
+          if (installationUpdate) {
+            try {
+              if (!options.authorizeInstallationUpdate || request.args.length !== 1)
+                throw new Error('Installation update closure is unavailable.')
+              installationClose = installationUpdateRequestSchema.parse(request.args[0])
+              const authorizedDeadline = options.authorizeInstallationUpdate(
+                installationClose.operationId
+              )
+              const deadlineAt = Math.min(
+                serviceStopDeadline(installationClose.shutdownDeadlineAt),
+                authorizedDeadline ?? Infinity,
+                installationCloseDeadline?.operationId === installationClose.operationId
+                  ? installationCloseDeadline.deadlineAt
+                  : Infinity
+              )
+              installationCloseDeadline = { operationId: installationClose.operationId, deadlineAt }
+              installationClose = { ...installationClose, shutdownDeadlineAt: deadlineAt }
+            } catch {
+              respond({
+                protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+                ok: false,
+                error: {
+                  code: 'command-unavailable',
+                  message: 'The installation update close authority could not be verified.'
+                }
+              })
+              return
+            }
+          }
+          const installationStop =
+            installationUpdate && request.channel === 'desktop:update-installation-stop'
           const requiresControl =
             request.kind === 'shutdown' ||
             (request.kind === 'lifecycle' &&
@@ -613,7 +653,11 @@ export async function startDesktopRuntimeTransport(options: {
             })
             return
           }
-          if ((shutdownPending || shutdownRequested) && request.kind !== 'shutdown') {
+          if (
+            (shutdownPending || shutdownRequested) &&
+            request.kind !== 'shutdown' &&
+            !installationStop
+          ) {
             respond({
               protocolVersion: WEB_RPC_PROTOCOL_VERSION,
               ok: false,
@@ -716,10 +760,11 @@ export async function startDesktopRuntimeTransport(options: {
             void operation.finally(() => owner?.operations.delete(operation)).catch(() => undefined)
             return
           }
-          if (request.kind === 'shutdown') {
+          if (request.kind === 'shutdown' || installationStop) {
             if (
-              request.generation !== listener.endpoint.generation ||
-              request.pid !== process.pid ||
+              (request.kind === 'shutdown' &&
+                (request.generation !== listener.endpoint.generation ||
+                  request.pid !== process.pid)) ||
               !options.requestShutdown
             ) {
               respond({
@@ -732,6 +777,11 @@ export async function startDesktopRuntimeTransport(options: {
               })
               return
             }
+            const stopReason = request.kind === 'shutdown' ? request.reason : 'update'
+            const stopDeadline =
+              request.kind === 'shutdown'
+                ? request.deadlineAt
+                : serviceStopDeadline(installationClose!.shutdownDeadlineAt)
             shutdownPending = true
             if (!options.lifetime) {
               // Legacy shutdown may close this transport immediately. Flush its reply after all
@@ -744,7 +794,7 @@ export async function startDesktopRuntimeTransport(options: {
                 shutdownRequested = true
                 setImmediate(() => {
                   void Promise.resolve()
-                    .then(() => options.requestShutdown!(request.reason, request.deadlineAt))
+                    .then(() => options.requestShutdown!(stopReason, stopDeadline))
                     .catch((error) => {
                       shutdownRequested = false
                       shutdownPending = false
@@ -759,8 +809,7 @@ export async function startDesktopRuntimeTransport(options: {
             pending.add(request.id)
             void (async () => {
               try {
-                if (!shutdownRequested)
-                  await options.requestShutdown!(request.reason, request.deadlineAt)
+                if (!shutdownRequested) await options.requestShutdown!(stopReason, stopDeadline)
                 shutdownRequested = true
                 respond({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, ok: true, result: null })
               } catch (error) {
@@ -792,7 +841,7 @@ export async function startDesktopRuntimeTransport(options: {
                   dispatcher,
                   eventRead ? 'sessions:load-one' : request.channel,
                   hostCaller,
-                  request.args,
+                  installationClose ? [installationClose] : request.args,
                   request
                 )
                 respond({

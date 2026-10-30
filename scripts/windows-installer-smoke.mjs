@@ -9,6 +9,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   stat,
   writeFile
@@ -16,7 +17,7 @@ import {
 import { createServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -44,7 +45,6 @@ const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
 // Keep the installer smoke step's 10-minute CI budget for launch, migrations, and shutdown too.
 const NOTEBOOK_ENV_PROVISION_TIMEOUT_MS = 8 * 60_000
-const TERMINATION_TIMEOUT_MS = 10_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
 const APP_GUID = 'a65c5229-0b29-5716-a0fe-d8755e62f3ca'
@@ -245,56 +245,12 @@ const readPackagedAppConfigRoot = async (
   throw new Error('Cannot authenticate the legacy installed app config root from its token file.')
 }
 
-const terminateProcessTree = async (
-  child,
-  timeoutMs = TERMINATION_TIMEOUT_MS,
-  spawnProcess = spawn
-) => {
-  if (!child.pid) return
-  const killDirectly = () => {
-    try {
-      child.kill()
-    } catch {
-      // Best effort: the process may already have exited between the timeout and fallback.
-    }
-  }
-  let terminator
-  try {
-    terminator = spawnProcess('taskkill.exe', ['/pid', String(child.pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true
-    })
-  } catch {
-    killDirectly()
-    return
-  }
-  await new Promise((resolveTermination) => {
-    let settled = false
-    const finish = () => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolveTermination()
-    }
-    const timer = setTimeout(() => {
-      try {
-        terminator.kill()
-      } catch {
-        // The taskkill process may have exited without delivering its event yet.
-      }
-      terminator.unref?.()
-      killDirectly()
-      finish()
-    }, timeoutMs)
-    terminator.once('error', () => {
-      killDirectly()
-      finish()
-    })
-    terminator.once('exit', (code) => {
-      if (code !== 0 && code !== null) killDirectly()
-      finish()
-    })
-  })
+// ChildProcess.kill uses the process handle retained by libuv on Windows. Never reopen a
+// historical PID with taskkill /T: that can target a recycled PID or unrelated descendants.
+// Fixture-owned installed descendants are reaped separately by terminateDirectoryProcesses.
+const terminateProcessTree = async (child) => {
+  if (!child.pid || child.exitCode != null || child.signalCode != null) return
+  child.kill()
 }
 
 const runProcess = (executable, args, options = {}, terminate = terminateProcessTree) =>
@@ -1216,7 +1172,7 @@ const launchForProcessLock = async ({
     if (bootstrap.appVersion !== expectedVersion || bootstrap.platform !== 'win32') {
       throw new Error(`Unexpected process-lock app bootstrap: ${JSON.stringify(bootstrap)}`)
     }
-    return { child, exit, output }
+    return { child, exit, output, endpoint, auth }
   } catch (error) {
     await terminateProcessTree(child)
     throw error
@@ -1487,18 +1443,100 @@ const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }
 }
 
 const terminateDirectoryProcesses = async (directory, run = runProcess) => {
-  const root = `${directory.replace(/[\\/]+$/u, '')}\\`
-  await run(
+  if (!win32.isAbsolute(directory) || win32.parse(directory).root === directory) {
+    throw new Error(
+      'Process cleanup requires an absolute installation directory, not a drive root.'
+    )
+  }
+  return run(
     'powershell.exe',
     [
       '-NoProfile',
       '-NonInteractive',
-      '-Command',
-      "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-      root
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      fileURLToPath(new URL('./windows-certification-processes.ps1', import.meta.url)),
+      '-Mode',
+      'Terminate',
+      '-Root',
+      directory
     ],
-    { allowNonZero: true }
+    { timeoutMs: 30_000 }
   )
+}
+
+const inspectInstalledProcess = async (executable, pid, run = runProcess) => {
+  if (!Number.isSafeInteger(pid) || pid < 1) throw new Error('Invalid successor process ID.')
+  // QueryFullProcessImageName returns the long path even when TEMP used an 8.3 alias.
+  // Bind the query root and final comparison to the same existing executable.
+  const canonicalExecutable = await realpath(executable)
+  const result = await run(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      fileURLToPath(new URL('./windows-certification-processes.ps1', import.meta.url)),
+      '-Mode',
+      'Inspect',
+      '-Root',
+      win32.dirname(canonicalExecutable),
+      '-TargetPid',
+      String(pid)
+    ],
+    { timeoutMs: 30_000 }
+  )
+  const processes = JSON.parse(result.stdout)
+  for (const entry of processes) {
+    if (entry.pid !== pid) continue
+    if (
+      win32.resolve(await realpath(entry.executablePath)).toLowerCase() ===
+      win32.resolve(canonicalExecutable).toLowerCase()
+    )
+      return { ...entry, executablePath: executable }
+  }
+  return undefined
+}
+
+// USERPROFILE/APPDATA environment overrides do not isolate HKCU, known folders, or NSIS's
+// existing-install discovery. Refuse to run these destructive fixtures on an occupied account.
+const assertIsolatedWindowsAccount = async ({
+  run = runProcess,
+  exists = pathExists,
+  environment = process.env
+} = {}) => {
+  const keys = ['HKCU', 'HKLM'].flatMap((hive) => [
+    `${hive}\\Software\\${APP_GUID}`,
+    `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${APP_GUID}`,
+    `${hive}\\Software\\Classes\\open-science`
+  ])
+  for (const key of keys) {
+    const result = await run('reg.exe', ['query', key], { allowNonZero: true })
+    if (result.code === 0)
+      throw new Error(
+        `Windows certification requires an isolated Windows account or VM; existing registration: ${key}`
+      )
+    if (
+      result.code !== 1 ||
+      !/unable to find|找不到|nicht gefunden|introuvable/i.test(result.stderr)
+    ) {
+      throw new Error(`Cannot verify registry isolation for ${key}: ${result.stderr}`)
+    }
+  }
+  const roots = [environment.USERPROFILE, environment.APPDATA, environment.LOCALAPPDATA].filter(
+    Boolean
+  )
+  for (const root of roots) {
+    for (const name of ['.open-science', 'Open-Science', 'open-science']) {
+      if (await exists(join(root, name)))
+        throw new Error(
+          `Windows certification requires a clean account; existing application data at ${join(root, name)}`
+        )
+    }
+  }
 }
 
 const uninstallAndVerify = async (installDirectory, env) => {
@@ -1726,6 +1764,7 @@ const runOrphanedUninstallerLockSmoke = async (installer) => {
 
 const main = async () => {
   if (process.platform !== 'win32') throw new Error('Windows installer smoke requires Windows.')
+  await assertIsolatedWindowsAccount()
   const options = parseArguments(process.argv.slice(2))
   const currentInstaller = await findSetupInstaller(options.installerDirectory)
   if (options.scenario === ORPHANED_UNINSTALLER_LOCK_SCENARIO) {
@@ -1917,6 +1956,13 @@ const main = async () => {
     sentinelCleanupError = error
   }
   if (!options.retainInstallation || primaryError || sentinelCleanupError) {
+    // Reap only executable objects still under this disposable root before removing its files.
+    // This also covers failed startup, where the direct child already exited but its backend did not.
+    try {
+      await terminateDirectoryProcesses(root)
+    } catch (error) {
+      sentinelCleanupError ??= error
+    }
     await cleanupSmokeRegistrations(
       root,
       installerVersion(currentInstaller),
@@ -1938,6 +1984,9 @@ if (invokedAsScript) {
 }
 
 export {
+  APP_GUID,
+  assertIsolatedWindowsAccount,
+  inspectInstalledProcess,
   authenticatePackagedAppEndpoint,
   assertDatabaseDowngradeBlocked,
   assertWsl2RestartCleanupBlocked,
@@ -1961,6 +2010,7 @@ export {
   installAndProbe,
   installApplication,
   launchAndProbe,
+  launchForProcessLock,
   packagedArtifactSmokeRpcResult,
   packagedMcpRuntime,
   observeChildClose,
