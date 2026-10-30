@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScanText } from 'lucide-react'
+import { Check, ScanText } from 'lucide-react'
+import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { OCR_LANGUAGE_LABELS, localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
@@ -171,20 +172,31 @@ export function LocalOcrControl({
             {t('OCR languages')}
           </legend>
           <div className="grid gap-2 sm:grid-cols-2">
-            {snapshot.ocrLanguages.map((language) => (
-              <label key={language.code} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
+            {snapshot.ocrLanguages.map((language) => {
+              const label = languageLabel(language.code, t)
+              return (
+                <Checkbox.Root
+                  key={language.code}
                   checked={language.selected}
                   disabled={pending || language.code === 'eng'}
-                  onChange={(event) => void setLanguage(language.code, event.target.checked)}
-                />
-                <span>{languageLabel(language.code, t)}</span>
-                {!language.installed ? (
-                  <span className="text-xs text-muted-foreground">{t('Not installed')}</span>
-                ) : null}
-              </label>
-            ))}
+                  aria-label={label}
+                  onCheckedChange={(checked) => {
+                    if (checked !== 'indeterminate') void setLanguage(language.code, checked)
+                  }}
+                  className="group flex min-h-8 items-center gap-2 rounded-md px-1 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
+                    <Checkbox.Indicator>
+                      <Check className="size-3" aria-hidden="true" />
+                    </Checkbox.Indicator>
+                  </span>
+                  <span>{label}</span>
+                  {!language.installed ? (
+                    <span className="text-xs text-muted-foreground">{t('Not installed')}</span>
+                  ) : null}
+                </Checkbox.Root>
+              )
+            })}
           </div>
         </fieldset>
       ) : null}
