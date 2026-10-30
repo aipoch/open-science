@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readlink,
   rm,
   stat,
   symlink,
@@ -172,6 +173,36 @@ describe('standalone runtime archives', () => {
     // macOS resolves /var to /private/var for process.cwd().
     expect(await stat(result.cwd)).toEqual(await stat(options.root))
   }, 30_000)
+  it('preserves relative npm launcher symlinks inside the archive', async () => {
+    if (process.platform === 'win32') return
+    const options = await fixture()
+    await mkdir(join(options.nodeSource, 'node_modules/npm/bin'), { recursive: true })
+    await writeFile(join(options.nodeSource, 'node_modules/npm/bin/npm-cli.js'), 'npm-entry')
+    await writeFile(join(options.nodeSource, 'node_modules/npm/bin/npx-cli.js'), 'npx-entry')
+    // Staging creates relative launcher links; the archive must not rewrite them to
+    // absolute paths, or they dangle (and fail safety validation) on any other machine.
+    await symlink('node_modules/npm/bin/npm-cli.js', join(options.nodeSource, 'npm'))
+    await symlink('node_modules/npm/bin/npx-cli.js', join(options.nodeSource, 'npx'))
+    const report = await packRuntimeArchive(options)
+    const extracted = join(options.root, 'extracted-symlinks')
+    await mkdir(extracted)
+    execFileSync(
+      archiveTar,
+      ['-xf', join('archives', report.filename), '-C', 'extracted-symlinks'],
+      {
+        cwd: options.root
+      }
+    )
+    const installed = join(extracted, archiveStem('1.2.3', options.target), 'node-runtime')
+    for (const [name, entry] of [
+      ['npm', 'npm-entry'],
+      ['npx', 'npx-entry']
+    ]) {
+      const target = await readlink(join(installed, name))
+      expect(target.startsWith('/')).toBe(false)
+      expect(await readFile(join(installed, target), 'utf8')).toBe(entry)
+    }
+  })
   it('rejects stale backend and mismatched Node before creating a deliverable', async () => {
     const options = await fixture()
     const manifest = join(options.source, 'package.json')
