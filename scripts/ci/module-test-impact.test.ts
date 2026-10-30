@@ -11,6 +11,7 @@ import { createPackageTestPlan, validatePackageTestRegistry } from './package-te
 import {
   collectCodeGraphTests,
   createAffectedTestPlan,
+  createFullPlanFloor,
   createModuleTestPlan,
   executeModuleTestPlan,
   formatModuleTestPlan,
@@ -994,6 +995,37 @@ describe('module test impact commands', () => {
     }
   })
 
+  it('runs the full-plan floor selectively with coverage scoped to its own changes', async () => {
+    const owned = 'src/main/literature/mcp-server.ts'
+    const unowned = 'src/shared/new-unregistered-contract.ts'
+    const options = (spawn: NpmInvocation): Parameters<typeof runModuleTestCli>[1] => ({
+      execute: (command: string, args: string[]) => {
+        if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+        if (command === 'git' && args[0] === 'diff')
+          return Buffer.from(`M\0${owned}\0A\0${unowned}\0M\0package.json\0`)
+        throw new Error('CodeGraph unavailable in CI')
+      },
+      spawn,
+      derivedConsumers: { schemaVersion: 1, modules: {} },
+      environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+    })
+    const args = ['affected', '--base', 'base', '--head', 'head', '--coverage-changed', 'base']
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      const { spawn, invocation } = captureNpmInvocation()
+      await expect(
+        runModuleTestCli([...args, '--require-selective'], options(spawn))
+      ).rejects.toThrow('Selective test plan required')
+      await runModuleTestCli([...args, '--require-selective', '--full-floor'], options(spawn))
+      const npm = invocation.mock.calls[0]?.[1]
+      expect(npm).toContain('src/main/acp/auto-operation-inventory.test.ts')
+      expect(npm).toContain(`--coverage.include=${owned}`)
+      expect(npm).not.toContain(`--coverage.include=${unowned}`)
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it('generates derived consumers from the requested head, not the dirty worktree', async () => {
     const cwd = mkdtempSync(resolve(tmpdir(), 'module-head-snapshot-'))
     try {
@@ -1498,6 +1530,34 @@ it('keeps literature command consumers covered by the explicit full fallback', (
   expect(manifest.modules.main_literature.testFiles.consumer).toContain(
     'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx'
   )
+})
+
+it('keeps declared contract tests as the deferred full-plan floor', () => {
+  const manifest = loadModuleImpactManifest()
+  const graph = { status: 'not-used', testFiles: [] }
+  const literature = { path: 'src/main/literature/mcp-server.ts', status: 'modified' }
+  // #3979: a full marker and a global input together removed the Auto inventory before merge.
+  const changes = [literature, { path: 'package.json', status: 'modified' }]
+  expect(createAffectedTestPlan(changes, graph, manifest).mode).toBe('full')
+  const floor = createFullPlanFloor(changes, graph, manifest)
+  expect(floor?.mode).toBe('selective')
+  expect(floor?.modules).toContain('main_literature')
+  expect(floor?.testFiles).toContain('src/main/acp/auto-operation-inventory.test.ts')
+  expect(floor?.testFiles).toEqual(createFullPlanFloor([literature], graph, manifest)?.testFiles)
+  const unownedPath = { path: 'src/shared/new-unregistered-contract.ts', status: 'added' }
+  expect(createFullPlanFloor([...changes, unownedPath], graph, manifest)?.floorPaths).toEqual([
+    literature.path
+  ])
+  expect(floor?.reasonChains).toContain(
+    'full plan -> declared module test floor; complete portable suite deferred to scheduled acceptance'
+  )
+  for (const unowned of [
+    [{ path: 'package.json', status: 'modified' }],
+    [{ path: 'src/shared/new-unregistered-contract.ts', status: 'added' }],
+    [{ path: 'src/main/literature/mcp-server.ts', status: 'deleted' }]
+  ]) {
+    expect(createFullPlanFloor(unowned, graph, manifest)).toBeUndefined()
+  }
 })
 
 it('keeps tag event consumers covered by the explicit full fallback', () => {

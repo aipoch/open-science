@@ -16,7 +16,7 @@ import {
   createModuleImpactShadowReport,
   formatModuleImpactShadowSummary
 } from './module-impact-shadow.mjs'
-import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { createAffectedTestPlan, createFullPlanFloor } from './module-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { loadDerivedConsumers } from './module-graph/policy.mjs'
 import { selectWindowsCoreChecks } from './windows-core-plan.mjs'
@@ -76,9 +76,13 @@ export function runModuleImpactAuthorityCli(
     ? createAffectedTestPlan(changes, manifestOnlyGraph, manifest, registrationModules)
     : unusedModulePlan
   const report = createModuleImpactShadowReport(candidatePlan, modulePlan)
+  const unitFloor =
+    report.resolved.mode === 'full' &&
+    report.resolved.bundles.includes('unit') &&
+    createFullPlanFloor(changes, manifestOnlyGraph, manifest, registrationModules) !== undefined
   const platformPlan =
     environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
-      ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME)
+      ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME, { unitFloor })
       : report.resolved
   // Trusted preflight has no parser to generate the derived index. Without a committed index the
   // module plan lacks consumer evidence, so Windows core selection must fail closed to all checks.

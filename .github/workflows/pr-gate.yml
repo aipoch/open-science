@@ -618,7 +618,7 @@ jobs:
         if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts')) }}
         continue-on-error: true
         env:
-          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}
         run: |
           npm run check:web-api-map
           # Full portable shards already execute these tests. Keep the map check in this lane.
@@ -693,7 +693,7 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
         continue-on-error: true
         env:
-          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}
         run: |
           if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
             npx vitest run cli packages/open-science
@@ -848,7 +848,7 @@ jobs:
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
       - name: Test complete suite shard
         id: unit_macos_shard
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
         continue-on-error: true
         # The static lane owns the i18n catalog guard. Real Linux and macOS sandbox behavior runs
         # in platform jobs with the required native dependencies, so do not duplicate those files.
@@ -864,14 +864,15 @@ jobs:
           --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Test affected Module shard
         id: unit_macos_related_shard
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} --
           --coverage.reporter=text-summary
           --testTimeout=30000
           --shard=${{ matrix.shard }}/${{ matrix.total }}
@@ -933,16 +934,17 @@ jobs:
         run: npm run generate:module-consumers
       - name: Test affected Modules
         id: unit_macos_related
-        if: ${{ needs.unit_shard.result == 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ needs.unit_shard.result == 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           VITEST_PORTABLE_CI: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor}
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -954,22 +956,23 @@ jobs:
         id: unit_macos_full
         # The shard job covers both full plans and trusted pre-migration selective plans that select
         # the unit bundle without unit_macos. Merge once so thresholds see the complete suite.
-        if: ${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
+        if: ${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
         continue-on-error: true
         # Blob reports retain their source test paths. The merge reconstructs coverage without
         # discovering or executing tests again, so coverage thresholds remain authoritative.
         run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Merge Module reports and coverage
         id: unit_macos_related_merge
-        if: ${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           VITEST_PORTABLE_CI: '1'
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true

@@ -17,9 +17,10 @@ The final PR Gate requires its success; no additional repository required-check 
 PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repository
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
-Failed selected checks block merging. Full plans retain the complete portable test lanes in both
-PRs and merge queue; selective plans retain module-based selection. Platform policy does not defer
-required portable tests to scheduled/manual Source Regression, which remains additional coverage.
+Failed selected checks block merging; full portable suites run in scheduled/manual Source
+Regression instead. A full plan still runs, as a blocking floor (`unitFloor`), the declared module
+tests of each changed path that has its own bounded selection; deleted, unowned and global paths
+add no floor.
 See [Package workflows](package-workflows.md) for selection details.
 Desktop changes run the Windows
 mainline E2E journeys on one test runner, selected from the changed modules and their declared
@@ -294,8 +295,8 @@ Registry changes require CI owner review.
 
 Installed package checks run selectively in merge queue and fully in scheduled Source Regression.
 Queue retains isolated builds and all installed-consumer assertions but omits the verifier's source
-Vitest rerun. Source suites run in the portable package shards; when a plan selects package sources
-without the general unit bundle, two blocking package-only shards run those selected packages. They do
+Vitest rerun. Source suites run in the portable package shards; when platform policy defers the general
+portable suite, two blocking package-only shards run the trusted selected packages instead. They do
 not allocate host test shards or duplicate an already selected portable job. Scheduled/manual full
 verification retains complete isolated source suites. Isolation-only source failures can therefore
 first appear in scheduled certification. The existing aggregate gate also rejects failed, cancelled

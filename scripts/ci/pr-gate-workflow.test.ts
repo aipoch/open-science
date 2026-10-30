@@ -307,8 +307,22 @@ describe('PR Gate workflow', () => {
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
     expect(merge?.run).toContain(
-      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports'
+      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} -- --merge-reports=vitest-reports'
     )
+    // Trusted preflight marks deferred full plans that keep a declared module test floor. The
+    // runner selects the same floor, never the complete suite, and still refuses full plans.
+    const floor = 'fromJSON(needs.preflight.outputs.plan).unitFloor == true'
+    const serialFloor = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
+    for (const step of [selected, merge, serialFloor]) {
+      expect(step?.if).toContain(floor)
+      expect(step?.env?.FULL_FLOOR).toBe(`\${{ ${floor} && '1' || '' }}`)
+      expect(step?.run).toContain('--require-selective ${FULL_FLOOR:+--full-floor}')
+    }
+    const completeShard = shards.steps?.find(({ id }) => id === 'unit_macos_shard')
+    const completeMerge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_full')
+    for (const step of [completeShard, completeMerge]) {
+      expect(step?.if).toContain('fromJSON(needs.preflight.outputs.plan).unitFloor != true')
+    }
     expect(workflow.jobs.unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     const serial = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
     expect(serial?.if).toContain("needs.unit_shard.result == 'skipped'")
@@ -1598,7 +1612,7 @@ describe('PR Gate workflow', () => {
     expect(merge).toMatchObject({
       id: 'unit_macos_full',
       'continue-on-error': true,
-      if: "${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}",
+      if: "${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}",
       run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
@@ -1855,7 +1869,7 @@ describe('PR Gate workflow', () => {
             (step) => step.id === id
           )
           expect(step?.env?.RUN_DEDICATED_TESTS).toBe(
-            "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+            "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}"
           )
           const log = join(directory, id)
           const run = spawnSync('bash', ['-e', '-c', step!.run!], {

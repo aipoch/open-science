@@ -183,13 +183,16 @@ describe('module registration approval boundary', () => {
         path
       }))
     )
-  )('retains full portable registration validation for $event at $path', ({ event, path }) => {
-    const changes = [{ path, status: 'modified' }]
-    const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
-    expect(plan.mode).toBe('full')
-    expect(plan.bundles).toContain('unit')
-    expect(plan.bundles).toContain('static')
-  })
+  )(
+    'schedules full portable registration validation at the scheduled acceptance boundary for $event at $path',
+    ({ event, path }) => {
+      const changes = [{ path, status: 'modified' }]
+      const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
+      expect(plan.mode).toBe('full')
+      expect(plan.bundles).not.toContain('unit')
+      expect(plan.bundles).toContain('static')
+    }
+  )
 
   it('protects CI tooling and exempts only registration JSON', () => {
     const entries = readFileSync(join(process.cwd(), '.github/CODEOWNERS'), 'utf8')

@@ -363,6 +363,46 @@ function isPortableVitestFile(path) {
   )
 }
 
+// PR and queue full plans defer the complete portable suite to scheduled acceptance. They still
+// run the declared closure of each owned change, so a full marker or a global input cannot remove
+// its owner, contract and consumer tests before merge. Deleted paths and paths that only resolve
+// to full validation remain covered by the deferred suite.
+export function createFullPlanFloor(
+  changes,
+  graph,
+  manifest = defaultManifest,
+  registrationModules = []
+) {
+  const modules = Object.fromEntries(
+    Object.entries(manifest.modules).map(([moduleId, module]) => {
+      const floorModule = { ...module }
+      delete floorModule.fullTestReason
+      return [moduleId, floorModule]
+    })
+  )
+  const floorManifest = { ...manifest, modules }
+  // Each path joins the floor only when it has its own bounded selection, so one unowned or
+  // global path cannot remove the floor of the owned changes beside it.
+  const floorChanges = changes
+    .filter(({ status }) => status !== 'deleted')
+    .map(({ path }) => ({ path, status: 'modified' }))
+    .filter(
+      (change) =>
+        createAffectedTestPlan([change], graph, floorManifest, registrationModules).mode ===
+        'selective'
+    )
+  const plan = createAffectedTestPlan(floorChanges, graph, floorManifest, registrationModules)
+  if (plan.mode !== 'selective' || plan.testFiles.length === 0) return undefined
+  return {
+    ...plan,
+    floorPaths: sorted(floorChanges.map(({ path }) => path)),
+    reasonChains: sorted([
+      ...plan.reasonChains,
+      'full plan -> declared module test floor; complete portable suite deferred to scheduled acceptance'
+    ])
+  }
+}
+
 export function collectCodeGraphTests(
   paths,
   { cwd = process.cwd(), execute = execFileSync, pathExists = existsSync } = {}
@@ -523,7 +563,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
   }
-  const { plan, changes } = await resolveAffectedTestPlan(base, head, { tier, ...options })
+  const { plan, changes } = await resolveAffectedTestPlan(base, head, {
+    tier,
+    fullFloor: arguments_.includes('--full-floor'),
+    ...options
+  })
   if (arguments_.includes('--require-selective') && plan.mode !== 'selective') {
     throw new Error(
       `Selective test plan required; refusing full execution.\n${formatModuleTestPlan(plan)}`
@@ -568,7 +612,11 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
 
 // The plan `affected` executes for a revision range, including CodeGraph and host/package
 // refinement. Shadow reports compare against this, not the unrefined registered plan.
-export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...options } = {}) {
+export async function resolveAffectedTestPlan(
+  base,
+  head,
+  { tier = 'queue', fullFloor = false, ...options } = {}
+) {
   const derivedConsumers =
     options.derivedConsumers ??
     (await loadOrGenerateDerivedConsumers(
@@ -587,6 +635,16 @@ export async function resolveAffectedTestPlan(base, head, { tier = 'queue', ...o
   )
   const graph = collectCodeGraphTests(paths, options)
   let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
+  // Trusted preflight selected the floor for a full plan. Run it as declared, without narrowing
+  // refinements, which evaluate the complete change set the floor excludes. Changed-source
+  // coverage is limited to the floor's changes; the deferred suite covers the remainder.
+  if (fullFloor && plan.mode === 'full') {
+    const floor = createFullPlanFloor(changes, graph, manifest, registrationModules)
+    if (floor) {
+      const floorChanges = changes.filter(({ path }) => floor.floorPaths.includes(path))
+      return { plan: floor, changes: floorChanges, manifest, registrationModules, registrationOnly }
+    }
+  }
   // Documentation and trusted additive records do not turn a source boundary into a
   // mixed product change. Keep their plan evidence and capability selection intact.
   const sourceChanges = changes.filter((change) => {
