@@ -1020,12 +1020,7 @@ const verifyNotebookMutationCancellation = async (sessionId) =>
             arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
           },
           undefined,
-          {
-            timeout: 60_000,
-            maxTotalTimeout: 60_000,
-            resetTimeoutOnProgress: true,
-            onprogress: () => undefined
-          }
+          { timeout: 60_000 }
         )
         .catch((error) => {
           throw new Error(`Mutation warm-up failed: ${String(error)}`, { cause: error })
