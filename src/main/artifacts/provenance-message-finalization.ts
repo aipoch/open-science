@@ -562,6 +562,41 @@ export class ArtifactProvenanceMessageFinalizer {
         !lineage.currentVersion ||
         lineage.currentVersion.versionNumber < latestMatching.versionNumber
       ) {
+        // Editing an immutable version does not rewrite the producer's workspace file. Keep a
+        // repeat of pre-edit bytes as message-owned history without making it current. Anchor
+        // protection to the last published edit even after an intervening generated update.
+        // A new checksum remains eligible; this is exact-content replay protection, not a merge.
+        const currentVersion = lineage.currentVersion
+        if (currentVersion && currentVersion.checksum !== latestMatching.checksum) {
+          const lastEdit =
+            currentVersion.originKind === 'user_edit'
+              ? currentVersion
+              : await transaction.artifactVersion.findFirst({
+                  where: {
+                    artifactId,
+                    originKind: 'user_edit',
+                    versionNumber: { lt: currentVersion.versionNumber },
+                    state: 'finalized',
+                    managedVisibleAt: { not: null }
+                  },
+                  orderBy: { versionNumber: 'desc' },
+                  select: { versionNumber: true }
+                })
+          if (lastEdit) {
+            const repeatedVersion = await transaction.artifactVersion.findFirst({
+              where: {
+                artifactId,
+                versionNumber: { lt: lastEdit.versionNumber },
+                state: 'finalized',
+                managedVisibleAt: { not: null },
+                checksum: latestMatching.checksum,
+                sizeBytes: latestMatching.sizeBytes
+              },
+              select: { id: true }
+            })
+            if (repeatedVersion) continue
+          }
+        }
         await transaction.artifactLineage.update({
           where: { id: artifactId },
           data: { currentVersionId: latestMatching.id }
