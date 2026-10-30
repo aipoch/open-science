@@ -61,6 +61,10 @@ the checks group. Each runner installs its own dependencies and builds its own g
 consumer-index generation stays with its readers. Node and Web typechecks remain concurrent
 after package declarations are ready.
 
+The interface contract check includes the Auto operation inventory guard. When full portable
+tests are deferred, it still checks reviewed MCP tool fingerprints in the blocking static group.
+When full portable shards run, they cover the guard without a duplicate static test run.
+
 The matrix disables fail-fast so both groups report diagnostics. The existing PR Gate consumes
 the aggregate static result; either group's failure blocks the gate. Zizmor remains advisory.
 This reduces elapsed time at the cost of one extra setup/install when lint is selected.

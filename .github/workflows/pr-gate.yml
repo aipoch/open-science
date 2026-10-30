@@ -624,6 +624,7 @@ jobs:
           # Full portable shards already execute these tests. Keep the map check in this lane.
           if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
             npx vitest run \
+              src/main/acp/auto-operation-inventory.test.ts \
               src/preload/index.test.ts \
               src/preload/electron-renderer-contract-adapter.test.ts \
               src/shared/renderer-contract.test.ts \
