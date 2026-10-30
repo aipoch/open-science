@@ -58,6 +58,8 @@ export type SettleTaskSessionCompletionRequest = Readonly<{
   projectId: string
   sessionId: string
   promptMessageId: string
+  // Captured at admission; continuations can reuse the same prompt Message.
+  expectedRunStartedAt?: number
   taskRunCommitId: string
   messageId?: string
   artifacts: readonly PersistedArtifact[]
