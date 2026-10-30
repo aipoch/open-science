@@ -1302,7 +1302,7 @@ describe('ACP runtime migration write-gate', () => {
           expect.objectContaining({
             kind: 'error',
             text: expect.stringContaining(capacityError),
-            providerError: true
+            failure: { category: 'service' as const, diagnostics: {} }
           })
         ])
       )
@@ -6146,7 +6146,7 @@ describe('ACP runtime session management', () => {
         kind: 'error',
         sessionId: session.sessionId,
         interruptionCause: 'app-restart',
-        errorReportable: false
+        failure: { category: 'service' as const, diagnostics: {} }
       })
     )
     promptGate.resolve()
@@ -25557,7 +25557,7 @@ describe('ACP runtime session management', () => {
     'tags a provider-relayed %s prompt failure so the renderer hides Report',
     async (_name, data, message) => {
       const process = new FakeAgentProcess()
-      const events: Array<{ kind: string; providerError?: boolean }> = []
+      const events: Array<{ kind: string; category?: string }> = []
       startFakeAgent(process, ['remote-session-1'], {
         onPrompt: () => {
           throw acp.RequestError.internalError(data, message)
@@ -25568,7 +25568,7 @@ describe('ACP runtime session management', () => {
         defaultCwd: '/workspace',
         spawnAgent: () => asAgentProcess(process),
         callbacks: {
-          onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
+          onEvent: (event) => events.push({ kind: event.kind, category: event.failure?.category })
         }
       })
 
@@ -25577,13 +25577,13 @@ describe('ACP runtime session management', () => {
         runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
       ).rejects.toThrow()
 
-      expect(events).toContainEqual({ kind: 'error', providerError: true })
+      expect(events).toContainEqual({ kind: 'error', category: 'configuration' })
     }
   )
 
   it('does not tag an ACP-layer prompt failure as providerError (stays reportable)', async () => {
     const process = new FakeAgentProcess()
-    const events: Array<{ kind: string; providerError?: boolean }> = []
+    const events: Array<{ kind: string; category?: string }> = []
     startFakeAgent(process, ['remote-session-1'], {
       onPrompt: () => {
         // A protocol-level failure with no upstream provider signal is an app/ACP problem, not a
@@ -25596,7 +25596,7 @@ describe('ACP runtime session management', () => {
       defaultCwd: '/workspace',
       spawnAgent: () => asAgentProcess(process),
       callbacks: {
-        onEvent: (event) => events.push({ kind: event.kind, providerError: event.providerError })
+        onEvent: (event) => events.push({ kind: event.kind, category: event.failure?.category })
       }
     })
 
@@ -25607,7 +25607,7 @@ describe('ACP runtime session management', () => {
 
     const errorEvent = events.find((event) => event.kind === 'error')
     expect(errorEvent).toBeDefined()
-    expect(errorEvent?.providerError).toBeFalsy()
+    expect(errorEvent?.category).toBe('internal')
   })
 
   it('logs the provider rejection reason (message/code/data) when a prompt fails', async () => {
@@ -27356,7 +27356,7 @@ describe('ACP runtime skill force-load + nudge', () => {
           level: 'error',
           timestamp: Date.now(),
           text: 'Analysis failed',
-          providerError: true
+          failure: { category: 'service' as const, diagnostics: {} }
         }
       ])
       expect(settled.activeRun).toBeUndefined()

@@ -37,7 +37,7 @@ const marker = (): Record<string, unknown> => ({
   previousState: {
     status: 'error',
     error: 'Interrupted',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     resumeRecovery: { kind: 'resume-required', cause: 'app-restart', promptMessageId: 'prompt' }
   },
   expectedState: { status: 'idle' }
@@ -172,7 +172,12 @@ describe('Session files written by a future version', () => {
     const decoded = decodeSessionFile(futureFile(), { preserveRuntimeState: true })
     expect(decoded.status).toBe('ok')
     if (decoded.status !== 'ok') throw new Error('Expected Session decode')
-    const outcome = { kind: 'failed', settledAt: 3, error: 'Bad' }
+    const outcome = {
+      kind: 'failed',
+      settledAt: 3,
+      error: 'Bad',
+      failure: { category: 'internal', diagnostics: { raw: 'Bad' } }
+    }
     expect(decoded.session.messages[0].turnOutcome).toEqual(outcome)
     expect(decoded.session.conversationGraph?.messages[0].turnOutcome).toEqual(outcome)
     expect(decoded.session.promptPreparation?.id).toBe('prep-1')

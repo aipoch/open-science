@@ -26,7 +26,6 @@ import {
 } from '../../../../shared/artifacts'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
-import { isClaudeApiResponseInterruption } from '../../../../shared/run-error-classification'
 import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
@@ -1144,7 +1143,7 @@ const applyWorkspaceRuntimeEvent = async (
     // an app defect: settle the partial projection and reuse the durable, user-triggered Resume path.
     // Require both the structural provider tag and the fixed wrapper so unrelated provider failures
     // keep their existing terminal-error behavior.
-    if (event.providerError && isClaudeApiResponseInterruption(errorText)) {
+    if (event.failure?.reason === 'service/response-interrupted') {
       store.interruptRun(
         event.sessionId,
         'connection-lost',
@@ -1163,7 +1162,7 @@ const applyWorkspaceRuntimeEvent = async (
       // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
       // failures still fall through the text tier to reportable.
       store.failRun(event.sessionId, errorText, {
-        reportable: event.providerError ? false : undefined,
+        failure: event.failure,
         promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
         contextWindowSample: getTerminalContextWindowSample(event)
       })

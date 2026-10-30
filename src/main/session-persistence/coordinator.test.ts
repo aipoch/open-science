@@ -895,7 +895,7 @@ describe('SessionPersistenceCoordinator', () => {
       createSession({
         revision: 3,
         status: 'running',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         agentFrameworkId: 'codex',
         activeRun: { promptMessageId: prompt.id, startedAt: 1 },
         runtimeContext: { version: 1, revision: 2 },
@@ -986,7 +986,7 @@ describe('SessionPersistenceCoordinator', () => {
       activeRun: undefined,
       taskRunCommitId: 'task-run'
     })
-    expect(durable.errorReportable).toBeUndefined()
+    expect(durable.failure).toBeUndefined()
     expect(durable.runtimeContext).toEqual({ version: 1, revision: 2 })
     expect(durable.messages.map(({ id }) => id)).toEqual([
       prompt.id,
@@ -1163,7 +1163,7 @@ describe('SessionPersistenceCoordinator', () => {
       messageId: taskMessage.id,
       artifacts: [{ id: 'partial-artifact', kind: 'workspace-file', path: '/partial.txt' }],
       error: 'Provider failed',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       updatedAt: 9
     })
 
@@ -1172,7 +1172,7 @@ describe('SessionPersistenceCoordinator', () => {
       status: 'error',
       activeRun: undefined,
       error: 'Provider failed',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       taskRunCommitId: 'task-run',
       runtimeContext: { version: 1, revision: 4 }
     })

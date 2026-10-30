@@ -166,7 +166,7 @@ const acknowledgeTestSessionCommands = (
           ...session,
           status: baseline.status,
           error: baseline.error,
-          errorReportable: baseline.errorReportable,
+          failure: baseline.failure,
           activeRun: baseline.activeRun,
           resumeRecovery: baseline.resumeRecovery,
           // Provider reset/open-segment is an ambient Main fact, outside the tagged prompt undo.
@@ -188,7 +188,7 @@ const acknowledgeTestSessionCommands = (
       const previousState = {
         status: result.status,
         error: result.error,
-        errorReportable: result.errorReportable,
+        failure: result.failure,
         resumeRecovery: result.resumeRecovery
       }
       result.promptPreparation = {
@@ -312,7 +312,7 @@ const acceptTestMainContinuation = async (
   durable = {
     ...durable,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     pendingHistoryReplay: undefined
   }
@@ -355,7 +355,7 @@ const projectTestMainAttachment = (sessionId: string): void => {
     ...toPersistedSession(source),
     status: 'idle' as const,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     runtimeTranscriptOwner: 'main' as const
   }
@@ -8282,7 +8282,7 @@ describe('workspace agent message sending', () => {
       "The active model isn't compatible with Codex. Open Settings → Model to pick a compatible model or switch the agent framework."
     )
     // A wrong-config start failure hides the report button.
-    expect(session.errorReportable).toBeUndefined()
+    expect(session.failure).toBeUndefined()
     expect(
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toEqual(expect.any(String))
@@ -8821,7 +8821,7 @@ describe('workspace agent message sending', () => {
       kind: 'error',
       level: 'error',
       sessionId: 'session-1',
-      providerError: true,
+      failure: { category: 'service' as const, diagnostics: {} },
       title: 'Prompt failed',
       text: 'Invalid API key'
     }
@@ -8845,7 +8845,12 @@ describe('workspace agent message sending', () => {
         const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
         await acceptTestMainContinuation(
           { sessionId, promptMessageId },
-          { kind: 'error', level: 'error', text: 'Invalid API key', providerError: true }
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Invalid API key',
+            failure: { category: 'service' as const, diagnostics: {} }
+          }
         )
         throw new Error('Invalid API key')
       })
@@ -8868,7 +8873,7 @@ describe('workspace agent message sending', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
-    expect(session.errorReportable).toBe(false)
+    expect(session.failure?.category).toBe('service')
   })
 
   it('marks an untagged (ACP-layer) prompt failure reportable', async () => {
@@ -8926,7 +8931,7 @@ describe('workspace agent message sending', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
-    expect(session.errorReportable).toBe(true)
+    expect(session.failure?.category).toBe('internal')
   })
 
   it('uses fallback message when error is empty or whitespace-only', async () => {
@@ -12977,7 +12982,7 @@ describe('recovering from a request-size overflow', () => {
     expect(current.compacting).toBeUndefined()
     expect(current.status).toBe(before.status)
     expect(current.error).toBe(before.error)
-    expect(current.errorReportable).toBe(before.errorReportable)
+    expect(current.failure).toBe(before.failure)
     expect(current.messages).toEqual(before.messages)
   })
 

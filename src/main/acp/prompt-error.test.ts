@@ -1,8 +1,10 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { describe, expect, it } from 'vitest'
 import { RequestError } from '@agentclientprotocol/sdk'
 
 import {
   describePromptError,
+  collectPromptFailureFacts,
   isProviderPromptError,
   isOpenCodeSessionServiceFailure,
   withAgentAuthenticationRecovery
@@ -314,5 +316,55 @@ describe('ACP authentication recovery boundary', () => {
     Object.assign(new Error('unrelated RPC'), { code: -32000 })
   ])('preserves other failures', (error) => {
     expect(describePromptError(error)).toBe(error.message)
+  })
+})
+
+describe('classified failure facts across agent execution paths', () => {
+  it.each([
+    [
+      'claude-code',
+      agentError('Internal error: API Error: 401 Unauthorized', { errorKind: 'unknown' }),
+      'configuration',
+      401
+    ],
+    [
+      'opencode',
+      agentError('upstream failure', {
+        errorName: 'APIError',
+        statusCode: 429,
+        requestId: 'request-example'
+      }),
+      'service',
+      429
+    ],
+    [
+      'codex-response',
+      agentError('upstream failure', {
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
+        errorKind: 'provider-error'
+      }),
+      'service',
+      503
+    ],
+    [
+      'codex-bridge',
+      agentError('upstream failure', { errorKind: 'provider-error', status: 403 }),
+      'configuration',
+      403
+    ]
+  ] as const)(
+    'captures and classifies the %s wire shape',
+    (_framework, error, category, status) => {
+      const facts = collectPromptFailureFacts(error, { model: 'example-model' })
+      expect(facts.status).toBe(status)
+      expect(facts.model).toBe('example-model')
+      expect(classifyFailure(facts).category).toBe(category)
+    }
+  )
+  it('keeps an opaque protocol error internal even when its prose mentions a status', () => {
+    expect(
+      classifyFailure(collectPromptFailureFacts(agentError('Record 503 could not be decoded', {})))
+        .category
+    ).toBe('internal')
   })
 })

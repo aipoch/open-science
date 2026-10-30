@@ -304,7 +304,7 @@ describe('Main runtime Session authority', () => {
       taskRunCommitId: 'interrupted-task',
       artifacts: [],
       error: 'Interrupted',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       updatedAt: 20
     })
     expect(failed.messages.find((message) => message.role === 'agent')).toMatchObject({
@@ -316,7 +316,7 @@ describe('Main runtime Session authority', () => {
     expect(failed.artifacts).toEqual(active.artifacts)
     expect(failed).toMatchObject({
       status: 'error',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       taskRunCommitId: 'interrupted-task',
       runtimeTranscriptLastRun: active.activeRun
     })

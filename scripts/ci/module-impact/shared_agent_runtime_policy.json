@@ -8,6 +8,7 @@
     "src/shared/media-overflow.test.ts",
     "src/shared/failure/classify.test.ts",
     "src/shared/failure/classify.ts",
+    "src/shared/failure/messages.ts",
     "src/shared/failure/contract.ts",
     "src/shared/failure/recognizers/agent-runtime.ts",
     "src/shared/failure/recognizers/environment.ts",

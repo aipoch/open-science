@@ -11,7 +11,7 @@ export const clearUnanchoredAttachmentRecovery = (
     ...session,
     status: 'idle',
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     updatedAt: Date.now()
   }

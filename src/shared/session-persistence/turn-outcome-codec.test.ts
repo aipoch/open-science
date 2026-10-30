@@ -9,8 +9,22 @@ const future = { futureField: { nested: true } }
 describe('sanitizeTurnOutcome forward compatibility', () => {
   it.each([
     [{ kind: 'completed', settledAt: 2 }],
-    [{ kind: 'failed', settledAt: 2, error: 'Bad', errorReportable: false }],
-    [{ kind: 'failed', settledAt: 2, recovery: 'retry-artifact-publication' }],
+    [
+      {
+        kind: 'failed',
+        settledAt: 2,
+        error: 'Bad',
+        failure: { category: 'service' as const, diagnostics: {} }
+      }
+    ],
+    [
+      {
+        kind: 'failed',
+        settledAt: 2,
+        failure: { category: 'internal', diagnostics: {} },
+        recovery: 'retry-artifact-publication'
+      }
+    ],
     [{ kind: 'cancelled', settledAt: 2, recovery: 'resume' }],
     [
       {
@@ -18,11 +32,19 @@ describe('sanitizeTurnOutcome forward compatibility', () => {
         settledAt: 2,
         cause: 'app-restart',
         error: 'Interrupted',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         recovery: 'resume'
       }
     ],
-    [{ kind: 'interrupted', settledAt: 2, cause: 'connection-lost', recovery: 'resume' }]
+    [
+      {
+        kind: 'interrupted',
+        settledAt: 2,
+        cause: 'connection-lost',
+        recovery: 'resume',
+        failure: { category: 'session', diagnostics: {} }
+      }
+    ]
   ])('keeps a known kind and strips unknown fields: %j', (outcome) => {
     const result = sanitizeTurnOutcome({ ...outcome, ...future, another: 1 })
     expect(result).toEqual(outcome)
@@ -45,7 +67,8 @@ describe('sanitizeTurnOutcome forward compatibility', () => {
         {
           kind: 'failed',
           settledAt: 2,
-          error: 'Bad'
+          error: 'Bad',
+          failure: { category: 'internal', diagnostics: { raw: 'Bad' } }
         }
       )
     }
@@ -131,7 +154,8 @@ describe('Turn Outcome in a Session file written by a future version', () => {
       expect(byId.get('prompt-a')?.turnOutcome).toEqual({
         kind: 'failed',
         settledAt: 2,
-        error: 'Old failure'
+        error: 'Old failure',
+        failure: { category: 'internal', diagnostics: { raw: 'Old failure' } }
       })
       expect(byId.get('prompt-b')?.turnOutcome).toEqual({ kind: 'completed', settledAt: 4 })
     }
@@ -143,5 +167,44 @@ describe('Turn Outcome in a Session file written by a future version', () => {
       sanitizeMessage({ ...message, turnOutcome: { kind: 'completed', settledAt: 2, ...future } })
         ?.turnOutcome
     ).toEqual({ kind: 'completed', settledAt: 2 })
+  })
+})
+
+describe('legacy failure migration', () => {
+  it.each([
+    ['failed', false, 'service'],
+    ['failed', true, 'internal'],
+    ['failed', undefined, 'internal'],
+    ['interrupted', false, 'session'],
+    ['interrupted', true, 'internal'],
+    ['interrupted', undefined, 'internal']
+  ] as const)('maps %s with legacy flag %s to %s', (kind, errorReportable, category) => {
+    const outcome = sanitizeTurnOutcome({
+      kind,
+      settledAt: 1,
+      error: 'legacy',
+      errorReportable,
+      cause: 'app-restart',
+      recovery: 'resume'
+    })
+    expect(outcome).toMatchObject({ failure: { category, diagnostics: { raw: 'legacy' } } })
+    expect(JSON.stringify(outcome)).not.toContain('errorReportable')
+  })
+  it('prefers classified data and strips invalid diagnostic fields', () => {
+    const outcome = sanitizeTurnOutcome({
+      kind: 'failed',
+      settledAt: 1,
+      errorReportable: false,
+      failure: {
+        category: 'configuration',
+        reason: 'service/wrong-category',
+        diagnostics: { status: '401', model: 'example', requestId: 123, raw: 'detail' }
+      }
+    })
+    expect(outcome).toEqual({
+      kind: 'failed',
+      settledAt: 1,
+      failure: { category: 'configuration', diagnostics: { model: 'example', raw: 'detail' } }
+    })
   })
 })

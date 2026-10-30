@@ -268,7 +268,7 @@ export const applySessionConversationCommands = (
           status: 'idle',
           activeRun: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           branchContextResetRequired: true
         }
         break
@@ -350,7 +350,7 @@ export const applySessionConversationCommands = (
           activeRun: command.run,
           status: 'running',
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           // Resume validates this durable marker after the renderer has prepared its run.
           // Runtime admission consumes it; a different prompt must never inherit it.
           resumeRecovery:

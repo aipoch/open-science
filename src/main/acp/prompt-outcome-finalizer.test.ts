@@ -199,7 +199,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
       expect.objectContaining({
         kind: 'error',
         artifactFailure: true,
-        errorReportable: true
+        failure: expect.objectContaining({ category: 'internal' })
       })
     )
   })
@@ -504,7 +504,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
     expect(harness.events).toContainEqual(
       expect.objectContaining({
         kind: 'error',
-        providerError: true,
+        failure: expect.objectContaining({ category: 'service' }),
         text: 'Could not connect to the model provider for model "test-model". Check the base URL in Settings → Model and your proxy, VPN, or firewall, then retry. Connection detail: ConnectionRefused.'
       })
     )
@@ -517,7 +517,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         data: { errorKind: 'request_too_large' }
       }),
       recoverable: 'context-overflow',
-      providerError: false
+      failure: { category: 'input' }
     },
     {
       name: 'OpenCode typed overflow without provider wording',
@@ -532,7 +532,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: 'context-overflow',
-      providerError: false
+      failure: { category: 'input' }
     },
     {
       name: 'OpenCode session service failure',
@@ -542,7 +542,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         name: 'RequestError'
       }),
       recoverable: 'session-lost',
-      providerError: false
+      failure: { category: 'session' }
     },
     {
       name: 'OpenCode session read stream EOF',
@@ -555,7 +555,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: 'session-lost',
-      providerError: false
+      failure: { category: 'session' }
     },
     {
       name: 'non-session OpenCode service failure',
@@ -565,13 +565,13 @@ describe('AcpPromptOutcomeFinalizer', () => {
         name: 'RequestError'
       }),
       recoverable: undefined,
-      providerError: false
+      failure: { category: 'internal' }
     },
     {
       name: 'provider error',
       error: Object.assign(new Error('Invalid API key'), { data: { errorName: 'APIError' } }),
       recoverable: undefined,
-      providerError: true
+      failure: { category: 'configuration' }
     },
     {
       name: 'Claude Code provider 4xx with an unknown error kind',
@@ -586,7 +586,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: undefined,
-      providerError: true
+      failure: { category: 'service' }
     },
     {
       name: 'Claude Code API connection refused with an unknown error kind',
@@ -599,7 +599,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: undefined,
-      providerError: true
+      failure: { category: 'service' }
     },
     {
       name: 'Claude Code API connection closed mid-response',
@@ -614,13 +614,13 @@ describe('AcpPromptOutcomeFinalizer', () => {
         }
       ),
       recoverable: undefined,
-      providerError: true
+      failure: { category: 'service' }
     },
     {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,
-      providerError: false
+      failure: { category: 'internal' }
     }
   ])('classifies a fresh $name and cleans up once', async (testCase) => {
     const harness = createHarness({ now: () => 321 })
@@ -640,7 +640,7 @@ describe('AcpPromptOutcomeFinalizer', () => {
         kind: 'error',
         timestamp: 321,
         recoverable: testCase.recoverable,
-        providerError: testCase.providerError,
+        failure: expect.objectContaining({ category: testCase.failure?.category }),
         terminalContextWindow: {
           termination: { kind: 'error' },
           contextWindow: { used: 12, size: 128_000 },

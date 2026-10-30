@@ -296,3 +296,56 @@ export const isOpenCodeContextOverflow = (error: unknown): boolean => {
     data.errorName === 'ContextOverflowError'
   )
 }
+
+// Normalize framework-specific wire fields once; classification never needs to inspect an Error.
+export const collectPromptFailureFacts = (
+  error: unknown,
+  context: PromptErrorContext = {}
+): import('../../shared/failure/contract').FailureFacts => {
+  const record = (value: unknown): Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
+  const top = record(error)
+  const data = record(top.data)
+  const codex = record(data.codexErrorInfo)
+  const detail = record(Object.values(codex)[0])
+  const text = rawErrorMessage(error)
+  const upstream = extractUpstreamDetail(text)
+  const explicitStatus = [
+    data.statusCode,
+    data.status,
+    detail.httpStatusCode,
+    top.status,
+    top.statusCode
+  ].find(
+    (value): value is number =>
+      typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+  )
+  const apiWrapper =
+    error instanceof Error && error.name === 'RequestError' && errorCode(error) === -32603
+      ? text.match(/^\s*internal error:\s*api error:\s*([45]\d{2})\b/i)
+      : undefined
+  const status = explicitStatus ?? (apiWrapper ? Number(apiWrapper[1]) : undefined)
+  const origin = isOpenCodeSessionServiceFailure(error)
+    ? 'session'
+    : isProviderPromptError(error) || apiWrapper
+      ? 'provider'
+      : 'agent-runtime'
+  const code = isOpenCodeContextOverflow(error)
+    ? 'ContextOverflowError'
+    : isAgentAuthenticationFailure(error)
+      ? 'authentication_error'
+      : data.codexErrorInfo === 'serverOverloaded'
+        ? 'overloaded_error'
+        : (upstream?.type ?? data.errorKind ?? top.code)
+  return {
+    origin,
+    ...(status === undefined ? {} : { status }),
+    ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
+    ...(typeof data.provider === 'string' ? { provider: data.provider } : {}),
+    ...(context.model ? { model: context.model } : {}),
+    ...(typeof data.requestId === 'string' ? { requestId: data.requestId } : {}),
+    text
+  }
+}

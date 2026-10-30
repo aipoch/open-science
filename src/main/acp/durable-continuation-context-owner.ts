@@ -258,7 +258,7 @@ class AcpDurableContinuationContextOwner {
         activities,
         status: stillWaiting ? 'waiting-for-user' : 'idle',
         error: undefined,
-        errorReportable: undefined,
+        failure: undefined,
         resumeRecovery: undefined
       }
     })

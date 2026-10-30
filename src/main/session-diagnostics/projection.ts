@@ -98,7 +98,7 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
     'autoReviewEnabled',
     'memoryEnabled',
     'specialistBindingPending',
-    'errorReportable',
+    'failure',
     'branchContextResetRequired',
     'continuationPending',
     'retryable'

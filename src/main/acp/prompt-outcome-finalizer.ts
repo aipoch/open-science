@@ -13,14 +13,14 @@ import type {
 } from '../../shared/acp-usage-contract'
 import { isMediaOverflowError } from '../../shared/media-overflow'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { isExpectedRunFailure } from '../../shared/run-error-classification'
+import { classifyFailure } from '../../shared/failure/classify'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
 import {
   describePromptError,
   isOpenCodeContextOverflow,
   isOpenCodeSessionServiceFailure,
-  isProviderPromptError
+  collectPromptFailureFacts
 } from './prompt-error'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
@@ -257,9 +257,7 @@ export class AcpPromptOutcomeFinalizer {
           ? {}
           : {
               artifactFailure: true,
-              errorReportable: !isExpectedRunFailure(
-                describePromptError(failure, { model: handles.model })
-              )
+              failure: classifyFailure(collectPromptFailureFacts(failure, { model: handles.model }))
             })
       } as RuntimeEventInput
       if (handles.commitTerminal) await handles.commitTerminal(event)
@@ -368,7 +366,7 @@ export class AcpPromptOutcomeFinalizer {
         kind: 'error',
         level: 'error',
         recoverable,
-        providerError: isProviderPromptError(error),
+        failure: classifyFailure(collectPromptFailureFacts(error, { model: handles.model })),
         sessionId,
         ...eventIdentity,
         timestamp: terminal.timestamp,

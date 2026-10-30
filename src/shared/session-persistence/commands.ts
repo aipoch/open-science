@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from '../failure/contract'
 import { z } from 'zod'
 import {
   type RuntimeCodec,
@@ -67,7 +68,7 @@ export type SettleTaskSessionCompletionRequest = Readonly<{
 export type FailTaskSessionRunRequest = SettleTaskSessionCompletionRequest &
   Readonly<{
     error: string
-    errorReportable?: false
+    failure?: ClassifiedFailure
     interruptionCause?: 'app-restart'
   }>
 

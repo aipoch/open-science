@@ -637,7 +637,7 @@ const pendingPromptSeed = (
     delegationPolicy: source.delegationPolicyAuthorityPending ? 'allow' : seed.delegationPolicy,
     activeRun: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     messages: seed.messages.filter(({ id }) => id !== promptMessageId),
     ...(graph
       ? {
