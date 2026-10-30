@@ -58,6 +58,41 @@ test('optimizes drafts without sending and persists project-specific templates',
   await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
   await expect(page.getByText('Response completed.', { exact: true })).toBeVisible()
 
+  // Exercise real paste staging and deletion; undo must send the recovered text, not a dead upload ID.
+  const longText = 'Measured value: 42.\n'.repeat(600)
+  const prefix = 'Optimize pasted text regression: '
+  await editor.fill(prefix)
+  await editor.press('End')
+  await editor.evaluate((element, text) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', text)
+    element.dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
+    )
+  }, longText)
+  const pastedAttachment = page.locator('[data-pasted-text-attachment="true"]')
+  await expect(pastedAttachment).toHaveCount(1)
+  await expect(pastedAttachment.getByRole('button', { name: /^Remove attachment/ })).toBeVisible()
+  await optimize.click()
+  await expect(editor).toContainText('Improved pasted text:')
+  await pastedAttachment.getByRole('button', { name: /^Remove attachment/ }).click()
+  await expect(pastedAttachment).toHaveCount(0)
+  await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
+  await expect(editor).toHaveText(prefix + longText)
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(
+        async () =>
+          (await window.api.sessions.loadAll()).sessions
+            .flatMap(({ messages }) => messages)
+            .filter(({ role }) => role === 'user')
+            .at(-1)?.content
+      )
+    )
+    .toBe((prefix + longText).trim())
+  await expect(page.getByText('Response completed.', { exact: true }).last()).toBeVisible()
+
   // A model response which drops a protected span must leave the draft untouched.
   await editor.fill('Explain `print(1)`')
   await optimize.click()

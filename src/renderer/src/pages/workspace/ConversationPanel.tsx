@@ -666,8 +666,11 @@ const ConversationPanel = ({
   )
   const onValidatedDraftDocChange = (
     nextDoc: Parameters<typeof onDraftDocChange>[0],
-    caret?: Parameters<typeof onDraftDocChange>[1]
+    caret?: Parameters<typeof onDraftDocChange>[1],
+    userEdit = true
   ): void => {
+    if (userEdit && JSON.stringify(nextDoc) !== JSON.stringify(draftDoc))
+      promptOptimization.edited()
     if (caret) onDraftDocChange(nextDoc, caret)
     else onDraftDocChange(nextDoc)
     const validation = validateAnnotations(annotations, docToText(nextDoc))
@@ -775,8 +778,7 @@ const ConversationPanel = ({
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
   const submitOptimizedDraft: typeof submitDraft = (options) => {
-    promptOptimization.sent()
-    submitDraft(options)
+    submitDraft({ ...options, onAccepted: promptOptimization.sent })
   }
   const onSendMessage = (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds })
   const onPlanFirst = (forcedSkillIds: string[]): void =>
@@ -1396,9 +1398,13 @@ const ConversationPanel = ({
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
   const promptOptimization = usePromptOptimization({
     projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
-    sessionKey: activeSession?.id ?? composerFocusKey ?? 'new',
+    // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
+    sessionKey: 'composer',
+    modelConfiguration: modelUnavailable ? undefined : modelConfiguration,
+    attachmentIds: attachments.map(({ id }) => id),
+    transferIds: attachmentTransfers.map(({ transferId }) => transferId),
     doc: draftDoc,
-    onChange: onValidatedDraftDocChange
+    onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
   })
 
   const handleSubmit = (): void => {
@@ -1513,8 +1519,7 @@ const ConversationPanel = ({
   const handleSideChat = (): void => {
     if (!canOpenSideChat) return
     if (sendsSideChatDraft) {
-      promptOptimization.sent()
-      onStartSideChat()
+      onStartSideChat(promptOptimization.sent)
     } else sideChatController.createDraft?.()
   }
   const sideChatMenuItems = (
@@ -1569,6 +1574,7 @@ const ConversationPanel = ({
   }
 
   const handleRemoveAttachment = (attachment: (typeof attachments)[number]): void => {
+    promptOptimization.edited()
     onRemoveAttachment(attachment)
     if (pastedTextByAttachmentId.has(attachment.id)) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -1576,6 +1582,7 @@ const ConversationPanel = ({
   }
 
   const handleCancelAttachmentTransfer = (transfer: (typeof attachmentTransfers)[number]): void => {
+    if (transfer.pastedTextId) promptOptimization.edited()
     onCancelAttachmentTransfer(transfer)
     if (transfer.pastedTextId) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -2836,7 +2843,10 @@ const ConversationPanel = ({
                                         type="button"
                                         className={pastedTextRestoreButtonClassName}
                                         disabled={!canEditDraft}
-                                        onClick={() => onRestorePastedText(pastedText.id)}
+                                        onClick={() => {
+                                          promptOptimization.edited()
+                                          onRestorePastedText(pastedText.id)
+                                        }}
                                       >
                                         <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
                                           {pastedTextPreviewName(pastedText.text)}
@@ -3004,10 +3014,21 @@ const ConversationPanel = ({
                               onDocChange={onValidatedDraftDocChange}
                               onSubmit={handleSubmit}
                               onPaste={handleMessageDraftPaste}
-                              onLongTextPaste={onStagePastedText}
+                              onLongTextPaste={(...args) => {
+                                promptOptimization.edited()
+                                onStagePastedText(...args)
+                              }}
                               onLocatePastedText={handleLocatePastedText}
-                              onUndo={onUndo}
-                              onRedo={onRedo}
+                              onUndo={(...args) => {
+                                const changed = onUndo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
+                              onRedo={(...args) => {
+                                const changed = onRedo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
@@ -3020,7 +3041,11 @@ const ConversationPanel = ({
                               onSelectWslSetup={() => void handleWslSetupCommand()}
                               isHistoryBrowsing={isHistoryBrowsing}
                               historyStatus={historyStatus}
-                              onNavigateHistory={onNavigateHistory}
+                              onNavigateHistory={(...args) => {
+                                const changed = onNavigateHistory(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               mentionPreviewContext={
                                 activeSession
                                   ? {

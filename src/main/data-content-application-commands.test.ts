@@ -839,7 +839,13 @@ describe('Data and content application commands', () => {
       },
       {
         key: 'projectOptimizePrompt',
-        args: [{ projectId: 'project-1', input: 'Research this' }],
+        args: [
+          {
+            projectId: 'project-1',
+            input: 'Research this',
+            agentConfiguration: { providerId: 'test', model: 'test', reasoningEffort: 'default' }
+          }
+        ],
         owner: deps.projects.optimizePrompt
       },
       {

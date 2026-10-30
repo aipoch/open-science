@@ -1921,7 +1921,13 @@ if (process.argv.includes('--version')) {
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)
-        if (handoffReply) {
+        if (
+          prompt.includes('Optimize pasted text regression') &&
+          /OS_PROTECTED_[\w-]+_\d+_END/u.test(prompt)
+        ) {
+          // Echo protected references for the optimizer's real upload/delete/undo regression.
+          reply = `Improved pasted text: ${[...new Set(prompt.match(/OS_PROTECTED_[\w-]+_\d+_END/gu))].join(' ')}`
+        } else if (handoffReply) {
           reply = handoffReply
         } else if (
           prompt.includes('Continue the original user task as ') &&

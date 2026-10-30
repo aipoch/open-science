@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { usePromptOptimization } from './use-prompt-optimization'
-import { docFromText, docToText, type ComposerDoc } from './composer-doc'
+import { docFromText, docToText, docToMessageParts, type ComposerDoc } from './composer-doc'
 import type { OptimizePromptRequest } from '../../../../../shared/prompt-optimization'
 
 const deferred = (): {
@@ -18,20 +18,26 @@ const deferred = (): {
 }
 // Keep the inferred renderHook and spy types for assertions.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-const harness = (initial = docFromText('Original')) => {
+const harness = (initial = docFromText('Original'), attachmentIds: string[] = []) => {
   const request = deferred()
   const optimize = vi.fn<(request: OptimizePromptRequest) => Promise<{ text: string }>>(
     () => request.promise
   )
   const event = vi.fn(async () => {})
   const hook = renderHook(
-    ({ sessionKey }) => {
+    ({ sessionKey, attachmentIds }) => {
       const [doc, setDoc] = useState<ComposerDoc>(initial)
       return {
         doc,
         setDoc,
         optimization: usePromptOptimization({
           projectId: 'project',
+          modelConfiguration: {
+            providerId: 'session',
+            model: 'session-model',
+            reasoningEffort: 'high'
+          },
+          attachmentIds,
           sessionKey,
           doc,
           onChange: setDoc,
@@ -40,12 +46,71 @@ const harness = (initial = docFromText('Original')) => {
         })
       }
     },
-    { initialProps: { sessionKey: 'one' } }
+    { initialProps: { sessionKey: 'one', attachmentIds } }
   )
-  return { ...hook, request, optimize }
+  return { ...hook, request, optimize, event }
 }
 
 describe('composer prompt optimization', () => {
+  it('does not count send preparation clearing and restoration as user edits', async () => {
+    const { result, request, event, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    await act(async () => request.resolve({ text: 'Improved' }))
+    act(() => result.current.setDoc({ nodes: [] }))
+    act(() => result.current.setDoc(docFromText('Improved')))
+    expect(event).not.toHaveBeenCalledWith({ action: 'edit' })
+    act(() => {
+      result.current.optimization.edited()
+      result.current.setDoc(docFromText('Edited'))
+    })
+    expect(event).toHaveBeenCalledExactlyOnceWith({ action: 'edit' })
+    unmount()
+  })
+
+  it('sends the effective composer configuration with the optimization request', async () => {
+    const { result, request, optimize, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    expect(optimize).toHaveBeenCalledWith({
+      projectId: 'project',
+      input: 'Original',
+      agentConfiguration: { providerId: 'session', model: 'session-model', reasoningEffort: 'high' }
+    })
+    await act(async () => request.resolve({ text: 'Improved' }))
+    unmount()
+  })
+  it.each([false, true])(
+    'restores pasted text without losing content when attachment removed=%s',
+    async (removed) => {
+      const text = 'research data\n'.repeat(1000)
+      const pasted = { type: 'pasted-text' as const, id: 'paste', attachmentId: 'upload', text }
+      const original = { nodes: [{ type: 'text' as const, text: 'Analyze ' }, pasted] }
+      const { result, request, optimize, rerender, unmount } = harness(original, ['upload'])
+      act(() => {
+        void result.current.optimization.optimize()
+      })
+      await act(async () =>
+        request.resolve({ text: `Improved: ${optimize.mock.calls[0][0].input}` })
+      )
+      if (removed) {
+        act(() => result.current.setDoc(docFromText('Improved: Analyze ')))
+        rerender({ sessionKey: 'one', attachmentIds: [] })
+      }
+      act(() => result.current.optimization.undo())
+      if (removed) {
+        expect(docToText(result.current.doc)).toBe(`Analyze ${text}`)
+        expect(docToMessageParts(result.current.doc)).toEqual([
+          { type: 'text', text: 'Analyze ' },
+          { type: 'text', text }
+        ])
+      } else expect(result.current.doc).toEqual(original)
+      unmount()
+    }
+  )
+
   it('replaces the draft only after success and restores the complete original on undo', async () => {
     const { result, request, unmount } = harness()
     act(() => {
@@ -78,7 +143,7 @@ describe('composer prompt optimization', () => {
       void result.current.optimization.optimize()
     })
     expect(optimize).toHaveBeenCalledTimes(1)
-    rerender({ sessionKey: 'two' })
+    rerender({ sessionKey: 'two', attachmentIds: [] })
     await act(async () => request.resolve({ text: 'Obsolete' }))
     expect(docToText(result.current.doc)).toBe('Original')
     expect(result.current.optimization.canUndo).toBe(false)

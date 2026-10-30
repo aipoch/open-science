@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sessionAgentConfigurationSchema } from './session-configuration'
 
 export const PROMPT_OPTIMIZATION_INPUT_LIMIT = 16000
 export const PROMPT_OPTIMIZATION_OUTPUT_LIMIT = 32000
@@ -15,6 +16,7 @@ Return only the improved prompt, without commentary or surrounding quotation mar
 export const optimizePromptRequestSchema = z
   .object({
     projectId: z.string().min(1),
+    agentConfiguration: sessionAgentConfigurationSchema,
     input: z
       .string()
       .max(PROMPT_OPTIMIZATION_INPUT_LIMIT)

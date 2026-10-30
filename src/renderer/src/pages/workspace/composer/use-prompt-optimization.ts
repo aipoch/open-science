@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import {
   PROMPT_OPTIMIZATION_INPUT_LIMIT,
   optimizePromptResultSchema,
@@ -6,10 +6,14 @@ import {
   type OptimizePromptResult,
   type OptimizationEvent
 } from '../../../../../shared/prompt-optimization'
+import type { SessionAgentConfiguration } from '../../../../../shared/settings'
 import type { ComposerDoc, ComposerNode } from './composer-doc'
 
 type Options = {
   projectId?: string
+  modelConfiguration?: SessionAgentConfiguration
+  attachmentIds?: readonly string[]
+  transferIds?: readonly string[]
   sessionKey: string
   doc: ComposerDoc
   onChange: (doc: ComposerDoc) => void
@@ -21,6 +25,7 @@ type OptimizationState = {
   optimize: () => Promise<void>
   undo: () => void
   sent: () => void
+  edited: () => void
   pending: boolean
   notice?: 'success' | 'changed' | 'failed'
   canUndo: boolean
@@ -54,7 +59,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
     setNotice(undefined)
     setPrevious(undefined)
   }
-  const successful = useRef<{ serialized: string; edited: boolean } | undefined>(undefined)
+  const successful = useRef<{ edited: boolean } | undefined>(undefined)
   const record = (action: OptimizationEvent['action']): void => {
     const api = current.current.options.recordEvent ?? window.api?.projects?.recordOptimizationEvent
     void api?.({ action }).catch(() => undefined)
@@ -66,19 +71,20 @@ export function usePromptOptimization(options: Options): OptimizationState {
       requestId.current += 1
     }
   }, [scope])
-  useEffect(() => {
-    if (
-      successful.current &&
-      successful.current.serialized !== serialized &&
-      !successful.current.edited
-    ) {
-      successful.current.edited = true
-      record('edit')
-    }
-  }, [serialized])
+  // Observe user actions, not programmatic clearing/restoration during send preparation.
+  const edited = (): void => {
+    if (!successful.current || successful.current.edited) return
+    successful.current.edited = true
+    record('edit')
+  }
 
   const optimize = async (): Promise<void> => {
-    if (busy.current || !current.current.options.projectId) return
+    if (
+      busy.current ||
+      !current.current.options.projectId ||
+      !current.current.options.modelConfiguration
+    )
+      return
     const snapshot = current.current
     const original = snapshot.options.doc
     const prefix = `OS_REFERENCE_${crypto.randomUUID()}_`
@@ -99,7 +105,11 @@ export function usePromptOptimization(options: Options): OptimizationState {
     try {
       const api = snapshot.options.optimize ?? window.api.projects.optimizePrompt
       const result = optimizePromptResultSchema.parse(
-        await api({ projectId: snapshot.options.projectId!, input })
+        await api({
+          projectId: snapshot.options.projectId!,
+          input,
+          agentConfiguration: snapshot.options.modelConfiguration!
+        })
       )
       if (id !== requestId.current || scope !== current.current.scope) return
       if (snapshot.revision !== current.current.revision) {
@@ -122,7 +132,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
       }
       if (offset < result.text.length) nodes.push({ type: 'text', text: result.text.slice(offset) })
       const doc = { nodes }
-      successful.current = { serialized: JSON.stringify(doc), edited: false }
+      successful.current = { edited: false }
       setPrevious(original)
       current.current.options.onChange(doc)
       setNotice('success')
@@ -138,12 +148,27 @@ export function usePromptOptimization(options: Options): OptimizationState {
   const undo = (): void => {
     if (!previous || pending) return
     successful.current = undefined
-    current.current.options.onChange(previous)
+    // Upload removal also deletes its staged file. Restore the saved text inline when its
+    // attachment/transfer no longer exists, rather than resurrecting an unsendable anchor.
+    const { attachmentIds = [], transferIds = [] } = current.current.options
+    const restored = {
+      nodes: previous.nodes.map((node): ComposerNode =>
+        node.type === 'pasted-text' &&
+        !(node.attachmentId && attachmentIds.includes(node.attachmentId)) &&
+        !(node.transferId && transferIds.includes(node.transferId))
+          ? { type: 'text', text: node.text }
+          : node
+      )
+    }
+    current.current.options.onChange(restored)
     setPrevious(undefined)
     setNotice(undefined)
     record('undo')
   }
+  const sendRequestId = requestId.current
   const sent = (): void => {
+    // A delayed admission must not clear an optimization started in a different draft.
+    if (scope !== current.current.scope || sendRequestId !== requestId.current) return
     if (successful.current) record('send')
     requestId.current += 1
     busy.current = false
@@ -160,12 +185,14 @@ export function usePromptOptimization(options: Options): OptimizationState {
     optimize,
     undo,
     sent,
+    edited,
     pending,
     notice,
     canUndo: Boolean(previous),
     tooLong: textLength > PROMPT_OPTIMIZATION_INPUT_LIMIT,
     canOptimize: Boolean(
       options.projectId &&
+      options.modelConfiguration &&
       options.doc.nodes.some((node) => node.type === 'text' && node.text.trim()) &&
       textLength <= PROMPT_OPTIMIZATION_INPUT_LIMIT
     )
