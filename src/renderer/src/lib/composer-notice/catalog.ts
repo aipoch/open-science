@@ -109,6 +109,7 @@ export type ComposerNotice = Readonly<{
   blocksSend?: boolean
   promptMessageId?: string
   recovery?: 'retry-artifact-publication'
+  recoveryCause?: string
   operation?: string
 }>
 export type NoticeActionHandler = Readonly<{

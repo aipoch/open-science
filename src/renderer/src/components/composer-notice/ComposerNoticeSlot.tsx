@@ -195,6 +195,131 @@ export const ComposerNoticeSlot = ({
               : labels[action]}
       </Button>
     ) : null
+  // Known Main diagnostics are stored in English; localize them for display only.
+  const sessionRecoveryMessage = (notice: ComposerNotice, fallback: string): string => {
+    const raw = notice.failure.diagnostics.raw?.trim()
+    if (raw) {
+      switch (raw) {
+        case 'This turn was interrupted. Resume to continue.':
+          return t('This turn was interrupted. Resume to continue.')
+        case 'ACP connection closed':
+        case 'Connection lost — Resume to reconnect and continue.':
+          return t('Connection lost — Resume to reconnect and continue.')
+        case 'Session was interrupted before the app closed.':
+          return t('Session was interrupted before the app closed.')
+        default:
+          return raw
+      }
+    }
+    switch (notice.recoveryCause) {
+      case 'cancelled':
+        return t('This turn was interrupted. Resume to continue.')
+      case 'connection-lost':
+        return t('Connection lost — Resume to reconnect and continue.')
+      case 'app-restart':
+        return t('Session was interrupted before the app closed.')
+      default:
+        return fallback
+    }
+  }
+
+  const moreNotices =
+    notices.length > 1 ? (
+      <div className="min-w-0 pt-1">
+        <button
+          type="button"
+          className="inline-flex min-h-8 items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground hover:text-foreground focus-visible:keyboard-focus active:text-foreground"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded
+            ? t('Show less')
+            : t('{{count}} more notices', {
+                count: notices.length - 1,
+                defaultValue_one: '{{count}} more notice'
+              })}
+          <ChevronDown aria-hidden="true" className={cn('size-3', expanded && 'rotate-180')} />
+        </button>
+        {expanded ? (
+          <ul className="mt-1 flex min-w-0 flex-col gap-1">
+            {notices
+              .filter(({ id }) => id !== current.id)
+              .map((notice) => {
+                const item = noticePresentation(notice.failure)
+                const Icon =
+                  notice.failure.category === 'session'
+                    ? PauseCircle
+                    : item.level === 'error'
+                      ? CircleAlert
+                      : item.level === 'warning'
+                        ? TriangleAlert
+                        : Info
+                return (
+                  <li key={notice.id} className="flex min-w-0 items-center gap-2">
+                    <Icon
+                      aria-hidden="true"
+                      className={cn(
+                        'size-4 shrink-0',
+                        notice.failure.category === 'session'
+                          ? 'text-muted-foreground'
+                          : item.level === 'error'
+                            ? 'text-status-failure-foreground'
+                            : item.level === 'warning'
+                              ? 'text-status-warning-foreground'
+                              : 'text-status-info-foreground'
+                      )}
+                    />
+                    <button
+                      type="button"
+                      className="min-h-8 min-w-0 flex-1 rounded-sm text-left text-sm text-foreground hover:underline focus-visible:keyboard-focus active:text-foreground"
+                      data-select-notice={notice.id}
+                      onClick={() => {
+                        setSelected({ id: notice.id, leaderId: notices[0].id })
+                        setExpanded(false)
+                      }}
+                    >
+                      <TruncatedText text={t(item.titleKey)} />
+                    </button>
+                    {actionButton(item.primaryAction, notice)}
+                  </li>
+                )
+              })}
+          </ul>
+        ) : null}
+      </div>
+    ) : null
+
+  if (current.failure.category === 'session') {
+    return (
+      <TooltipProvider delayDuration={800}>
+        <div
+          data-testid="composer-notice-slot"
+          data-slot="session-recovery-notice"
+          data-notice-operation={current.operation}
+          data-prompt-message-id={current.promptMessageId}
+          data-notice-category="session"
+          className="mb-2 min-w-0 rounded-lg bg-bg-200/50 px-3 py-2"
+        >
+          <div className="flex items-center gap-3">
+            <PauseCircle aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+            <div role="status" aria-atomic="true" className="min-w-0 flex-1">
+              <h2 className="min-w-0 text-sm font-normal leading-5 text-foreground">
+                <TruncatedText text={sessionRecoveryMessage(current, `${title}. ${description}`)} />
+              </h2>
+            </div>
+            {primary ? actionButton(primary, current, true) : null}
+          </div>
+          {actionFailure?.id === current.id ? (
+            <p role="alert" className="pt-1 text-sm text-destructive">
+              {t('The action could not be completed. See details and try again.')}
+            </p>
+          ) : null}
+          {moreNotices}
+        </div>
+      </TooltipProvider>
+    )
+  }
+
   return (
     <TooltipProvider delayDuration={800}>
       <Notice
@@ -210,8 +335,6 @@ export const ComposerNoticeSlot = ({
         data-prompt-message-id={current.promptMessageId}
         data-notice-category={current.failure.category}
         level={presentation.level}
-        icon={current.failure.category === 'session' ? PauseCircle : undefined}
-        iconClassName={current.failure.category === 'session' ? 'text-muted-foreground' : undefined}
         className="mb-2 min-w-0 gap-2 [&_pre]:max-h-40 [&_pre]:overflow-auto"
         content={
           <>
@@ -259,7 +382,7 @@ export const ComposerNoticeSlot = ({
           </>
         }
         dismissButton={
-          onDismiss && current.failure.category !== 'session'
+          onDismiss
             ? {
                 label: t('Dismiss error'),
                 onClick: () => {
@@ -289,70 +412,7 @@ export const ComposerNoticeSlot = ({
             {primary ? actionButton(primary, current, true) : null}
           </div>
         </div>
-        {notices.length > 1 ? (
-          <div className="min-w-0 pt-1">
-            <button
-              type="button"
-              className="inline-flex min-h-8 items-center gap-1 rounded-sm text-xs leading-5 text-muted-foreground hover:text-foreground focus-visible:keyboard-focus active:text-foreground"
-              aria-expanded={expanded}
-              onClick={() => setExpanded(!expanded)}
-            >
-              {expanded
-                ? t('Show less')
-                : t('{{count}} more notices', {
-                    count: notices.length - 1,
-                    defaultValue_one: '{{count}} more notice'
-                  })}
-              <ChevronDown aria-hidden="true" className={cn('size-3', expanded && 'rotate-180')} />
-            </button>
-            {expanded ? (
-              <ul className="mt-1 flex min-w-0 flex-col gap-1">
-                {notices
-                  .filter(({ id }) => id !== current.id)
-                  .map((notice) => {
-                    const item = noticePresentation(notice.failure)
-                    const Icon =
-                      notice.failure.category === 'session'
-                        ? PauseCircle
-                        : item.level === 'error'
-                          ? CircleAlert
-                          : item.level === 'warning'
-                            ? TriangleAlert
-                            : Info
-                    return (
-                      <li key={notice.id} className="flex min-w-0 items-center gap-2">
-                        <Icon
-                          aria-hidden="true"
-                          className={cn(
-                            'size-4 shrink-0',
-                            notice.failure.category === 'session'
-                              ? 'text-muted-foreground'
-                              : item.level === 'error'
-                                ? 'text-status-failure-foreground'
-                                : item.level === 'warning'
-                                  ? 'text-status-warning-foreground'
-                                  : 'text-status-info-foreground'
-                          )}
-                        />
-                        <button
-                          type="button"
-                          className="min-h-8 min-w-0 flex-1 rounded-sm text-left text-sm text-foreground hover:underline focus-visible:keyboard-focus active:text-foreground"
-                          data-select-notice={notice.id}
-                          onClick={() => {
-                            setSelected({ id: notice.id, leaderId: notices[0].id })
-                            setExpanded(false)
-                          }}
-                        >
-                          <TruncatedText text={t(item.titleKey)} />
-                        </button>
-                        {actionButton(item.primaryAction, notice)}
-                      </li>
-                    )
-                  })}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
+        {moreNotices}
       </Notice>
     </TooltipProvider>
   )

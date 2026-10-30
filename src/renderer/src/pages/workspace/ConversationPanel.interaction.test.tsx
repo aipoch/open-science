@@ -6329,7 +6329,7 @@ describe('ConversationPanel interrupted Session recovery', () => {
       renderPanel({ view: { activeSession } })
       expect(
         container.querySelector('[data-slot="session-recovery-notice"]')?.textContent
-      ).toContain('对话已中断')
+      ).toContain('连接已断开 — 恢复以重新连接并继续。')
       expect(activeSession.messages[0].turnOutcome).toMatchObject({
         error: 'ACP connection closed'
       })

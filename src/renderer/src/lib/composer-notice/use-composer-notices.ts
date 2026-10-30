@@ -36,6 +36,7 @@ export const useComposerNotices = (input: {
     notices.push({
       id: `${prefix}:session:${recovery.cause}:${recovery.error ?? ''}`,
       source: 'session',
+      recoveryCause: recovery.cause,
       occurredAt: turn?.outcome.settledAt ?? 0,
       blocksSend: true,
       failure: classifyFailure({ origin: 'session', text: recovery.error })
