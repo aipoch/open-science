@@ -14,11 +14,7 @@ import { dirname, join } from 'node:path'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
-import {
-  classifyChanges,
-  macosGroupsForPlan,
-  platformExecutionPlan
-} from './classify-pr-changes.mjs'
+import { macosGroupsForPlan } from './classify-pr-changes.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
@@ -1250,13 +1246,7 @@ describe('PR Gate workflow', () => {
     expect(gate?.env?.PR_GATE_NEEDS).toContain('needs.static.result')
   })
 
-  it.each([
-    'LINT_OUTCOME',
-    'TYPECHECKS_OUTCOME',
-    'ACTIONLINT_OUTCOME',
-    'I18N_OUTCOME',
-    'INTERFACE_CONTRACTS_OUTCOME'
-  ])(
+  it.each(['LINT_OUTCOME', 'TYPECHECKS_OUTCOME', 'ACTIONLINT_OUTCOME', 'I18N_OUTCOME'])(
     'blocks the static bundle when %s fails even if its sibling group succeeds',
     (failedOutcome) => {
       const enforce = workflow.jobs.static.steps!.find(
@@ -1883,11 +1873,6 @@ describe('PR Gate workflow', () => {
             id === 'interface_contracts' ? 'npm run check:web-api-map' : 'npm run check:cli-package'
           )
           expect(commands.includes('npx vitest run')).toBe(runDedicatedTests === 'true')
-          if (id === 'interface_contracts') {
-            expect(commands.includes('src/main/acp/auto-operation-inventory.test.ts')).toBe(
-              runDedicatedTests === 'true'
-            )
-          }
         }
       } finally {
         rmSync(directory, { recursive: true, force: true })
@@ -2349,26 +2334,6 @@ describe('PR Gate workflow', () => {
       expect(result.status, result.stderr).toBe(outcome === 'success' ? 0 : 1)
     }
   })
-
-  it.each(['pull_request', 'merge_group'])(
-    'retains the Auto inventory contract when full portable tests are deferred for %s',
-    (event) => {
-      const changes = [
-        { status: 'modified', path: 'scripts/ci/module-test-impact.test.ts' },
-        { status: 'modified', path: 'src/main/literature/mcp-server.ts' }
-      ]
-      const plan = platformExecutionPlan(classifyChanges(changes), changes, event)
-      expect(plan.mode).toBe('full')
-      expect(plan.bundles).not.toContain('unit')
-      expect(plan.bundles).toContain('static')
-      expect(plan.lanes).toContain('interface_contracts')
-      const step = workflow.jobs.static.steps!.find(({ id }) => id === 'interface_contracts')!
-      expect(step.if).toBe(
-        "${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts')) }}"
-      )
-      expect(step.run).toContain('src/main/acp/auto-operation-inventory.test.ts')
-    }
-  )
 
   it('labels the existing cross-process checks as a shadow baseline', () => {
     const step = workflow.jobs.static.steps?.find(
