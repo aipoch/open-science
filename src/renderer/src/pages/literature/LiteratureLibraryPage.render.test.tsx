@@ -2089,7 +2089,9 @@ describe('LiteratureLibraryPage', () => {
     const title = screen.getByLabelText('Title') as HTMLInputElement
     fireEvent.change(title, { target: { value: 'Submitted title' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true)
+    const saving = screen.getByRole('button', { name: 'Saving…' }) as HTMLButtonElement
+    expect(saving.disabled).toBe(true)
+    expect(saving.getAttribute('aria-busy')).toBe('true')
     const locked = title.matches(':disabled') || title.readOnly
     if (!locked) fireEvent.change(title, { target: { value: 'New unsaved title' } })
     expect(title.value).toBe(locked ? 'Submitted title' : 'New unsaved title')
@@ -11405,6 +11407,236 @@ describe('LiteratureLibraryPage', () => {
 
     expect(screen.queryByText('Corrective Retrieval Augmented Generation')).toBeNull()
     expect(screen.getByRole('status')).not.toBeNull()
+  })
+
+  it.each([
+    {
+      destination: 'library',
+      policy: 'reuse',
+      source: 'DOI',
+      reference: 'https://doi.org/10.1234/linked-paper'
+    },
+    {
+      destination: 'project',
+      policy: 'separate',
+      source: 'arXiv',
+      reference: 'https://arxiv.org/abs/2401.12345v2'
+    },
+    {
+      destination: 'collection',
+      policy: 'fill-missing',
+      source: 'DOI',
+      reference: 'https://doi.org/10.1234/linked-paper'
+    }
+  ])(
+    'reviews a linked reference before saving ($source, $destination, $policy)',
+    async ({ destination, policy, source, reference }) => {
+      if (destination === 'collection') {
+        search.mockImplementation((request: { scope: string }) =>
+          Promise.resolve(
+            request.scope === 'collections'
+              ? {
+                  entries: [
+                    {
+                      id: 'collection-1',
+                      revision: 1,
+                      name: 'Link review',
+                      description: '',
+                      itemCount: 0,
+                      createdAt: 1,
+                      updatedAt: 1
+                    }
+                  ]
+                }
+              : request.scope === 'inbox'
+                ? inboxPage
+                : { entries: [] }
+          )
+        )
+        useNavigationStore.setState({ pendingLiteratureCollectionId: 'collection-1' })
+      }
+      render(<LiteratureLibraryPage />)
+      if (destination === 'collection') {
+        await screen.findByRole('heading', { name: 'Link review' })
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await screen.findByRole('heading', { name: 'All references' })
+      }
+      if (destination === 'project') {
+        fireEvent.click(screen.getByRole('button', { name: /Retrieval research/ }))
+        await screen.findByRole('heading', { name: 'Retrieval research' })
+      }
+      await openMenu(screen.getByRole('button', { name: 'Add' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+      fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+        target: { value: reference }
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+      await waitFor(() =>
+        expect(window.api.literature.lookupMetadata).toHaveBeenCalledWith(
+          source === 'DOI' ? '10.1234/linked-paper' : 'arxiv:2401.12345'
+        )
+      )
+      expect(transact).not.toHaveBeenCalled()
+      const dialog = await screen.findByRole('dialog', { name: 'Review reference details' })
+      expect(
+        within(dialog).getByText(
+          `Retrieved via ${source}. Review the reference details before saving.`
+        )
+      ).not.toBeNull()
+      expect(
+        within(dialog)
+          .getByRole('button', { name: 'Advanced settings' })
+          .getAttribute('aria-expanded')
+      ).toBe('false')
+      expect(
+        within(dialog).getByText(
+          'When identifiers match: Keep existing metadata and add the reference to this destination.'
+        )
+      ).not.toBeNull()
+      if (policy !== 'reuse') {
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Advanced settings' }))
+        await openMenu(within(dialog).getByRole('combobox', { name: 'When identifiers match' }))
+        fireEvent.click(
+          screen.getByRole('option', {
+            name: policy === 'separate' ? 'Keep as separate reference' : 'Fill empty fields'
+          })
+        )
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Advanced settings' }))
+        expect(
+          within(dialog).getByText(
+            policy === 'separate'
+              ? 'When identifiers match: Create independent references. Review them later in Duplicates.'
+              : 'When identifiers match: Fill empty fields only. Existing values and conflicting fields are kept.'
+          )
+        ).not.toBeNull()
+      }
+      expect((within(dialog).getByLabelText('Title') as HTMLInputElement).value).toBe(
+        libraryItem.item.title
+      )
+      fireEvent.change(within(dialog).getByLabelText('Title'), {
+        target: { value: 'Reviewed linked reference' }
+      })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await waitFor(() =>
+        expect(transact).toHaveBeenCalledWith(
+          expect.objectContaining({
+            kind: 'create-item',
+            ...(policy === 'reuse' ? {} : { duplicatePolicy: policy }),
+            item: expect.objectContaining({
+              title: 'Reviewed linked reference',
+              identifiers: libraryItem.item.identifiers
+            })
+          })
+        )
+      )
+      if (destination === 'project') {
+        await waitFor(() =>
+          expect(transact).toHaveBeenCalledWith(
+            expect.objectContaining({
+              kind: 'set-project-item',
+              projectId: 'project-1',
+              itemId: 'item-1',
+              included: true
+            })
+          )
+        )
+      }
+      if (destination === 'collection') {
+        await waitFor(() =>
+          expect(transact).toHaveBeenCalledWith(
+            expect.objectContaining({
+              kind: 'set-collection-item',
+              collectionId: 'collection-1',
+              itemId: 'item-1',
+              included: true
+            })
+          )
+        )
+      }
+      expect(importPdf).not.toHaveBeenCalled()
+    }
+  )
+
+  it('recovers a linked reference through delayed creation and destination failures without creating it twice', async () => {
+    let failCreate!: (error: Error) => void
+    let failDestination!: (error: Error) => void
+    let finishDestination!: (receipt: LiteratureCatalogReceipt) => void
+    transact
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failCreate = reject
+          })
+      )
+      .mockResolvedValueOnce({ kind: 'item', id: libraryItem.id, state: 'present' })
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failDestination = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishDestination = resolve
+          })
+      )
+    const title = 'Reviewed pending link'
+    get.mockResolvedValue({ ...libraryItem, item: { ...libraryItem.item, title } })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('heading', { name: 'All references' })
+    fireEvent.click(screen.getByRole('button', { name: /Retrieval research/ }))
+    await screen.findByRole('heading', { name: 'Retrieval research' })
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+    fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+      target: { value: '10.1234/linked-paper' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+    const review = await screen.findByRole('dialog', { name: 'Review reference details' })
+    expect(transact).not.toHaveBeenCalled()
+    fireEvent.change(within(review).getByLabelText('Title'), { target: { value: title } })
+    fireEvent.click(within(review).getByRole('button', { name: 'Save' }))
+    const saving = within(review).getByRole('button', { name: 'Saving…' })
+    expect(saving.getAttribute('aria-busy')).toBe('true')
+    expect(saving.matches(':disabled')).toBe(true)
+    fireEvent.click(saving)
+    expect(transact).toHaveBeenCalledTimes(1)
+    await act(async () => failCreate(new Error('Create unavailable')))
+    expect(await within(review).findByRole('alert')).not.toBeNull()
+    expect((within(review).getByLabelText('Title') as HTMLInputElement).value).toBe(title)
+    expect(within(review).getByRole('button', { name: 'Save' }).matches(':disabled')).toBe(false)
+    fireEvent.click(within(review).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(transact).toHaveBeenCalledTimes(3))
+    await act(async () => failDestination(new Error('Destination unavailable')))
+    expect((await within(review).findByRole('alert')).textContent).toContain(
+      'linking it to the destination failed'
+    )
+    fireEvent.click(within(review).getByRole('button', { name: 'Retry' }))
+    const retrying = within(review).getByRole('button', { name: 'Retrying…' })
+    expect(retrying.getAttribute('aria-busy')).toBe('true')
+    fireEvent.click(retrying)
+    expect(transact).toHaveBeenCalledTimes(4)
+    await act(async () => finishDestination({ kind: 'item', id: libraryItem.id, state: 'present' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Review reference details' })).toBeNull()
+    )
+    await screen.findByRole('heading', { name: title })
+    const creates = transact.mock.calls
+      .map(([command]) => command)
+      .filter(({ kind }) => kind === 'create-item')
+    expect(creates).toHaveLength(2) // One failed attempt, followed by exactly one acknowledged creation.
+    expect(creates.every((command) => command.item.title === title)).toBe(true)
+    expect(
+      transact.mock.calls
+        .map(([command]) => command)
+        .filter(({ kind }) => kind === 'set-project-item')
+    ).toEqual([
+      expect.objectContaining({ projectId: 'project-1', itemId: libraryItem.id, included: true }),
+      expect.objectContaining({ projectId: 'project-1', itemId: libraryItem.id, included: true })
+    ])
   })
 
   it('keeps the created reference available when its PDF import fails', async () => {

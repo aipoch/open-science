@@ -1,4 +1,4 @@
-import { ChevronDown, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, LoaderCircle, Plus, Trash2 } from 'lucide-react'
 import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -20,10 +20,13 @@ import { type LiteratureItemInput } from '@aipoch/literature-library/item'
 type LiteratureMetadataEditorProps = Readonly<{
   item: LiteratureItemInput
   saving: boolean
+  // A retained recovery draft can stay locked after the request has finished.
+  busy?: boolean
   saveDisabled?: boolean
   error?: string
   className?: string
   beforeFields?: React.ReactNode
+  saveNotice?: React.ReactNode
   onDirtyChange?: (dirty: boolean) => void
   onRetry?: () => void
   onCancel: () => void
@@ -87,10 +90,12 @@ const ADVANCED_FIELD_KEYS = [
 const LiteratureMetadataEditor = ({
   item,
   saving,
+  busy = saving,
   saveDisabled = false,
   error,
   className,
   beforeFields,
+  saveNotice,
   onDirtyChange,
   onRetry,
   onCancel,
@@ -717,16 +722,26 @@ const LiteratureMetadataEditor = ({
           {error}
         </p>
       ) : null}
-      <div className="flex shrink-0 justify-end gap-2 border-t border-border-300/80 bg-background px-5 py-3">
+      <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border-300/80 bg-background px-5 py-3">
+        {saveNotice ? (
+          <div className="w-full text-xs leading-relaxed text-muted-foreground">{saveNotice}</div>
+        ) : null}
         <Button type="button" variant="outline" disabled={saving} onClick={onCancel}>
           {onRetry ? t('Close') : t('Cancel')}
         </Button>
         <Button
           type="button"
+          aria-busy={busy}
           disabled={saving || (!onRetry && (saveDisabled || !draft.title.trim()))}
           onClick={onRetry ?? submit}
         >
-          {onRetry ? t('Retry') : t('Save')}
+          {busy ? (
+            <LoaderCircle
+              className="size-4 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          ) : null}
+          {busy ? (onRetry ? t('Retrying…') : t('Saving…')) : onRetry ? t('Retry') : t('Save')}
         </Button>
       </div>
     </div>

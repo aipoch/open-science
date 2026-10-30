@@ -26,10 +26,15 @@ describe('LiteratureMetadataEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'Draft title' }))
     rerender(<LiteratureMetadataEditor {...props} saving />)
+    const savingButton = screen.getByRole('button', { name: 'Saving…' })
+    expect(savingButton.getAttribute('aria-busy')).toBe('true')
+    expect(savingButton.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    fireEvent.click(savingButton)
+    expect(onSave).toHaveBeenCalledOnce()
     const controls = [...container.querySelectorAll('input, textarea, button')]
-    expect(controls.length).toBeGreaterThan(15)
     expect(controls.filter((control) => !control.matches(':disabled'))).toEqual([])
     rerender(<LiteratureMetadataEditor {...props} saving={false} error="Save failed" />)
+    expect(screen.getByRole('button', { name: 'Save' }).getAttribute('aria-busy')).toBe('false')
     expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Draft title')
     expect(screen.getByRole('alert').textContent).toBe('Save failed')
     expect(screen.getByRole('button', { name: /Add (creator|author)/ }).matches(':disabled')).toBe(
@@ -38,6 +43,48 @@ describe('LiteratureMetadataEditor', () => {
     expect(screen.getByRole('combobox', { name: 'Reference type' }).matches(':disabled')).toBe(
       false
     )
+  })
+
+  it('shows retry progress without resubmitting and restores the retry action after failure', () => {
+    const props = {
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved draft' }),
+      onSave: vi.fn(),
+      onRetry: vi.fn(),
+      onCancel: vi.fn()
+    }
+    const { rerender } = render(<LiteratureMetadataEditor {...props} saving={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(props.onRetry).toHaveBeenCalledOnce()
+    rerender(<LiteratureMetadataEditor {...props} saving />)
+    const retrying = screen.getByRole('button', { name: 'Retrying…' })
+    expect(retrying.getAttribute('aria-busy')).toBe('true')
+    expect(retrying.matches(':disabled')).toBe(true)
+    fireEvent.click(retrying)
+    expect(props.onRetry).toHaveBeenCalledOnce()
+    expect(props.onSave).not.toHaveBeenCalled()
+    rerender(<LiteratureMetadataEditor {...props} saving={false} error="Read failed" />)
+    expect(screen.getByRole('alert').textContent).toBe('Read failed')
+    expect(screen.getByRole('button', { name: 'Retry' }).matches(':disabled')).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Retrying…' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(props.onRetry).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report active saving for a locked recovery draft', () => {
+    render(
+      <LiteratureMetadataEditor
+        item={literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved draft' })}
+        saving
+        busy={false}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save.matches(':disabled')).toBe(true)
+    expect(save.getAttribute('aria-busy')).toBe('false')
+    expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    expect(screen.getByLabelText('Title').matches(':disabled')).toBe(true)
   })
 })
 

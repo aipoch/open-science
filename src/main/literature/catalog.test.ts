@@ -7,6 +7,8 @@ import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import type { PrismaClient } from '@prisma/client'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { LiteratureReferenceResolver } from '@aipoch/literature-discovery'
+import { createLiteratureCreation } from '@aipoch/literature-library/client'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { journalBindingIdentity } from '@aipoch/journal-catalog/contracts'
 import {
@@ -2240,6 +2242,53 @@ describe('LiteratureCatalog', () => {
       expect((await catalog.search({ ...request, offset: 999 })).entries).toEqual([])
     }
   })
+
+  it.each([
+    { duplicatePolicy: 'reuse', existingType: 'journalArticle', expectedAbstract: '' },
+    {
+      duplicatePolicy: 'fill-missing',
+      existingType: 'preprint',
+      expectedAbstract: 'Preprint abstract'
+    },
+    { duplicatePolicy: 'fill-missing', existingType: 'journalArticle', expectedAbstract: '' }
+  ] as const)(
+    'reuses a published DOI reference when saving reviewed arXiv metadata ($duplicatePolicy, $existingType)',
+    async ({ duplicatePolicy, existingType, expectedAbstract }) => {
+      const catalog = await setup()
+      const published = await catalog.transact({
+        kind: 'create-item',
+        item: literatureItemInputSchema.parse({
+          itemType: existingType,
+          title: 'Published title',
+          identifiers: [{ scheme: 'doi', value: '10.1234/published', isPrimary: true }]
+        })
+      })
+      const xml = `<feed xmlns="http://www.w3.org/2005/Atom"><entry>
+      <id>http://arxiv.org/abs/2401.12345v2</id><title>Different preprint title</title>
+      <summary>Preprint abstract</summary>
+      <arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1234/PUBLISHED</arxiv:doi>
+      </entry></feed>`
+      const draft = await new LiteratureReferenceResolver(
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+      ).lookup('arxiv:2401.12345')
+      const creation = createLiteratureCreation({
+        transact: (command) => catalog.transact(command),
+        read: (id) => catalog.get(id)
+      })
+      const attachPdf = vi.fn()
+      const saved = await creation.complete(
+        { item: draft.item, duplicatePolicy, projectId: 'project-1' },
+        attachPdf
+      )
+      expect(saved.item.id).toBe(published.id)
+      expect(saved.item.item.title).toBe('Published title')
+      // A different reference type is an existing conflict boundary, not an empty field.
+      expect(saved.item.item.itemType).toBe(existingType)
+      expect(saved.item.item.abstract).toBe(expectedAbstract)
+      expect((await catalog.search({ scope: 'library' })).entries).toHaveLength(1)
+      expect(attachPdf).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not reinterpret a bare PMID as a different PMCID identity', async () => {
     const catalog = await setup()

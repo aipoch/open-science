@@ -1,5 +1,112 @@
 import { expect, test } from '@playwright/test'
 
+type LinkFixture = {
+  literatureLink: { references: string[]; completeLookup(index: number): void }
+  literatureRecovery: { commands: Array<{ kind: string }> }
+}
+
+test('linked reference keyboard flow ignores composing Enter and late results after Escape', async ({
+  page
+}) => {
+  await page.goto('/literature-recovery.html?mode=links')
+  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  const add = page.getByRole('button', { name: 'Add', exact: true })
+  await add.focus()
+  await add.press('Enter')
+  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  const input = page.getByLabel('DOI or arXiv link', { exact: true })
+  await expect(input).toBeFocused()
+  await input.fill('10.1234/paper')
+  // This exercises Chromium composition events; it does not emulate a system IME.
+  await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true })
+  expect(
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references)
+  ).toEqual([])
+  await input.press('Enter')
+  await expect(page.getByRole('button', { name: 'Searching…', exact: true })).toBeDisabled()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(add).toBeFocused()
+  await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
+  await add.press('Enter')
+  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await expect(input).toBeFocused()
+  await input.fill('10.1234/paper')
+  await input.press('Enter')
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+    )
+    .toBe(2)
+  await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(1))
+  const review = page.getByRole('dialog', { name: 'Review reference details' })
+  await expect(review).toBeVisible()
+  expect(
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
+  ).toEqual([])
+  await review.getByLabel('Title', { exact: true }).fill('Reviewed browser reference')
+  await review.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(review).toBeHidden()
+  await expect(
+    page.getByRole('heading', { name: 'Reviewed browser reference', exact: true })
+  ).toBeVisible()
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as LinkFixture).literatureRecovery.commands.filter(
+          ({ kind }) => kind === 'create-item'
+        ).length
+    )
+  ).toBe(1)
+})
+
+test('linked reference dark narrow review keeps the policy and actions visible with trapped focus', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('/literature-recovery.html?mode=links&dark')
+  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  const add = page.getByRole('button', { name: 'Add', exact: true })
+  await add.click()
+  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+  await page
+    .getByLabel('DOI or arXiv link', { exact: true })
+    .fill('https://arxiv.org/abs/2401.12345v2')
+  await expect(page.getByText('Versioned arXiv links use the latest metadata.')).toBeVisible()
+  await page.getByRole('button', { name: 'Find reference', exact: true }).click()
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+    )
+    .toBe(1)
+  await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
+  const review = page.getByRole('dialog', { name: 'Review reference details' })
+  await expect(review).toBeVisible()
+  await expect(
+    review.getByText('Retrieved via arXiv. Review the reference details before saving.')
+  ).toBeVisible()
+  const policy = review.getByText(
+    'When identifiers match: Keep existing metadata and add the reference to this destination.'
+  )
+  const save = review.getByRole('button', { name: 'Save', exact: true })
+  await expect(policy).toBeInViewport()
+  await expect(save).toBeInViewport()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await review.getByRole('button', { name: 'Close', exact: true }).focus()
+  await page.keyboard.press('Shift+Tab')
+  await expect(save).toBeFocused()
+  await page.screenshot({
+    path: testInfo.outputPath('linked-reference-dark-narrow.png'),
+    animations: 'disabled'
+  })
+  await page.keyboard.press('Escape')
+  await expect(review).toBeHidden()
+  await expect(add).toBeFocused()
+  expect(
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
+  ).toEqual([])
+})
+
 test('previews conflicting promotion, renames the child, then allows parent deletion', async ({
   page
 }) => {

@@ -24,6 +24,7 @@ export function LiteratureCreateItemDialog({
   isCreatingItem,
   isSavingNewItem,
   closeItemEditor,
+  onCloseAutoFocus,
   discardMetadataDialog,
   dialogItemEditor,
   pdfStaging,
@@ -36,6 +37,7 @@ export function LiteratureCreateItemDialog({
   isCreatingItem: boolean
   isSavingNewItem: boolean
   closeItemEditor: () => void
+  onCloseAutoFocus?: (event: Event) => void
   discardMetadataDialog: React.JSX.Element
   dialogItemEditor: ReturnType<typeof useLiteratureImport>['dialogItemEditor']
   pdfStaging: ReturnType<typeof useLiteraturePdfStaging>
@@ -58,20 +60,29 @@ export function LiteratureCreateItemDialog({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
         >
           {discardMetadataDialog}
           <div className={dialogHeaderClassName}>
             <div>
               <Dialog.Title className={dialogTitleClassName}>
-                {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
+                {dialogItemEditor?.linkSource
+                  ? t('Review reference details')
+                  : dialogItemEditor?.file
+                    ? t('Import PDF')
+                    : t('Add reference')}
               </Dialog.Title>
               <Dialog.Description className={dialogDescriptionClassName}>
-                {dialogItemEditor?.file
-                  ? t('Review reference details before importing {{name}}.', {
-                      name: dialogItemEditor?.file.name
+                {dialogItemEditor?.linkSource
+                  ? t('Retrieved via {{source}}. Review the reference details before saving.', {
+                      source: dialogItemEditor.linkSource
                     })
-                  : t('Create a reference in your library.')}
+                  : dialogItemEditor?.file
+                    ? t('Review reference details before importing {{name}}.', {
+                        name: dialogItemEditor?.file.name
+                      })
+                    : t('Create a reference in your library.')}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -112,6 +123,15 @@ export function LiteratureCreateItemDialog({
             <LiteratureMetadataEditor
               onDirtyChange={trackNewMetadataDirty}
               className="min-h-0"
+              saveNotice={
+                dialogItemEditor?.linkSource ? (
+                  <LiteratureDuplicatePolicyField
+                    summaryOnly
+                    value={dialogItemEditor.duplicatePolicy}
+                    onChange={setDuplicatePolicy}
+                  />
+                ) : undefined
+              }
               beforeFields={
                 <LiteratureDuplicatePolicyField
                   value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}
