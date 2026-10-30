@@ -543,7 +543,6 @@ describe('ComposerEditor mention input safety', () => {
 describe('ComposerEditor', () => {
   it('shows the placeholder when the doc is empty and hides it once there is content', () => {
     renderEditor({ doc: emptyDoc })
-    // The only aria-hidden node in the editor is the placeholder overlay.
     expect(
       Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
         (node) => node.textContent === 'Ask anything'
@@ -562,7 +561,11 @@ describe('ComposerEditor', () => {
         />
       )
     })
-    expect(document.body.querySelector('[aria-hidden="true"]')).toBeNull()
+    expect(
+      Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
+        (node) => node.textContent === 'Ask anything'
+      )
+    ).toBe(false)
   })
 
   it('exposes complete input help semantically and through a dismissible popover', () => {
@@ -613,11 +616,17 @@ describe('ComposerEditor', () => {
         />
       )
     })
-    expect(document.body.querySelector('button[aria-label="Input help"]')).toBeNull()
+    expect(document.body.querySelector('button[aria-label="Input help"]')).toBe(trigger)
+    act(() => trigger.click())
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(placeholder)
+    dispatchKey(document, 'Escape')
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    expect(editor().textContent).toBe('Draft')
   })
 
   it('hides the placeholder while an IME composition is active', () => {
     renderEditor({ doc: emptyDoc })
+    const inputHelp = document.body.querySelector('button[aria-label="Input help"]')
     const hasPlaceholder = (): boolean =>
       Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
         (node) => node.textContent === 'Ask anything'
@@ -629,11 +638,13 @@ describe('ComposerEditor', () => {
       editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
     })
     expect(hasPlaceholder()).toBe(false)
+    expect(document.body.querySelector('button[aria-label="Input help"]')).toBe(inputHelp)
 
     act(() => {
       editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
     })
     expect(hasPlaceholder()).toBe(true)
+    expect(document.body.querySelector('button[aria-label="Input help"]')).toBe(inputHelp)
   })
 
   it('keeps an inline placeholder and a visible caret host after a pasted-text marker', () => {
@@ -650,6 +661,7 @@ describe('ComposerEditor', () => {
     expect(root.getAttribute('data-inline-placeholder')).toBe('true')
     expect(root.className).toContain('after:content-[attr(data-placeholder)]')
     expect(root.querySelector('[data-pasted-text-id="paste-1"]')?.textContent).toBe('…')
+    expect(document.body.querySelector('button[aria-label="Input help"]')).not.toBeNull()
     expect(
       Array.from(document.body.querySelectorAll('[aria-hidden="true"]')).some(
         (node) => node.textContent === 'Ask anything'
