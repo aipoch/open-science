@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codeBuddyFramework,
+  codexFramework,
+  opencodeFramework
+} from '../agent-framework'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 import type { LiteratureMcpHandler } from '../literature/mcp-server'
@@ -16,6 +21,7 @@ afterEach(async () => {
 
 it.each([
   ['claude-code', claudeCodeFramework, false],
+  ['codebuddy', codeBuddyFramework, false],
   ['opencode', opencodeFramework, false],
   ['codex-response', codexFramework, false],
   ['codex-bridge', codexFramework, true]
