@@ -37,7 +37,7 @@ import {
   MINIMUM_CODEX_ACP_VERSION
 } from '../../shared/codex-runtime'
 import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
-import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
+import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/failure/messages'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,

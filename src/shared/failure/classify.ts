@@ -6,15 +6,20 @@ import { recognizeEnvironment } from './recognizers/environment'
 import { recognizeSession } from './recognizers/session'
 
 export const classifyFailure = (facts: FailureFacts): ClassifiedFailure => {
-  const recognized = [
+  let recognized: ClassifiedFailure | undefined
+  for (const recognize of [
+    recognizeSession,
     recognizeProvider,
     recognizeInput,
     recognizeAgentRuntime,
-    recognizeEnvironment,
-    recognizeSession
-  ]
-    .map((recognize) => recognize(facts))
-    .find((result) => result !== undefined)
+    recognizeEnvironment
+  ]) {
+    // Explicit session ownership wins; textual session rules follow the more specific domains.
+    if (recognize === recognizeSession && facts.origin !== 'session') continue
+    recognized = recognize(facts)
+    if (recognized) break
+  }
+  recognized ??= recognizeSession(facts)
   return {
     category: recognized?.category ?? (facts.origin === 'provider' ? 'service' : 'internal'),
     ...(recognized?.reason ? { reason: recognized.reason } : {}),

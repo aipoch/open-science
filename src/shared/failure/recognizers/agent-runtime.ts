@@ -2,8 +2,26 @@ import { CLAUDE_CLI_INCOMPATIBLE_MESSAGE } from '../../claude-runtime'
 import { CODEX_CLI_INCOMPATIBLE_MESSAGE, MINIMUM_CODEX_ACP_VERSION } from '../../codex-runtime'
 import type { Recognizer } from '../contract'
 
-export const recognizeAgentRuntime: Recognizer = ({ text = '' }) => {
+export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) => {
+  if (code === 'specialist-reconfigure-failed')
+    return { category: 'internal', reason: 'internal/reconfigure', diagnostics: {} }
   const message = text.trim()
+  if (
+    origin === 'operation' &&
+    code === 'resume-operation' &&
+    /does not support session resume/i.test(text)
+  )
+    return {
+      category: 'configuration',
+      reason: 'configuration/resume-unsupported',
+      diagnostics: {}
+    }
+  if (
+    origin === 'operation' &&
+    code === 'resume-operation' &&
+    /active model isn'?t compatible with/i.test(text)
+  )
+    return { category: 'configuration', reason: 'configuration/model-unavailable', diagnostics: {} }
   for (const [expected, reason] of [
     [CLAUDE_CLI_INCOMPATIBLE_MESSAGE, 'configuration/claude-cli'],
     [CODEX_CLI_INCOMPATIBLE_MESSAGE, 'configuration/codex-cli']

@@ -15,8 +15,7 @@ import { i18next } from '../../i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
-import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
+import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/failure/messages'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import {
@@ -781,12 +780,9 @@ const processContextOverflowRecovery = (
     if (handledEventIds.has(event.id)) continue
     if (event.kind !== 'error' || !event.sessionId) continue
 
-    // Prefer the runtime's explicit marker; fall back to matching the message so an unmarked overflow
-    // (older event, or a path that didn't tag it) is still recovered.
+    // Accept the runtime's recovery marker or its classified overflow reason.
     const isOverflow =
-      event.recoverable === 'context-overflow' ||
-      isMediaOverflowError(event.text) ||
-      isMediaOverflowError(event.title)
+      event.recoverable === 'context-overflow' || event.failure?.reason === 'input/context-overflow'
     const isSessionLost = event.recoverable === 'session-lost'
 
     if (!isOverflow && !isSessionLost) continue

@@ -4,7 +4,7 @@ import {
   type ElicitationResponse
 } from '../../../../shared/acp'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
-import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
+import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/failure/messages'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import { flushSessionPersistence } from '../session-persistence/session-persistence'
 import { useSessionStore } from '../../stores/session-store'

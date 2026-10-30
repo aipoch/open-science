@@ -24,7 +24,6 @@ import {
   type ReconcilePendingArtifactsRequest,
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
 import {
   INTERRUPTED_TURN_ERROR,
@@ -1125,12 +1124,9 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
     const isCompacting = activeSession?.compacting
-    // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
-    // agree on which errors are recoverable.
+    // Use the same structured recovery facts as the recovery effect.
     const isOverflow =
-      event.recoverable === 'context-overflow' ||
-      isMediaOverflowError(event.text) ||
-      isMediaOverflowError(event.title)
+      event.recoverable === 'context-overflow' || event.failure?.reason === 'input/context-overflow'
     const isSessionLost = event.recoverable === 'session-lost'
 
     if ((isOverflow || isSessionLost) && isCompacting) {
@@ -1154,13 +1150,7 @@ const applyWorkspaceRuntimeEvent = async (
         event.modelCallUsage
       )
     } else {
-      // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
-      // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. For
-      // everything else, defer to failRun's text tier (undefined) rather than forcing reportable=true: a
-      // non-recovered overflow reaches here (repeat inside cooldown, nothing to replay, detached session)
-      // with providerError=false but IS a client-side/size failure the text tier recognizes as expected —
-      // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
-      // failures still fall through the text tier to reportable.
+      // Preserve the runtime's classification, including overflow failures that could not recover.
       store.failRun(event.sessionId, errorText, {
         failure: event.failure,
         promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,

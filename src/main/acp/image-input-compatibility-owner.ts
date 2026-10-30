@@ -15,7 +15,7 @@ import {
   VISION_IMAGE_INVALID_MESSAGE,
   VISION_IMAGE_TOO_LARGE_MESSAGE,
   VISION_MODEL_NOT_CONFIGURED_MESSAGE
-} from '../../shared/run-error-classification'
+} from '../../shared/failure/messages'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { isRecord } from '../value-guards'

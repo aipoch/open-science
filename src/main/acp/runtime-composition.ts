@@ -16,7 +16,7 @@ import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
 import type { AcpRuntimeEvent, AcpStateUpdate } from '../../shared/acp'
 import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
-import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/run-error-classification'
+import { SPECIALIST_CAPABILITY_READ_FAILED_MESSAGE } from '../../shared/failure/messages'
 import { DEFAULT_ARTIFACT_PROJECT_ID, type ArtifactFile } from '../../shared/artifacts'
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
 import {

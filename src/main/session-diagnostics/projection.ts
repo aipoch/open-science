@@ -7,7 +7,7 @@ const object = (value: unknown): ObjectValue =>
 const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/.test(value)
 const numbers =
-  'endedAt askedAt acceptedAt uncertainAt dispatchStartedAt sequence laneSequence queuedAt callIndex version schemaVersion number revision createdAt updatedAt completedAt failedAt startedAt archivedAt sortIndex index inputTokens cacheTokens cachedReadTokens cachedWriteTokens outputTokens turnCount contextUsedTokens contextWindowSize terminalExitCode computeConcurrencyLimit round maxRounds respondedAt'.split(
+  'settledAt endedAt acceptedAt uncertainAt dispatchStartedAt sequence laneSequence queuedAt callIndex version schemaVersion number revision createdAt updatedAt completedAt failedAt startedAt archivedAt sortIndex index inputTokens cacheTokens cachedReadTokens cachedWriteTokens outputTokens turnCount contextUsedTokens contextWindowSize terminalExitCode computeConcurrencyLimit round maxRounds respondedAt'.split(
     ' '
   )
 const identities =
@@ -98,7 +98,6 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
     'autoReviewEnabled',
     'memoryEnabled',
     'specialistBindingPending',
-    'failure',
     'branchContextResetRequired',
     'continuationPending',
     'retryable'
@@ -128,6 +127,32 @@ function fields(value: unknown, options: DiagnosticTextOptions): ObjectValue {
     if (source[key] !== undefined) {
       const error = projectDiagnosticError(source[key], options)
       if (error) result[key] = error
+    }
+  }
+  const failure = object(source.failure)
+  if (
+    ['configuration', 'service', 'environment', 'input', 'session', 'internal'].includes(
+      String(failure.category)
+    )
+  ) {
+    const evidence = object(failure.diagnostics)
+    const diagnostics: ObjectValue = {}
+    if (
+      typeof evidence.status === 'number' &&
+      Number.isInteger(evidence.status) &&
+      evidence.status >= 100 &&
+      evidence.status <= 599
+    )
+      diagnostics.status = evidence.status
+    for (const key of ['code', 'provider', 'model', 'requestId', 'raw'])
+      if (typeof evidence[key] === 'string')
+        diagnostics[key] = diagnosticText(evidence[key], options, key === 'raw' ? 4000 : 200)
+    result.failure = {
+      category: failure.category,
+      ...(typeof failure.reason === 'string'
+        ? { reason: diagnosticText(failure.reason, options, 200) }
+        : {}),
+      diagnostics
     }
   }
   // Model routing identifiers are protocol metadata, never arbitrary configuration objects.
@@ -177,6 +202,7 @@ export function projectDiagnosticSession(
     }
     if (depth < 4)
       for (const key of [
+        'turnOutcome',
         'receipt',
         'resolvedAgent',
         'executionModel',

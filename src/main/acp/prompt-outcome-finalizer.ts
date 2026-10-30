@@ -11,17 +11,11 @@ import type {
   AcpTerminalContextWindow,
   AcpTurnTokenUsage
 } from '../../shared/acp-usage-contract'
-import { isMediaOverflowError } from '../../shared/media-overflow'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { classifyFailure } from '../../shared/failure/classify'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { AcpPermissionContext } from './permission-context'
-import {
-  describePromptError,
-  isOpenCodeContextOverflow,
-  isOpenCodeSessionServiceFailure,
-  collectPromptFailureFacts
-} from './prompt-error'
+import { describePromptError, collectPromptFailureFacts } from './prompt-error'
 import type { PreparedPromptHandle } from './prompt-preparation-owner'
 import type { ProviderPromptOutcome } from './provider-prompt-executor'
 import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
@@ -352,21 +346,20 @@ export class AcpPromptOutcomeFinalizer {
       safeCleanup('skill activity cleanup failed', handles.failPendingSkillActivities)
       safeLog('error', 'prompt failed', errorLogFields(error))
       const text = describePromptError(error, { model: handles.model })
-      const recoverable = isOpenCodeSessionServiceFailure(error)
-        ? 'session-lost'
-        : isOpenCodeContextOverflow(error) ||
-            isMediaOverflowError(text) ||
-            isMediaOverflowError(handles.errorMessage(error)) ||
-            isMediaOverflowError(handles.errorKind(error))
-          ? 'context-overflow'
-          : undefined
+      const failure = classifyFailure(collectPromptFailureFacts(error, { model: handles.model }))
+      const recoverable =
+        failure.category === 'session'
+          ? 'session-lost'
+          : failure.reason === 'input/context-overflow'
+            ? 'context-overflow'
+            : undefined
       const terminal = interactions.settle(interaction, {})
       if (!terminal) throw error
       const failureEvent: RuntimeEventInput = {
         kind: 'error',
         level: 'error',
         recoverable,
-        failure: classifyFailure(collectPromptFailureFacts(error, { model: handles.model })),
+        failure,
         sessionId,
         ...eventIdentity,
         timestamp: terminal.timestamp,

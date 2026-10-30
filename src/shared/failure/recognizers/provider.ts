@@ -4,6 +4,7 @@ export const recognizeProvider: Recognizer = ({ origin, status, code, text = '' 
   const diagnosticCode = String(code ?? '').toLowerCase()
   // Transport status wins over provider prose, which can quote an unrelated previous failure.
   if (origin === 'provider') {
+    if (status === 413) return undefined
     if (status === 401 || status === 403)
       return { category: 'configuration', reason: 'configuration/auth-failed', diagnostics: {} }
     if (status === 429)

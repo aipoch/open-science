@@ -2,6 +2,8 @@ import type { Recognizer } from '../contract'
 
 export const recognizeEnvironment: Recognizer = ({ origin, code, text = '' }) => {
   if (origin === 'provider') return undefined
+  if (origin === 'operation' && code === 'resume-operation' && /cwd does not exist/i.test(text))
+    return { category: 'environment', reason: 'environment/workspace-missing', diagnostics: {} }
   if (
     ['EACCES', 'EPERM', 'ENOSPC', 'EROFS'].includes(String(code)) ||
     /\b(?:EACCES|EPERM|ENOSPC|EROFS)\b/.test(text)
