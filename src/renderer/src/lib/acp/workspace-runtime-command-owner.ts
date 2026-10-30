@@ -9,7 +9,7 @@ import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId
 } from '../../../../shared/permission-profiles'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
 import {
   withPdfContext as withPdf,
   pdfProseReadingSelectionsFromContext,
@@ -1952,7 +1952,7 @@ const resendEditedWorkspaceMessage = async (
   const cwd = session.cwd || runtime.state.cwd
   if (
     !cwd ||
-    (!input.text.trim() && annotations.length === 0) ||
+    (!input.text.trim() && annotations.length === 0 && !sourceMessage?.uploads?.length) ||
     !sourceMessage ||
     runtime.state.promptInFlightSessionIds.includes(input.sessionId)
   )

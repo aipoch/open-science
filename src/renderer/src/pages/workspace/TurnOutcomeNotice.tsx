@@ -1,12 +1,8 @@
-import { ChevronRight, Flag, Loader2 } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { TurnOutcome } from '../../../../shared/session-persistence'
-import { isReportableRunFailure } from '../../../../shared/run-error-classification'
-import {
-  isCodexCliCompatibilityError,
-  isUnsupportedCodexAcpVersionError
-} from '../../../../shared/codex-runtime'
+import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
 
 type TurnOutcomeActions = {
   artifactRetryingPromptMessageId?: string
@@ -26,64 +22,48 @@ const TurnOutcomeNotice = ({
   outcome: Exclude<TurnOutcome, { kind: 'completed' }>
   actions: TurnOutcomeActions
 }): React.JSX.Element | null => {
-  const { t } = useTranslation()
-  // Recovery belongs to the Session; a message result never owns its Resume entry.
-  if (outcome.kind === 'interrupted' || outcome.kind === 'cancelled') return null
-
-  const error = actions.resolveError(outcome.error)
-  const canRetryArtifact = outcome.recovery === 'retry-artifact-publication'
-  const retrying = actions.artifactRetryingPromptMessageId === promptMessageId
-  const canReport =
-    !isUnsupportedCodexAcpVersionError(outcome.error) &&
-    !isCodexCliCompatibilityError(outcome.error) &&
-    (outcome.errorReportable ?? isReportableRunFailure(outcome.error))
-  const settingsAction = actions.settingsAction?.(outcome.error)
+  if (outcome.kind !== 'failed') return null
+  const failure = {
+    ...(outcome.failure ?? { category: 'internal' as const }),
+    diagnostics: {
+      ...outcome.failure?.diagnostics,
+      raw: outcome.failure?.diagnostics.raw ?? outcome.error
+    }
+  }
   return (
-    <div
-      role="alert"
-      data-slot="turn-outcome-notice"
-      data-prompt-message-id={promptMessageId}
-      className="mb-2 flex flex-col gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700 dark:border-red-800/50 dark:bg-red-950/20 dark:text-red-300"
-    >
-      <span className="min-w-0 break-words">{error}</span>
-      {canRetryArtifact || canReport || settingsAction ? (
-        <div className="flex flex-wrap items-center justify-end gap-1">
-          {canRetryArtifact ? (
-            <button
-              type="button"
-              onClick={() => actions.onRetryArtifact(promptMessageId)}
-              disabled={actions.artifactRetryDisabled}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-              aria-label={t('Retry Artifact publication')}
-            >
-              {retrying ? (
-                <Loader2 className="size-3 animate-spin" strokeWidth={2.2} aria-hidden="true" />
-              ) : null}
-              {t('Retry Artifact publication')}
-            </button>
-          ) : null}
-          {canReport ? (
-            <button
-              type="button"
-              onClick={() => actions.onReportError(error)}
-              className="inline-flex h-6 items-center gap-1 rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-              aria-label={t('Report this error')}
-            >
-              <Flag className="size-3" strokeWidth={2.2} aria-hidden="true" />
-              {t('Report error')}
-            </button>
-          ) : null}
-          {settingsAction ? (
-            <button
-              type="button"
-              onClick={settingsAction.onClick}
-              className="inline-flex h-6 items-center rounded-md border border-red-200 bg-red-100/60 px-2 font-medium text-red-700 hover:bg-red-100 dark:border-red-800/50 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/40"
-            >
-              {settingsAction.label}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+    <div data-slot="turn-outcome-notice" data-prompt-message-id={promptMessageId}>
+      <ComposerNoticeSlot
+        notices={[
+          {
+            id: promptMessageId,
+            source: 'turn',
+            occurredAt: outcome.settledAt,
+            failure,
+            promptMessageId,
+            recovery: outcome.recovery
+          }
+        ]}
+        handlers={{
+          report: { run: () => actions.onReportError(actions.resolveError(outcome.error)) },
+          ...(outcome.recovery === 'retry-artifact-publication'
+            ? {
+                retry: {
+                  run: () => actions.onRetryArtifact(promptMessageId),
+                  disabled: () =>
+                    actions.artifactRetryDisabled ||
+                    actions.artifactRetryingPromptMessageId === promptMessageId
+                }
+              }
+            : {}),
+          ...(actions.settingsAction?.(outcome.error)
+            ? {
+                'open-provider-settings': {
+                  run: () => actions.settingsAction?.(outcome.error)?.onClick()
+                }
+              }
+            : {})
+        }}
+      />
     </div>
   )
 }

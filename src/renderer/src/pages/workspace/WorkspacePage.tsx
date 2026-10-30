@@ -1882,6 +1882,7 @@ const WorkspacePage = ({
                   }
                 }}
                 sessionTools={{
+                  newConversation: openNewConversation,
                   menuBindings: createSessionActionBindings({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,
