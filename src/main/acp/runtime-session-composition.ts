@@ -286,6 +286,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       canOwnRuntimeBindingDecision: options.notebook?.canOwnRuntimeBindingDecision,
       shellRuntimeBindingFor: (sessionId) =>
         base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
+      piReviewerPermissionContextFor: (sessionId) =>
+        reviewerSessions.piPermissionContextFor(sessionId),
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
       resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
       currentFramework: () => base.backendGeneration.current.framework,

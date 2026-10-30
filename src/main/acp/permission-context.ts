@@ -150,6 +150,8 @@ type AcpPermissionContextOptions = {
         runtimeId: string
       }
     ) => Promise<boolean>
+    // Pi correlation context for an active Reviewer session, owned by ReviewerSessionOwner.
+    piReviewerPermissionContextFor?: (providerSessionId: string) => PiPermissionContext | undefined
     reviewerContextFor: (providerSessionId: string) =>
       | {
           frameworkId: AgentFrameworkId
@@ -494,10 +496,15 @@ class AcpPermissionContext {
     let piBound: PiBoundCall | undefined
     let normalizedParams: RequestPermissionRequest | undefined
     if (String(framework) === 'pi') {
-      // Reviewer/Specialist Pi sessions are not admitted by this experimental primary path.
+      // A Reviewer session binds against its own reviewer-only context. An unbound Reviewer call
+      // carries no trusted identity, so the Reviewer owner rejects and counts it.
       const piContext = reviewerContext
-        ? undefined
+        ? routing.piReviewerPermissionContextFor?.(params.sessionId)
         : routing.piPermissionContextFor?.(appSessionId, params.sessionId)
+      const denied = (): RequestPermissionResponse =>
+        (reviewerContext ? routing.resolveReviewerPermission(params) : undefined) ?? {
+          outcome: { outcome: 'cancelled' }
+        }
       const onceOptions = params.options.filter(
         (option) => option.kind === 'allow_once' || option.kind === 'reject_once'
       )
@@ -506,7 +513,7 @@ class AcpPermissionContext {
         !onceOptions.some((option) => option.kind === 'allow_once') ||
         !onceOptions.some((option) => option.kind === 'reject_once')
       )
-        return { outcome: { outcome: 'cancelled' } }
+        return denied()
       this.piTurnContexts.set(appSessionId, piContext)
       const result = await this.piCorrelation.waitFor(params, piContext)
       if (result.status !== 'bound') {
@@ -515,7 +522,7 @@ class AcpPermissionContext {
           sessionId: appSessionId,
           toolCallId: params.toolCall.toolCallId
         })
-        return { outcome: { outcome: 'cancelled' } }
+        return denied()
       }
       piBound = result.call
       normalizedParams = withTrustedMcpToolIdentity(
@@ -551,6 +558,7 @@ class AcpPermissionContext {
 
     try {
       if (reviewerContext) {
+        if (piBound && !piBound.isCurrent()) return { outcome: { outcome: 'cancelled' } }
         const response = routing.resolveReviewerPermission(normalizedParams)
         if (response) return response
         throw new Error(`Unknown ACP reviewer session: ${params.sessionId}`)
@@ -716,7 +724,7 @@ class AcpPermissionContext {
     const frameworkId = reviewerContext?.frameworkId ?? snapshot?.frameworkId
     if (String(frameworkId) === 'pi') {
       const piContext = reviewerContext
-        ? undefined
+        ? routing.piReviewerPermissionContextFor?.(notification.sessionId)
         : routing.piPermissionContextFor?.(sessionId, notification.sessionId)
       if (piContext) {
         this.piTurnContexts.set(sessionId, piContext)

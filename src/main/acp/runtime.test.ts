@@ -68,6 +68,7 @@ import {
   claudeCodeFramework,
   codeBuddyFramework,
   codexFramework,
+  createPiFramework,
   opencodeFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -16987,6 +16988,87 @@ describe('ACP runtime session management', () => {
     // dispose returns the final count and clears it atomically — the orchestrator relies on this.
     expect(runtime.disposeReviewerSession(session)).toEqual({
       rejectedToolCalls: 1,
+      reviewerBridgeScoped: undefined
+    })
+  })
+
+  // Regression: Pi Reviewer sessions had no permission correlation context, so every reviewer MCP
+  // call was cancelled and Request review never finished under Pi.
+  it('admits only bound reviewer MCP calls in a Pi Reviewer session', async () => {
+    const process = new FakeAgentProcess()
+    const calls = [
+      ['read', 'mcp__open-science-reviewer__read_turn', { turnId: 'turn-1' }],
+      ['submit', 'mcp__open-science-reviewer__submit_findings', { checks: [] }],
+      ['notebook', 'mcp__open-science-notebook__notebook_execute', { code: 'print(1)' }],
+      ['native', 'bash', { command: 'ls' }]
+    ] as const
+    const responses = new Map<string, unknown>()
+    acp
+      .agent({ name: 'pi-reviewer-probe' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'pi-reviewer-1' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const [toolCallId, name, rawInput] of calls) {
+          // Pi names the tool only through top-level name/title, not _meta.
+          const toolCall = { toolCallId, name, title: name, kind: 'other' as const, rawInput }
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: { sessionUpdate: 'tool_call', status: 'pending', ...toolCall }
+          } as acp.SessionNotification)
+          responses.set(
+            toolCallId,
+            await ctx.client.request(acp.methods.client.session.requestPermission, {
+              sessionId: ctx.params.sessionId,
+              toolCall,
+              options: [
+                { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+                { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+              ]
+            } as acp.RequestPermissionRequest)
+          )
+        }
+        return { stopReason: 'end_turn' }
+      })
+      .onNotification(acp.methods.agent.session.cancel, () => undefined)
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: createPiFramework({
+        assertApprovedAdapter: () => undefined,
+        mapPermissionProfile: claudeCodeFramework.mapPermissionProfile
+      })
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'review the audited turn' }])
+
+    const allowed = { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    const rejected = { outcome: { outcome: 'selected', optionId: 'reject-once' } }
+    expect(Object.fromEntries(responses)).toEqual({
+      read: allowed,
+      submit: allowed,
+      notebook: rejected,
+      native: rejected
+    })
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 2,
       reviewerBridgeScoped: undefined
     })
   })
