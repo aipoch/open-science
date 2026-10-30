@@ -233,6 +233,33 @@ describe('Agent PDF evidence from existing Structure caches', () => {
     await expect(reader.annotationRegions(context, elementRef)).rejects.toThrow()
   })
 
+  it('loads every page covered by a cross-page element before returning annotation regions', async () => {
+    const crossPage = {
+      ...figure,
+      regions: [region, { ...region, page: 3, x: 0.2, y: 0.2 }]
+    }
+    const { reader, context, reference, owner, result } = setup([crossPage])
+    result.pages = [
+      { page: 2, width: 600, height: 800, rotation: 0 },
+      { page: 3, width: 800, height: 600, rotation: 90 }
+    ]
+    owner.readCached.mockImplementation(async (_request, pages) =>
+      pages.length === 1 ? { ...result, pages: [result.pages[0]!] } : result
+    )
+    const elementRef = await reference()
+    await expect(reader.annotationRegions(context, elementRef)).resolves.toMatchObject({
+      regions: [
+        { page: 2, rotation: 0 },
+        { page: 3, rotation: 90 }
+      ]
+    })
+    expect(owner.readCached).toHaveBeenLastCalledWith(
+      expect.anything(),
+      [2, 3],
+      expect.any(AbortSignal)
+    )
+  })
+
   it('delivers Figure 3 as typed image evidence with its native caption and physical pages', async () => {
     const { reader, context, reference, owner } = setup()
     const output = await reader.read(context, { elementRef: await reference() })

@@ -257,50 +257,54 @@ export class PdfAnnotationAgent {
     const source = await this.source(context, binding)
     let selectors: PdfAnnotationSelector[] = []
     let truncated = false
-    await this.options.annotations.withVerifiedSource(source, async (lease) => {
-      const geometry = this.options.geometry ?? locatePdfAnnotationGeometryInWorker
-      if (input.kind === 'document-note')
-        selectors = [{ kind: 'document-note', coordinateVersion: 1 }]
-      else if (element) {
-        const rotations = new Map<number, number>()
-        for (const region of element.regions) {
-          if (!rotations.has(region.page)) {
-            const result = await geometry(
-              { filePath: lease.path, pageNumber: region.page },
-              context.signal
-            )
-            const page = result.selectors[0]
-            if (page?.kind !== 'page-note') throw stale()
-            rotations.set(region.page, page.pageRotation)
+    await this.options.annotations.withVerifiedSource(
+      source,
+      async (lease) => {
+        const geometry = this.options.geometry ?? locatePdfAnnotationGeometryInWorker
+        if (input.kind === 'document-note')
+          selectors = [{ kind: 'document-note', coordinateVersion: 1 }]
+        else if (element) {
+          const rotations = new Map<number, number>()
+          for (const region of element.regions) {
+            if (!rotations.has(region.page)) {
+              const result = await geometry(
+                { filePath: lease.path, pageNumber: region.page },
+                context.signal
+              )
+              const page = result.selectors[0]
+              if (page?.kind !== 'page-note') throw stale()
+              rotations.set(region.page, page.pageRotation)
+            }
+            const pageRotation = rotations.get(region.page)!
+            let { x, y, width, height } = region
+            for (let turn = 0; turn < ((pageRotation - region.rotation + 360) % 360) / 90; turn++)
+              [x, y, width, height] = [1 - y - height, x, height, width]
+            selectors.push({
+              kind: 'region',
+              pageNumber: region.page,
+              rect: { x, y, width, height },
+              pageRotation,
+              coordinateVersion: 1
+            })
           }
-          const pageRotation = rotations.get(region.page)!
-          let { x, y, width, height } = region
-          for (let turn = 0; turn < ((pageRotation - region.rotation + 360) % 360) / 90; turn++)
-            [x, y, width, height] = [1 - y - height, x, height, width]
-          selectors.push({
-            kind: 'region',
-            pageNumber: region.page,
-            rect: { x, y, width, height },
-            pageRotation,
-            coordinateVersion: 1
-          })
+        } else if (input.kind === 'text' || input.kind === 'page-note') {
+          const result = await geometry(
+            {
+              filePath: lease.path,
+              pageNumber: input.pageNumber,
+              ...(input.kind === 'text'
+                ? { quote: input.quote, prefix: input.prefix, suffix: input.suffix }
+                : {})
+            },
+            context.signal
+          )
+          selectors = result.selectors
+          truncated = result.truncated
         }
-      } else if (input.kind === 'text' || input.kind === 'page-note') {
-        const result = await geometry(
-          {
-            filePath: lease.path,
-            pageNumber: input.pageNumber,
-            ...(input.kind === 'text'
-              ? { quote: input.quote, prefix: input.prefix, suffix: input.suffix }
-              : {})
-          },
-          context.signal
-        )
-        selectors = result.selectors
-        truncated = result.truncated
-      }
-      await lease.verifyUnchanged()
-    })
+        await lease.verifyUnchanged()
+      },
+      { writable: false }
+    )
     const current = await this.binding(context, binding.bindingId)
     if (bindingKey(current) !== bindingKey(binding)) throw stale()
     for (const [id, target] of this.targets)
