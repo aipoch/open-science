@@ -1213,6 +1213,7 @@ jobs:
           src/main/desktop-runtime-recovery.test.ts
           src/main/desktop-runtime-stop-deadline.integration.test.ts
           src/main/update/installation-occupancy.test.ts
+          src/main/update/installation-file-occupancy.integration.test.ts
           src/main/verified-service-stop.test.ts
           packages/open-science/runtime-control.test.ts
           src/main/local-service-stop-intent.integration.test.ts

@@ -229,6 +229,7 @@ jobs:
           src/main/delegation/opencode-runtime-preparation.test.ts
           packages/notebook-network-sandbox/src/gateway.test.ts
           packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
+          src/main/update/installation-file-occupancy.integration.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
           --testNamePattern="$TEST_NAME_PATTERN"
 

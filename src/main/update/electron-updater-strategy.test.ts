@@ -1,5 +1,5 @@
 import type { WindowsUpdateHandoff } from './windows-update-handoff'
-import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
+import { UPDATE_INSTALLATION_REQUIRED, UpdateLifecycleError } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1089,6 +1089,63 @@ describe('ElectronUpdaterStrategy', () => {
     finishGate?.()
     await applying
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it('records failed occupancy preparation and allows retry without stopping the runtime', async () => {
+    const updater = new FakeUpdater()
+    const log = createLogSpy()
+    const gate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const prepareInstall = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new UpdateLifecycleError(
+          'installation-busy',
+          'Installation occupancy could not be verified.',
+          {
+            phase: 'preparing',
+            runtime: 'running',
+            installation: 'unchanged',
+            canCancel: true,
+            canRecover: false,
+            canRetryInstall: false,
+            detail: 'occupancy-unknown'
+          },
+          { cause: new Error('private process query detail') }
+        )
+      )
+      .mockResolvedValueOnce(undefined)
+    const strategy = createStrategy({
+      updater,
+      currentVersion: '0.2.0',
+      broadcast: vi.fn(),
+      prepareInstall,
+      installGate: gate,
+      log
+    })
+    await markUpdateReady(strategy, updater)
+
+    expect(await strategy.apply()).toMatchObject({
+      state: 'ready',
+      reason: 'installation-busy',
+      recovery: { runtime: 'running', detail: 'occupancy-unknown', canCancel: true }
+    })
+    expect(gate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(diagnosticRecords(log)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'update-apply',
+          phase: 'prepare-install',
+          outcome: 'failed'
+        })
+      ])
+    )
+    expect(JSON.stringify(diagnosticRecords(log))).not.toContain('private process query detail')
+
+    await strategy.apply()
+    expect(prepareInstall).toHaveBeenCalledTimes(2)
+    expect(gate).toHaveBeenCalledOnce()
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce()
   })
 
   it('apply refuses to install and reports an error when the teardown times out', async () => {

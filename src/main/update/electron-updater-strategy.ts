@@ -890,6 +890,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     })
 
     try {
+      operation.phase('prepare-install')
       const preparation = this.installationHooks.prepareInstall
         ? await this.installationHooks.prepareInstall(this.status, options)
         : undefined
@@ -901,6 +902,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     } catch (error) {
       this.applying = false
       this.setLifecycleFailure(error)
+      operation.fail(error, { result: 'error' })
       return this.status
     }
     if (!this.applying) return this.status
