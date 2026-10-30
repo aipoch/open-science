@@ -147,6 +147,36 @@ describe('workspace tool activity details', () => {
     expect(getToolDisplayName(createActivity({ toolKind: undefined }))).toBe('Tool')
   })
 
+  it.each([
+    ['list_pdf_annotations', 'list', { annotations: [{ id: 'a1', kind: 'highlight' }], total: 1 }],
+    [
+      'locate_pdf_annotation_target',
+      'locate',
+      { targets: [{ targetRef: 'target-1', kind: 'text', pageNumber: 2, quote: 'Result' }] }
+    ],
+    ['create_pdf_annotation', 'create', { id: 'a2', kind: 'highlight', pageNumber: 2 }]
+  ] as const)(
+    'projects %s into a Literature annotation card summary',
+    (tool, operation, output) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: `mcp__open-science-literature__${tool}`,
+          rawInput: { documentId: 'paper-1' },
+          rawOutput: output
+        })
+      )
+      expect(details?.displayName).toBe('Reading')
+      expect(details?.sections).toContainEqual(
+        expect.objectContaining({
+          kind: 'literature',
+          summary: expect.objectContaining({
+            annotation: expect.objectContaining({ operation, documentId: 'paper-1' })
+          })
+        })
+      )
+    }
+  )
+
   it('keeps native Skill instruction documents out of expandable activity details', () => {
     const activity = createActivity({
       title: 'Loaded skill: mcp-pubmed',

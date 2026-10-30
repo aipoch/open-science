@@ -32,7 +32,9 @@ import {
 } from './workspace-skill-load'
 import {
   buildLiteratureLibraryToolSummary,
+  buildPdfAnnotationToolSummary,
   pdfElementToolAction,
+  pdfAnnotationToolAction,
   buildPdfElementToolSummary,
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
@@ -474,15 +476,18 @@ const buildLiteratureDetails = (activity: ToolActivity): ToolActivityDetails | u
     : getLiteratureLibraryToolAction(activity.providerToolName, activity.title)
   const isReading = isLiteratureReadDocumentTool(activity.providerToolName, activity.title)
   const elementAction = pdfElementToolAction(activity.providerToolName, activity.title)
-  if (!libraryAction && !isReading && !elementAction) return undefined
+  const annotationAction = pdfAnnotationToolAction(activity.providerToolName, activity.title)
+  if (!libraryAction && !isReading && !elementAction && !annotationAction) return undefined
 
   const contentTexts = collectToolTexts(activity)
   const output = [...contentTexts, activity.rawOutput]
-  const summary = elementAction
-    ? buildPdfElementToolSummary(elementAction, output)
-    : libraryAction
-      ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
-      : buildLiteratureToolSummary(activity.rawInput, output)
+  const summary = annotationAction
+    ? buildPdfAnnotationToolSummary(annotationAction, activity.rawInput, output)
+    : elementAction
+      ? buildPdfElementToolSummary(elementAction, output)
+      : libraryAction
+        ? buildLiteratureLibraryToolSummary(libraryAction, activity.rawInput, output)
+        : buildLiteratureToolSummary(activity.rawInput, output)
   // Only replace acquisition output when a pending receipt provides an actionable destination.
   // Keep generic diagnostics for not-found, already-reviewed, failures and unknown outcomes.
   if (isAcquiringPdf && !summary.pdfDownloaded) {
