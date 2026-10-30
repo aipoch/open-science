@@ -29,7 +29,8 @@ const registrations: Record<
   'literature/mcp-server.ts:LITERATURE_READ_DOCUMENT_TOOL_NAME': 'allow_once',
   "literature/mcp-server.ts:'list_pdf_elements'": 'allow_once',
   "literature/mcp-server.ts:'read_pdf_element'": 'allow_once',
-  // Reading annotations use the verified Literature identity and one-call Auto approval.
+  // Reading annotations use the verified Literature identity; read-only calls skip the prompt,
+  // while create remains a one-call Auto approval.
   "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
   "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
   "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',

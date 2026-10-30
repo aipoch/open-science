@@ -327,6 +327,11 @@ const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-literature/create_pdf_annotation'
 ])
 
+const LIBRARY_READ_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
+  'open-science-literature/list_pdf_annotations',
+  'open-science-literature/locate_pdf_annotation_target'
+])
+
 const APP_INTERACTION_TOOLS = new Set([
   'open-science-notebook/ask_user_question',
   'open-science-notebook/request_network_access'
@@ -364,6 +369,14 @@ const resolveLegacyAutomaticPermissionReason = (
   }
 
   const libraryIdentity = trustedMcpToolIdentity(params)
+  if (
+    libraryIdentity &&
+    LIBRARY_READ_TOOL_IDENTITIES.has(libraryIdentity) &&
+    context?.mcpServerNames?.map(canonicalAppMcpServerName).includes('open-science-literature')
+  ) {
+    return 'library_read'
+  }
+
   if (
     context?.profile === 'auto' &&
     libraryIdentity &&

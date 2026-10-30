@@ -36,20 +36,21 @@ const request = (title: string): RequestPermissionRequest => ({
 })
 
 describe('Library Auto policy', () => {
-  it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
-    'auto-approves the verified annotation tool %s once and keeps ask profile approval',
-    (name) => {
-      const identity = `open-science-literature/${name}`
-      const trusted = withTrustedMcpToolIdentity(request(name), identity)
-      expect(appMcpToolIdentities()).toContain(identity)
-      expect(
-        resolveAutomaticPermission(trusted, { profile: 'auto', mcpServerNames: servers })
-      ).toBe('once')
-      expect(
-        resolveAutomaticPermission(trusted, { profile: 'ask', mcpServerNames: servers })
-      ).toBeUndefined()
-    }
-  )
+  it.each([
+    ['list_pdf_annotations', true],
+    ['locate_pdf_annotation_target', true],
+    ['create_pdf_annotation', false]
+  ] as const)('handles annotation tool %s permission', (name, readOnly) => {
+    const identity = `open-science-literature/${name}`
+    const trusted = withTrustedMcpToolIdentity(request(name), identity)
+    expect(appMcpToolIdentities()).toContain(identity)
+    expect(resolveAutomaticPermission(trusted, { profile: 'auto', mcpServerNames: servers })).toBe(
+      'once'
+    )
+    expect(resolveAutomaticPermission(trusted, { profile: 'ask', mcpServerNames: servers })).toBe(
+      readOnly ? 'once' : undefined
+    )
+  })
 
   it.each([...LIBRARY_AUTO_TOOL_IDENTITIES])(
     'only allows a verified mounted identity in Auto: %s',
@@ -66,7 +67,12 @@ describe('Library Auto policy', () => {
         )
       ).toBeUndefined()
       expect(resolveAutomaticPermission(trusted, { ...policy, mcpServerNames: [] })).toBeUndefined()
-      expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBeUndefined()
+      expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBe(
+        identity.endsWith('/list_pdf_annotations') ||
+          identity.endsWith('/locate_pdf_annotation_target')
+          ? 'once'
+          : undefined
+      )
       expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'full' })).toBe('once')
       expect(
         resolveAutomaticPermission({ ...trusted, options: raw.options.slice(1) }, policy)
@@ -152,7 +158,13 @@ describe('Library Auto policy', () => {
               frameworkId: framework,
               mcpServerNames: servers
             })
-          ).toBeUndefined()
+          ).toBe(
+            framework !== 'codebuddy' &&
+              (identity.endsWith('/list_pdf_annotations') ||
+                identity.endsWith('/locate_pdf_annotation_target'))
+              ? 'once'
+              : undefined
+          )
         }
       } finally {
         context.dispose()
