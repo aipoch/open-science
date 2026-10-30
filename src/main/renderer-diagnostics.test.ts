@@ -9,28 +9,31 @@ import {
 } from './renderer-diagnostics'
 
 describe('createRendererFailureReporter', () => {
-  it('records a validated renderer failure without retaining extra renderer data', () => {
-    const error = vi.fn()
-    const reporter = createRendererFailureReporter({
-      log: { error, warn: vi.fn() },
-      now: () => 100
-    })
+  it.each(['workspace', 'marketplace'])(
+    'records a validated %s failure without retaining extra renderer data',
+    (surface) => {
+      const error = vi.fn()
+      const reporter = createRendererFailureReporter({
+        log: { error, warn: vi.fn() },
+        now: () => 100
+      })
 
-    expect(
-      reporter.report('renderer-a', {
+      expect(
+        reporter.report('renderer-a', {
+          source: 'window-error',
+          surface,
+          errorCategory: 'type',
+          fingerprint: 'a1b2c3d4'
+        })
+      ).toBe('recorded')
+      expect(error).toHaveBeenCalledWith('renderer javascript failure', {
         source: 'window-error',
-        surface: 'workspace',
+        surface,
         errorCategory: 'type',
         fingerprint: 'a1b2c3d4'
       })
-    ).toBe('recorded')
-    expect(error).toHaveBeenCalledWith('renderer javascript failure', {
-      source: 'window-error',
-      surface: 'workspace',
-      errorCategory: 'type',
-      fingerprint: 'a1b2c3d4'
-    })
-  })
+    }
+  )
 
   it('records an allowlisted handled-error context', () => {
     const error = vi.fn()
