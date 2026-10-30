@@ -268,6 +268,32 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).not.toContain('INPUT')
   })
 
+  it('shows the Literature jump action only for created annotations', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__create_pdf_annotation',
+      rawInput: { targetRef: 'target-1', requestId: 'mark-1', note: 'Review this claim.' },
+      rawOutput: { id: 'annotation-1', documentId: 'paper-1', kind: 'highlight', pageNumber: 2 }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+          onViewLiteratureAnnotation={() => undefined}
+        />
+      )
+    )
+    expect(container.querySelector('[data-testid="literature-tool-card"]')).not.toBeNull()
+    expect(
+      Array.from(container.querySelectorAll('button')).some((button) =>
+        button.textContent?.includes('View in Literature')
+      )
+    ).toBe(true)
+  })
+
   it('shows the selected figure caption and image delivery without rendering Base64 as text', async () => {
     const activity = createActivity({
       providerToolName: 'mcp.open-science-literature.read_pdf_element',

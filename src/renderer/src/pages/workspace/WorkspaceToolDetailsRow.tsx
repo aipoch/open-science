@@ -42,6 +42,7 @@ type WorkspaceToolDetailsRowProps = {
   onToggle: (activityId: string, nextExpanded: boolean) => void
   annotationPort?: AnnotationPort
   annotationItemType?: SessionTextAnnotationItemType
+  onViewLiteratureAnnotation?: () => void
   revealRequest?: Readonly<{ requestId: number; itemId: string; sectionId?: string }>
 }
 
@@ -178,6 +179,7 @@ const WorkspaceToolDetailsRow = ({
   onToggle,
   annotationPort,
   annotationItemType,
+  onViewLiteratureAnnotation,
   revealRequest
 }: WorkspaceToolDetailsRowProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -254,6 +256,7 @@ const WorkspaceToolDetailsRow = ({
           key={index}
           summary={section.summary}
           activityId={activity.id}
+          onViewAnnotation={onViewLiteratureAnnotation}
         />
       )
     }
