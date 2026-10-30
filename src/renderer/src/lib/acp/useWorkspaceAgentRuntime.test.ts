@@ -8876,9 +8876,8 @@ describe('workspace agent message sending', () => {
     expect(session.failure?.category).toBe('service')
   })
 
-  it('marks an untagged (ACP-layer) prompt failure reportable', async () => {
-    // No providerError tag on the run's error event → an app-layer failure the user should be able to
-    // report as a bug.
+  it('preserves an internal ACP prompt failure classification', async () => {
+    // The main runtime classifies unknown ACP failures before renderer projection.
     const acpErrorEvent: AcpRuntimeEvent = {
       id: 'error-acp-1',
       timestamp: Date.now(),
@@ -8886,7 +8885,8 @@ describe('workspace agent message sending', () => {
       level: 'error',
       sessionId: 'session-1',
       title: 'Prompt failed',
-      text: 'Something unexpected broke'
+      text: 'Something unexpected broke',
+      failure: { category: 'internal', diagnostics: { raw: 'Something unexpected broke' } }
     }
     vi.stubGlobal('window', {
       api: {
@@ -8908,7 +8908,12 @@ describe('workspace agent message sending', () => {
         const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
         await acceptTestMainContinuation(
           { sessionId, promptMessageId },
-          { kind: 'error', level: 'error', text: 'Something unexpected broke' }
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Something unexpected broke',
+            failure: { category: 'internal', diagnostics: { raw: 'Something unexpected broke' } }
+          }
         )
         throw new Error('Something unexpected broke')
       })
@@ -13033,7 +13038,8 @@ describe('recovering from a request-size overflow', () => {
       level: 'error',
       sessionId: 'session-1',
       title: 'Prompt failed',
-      text: 'Internal error: Request too large (max 32MB).'
+      text: 'Internal error: Request too large (max 32MB).',
+      failure: { category: 'input', reason: 'input/context-overflow', diagnostics: {} }
     })
 
     processContextOverflowRecovery(runtime, [event], handled, cooldown, active, recover)
@@ -13729,83 +13735,87 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
   })
 
-  it('routes a cross-session source Upload Version as a current attachment after branching', async () => {
-    const sourceUpload = {
-      id: 'upload-source',
-      versionId: 'upload-version-source',
-      versionNumber: 1,
-      sessionId: 'source-session',
-      name: 'measurements.csv',
-      originalName: 'measurements.csv',
-      mimeType: 'text/csv',
-      size: 24,
-      sha256: 'source-checksum'
-    }
-    useSessionStore.setState({
-      ...createInitialSessionState(),
-      sessions: [
-        {
-          id: 'session-1',
-          projectId: 'default-project',
-          title: 'Conversation',
-          cwd: '/workspace/project',
-          status: 'idle' as const,
-          messages: [
-            createMessage('user-1', 'user', 'first prompt', baseTime),
-            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
-            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
-              uploads: [sourceUpload]
-            }),
-            createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
-          ],
-          createdAt: baseTime,
-          updatedAt: baseTime + 300
-        }
-      ],
-      selectedSessionId: 'session-1'
-    })
-    const finalizeSession = vi.fn(
-      async ({ attachments }: FinalizeUploadSessionRequest) => attachments
-    )
-    vi.stubGlobal('window', {
-      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
-    })
-    const runtime = {
-      state: createSnapshot(['session-1']),
-      createSession: vi.fn(),
-      resumeSession: vi.fn(),
-      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
-      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
-    }
-
-    const resent = await resendEditedWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      messageId: 'user-2',
-      text: 'second prompt, edited'
-    })
-    await flushRuntimeTasks()
-
-    expect(resent).toBe(true)
-    expect(finalizeSession).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
-      expect.objectContaining({
+  it.each(['second prompt, edited', ''])(
+    'routes a source Upload Version during retry with text %j',
+    async (text) => {
+      const sourceUpload = {
         id: 'upload-source',
         versionId: 'upload-version-source',
-        path: 'upload-version:default-project/source-session/upload-source/upload-version-source'
+        versionNumber: 1,
+        sessionId: 'source-session',
+        name: 'measurements.csv',
+        originalName: 'measurements.csv',
+        mimeType: 'text/csv',
+        size: 24,
+        sha256: 'source-checksum'
+      }
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
+          {
+            id: 'session-1',
+            projectId: 'default-project',
+            title: 'Conversation',
+            cwd: '/workspace/project',
+            status: 'idle' as const,
+            messages: [
+              createMessage('user-1', 'user', 'first prompt', baseTime),
+              createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+              createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+                uploads: [sourceUpload]
+              }),
+              createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
+            ],
+            createdAt: baseTime,
+            updatedAt: baseTime + 300
+          }
+        ],
+        selectedSessionId: 'session-1'
       })
-    ])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+      const finalizeSession = vi.fn(
+        async ({ attachments }: FinalizeUploadSessionRequest) => attachments
+      )
+      vi.stubGlobal('window', {
+        api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
+      })
+      const runtime = {
+        state: createSnapshot(['session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
 
-    const editedSession = useSessionStore.getState().sessions[0]
-    expect(editedSession.messages.at(-1)).toMatchObject({
-      content: 'second prompt, edited',
-      uploads: [expect.objectContaining({ versionId: 'upload-version-source' })]
-    })
-    expect(
-      editedSession.conversationGraph?.messages.find((message) => message.id === 'user-2')?.uploads
-    ).toEqual([expect.objectContaining({ versionId: 'upload-version-source' })])
-    expect(editedSession.conversationGraph?.branches).toHaveLength(2)
-  })
+      const resent = await resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text
+      })
+      await flushRuntimeTasks()
+
+      expect(resent).toBe(true)
+      expect(finalizeSession).not.toHaveBeenCalled()
+      expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
+        expect.objectContaining({
+          id: 'upload-source',
+          versionId: 'upload-version-source',
+          path: 'upload-version:default-project/source-session/upload-source/upload-version-source'
+        })
+      ])
+      expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+
+      const editedSession = useSessionStore.getState().sessions[0]
+      expect(editedSession.messages.at(-1)).toMatchObject({
+        content: text,
+        uploads: [expect.objectContaining({ versionId: 'upload-version-source' })]
+      })
+      expect(
+        editedSession.conversationGraph?.messages.find((message) => message.id === 'user-2')
+          ?.uploads
+      ).toEqual([expect.objectContaining({ versionId: 'upload-version-source' })])
+      expect(editedSession.conversationGraph?.branches).toHaveLength(2)
+    }
+  )
 
   it('keeps edited attachments newest within the Composer replay limit', async () => {
     const versionedUpload = (id: string): NonNullable<ChatMessage['uploads']>[number] => ({

@@ -617,6 +617,15 @@ describe('AcpPromptOutcomeFinalizer', () => {
       failure: { category: 'service' }
     },
     {
+      name: 'ACP missing resource without session ownership',
+      error: Object.assign(new Error('Resource not found'), {
+        code: -32002,
+        data: { uri: 'file:///missing' }
+      }),
+      recoverable: undefined,
+      failure: { category: 'internal' }
+    },
+    {
       name: 'ACP error',
       error: new Error('protocol failed'),
       recoverable: undefined,

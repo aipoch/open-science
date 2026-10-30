@@ -49,7 +49,7 @@ const cases: [FailureCategory, FailureFacts][] = [
   ],
   ['input', { origin: 'operation', text: 'unsupported attachment type' }],
   ['session', { origin: 'session', text: 'connection lost' }],
-  ['session', { origin: 'agent-runtime', code: -32002 }],
+  ['internal', { origin: 'agent-runtime', code: -32002 }],
   ['session', { origin: 'operation', text: 'Session was interrupted before the app closed.' }],
   ['internal', { origin: 'agent-runtime', code: -32603, text: 'tool call state mismatch' }]
 ]
@@ -108,4 +108,21 @@ describe('classifyFailure', () => {
       diagnostics: {}
     })
   })
+})
+
+it.each(['Upload timed out', 'Bookmark connection failed'])(
+  'does not treat an ordinary operation as session recovery: %s',
+  (text) => {
+    expect(classifyFailure({ origin: 'operation', text }).category).toBe('internal')
+  }
+)
+
+it('keeps a structured size failure ahead of unrelated provider prose', () => {
+  expect(
+    classifyFailure({
+      origin: 'provider',
+      status: 413,
+      text: 'The payload contains an example invalid API key.'
+    }).category
+  ).toBe('input')
 })

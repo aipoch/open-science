@@ -2,10 +2,8 @@
   "ownerPaths": [
     "src/shared/claude-runtime.ts",
     "src/shared/codex-runtime.ts",
-    "src/shared/run-error-classification.ts",
-    "src/shared/media-overflow.ts",
-    "src/shared/run-error-classification.test.ts",
-    "src/shared/media-overflow.test.ts",
+    "src/shared/failure/legacy-recognition.test.ts",
+    "src/shared/failure/input.test.ts",
     "src/shared/failure/classify.test.ts",
     "src/shared/failure/classify.ts",
     "src/shared/failure/messages.ts",
@@ -19,8 +17,6 @@
   "interfacePaths": [
     "src/shared/claude-runtime.ts",
     "src/shared/codex-runtime.ts",
-    "src/shared/run-error-classification.ts",
-    "src/shared/media-overflow.ts",
     "src/shared/failure/contract.ts",
     "src/shared/failure/classify.ts"
   ],
@@ -32,8 +28,8 @@
   ],
   "testFiles": {
     "owner": [
-      "src/shared/run-error-classification.test.ts",
-      "src/shared/media-overflow.test.ts",
+      "src/shared/failure/legacy-recognition.test.ts",
+      "src/shared/failure/input.test.ts",
       "src/shared/failure/classify.test.ts"
     ],
     "contract": [],

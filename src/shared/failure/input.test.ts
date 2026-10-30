@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { isMediaOverflowError } from './media-overflow'
+import { classifyFailure } from './classify'
+const isMediaOverflowError = (text: string | null | undefined): boolean =>
+  classifyFailure({ origin: 'provider', text: text ?? undefined }).reason ===
+  'input/context-overflow'
 
 describe('isMediaOverflowError', () => {
   it('matches the backend compaction failure', () => {

@@ -1302,7 +1302,10 @@ describe('ACP runtime migration write-gate', () => {
           expect.objectContaining({
             kind: 'error',
             text: expect.stringContaining(capacityError),
-            failure: { category: 'service' as const, diagnostics: {} }
+            failure: {
+              category: 'service',
+              diagnostics: { code: 'overloaded_error', raw: `Internal error: ${capacityError}` }
+            }
           })
         ])
       )
@@ -6146,7 +6149,7 @@ describe('ACP runtime session management', () => {
         kind: 'error',
         sessionId: session.sessionId,
         interruptionCause: 'app-restart',
-        failure: { category: 'service' as const, diagnostics: {} }
+        failure: { category: 'session', reason: 'session/interrupted', diagnostics: {} }
       })
     )
     promptGate.resolve()
@@ -25537,25 +25540,28 @@ describe('ACP runtime session management', () => {
   })
 
   it.each([
-    ['OpenCode APIError', { errorName: 'APIError' }, 'Invalid API key'],
+    ['OpenCode APIError', { errorName: 'APIError' }, 'Invalid API key', 'configuration'],
     [
       'Claude Code explicit 4xx',
       { errorKind: 'unknown' },
-      'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid'
+      'API Error: 400 Authentication Fails, Your api key: ****e52d is invalid',
+      'service'
     ],
     [
       'Claude Code API connection refused',
       { errorKind: 'unknown' },
-      'API Error: Unable to connect to API (ConnectionRefused)'
+      'API Error: Unable to connect to API (ConnectionRefused)',
+      'service'
     ],
     [
       'provider bridge error kind',
       { errorKind: 'provider-error' },
-      '{"error":{"message":"Authentication failed","type":"authentication_error"}}'
+      '{"error":{"message":"Authentication failed","type":"authentication_error"}}',
+      'configuration'
     ]
   ] as const)(
-    'tags a provider-relayed %s prompt failure so the renderer hides Report',
-    async (_name, data, message) => {
+    'classifies a provider-relayed %s prompt failure for category-specific recovery',
+    async (_name, data, message, category) => {
       const process = new FakeAgentProcess()
       const events: Array<{ kind: string; category?: string }> = []
       startFakeAgent(process, ['remote-session-1'], {
@@ -25577,11 +25583,11 @@ describe('ACP runtime session management', () => {
         runtime.sendPrompt({ sessionId: 'remote-session-1', text: 'hi' })
       ).rejects.toThrow()
 
-      expect(events).toContainEqual({ kind: 'error', category: 'configuration' })
+      expect(events).toContainEqual({ kind: 'error', category })
     }
   )
 
-  it('does not tag an ACP-layer prompt failure as providerError (stays reportable)', async () => {
+  it('keeps an unowned ACP prompt failure internal', async () => {
     const process = new FakeAgentProcess()
     const events: Array<{ kind: string; category?: string }> = []
     startFakeAgent(process, ['remote-session-1'], {
