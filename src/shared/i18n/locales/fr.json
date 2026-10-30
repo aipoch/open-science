@@ -8009,7 +8009,7 @@
     "Pages with text: {{parsed}} / {{total}}": "Pages avec du texte : {{parsed}} / {{total}}",
     "Image content needs source verification. Pages with text do not establish complete evidence.": "Vérifiez le contenu des images dans la source. La présence de texte ne garantit pas des éléments probants complets.",
     "Text recognition (OCR)": "Reconnaissance de texte (OCR)",
-    "English and Simplified Chinese": "Anglais et chinois simplifié",
+    "OCR languages": "Langues OCR",
     "OCR installed. Read the PDF again.": "OCR installé. Relisez le PDF.",
     "Model configuration needs attention": "La configuration du modèle nécessite votre attention",
     "Check your credentials, model and account settings, then retry.": "Vérifiez vos identifiants et les paramètres du modèle et du compte, puis réessayez.",

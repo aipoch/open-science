@@ -7671,7 +7671,7 @@
     "Pages with text: {{parsed}} / {{total}}": "テキストのあるページ：{{parsed}} / {{total}}",
     "Image content needs source verification. Pages with text do not establish complete evidence.": "画像の内容を原文で確認してください。テキストがあっても証拠が完全とは限りません。",
     "Text recognition (OCR)": "文字認識（OCR）",
-    "English and Simplified Chinese": "英語と簡体字中国語",
+    "OCR languages": "OCR 言語",
     "OCR installed. Read the PDF again.": "OCR をインストールしました。PDF を再度読み込んでください。",
     "Model configuration needs attention": "モデル設定の確認が必要です",
     "Check your credentials, model and account settings, then retry.": "認証情報、モデル、アカウントの設定を確認してから再試行してください。",

@@ -8154,7 +8154,7 @@
     "Pages with text: {{parsed}} / {{total}}": "Страницы с текстом: {{parsed}} / {{total}}",
     "Image content needs source verification. Pages with text do not establish complete evidence.": "Сверьте содержимое изображений с оригиналом. Наличие текста не означает полноту доказательств.",
     "Text recognition (OCR)": "Распознавание текста (OCR)",
-    "English and Simplified Chinese": "Английский и упрощённый китайский",
+    "OCR languages": "Языки OCR",
     "OCR installed. Read the PDF again.": "OCR установлен. Прочитайте PDF повторно.",
     "Model configuration needs attention": "Необходимо проверить настройки модели",
     "Check your credentials, model and account settings, then retry.": "Проверьте учётные данные, настройки модели и аккаунта, затем повторите попытку.",

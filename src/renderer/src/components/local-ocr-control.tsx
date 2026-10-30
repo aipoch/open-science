@@ -2,12 +2,38 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScanText } from 'lucide-react'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
-import { localModelDownloadProgress } from '../../../shared/local-models'
+import { OCR_LANGUAGE_LABELS, localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
 
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+
+const languageLabel = (
+  code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+  t: (key: string) => string
+): string => {
+  switch (code) {
+    case 'eng':
+      return OCR_LANGUAGE_LABELS.eng
+    case 'chi_sim':
+      return OCR_LANGUAGE_LABELS.chi_sim
+    case 'chi_tra':
+      return OCR_LANGUAGE_LABELS.chi_tra
+    case 'deu':
+      return t('German')
+    case 'spa':
+      return t('Spanish')
+    case 'fra':
+      return t('French')
+    case 'jpn':
+      return t('Japanese')
+    case 'kor':
+      return t('Korean')
+    case 'rus':
+      return t('Russian')
+  }
+}
 
 export function LocalOcrControl({
   compact = false
@@ -54,6 +80,24 @@ export function LocalOcrControl({
       setPending(false)
     }
   }
+  const setLanguage = async (
+    code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+    selected: boolean
+  ): Promise<void> => {
+    if (!snapshot?.selectedOcrLanguages) return
+    setPending(true)
+    try {
+      const languages = selected
+        ? [...snapshot.selectedOcrLanguages, code]
+        : snapshot.selectedOcrLanguages.filter((value) => value !== code)
+      setSnapshot(await window.api.localModels.setOcrLanguages(languages))
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    } finally {
+      setPending(false)
+    }
+  }
   const installed = snapshot?.availability === 'ready'
   const installing = snapshot?.availability === 'installing'
   if (compact && ((!snapshot && !failed) || (installed && !installedHere && !snapshot?.error)))
@@ -66,11 +110,7 @@ export function LocalOcrControl({
         <div className="flex min-w-0 items-center gap-2">
           <ScanText className="size-4 shrink-0" aria-hidden="true" />
           <span className="text-sm font-medium">{t('Text recognition (OCR)')}</span>
-          {!compact && (
-            <span className="text-xs text-muted-foreground">
-              {t('English and Simplified Chinese')}
-            </span>
-          )}
+          {!compact && <span className="text-xs text-muted-foreground">{t('OCR languages')}</span>}
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {snapshot && !compact && (
@@ -125,6 +165,29 @@ export function LocalOcrControl({
       {installing && snapshot && (
         <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
       )}
+      {!compact && snapshot?.ocrLanguages ? (
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium text-muted-foreground">
+            {t('OCR languages')}
+          </legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {snapshot.ocrLanguages.map((language) => (
+              <label key={language.code} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={language.selected}
+                  disabled={pending || language.code === 'eng'}
+                  onChange={(event) => void setLanguage(language.code, event.target.checked)}
+                />
+                <span>{languageLabel(language.code, t)}</span>
+                {!language.installed ? (
+                  <span className="text-xs text-muted-foreground">{t('Not installed')}</span>
+                ) : null}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+      ) : null}
       {failed || snapshot?.error ? (
         <ErrorNotice
           inline

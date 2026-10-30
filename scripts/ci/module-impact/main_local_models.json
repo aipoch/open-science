@@ -5,6 +5,8 @@
     "src/main/local-models/download.test.ts",
     "src/main/local-models/download.ts",
     "src/main/local-models/ipc.ts",
+    "src/main/local-models/ocr-owner.test.ts",
+    "src/main/local-models/ocr-owner.ts",
     "src/main/local-models/owner.test.ts",
     "src/main/local-models/owner.ts",
     "src/main/local-models/ipc.test.ts"
@@ -16,7 +18,11 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/local-models/download.test.ts", "src/main/local-models/owner.test.ts"],
+    "owner": [
+      "src/main/local-models/download.test.ts",
+      "src/main/local-models/ocr-owner.test.ts",
+      "src/main/local-models/owner.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",

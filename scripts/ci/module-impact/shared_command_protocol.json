@@ -2,6 +2,7 @@
   "ownerPaths": [
     "src/shared/application-command-contract.test.ts",
     "src/shared/application-command-contract.ts",
+    "src/shared/local-models.test.ts",
     "src/shared/renderer-contracts/definition.test.ts",
     "src/shared/renderer-contracts/definition.ts"
   ],
@@ -87,6 +88,7 @@
   "testFiles": {
     "owner": [
       "src/shared/application-command-contract.test.ts",
+      "src/shared/local-models.test.ts",
       "src/shared/renderer-contracts/definition.test.ts"
     ],
     "contract": [],

@@ -103,7 +103,8 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
     getSnapshot: vi.fn(),
     install: vi.fn(),
     cancel: vi.fn(),
-    remove: vi.fn()
+    remove: vi.fn(),
+    setOcrLanguages: vi.fn()
   },
   cli: {
     getStatus: vi.fn(async () => ({

@@ -21,7 +21,8 @@ it('downloads only after a click, routes cancel to OCR and stops polling on unmo
     getSnapshot: vi.fn(async () => snapshot),
     install: vi.fn(async () => (snapshot = { ...snapshot, availability: 'installing' })),
     cancel: vi.fn(async () => (snapshot = { ...snapshot, availability: 'notInstalled' })),
-    remove: vi.fn(async () => snapshot)
+    remove: vi.fn(async () => snapshot),
+    setOcrLanguages: vi.fn(async () => snapshot)
   }
   const previous = window.api
   window.api = { ...previous, localModels: api }

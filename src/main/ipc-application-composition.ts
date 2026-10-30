@@ -88,6 +88,7 @@ import {
 import type { TaskControlPorts } from './tasks/task-control-ports'
 import type { TaskAgentPort } from './tasks/task-runner'
 import type { TrayNavigationSession } from './tray-navigation'
+import { defaultOcrLanguagesForLocale } from '../shared/local-models'
 
 export type IpcRegistrationOptions = {
   notificationDelivery?: (
@@ -321,7 +322,8 @@ export const createApplicationModules = async (
     ...managedFiles,
     ...sessionAuthority,
     modules,
-    settingsService: settingsBootstrap.settingsService
+    settingsService: settingsBootstrap.settingsService,
+    defaultOcrLanguages: defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
   })
   const projectLifecycle = composeProjectLifecycle({
     applicationEvents,
