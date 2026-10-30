@@ -25,8 +25,8 @@ const lifecycle = (
   }
 })
 
-// OpenCode 1.x omits summary identity from ACP chunks. Classify before the SDK queues or
-// observes them, including session/load replay. Never inspect prose or modify native history.
+// OpenCode 1.x can put a part ID on reasoning chunks. Normalize it before the SDK queues or
+// observes the update, including session/load replay. Never inspect prose or modify native history.
 export function createOpenCodeCompactionStream(
   stream: Stream,
   options: {
@@ -40,6 +40,7 @@ export function createOpenCodeCompactionStream(
   const pending = new Map<string, MessageIdentity>()
   const requests = new Map<JsonRpcId, { method: string; sessionId?: string; cwd?: string }>()
   const sessionCwds = new Map<string, string>()
+  const partMessages = new Map<string, string>()
   const abort = new AbortController()
   const signal = AbortSignal.any([options.signal, abort.signal])
   const clear = (): void => {
@@ -47,8 +48,58 @@ export function createOpenCodeCompactionStream(
     pending.clear()
     requests.clear()
     sessionCwds.clear()
+    partMessages.clear()
   }
   signal.addEventListener('abort', clear, { once: true })
+  const resolveMessageId = async (identity: MessageIdentity): Promise<MessageIdentity> => {
+    try {
+      if (!identity.messageId.startsWith('prt_')) return identity
+      const cached = partMessages.get(`${identity.sessionId}:${identity.messageId}`)
+      if (cached) return { ...identity, messageId: cached }
+      if (!options.api || signal.aborted) throw classificationError()
+      const url = new URL(
+        `/session/${encodeURIComponent(identity.sessionId)}/message`,
+        options.api.baseUrl
+      )
+      const loading = [...requests.values()].find(
+        (request) => request.sessionId === identity.sessionId && request.cwd
+      )
+      url.searchParams.set(
+        'directory',
+        loading?.cwd ??
+          sessionCwds.get(identity.sessionId) ??
+          options.resolveSessionCwd(identity.sessionId)
+      )
+      const response = await (options.fetchImpl ?? fetch)(url, {
+        headers: { authorization: options.api.authorization },
+        signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)])
+      })
+      if (!response.ok) throw classificationError()
+      const body: unknown = await response.json()
+      const messages = Array.isArray(body)
+        ? body
+        : isRecord(body) && Array.isArray(body.data)
+          ? body.data
+          : undefined
+      const match = messages?.find((message) => {
+        if (!isRecord(message) || !isRecord(message.info) || !Array.isArray(message.parts))
+          return false
+        return (
+          message.info.sessionID === identity.sessionId &&
+          message.info.role === 'assistant' &&
+          typeof message.info.id === 'string' &&
+          message.parts.some((part) => isRecord(part) && part.id === identity.messageId)
+        )
+      })
+      const messageId = isRecord(match) && isRecord(match.info) ? match.info.id : undefined
+      if (typeof messageId !== 'string' || !messageId.startsWith('msg_'))
+        throw classificationError()
+      partMessages.set(`${identity.sessionId}:${identity.messageId}`, messageId)
+      return { ...identity, messageId }
+    } catch {
+      throw classificationError()
+    }
+  }
   const classify = async (identity: MessageIdentity): Promise<Classification> => {
     try {
       if (!options.api || signal.aborted) throw classificationError()
@@ -163,6 +214,7 @@ export function createOpenCodeCompactionStream(
                 // Cached identity contains no content and is bounded. Reclassify after a close,
                 // including a later load of the same native ID in another working directory.
                 cache.clear()
+                partMessages.clear()
                 for (const [key, identity] of pending) {
                   if (identity.sessionId === request.sessionId) pending.delete(key)
                 }
@@ -189,7 +241,18 @@ export function createOpenCodeCompactionStream(
             !update.messageId
           )
             throw classificationError()
-          const identity = { sessionId: params.sessionId, messageId: update.messageId }
+          const incoming = { sessionId: params.sessionId, messageId: update.messageId }
+          const identity = await resolveMessageId(incoming)
+          const normalized =
+            identity.messageId === incoming.messageId
+              ? message
+              : ({
+                  ...message,
+                  params: {
+                    ...params,
+                    update: { ...update, messageId: identity.messageId }
+                  }
+                } as AnyMessage)
           const key = JSON.stringify([identity.sessionId, identity.messageId])
           let info = cache.get(key)
           if (!info) {
@@ -209,7 +272,7 @@ export function createOpenCodeCompactionStream(
           }
           if (info.summary) return
           await finish(identity.sessionId, controller)
-          controller.enqueue(message)
+          controller.enqueue(normalized)
         },
         flush: clear
       }),
