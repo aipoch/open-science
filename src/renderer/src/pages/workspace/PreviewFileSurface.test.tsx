@@ -1090,6 +1090,122 @@ describe('PreviewFileSurface managed text versions', () => {
     )
   })
 
+  it.each(['publish', 'save', 'history', 'draft', 'pending'] as const)(
+    'keeps open provenance bound to the confirmed content during %s',
+    async (action) => {
+      const artifactItem: PreviewFileItem = {
+        ...managedUploadItem,
+        id: 'artifact-1',
+        artifactId: 'artifact-1',
+        managedFileId: 'artifact-1',
+        selectedVersionId: undefined,
+        source: 'artifact'
+      }
+      const versions = [1, 2, 3].map((n) => ({
+        ...managedInspect.versions[1],
+        id: `artifact-v${n}`,
+        versionNumber: n,
+        source: 'artifact' as const,
+        fileId: 'artifact-1'
+      }))
+      let head = versions[1]
+      let notify!: Parameters<typeof window.api.projectFiles.onChanged>[0]
+      window.api.projectFiles = {
+        ...window.api.projectFiles,
+        onChanged: vi.fn((listener) => {
+          notify = listener
+          return vi.fn()
+        })
+      }
+      window.api.managedFileVersions.inspect = vi.fn(async (request) => {
+        const selected = versions.find((v) => v.id === request.versionId) ?? head
+        return {
+          ok: true as const,
+          value: {
+            ...managedInspect,
+            source: 'artifact' as const,
+            fileId: 'artifact-1',
+            versions,
+            headVersionId: head.id,
+            selectedVersionId: selected.id,
+            selectedVersion: selected,
+            text: `# Version ${selected.versionNumber}\n`
+          }
+        }
+      })
+      window.api.managedFileVersions.saveTextEdit = vi.fn(async () => {
+        head = versions[2]
+        return {
+          ok: true as const,
+          value: {
+            kind: 'created' as const,
+            replayed: false,
+            version: head,
+            headVersionId: head.id
+          }
+        }
+      })
+      await act(async () =>
+        root.render(
+          <PreviewFileSurface item={artifactItem} provenanceEntry="leading" onClose={vi.fn()} />
+        )
+      )
+      await click(container.querySelector('[aria-label="Open Provenance for README.md"]'))
+      const panelVersion = (): string =>
+        provenancePanelSpy.mock.lastCall?.[0].item.selectedVersionId
+      expect(panelVersion()).toBe('artifact-v2')
+      if (action === 'history') {
+        await act(async () =>
+          provenancePanelSpy.mock.lastCall?.[0].onVersionChange({
+            ...artifactItem,
+            selectedVersionId: 'artifact-v1',
+            versionNumber: 1,
+            path: 'artifact-version:project-1/session-1/artifact-1/artifact-v1'
+          })
+        )
+      }
+      if (action === 'save' || action === 'draft') {
+        await click(container.querySelector('[aria-label="Edit README.md"]'))
+        await changeTextarea(
+          container.querySelector<HTMLTextAreaElement>('textarea')!,
+          '# Unsaved draft\n'
+        )
+      }
+      if (action === 'save') await click(container.querySelector('[aria-label="Save changes"]'))
+      else {
+        head = versions[2]
+        const nextInspect = await window.api.managedFileVersions.inspect({
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: 'artifact-1'
+        })
+        let confirm!: (value: typeof nextInspect) => void
+        if (action === 'pending')
+          vi.mocked(window.api.managedFileVersions.inspect).mockReturnValueOnce(
+            new Promise((resolve) => {
+              confirm = resolve
+            })
+          )
+        await act(async () =>
+          notify({ projectId: 'project-1', sources: ['artifact'], kind: 'upsert' })
+        )
+        if (action === 'pending') {
+          expect(panelVersion()).toBe('artifact-v2')
+          expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe('artifact-v2')
+          await act(async () => confirm(nextInspect))
+        }
+      }
+      expect(panelVersion()).toBe(
+        action === 'history' ? 'artifact-v1' : action === 'draft' ? 'artifact-v2' : 'artifact-v3'
+      )
+      if (action === 'draft')
+        expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe(
+          '# Unsaved draft\n'
+        )
+      else expect(previewContentSpy.mock.lastCall?.[0].item.selectedVersionId).toBe(panelVersion())
+    }
+  )
+
   it('supplies the exact head Version when annotating a default managed Artifact', async () => {
     const managedArtifactItem: PreviewFileItem = {
       ...managedUploadItem,

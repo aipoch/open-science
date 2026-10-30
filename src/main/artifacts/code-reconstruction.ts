@@ -319,6 +319,11 @@ const sourceState = (
       return { state: 'unavailable', reason: 'supporting-code-incomplete' }
     }
   }
+  // Derived cache reads/writes require verified artifact bytes. This is independent of the
+  // execution checks above and must not be presented as invalid execution evidence.
+  if (provenance.contentStatus.state === 'unavailable') {
+    return { state: 'unavailable', reason: 'artifact-content-unavailable' }
+  }
   return {
     provenance,
     producerRun,

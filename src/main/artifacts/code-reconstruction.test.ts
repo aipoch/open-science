@@ -1203,3 +1203,24 @@ it('blocks script generation on a corrupt execution record before consulting cac
   expect(harness.readCodeReconstructionCache).not.toHaveBeenCalled()
   expect(harness.run).not.toHaveBeenCalled()
 })
+
+// Content availability and execution integrity are independent; retain the cache's content guard.
+it.each(['missing', 'checksum-mismatch'] as const)(
+  'classifies %s artifact bytes without invalidating valid execution evidence',
+  async (reason) => {
+    const value = provenance()
+    value.contentStatus = { state: 'unavailable', reason }
+    const harness = makeHarness(value)
+    await expect(harness.service.get(request)).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'artifact-content-unavailable'
+    })
+    await expect(harness.service.generate(request)).resolves.toEqual({
+      state: 'unavailable',
+      reason: 'artifact-content-unavailable'
+    })
+    expect(harness.readCodeReconstructionCache).not.toHaveBeenCalled()
+    expect(harness.writeCodeReconstructionCache).not.toHaveBeenCalled()
+    expect(harness.run).not.toHaveBeenCalled()
+  }
+)

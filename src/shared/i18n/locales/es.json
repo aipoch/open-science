@@ -912,7 +912,6 @@
     "Args": "Argumentos",
     "Arguments": "Argumentos",
     "Arguments were truncated for display.": "Los argumentos se truncaron para mostrarlos.",
-    "Artifact content is {{reason}}; captured provenance remains available.": "El contenido del artefacto es {{reason}}; la procedencia capturada sigue estando disponible.",
     "Artifact file input": "Entrada de archivo de artefacto",
     "Artifact suggestions": "Sugerencias de artefactos",
     "Artifacts": "Artefactos",
@@ -8037,6 +8036,10 @@
     "The records for this version failed integrity validation.": "Los registros de esta versión no superaron la validación de integridad.",
     "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Conserve esta versión y sus datos de diagnóstico para su investigación. No utilice sus registros para generar un script.",
     "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Vuelva a ejecutar la tarea que generó el archivo para capturar evidencias completas de una nueva versión. Los registros históricos no se modifican.",
-    "Review the connector execution details for this version.": "Revise los detalles de ejecución del Conector de esta versión."
+    "Review the connector execution details for this version.": "Revise los detalles de ejecución del Conector de esta versión.",
+    "Artifact content is unavailable for v{{version}}": "El contenido del artefacto de v{{version}} no está disponible",
+    "The artifact file is missing. Captured provenance remains available.": "Falta el archivo del artefacto. La información de procedencia registrada sigue disponible.",
+    "The artifact content failed validation. Captured provenance remains available.": "El contenido del artefacto no superó la validación. La información de procedencia registrada sigue disponible.",
+    "Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.": "Restaure el archivo original o publique una nueva versión. La generación de scripts requiere contenido del artefacto verificado; esto no significa que los registros de ejecución sean inválidos."
   }
 }

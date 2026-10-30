@@ -313,6 +313,10 @@ const codeReconstructionUnavailableLabel = (
   switch (reason) {
     case 'script-not-applicable':
       return t('This version was produced by a connector without a Notebook script.')
+    case 'artifact-content-unavailable':
+      return t(
+        'Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.'
+      )
     case 'record-invalid':
       return t('The records for this version failed integrity validation.')
     case 'execution-unavailable':
@@ -1740,12 +1744,15 @@ const ArtifactProvenancePanel = ({
               <ProvenanceLoadNotice
                 versionNumber={selectedVersionDescriptor?.versionNumber}
                 key={provenanceKey + ':content'}
+                contentFailure={provenance.contentStatus.reason}
                 failure={{
                   kind: 'integrity-failed',
-                  message: t(
-                    'Artifact content is {{reason}}; captured provenance remains available.',
-                    { reason: provenance.contentStatus.reason }
-                  )
+                  message:
+                    provenance.contentStatus.reason === 'missing'
+                      ? t('The artifact file is missing. Captured provenance remains available.')
+                      : t(
+                          'The artifact content failed validation. Captured provenance remains available.'
+                        )
                 }}
                 diagnostics={diagnosticsFor(
                   { kind: 'integrity-failed', message: provenance.contentStatus.reason },
@@ -1754,7 +1761,11 @@ const ArtifactProvenancePanel = ({
               />
             ) : null}
             <div className={tabActionBarClassName}>
-              {generatedCode ? (
+              {provenance.contentStatus.state === 'unavailable' ? (
+                <Button type="button" variant="outline" size="sm" disabled>
+                  {t('Generate script')}
+                </Button>
+              ) : generatedCode ? (
                 <Button
                   type="button"
                   size="sm"
@@ -1871,7 +1882,9 @@ const ArtifactProvenancePanel = ({
                 className="border-b border-border-300/50 px-4 py-2"
               />
             ) : null}
-            {codeReconstructionState?.state === 'unavailable' ? (
+            {codeReconstructionState?.state === 'unavailable' &&
+            (codeReconstructionState.reason !== 'artifact-content-unavailable' ||
+              provenance.contentStatus.state === 'available') ? (
               <ErrorNotice
                 className="w-full min-w-0 rounded-none whitespace-normal [overflow-wrap:anywhere]"
                 role={codeReconstructionState.reason === 'record-invalid' ? 'alert' : 'status'}
@@ -1883,31 +1896,37 @@ const ArtifactProvenancePanel = ({
                       : 'warning'
                 }
                 title={
-                  codeReconstructionState.reason === 'record-invalid'
-                    ? t('Record validation failed for v{{version}}', {
+                  codeReconstructionState.reason === 'artifact-content-unavailable'
+                    ? t('Artifact content is unavailable for v{{version}}', {
                         version: selectedVersionDescriptor?.versionNumber
                       })
-                    : codeReconstructionState.reason === 'script-not-applicable'
-                      ? t('Script reconstruction is not applicable to v{{version}}', {
+                    : codeReconstructionState.reason === 'record-invalid'
+                      ? t('Record validation failed for v{{version}}', {
                           version: selectedVersionDescriptor?.versionNumber
                         })
-                      : t('Execution evidence is incomplete for v{{version}}', {
-                          version: selectedVersionDescriptor?.versionNumber
-                        })
+                      : codeReconstructionState.reason === 'script-not-applicable'
+                        ? t('Script reconstruction is not applicable to v{{version}}', {
+                            version: selectedVersionDescriptor?.versionNumber
+                          })
+                        : t('Execution evidence is incomplete for v{{version}}', {
+                            version: selectedVersionDescriptor?.versionNumber
+                          })
                 }
                 description={codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
                 content={
-                  <p>
-                    {codeReconstructionState.reason === 'record-invalid'
-                      ? t(
-                          'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'
-                        )
-                      : codeReconstructionState.reason === 'script-not-applicable'
-                        ? t('Review the connector execution details for this version.')
-                        : t(
-                            'Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.'
-                          )}
-                  </p>
+                  codeReconstructionState.reason === 'artifact-content-unavailable' ? undefined : (
+                    <p>
+                      {codeReconstructionState.reason === 'record-invalid'
+                        ? t(
+                            'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'
+                          )
+                        : codeReconstructionState.reason === 'script-not-applicable'
+                          ? t('Review the connector execution details for this version.')
+                          : t(
+                              'Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.'
+                            )}
+                    </p>
+                  )
                 }
               />
             ) : null}

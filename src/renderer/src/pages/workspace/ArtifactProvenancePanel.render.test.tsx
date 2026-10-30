@@ -844,8 +844,20 @@ describe('ArtifactProvenancePanel', () => {
         root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
       )
       await flush()
+      expect(container.textContent).toContain('Artifact content is unavailable for v1')
+      expect(container.textContent).not.toContain('Record validation failed')
+      expect(container.textContent).not.toContain('Do not use its records')
+      expect(
+        container.querySelector(
+          `[data-notice-level="${reason === 'missing' ? 'warning' : 'error'}"]`
+        )
+      ).not.toBeNull()
+      const generate = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )!
+      expect(generate.disabled).toBe(true)
       expect(container.textContent).toContain(
-        `Artifact content is ${reason}; captured provenance remains available.`
+        'Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.'
       )
       const diagnostics = [...container.querySelectorAll('button')].find(
         (button) => button.textContent?.trim() === 'View diagnostics'

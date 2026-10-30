@@ -886,7 +886,6 @@
     "Args": "인수",
     "Arguments": "인수",
     "Arguments were truncated for display.": "표시를 위해 인수를 잘랐습니다.",
-    "Artifact content is {{reason}}; captured provenance remains available.": "아티팩트 내용은 {{reason}}입니다. 캡처된 출처는 계속 사용 가능합니다.",
     "Artifact file input": "아티팩트 파일 입력",
     "Artifact suggestions": "아티팩트 제안",
     "Artifacts": "아티팩트",
@@ -7695,6 +7694,10 @@
     "The records for this version failed integrity validation.": "이 버전의 기록이 무결성 검증을 통과하지 못했습니다.",
     "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "조사를 위해 이 버전과 진단 정보를 보관하세요. 이 기록으로 스크립트를 생성하지 마세요.",
     "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "파일을 생성한 작업을 다시 실행하여 새 버전의 완전한 증거를 수집하세요. 이전 기록은 변경되지 않습니다.",
-    "Review the connector execution details for this version.": "이 버전의 커넥터 실행 세부 정보를 확인하세요."
+    "Review the connector execution details for this version.": "이 버전의 커넥터 실행 세부 정보를 확인하세요.",
+    "Artifact content is unavailable for v{{version}}": "v{{version}}의 아티팩트 콘텐츠를 사용할 수 없습니다",
+    "The artifact file is missing. Captured provenance remains available.": "아티팩트 파일이 없습니다. 기록된 출처 정보는 계속 확인할 수 있습니다.",
+    "The artifact content failed validation. Captured provenance remains available.": "아티팩트 콘텐츠 검증에 실패했습니다. 기록된 출처 정보는 계속 확인할 수 있습니다.",
+    "Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.": "원본 파일을 복원하거나 새 버전을 게시하세요. 스크립트를 생성하려면 아티팩트 콘텐츠 검증이 필요합니다. 실행 기록이 유효하지 않다는 의미는 아닙니다."
   }
 }

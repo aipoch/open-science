@@ -806,6 +806,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       text: string
       expectedHeadVersionId: string
       basedOnVersionId: string
+      item: PreviewFileItem
     }>()
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
@@ -992,6 +993,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             sessionId: managedNavigationInspect.sessionId
           })
         : resolvedPreviewItem
+    // An editor owns a draft of its confirmed baseline, even when a newer head arrives.
+    const provenanceItem = mode === 'edit' && editBaseline ? editBaseline.item : contentItem
     const { action: linkedPdfContextAction, readingContextBindingId } = usePdfContextAction(
       contentItem,
       onPdfContextError,
@@ -1429,7 +1432,8 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       setEditBaseline({
         text: managedInspect.text,
         expectedHeadVersionId: managedInspect.headVersionId,
-        basedOnVersionId: managedInspect.selectedVersionId
+        basedOnVersionId: managedInspect.selectedVersionId,
+        item: contentItem
       })
       setEditError(undefined)
       setConflictHead(undefined)
@@ -1873,14 +1877,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
               <PreviewProvenanceSplit
                 mode={showProvenance ? (widePreview ? 'split' : 'provenance') : 'content'}
                 provenance={
-                  showProvenance && projectId ? (
+                  showProvenance &&
+                  projectId &&
+                  (!managedIdentity || provenanceItem.selectedVersionId) ? (
                     <aside
                       aria-label={t('Provenance')}
                       data-testid="preview-provenance-pane"
                       className="h-full min-h-0 min-w-0"
                     >
                       <ArtifactProvenancePanel
-                        item={resolvedPreviewItem}
+                        item={provenanceItem}
                         projectId={projectId}
                         onClose={() => updateFileView({ provenanceOpen: false })}
                         selectedTab={storedItem?.fileViewState?.provenanceTab}

@@ -854,7 +854,6 @@
     "Archiving…": "Archivierung…",
     "Args": "Argumente",
     "Arguments": "Argumente",
-    "Artifact content is {{reason}}; captured provenance remains available.": "Der Artefaktinhalt ist {{reason}}; die erfasste Provenienz bleibt verfügbar.",
     "Artifact file input": "Eingabe der Artefaktdatei",
     "Artifact suggestions": "Artefaktvorschläge",
     "Artifacts": "Artefakte",
@@ -7863,6 +7862,10 @@
     "The records for this version failed integrity validation.": "Die Datensätze dieser Version haben die Integritätsprüfung nicht bestanden.",
     "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Bewahren Sie diese Version und ihre Diagnosedaten zur Untersuchung auf. Verwenden Sie ihre Datensätze nicht zur Skripterzeugung.",
     "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Führen Sie die erzeugende Aufgabe erneut aus, um vollständige Nachweise für eine neue Version zu erfassen. Historische Datensätze bleiben unverändert.",
-    "Review the connector execution details for this version.": "Prüfen Sie die Ausführungsdetails des Konnektors für diese Version."
+    "Review the connector execution details for this version.": "Prüfen Sie die Ausführungsdetails des Konnektors für diese Version.",
+    "Artifact content is unavailable for v{{version}}": "Der Artefaktinhalt für v{{version}} ist nicht verfügbar",
+    "The artifact file is missing. Captured provenance remains available.": "Die Artefaktdatei fehlt. Die erfassten Herkunftsinformationen bleiben verfügbar.",
+    "The artifact content failed validation. Captured provenance remains available.": "Die Validierung des Artefaktinhalts ist fehlgeschlagen. Die erfassten Herkunftsinformationen bleiben verfügbar.",
+    "Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.": "Stellen Sie die Originaldatei wieder her oder veröffentlichen Sie eine neue Version. Für die Skripterstellung ist geprüfter Artefaktinhalt erforderlich; dies bedeutet nicht, dass die Ausführungsaufzeichnungen ungültig sind."
   }
 }

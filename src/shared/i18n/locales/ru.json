@@ -924,7 +924,6 @@
     "Args": "Параметры",
     "Arguments": "Аргументы",
     "Arguments were truncated for display.": "Аргументы обрезаны для отображения.",
-    "Artifact content is {{reason}}; captured provenance remains available.": "Содержимое артефакта — {{reason}}; информация о происхождении сохранена.",
     "Artifact file input": "Ввод файла артефакта",
     "Artifact suggestions": "Рекомендации по артефактам",
     "Artifacts": "Артефакты",
@@ -8183,6 +8182,10 @@
     "The records for this version failed integrity validation.": "Записи этой версии не прошли проверку целостности.",
     "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Сохраните эту версию и её диагностические данные для расследования. Не используйте её записи для генерации скрипта.",
     "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Повторно запустите задачу, создавшую файл, чтобы собрать полные сведения для новой версии. Исторические записи останутся без изменений.",
-    "Review the connector execution details for this version.": "Просмотрите сведения о выполнении Коннектора для этой версии."
+    "Review the connector execution details for this version.": "Просмотрите сведения о выполнении Коннектора для этой версии.",
+    "Artifact content is unavailable for v{{version}}": "Содержимое артефакта v{{version}} недоступно",
+    "The artifact file is missing. Captured provenance remains available.": "Файл артефакта отсутствует. Сохранённые сведения о происхождении по-прежнему доступны.",
+    "The artifact content failed validation. Captured provenance remains available.": "Содержимое артефакта не прошло проверку. Сохранённые сведения о происхождении по-прежнему доступны.",
+    "Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.": "Восстановите исходный файл или опубликуйте новую версию. Для создания скрипта требуется проверенное содержимое артефакта; это не означает, что записи выполнения недействительны."
   }
 }

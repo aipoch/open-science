@@ -10,11 +10,13 @@ export const ProvenanceLoadNotice = ({
   failure,
   diagnostics,
   versionNumber,
+  contentFailure,
   onRetry
 }: {
   failure: ProvenanceReadFailure
   diagnostics: string
   versionNumber?: number
+  contentFailure?: 'missing' | 'checksum-mismatch'
   onRetry?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -27,17 +29,31 @@ export const ProvenanceLoadNotice = ({
       <div role="alert">
         <ErrorNotice
           icon={TriangleAlert}
-          tone={failure.kind === 'integrity-failed' ? 'red' : 'amber'}
+          level={
+            contentFailure === 'missing'
+              ? 'warning'
+              : failure.kind === 'integrity-failed'
+                ? 'error'
+                : 'warning'
+          }
           title={
-            failure.kind === 'integrity-failed'
-              ? versionNumber === undefined
-                ? t('Provenance integrity error')
-                : t('Record validation failed for v{{version}}', { version: versionNumber })
-              : t('Provenance could not be loaded')
+            contentFailure
+              ? t('Artifact content is unavailable for v{{version}}', { version: versionNumber })
+              : failure.kind === 'integrity-failed'
+                ? versionNumber === undefined
+                  ? t('Provenance integrity error')
+                  : t('Record validation failed for v{{version}}', { version: versionNumber })
+                : t('Provenance could not be loaded')
           }
           description={failure.message}
           content={
-            failure.kind === 'integrity-failed' ? (
+            contentFailure ? (
+              <p>
+                {t(
+                  'Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.'
+                )}
+              </p>
+            ) : failure.kind === 'integrity-failed' ? (
               <p>
                 {t(
                   'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'

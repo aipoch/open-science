@@ -886,7 +886,6 @@
     "Args": "引数",
     "Arguments": "引数",
     "Arguments were truncated for display.": "表示用に引数が切り詰められています。",
-    "Artifact content is {{reason}}; captured provenance remains available.": "アーティファクトの内容は {{reason}} です。キャプチャされた来歴情報は引き続き利用できます。",
     "Artifact file input": "アーティファクトファイルの入力",
     "Artifact suggestions": "アーティファクトの提案",
     "Artifacts": "アーティファクト",
@@ -7697,6 +7696,10 @@
     "The records for this version failed integrity validation.": "このバージョンの記録は整合性検証に失敗しました。",
     "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "調査のため、このバージョンと診断情報を保管してください。この記録を使ってスクリプトを生成しないでください。",
     "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "ファイルを生成したタスクを再実行して、新しいバージョンの完全な証拠を記録してください。過去の記録は変更されません。",
-    "Review the connector execution details for this version.": "このバージョンのコネクタ実行の詳細を確認してください。"
+    "Review the connector execution details for this version.": "このバージョンのコネクタ実行の詳細を確認してください。",
+    "Artifact content is unavailable for v{{version}}": "v{{version}} の成果物の内容を利用できません",
+    "The artifact file is missing. Captured provenance remains available.": "成果物のファイルが見つかりません。記録済みの来歴情報は引き続き参照できます。",
+    "The artifact content failed validation. Captured provenance remains available.": "成果物の内容の検証に失敗しました。記録済みの来歴情報は引き続き参照できます。",
+    "Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.": "元のファイルを復元するか、新しいバージョンを公開してください。スクリプトの生成には検証済みの成果物の内容が必要です。これは実行記録が無効であることを意味しません。"
   }
 }
