@@ -104,6 +104,7 @@ describe('independent package verification', () => {
         ['scripts/check-reproducibility-package.mjs', '--ci'],
         {
           encoding: 'utf8',
+          timeout: 30_000,
           env: {
             ...process.env,
             npm_execpath: 'unexpected-npm-invocation.cjs',
@@ -123,6 +124,7 @@ describe('independent package verification', () => {
       ['scripts/check-environment-package.mjs', '--ci'],
       {
         encoding: 'utf8',
+        timeout: 30_000,
         env: {
           ...process.env,
           npm_execpath: 'unexpected-npm-invocation.cjs',
@@ -222,6 +224,8 @@ it.each([false, true])(
         process.execPath,
         ['scripts/check-packages.mjs', `--output=${output}`, ...(skip ? ['--skip-tests'] : [])],
         {
+          // A synchronous child otherwise blocks Vitest's own timeout indefinitely.
+          timeout: 30_000,
           env: { ...process.env, npm_execpath: npm, PACKAGE_TEST_CALLS: calls }
         }
       )
