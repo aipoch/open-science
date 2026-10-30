@@ -262,7 +262,7 @@ roles remain explicit in the tables above.
 
 ### PDF reading and annotations
 
-- PDF reading order defaults to automatic: complete PDF logical structure first, then page layout. Line spacing and isolated baseline matches do not prove that columns are semantically independent; ambiguous untagged rows retain native order to protect tables. The area-selection menu offers an optional two-column body correction for the next message. Its selection overlay and divider editor appear only while correcting, never as a persistent configuration strip. Confirmed regions stay bound to that message and immutable PDF version, including historical selections; extraction, search and continuation use the same strategy. Clearing the current page returns it to automatic ordering.
+- PDF reading order is automatic. The reader shows no manual body-region configuration panel or overlays. Extraction uses complete PDF logical structure when available, then page layout; ambiguous untagged layouts retain native order. Historical manual body selections no longer control extraction.
 
 - All single-page PDFs, including Literature attachments, use an image-style preview with centered fit, pan and zoom controls. Hide reading tabs, annotations, translation, search and page navigation; do not offer a full-reader switch. Existing saved annotations and translations remain stored. Multi-page PDFs retain the complete reader.
 
