@@ -13,6 +13,7 @@ import { LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
+import { LiteratureLinkReview } from './LiteratureLinkReview'
 import {
   emptyLiteratureItem,
   titleFromPdfFilename,
@@ -119,19 +120,25 @@ export function LiteratureCreateItemDialog({
                 {t('Reading…')}
               </span>
             </div>
+          ) : dialogItemEditor?.linkSource && dialogItemEditor.draft ? (
+            <LiteratureLinkReview
+              item={dialogItemEditor.draft}
+              saving={isSavingNewItem}
+              createdItemId={createdItemId}
+              error={dialogItemEditor.error}
+              duplicatePolicy={dialogItemEditor.duplicatePolicy}
+              onDuplicatePolicyChange={setDuplicatePolicy}
+              onDirtyChange={trackNewMetadataDirty}
+              onCancel={closeItemEditor}
+              onSave={(item) => {
+                if (isCreatingItem) void createManualItem(item)
+              }}
+              onRetry={() => void createManualItem()}
+            />
           ) : (
             <LiteratureMetadataEditor
               onDirtyChange={trackNewMetadataDirty}
               className="min-h-0"
-              saveNotice={
-                dialogItemEditor?.linkSource ? (
-                  <LiteratureDuplicatePolicyField
-                    summaryOnly
-                    value={dialogItemEditor.duplicatePolicy}
-                    onChange={setDuplicatePolicy}
-                  />
-                ) : undefined
-              }
               beforeFields={
                 <LiteratureDuplicatePolicyField
                   value={dialogItemEditor?.duplicatePolicy ?? duplicatePolicy}

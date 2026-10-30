@@ -139,12 +139,37 @@ window.api = {
           'A linked reference with a deliberately long title for reviewing metadata in a narrow window',
         abstract: 'Metadata supplied by the browser fixture, with no external provider requests.',
         issuedYear: 2024,
+        containerTitle: 'Journal of Reproducible Scientific Research',
+        typeFields: { volume: '18', issue: '4', pages: '1–16' },
+        creators: [
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Researcher',
+            givenName: 'Alice Alexandra'
+          },
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Scientist',
+            givenName: 'Bob Benjamin'
+          },
+          {
+            creatorType: 'author',
+            nameMode: 'person',
+            familyName: 'Collaborator',
+            givenName: 'Carol Catherine'
+          }
+        ],
         identifiers: [
           {
             scheme: arxiv ? 'arxiv' : 'doi',
             value: arxiv ? reference.slice(6) : reference,
             isPrimary: true
-          }
+          },
+          arxiv
+            ? { scheme: 'doi', value: '10.1234/identity-review', isPrimary: true }
+            : { scheme: 'pmid', value: '2097408', isPrimary: true }
         ]
       })
     },

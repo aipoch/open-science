@@ -7741,6 +7741,8 @@
     "DOI and arXiv links": "DOI と arXiv のリンク",
     "Review reference details": "文献情報を確認",
     "Versioned arXiv links use the latest metadata.": "バージョン付きの arXiv リンクでも最新のメタデータを使用します。",
-    "Retrieved via {{source}}. Review the reference details before saving.": "{{source}} から取得しました。文献情報を確認してから保存してください。"
+    "Retrieved via {{source}}. Review the reference details before saving.": "{{source}} から取得しました。文献情報を確認してから保存してください。",
+    "Edit details": "詳細を編集",
+    "Back to review": "確認に戻る"
   }
 }

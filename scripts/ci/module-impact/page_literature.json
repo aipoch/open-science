@@ -164,6 +164,7 @@
     "src/renderer/src/pages/literature/LiteratureZoteroDialog.tsx",
     "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
     "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.tsx",
+    "src/renderer/src/pages/literature/imports/LiteratureLinkReview.tsx",
     "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx"
   ],
   "interfacePaths": [

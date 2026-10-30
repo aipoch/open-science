@@ -44,7 +44,15 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   expect(
     await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
   ).toEqual([])
+  await review.getByRole('button', { name: 'Edit details', exact: true }).click()
   await review.getByLabel('Title', { exact: true }).fill('Reviewed browser reference')
+  await review.getByRole('button', { name: 'Back to review', exact: true }).click()
+  await expect(
+    review.getByRole('heading', { name: 'Reviewed browser reference', exact: true })
+  ).toBeVisible()
+  expect(
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
+  ).toEqual([])
   await review.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(review).toBeHidden()
   await expect(
@@ -60,52 +68,85 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   ).toBe(1)
 })
 
-test('linked reference dark narrow review keeps the policy and actions visible with trapped focus', async ({
-  page
-}, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 812 })
-  await page.goto('/literature-recovery.html?mode=links&dark')
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
-  const add = page.getByRole('button', { name: 'Add', exact: true })
-  await add.click()
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
-  await page
-    .getByLabel('DOI or arXiv link', { exact: true })
-    .fill('https://arxiv.org/abs/2401.12345v2')
-  await expect(page.getByText('Versioned arXiv links use the latest metadata.')).toBeVisible()
-  await page.getByRole('button', { name: 'Find reference', exact: true }).click()
-  await expect
-    .poll(() =>
-      page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+for (const viewport of [
+  { width: 375, height: 812, dark: true },
+  { width: 1024, height: 600, dark: false }
+]) {
+  test(`linked reference review stays readable at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height })
+    await page.goto(`/literature-recovery.html?mode=links${viewport.dark ? '&dark' : ''}`)
+    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    const add = page.getByRole('button', { name: 'Add', exact: true })
+    await add.click()
+    await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+    await page
+      .getByLabel('DOI or arXiv link', { exact: true })
+      .fill('https://arxiv.org/abs/2401.12345v2')
+    await expect(page.getByText('Versioned arXiv links use the latest metadata.')).toBeVisible()
+    await page.getByRole('button', { name: 'Find reference', exact: true }).click()
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+      )
+      .toBe(1)
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
+    const review = page.getByRole('dialog', { name: 'Review reference details' })
+    await expect(review).toBeVisible()
+    await expect(
+      review.getByText('Retrieved via arXiv. Review the reference details before saving.')
+    ).toBeVisible()
+    const title = review.getByRole('heading', {
+      name: 'A linked reference with a deliberately long title for reviewing metadata in a narrow window',
+      exact: true
+    })
+    expect(
+      await title.evaluate(
+        (element) =>
+          element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight
+      )
+    ).toBe(true)
+    await expect(title).toBeInViewport({ ratio: 1 })
+    const visibleDoi = review.getByText('10.1234/identity-review', { exact: true })
+    await expect(visibleDoi).toBeInViewport({ ratio: 1 })
+    const policy = review.getByText(
+      'Keep existing metadata and add the reference to this destination.',
+      { exact: true }
     )
-    .toBe(1)
-  await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
-  const review = page.getByRole('dialog', { name: 'Review reference details' })
-  await expect(review).toBeVisible()
-  await expect(
-    review.getByText('Retrieved via arXiv. Review the reference details before saving.')
-  ).toBeVisible()
-  const policy = review.getByText(
-    'When identifiers match: Keep existing metadata and add the reference to this destination.'
-  )
-  const save = review.getByRole('button', { name: 'Save', exact: true })
-  await expect(policy).toBeInViewport()
-  await expect(save).toBeInViewport()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await review.getByRole('button', { name: 'Close', exact: true }).focus()
-  await page.keyboard.press('Shift+Tab')
-  await expect(save).toBeFocused()
-  await page.screenshot({
-    path: testInfo.outputPath('linked-reference-dark-narrow.png'),
-    animations: 'disabled'
+    const save = review.getByRole('button', { name: 'Save', exact: true })
+    await expect(policy).toBeInViewport()
+    await expect(save).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await review.getByRole('button', { name: 'Close', exact: true }).focus()
+    await page.keyboard.press('Shift+Tab')
+    await expect(save).toBeFocused()
+    await page.screenshot({
+      path: testInfo.outputPath('linked-reference-dark-narrow.png'),
+      animations: 'disabled'
+    })
+    await review.getByRole('button', { name: 'Edit details', exact: true }).click()
+    const doi = review.getByRole('textbox', { name: 'DOI', exact: true })
+    await doi.scrollIntoViewIfNeeded()
+    expect(await doi.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(
+      240
+    )
+    expect(await doi.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await page.screenshot({
+      path: testInfo.outputPath('linked-reference-dark-narrow-identifiers.png'),
+      animations: 'disabled'
+    })
+    await review.getByRole('button', { name: 'Back to review', exact: true }).click()
+    await expect(title).toBeInViewport({ ratio: 1 })
+    await expect(visibleDoi).toBeInViewport({ ratio: 1 })
+    await page.keyboard.press('Escape')
+    await expect(review).toBeHidden()
+    await expect(add).toBeFocused()
+    expect(
+      await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
+    ).toEqual([])
   })
-  await page.keyboard.press('Escape')
-  await expect(review).toBeHidden()
-  await expect(add).toBeFocused()
-  expect(
-    await page.evaluate(() => (window as unknown as LinkFixture).literatureRecovery.commands)
-  ).toEqual([])
-})
+}
 
 test('previews conflicting promotion, renames the child, then allows parent deletion', async ({
   page

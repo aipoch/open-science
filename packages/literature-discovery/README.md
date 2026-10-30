@@ -33,6 +33,18 @@ No state/schema changes are required: batch indexes v1/v2/v3 remain readable and
 Run `npm run build` and `npm test` inside this package. The repository's isolation check packs the
 package, installs its declared sibling tarball and validates consumption outside the checkout.
 
+## Reference lookup
+
+`LiteratureReferenceResolver.lookup` accepts `doi:`, `pmid:` and `arxiv:` identifiers and
+returns metadata without writing library records. Callers parse supported resolver links into
+identifiers before lookup; the resolver does not fetch arbitrary user-provided URLs.
+
+arXiv lookup uses the fixed Atom API endpoint and validates the returned identity, XML structure
+and response size. Versioned identifiers resolve to the latest work metadata. A valid published
+DOI is retained as a secondary identifier for deduplication. DOI keys use shared ASCII-only case
+normalization, preserving Unicode identity distinctions. Review and persistence remain with the
+caller; metadata lookup does not download full-text PDFs.
+
 ## Single-paper citation discovery
 
 `LiteratureRelatedFinder` resolves an existing catalog reference through the Semantic Scholar

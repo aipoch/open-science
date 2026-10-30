@@ -37,8 +37,10 @@ test.describe('live literature providers', () => {
         await page.getByRole('button', { name: 'Find reference', exact: true }).click()
         const review = page.getByRole('dialog', { name: 'Review reference details' })
         await expect(review).toBeVisible({ timeout: 60_000 })
-        await expect(review.getByLabel('Title', { exact: true })).toHaveValue(/thermometry/i)
+        await expect(review.getByRole('heading', { name: /thermometry/i })).toBeVisible()
+        await review.getByRole('button', { name: 'Edit details', exact: true }).click()
         await review.getByLabel('Title', { exact: true }).fill('Concurrent linked reference')
+        await review.getByRole('button', { name: 'Back to review', exact: true }).click()
         return review
       })
     )
@@ -108,7 +110,7 @@ test.describe('live literature providers', () => {
         const review = page.getByRole('dialog', { name: 'Review reference details' })
         await expect(review).toBeVisible({ timeout: 60_000 })
         await expect(review).toContainText(`Retrieved via ${source}.`)
-        await expect(review.getByLabel('Title', { exact: true })).toHaveValue(expectedTitle)
+        await expect(review.getByRole('heading', { name: expectedTitle })).toBeVisible()
         return review
       }
       const before = await readIds()
@@ -121,7 +123,9 @@ test.describe('live literature providers', () => {
 
       const review = await lookup()
       const title = `Reviewed live ${source} reference`
+      await review.getByRole('button', { name: 'Edit details', exact: true }).click()
       await review.getByLabel('Title', { exact: true }).fill(title)
+      await review.getByRole('button', { name: 'Back to review', exact: true }).click()
       await review.getByRole('button', { name: 'Save', exact: true }).click()
       await expect(review).toBeHidden()
       await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()

@@ -8227,6 +8227,8 @@
     "DOI and arXiv links": "Ссылки DOI и arXiv",
     "Review reference details": "Проверка сведений о публикации",
     "Versioned arXiv links use the latest metadata.": "Для ссылок arXiv с номером версии используются последние метаданные.",
-    "Retrieved via {{source}}. Review the reference details before saving.": "Получено через {{source}}. Проверьте сведения о публикации перед сохранением."
+    "Retrieved via {{source}}. Review the reference details before saving.": "Получено через {{source}}. Проверьте сведения о публикации перед сохранением.",
+    "Edit details": "Изменить сведения",
+    "Back to review": "Вернуться к проверке"
   }
 }

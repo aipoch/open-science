@@ -27,6 +27,7 @@ type LiteratureMetadataEditorProps = Readonly<{
   className?: string
   beforeFields?: React.ReactNode
   saveNotice?: React.ReactNode
+  saveLabel?: string
   onDirtyChange?: (dirty: boolean) => void
   onRetry?: () => void
   onCancel: () => void
@@ -96,6 +97,7 @@ const LiteratureMetadataEditor = ({
   className,
   beforeFields,
   saveNotice,
+  saveLabel,
   onDirtyChange,
   onRetry,
   onCancel,
@@ -336,16 +338,21 @@ const LiteratureMetadataEditor = ({
             </Select>
           </div>
 
-          <label className="block space-y-1.5">
-            <span className="font-medium">{t('Title')}</span>
-            <Input
+          <div className="space-y-1.5">
+            <label htmlFor={`${id}-title`} className="block font-medium">
+              {t('Title')}
+            </label>
+            <Textarea
+              id={`${id}-title`}
+              rows={3}
+              className="field-sizing-fixed"
               value={draft.title}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, title: event.target.value }))
               }
               autoFocus
             />
-          </label>
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5">
@@ -420,92 +427,6 @@ const LiteratureMetadataEditor = ({
                 }
               />
             </label>
-          </div>
-
-          <div>
-            <button
-              type="button"
-              className="flex items-center gap-1.5 font-medium"
-              aria-expanded={advancedOpen}
-              aria-controls="literature-advanced-fields"
-              onClick={() => setAdvancedOpen((open) => !open)}
-            >
-              <ChevronDown
-                className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
-                aria-hidden="true"
-              />
-              {t('Advanced settings')}
-            </button>
-            {advancedOpen ? (
-              <div id="literature-advanced-fields" className="mt-4 grid gap-4 sm:grid-cols-2">
-                {beforeFields ? <div className="sm:col-span-2">{beforeFields}</div> : null}
-                {[
-                  ['volume', t('Volume')],
-                  ['issue', t('Issue')],
-                  ['pages', t('Pages')],
-                  ['publisher', t('Publisher')],
-                  ['publisherPlace', t('Place')],
-                  ['edition', t('Edition')]
-                ].map(([key, label]) => (
-                  <label key={key} className="block space-y-1.5">
-                    <span className="font-medium">{label}</span>
-                    <Input
-                      value={typeField(key)}
-                      onChange={(event) => updateTypeField(key, event.target.value)}
-                    />
-                  </label>
-                ))}
-                {(
-                  [
-                    ['shortTitle', t('Short title')],
-                    ['language', t('Language')],
-                    ['citationKey', t('Citation key')],
-                    ['rights', t('Rights')]
-                  ] as const
-                ).map(([key, label]) => (
-                  <label key={key} className="block space-y-1.5">
-                    <span className="font-medium">{label}</span>
-                    <Input
-                      value={draft[key] ?? ''}
-                      onChange={(event) =>
-                        setDraft((current) => ({ ...current, [key]: event.target.value }))
-                      }
-                    />
-                  </label>
-                ))}
-                <label className="block space-y-1.5">
-                  <span className="font-medium">{t('Date accessed')}</span>
-                  <Input
-                    ref={accessRef}
-                    aria-label={t('Date accessed')}
-                    type="date"
-                    min="1970-01-01"
-                    value={accessDate}
-                    aria-invalid={invalidField === 'access'}
-                    aria-describedby={invalidField === 'access' ? `${id}-access-error` : undefined}
-                    onChange={(event) => {
-                      setAccessDate(event.target.value)
-                      setInvalidField(undefined)
-                    }}
-                  />
-                  {invalidField === 'access' ? (
-                    <span id={`${id}-access-error`} role="alert" className="block text-destructive">
-                      {t('Enter a valid access date on or after 1970-01-01, or leave it blank.')}
-                    </span>
-                  ) : null}
-                </label>
-                <label className="block space-y-1.5 sm:col-span-2">
-                  <span className="font-medium">{t('Extra')}</span>
-                  <Textarea
-                    value={draft.extra}
-                    rows={3}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, extra: event.target.value }))
-                    }
-                  />
-                </label>
-              </div>
-            ) : null}
           </div>
 
           <section className="space-y-2">
@@ -637,7 +558,10 @@ const LiteratureMetadataEditor = ({
             </div>
             <div className="space-y-2">
               {draft.identifiers.map((identifier, index) => (
-                <div key={index} className="flex items-center gap-2">
+                <div
+                  key={index}
+                  className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)_auto] items-center gap-2 sm:flex"
+                >
                   <Select
                     disabled={locked}
                     value={identifier.scheme}
@@ -659,15 +583,7 @@ const LiteratureMetadataEditor = ({
                       ))}
                     </SelectContent>
                   </Select>
-                  <Input
-                    aria-label={identifier.scheme.toUpperCase()}
-                    className="h-8"
-                    value={identifier.value}
-                    onChange={(event) =>
-                      updateIdentifier(index, { ...identifier, value: event.target.value })
-                    }
-                  />
-                  <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                  <label className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground sm:shrink-0">
                     <input
                       type="radio"
                       name={`primary-literature-identifier-${identifier.scheme}`}
@@ -692,10 +608,104 @@ const LiteratureMetadataEditor = ({
                   >
                     <Trash2 className="size-3.5" aria-hidden="true" />
                   </Button>
+                  <Input
+                    aria-label={identifier.scheme.toUpperCase()}
+                    className="col-span-3 h-8 min-w-0 sm:flex-1"
+                    value={identifier.value}
+                    onChange={(event) =>
+                      updateIdentifier(index, { ...identifier, value: event.target.value })
+                    }
+                  />
                 </div>
               ))}
             </div>
           </section>
+
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 font-medium"
+              aria-expanded={advancedOpen}
+              aria-controls="literature-advanced-fields"
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              <ChevronDown
+                className={`size-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}
+                aria-hidden="true"
+              />
+              {t('Advanced settings')}
+            </button>
+            {advancedOpen ? (
+              <div id="literature-advanced-fields" className="mt-4 grid gap-4 sm:grid-cols-2">
+                {beforeFields ? <div className="sm:col-span-2">{beforeFields}</div> : null}
+                {[
+                  ['volume', t('Volume')],
+                  ['issue', t('Issue')],
+                  ['pages', t('Pages')],
+                  ['publisher', t('Publisher')],
+                  ['publisherPlace', t('Place')],
+                  ['edition', t('Edition')]
+                ].map(([key, label]) => (
+                  <label key={key} className="block space-y-1.5">
+                    <span className="font-medium">{label}</span>
+                    <Input
+                      value={typeField(key)}
+                      onChange={(event) => updateTypeField(key, event.target.value)}
+                    />
+                  </label>
+                ))}
+                {(
+                  [
+                    ['shortTitle', t('Short title')],
+                    ['language', t('Language')],
+                    ['citationKey', t('Citation key')],
+                    ['rights', t('Rights')]
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="block space-y-1.5">
+                    <span className="font-medium">{label}</span>
+                    <Input
+                      value={draft[key] ?? ''}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, [key]: event.target.value }))
+                      }
+                    />
+                  </label>
+                ))}
+                <label className="block space-y-1.5">
+                  <span className="font-medium">{t('Date accessed')}</span>
+                  <Input
+                    ref={accessRef}
+                    aria-label={t('Date accessed')}
+                    type="date"
+                    min="1970-01-01"
+                    value={accessDate}
+                    aria-invalid={invalidField === 'access'}
+                    aria-describedby={invalidField === 'access' ? `${id}-access-error` : undefined}
+                    onChange={(event) => {
+                      setAccessDate(event.target.value)
+                      setInvalidField(undefined)
+                    }}
+                  />
+                  {invalidField === 'access' ? (
+                    <span id={`${id}-access-error`} role="alert" className="block text-destructive">
+                      {t('Enter a valid access date on or after 1970-01-01, or leave it blank.')}
+                    </span>
+                  ) : null}
+                </label>
+                <label className="block space-y-1.5 sm:col-span-2">
+                  <span className="font-medium">{t('Extra')}</span>
+                  <Textarea
+                    value={draft.extra}
+                    rows={3}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, extra: event.target.value }))
+                    }
+                  />
+                </label>
+              </div>
+            ) : null}
+          </div>
 
           <label className="block space-y-1.5">
             <span className="font-medium">{t('URL')}</span>
@@ -741,7 +751,13 @@ const LiteratureMetadataEditor = ({
               aria-hidden="true"
             />
           ) : null}
-          {busy ? (onRetry ? t('Retrying…') : t('Saving…')) : onRetry ? t('Retry') : t('Save')}
+          {busy
+            ? onRetry
+              ? t('Retrying…')
+              : t('Saving…')
+            : onRetry
+              ? t('Retry')
+              : (saveLabel ?? t('Save'))}
         </Button>
       </div>
     </div>

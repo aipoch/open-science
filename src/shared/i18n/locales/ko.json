@@ -7739,6 +7739,8 @@
     "DOI and arXiv links": "DOI 및 arXiv 링크",
     "Review reference details": "문헌 정보 검토",
     "Versioned arXiv links use the latest metadata.": "버전 번호가 있는 arXiv 링크도 최신 메타데이터를 사용합니다.",
-    "Retrieved via {{source}}. Review the reference details before saving.": "{{source}}을(를) 통해 가져왔습니다. 문헌 정보를 검토한 후 저장하세요."
+    "Retrieved via {{source}}. Review the reference details before saving.": "{{source}}을(를) 통해 가져왔습니다. 문헌 정보를 검토한 후 저장하세요.",
+    "Edit details": "세부 정보 편집",
+    "Back to review": "검토로 돌아가기"
   }
 }
