@@ -144,37 +144,6 @@ describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
         require('./compile-windows-installation-processes.cjs')(
           join(root, 'out/windows-installer/ia32/windows-installation-processes.exe')
         )
-        // Capture the OS-reported namespace only in this isolated test helper when the
-        // production helper rejects it. Do not add process paths to product diagnostics.
-        const helperSource = join(root, 'inspection-diagnostic.cs')
-        const diagnosticStage = 'throw new IOException("process-image-native-path");'
-        const productionSource = readFileSync(
-          join(repoRoot, 'build/windows-installation-processes.cs'),
-          'utf8'
-        )
-        expect(productionSource).toContain(diagnosticStage)
-        writeFileSync(
-          helperSource,
-          productionSource.replace(
-            diagnosticStage,
-            '{ Console.Error.WriteLine("Test native image: " + image.ToString()); ' +
-              diagnosticStage +
-              ' }'
-          )
-        )
-        const helperCompiled = spawnSync(
-          join(process.env.SystemRoot!, 'Microsoft.NET/Framework/v4.0.30319/csc.exe'),
-          [
-            '/nologo',
-            '/target:exe',
-            '/platform:anycpu',
-            '/reference:System.Web.Extensions.dll',
-            `/out:${join(root, 'out/windows-installer/ia32/windows-installation-processes.exe')}`,
-            helperSource
-          ],
-          { windowsHide: true, encoding: 'utf8', timeout: 30_000 }
-        )
-        expect(helperCompiled.status, helperCompiled.stdout + helperCompiled.stderr).toBe(0)
         writeFileSync(
           source,
           [

@@ -1,5 +1,13 @@
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { createHash, randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -15,7 +23,7 @@ describe.skipIf(process.platform !== 'win32')(
     let fixture: string, helper: string
     const children: ChildProcess[] = []
     beforeAll(() => {
-      fixture = mkdtempSync(join(tmpdir(), 'installation-processes-'))
+      fixture = realpathSync.native(mkdtempSync(join(tmpdir(), 'installation-processes-')))
       helper = join(fixture, 'inspection.exe')
       require('../build/compile-windows-installation-processes.cjs')(helper)
     })
@@ -273,6 +281,79 @@ describe.skipIf(process.platform !== 'win32')(
       expect(JSON.parse(run('close', root, '', '0'))).toEqual({ graceful: [], forced: [] })
       expect(spawnSync(helper, ['check', root], { windowsHide: true }).status).toBe(3)
       expect(child.exitCode).toBeNull()
+      // A native API result can be a bare system label (Registry on Windows CI), not
+      // an executable path. Inject that result only for this retained fixture object;
+      // the real file lock and Restart Manager must still prevent installation.
+      const labelSource = join(fixture, 'native-label.cs')
+      const labelHelper = join(fixture, 'native-label.exe')
+      writeFileSync(
+        labelSource,
+        readFileSync(join(__dirname, '../build/windows-installation-processes.cs'), 'utf8')
+          .replace(
+            'QueryFullProcessImageName(handle, 0, image, ref size)',
+            'FixtureImage(handle, 0, image, ref size)'
+          )
+          .replace(
+            'QueryFullProcessImageName(handle, 1, image, ref size)',
+            'FixtureImage(handle, 1, image, ref size)'
+          )
+          .replace(
+            'static int Main(string[] args) {',
+            `
+            [DllImport("kernel32.dll", SetLastError = true)] static extern void SetLastError(uint code);
+            [DllImport("kernel32.dll")] static extern uint GetProcessId(IntPtr handle);
+            static bool FixtureImage(IntPtr handle, uint flags, StringBuilder image, ref uint size) {
+              if (GetProcessId(handle) != ${child.pid}) return QueryFullProcessImageName(handle, flags, image, ref size);
+              if (flags == 0) { SetLastError(31); return false; }
+              string label = Environment.GetEnvironmentVariable("TEST_NATIVE_IMAGE") ?? "";
+              image.Clear(); image.Append(label); size = (uint)label.Length; return true;
+            }
+            static int Main(string[] args) {`
+          )
+      )
+      execFileSync(
+        join(process.env.SystemRoot!, 'Microsoft.NET/Framework/v4.0.30319/csc.exe'),
+        ['/nologo', '/reference:System.Web.Extensions.dll', `/out:${labelHelper}`, labelSource],
+        { windowsHide: true }
+      )
+      const labelRun = (label: string, ...args: string[]): ReturnType<typeof spawnSync> =>
+        spawnSync(labelHelper, args, {
+          env: { ...process.env, TEST_NATIVE_IMAGE: label },
+          windowsHide: true,
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+      const empty = join(fixture, 'no-resource-use')
+      mkdirSync(empty)
+      for (const label of ['Registry', 'Memory Compression']) {
+        const query = labelRun(label, 'query', root)
+        expect(query.status, String(query.stderr)).toBe(0)
+        expect(JSON.parse(String(query.stdout))).toEqual({
+          resourcePids: [child.pid],
+          processes: []
+        })
+        expect(labelRun(label, 'check', root).status).toBe(3)
+        expect(JSON.parse(String(labelRun(label, 'close', root, '', '0').stdout))).toEqual({
+          graceful: [],
+          forced: []
+        })
+        expect(JSON.parse(String(labelRun(label, 'query', root).stdout)).resourcePids).toContain(
+          child.pid
+        )
+        expect(labelRun(label, 'check', empty).status).toBe(0)
+        expect(child.exitCode).toBeNull()
+      }
+      for (const label of [
+        '',
+        'relative\\file.exe',
+        '/usr/bin/example',
+        'C:example.exe',
+        'bad\nlabel'
+      ]) {
+        const unknown = labelRun(label, 'check', empty)
+        expect(unknown.status).toBe(2)
+        expect(String(unknown.stderr)).toContain('stage=process-image-native-path;')
+      }
     })
     it('excludes its own temporary inspection process only after the caller has waited for exit', () => {
       expect(JSON.parse(run('query', resolve(fixture))).processes).not.toContainEqual(
