@@ -2589,7 +2589,7 @@ describe('PreviewFileSurface managed text versions', () => {
   })
 
   it.each([false, true])(
-    'returns to current without retaining an obsolete editor (dirty=%s)',
+    'moves to the next version without retaining an obsolete editor (dirty=%s)',
     async (dirty) => {
       const historicalItem = { ...managedUploadItem, selectedVersionId: 'upload-v1' }
       window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
@@ -2610,20 +2610,18 @@ describe('PreviewFileSurface managed text versions', () => {
       await click(container.querySelector('[aria-label="Edit README.md"]'))
       const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
       if (dirty) await changeTextarea(editor, '# Keep draft\n')
-      const current = [...container.querySelectorAll('button')].find(
-        (button) => button.textContent === 'Current version'
-      )!
-      await click(current)
+      const next = container.querySelector('[aria-label="Next file version"]')
+      await click(next)
       if (dirty) {
         expect(discardConfirmation()).not.toBeNull()
         await cancelDiscard()
         expect(editor.value).toBe('# Keep draft\n')
-        await click(current)
+        await click(next)
         await confirmDiscard()
       }
       expect(container.querySelector('textarea')).toBeNull()
       expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
-        selectedVersionId: undefined
+        selectedVersionId: 'upload-v2'
       })
     }
   )

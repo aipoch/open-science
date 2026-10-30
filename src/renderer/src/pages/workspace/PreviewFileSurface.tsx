@@ -667,12 +667,10 @@ const ArtifactVersionNavigation = ({
 
 const ManagedVersionNavigation = ({
   inspect,
-  onSelect,
-  onCurrent
+  onSelect
 }: {
   inspect: ManagedFileVersionInspectResult
   onSelect: (versionId: string) => void
-  onCurrent?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const selectedIndex = inspect.versions.findIndex(
@@ -721,11 +719,6 @@ const ManagedVersionNavigation = ({
       >
         <ChevronRight aria-hidden="true" />
       </Button>
-      {onCurrent ? (
-        <Button type="button" variant="ghost" size="xs" onClick={onCurrent}>
-          {t('Current version')}
-        </Button>
-      ) : null}
     </div>
   )
 }
@@ -1840,16 +1833,6 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   <ManagedVersionNavigation
                     inspect={managedNavigationInspect}
                     onSelect={selectManagedVersion}
-                    onCurrent={
-                      previewItem.selectedVersionId
-                        ? () =>
-                            applyVersionItem(
-                              { ...previewItem, selectedVersionId: undefined },
-                              false,
-                              () => finishVersionSelection(true)
-                            )
-                        : undefined
-                    }
                   />
                   <VersionHistoryLoadButton history={managedWorkflow.history} />
                 </>
