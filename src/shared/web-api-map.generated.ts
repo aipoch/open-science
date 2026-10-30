@@ -191,6 +191,7 @@ export const WEB_INVOKE_CHANNELS = {
   'projectFiles.repairIndex': 'project-files:repair-index',
   'projectFiles.resolveFile': 'project-files:resolve-file',
   'projectFiles.searchArtifacts': 'project-files:search-artifacts',
+  'projects.cancelPromptOptimization': 'projects:cancel-prompt-optimization',
   'projects.create': 'projects:create',
   'projects.delete': 'projects:delete',
   'projects.get': 'projects:get',

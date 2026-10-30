@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { useState } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { usePromptOptimization } from './use-prompt-optimization'
 import { docFromText, docToText, docToMessageParts, type ComposerDoc } from './composer-doc'
 import type { OptimizePromptRequest } from '../../../../../shared/prompt-optimization'
+
+afterEach(() => vi.unstubAllGlobals())
 
 const deferred = (): {
   promise: Promise<{ text: string }>
@@ -52,6 +54,52 @@ const harness = (initial = docFromText('Original'), attachmentIds: string[] = []
 }
 
 describe('composer prompt optimization', () => {
+  it('cancels immediately and ignores a late result while a new request is running', async () => {
+    const cancel = vi.fn(async () => {})
+    vi.stubGlobal('api', { projects: { cancelPromptOptimization: cancel } })
+    const { result, request, optimize, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    act(() => result.current.optimization.cancel())
+    expect(cancel).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project',
+      requestId: optimize.mock.calls[0][0].requestId
+    })
+    expect(result.current.optimization.pending).toBe(false)
+    expect(docToText(result.current.doc)).toBe('Original')
+    const next = deferred()
+    optimize.mockImplementationOnce(() => next.promise)
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    await act(async () => request.resolve({ text: 'Cancelled result' }))
+    expect(result.current.optimization.pending).toBe(true)
+    expect(docToText(result.current.doc)).toBe('Original')
+    await act(async () => next.resolve({ text: 'Fresh result' }))
+    expect(docToText(result.current.doc)).toBe('Fresh result')
+    unmount()
+  })
+
+  it('keeps the previous undo snapshot when a repeat optimization is cancelled', async () => {
+    const { result, request, optimize, unmount } = harness()
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    await act(async () => request.resolve({ text: 'Improved' }))
+    const next = deferred()
+    optimize.mockImplementationOnce(() => next.promise)
+    act(() => {
+      void result.current.optimization.optimize()
+    })
+    act(() => result.current.optimization.cancel())
+    await act(async () => next.resolve({ text: 'Cancelled result' }))
+    expect(docToText(result.current.doc)).toBe('Improved')
+    expect(result.current.optimization.notice).toBeUndefined()
+    act(() => result.current.optimization.undo())
+    expect(docToText(result.current.doc)).toBe('Original')
+    unmount()
+  })
   it('does not count send preparation clearing and restoration as user edits', async () => {
     const { result, request, event, unmount } = harness()
     act(() => {
@@ -76,6 +124,7 @@ describe('composer prompt optimization', () => {
     })
     expect(optimize).toHaveBeenCalledWith({
       projectId: 'project',
+      requestId: expect.any(String),
       input: 'Original',
       agentConfiguration: { providerId: 'session', model: 'session-model', reasoningEffort: 'high' }
     })

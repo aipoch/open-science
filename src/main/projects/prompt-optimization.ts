@@ -3,6 +3,8 @@ import { marked } from 'marked'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   DEFAULT_OPTIMIZATION_PROMPT,
+  cancelPromptOptimizationRequestSchema,
+  type CancelPromptOptimizationRequest,
   optimizePromptRequestSchema,
   optimizePromptResultSchema,
   type OptimizePromptRequest,
@@ -72,29 +74,47 @@ type Options = {
 }
 
 export class PromptOptimizationService {
-  private readonly pending = new Set<string>()
+  private readonly pending = new Map<string, { requestId?: string; controller: AbortController }>()
   constructor(private readonly options: Options) {}
 
   recordEvent(event: OptimizationEvent): void {
     log.info('interaction', { action: event.action })
   }
 
-  async optimize(request: OptimizePromptRequest): Promise<OptimizePromptResult> {
-    const { projectId, input, agentConfiguration } = optimizePromptRequestSchema.parse(request)
+  cancel(request: CancelPromptOptimizationRequest): void {
+    const { projectId, requestId } = cancelPromptOptimizationRequestSchema.parse(request)
+    const pending = this.pending.get(projectId)
+    if (pending?.requestId !== requestId) return
+    pending.controller.abort()
+    this.pending.delete(projectId)
+  }
+
+  async optimize(
+    request: OptimizePromptRequest,
+    prepare?: () => Promise<void>
+  ): Promise<OptimizePromptResult> {
+    const { projectId, requestId, input, agentConfiguration } =
+      optimizePromptRequestSchema.parse(request)
     if (this.pending.has(projectId)) throw new Error('Prompt optimization is already running.')
-    this.pending.add(projectId)
     const started = Date.now()
     log.info('requested', { inputLength: input.length })
     const controller = new AbortController()
+    this.pending.set(projectId, { requestId, controller })
+    let timedOut = false
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
-      const timeout = new Promise<never>((_, reject) => {
+      const aborted = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => reject(new Error('Aborted')), {
+          once: true
+        })
         timer = setTimeout(() => {
+          timedOut = true
           controller.abort()
-          reject(new Error('Prompt optimization timed out.'))
         }, this.options.timeoutMs ?? 90000)
       })
       const work = async (): Promise<OptimizePromptResult> => {
+        await prepare?.()
+        controller.signal.throwIfAborted()
         const project = await this.options.getProject(projectId)
         if (!project) throw new Error('Project is unavailable.')
         // Validate the composer selection against current main-process provider settings.
@@ -132,7 +152,7 @@ export class PromptOptimizationService {
         if (text.includes(prefix)) throw new Error('Protected content was changed.')
         return optimizePromptResultSchema.parse({ text })
       }
-      const result = await Promise.race([work(), timeout])
+      const result = await Promise.race([work(), aborted])
       log.info('succeeded', {
         durationMs: Date.now() - started,
         inputLength: input.length,
@@ -141,12 +161,15 @@ export class PromptOptimizationService {
       return result
     } catch {
       // Provider errors can echo prompts or credentials. Never forward them to logs or the renderer.
-      if (controller.signal.aborted) throw new Error('Prompt optimization timed out.')
+      if (controller.signal.aborted)
+        throw new Error(
+          timedOut ? 'Prompt optimization timed out.' : 'Prompt optimization cancelled.'
+        )
       log.info('failed', { durationMs: Date.now() - started })
       throw new Error('Prompt optimization failed. Your draft was kept.')
     } finally {
       if (timer) clearTimeout(timer)
-      this.pending.delete(projectId)
+      if (this.pending.get(projectId)?.controller === controller) this.pending.delete(projectId)
     }
   }
 }

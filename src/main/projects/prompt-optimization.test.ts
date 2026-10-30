@@ -29,7 +29,8 @@ const settings = {
 } as SettingsSnapshot
 
 const setup = (
-  generate: (input: RestrictedInferenceRunInput) => Promise<string>
+  generate: (input: RestrictedInferenceRunInput) => Promise<string>,
+  timeoutMs = 20
 ): PromptOptimizationService => {
   const runner = {
     run: async (input: RestrictedInferenceRunInput) => ({
@@ -44,11 +45,45 @@ const setup = (
       id === 'deleted' ? null : { optimizationPrompt: id === 'custom' ? 'Keep it concise.' : '' },
     resolveTarget: async (source) => resolveValidatedSessionAgentTarget(source, settings),
     runner,
-    timeoutMs: 20
+    timeoutMs
   })
 }
 
 describe('prompt optimization', () => {
+  it('aborts only the matching request and permits a retry before the old runner settles', async () => {
+    let signal: AbortSignal | undefined
+    let finish!: (text: string) => void
+    const service = setup(async (input) => {
+      if (input.prompt === 'Retry') return 'Fresh'
+      signal = input.signal
+      return new Promise<string>((resolve) => {
+        finish = resolve
+      })
+    }, 10000)
+    const requestId = crypto.randomUUID()
+    const pending = service.optimize({
+      projectId: 'default',
+      requestId,
+      input: 'Help',
+      agentConfiguration
+    })
+    const cancelled = expect(pending).rejects.toThrow('cancelled')
+    await vi.waitFor(() => expect(signal).toBeDefined(), { interval: 1 })
+    service.cancel({ projectId: 'default', requestId: crypto.randomUUID() })
+    expect(signal!.aborted).toBe(false)
+    service.cancel({ projectId: 'default', requestId })
+    expect(signal!.aborted).toBe(true)
+    await cancelled
+    await expect(
+      service.optimize({
+        projectId: 'default',
+        requestId: crypto.randomUUID(),
+        input: 'Retry',
+        agentConfiguration
+      })
+    ).resolves.toEqual({ text: 'Fresh' })
+    finish('Late')
+  })
   it('uses the validated composer provider and model instead of the global selection', async () => {
     const service = setup(async ({ target: actual }) => {
       expect(actual).toEqual({

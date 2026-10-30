@@ -1,4 +1,5 @@
 import type {
+  CancelPromptOptimizationRequest,
   OptimizePromptRequest,
   OptimizePromptResult,
   OptimizationEvent
@@ -28,6 +29,7 @@ import { resolveConfigRoot } from '../storage-root'
 
 type ProjectHandlers = {
   optimizePrompt: (request: OptimizePromptRequest) => Promise<OptimizePromptResult>
+  cancelPromptOptimization: (request: CancelPromptOptimizationRequest) => Promise<void>
   recordOptimizationEvent: (event: OptimizationEvent) => Promise<void>
   list: () => Promise<Project[]>
   get: (id: string) => Promise<Project | null>
@@ -72,9 +74,13 @@ const createProjectHandlers = (
   }
 ): ProjectHandlers => ({
   optimizePrompt: async (request) => {
-    await deletionCoordinator.waitForProjectOperations([request.projectId])
     if (!effects.promptOptimization) throw new Error('Prompt optimization is unavailable.')
-    return effects.promptOptimization.optimize(request)
+    return effects.promptOptimization.optimize(request, () =>
+      deletionCoordinator.waitForProjectOperations([request.projectId])
+    )
+  },
+  cancelPromptOptimization: async (request) => {
+    effects.promptOptimization?.cancel(request)
   },
   recordOptimizationEvent: async (event) => {
     effects.promptOptimization?.recordEvent(event)

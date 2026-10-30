@@ -176,6 +176,7 @@ const createDependencies = () => {
   }
   const projects = {
     optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
+    cancelPromptOptimization: vi.fn(async () => undefined),
     recordOptimizationEvent: vi.fn(async () => undefined),
     create: vi.fn(async () => project),
     delete: vi.fn(async () => ({ status: 'cleanup-pending' as const })),
@@ -440,6 +441,7 @@ describe('Data and content application commands', () => {
         'project-files:resolve-file',
         'project-files:search-artifacts',
         'projects:optimize-prompt',
+        'projects:cancel-prompt-optimization',
         'projects:record-optimization-event',
         'projects:create',
         'projects:update-archive',
@@ -847,6 +849,11 @@ describe('Data and content application commands', () => {
           }
         ],
         owner: deps.projects.optimizePrompt
+      },
+      {
+        key: 'projectCancelPromptOptimization',
+        args: [{ projectId: 'project-1', requestId: '50bf17e1-f178-4253-90a0-fd5845b49d26' }],
+        owner: deps.projects.cancelPromptOptimization
       },
       {
         key: 'projectRecordOptimizationEvent',

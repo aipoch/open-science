@@ -16,6 +16,7 @@ Return only the improved prompt, without commentary or surrounding quotation mar
 export const optimizePromptRequestSchema = z
   .object({
     projectId: z.string().min(1),
+    requestId: z.uuid().optional(),
     agentConfiguration: sessionAgentConfigurationSchema,
     input: z
       .string()
@@ -30,6 +31,11 @@ export const optimizePromptResultSchema = z
   .strict()
 export type OptimizePromptRequest = z.infer<typeof optimizePromptRequestSchema>
 export type OptimizePromptResult = z.infer<typeof optimizePromptResultSchema>
+
+export const cancelPromptOptimizationRequestSchema = z
+  .object({ projectId: z.string().min(1), requestId: z.uuid() })
+  .strict()
+export type CancelPromptOptimizationRequest = z.infer<typeof cancelPromptOptimizationRequestSchema>
 
 export const optimizationEventSchema = z
   .object({

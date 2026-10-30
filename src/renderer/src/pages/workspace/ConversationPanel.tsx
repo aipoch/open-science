@@ -3,6 +3,7 @@ import {
   SplitButton,
   SplitButtonGroup,
   SplitButtonPrimary,
+  SplitButtonSecondary,
   SplitButtonTrigger,
   SplitButtonContent
 } from '@/components/ui/split-button'
@@ -3357,63 +3358,99 @@ const ConversationPanel = ({
                               computeOpenRequest={computeControlsOpenRequest}
                             />
 
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  className={composerIconButtonClassName}
-                                  aria-label={
-                                    promptOptimization.pending
-                                      ? t('Optimizing…')
-                                      : t('Optimize question')
-                                  }
-                                  aria-busy={promptOptimization.pending}
-                                  disabled={
-                                    !canEditLocalDraft ||
-                                    !promptOptimization.canOptimize ||
-                                    promptOptimization.pending
-                                  }
-                                  onClick={() => void promptOptimization.optimize()}
-                                >
-                                  {promptOptimization.pending ? (
-                                    <Loader2
-                                      className="size-4 animate-spin motion-reduce:animate-none"
-                                      strokeWidth={2}
-                                      aria-hidden="true"
-                                    />
-                                  ) : (
-                                    <WandSparkles
-                                      className="size-4"
-                                      strokeWidth={2}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent side="top" className="text-[11px]">
-                                {promptOptimization.pending
-                                  ? t('Optimizing…')
-                                  : t('Optimize question')}
-                              </TooltipContent>
-                            </Tooltip>
-                            {promptOptimization.canUndo ? (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    className={composerIconButtonClassName}
-                                    aria-label={t('Undo optimization')}
-                                    disabled={!canEditLocalDraft || promptOptimization.pending}
-                                    onClick={promptOptimization.undo}
-                                  >
-                                    <Undo2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent side="top" className="text-[11px]">
-                                  {t('Undo optimization')}
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : null}
+                            <SplitButton
+                              kind="actions"
+                              busy={promptOptimization.pending}
+                              hideMenu={!promptOptimization.canUndo}
+                            >
+                              <SplitButtonGroup
+                                className="split-button-compact"
+                                aria-label={t('Optimize question')}
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SplitButtonPrimary
+                                      variant="ghost"
+                                      allowWhileBusy
+                                      className={cn(composerIconButtonClassName, 'group/optimize')}
+                                      aria-label={
+                                        promptOptimization.pending
+                                          ? t('Cancel optimization')
+                                          : promptOptimization.canUndo
+                                            ? t('Optimize again')
+                                            : t('Optimize question')
+                                      }
+                                      disabled={
+                                        !promptOptimization.pending &&
+                                        (!canEditLocalDraft || !promptOptimization.canOptimize)
+                                      }
+                                      onClick={() => {
+                                        if (promptOptimization.pending) promptOptimization.cancel()
+                                        else void promptOptimization.optimize()
+                                      }}
+                                    >
+                                      {promptOptimization.pending ? (
+                                        <>
+                                          <Loader2
+                                            className="size-4 animate-spin motion-reduce:animate-none group-hover/optimize:hidden group-focus-visible/optimize:hidden"
+                                            strokeWidth={2}
+                                            aria-hidden="true"
+                                          />
+                                          <Square
+                                            className="hidden size-3 fill-current group-hover/optimize:block group-focus-visible/optimize:block"
+                                            aria-hidden="true"
+                                          />
+                                        </>
+                                      ) : (
+                                        <WandSparkles
+                                          className="size-4"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      )}
+                                    </SplitButtonPrimary>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-[11px]">
+                                    {promptOptimization.pending
+                                      ? t('Cancel optimization')
+                                      : promptOptimization.canUndo
+                                        ? t('Optimize again')
+                                        : t('Optimize question')}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SplitButtonSecondary
+                                      variant="ghost"
+                                      className={composerIconButtonClassName}
+                                      aria-label={t('Undo optimization')}
+                                      disabled={!canEditLocalDraft}
+                                      onClick={(event) => {
+                                        const group =
+                                          event.currentTarget.closest('[data-split-group]')
+                                        promptOptimization.undo()
+                                        requestAnimationFrame(() => {
+                                          group
+                                            ?.querySelector<HTMLButtonElement>(
+                                              '[data-split-primary]'
+                                            )
+                                            ?.focus()
+                                        })
+                                      }}
+                                    >
+                                      <Undo2
+                                        className="size-4"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </SplitButtonSecondary>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-[11px]">
+                                    {t('Undo optimization')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </SplitButtonGroup>
+                            </SplitButton>
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}

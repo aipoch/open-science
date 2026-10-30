@@ -1,4 +1,5 @@
 import {
+  cancelPromptOptimizationRequestSchema,
   optimizePromptRequestSchema,
   optimizePromptResultSchema,
   optimizationEventSchema
@@ -101,6 +102,10 @@ export const projectApplicationCommandContracts = Object.freeze({
   optimizePrompt: defineApplicationCommandContract(
     validationCodec(z.tuple([optimizePromptRequestSchema])),
     validationCodec(optimizePromptResultSchema)
+  ),
+  cancelPromptOptimization: defineApplicationCommandContract(
+    validationCodec(z.tuple([cancelPromptOptimizationRequestSchema])),
+    validationCodec(z.undefined())
   ),
   recordOptimizationEvent: defineApplicationCommandContract(
     validationCodec(z.tuple([optimizationEventSchema])),

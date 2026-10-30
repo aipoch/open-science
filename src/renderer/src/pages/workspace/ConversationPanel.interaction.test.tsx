@@ -10232,7 +10232,9 @@ describe('prompt optimization admission', () => {
         conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
       })
     const button = (label: string): HTMLButtonElement | undefined =>
-      container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`) ??
+      container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]:not([aria-hidden="true"])`
+      ) ??
       Array.from(container.querySelectorAll('button')).find((node) => node.textContent === label)
     render()
     await act(async () => button('Optimize question')!.click())

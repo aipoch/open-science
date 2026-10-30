@@ -435,6 +435,11 @@ const dataContentApplicationCommands = Object.freeze({
     'optimizePrompt',
     Projects.projectApplicationCommandContracts.optimizePrompt
   ),
+  projectCancelPromptOptimization: projectCommand(
+    'projects:cancel-prompt-optimization',
+    'cancelPromptOptimization',
+    Projects.projectApplicationCommandContracts.cancelPromptOptimization
+  ),
   projectRecordOptimizationEvent: projectCommand(
     'projects:record-optimization-event',
     'recordOptimizationEvent',
@@ -690,6 +695,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
   ] as const),
   defineApplicationCommandGroup('projects', [
     dataContentApplicationCommands.projectOptimizePrompt,
+    dataContentApplicationCommands.projectCancelPromptOptimization,
     dataContentApplicationCommands.projectRecordOptimizationEvent,
     dataContentApplicationCommands.projectCreate,
     dataContentApplicationCommands.projectUpdateArchive,
@@ -954,6 +960,8 @@ const registerDataContentApplicationCommands = (
     })
     scope.registerGroup(dataContentApplicationCommandGroups[5], {
       'projects:optimize-prompt': ({ args }) => dependencies.projects.optimizePrompt(args[0]),
+      'projects:cancel-prompt-optimization': ({ args }) =>
+        dependencies.projects.cancelPromptOptimization(args[0]),
       'projects:record-optimization-event': ({ args }) =>
         dependencies.projects.recordOptimizationEvent(args[0]),
       'projects:create': ({ args }) =>

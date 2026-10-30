@@ -1918,6 +1918,8 @@ if (process.argv.includes('--version')) {
         return { stopReason: 'cancelled' }
       }
 
+      if (prompt.includes('Prompt optimization cancellation fixture.')) await delay(3000)
+
       let reply = 'Deterministic reply: Summarize the deterministic fixture.'
       try {
         const handoffReply = await permissionHandoffTask(context, prompt)

@@ -23,6 +23,7 @@ type Options = {
 
 type OptimizationState = {
   optimize: () => Promise<void>
+  cancel: () => void
   undo: () => void
   sent: () => void
   edited: () => void
@@ -49,6 +50,15 @@ export function usePromptOptimization(options: Options): OptimizationState {
   })
   const requestId = useRef(0)
   const busy = useRef(false)
+  const activeRequest = useRef<{ projectId: string; requestId: string } | undefined>(undefined)
+  const abortRequest = (): void => {
+    const request = activeRequest.current
+    activeRequest.current = undefined
+    if (request)
+      void window.api?.projects?.cancelPromptOptimization?.(request).catch(() => undefined)
+    requestId.current += 1
+    busy.current = false
+  }
   const [pending, setPending] = useState(false)
   const [notice, setNotice] = useState<'changed' | 'failed'>()
   const [previous, setPrevious] = useState<ComposerDoc>()
@@ -68,7 +78,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
     busy.current = false
     successful.current = undefined
     return () => {
-      requestId.current += 1
+      abortRequest()
     }
   }, [scope])
   // Observe user actions, not programmatic clearing/restoration during send preparation.
@@ -102,11 +112,13 @@ export function usePromptOptimization(options: Options): OptimizationState {
     setPending(true)
     setNotice(undefined)
     const id = ++requestId.current
+    const remoteRequest = { projectId: snapshot.options.projectId!, requestId: crypto.randomUUID() }
+    activeRequest.current = remoteRequest
     try {
       const api = snapshot.options.optimize ?? window.api.projects.optimizePrompt
       const result = optimizePromptResultSchema.parse(
         await api({
-          projectId: snapshot.options.projectId!,
+          ...remoteRequest,
           input,
           agentConfiguration: snapshot.options.modelConfiguration!
         })
@@ -140,10 +152,16 @@ export function usePromptOptimization(options: Options): OptimizationState {
       if (id === requestId.current && scope === current.current.scope) setNotice('failed')
     } finally {
       if (id === requestId.current) {
+        activeRequest.current = undefined
         busy.current = false
         setPending(false)
       }
     }
+  }
+  const cancel = (): void => {
+    abortRequest()
+    setPending(false)
+    setNotice(undefined)
   }
   const undo = (): void => {
     if (!previous || pending) return
@@ -170,8 +188,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
     // A delayed admission must not clear an optimization started in a different draft.
     if (scope !== current.current.scope || sendRequestId !== requestId.current) return
     if (successful.current) record('send')
-    requestId.current += 1
-    busy.current = false
+    abortRequest()
     setPending(false)
     setPrevious(undefined)
     setNotice(undefined)
@@ -183,6 +200,7 @@ export function usePromptOptimization(options: Options): OptimizationState {
   )
   return {
     optimize,
+    cancel,
     undo,
     sent,
     edited,

@@ -2,6 +2,8 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { homeNewProjectButton } from './fixtures/project'
 
+test.use({ windowMode: 'normal' })
+
 // Keep the UI, command transport, database and restricted runner real. Only the external model
 // executable is replaced by the common deterministic ACP fixture.
 test('optimizes drafts without sending and persists project-specific templates', async ({
@@ -9,6 +11,7 @@ test('optimizes drafts without sending and persists project-specific templates',
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   const pythonPath = process.env.OPEN_SCIENCE_TASK_PYTHON
   if (pythonPath) {
     await page.evaluate(async (path) => {
@@ -31,20 +34,53 @@ test('optimizes drafts without sending and persists project-specific templates',
   let editor = page.getByRole('textbox', { name: 'Ask anything' })
   let optimize = page.getByRole('button', { name: 'Optimize question', exact: true })
   await expect(optimize).toBeDisabled()
+  const split = page.getByRole('group', { name: 'Optimize question', exact: true })
+  await expect.poll(async () => (await split.boundingBox())?.width).toBe(32)
+  expect(await split.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain(
+    '0.22s'
+  )
+  await editor.fill('Prompt optimization cancellation fixture.')
+  await optimize.click()
+  const cancel = page.getByRole('button', { name: 'Cancel optimization', exact: true })
+  await expect(cancel).toBeEnabled()
+  await editor.hover()
+  await cancel.hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Cancel optimization')
+  await page.screenshot({ path: testInfo.outputPath('optimization-cancellable.png') })
+  await cancel.click()
+  await expect(editor).toHaveText('Prompt optimization cancellation fixture.')
+  await expect(optimize).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Undo optimization', exact: true })).toHaveCount(0)
   await editor.fill(original)
   await optimize.click()
   await expect(editor).toHaveText(improved)
   expect(
     await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
   ).toHaveLength(0)
+  await expect.poll(async () => (await split.boundingBox())?.width).toBe(60)
+  const undo = page.getByRole('button', { name: 'Undo optimization', exact: true })
+  await undo.hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Undo optimization')
+  await editor.fill(`${improved} Prompt optimization cancellation fixture.`)
+  await page.getByRole('button', { name: 'Optimize again', exact: true }).click()
+  await expect(undo).toBeDisabled()
+  await expect.poll(async () => (await split.boundingBox())?.width).toBe(60)
+  await cancel.click()
+  await expect(undo).toBeEnabled()
+  await expect(editor).toHaveText(`${improved} Prompt optimization cancellation fixture.`)
   await editor.fill(`${improved} Keep the evidence.`)
   await page.getByRole('button', { name: 'Undo optimization', exact: true }).click()
   await expect(editor).toHaveText(original)
+  await expect(optimize).toBeFocused()
+  await expect.poll(async () => (await split.boundingBox())?.width).toBe(32)
   await optimize.click()
   await expect(editor).toHaveText(improved)
   await page.screenshot({ path: testInfo.outputPath('optimized-draft.png') })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  expect(await split.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s')
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.setViewportSize({ width: 430, height: 900 })
-  await expect(optimize).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Optimize again', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeInViewport({
     ratio: 1
   })
