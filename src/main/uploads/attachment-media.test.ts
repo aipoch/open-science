@@ -148,7 +148,14 @@ type FakePdfTextItem =
       dir?: string
       hasEOL?: boolean
     }>
-let fakePdf: { numPages: number; pages: FakePdfTextItem[][]; rotate?: number }
+let fakePdf: {
+  numPages: number
+  pages: FakePdfTextItem[][]
+  rotate?: number
+  raster?: boolean
+  rasterPages?: number[]
+  vector?: boolean
+}
 type FakePdfDocument = {
   promise: Promise<{
     numPages: number
@@ -156,6 +163,7 @@ type FakePdfDocument = {
       view: number[]
       rotate: number
       getTextContent: () => Promise<{ items: unknown[] }>
+      getOperatorList: () => Promise<{ fnArray: number[] }>
       cleanup: () => void
     }>
     destroy: () => Promise<void>
@@ -167,6 +175,14 @@ const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(
     getPage: async (pageNumber: number) => ({
       view: [0, 0, 600, 800],
       rotate: fakePdf.rotate ?? 0,
+      getOperatorList: async () => ({
+        fnArray:
+          fakePdf.raster || fakePdf.rasterPages?.includes(pageNumber)
+            ? [1]
+            : fakePdf.vector
+              ? [8]
+              : []
+      }),
       getStructTree: async () => null,
       getTextContent: async () => {
         await beforePdfPageRead?.()
@@ -183,7 +199,22 @@ const getDocument = vi.fn<(options?: { data?: Uint8Array }) => FakePdfDocument>(
   })
 }))
 
+const fakeOcr = vi.hoisted(() => vi.fn(async () => 'OCR body'))
+vi.mock('./pdf-ocr', () => ({
+  createPdfOcrSession: () => ({ recognize: fakeOcr, close: async () => {} })
+}))
+
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({
+  OPS: {
+    constructPath: 8,
+    paintImageXObject: 1,
+    paintInlineImageXObject: 2,
+    paintImageMaskXObject: 3,
+    paintImageXObjectRepeat: 4,
+    paintImageMaskXObjectRepeat: 5,
+    paintInlineImageXObjectGroup: 6,
+    paintImageMaskXObjectGroup: 7
+  },
   getDocument: (options?: unknown) => getDocument(options as { data?: Uint8Array } | undefined)
 }))
 
@@ -193,6 +224,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'attachment-media-'))
   sharpFactory.mockClear()
   getDocument.mockClear()
+  fakeOcr.mockClear()
   beforePdfPageRead = undefined
   fakeImage = {
     isEmpty: () => false,
@@ -672,55 +704,59 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
-  it('automatically orders ragged columns in both ordinary and targeted extraction, ignoring legacy regions', async () => {
-    const rows = [
-      ['Left first sentence.', 'Right first sentence.'],
-      ['Left second sentence.', 'Right second sentence.'],
-      ['Left third sentence.', 'Right third sentence.']
-    ]
-    fakePdf = {
-      numPages: 1,
-      pages: [
-        rows.flatMap(([left, right], row) => [
-          {
-            str: left,
-            width: 180,
-            height: 10,
-            dir: 'ltr',
-            transform: [10, 0, 0, 10, 40, 720 - row * 14],
-            hasEOL: true
-          },
-          {
-            str: right,
-            width: 180,
-            height: 10,
-            dir: 'ltr',
-            transform: [10, 0, 0, 10, 330, 715 - row * 17],
-            hasEOL: true
-          }
-        ])
+  it.each([false, true])(
+    'automatically orders ragged columns in both ordinary and targeted extraction, ignoring legacy regions (ocr=%s)',
+    async (ocr) => {
+      const rows = [
+        ['Left first sentence.', 'Right first sentence.'],
+        ['Left second sentence.', 'Right second sentence.'],
+        ['Left third sentence.', 'Right third sentence.']
       ]
-    }
-    const filePath = join(root, 'columns.pdf')
-    await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
-    const text = [...rows.map(([left]) => left), ...rows.map(([, right]) => right)].join('\n')
-    const proseRegions = [
-      { page: 999, left: 0.05, top: 0.08, right: 0.95, bottom: 0.4, split: 0.5 }
-    ]
-    for (const page of [undefined, 1]) {
-      await expect(extractPdfText(filePath, page)).resolves.toMatchObject({
-        text: `--- Page 1 ---\n${text}`
-      })
-      await expect(extractPdfText(filePath, page, { proseRegions })).resolves.toMatchObject({
-        text: `--- Page 1 ---\n${text}`,
+      fakePdf = {
+        numPages: 1,
+        pages: [
+          rows.flatMap(([left, right], row) => [
+            {
+              str: left,
+              width: 180,
+              height: 10,
+              dir: 'ltr',
+              transform: [10, 0, 0, 10, 40, 720 - row * 14],
+              hasEOL: true
+            },
+            {
+              str: right,
+              width: 180,
+              height: 10,
+              dir: 'ltr',
+              transform: [10, 0, 0, 10, 330, 715 - row * 17],
+              hasEOL: true
+            }
+          ])
+        ]
+      }
+      const filePath = join(root, 'columns.pdf')
+      await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
+      const text = [...rows.map(([left]) => left), ...rows.map(([, right]) => right)].join('\n')
+      const proseRegions = [
+        { page: 999, left: 0.05, top: 0.08, right: 0.95, bottom: 0.4, split: 0.5 }
+      ]
+      for (const page of [undefined, 1]) {
+        await expect(extractPdfText(filePath, page, { ocr })).resolves.toMatchObject({
+          text: `--- Page 1 ---\n${text}`
+        })
+        await expect(extractPdfText(filePath, page, { ocr, proseRegions })).resolves.toMatchObject({
+          text: `--- Page 1 ---\n${text}`,
+          truncated: false
+        })
+      }
+      await expect(extractPdfTextPages(filePath, [1])).resolves.toMatchObject({
+        pages: [{ pageNumber: 1, text }],
         truncated: false
       })
+      expect(fakeOcr).not.toHaveBeenCalled()
     }
-    await expect(extractPdfTextPages(filePath, [1])).resolves.toMatchObject({
-      pages: [{ pageNumber: 1, text }],
-      truncated: false
-    })
-  })
+  )
   it('reads PDF page count without extracting page text', async () => {
     const filePath = join(root, 'count.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
@@ -753,6 +789,91 @@ describe('extractPdfText', () => {
     expect(getDocument).not.toHaveBeenCalled()
   })
 
+  it('preserves original native text when OCR supplements a raster page', async () => {
+    fakePdf = { numPages: 1, pages: [['1']], raster: true }
+    const path = join(root, 'mixed-header.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const result = await extractPdfText(path, undefined, { ocr: true })
+    expect(result.text).toContain('1\n\n[OCR]\nOCR body')
+    expect(result.coverage?.unverifiedPages).toEqual([1])
+    expect(fakeOcr).toHaveBeenCalledOnce()
+  })
+
+  it('does not OCR readable native prose merely because a page has an image', async () => {
+    fakePdf = { numPages: 1, pages: [['Original clinical body']], raster: true }
+    const path = join(root, 'native-with-figure.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const result = await extractPdfText(path, undefined, { ocr: true })
+    expect(result.text).toBe('--- Page 1 ---\nOriginal clinical body')
+    expect(fakeOcr).not.toHaveBeenCalled()
+    expect(result.coverage?.ocrPages).toEqual([])
+    expect(result.coverage?.unavailablePages).toEqual([])
+    expect(result.coverage?.unverifiedPages).toEqual([1])
+  })
+
+  it('does not spend OCR attempts on an empty operator list', async () => {
+    fakePdf = { numPages: 1, pages: [[]] }
+    const path = join(root, 'truly-blank.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const result = await extractPdfText(path, undefined, { ocr: true })
+    expect(fakeOcr).not.toHaveBeenCalled()
+    expect(result.coverage?.unavailablePages).toEqual([1])
+  })
+
+  it('still OCRs nonempty drawings without selectable text', async () => {
+    fakePdf = { numPages: 1, pages: [[]], vector: true }
+    const path = join(root, 'outlined-text.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const result = await extractPdfText(path, undefined, { ocr: true })
+    expect(fakeOcr).toHaveBeenCalledOnce()
+    expect(result.text).toContain('OCR body')
+    expect(result.coverage?.unavailablePages).toEqual([])
+  })
+
+  it('decorative native-page images do not consume the scan OCR budget', async () => {
+    fakePdf = {
+      numPages: 13,
+      pages: [...Array.from({ length: 12 }, () => ['Native body']), []],
+      raster: true,
+      rasterPages: [13]
+    }
+    const path = join(root, 'logos-before-scan.pdf')
+    await writeFile(path, '%PDF-fixture')
+    try {
+      for (const raster of [false, true]) {
+        fakePdf.raster = raster
+        let attempts = 0
+        fakeOcr.mockImplementation(async () => (++attempts <= 12 ? 'Recovered scan' : ''))
+        const result = await extractPdfText(path, undefined, { ocr: true })
+        expect(result.text).toContain('--- Page 13 ---\nRecovered scan')
+        expect(result.coverage?.ocrPages).toContain(13)
+      }
+    } finally {
+      fakeOcr.mockImplementation(async () => 'OCR body')
+    }
+  })
+
+  it('keeps vector body content unverified despite a selectable header', async () => {
+    fakePdf = { numPages: 1, pages: [['1']], vector: true }
+    const path = join(root, 'outlined-body.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const result = await extractPdfText(path, undefined, { ocr: true })
+    expect(result.coverage?.unverifiedPages).toEqual([1])
+    expect(result.text).toContain('1')
+  })
+
+  it('does not count collected pages omitted by the OCR output limit', async () => {
+    fakePdf = { numPages: 2, pages: [[], ['clinical']], rasterPages: [1] }
+    const path = join(root, 'ocr-output-budget.pdf')
+    await writeFile(path, '%PDF-fixture')
+    fakeOcr.mockResolvedValueOnce('x'.repeat(150))
+    const result = await extractPdfText(path, undefined, { ocr: true, maxChars: 100 })
+    expect(result.coverage?.textPages).toEqual([])
+    expect(result.coverage?.ocrPages).toEqual([1])
+    expect(result.coverage?.uncheckedPages).toEqual([2])
+    expect(result.truncated).toBe(true)
+  })
+
   it('joins per-page text with page markers', async () => {
     const filePath = join(root, 'doc.pdf')
     await writeFile(filePath, Buffer.from('%PDF-1.4 fake'))
@@ -762,6 +883,88 @@ describe('extractPdfText', () => {
     expect(result.pageCount).toBe(2)
     expect(result.truncated).toBe(false)
     expect(result.text).toBe('--- Page 1 ---\nHello world\n\n--- Page 2 ---\nSecond page')
+  })
+
+  it.each([0, 1])(
+    'does not invent truncation at a fitting native output boundary plus %i',
+    async (spare) => {
+      fakePdf = { numPages: 1, pages: [['clinical']] }
+      const path = join(root, 'fits.pdf')
+      await writeFile(path, '%PDF-fixture')
+      const text = '--- Page 1 ---\nclinical'
+      const result = await extractPdfText(path, undefined, { maxChars: text.length + spare })
+      expect(result.text).toBe(text)
+      expect(result.truncated).toBe(false)
+    }
+  )
+
+  it('does not charge blank pages against returned-text capacity', async () => {
+    fakePdf = { numPages: 4, pages: [[], [], [], ['clinical']] }
+    const path = join(root, 'blanks-fit.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const text = '--- Page 4 ---\nclinical'
+    const result = await extractPdfText(path, undefined, { maxChars: text.length + 1 })
+    expect(result.text).toBe(text)
+    expect(result.truncated).toBe(false)
+  })
+
+  it('does not count a next page when the preceding page exactly fills output', async () => {
+    fakePdf = { numPages: 2, pages: [['clinical'], ['omitted']] }
+    const path = join(root, 'exact-first-page.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const text = '--- Page 1 ---\nclinical'
+    const result = await extractPdfText(path, undefined, { maxChars: text.length })
+    expect(result.text).toBe(text)
+    expect(result.truncated).toBe(true)
+    expect(result.coverage?.textPages).toEqual([1])
+    expect(result.coverage?.uncheckedPages).toEqual([2])
+  })
+
+  it.each(
+    [true, false].flatMap((scan) =>
+      [0, 1, '--- Page 2 ---\n'.length].map((spare) => ({ scan, spare }))
+    )
+  )(
+    'does not OCR or count a page when only $spare marker characters fit (scan=$scan)',
+    async ({ scan, spare }) => {
+      fakePdf = {
+        numPages: 2,
+        pages: [['clinical'], scan ? [] : ['omitted']],
+        rasterPages: scan ? [2] : []
+      }
+      const path = join(root, 'no-room-for-ocr.pdf')
+      await writeFile(path, '%PDF-fixture')
+      const first = '--- Page 1 ---\nclinical'
+      const result = await extractPdfText(path, undefined, {
+        ocr: true,
+        maxChars: first.length + 2 + spare
+      })
+      expect(fakeOcr, 'OCR output cannot fit, so recognition must not start').not.toHaveBeenCalled()
+      expect(result.text).toBe(first)
+      expect(result.truncated).toBe(true)
+      expect(result.coverage).toMatchObject({ textPages: [1], ocrPages: [], uncheckedPages: [2] })
+    }
+  )
+
+  it.each([0, 1])('respects OCR supplement capacity with %i body characters', async (bodyChars) => {
+    fakePdf = { numPages: 2, pages: [['clinical'], ['1']], rasterPages: [2] }
+    const path = join(root, 'no-room-for-supplement.pdf')
+    await writeFile(path, '%PDF-fixture')
+    const first = '--- Page 1 ---\nclinical'
+    const prefix = '--- Page 2 ---\n1\n\n[OCR]\n'
+    const result = await extractPdfText(path, undefined, {
+      ocr: true,
+      maxChars: first.length + 2 + prefix.length + bodyChars
+    })
+    if (bodyChars) {
+      expect(fakeOcr).toHaveBeenCalledOnce()
+      expect(result.text).toBe(`${first}\n\n${prefix}O`)
+    } else {
+      expect(fakeOcr).not.toHaveBeenCalled()
+      expect(result.text).toBe(first)
+      expect(result.coverage?.uncheckedPages).toEqual([2])
+    }
+    expect(result.truncated).toBe(true)
   })
 
   it('extracts managed PDFs from the trusted byte source instead of the path', async () => {

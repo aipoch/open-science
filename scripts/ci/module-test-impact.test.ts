@@ -350,6 +350,7 @@ describe('module test impact commands', () => {
   })
 
   it.each([
+    ['upload_repository', 'src/main/uploads/pdf-ocr.ts'],
     ['user_skills_repository', 'src/main/skills/catalog.ts'],
     ['user_skills_repository', 'src/main/skills/user-skill-repository.ts'],
     ['user_skills_repository', 'src/main/skills/source-repository.ts'],

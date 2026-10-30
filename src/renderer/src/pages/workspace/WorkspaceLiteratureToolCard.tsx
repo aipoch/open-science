@@ -1,3 +1,4 @@
+import { LocalOcrControl } from '@/components/local-ocr-control'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import { BookOpenText, FileText, Inbox, Link2, Search, TriangleAlert } from 'lucide-react'
 import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'
@@ -234,6 +235,49 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
         </div>
       ) : null}
+
+      {summary.textCoverage?.some((coverage) => coverage.missing.length > 0) ? (
+        <LocalOcrControl compact />
+      ) : null}
+      {summary.textCoverage?.map((coverage, index) => (
+        <div key={index} className="space-y-1 text-[11px] text-muted-foreground">
+          {coverage.name ? <p className="break-words">{coverage.name}</p> : null}
+          <p>
+            {t('Pages with text: {{parsed}} / {{total}}', {
+              parsed: coverage.parsed,
+              total: coverage.total
+            })}
+          </p>
+          {coverage.ocr > 0 ? (
+            <p>{t('OCR was used. Verify recognized text against the PDF.')}</p>
+          ) : null}
+          {coverage.unverified?.length ? (
+            <ErrorNotice
+              inline
+              icon={TriangleAlert}
+              tone="amber"
+              description={t(
+                'Image content needs source verification. Pages with text do not establish complete evidence.'
+              )}
+            />
+          ) : null}
+          {coverage.missing.length > 0 ? (
+            <ErrorNotice
+              inline
+              icon={TriangleAlert}
+              tone="amber"
+              description={t(
+                'Text is incomplete. Unread pages: {{pages}}. Check the source PDF or retry reading.',
+                {
+                  pages:
+                    coverage.missing.slice(0, 20).join(', ') +
+                    (coverage.missing.length > 20 ? '…' : '')
+                }
+              )}
+            />
+          ) : null}
+        </div>
+      ))}
 
       {summary.action === 'save' ? (
         <>

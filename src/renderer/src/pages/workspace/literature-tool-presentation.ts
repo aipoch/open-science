@@ -5,6 +5,14 @@ type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
 type LiteratureToolSummary = Readonly<{
   action: LiteratureToolAction
+  textCoverage?: readonly Readonly<{
+    name: string
+    parsed: number
+    total: number
+    ocr: number
+    missing: readonly number[]
+    unverified?: readonly number[]
+  }>[]
   pdfElements?: Readonly<{
     caption?: string
     elementCount?: number
@@ -352,6 +360,52 @@ const pageRangeFromOutput = (
   }
 }
 
+const textCoverageFromOutput = (
+  output: UnknownRecord | undefined
+): LiteratureToolSummary['textCoverage'] => {
+  const documents = isRecord(output?.document)
+    ? [output.document]
+    : Array.isArray(output?.documents)
+      ? output.documents.filter(isRecord)
+      : []
+  const result = documents.flatMap((document) => {
+    const coverage = isRecord(document.coverage) ? document.coverage : undefined
+    const total = asPositiveInteger(document.pageCount)
+    if (!coverage || !total) return []
+    const pages = (value: unknown): number[] =>
+      Array.isArray(value)
+        ? [
+            ...new Set(
+              value.filter(
+                (page): page is number =>
+                  typeof page === 'number' &&
+                  Number.isSafeInteger(page) &&
+                  page > 0 &&
+                  page <= total
+              )
+            )
+          ]
+        : []
+    const text = pages(coverage.textPages)
+    const ocr = pages(coverage.ocrPages)
+    const unverified = pages(coverage.unverifiedPages)
+    const missing = [
+      ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
+    ].sort((a, b) => a - b)
+    return [
+      {
+        name: asString(document.name) ?? '',
+        total,
+        parsed: new Set([...text, ...ocr]).size,
+        ocr: ocr.length,
+        missing,
+        ...(unverified.length ? { unverified } : {})
+      }
+    ]
+  })
+  return result.length ? result : undefined
+}
+
 const buildLiteratureToolSummary = (
   inputValue: unknown,
   outputValue?: unknown
@@ -393,11 +447,46 @@ const buildLiteratureToolSummary = (
         ? output.nextCursor !== null
         : undefined
 
+  // ACP retains the bounded presentation block even when the passage JSON is truncated.
+  const textCoverage =
+    textCoverageFromOutput(output) ??
+    (Array.isArray(presentation?.textCoverage)
+      ? presentation.textCoverage.slice(0, 3).flatMap((entry) => {
+          if (!isRecord(entry)) return []
+          const total = asPositiveInteger(entry.total)
+          const parsed = asNonNegativeInteger(entry.parsed)
+          const ocr = asNonNegativeInteger(entry.ocr)
+          if (!total || parsed === undefined || ocr === undefined || parsed > total || ocr > parsed)
+            return []
+          const pages = (value: unknown): number[] =>
+            Array.isArray(value)
+              ? [
+                  ...new Set(
+                    value.filter(
+                      (page): page is number =>
+                        Number.isSafeInteger(page) && page > 0 && page <= total
+                    )
+                  )
+                ].slice(0, 21)
+              : []
+          return [
+            {
+              name: asString(entry.name)?.slice(0, 512) ?? '',
+              total,
+              parsed,
+              ocr,
+              missing: pages(entry.missing),
+              unverified: pages(entry.unverified)
+            }
+          ]
+        })
+      : undefined)
   return {
     action,
     ...(query ? { query } : {}),
     documentNames,
     documentCount: documentNames.length || requestedIds.length,
+    ...(textCoverage ? { textCoverage } : {}),
     ...(passageCount !== undefined ? { passageCount } : {}),
     ...(pageStart !== undefined ? { pageStart } : {}),
     ...(pageEnd !== undefined ? { pageEnd } : {}),

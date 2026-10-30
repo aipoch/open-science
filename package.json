@@ -121,7 +121,8 @@
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
     "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
-    "check:providers-package": "node scripts/check-providers-package.mjs"
+    "check:providers-package": "node scripts/check-providers-package.mjs",
+    "build:ocr": "node scripts/ocr/build.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -204,6 +205,9 @@
   },
   "devDependencies": {
     "@aiden0z/pptx-renderer": "1.2.4",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "tesseract.js": "6.0.1",
     "@anthropic-ai/claude-agent-sdk": "0.3.232",
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
