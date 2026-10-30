@@ -7682,6 +7682,15 @@
     "Copy error": "エラーをコピー",
     "The action could not be completed. See details and try again.": "操作を完了できませんでした。詳細を確認して再試行してください。",
     "Still need help? Report this error": "解決しない場合は、このエラーを報告",
-    "{{count}} more notices_other": "ほか {{count}} 件の通知"
+    "{{count}} more notices_other": "ほか {{count}} 件の通知",
+    "Set two-column body": "本文を2段組に設定",
+    "Save body area": "本文領域を保存",
+    "Drag across both columns, then confirm the divider.": "両方の段をドラッグして選択し、境界線を確定してください。",
+    "Body areas are unavailable on rotated pages.": "回転したページでは本文領域を設定できません。",
+    "Column divider": "段の境界線",
+    "Two-column body": "2段組の本文",
+    "Clear two-column correction on this page": "このページの2段組み補正を解除",
+    "You can configure up to 32 pages.": "最大32ページまで設定できます。",
+    "Applies to your next message. Select body text only; exclude tables.": "次のメッセージに適用されます。本文のみを選択し、表は含めないでください。"
   }
 }

@@ -5,7 +5,7 @@ import type {
   TextContent,
   TextItem
 } from 'pdfjs-dist/types/src/display/api'
-import { joinPdfTextItems } from '../../shared/pdf-text'
+import { joinPdfProseTextItems, joinPdfTextItems, type PdfProseRegion } from '../../shared/pdf-text'
 
 // A complete logical structure is stronger evidence than visual column geometry.
 const taggedOrder = (content: TextContent, tree: StructTreeNode): TextItem[][] | undefined => {
@@ -53,10 +53,20 @@ const taggedOrder = (content: TextContent, tree: StructTreeNode): TextItem[][] |
   return count > 0 && items.length === count && new Set(items).size === count ? ordered : undefined
 }
 
-export const readPdfPageText = async (page: PDFPageProxy): Promise<string> => {
+export const readPdfPageText = async (
+  page: PDFPageProxy,
+  proseRegions: readonly PdfProseRegion[] = []
+): Promise<string> => {
   const content = await page.getTextContent({ includeMarkedContent: true })
   const nativeItems = content.items.filter((item): item is TextItem => 'str' in item)
   const native = (): string => joinPdfTextItems(nativeItems)
+  if (proseRegions.length) {
+    if (page.rotate % 360 !== 0)
+      throw new Error(
+        'PDF_READING_REGION_INVALID: Explicit prose regions require an unrotated PDF page.'
+      )
+    return joinPdfProseTextItems(nativeItems, proseRegions, page.view)
+  }
   try {
     const tree = await page.getStructTree()
     if (tree) {

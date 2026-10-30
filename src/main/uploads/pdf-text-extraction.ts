@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises'
-import type { PdfProseRegion } from '../../shared/pdf-text'
+import { validatePdfProseRegions, type PdfProseRegion } from '../../shared/pdf-text'
 import {
   MAX_AUTO_EXTRACT_PDF_BYTES,
   MAX_CONCURRENT_PDF_TEXT_EXTRACTIONS,
@@ -34,6 +34,7 @@ export const extractPdfText = async (
   targetPageOrSource?: number | AttachmentByteSource,
   options: Readonly<{ maxChars?: number; proseRegions?: readonly PdfProseRegion[] }> = {}
 ): Promise<PdfTextResult> => {
+  if (options.proseRegions !== undefined) validatePdfProseRegions(options.proseRegions)
   const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
   const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
   const size = source?.size ?? (await stat(filePath)).size
@@ -67,11 +68,18 @@ export const extractPdfText = async (
           : undefined
       const firstPage = boundedTargetPage ?? 1
       const lastPage = boundedTargetPage ?? document.numPages
+      if (options.proseRegions?.some((region) => region.page < firstPage || region.page > lastPage))
+        throw new Error(
+          'PDF_READING_REGION_INVALID: A region page is outside the requested PDF pages.'
+        )
       for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
         const page = await document.getPage(pageNumber)
         let pageText: string
         try {
-          pageText = await readPdfPageText(page)
+          pageText = await readPdfPageText(
+            page,
+            options.proseRegions?.filter((region) => region.page === pageNumber)
+          )
         } finally {
           page.cleanup()
         }

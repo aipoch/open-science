@@ -5,6 +5,7 @@ import type {
   TextContent,
   TextItem
 } from 'pdfjs-dist/types/src/display/api'
+import type { PdfProseRegion } from '../../shared/pdf-text'
 import { readPdfPageText } from './pdf-reading-order'
 
 const item = (str: string, x: number, y: number, width = 210): TextItem => ({
@@ -18,21 +19,26 @@ const item = (str: string, x: number, y: number, width = 210): TextItem => ({
 })
 const read = (
   items: TextContent['items'],
-  tree: StructTreeNode | null | Error = null
+  tree: StructTreeNode | null | Error = null,
+  regions: readonly PdfProseRegion[] = [],
+  rotation = 0
 ): Promise<string> =>
-  readPdfPageText({
-    rotate: 0,
-    view: [0, 0, 600, 800],
-    getTextContent: vi.fn(async () => ({
-      items,
-      styles: { Body: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'serif' } },
-      lang: null
-    })),
-    getStructTree: vi.fn(async () => {
-      if (tree instanceof Error) throw tree
-      return tree
-    })
-  } as unknown as PDFPageProxy)
+  readPdfPageText(
+    {
+      rotate: rotation,
+      view: [0, 0, 600, 800],
+      getTextContent: vi.fn(async () => ({
+        items,
+        styles: { Body: { ascent: 0.8, descent: -0.2, vertical: false, fontFamily: 'serif' } },
+        lang: null
+      })),
+      getStructTree: vi.fn(async () => {
+        if (tree instanceof Error) throw tree
+        return tree
+      })
+    } as unknown as PDFPageProxy,
+    regions
+  )
 
 describe('automatic PDF reading order', () => {
   it('reads ragged columns below a full-width heading without changing source text', async () => {
@@ -54,6 +60,71 @@ describe('automatic PDF reading order', () => {
       ].join('\n')
     )
   })
+  it('requires explicit confirmation for dense columns with incidental paired baselines', async () => {
+    const rows = Array.from({ length: 24 }, (_, i) => [
+      item(`Left ${i} body sentence.`, 40, 116 + i * 16),
+      item(`Right ${i} body sentence.`, 330, 122 + i * 17)
+    ])
+    expect(await read(rows.flat())).toBe(
+      rows
+        .flat()
+        .map((i) => i.str)
+        .join('\n')
+    )
+    expect(
+      await read(rows.flat(), null, [
+        { page: 1, left: 0.04, top: 0.1, right: 0.95, bottom: 0.95, split: 0.48 }
+      ])
+    ).toBe([...rows.map(([a]) => a.str), ...rows.map(([, b]) => b.str)].join('\n'))
+  })
+
+  it('retains aligned long prose until the user explicitly confirms body bounds', async () => {
+    const rows = Array.from({ length: 24 }, (_, i) => [
+      item(`Left ${i} body sentence.`, 40, 116 + i * 16),
+      item(`Right ${i} body sentence.`, 330, 116 + i * 16)
+    ])
+    const input = rows.flat()
+    expect(await read(input)).toBe(input.map((i) => i.str).join('\n'))
+    const regions = [{ page: 1, left: 0.04, top: 0.1, right: 0.95, bottom: 0.95, split: 0.48 }]
+    expect(await read(input, null, regions)).toBe(
+      [...rows.map(([a]) => a.str), ...rows.map(([, b]) => b.str)].join('\n')
+    )
+    await expect(read(input, null, regions, 90)).rejects.toThrow('unrotated PDF page')
+  })
+
+  it('keeps independently wrapped table cells attached to their row anchors', async () => {
+    const input = [
+      item('Condition A', 40, 120),
+      item('Outcome A', 330, 120),
+      item('wrapped left cell', 40, 134),
+      item('wrapped right cell', 330, 137),
+      item('Condition B', 40, 170),
+      item('Outcome B', 330, 170),
+      item('wrapped left B', 40, 184),
+      item('wrapped right B', 330, 187)
+    ]
+    expect(await read(input)).toBe(input.map((i) => i.str).join('\n'))
+  })
+
+  it('preserves tall text-table cells whose first row anchors align despite different wrapping cadence', async () => {
+    const input = Array.from({ length: 24 }, (_, row) => [
+      item(`Condition description line ${row}.`, 40, 120 + row * 16),
+      item(`Outcome description line ${row}.`, 330, 120 + row * 17)
+    ]).flat()
+    expect(await read(input)).toBe(input.map((i) => i.str).join('\n'))
+  })
+
+  it('does not detach aligned tall table cells when one column has a preceding heading', async () => {
+    const input = [
+      item('Condition definition', 40, 104),
+      ...Array.from({ length: 24 }, (_, row) => [
+        item(`Condition description line ${row}.`, 40, 120 + row * 16),
+        item(`Outcome description line ${row}.`, 330, 120 + row * 17)
+      ]).flat()
+    ]
+    expect(await read(input)).toBe(input.map((i) => i.str).join('\n'))
+  })
+
   it.each([false, true])(
     'preserves text-table row associations, including wrapped cells: %s',
     async (wrapped) => {

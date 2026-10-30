@@ -160,11 +160,11 @@ describe('Auto operation completeness against real tool registrations', () => {
           'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
-        // Reviewed: linked-PDF reading order is resolved automatically from logical structure
-        // or layout; description text only. Strict tool inputs, mounted-server checks and
-        // single-use authorization are unchanged.
+        // Reviewed: description now explains automatic reading with a user-confirmed
+        // correction taking precedence. Tool schemas, handler branches, mounted-server
+        // checks and single-use authorization remain unchanged.
         'literature/mcp-server.ts':
-          '936e8dffc17c4407864ed61043b059dadd1ab92290361d37277cb9ba62422c70',
+          '70c171f6a9f2d7e9cc8994fd08e7e5afe798ab941e4cdb2c396abf9fa6012353',
         // Reviewed: Windows Bioconductor installer guidance only; schemas, handlers and Auto
         // operation dispositions are unchanged.
         'notebook/mcp-server.ts':

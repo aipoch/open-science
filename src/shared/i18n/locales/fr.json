@@ -8022,6 +8022,15 @@
     "Still need help? Report this error": "Encore besoin d’aide ? Signaler cette erreur",
     "{{count}} more notices_one": "{{count}} autre notification",
     "{{count}} more notices_many": "{{count}} autres notifications",
-    "{{count}} more notices_other": "{{count}} autres notifications"
+    "{{count}} more notices_other": "{{count}} autres notifications",
+    "Set two-column body": "Définir le corps sur deux colonnes",
+    "Save body area": "Enregistrer la zone de texte principal",
+    "Drag across both columns, then confirm the divider.": "Faites glisser sur les deux colonnes, puis confirmez la séparation.",
+    "Body areas are unavailable on rotated pages.": "Les zones de texte principal ne sont pas disponibles sur les pages pivotées.",
+    "Column divider": "Séparation des colonnes",
+    "Two-column body": "Corps sur deux colonnes",
+    "Clear two-column correction on this page": "Effacer la correction à deux colonnes de cette page",
+    "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
+    "Applies to your next message. Select body text only; exclude tables.": "S’applique à votre prochain message. Sélectionnez uniquement le texte du corps et excluez les tableaux."
   }
 }
