@@ -603,7 +603,7 @@ describe('ArtifactProvenancePanel', () => {
     )
   })
 
-  it('truncates the inline kernel warning and exposes the full reason on hover', async () => {
+  it('shows the full version-specific warning and advice without hover', async () => {
     act(() => root.unmount())
     getCodeReconstruction.mockResolvedValue({
       state: 'unavailable',
@@ -618,29 +618,37 @@ describe('ArtifactProvenancePanel', () => {
       p.textContent?.includes('Failed or interrupted cells')
     )
     expect(reason?.textContent).toContain('may have changed kernel state before stopping')
-    expect(reason?.className).toContain('truncate')
-    expect(reason?.className).toContain('text-xs')
-    expect(reason?.className).toContain('leading-5')
-    const notice = reason?.closest('[role="status"]')
-    expect(notice?.hasAttribute('title')).toBe(false)
-    expect(notice?.getAttribute('tabindex')).toBe('0')
-    expect(notice?.className).toContain('text-status-warning-foreground')
-    expect(notice?.className).toContain('dark:text-status-warning-dark-foreground')
-    expect(notice?.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    const notice = reason?.closest('[data-notice-level="warning"]')
+    expect(notice?.textContent).toContain('v1')
+    expect(notice?.textContent).toContain('Run the producing task again')
+    expect(notice?.querySelector('.truncate')).toBeNull()
     const generate = [...container.querySelectorAll('button')].find(
       (button) => button.textContent === 'Generate script'
     )
     expect(generate?.disabled).toBe(true)
-    expect(generate?.getAttribute('data-variant')).toBe('outline')
-    expect(generate?.parentElement?.className).not.toContain('flex-col')
-    expect(notice?.parentElement).toBe(generate?.parentElement)
-    vi.useFakeTimers()
-    await act(async () => notice?.dispatchEvent(new MouseEvent('pointermove', { bubbles: true })))
-    await act(async () => vi.advanceTimersByTime(100))
-    expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(reason?.textContent)
-    await act(async () => notice?.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })))
-    vi.useRealTimers()
+    expect(notice?.parentElement).not.toBe(generate?.parentElement)
     expect(container.textContent).not.toContain('Download script')
+    expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['script-not-applicable', 'info', 'Script reconstruction is not applicable to v1'],
+    ['execution-unavailable', 'warning', 'Execution evidence is incomplete for v1'],
+    ['record-invalid', 'error', 'Record validation failed for v1']
+  ] as const)('classifies %s and disables script generation', async (reason, level, title) => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({ state: 'unavailable', reason })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    expect(container.querySelector(`[data-notice-level="${level}"]`)?.textContent).toContain(title)
+    expect(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )?.disabled
+    ).toBe(true)
     expect(generateCodeReconstruction).not.toHaveBeenCalled()
   })
 

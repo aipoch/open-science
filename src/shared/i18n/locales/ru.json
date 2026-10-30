@@ -8174,6 +8174,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Источники сохранены. Некоторые PDF не удалось скопировать; восстановите их в Zotero и повторите попытку.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Не удалось подключиться к Zotero. Откройте Zotero 10 или новее и повторите попытку.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "В Zotero откройте Настройки → Дополнительно и разрешите другим приложениям на этом компьютере взаимодействовать с Zotero, затем повторите попытку.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero не ответил вовремя. Дождитесь завершения запуска и повторите попытку."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero не ответил вовремя. Дождитесь завершения запуска и повторите попытку.",
+    "Restore as new version": "Восстановить как новую версию",
+    "Script reconstruction is not applicable to v{{version}}": "Реконструкция скрипта неприменима к v{{version}}",
+    "Execution evidence is incomplete for v{{version}}": "Сведения о выполнении для v{{version}} неполны",
+    "Record validation failed for v{{version}}": "Проверка записей для v{{version}} не пройдена",
+    "This version was produced by a connector without a Notebook script.": "Эта версия создана Коннектором без скрипта Notebook.",
+    "The records for this version failed integrity validation.": "Записи этой версии не прошли проверку целостности.",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Сохраните эту версию и её диагностические данные для расследования. Не используйте её записи для генерации скрипта.",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Повторно запустите задачу, создавшую файл, чтобы собрать полные сведения для новой версии. Исторические записи останутся без изменений.",
+    "Review the connector execution details for this version.": "Просмотрите сведения о выполнении Коннектора для этой версии."
   }
 }

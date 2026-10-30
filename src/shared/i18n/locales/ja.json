@@ -7688,6 +7688,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文献は保存されました。一部の PDF をコピーできませんでした。Zotero で復元して再試行してください。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Zotero に接続できませんでした。Zotero 10 以降を起動して、もう一度お試しください。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Zotero の「設定 → 詳細」で、このコンピューター上の他のアプリケーションが Zotero と通信することを許可してから、もう一度お試しください。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero の応答がタイムアウトしました。起動が完了するまで待ってから、もう一度お試しください。",
+    "Restore as new version": "新しいバージョンとして復元",
+    "Script reconstruction is not applicable to v{{version}}": "v{{version}} はスクリプト再構築の対象外です",
+    "Execution evidence is incomplete for v{{version}}": "v{{version}} の実行証拠が不完全です",
+    "Record validation failed for v{{version}}": "v{{version}} の記録の検証に失敗しました",
+    "This version was produced by a connector without a Notebook script.": "このバージョンは Notebook スクリプトを使わずにコネクタで生成されました。",
+    "The records for this version failed integrity validation.": "このバージョンの記録は整合性検証に失敗しました。",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "調査のため、このバージョンと診断情報を保管してください。この記録を使ってスクリプトを生成しないでください。",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "ファイルを生成したタスクを再実行して、新しいバージョンの完全な証拠を記録してください。過去の記録は変更されません。",
+    "Review the connector execution details for this version.": "このバージョンのコネクタ実行の詳細を確認してください。"
   }
 }

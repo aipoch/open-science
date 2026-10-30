@@ -921,7 +921,8 @@ describe('PreviewFileSurface managed text versions', () => {
         root.render(<PreviewFileSurface item={{ ...managedUploadItem, name }} onClose={vi.fn()} />)
       )
       expect(
-        container.querySelector('[data-testid="managed-preview-version-navigation"]') !== null
+        container.querySelector('[data-testid="managed-preview-version-navigation"] > span') !==
+          null
       ).toBe(isText)
       expect(container.querySelector('[role="alert"]')).toBeNull()
       expect(container.textContent).not.toContain('Checking version…')
@@ -962,7 +963,8 @@ describe('PreviewFileSurface managed text versions', () => {
         })
       )
       expect(
-        container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+        container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
+          ?.textContent
       ).toContain('v1')
     }
     expectSelectedDownload()
@@ -1377,7 +1379,7 @@ describe('PreviewFileSurface managed text versions', () => {
       container.querySelector('[aria-label="Compare README.md with its source version"]')
     ).not.toBeNull()
     expect(
-      container.querySelector('[data-testid="managed-preview-version-navigation"]')
+      container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
     ).not.toBeNull()
   })
 
@@ -2033,7 +2035,8 @@ describe('PreviewFileSurface managed text versions', () => {
     expect(container.querySelector('[aria-label="Stop comparing README.md"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
     expect(
-      container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+      container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
+        ?.textContent
     ).toBe('v2')
 
     await click(container.querySelector('[aria-label="Previous file version"]'))
@@ -2043,7 +2046,8 @@ describe('PreviewFileSurface managed text versions', () => {
     })
 
     expect(
-      container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+      container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
+        ?.textContent
     ).toBe('v1')
   })
 
@@ -2463,8 +2467,90 @@ describe('PreviewFileSurface managed text versions', () => {
 
     expect(container.querySelector<HTMLTextAreaElement>('textarea')?.value).toBe('# Draft\n')
     expect(
-      container.querySelector('[data-testid="managed-preview-version-navigation"]')?.textContent
+      container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
+        ?.textContent
     ).toBe('v2')
+  })
+
+  it.each([false, true])(
+    'returns to current without retaining an obsolete editor (dirty=%s)',
+    async (dirty) => {
+      const historicalItem = { ...managedUploadItem, selectedVersionId: 'upload-v1' }
+      window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          ...managedInspect,
+          selectedVersionId: 'upload-v1',
+          text: '# Historical\n'
+        }
+      })
+      usePreviewWorkbenchStore.getState().activateProject('project-1')
+      usePreviewWorkbenchStore.getState().upsertAndActivateItem(historicalItem)
+      await act(async () =>
+        root.render(
+          <PreviewFileSurface item={historicalItem} onClose={vi.fn()} workbenchConnected />
+        )
+      )
+      await click(container.querySelector('[aria-label="Edit README.md"]'))
+      const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
+      if (dirty) await changeTextarea(editor, '# Keep draft\n')
+      const current = [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Current version'
+      )!
+      await click(current)
+      if (dirty) {
+        expect(discardConfirmation()).not.toBeNull()
+        await cancelDiscard()
+        expect(editor.value).toBe('# Keep draft\n')
+        await click(current)
+        await confirmDiscard()
+      }
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
+        selectedVersionId: undefined
+      })
+    }
+  )
+
+  it('offers an explicit restoration of unchanged historical text', async () => {
+    window.api.managedFileVersions.inspect = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        ...managedInspect,
+        selectedVersionId: 'upload-v1',
+        text: '# Historical\n'
+      }
+    })
+    window.api.managedFileVersions.saveTextEdit = vi.fn().mockResolvedValue({
+      ok: true,
+      value: {
+        kind: 'created',
+        replayed: false,
+        version: { ...managedInspect.versions[1], id: 'upload-v3', versionNumber: 3 },
+        headVersionId: 'upload-v3'
+      }
+    })
+    await act(async () =>
+      root.render(
+        <PreviewFileSurface
+          item={{ ...managedUploadItem, selectedVersionId: 'upload-v1' }}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    await click(container.querySelector('[aria-label="Edit README.md"]'))
+    const save = container.querySelector<HTMLButtonElement>('[aria-label="Save changes"]')!
+    expect(save.disabled).toBe(false)
+    expect(save.textContent).toBe('Restore as new version')
+    await click(save)
+    expect(window.api.managedFileVersions.saveTextEdit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        restore: true,
+        basedOnVersionId: 'upload-v1',
+        expectedHeadVersionId: 'upload-v2',
+        content: '# Historical\n'
+      })
+    )
   })
 
   it('does not guard again when a connected save publishes its new version', async () => {
@@ -2492,7 +2578,7 @@ describe('PreviewFileSurface managed text versions', () => {
 
     expect(discardConfirmation()).toBeNull()
     expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({
-      selectedVersionId: 'upload-v3'
+      selectedVersionId: undefined
     })
   })
 
@@ -3283,7 +3369,9 @@ describe('PreviewFileSurface Provenance entry', () => {
     expect(
       container.querySelector('[aria-label="Compare sin.png with its source version"]')
     ).toBeNull()
-    expect(container.querySelector('[data-testid="managed-preview-version-navigation"]')).toBeNull()
+    expect(
+      container.querySelector('[data-testid="managed-preview-version-navigation"] > span')
+    ).toBeNull()
     expect(container.querySelector('[data-testid="preview-content"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Download options for sin.png"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Close preview of sin.png"]')).not.toBeNull()

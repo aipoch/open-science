@@ -667,10 +667,12 @@ const ArtifactVersionNavigation = ({
 
 const ManagedVersionNavigation = ({
   inspect,
-  onSelect
+  onSelect,
+  onCurrent
 }: {
   inspect: ManagedFileVersionInspectResult
   onSelect: (versionId: string) => void
+  onCurrent?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const selectedIndex = inspect.versions.findIndex(
@@ -719,6 +721,11 @@ const ManagedVersionNavigation = ({
       >
         <ChevronRight aria-hidden="true" />
       </Button>
+      {onCurrent ? (
+        <Button type="button" variant="ghost" size="xs" onClick={onCurrent}>
+          {t('Current version')}
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -1443,12 +1450,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       }
     }
 
+    // Restoring history is an intentional new version even without editing its text.
+    const restoringHistory = Boolean(
+      editBaseline && editBaseline.basedOnVersionId !== editBaseline.expectedHeadVersionId
+    )
     const saveEdit = async (): Promise<void> => {
       if (
         !managedIdentity ||
         !managedInspect?.canEdit ||
         !editBaseline ||
-        draft === editBaseline.text ||
+        (draft === editBaseline.text && !restoringHistory) ||
         saving
       )
         return
@@ -1474,6 +1485,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             basedOnVersionId: editBaseline.basedOnVersionId,
             expectedHeadVersionId: editBaseline.expectedHeadVersionId,
             content: draft,
+            restore: restoringHistory,
             operationId: crypto.randomUUID()
           }
         }
@@ -1504,12 +1516,15 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       setDraft('')
       if (result.value.kind === 'created' && projectId) {
         applyVersionItem(
-          createPreviewFileItemForManagedVersion({
-            item: previewItem,
-            version: result.value.version,
-            projectId,
-            sessionId: managedInspect.sessionId
-          }),
+          {
+            ...createPreviewFileItemForManagedVersion({
+              item: previewItem,
+              version: result.value.version,
+              projectId,
+              sessionId: managedInspect.sessionId
+            }),
+            selectedVersionId: undefined
+          },
           true
         )
       }
@@ -1709,10 +1724,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                         type="button"
                         size="sm"
                         aria-label={t('Save changes')}
-                        disabled={!isDirty || saving || !managedInspect?.canEdit}
+                        disabled={
+                          (!isDirty && !restoringHistory) || saving || !managedInspect?.canEdit
+                        }
                         onClick={() => void saveEdit()}
                       >
-                        {t('Save')}
+                        {restoringHistory && !isDirty ? t('Restore as new version') : t('Save')}
                       </Button>
                     </div>
                   ) : managedWorkflow.showTextTools && managedControlsInspect ? (
@@ -1819,6 +1836,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
                   <ManagedVersionNavigation
                     inspect={managedNavigationInspect}
                     onSelect={selectManagedVersion}
+                    onCurrent={
+                      previewItem.selectedVersionId
+                        ? () =>
+                            applyVersionItem(
+                              { ...previewItem, selectedVersionId: undefined },
+                              false,
+                              () => finishVersionSelection(true)
+                            )
+                        : undefined
+                    }
                   />
                   <VersionHistoryLoadButton history={managedWorkflow.history} />
                 </>

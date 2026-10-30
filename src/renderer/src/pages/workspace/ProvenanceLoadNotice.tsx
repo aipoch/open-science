@@ -9,10 +9,12 @@ import type { ProvenanceReadFailure } from '../../../../shared/provenance-read-r
 export const ProvenanceLoadNotice = ({
   failure,
   diagnostics,
+  versionNumber,
   onRetry
 }: {
   failure: ProvenanceReadFailure
   diagnostics: string
+  versionNumber?: number
   onRetry?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -21,17 +23,28 @@ export const ProvenanceLoadNotice = ({
   const [copyFailed, setCopyFailed] = useState(false)
   const [copied, setCopied] = useState(false)
   return (
-    <div className="mx-auto flex w-full min-w-0 max-w-md flex-col gap-5 p-5">
+    <div className="flex w-full min-w-0 flex-col gap-5 p-4">
       <div role="alert">
         <ErrorNotice
           icon={TriangleAlert}
           tone={failure.kind === 'integrity-failed' ? 'red' : 'amber'}
           title={
             failure.kind === 'integrity-failed'
-              ? t('Provenance integrity error')
+              ? versionNumber === undefined
+                ? t('Provenance integrity error')
+                : t('Record validation failed for v{{version}}', { version: versionNumber })
               : t('Provenance could not be loaded')
           }
           description={failure.message}
+          content={
+            failure.kind === 'integrity-failed' ? (
+              <p>
+                {t(
+                  'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'
+                )}
+              </p>
+            ) : undefined
+          }
           primaryButton={onRetry ? { label: t('Retry'), onClick: onRetry } : undefined}
         />
       </div>

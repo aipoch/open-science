@@ -34,6 +34,8 @@ export type ArtifactCodeReconstructionState =
       state: 'unavailable'
       reason:
         | 'execution-unavailable'
+        | 'script-not-applicable'
+        | 'record-invalid'
         | 'producer-unavailable'
         | 'producer-script-missing'
         | 'helper-evidence-incomplete'

@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
@@ -24,7 +25,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
-  CircleAlert,
   Download,
   LoaderCircle,
   PackagePlus,
@@ -95,7 +95,7 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
@@ -311,6 +311,10 @@ const codeReconstructionUnavailableLabel = (
   t: TFunction
 ): string => {
   switch (reason) {
+    case 'script-not-applicable':
+      return t('This version was produced by a connector without a Notebook script.')
+    case 'record-invalid':
+      return t('The records for this version failed integrity validation.')
     case 'execution-unavailable':
       return t('A reconstruction needs an immutable Execution Log for this version.')
     case 'producer-unavailable':
@@ -1518,28 +1522,39 @@ const ArtifactProvenancePanel = ({
     codeReconstructionState?.state === 'cached' ? codeReconstructionState.value : undefined
 
   const editSummary = isUserEdit ? (
-    <div className="space-y-1.5 text-xs text-text-300">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{t('Edited in Open-Science')}</span>
-        {basedOnVersionId && basedOnVersionNumber !== undefined ? (
-          <button
-            type="button"
-            aria-label={t('Open source version v{{version}}', { version: basedOnVersionNumber })}
-            className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => selectVersion(basedOnVersionId)}
-          >
-            {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
-          </button>
-        ) : (
-          <span>{t('Based on an earlier immutable version.')}</span>
-        )}
-      </div>
-      <p>
-        {t(
-          'This edited version has no new agent execution. View the source version for its code, messages and execution evidence.'
-        )}
-      </p>
-    </div>
+    <ErrorNotice
+      level="info"
+      className="w-full min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+      title={t('Script reconstruction is not applicable to v{{version}}', {
+        version: selectedVersionDescriptor?.versionNumber
+      })}
+      content={
+        <div className="space-y-1.5 text-xs">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{t('Edited in Open-Science')}</span>
+            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+              <button
+                type="button"
+                aria-label={t('Open source version v{{version}}', {
+                  version: basedOnVersionNumber
+                })}
+                className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => selectVersion(basedOnVersionId)}
+              >
+                {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
+              </button>
+            ) : (
+              <span>{t('Based on an earlier immutable version.')}</span>
+            )}
+          </div>
+          <p>
+            {t(
+              'This edited version has no new agent execution. View the source version for its code, messages and execution evidence.'
+            )}
+          </p>
+        </div>
+      }
+    />
   ) : undefined
 
   return (
@@ -1650,6 +1665,7 @@ const ArtifactProvenancePanel = ({
       >
         {error ? (
           <ProvenanceLoadNotice
+            versionNumber={selectedVersionDescriptor?.versionNumber}
             key={provenanceKey + ':core'}
             failure={error}
             diagnostics={diagnosticsFor(error, lineageResult?.error ? 'lineage' : 'core')}
@@ -1669,9 +1685,21 @@ const ArtifactProvenancePanel = ({
           <section className="px-4 py-3">{editSummary}</section>
         ) : null}
         {!error && isLegacyVersion ? (
-          <p className="p-5 text-sm text-text-300">
-            {t('Provenance is not available for this legacy version.')}
-          </p>
+          <ErrorNotice
+            level="warning"
+            className="w-full rounded-none"
+            title={t('Execution evidence is incomplete for v{{version}}', {
+              version: selectedVersionDescriptor?.versionNumber
+            })}
+            description={t('Provenance is not available for this legacy version.')}
+            content={
+              <p>
+                {t(
+                  'Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.'
+                )}
+              </p>
+            }
+          />
         ) : null}
         {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
@@ -1697,6 +1725,7 @@ const ArtifactProvenancePanel = ({
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (
           <ProvenanceLoadNotice
+            versionNumber={selectedVersionDescriptor?.versionNumber}
             key={deferredSectionKey}
             failure={deferredSectionResult}
             diagnostics={diagnosticsFor(deferredSectionResult, activeTab)}
@@ -1709,6 +1738,7 @@ const ArtifactProvenancePanel = ({
           <section>
             {provenance.contentStatus.state === 'unavailable' ? (
               <ProvenanceLoadNotice
+                versionNumber={selectedVersionDescriptor?.versionNumber}
                 key={provenanceKey + ':content'}
                 failure={{
                   kind: 'integrity-failed',
@@ -1810,27 +1840,8 @@ const ArtifactProvenancePanel = ({
                 >
                   {codeReconstructionResult.message}
                 </p>
-              ) : codeReconstructionState?.state === 'unavailable' ? (
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div
-                        role="status"
-                        tabIndex={0}
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-status-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-status-warning-dark-foreground"
-                      >
-                        <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
-                        <p className="min-w-0 truncate text-xs leading-5">
-                          {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
-                        </p>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" align="start">
-                      {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              ) : codeReconstructionResult?.status === 'generating' ? (
+              ) : codeReconstructionState?.state ===
+                'unavailable' ? null : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   {codeReconstructionState?.state === 'ready' &&
                   codeReconstructionState.origin === 'app-replay'
@@ -1858,6 +1869,46 @@ const ArtifactProvenancePanel = ({
                 inputFiles={producerInputs}
                 label={t('Inputs')}
                 className="border-b border-border-300/50 px-4 py-2"
+              />
+            ) : null}
+            {codeReconstructionState?.state === 'unavailable' ? (
+              <ErrorNotice
+                className="w-full min-w-0 rounded-none whitespace-normal [overflow-wrap:anywhere]"
+                role={codeReconstructionState.reason === 'record-invalid' ? 'alert' : 'status'}
+                level={
+                  codeReconstructionState.reason === 'record-invalid'
+                    ? 'error'
+                    : codeReconstructionState.reason === 'script-not-applicable'
+                      ? 'info'
+                      : 'warning'
+                }
+                title={
+                  codeReconstructionState.reason === 'record-invalid'
+                    ? t('Record validation failed for v{{version}}', {
+                        version: selectedVersionDescriptor?.versionNumber
+                      })
+                    : codeReconstructionState.reason === 'script-not-applicable'
+                      ? t('Script reconstruction is not applicable to v{{version}}', {
+                          version: selectedVersionDescriptor?.versionNumber
+                        })
+                      : t('Execution evidence is incomplete for v{{version}}', {
+                          version: selectedVersionDescriptor?.versionNumber
+                        })
+                }
+                description={codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
+                content={
+                  <p>
+                    {codeReconstructionState.reason === 'record-invalid'
+                      ? t(
+                          'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'
+                        )
+                      : codeReconstructionState.reason === 'script-not-applicable'
+                        ? t('Review the connector execution details for this version.')
+                        : t(
+                            'Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.'
+                          )}
+                  </p>
+                }
               />
             ) : null}
             {generatedCode?.sourceTruncated ||

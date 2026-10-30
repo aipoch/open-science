@@ -7686,6 +7686,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "문헌이 저장되었습니다. 일부 PDF를 복사하지 못했습니다. Zotero에서 파일을 복원한 후 다시 시도하세요.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Zotero에 연결할 수 없습니다. Zotero 10 이상을 실행한 후 다시 시도하세요.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Zotero의 설정 → 고급에서 이 컴퓨터의 다른 애플리케이션이 Zotero와 통신하도록 허용한 후 다시 시도하세요.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 응답 시간이 초과되었습니다. 시작이 완료될 때까지 기다린 후 다시 시도하세요."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 응답 시간이 초과되었습니다. 시작이 완료될 때까지 기다린 후 다시 시도하세요.",
+    "Restore as new version": "새 버전으로 복원",
+    "Script reconstruction is not applicable to v{{version}}": "v{{version}}에는 스크립트 재구성이 적용되지 않습니다",
+    "Execution evidence is incomplete for v{{version}}": "v{{version}}의 실행 증거가 불완전합니다",
+    "Record validation failed for v{{version}}": "v{{version}}의 기록 검증에 실패했습니다",
+    "This version was produced by a connector without a Notebook script.": "이 버전은 Notebook 스크립트 없이 커넥터에서 생성되었습니다.",
+    "The records for this version failed integrity validation.": "이 버전의 기록이 무결성 검증을 통과하지 못했습니다.",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "조사를 위해 이 버전과 진단 정보를 보관하세요. 이 기록으로 스크립트를 생성하지 마세요.",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "파일을 생성한 작업을 다시 실행하여 새 버전의 완전한 증거를 수집하세요. 이전 기록은 변경되지 않습니다.",
+    "Review the connector execution details for this version.": "이 버전의 커넥터 실행 세부 정보를 확인하세요."
   }
 }

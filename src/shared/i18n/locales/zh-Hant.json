@@ -7688,6 +7688,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "文獻已儲存。部分 PDF 無法複製；請在 Zotero 中還原檔案後重試。",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "無法連線至 Zotero。請開啟 Zotero 10 或更新版本，然後重試。",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "請在 Zotero 的「設定 → 進階」中啟用「允許此電腦上的其他應用程式與 Zotero 通訊」，然後重試。",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 回應逾時。請等待其啟動完成，然後重試。"
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero 回應逾時。請等待其啟動完成，然後重試。",
+    "Restore as new version": "還原為新版本",
+    "Script reconstruction is not applicable to v{{version}}": "v{{version}} 不適用指令碼重建",
+    "Execution evidence is incomplete for v{{version}}": "v{{version}} 的執行證據不完整",
+    "Record validation failed for v{{version}}": "v{{version}} 的記錄驗證失敗",
+    "This version was produced by a connector without a Notebook script.": "此版本由連接器產生，沒有 Notebook 指令碼。",
+    "The records for this version failed integrity validation.": "此版本的記錄未通過完整性驗證。",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "請保留此版本及其診斷資訊以便調查，不要使用其記錄產生指令碼。",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "請重新執行產生此檔案的任務，為新版本擷取完整證據。歷史記錄保持不變。",
+    "Review the connector execution details for this version.": "請檢視此版本的連接器執行詳細資訊。"
   }
 }

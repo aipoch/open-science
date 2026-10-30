@@ -8028,6 +8028,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Referencias guardadas. No se pudieron copiar algunos PDF; restáurelos en Zotero y vuelva a intentarlo.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "No se pudo conectar con Zotero. Abra Zotero 10 o posterior e inténtelo de nuevo.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "En Zotero, abra Ajustes → Avanzado y permita que otras aplicaciones de este equipo se comuniquen con Zotero. Después, inténtelo de nuevo.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero no respondió a tiempo. Espere a que termine de iniciarse e inténtelo de nuevo."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero no respondió a tiempo. Espere a que termine de iniciarse e inténtelo de nuevo.",
+    "Restore as new version": "Restaurar como nueva versión",
+    "Script reconstruction is not applicable to v{{version}}": "La reconstrucción del script no se aplica a v{{version}}",
+    "Execution evidence is incomplete for v{{version}}": "Las evidencias de ejecución de v{{version}} están incompletas",
+    "Record validation failed for v{{version}}": "Falló la validación de los registros de v{{version}}",
+    "This version was produced by a connector without a Notebook script.": "Esta versión fue generada por un Conector sin un script de Notebook.",
+    "The records for this version failed integrity validation.": "Los registros de esta versión no superaron la validación de integridad.",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Conserve esta versión y sus datos de diagnóstico para su investigación. No utilice sus registros para generar un script.",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Vuelva a ejecutar la tarea que generó el archivo para capturar evidencias completas de una nueva versión. Los registros históricos no se modifican.",
+    "Review the connector execution details for this version.": "Revise los detalles de ejecución del Conector de esta versión."
   }
 }

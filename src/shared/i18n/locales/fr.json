@@ -8028,6 +8028,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Références enregistrées. Certains PDF n’ont pas pu être copiés ; restaurez-les dans Zotero et réessayez.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Impossible de se connecter à Zotero. Ouvrez Zotero 10 ou une version ultérieure, puis réessayez.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Dans Zotero, ouvrez Paramètres → Avancées et autorisez les autres applications de cet ordinateur à communiquer avec Zotero, puis réessayez.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero n’a pas répondu à temps. Attendez la fin de son démarrage, puis réessayez."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero n’a pas répondu à temps. Attendez la fin de son démarrage, puis réessayez.",
+    "Restore as new version": "Restaurer comme nouvelle version",
+    "Script reconstruction is not applicable to v{{version}}": "La reconstruction du script ne s’applique pas à v{{version}}",
+    "Execution evidence is incomplete for v{{version}}": "Les preuves d’exécution de v{{version}} sont incomplètes",
+    "Record validation failed for v{{version}}": "Échec de la validation des enregistrements de v{{version}}",
+    "This version was produced by a connector without a Notebook script.": "Cette version a été produite par un Connecteur sans script Notebook.",
+    "The records for this version failed integrity validation.": "Les enregistrements de cette version ont échoué à la validation d’intégrité.",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Conservez cette version et ses diagnostics pour investigation. N’utilisez pas ses enregistrements pour générer un script.",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Relancez la tâche de génération pour capturer des preuves complètes pour une nouvelle version. Les enregistrements historiques restent inchangés.",
+    "Review the connector execution details for this version.": "Consultez les détails d’exécution du Connecteur pour cette version."
   }
 }

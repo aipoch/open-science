@@ -134,7 +134,7 @@ const setupEditedReport = async (): Promise<{
 }
 
 it.each(['local', 'casefold', 'inline', 'multiple-edits'] as const)(
-  'preserves the user head when %s publication repeats pre-edit bytes, including replay',
+  'activates a new %s publication of historical bytes without losing edits',
   async (source) => {
     const { first, identity, saved } = await setupEditedReport()
     let expectedHead = saved.version.id
@@ -158,6 +158,9 @@ it.each(['local', 'casefold', 'inline', 'multiple-edits'] as const)(
     )
     expect(stale.version.artifactId).toBe(first.version.artifactId)
     await publish(stale)
+    expectedHead = stale.version.versionId
+    expectedText = original
+    await publish(first)
     await publish(stale)
     expect(await service.inspect(identity)).toMatchObject({
       headVersionId: expectedHead,
@@ -202,7 +205,7 @@ it.each(['local', 'casefold', 'inline', 'multiple-edits'] as const)(
   }
 )
 
-it('does not revert to an earlier user edit when that content is generated again', async () => {
+it('activates a new publication even when its bytes match an earlier edit', async () => {
   const { identity, saved } = await setupEditedReport()
   const second = await service.saveTextEdit({
     ...identity,
@@ -212,10 +215,11 @@ it('does not revert to an earlier user edit when that content is generated again
     content: updated
   })
   if (second.kind !== 'created') throw new Error('Expected second edit')
-  await publish(await prepare(2, edited))
+  const republished = await prepare(2, edited)
+  await publish(republished)
   expect(await service.inspect(identity)).toMatchObject({
-    headVersionId: second.version.id,
-    text: updated
+    headVersionId: republished.version.versionId,
+    text: edited
   })
 })
 
@@ -252,14 +256,15 @@ it('keeps ordinary repeated publication working when no manual edit exists', asy
 it.each([
   ['same edited bytes', edited],
   ['new follow-up content', updated]
-])('preserves edits after publishing %s and then repeating the old source', async (_, content) => {
+])('activates historical bytes after publishing %s', async (_, content) => {
   const { identity } = await setupEditedReport()
   const next = await prepare(2, content)
   await publish(next)
-  await publish(await prepare(3))
+  const republished = await prepare(3)
+  await publish(republished)
   expect(await service.inspect(identity)).toMatchObject({
-    headVersionId: next.version.versionId,
-    text: content
+    headVersionId: republished.version.versionId,
+    text: original
   })
 })
 
@@ -333,5 +338,70 @@ it('does not match historical bytes from another lineage', async () => {
   expect(await service.inspect(identity)).toMatchObject({
     headVersionId: next.version.versionId,
     text: updated
+  })
+})
+
+// Reopening the service and replaying old completion must preserve the explicit restoration.
+it('publishes v3, restores edited v2 as v4 and retains that head after restart and replay', async () => {
+  const { first, identity, saved } = await setupEditedReport()
+  const third = await prepare(2)
+  await publish(third)
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: third.version.versionId,
+    text: original
+  })
+  expect(third.version.versionNumber).toBe(3)
+  const historical = await service.inspect({ ...identity, versionId: saved.version.id })
+  expect(historical.text).toBe(edited)
+  const restored = await service.saveTextEdit({
+    ...identity,
+    basedOnVersionId: saved.version.id,
+    expectedHeadVersionId: third.version.versionId,
+    operationId: 'restore-v2',
+    restore: true,
+    content: edited
+  })
+  if (restored.kind !== 'created') throw new Error('Expected a new restoration')
+  expect(restored.version.versionNumber).toBe(4)
+  service = new ManagedFileVersionService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  await publish(first)
+  await publish(third)
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: restored.version.id,
+    text: edited
+  })
+  expect(await service.inspect({ ...identity, versionId: saved.version.id })).toMatchObject({
+    text: edited
+  })
+  expect(await service.inspect({ ...identity, versionId: third.version.versionId })).toMatchObject({
+    text: original
+  })
+})
+
+// Older app versions published the row but suppressed its head based on content equality.
+it('does not silently promote a previously suppressed version during completion replay', async () => {
+  const { identity, saved } = await setupEditedReport()
+  const suppressed = await prepare(2)
+  await publish(suppressed)
+  await fixture.client.artifactLineage.update({
+    where: { id: identity.fileId },
+    data: { currentVersionId: saved.version.id }
+  })
+  await publish(suppressed)
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: saved.version.id,
+    text: edited
+  })
+  expect(
+    await service.inspect({ ...identity, versionId: suppressed.version.versionId })
+  ).toMatchObject({ text: original })
+  const fresh = await prepare(3)
+  await publish(fresh)
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: fresh.version.versionId,
+    text: original
   })
 })

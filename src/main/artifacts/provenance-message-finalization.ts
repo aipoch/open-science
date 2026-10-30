@@ -475,7 +475,12 @@ export class ArtifactProvenanceMessageFinalizer {
         where: { id: { in: matching.map((version) => version.id) }, managedVisibleAt: null },
         data: { managedVisibleAt: publishedAt }
       })
-      await this.activateLineageHeads(transaction, matching)
+      // Visibility and head promotion commit atomically. Replaying an already visible row must
+      // not migrate historical heads suppressed by earlier app versions.
+      await this.activateLineageHeads(
+        transaction,
+        matching.filter((version) => !version.managedVisibleAt)
+      )
       return matching.map((version) => ({
         ...version,
         managedVisibleAt: version.managedVisibleAt ?? publishedAt
@@ -562,41 +567,8 @@ export class ArtifactProvenanceMessageFinalizer {
         !lineage.currentVersion ||
         lineage.currentVersion.versionNumber < latestMatching.versionNumber
       ) {
-        // Editing an immutable version does not rewrite the producer's workspace file. Keep a
-        // repeat of pre-edit bytes as message-owned history without making it current. Anchor
-        // protection to the last published edit even after an intervening generated update.
-        // A new checksum remains eligible; this is exact-content replay protection, not a merge.
-        const currentVersion = lineage.currentVersion
-        if (currentVersion && currentVersion.checksum !== latestMatching.checksum) {
-          const lastEdit =
-            currentVersion.originKind === 'user_edit'
-              ? currentVersion
-              : await transaction.artifactVersion.findFirst({
-                  where: {
-                    artifactId,
-                    originKind: 'user_edit',
-                    versionNumber: { lt: currentVersion.versionNumber },
-                    state: 'finalized',
-                    managedVisibleAt: { not: null }
-                  },
-                  orderBy: { versionNumber: 'desc' },
-                  select: { versionNumber: true }
-                })
-          if (lastEdit) {
-            const repeatedVersion = await transaction.artifactVersion.findFirst({
-              where: {
-                artifactId,
-                versionNumber: { lt: lastEdit.versionNumber },
-                state: 'finalized',
-                managedVisibleAt: { not: null },
-                checksum: latestMatching.checksum,
-                sizeBytes: latestMatching.sizeBytes
-              },
-              select: { id: true }
-            })
-            if (repeatedVersion) continue
-          }
-        }
+        // Each valid new publication becomes current, even when its bytes match history.
+        // The version-number guard above keeps old completion retries from moving the head back.
         await transaction.artifactLineage.update({
           where: { id: artifactId },
           data: { currentVersionId: latestMatching.id }

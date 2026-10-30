@@ -7854,6 +7854,15 @@
     "References were saved. Some PDFs could not be copied; restore them in Zotero and retry.": "Literaturangaben gespeichert. Einige PDFs konnten nicht kopiert werden. Stellen Sie sie in Zotero wieder her und versuchen Sie es erneut.",
     "Could not connect to Zotero. Open Zotero 10 or later, then try again.": "Verbindung zu Zotero fehlgeschlagen. Öffnen Sie Zotero 10 oder neuer und versuchen Sie es erneut.",
     "In Zotero, open Settings → Advanced and enable “Allow other applications on this computer to communicate with Zotero”, then try again.": "Öffnen Sie in Zotero Einstellungen → Erweitert und erlauben Sie anderen Anwendungen auf diesem Computer, mit Zotero zu kommunizieren. Versuchen Sie es dann erneut.",
-    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero hat nicht rechtzeitig geantwortet. Warten Sie, bis der Start abgeschlossen ist, und versuchen Sie es erneut."
+    "Zotero did not respond in time. Wait for it to finish starting, then try again.": "Zotero hat nicht rechtzeitig geantwortet. Warten Sie, bis der Start abgeschlossen ist, und versuchen Sie es erneut.",
+    "Restore as new version": "Als neue Version wiederherstellen",
+    "Script reconstruction is not applicable to v{{version}}": "Skriptrekonstruktion ist für v{{version}} nicht anwendbar",
+    "Execution evidence is incomplete for v{{version}}": "Ausführungsnachweise für v{{version}} sind unvollständig",
+    "Record validation failed for v{{version}}": "Datensatzprüfung für v{{version}} fehlgeschlagen",
+    "This version was produced by a connector without a Notebook script.": "Diese Version wurde von einem Konnektor ohne Notebook-Skript erzeugt.",
+    "The records for this version failed integrity validation.": "Die Datensätze dieser Version haben die Integritätsprüfung nicht bestanden.",
+    "Keep this version and its diagnostics for investigation. Do not use its records to generate a script.": "Bewahren Sie diese Version und ihre Diagnosedaten zur Untersuchung auf. Verwenden Sie ihre Datensätze nicht zur Skripterzeugung.",
+    "Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.": "Führen Sie die erzeugende Aufgabe erneut aus, um vollständige Nachweise für eine neue Version zu erfassen. Historische Datensätze bleiben unverändert.",
+    "Review the connector execution details for this version.": "Prüfen Sie die Ausführungsdetails des Konnektors für diese Version."
   }
 }

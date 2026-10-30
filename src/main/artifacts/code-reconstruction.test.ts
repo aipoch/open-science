@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
@@ -1169,3 +1170,36 @@ it.skipIf(!process.env.REPRO_REAL_EXECUTION_SNAPSHOT)(
     expect(harness.run).not.toHaveBeenCalled()
   }
 )
+
+// Equal content is not authority to use another version's execution or cached script.
+it('rejects reconstruction evidence belonging to another version with identical bytes', async () => {
+  const value = provenance()
+  value.evidence.version_id = 'another-version'
+  const harness = makeHarness(value)
+  expect(await harness.service.get(request)).toEqual({
+    state: 'unavailable',
+    reason: 'record-invalid'
+  })
+  expect(await harness.service.generate(request)).toEqual({
+    state: 'unavailable',
+    reason: 'record-invalid'
+  })
+  expect(harness.run).not.toHaveBeenCalled()
+})
+
+it('blocks script generation on a corrupt execution record before consulting cache', async () => {
+  const harness = makeHarness()
+  harness.getVersionProvenanceForCodeReconstruction.mockRejectedValue(
+    new ProvenanceIntegrityError('Execution checksum mismatch')
+  )
+  expect(await harness.service.get(request)).toEqual({
+    state: 'unavailable',
+    reason: 'record-invalid'
+  })
+  expect(await harness.service.generate(request)).toEqual({
+    state: 'unavailable',
+    reason: 'record-invalid'
+  })
+  expect(harness.readCodeReconstructionCache).not.toHaveBeenCalled()
+  expect(harness.run).not.toHaveBeenCalled()
+})
