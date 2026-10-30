@@ -7680,6 +7680,15 @@
     "Copy error": "오류 복사",
     "The action could not be completed. See details and try again.": "작업을 완료하지 못했습니다. 세부 정보를 확인한 후 다시 시도하세요.",
     "Still need help? Report this error": "도움이 더 필요하신가요? 오류 신고",
-    "{{count}} more notices_other": "알림 {{count}}개 더 보기"
+    "{{count}} more notices_other": "알림 {{count}}개 더 보기",
+    "Set two-column body": "본문을 두 단으로 설정",
+    "Save body area": "본문 영역 저장",
+    "Drag across both columns, then confirm the divider.": "두 단을 모두 드래그한 다음 구분선을 확인하세요.",
+    "Body areas are unavailable on rotated pages.": "회전된 페이지에서는 본문 영역을 사용할 수 없습니다.",
+    "Column divider": "단 구분선",
+    "Two-column body": "두 단 본문",
+    "Clear two-column correction on this page": "이 페이지의 2단 보정 지우기",
+    "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
+    "Applies to your next message. Select body text only; exclude tables.": "다음 메시지에 적용됩니다. 본문만 선택하고 표는 제외하세요."
   }
 }

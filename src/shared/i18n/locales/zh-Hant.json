@@ -7682,6 +7682,15 @@
     "Copy error": "複製錯誤",
     "The action could not be completed. See details and try again.": "操作未能完成。請查看詳細資訊後重試。",
     "Still need help? Report this error": "仍需協助？提交此錯誤",
-    "{{count}} more notices_other": "還有 {{count}} 則提示"
+    "{{count}} more notices_other": "還有 {{count}} 則提示",
+    "Set two-column body": "設定雙欄正文",
+    "Save body area": "儲存正文區域",
+    "Drag across both columns, then confirm the divider.": "拖曳選取兩欄，然後確認分隔線。",
+    "Body areas are unavailable on rotated pages.": "旋轉頁面無法設定正文區域。",
+    "Column divider": "欄間分隔線",
+    "Two-column body": "雙欄正文",
+    "Clear two-column correction on this page": "清除此頁雙欄校正",
+    "You can configure up to 32 pages.": "最多可設定 32 頁。",
+    "Applies to your next message. Select body text only; exclude tables.": "此設定適用於你的下一則訊息。僅選取正文，排除表格。"
   }
 }

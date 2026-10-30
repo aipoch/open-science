@@ -672,7 +672,7 @@ describe('consumeInlineImageBudget', () => {
 })
 
 describe('extractPdfText', () => {
-  it('automatically orders ragged columns in both ordinary and targeted extraction, ignoring legacy regions', async () => {
+  it('automatically orders ragged columns in both ordinary and targeted extraction', async () => {
     const rows = [
       ['Left first sentence.', 'Right first sentence.'],
       ['Left second sentence.', 'Right second sentence.'],
@@ -711,10 +711,9 @@ describe('extractPdfText', () => {
       await expect(extractPdfText(filePath, page)).resolves.toMatchObject({
         text: `--- Page 1 ---\n${text}`
       })
-      await expect(extractPdfText(filePath, page, { proseRegions })).resolves.toMatchObject({
-        text: `--- Page 1 ---\n${text}`,
-        truncated: false
-      })
+      await expect(extractPdfText(filePath, page, { proseRegions })).rejects.toThrow(
+        'PDF_READING_REGION_INVALID'
+      )
     }
     await expect(extractPdfTextPages(filePath, [1])).resolves.toMatchObject({
       pages: [{ pageNumber: 1, text }],

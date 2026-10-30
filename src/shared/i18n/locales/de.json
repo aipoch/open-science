@@ -7848,6 +7848,15 @@
     "The action could not be completed. See details and try again.": "Die Aktion konnte nicht abgeschlossen werden. Prüfen Sie die Details und versuchen Sie es erneut.",
     "Still need help? Report this error": "Benötigen Sie weitere Hilfe? Fehler melden",
     "{{count}} more notices_one": "{{count}} weiterer Hinweis",
-    "{{count}} more notices_other": "{{count}} weitere Hinweise"
+    "{{count}} more notices_other": "{{count}} weitere Hinweise",
+    "Set two-column body": "Zweispaltigen Textbereich festlegen",
+    "Save body area": "Textbereich speichern",
+    "Drag across both columns, then confirm the divider.": "Ziehen Sie über beide Spalten und bestätigen Sie anschließend die Trennlinie.",
+    "Body areas are unavailable on rotated pages.": "Auf gedrehten Seiten sind Textbereiche nicht verfügbar.",
+    "Column divider": "Spaltentrennlinie",
+    "Two-column body": "Zweispaltiger Textbereich",
+    "Clear two-column correction on this page": "Zweispaltenkorrektur auf dieser Seite entfernen",
+    "You can configure up to 32 pages.": "Sie können bis zu 32 Seiten konfigurieren.",
+    "Applies to your next message. Select body text only; exclude tables.": "Gilt für Ihre nächste Nachricht. Wählen Sie nur den Fließtext aus; Tabellen müssen ausgeschlossen bleiben."
   }
 }

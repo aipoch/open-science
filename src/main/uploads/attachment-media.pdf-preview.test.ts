@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { renderPdfPagePreviews } from './attachment-media'
-import { extractPdfTextPages } from './pdf-text-extraction'
+import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { extractPdfText, extractPdfTextPages } from './pdf-text-extraction'
 
 const twoPagePdf = (): Buffer => {
   const pageTwoStream = 'BT /F1 12 Tf 10 50 Td (Page two claim) Tj ET'
@@ -39,6 +40,54 @@ describe('targeted PDF preview rendering', () => {
 
   afterEach(async () => {
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('keeps ambiguous actual PDF columns conservative and applies only confirmed page corrections', async () => {
+    const document = await PDFDocument.create()
+    const font = await document.embedFont(StandardFonts.Helvetica)
+    for (const pageNumber of [1, 2]) {
+      const page = document.addPage([600, 800])
+      for (let row = 1; row <= 24; row++) {
+        page.drawText(`P${pageNumber}L${row} Left prose follows the previous sentence.`, {
+          x: 40,
+          y: 700 - row * 16,
+          size: 9,
+          font
+        })
+        page.drawText(`P${pageNumber}R${row} Right prose continues in its own column.`, {
+          x: 330,
+          y: pageNumber === 1 ? 695 - row * 17 : 700 - row * 16,
+          size: 9,
+          font
+        })
+      }
+    }
+    const path = join(root, 'actual-columns.pdf')
+    await writeFile(path, await document.save())
+    const ids = (text: string, page: number): string[] =>
+      text.match(new RegExp(`P${page}[LR]\\d+`, 'g')) ?? []
+    const expected = (page: number): string[] =>
+      ['L', 'R'].flatMap((column) =>
+        Array.from({ length: 24 }, (_, row) => `P${page}${column}${row + 1}`)
+      )
+    const automatic = await extractPdfText(path)
+    const native = (page: number): string[] =>
+      Array.from({ length: 24 }, (_, row) => [`P${page}L${row + 1}`, `P${page}R${row + 1}`]).flat()
+    expect(ids(automatic.text, 1)).toEqual(native(1))
+    expect(ids(automatic.text, 2)).toEqual(
+      Array.from({ length: 24 }, (_, row) => [`P2L${row + 1}`, `P2R${row + 1}`]).flat()
+    )
+    const proseRegions = [{ page: 2, left: 0.04, top: 0.1, right: 0.95, bottom: 0.95, split: 0.48 }]
+    const corrected = await extractPdfText(path, undefined, { proseRegions })
+    expect(ids(corrected.text, 1)).toEqual(native(1))
+    expect(ids(corrected.text, 2)).toEqual(expected(2))
+    const targeted = await extractPdfTextPages(path, [1])
+    expect(ids(targeted.pages[0]!.text, 1)).toEqual(native(1))
+    const firstPageRegions = [{ ...proseRegions[0]!, page: 1 }]
+    expect(
+      ids((await extractPdfText(path, 1, { proseRegions: firstPageRegions })).text, 1)
+    ).toEqual(expected(1))
+    expect(ids((await extractPdfText(path, 2, { proseRegions })).text, 2)).toEqual(expected(2))
   })
 
   it('extracts and rasterizes only requested page two', async () => {

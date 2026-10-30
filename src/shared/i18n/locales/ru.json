@@ -8168,6 +8168,15 @@
     "{{count}} more notices_one": "Ещё {{count}} уведомление",
     "{{count}} more notices_few": "Ещё {{count}} уведомления",
     "{{count}} more notices_many": "Ещё {{count}} уведомлений",
-    "{{count}} more notices_other": "Ещё {{count}} уведомления"
+    "{{count}} more notices_other": "Ещё {{count}} уведомления",
+    "Set two-column body": "Задать две колонки основного текста",
+    "Save body area": "Сохранить область основного текста",
+    "Drag across both columns, then confirm the divider.": "Выделите обе колонки перетаскиванием, затем подтвердите разделитель.",
+    "Body areas are unavailable on rotated pages.": "Для повёрнутых страниц нельзя задать область основного текста.",
+    "Column divider": "Разделитель колонок",
+    "Two-column body": "Основной текст в две колонки",
+    "Clear two-column correction on this page": "Удалить коррекцию двух колонок на этой странице",
+    "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
+    "Applies to your next message. Select body text only; exclude tables.": "Применяется к следующему сообщению. Выделите только основной текст, исключив таблицы."
   }
 }
