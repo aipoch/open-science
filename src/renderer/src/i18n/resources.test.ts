@@ -2103,7 +2103,7 @@ describe('mandatory product glossary', () => {
       'Notebook runtime',
       'Notebook runtime (optional)',
       'Notebook runtimes',
-      'The selection is saved, but the Agent runtime has not applied it yet. Your draft and queued messages are preserved.',
+      'Check the required runtime, files and permissions, then retry.',
       'Set up the agent runtime',
       'Setting up the notebook runtime — wait for it to finish, or cancel it, to continue.',
       'Setting up {{language}} runtime',

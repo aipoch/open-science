@@ -1715,17 +1715,18 @@ describe('PR Gate workflow', () => {
   it.each([
     ['runtime_checks', 'Install dependencies'],
     ['linux_runtime', 'Install application dependencies'],
-    ['unit_shard', 'Install dependencies']
-  ])('avoids optional GPU downloads while retaining native loading in %s', (job, installStep) => {
-    const steps = workflow.jobs[job].steps
-    expect(steps?.find(({ name }) => name === installStep)).toMatchObject({
-      env: { ONNXRUNTIME_NODE_INSTALL: 'skip' },
-      run: 'node scripts/ci/npm-ci.mjs'
-    })
-    expect(steps?.find(({ name }) => name === 'Verify ONNX native loading')?.run).toBe(
-      `node -e "require('onnxruntime-node')"`
-    )
-  })
+    ['unit_shard', 'Install dependencies'],
+    ['package_source', 'Install dependencies']
+  ])(
+    'installs locked dependencies without the retired local translation runtime in %s',
+    (job, installStep) => {
+      const steps = workflow.jobs[job].steps
+      const install = steps?.find(({ name }) => name === installStep)
+      expect(install?.run).toBe('node scripts/ci/npm-ci.mjs')
+      expect(install?.env?.ONNXRUNTIME_NODE_INSTALL).toBeUndefined()
+      expect(steps?.some(({ run }) => run?.includes('onnxruntime-node'))).toBe(false)
+    }
+  )
 
   it('preserves test commands while moving matrix setup into platform producers', () => {
     for (const bundle of ['static', 'unit_shard', 'windows_core', 'macos_e2e_setup']) {
@@ -2116,6 +2117,7 @@ describe('PR Gate workflow', () => {
     expect(linuxDependencies?.run).toContain('apt-get install --yes --no-install-recommends')
     expect(linuxDependencies?.run).toContain('apparmor-profiles')
     expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
+    expect(linuxDependencies?.run).toContain('scripts/ci/bwrap-userns-restrict')
     expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
     expect(linuxDependencies?.run).not.toContain('apparmor_restrict_unprivileged_userns=0')
     expect(

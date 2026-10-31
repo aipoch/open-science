@@ -56,7 +56,7 @@ const harness = async (
         runtimeTranscriptOwner: owner,
         status: mode === 'rearm' ? 'idle' : 'error',
         error: mode === 'rearm' ? undefined : 'Original interruption',
-        errorReportable: mode === 'rearm' ? undefined : false,
+        failure: mode === 'rearm' ? undefined : { category: 'service', diagnostics: {} },
         resumeRecovery:
           mode === 'rearm'
             ? undefined
@@ -89,6 +89,7 @@ const harness = async (
             cause: 'connection-lost',
             settledAt: 2,
             error: 'Original interruption',
+            failure: { category: 'session', diagnostics: {} },
             recovery: 'resume'
           }
     )
@@ -473,10 +474,21 @@ it.each(['interrupted', 'cancelled', 'failed'] as const)(
         },
         'old',
         kind === 'failed'
-          ? { kind, settledAt: 2, error: 'Earlier provider failure' }
+          ? {
+              kind,
+              settledAt: 2,
+              error: 'Earlier provider failure',
+              failure: { category: 'service', diagnostics: {} }
+            }
           : kind === 'cancelled'
             ? { kind, settledAt: 2, recovery: 'resume' }
-            : { kind, settledAt: 2, recovery: 'resume', cause: 'connection-lost' }
+            : {
+                kind,
+                settledAt: 2,
+                recovery: 'resume',
+                cause: 'connection-lost',
+                failure: { category: 'session', diagnostics: {} }
+              }
       )
     )
     await h.main.saveSession(prior, {
@@ -507,7 +519,7 @@ it('preserves concurrent Main state while releasing only the prepared run', asyn
   await h.main.mutateRuntimeSession(h.scope, (latest) => ({
     ...latest,
     error: 'Independent Main fact',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     title: 'Concurrent rename'
   }))
   await stateOwner(new SessionRepository(h.root)).prepareRuntimeResume({
@@ -517,7 +529,7 @@ it('preserves concurrent Main state while releasing only the prepared run', asyn
   const saved = await h.raw()
   expect(saved.activeRun).toBeUndefined()
   expect(saved.error).toBe('Independent Main fact')
-  expect(saved.errorReportable).toBe(false)
+  expect(saved.failure?.category).toBe('service')
   expect(saved.title).toBe('Concurrent rename')
   expect(saved.messages[1].turnOutcome).toBeUndefined()
 })
@@ -601,7 +613,7 @@ it('releases an unadmitted preparation when its caller lease ends without invent
   await h.main.mutateRuntimeSession(h.scope, (latest) => ({
     ...latest,
     error: 'Independent Main fact',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     title: 'Concurrent rename'
   }))
   callerA.abort()

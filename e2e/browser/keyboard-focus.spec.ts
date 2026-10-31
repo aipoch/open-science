@@ -278,7 +278,10 @@ test('skips Settings content wrappers without changing tab activation', async ({
     models.getByRole('link', { name: 'microsoft/table-transformer', exact: true })
   ).toBeFocused()
   await page.keyboard.press('Tab')
-  await expect(models.getByRole('button', { name: 'Install', exact: true })).toBeFocused()
+  const tableModel = models.locator('div.grid').filter({
+    has: page.getByRole('heading', { name: 'PDF figures and tables', exact: true })
+  })
+  await expect(tableModel.getByRole('button', { name: 'Install', exact: true })).toBeFocused()
   await expect(models.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')
   const capabilities = page.locator('[data-capabilities]')
   await expect(capabilities.getByRole('tabpanel')).toHaveAttribute('tabindex', '-1')

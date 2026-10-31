@@ -250,6 +250,13 @@ const callArtifactRpc = async (
   )
   const payload = (await response.json()) as ArtifactRpcResponse<ArtifactVersionFile>
 
+  if (response.status === 401) {
+    throw new Error(
+      'Artifact publication authorization has expired or is no longer active. Start a new conversation turn and retry publishing the existing file, preserving any producerRunId. Do not regenerate the file or drop provenance to retry. ' +
+        (payload.error ?? 'Artifact RPC authentication failed.')
+    )
+  }
+
   if (!response.ok || payload.error || !payload.result) {
     throw new Error(
       payload.error ?? `Artifact Provenance RPC failed with status ${response.status}`

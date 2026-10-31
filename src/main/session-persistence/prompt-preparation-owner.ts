@@ -42,7 +42,7 @@ const changedBranch = (): Error =>
 const stateFields = [
   'status',
   'error',
-  'errorReportable',
+  'failure',
   'resumeRecovery',
   'activeRun',
   'pendingHistoryReplay',
@@ -255,7 +255,7 @@ export class SessionPromptPreparationOwner {
         const previousState = {
           status: result.status,
           error: result.error,
-          errorReportable: result.errorReportable,
+          failure: result.failure,
           resumeRecovery: result.resumeRecovery
         }
         const noticePrompt = latestOutcomePrompt(result)
@@ -373,7 +373,7 @@ export class SessionPromptPreparationOwner {
               ? {
                   status: result.status,
                   error: result.error,
-                  errorReportable: result.errorReportable,
+                  failure: result.failure,
                   resumeRecovery: result.resumeRecovery
                 }
               : marker.previousState
@@ -386,7 +386,7 @@ export class SessionPromptPreparationOwner {
             expectedState: {
               status: next.status,
               error: next.error,
-              errorReportable: next.errorReportable,
+              failure: next.failure,
               resumeRecovery: structuredClone(next.resumeRecovery)
             }
           }

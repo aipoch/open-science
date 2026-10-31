@@ -571,7 +571,6 @@
       "src/main/literature/pdf-structure/engine.test.ts",
       "src/main/literature/pdf-structure/owner.test.ts",
       "src/main/literature/pdf-structure/source-metadata.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/session-pdf-source-resolver.test.ts",
       "src/main/literature/smart-collections.test.ts",

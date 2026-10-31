@@ -759,10 +759,6 @@ it('keeps provider units upstream of host adapters and selects real downstream c
       'src/main/settings/native-responses-compatibility.test.ts'
     ],
     [
-      'src/main/literature/pdf-translation/local.ts',
-      'src/main/literature/pdf-translation/local.test.ts'
-    ],
-    [
       'src/main/literature/pdf-translation/text-generation.ts',
       'src/main/literature/pdf-translation/text-generation.test.ts'
     ],

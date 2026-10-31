@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { describePromptError } from '../main/acp/prompt-error'
-import { buildUnsupportedCodexAcpVersionMessage } from './codex-runtime'
-import { isClaudeCliCompatibilityError } from './claude-runtime'
+import { describePromptError } from '../../main/acp/prompt-error'
+import { buildUnsupportedCodexAcpVersionMessage } from '../codex-runtime'
+import { classifyFailure } from './classify'
 import {
   buildActiveModelIncompatibleMessage,
   buildConfiguredModelUnavailableMessage,
@@ -17,12 +17,8 @@ import {
   RESUME_TIMED_OUT_MESSAGE,
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE,
-  VISION_EVIDENCE_INVALID_MESSAGE,
-  VISION_MODEL_NOT_CONFIGURED_MESSAGE,
-  isClaudeApiConnectionFailure,
-  isReportableRunFailure,
-  visionRunFailureMessage
-} from './run-error-classification'
+  VISION_EVIDENCE_INVALID_MESSAGE
+} from './messages'
 
 // This module is only the SECONDARY, text-based tier: it recognizes the app's OWN crafted strings so
 // their report button is hidden even without the structural `providerError` flag. Ordinary provider
@@ -126,7 +122,10 @@ describe('isReportableRunFailure (text tier)', () => {
   it('does not swallow an ordinary app error that merely mentions a provider word', () => {
     // The text tier only matches the app's own exact strings, so an internal failure that happens to
     // contain a provider-ish word or number is never mistaken for an expected failure.
-    expect(isReportableRunFailure('EACCES: permission denied opening workspace')).toBe(true)
+    expect(
+      classifyFailure({ origin: 'operation', text: 'EACCES: permission denied opening workspace' })
+        .category
+    ).toBe('environment')
     expect(isReportableRunFailure('Failed to parse rate limit configuration')).toBe(true)
     expect(isReportableRunFailure('Record 503 could not be decoded')).toBe(true)
     expect(isReportableRunFailure('Billing planner initialization failed')).toBe(true)
@@ -141,8 +140,8 @@ describe('isReportableRunFailure (text tier)', () => {
   it('recognizes app-owned Vision failures through the Electron invoke wrapper', () => {
     const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${VISION_EVIDENCE_INVALID_MESSAGE}`
 
-    expect(visionRunFailureMessage(wrapped)).toBe(VISION_EVIDENCE_INVALID_MESSAGE)
-    expect(isReportableRunFailure(wrapped)).toBe(false)
+    expect(classifyFailure({ origin: 'operation', text: wrapped }).category).toBe('internal')
+    expect(isReportableRunFailure(wrapped)).toBe(true)
   })
 
   it('maps the persisted legacy Vision configuration error to the current recovery message', () => {
@@ -150,8 +149,12 @@ describe('isReportableRunFailure (text tier)', () => {
       'Configure a Vision model in Settings > Model before sending images to this model.'
     const wrapped = `Error invoking remote method 'acp:send-prompt': Error: ${legacy}`
 
-    expect(visionRunFailureMessage(legacy)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
-    expect(visionRunFailureMessage(wrapped)).toBe(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
+    expect(classifyFailure({ origin: 'operation', text: legacy }).reason).toBe(
+      'configuration/vision-model'
+    )
+    expect(classifyFailure({ origin: 'operation', text: wrapped }).reason).toBe(
+      'configuration/vision-model'
+    )
     expect(isReportableRunFailure(legacy)).toBe(false)
   })
 
@@ -202,3 +205,10 @@ describe('isReportableRunFailure (text tier)', () => {
     expect(isReportableRunFailure(claude)).toBe(false)
   })
 })
+
+const isReportableRunFailure = (text: string | null | undefined): boolean =>
+  classifyFailure({ origin: 'agent-runtime', text: text ?? undefined }).category === 'internal'
+const isClaudeApiConnectionFailure = (text: string): boolean =>
+  classifyFailure({ origin: 'agent-runtime', text }).reason === 'service/connection-failed'
+const isClaudeCliCompatibilityError = (text: string): boolean =>
+  classifyFailure({ origin: 'agent-runtime', text }).reason === 'configuration/claude-cli'

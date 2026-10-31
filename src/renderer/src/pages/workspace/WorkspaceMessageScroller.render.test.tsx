@@ -1247,7 +1247,7 @@ describe('WorkspaceMessageScroller loading render', () => {
               kind: 'failed',
               settledAt: 1710000002000,
               error: 'Artifact publication failed.',
-              errorReportable: true,
+              failure: { category: 'internal' as const, diagnostics: {} },
               recovery: 'retry-artifact-publication'
             }
           }),

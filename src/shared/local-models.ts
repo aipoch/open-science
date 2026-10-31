@@ -1,4 +1,4 @@
-export type LocalModelCapability = 'pdf-tables' | 'pdf-translation'
+export type LocalModelCapability = 'pdf-tables' | 'pdf-translation' | 'ocr'
 
 import type { DownloadProgress } from '@aipoch/resilient-download'
 

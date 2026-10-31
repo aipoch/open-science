@@ -151,7 +151,6 @@
       "src/renderer/src/pages/workspace/SessionBackgroundActivity.test.tsx",
       "src/renderer/src/pages/workspace/SessionDiscussionSource.test.tsx",
       "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
-      "src/renderer/src/pages/workspace/SessionInterruptedBanner.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.image-loading.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.integration.test.tsx",
       "src/renderer/src/pages/workspace/SessionMessageMarkdown.test.tsx",

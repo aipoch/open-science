@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { extractPdfTextPages, renderPdfPagePreviews } from './attachment-media'
+import { renderPdfPagePreviews } from './attachment-media'
+import { extractPdfTextPages } from './pdf-text-extraction'
 
 const twoPagePdf = (): Buffer => {
   const pageTwoStream = 'BT /F1 12 Tf 10 50 Td (Page two claim) Tj ET'

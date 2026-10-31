@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from '../failure/contract'
 import { z } from 'zod'
 import {
   type RuntimeCodec,
@@ -58,6 +59,8 @@ export type SettleTaskSessionCompletionRequest = Readonly<{
   projectId: string
   sessionId: string
   promptMessageId: string
+  // Captured at admission; continuations can reuse the same prompt Message.
+  expectedRunStartedAt?: number
   taskRunCommitId: string
   messageId?: string
   artifacts: readonly PersistedArtifact[]
@@ -67,7 +70,7 @@ export type SettleTaskSessionCompletionRequest = Readonly<{
 export type FailTaskSessionRunRequest = SettleTaskSessionCompletionRequest &
   Readonly<{
     error: string
-    errorReportable?: false
+    failure?: ClassifiedFailure
     interruptionCause?: 'app-restart'
   }>
 

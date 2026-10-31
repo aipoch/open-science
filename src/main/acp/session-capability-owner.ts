@@ -986,7 +986,12 @@ export class AcpSessionCapabilityOwner {
               }
             : false,
           skillImport: capabilities.includes('skill-import'),
-          literature: literatureAllowed ? { elements: Boolean(literatureHandler?.elements) } : false
+          literature: literatureAllowed
+            ? {
+                elements: Boolean(literatureHandler?.elements),
+                annotations: Boolean(literatureHandler?.annotations)
+              }
+            : false
         })
       : []
     const bridgeMcpNamespaces = request.bridgeMcpAliasesEnabled
