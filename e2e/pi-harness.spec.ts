@@ -631,15 +631,40 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
   })
   await sidePanel.getByRole('button', { name: 'Cancel Side chat response', exact: true }).click()
   await expect.poll(async () => (await loadChat())?.running).toBe(false)
+  const switchReplyTag = `SWITCH-${randomUUID().slice(0, 8)}`
   await sidePanel
     .getByPlaceholder('Follow up…')
-    .fill('What is the SIDE marker from this chat? Reply only with that marker. Do not call tools.')
+    .fill(
+      `What is the SIDE marker from this chat? Reply with that marker, a space, then ${switchReplyTag}. Do not call tools.`
+    )
   await sidePanel.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
-  await expect(sidePanel.getByText(sideMarker, { exact: true })).toHaveCount(2, {
-    timeout: 120_000
-  })
+  await expect(sidePanel.getByText(`${sideMarker} ${switchReplyTag}`, { exact: true })).toBeVisible(
+    { timeout: 120_000 }
+  )
   await expect.poll(async () => (await loadChat())?.running).toBe(false)
   expect((await loadChat())?.modelSelection?.model).toBe(liveModel)
+  const switchedReplyModels: string[] = []
+  for (const name of await readdir(nativeRoot, { recursive: true })) {
+    if (!name.endsWith('.jsonl')) continue
+    for (const line of (await readFile(join(nativeRoot, name), 'utf8')).trim().split('\n')) {
+      const { message } = JSON.parse(line)
+      if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue
+      const isSwitchedReply = message.content.some(
+        (part: unknown) =>
+          typeof part === 'object' &&
+          part !== null &&
+          'type' in part &&
+          part.type === 'text' &&
+          'text' in part &&
+          typeof part.text === 'string' &&
+          part.text.includes(switchReplyTag)
+      )
+      if (isSwitchedReply && typeof message.model === 'string')
+        switchedReplyModels.push(message.model)
+    }
+  }
+  expect(switchedReplyModels.length).toBeGreaterThan(0)
+  expect(switchedReplyModels.every((model) => model.includes(`${liveModel}@`))).toBe(true)
   console.log('PI_SIDE in-flight restart')
   await startStreamingSideTurn()
   const restarting = app.restart()
@@ -668,7 +693,11 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
       {
         models: [...models],
         modelSwitchRetainedSideContext: true,
-        activeTurnModelSelection: { currentTurn: second.model, nextTurn: liveModel },
+        activeTurnModelSelection: {
+          currentTurn: second.model,
+          nextTurn: liveModel,
+          switchedReplyModels
+        },
         restartDuringPrompt: 'discarded',
         mainHistoryPreserved: true
       },
