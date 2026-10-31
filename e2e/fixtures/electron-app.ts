@@ -1996,7 +1996,11 @@ class ElectronAppHarness implements ElectronApp {
           : undefined
       )
       this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
-      if (process.platform === 'win32' || process.env.OPEN_SCIENCE_E2E_FLUSH_DIAGNOSTICS === '1') {
+      if (
+        process.platform === 'win32' ||
+        this.resourceProfiler ||
+        process.env.OPEN_SCIENCE_E2E_FLUSH_DIAGNOSTICS === '1'
+      ) {
         this.stopFlushDiagnostics = await observeElectronFlushDiagnostics(
           this.application,
           this.currentPage,
