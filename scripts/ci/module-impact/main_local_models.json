@@ -367,6 +367,5 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime",
-  "fullTestReason": "OCR language-pack persistence adds a source outside the reviewed local-model boundary; retain complete validation until that boundary is expanded."
+  "fallbackCapability": "main_runtime"
 }
