@@ -79,7 +79,7 @@ export function runModuleImpactAuthorityCli(
   const unitFloor =
     report.resolved.mode === 'full' &&
     report.resolved.bundles.includes('unit') &&
-    createFullPlanFloor(changes, manifestOnlyGraph, manifest, registrationModules) !== undefined
+    createFullPlanFloor(changes, manifest, registrationModules) !== undefined
   const platformPlan =
     environment.PR_GATE_PLATFORM_POLICY === 'risk-v1'
       ? platformExecutionPlan(report.resolved, changes, environment.EVENT_NAME, { unitFloor })

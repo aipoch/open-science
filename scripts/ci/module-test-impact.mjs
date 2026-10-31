@@ -366,13 +366,17 @@ function isPortableVitestFile(path) {
 // PR and queue full plans defer the complete portable suite to scheduled acceptance. They still
 // run the declared closure of each owned change, so a full marker or a global input cannot remove
 // its owner, contract and consumer tests before merge. Deleted paths and paths that only resolve
-// to full validation remain covered by the deferred suite.
-export function createFullPlanFloor(
-  changes,
-  graph,
-  manifest = defaultManifest,
-  registrationModules = []
-) {
+// to full validation remain covered by the deferred suite. The floor uses declared evidence only:
+// graph candidates are collected for every changed path, including those the floor excludes, and
+// trusted preflight has no graph, so both sides must select the same files.
+const declaredFloorGraph = Object.freeze({
+  status: 'not-used',
+  reason: 'full-plan floor uses declared module evidence only',
+  testFiles: []
+})
+
+export function createFullPlanFloor(changes, manifest = defaultManifest, registrationModules = []) {
+  const graph = declaredFloorGraph
   const modules = Object.fromEntries(
     Object.entries(manifest.modules).map(([moduleId, module]) => {
       const floorModule = { ...module }
@@ -639,7 +643,7 @@ export async function resolveAffectedTestPlan(
   // refinements, which evaluate the complete change set the floor excludes. Changed-source
   // coverage is limited to the floor's changes; the deferred suite covers the remainder.
   if (fullFloor && plan.mode === 'full') {
-    const floor = createFullPlanFloor(changes, graph, manifest, registrationModules)
+    const floor = createFullPlanFloor(changes, manifest, registrationModules)
     if (floor) {
       const floorChanges = changes.filter(({ path }) => floor.floorPaths.includes(path))
       return { plan: floor, changes: floorChanges, manifest, registrationModules, registrationOnly }

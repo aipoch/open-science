@@ -1026,6 +1026,49 @@ describe('module test impact commands', () => {
     }
   })
 
+  it('never builds a full-plan floor from graph candidates of excluded changes', async () => {
+    const graphTest = 'src/main/graph-only-candidate.test.ts'
+    const options = (
+      diff: string,
+      spawn: NpmInvocation
+    ): Parameters<typeof runModuleTestCli>[1] => ({
+      execute: (command: string, args: string[]) => {
+        if (command === 'git' && args[0] === 'merge-base') return 'base\n'
+        if (command === 'git' && args[0] === 'diff') return Buffer.from(diff)
+        if (command === 'codegraph' && args[0] === 'status') return currentStatus
+        if (command === 'codegraph') return JSON.stringify({ affectedTests: [graphTest] })
+        throw new Error(`Unexpected command: ${command}`)
+      },
+      pathExists: () => true,
+      spawn,
+      derivedConsumers: { schemaVersion: 1, modules: {} },
+      environment: { npm_execpath: '/npm/bin/npm-cli.js' }
+    })
+    const args = ['affected', '--base', 'base', '--head', 'head', '--require-selective']
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      const { spawn, invocation } = captureNpmInvocation()
+      // Only excluded paths changed: graph candidates alone must not create a floor.
+      await expect(
+        runModuleTestCli(
+          [...args, '--full-floor'],
+          options('M\0package.json\0A\0src/shared/new-unregistered-contract.ts\0', spawn)
+        )
+      ).rejects.toThrow('Selective test plan required')
+      expect(invocation).not.toHaveBeenCalled()
+      // An owned path keeps its declared floor without graph candidates from other paths.
+      await runModuleTestCli(
+        [...args, '--full-floor'],
+        options('M\0src/main/literature/mcp-server.ts\0M\0package.json\0', spawn)
+      )
+      const npm = invocation.mock.calls[0]?.[1]
+      expect(npm).toContain('src/main/acp/auto-operation-inventory.test.ts')
+      expect(npm).not.toContain(graphTest)
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it('generates derived consumers from the requested head, not the dirty worktree', async () => {
     const cwd = mkdtempSync(resolve(tmpdir(), 'module-head-snapshot-'))
     try {
@@ -1539,13 +1582,13 @@ it('keeps declared contract tests as the deferred full-plan floor', () => {
   // #3979: a full marker and a global input together removed the Auto inventory before merge.
   const changes = [literature, { path: 'package.json', status: 'modified' }]
   expect(createAffectedTestPlan(changes, graph, manifest).mode).toBe('full')
-  const floor = createFullPlanFloor(changes, graph, manifest)
+  const floor = createFullPlanFloor(changes, manifest)
   expect(floor?.mode).toBe('selective')
   expect(floor?.modules).toContain('main_literature')
   expect(floor?.testFiles).toContain('src/main/acp/auto-operation-inventory.test.ts')
-  expect(floor?.testFiles).toEqual(createFullPlanFloor([literature], graph, manifest)?.testFiles)
+  expect(floor?.testFiles).toEqual(createFullPlanFloor([literature], manifest)?.testFiles)
   const unownedPath = { path: 'src/shared/new-unregistered-contract.ts', status: 'added' }
-  expect(createFullPlanFloor([...changes, unownedPath], graph, manifest)?.floorPaths).toEqual([
+  expect(createFullPlanFloor([...changes, unownedPath], manifest)?.floorPaths).toEqual([
     literature.path
   ])
   expect(floor?.reasonChains).toContain(
@@ -1556,7 +1599,7 @@ it('keeps declared contract tests as the deferred full-plan floor', () => {
     [{ path: 'src/shared/new-unregistered-contract.ts', status: 'added' }],
     [{ path: 'src/main/literature/mcp-server.ts', status: 'deleted' }]
   ]) {
-    expect(createFullPlanFloor(unowned, graph, manifest)).toBeUndefined()
+    expect(createFullPlanFloor(unowned, manifest)).toBeUndefined()
   }
 })
 
