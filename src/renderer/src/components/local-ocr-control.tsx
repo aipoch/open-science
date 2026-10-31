@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Check, ScanText } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
@@ -12,7 +13,7 @@ const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB
 
 const languageLabel = (
   code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
-  t: (key: string) => string
+  t: TFunction
 ): string => {
   switch (code) {
     case 'eng':
