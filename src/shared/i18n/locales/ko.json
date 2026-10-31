@@ -7707,6 +7707,21 @@
     "Loading examples…": "사례 불러오는 중…",
     "Could not load examples. Try again.": "사례를 불러오지 못했습니다. 다시 시도해 주세요.",
     "No examples available yet.": "아직 사용 가능한 사례가 없습니다.",
-    "View in sharing marketplace": "공유 마켓플레이스에서 보기"
+    "View in sharing marketplace": "공유 마켓플레이스에서 보기",
+    "For example: {{doi}} or {{url}}": "예: {{doi}} 또는 {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "지원하지 않는 식별자 또는 링크입니다. DOI, doi.org 링크, arXiv 초록 페이지나 PDF 링크를 사용하거나 참고 문헌 파일을 가져오세요.",
+    "Find reference": "문헌 찾기",
+    "DOI or arXiv link": "DOI 또는 arXiv 링크",
+    "When identifiers match: {{policy}}": "식별자가 일치하는 경우: {{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "문헌 정보를 가져오지 못했습니다. 식별자를 확인하고 다시 시도하거나 PDF 또는 참고 문헌 파일을 가져오세요.",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "문헌 정보를 검색하고 검토한 후 저장하세요. 전문 PDF는 나중에 추가할 수 있습니다.",
+    "Add from DOI or link": "DOI 또는 링크로 추가",
+    "DOI and arXiv links": "DOI 및 arXiv 링크",
+    "Review reference details": "문헌 정보 검토",
+    "Versioned arXiv links use the latest metadata.": "버전 번호가 있는 arXiv 링크도 최신 메타데이터를 사용합니다.",
+    "Retrieved via {{source}}.": "{{source}}을(를) 통해 가져왔습니다.",
+    "Edit reference details": "문헌 정보 편집",
+    "Edit details": "세부 정보 편집",
+    "Back to review": "검토로 돌아가기"
   }
 }

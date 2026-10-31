@@ -8049,6 +8049,21 @@
     "Loading examples…": "Chargement des exemples…",
     "Could not load examples. Try again.": "Impossible de charger les exemples. Réessayez.",
     "No examples available yet.": "Aucun exemple disponible pour le moment.",
-    "View in sharing marketplace": "Voir dans la place de marché de partage"
+    "View in sharing marketplace": "Voir dans la place de marché de partage",
+    "For example: {{doi}} or {{url}}": "Par exemple : {{doi}} ou {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "Cet identifiant ou ce lien n’est pas pris en charge. Essayez un DOI, un lien doi.org ou un lien vers un résumé ou un PDF arXiv, ou importez un fichier bibliographique.",
+    "Find reference": "Rechercher une référence",
+    "DOI or arXiv link": "DOI ou lien arXiv",
+    "When identifiers match: {{policy}}": "Si les identifiants correspondent : {{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Impossible de récupérer les informations bibliographiques. Vérifiez l’identifiant et réessayez, ou importez un PDF ou un fichier bibliographique.",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "Rechercher les informations bibliographiques à vérifier avant l’enregistrement. Les PDF en texte intégral peuvent être ajoutés ultérieurement.",
+    "Add from DOI or link": "Ajouter via un DOI ou un lien",
+    "DOI and arXiv links": "Liens DOI et arXiv",
+    "Review reference details": "Vérifier les informations bibliographiques",
+    "Versioned arXiv links use the latest metadata.": "Les liens arXiv avec un numéro de version utilisent les métadonnées les plus récentes.",
+    "Retrieved via {{source}}.": "Informations obtenues via {{source}}.",
+    "Edit reference details": "Modifier les informations bibliographiques",
+    "Edit details": "Modifier les détails",
+    "Back to review": "Revenir à la vérification"
   }
 }

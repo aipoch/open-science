@@ -7875,6 +7875,21 @@
     "Loading examples…": "Beispiele werden geladen…",
     "Could not load examples. Try again.": "Beispiele konnten nicht geladen werden. Versuchen Sie es erneut.",
     "No examples available yet.": "Noch keine Beispiele verfügbar.",
-    "View in sharing marketplace": "Im Marktplatz zum Teilen ansehen"
+    "View in sharing marketplace": "Im Marktplatz zum Teilen ansehen",
+    "For example: {{doi}} or {{url}}": "Zum Beispiel: {{doi}} oder {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "Diese Kennung oder dieser Link wird nicht unterstützt. Versuchen Sie eine DOI, einen doi.org-Link oder einen arXiv-Link zur Zusammenfassung oder PDF oder importieren Sie eine Bibliografiedatei.",
+    "Find reference": "Literatur suchen",
+    "DOI or arXiv link": "DOI oder arXiv-Link",
+    "When identifiers match: {{policy}}": "Bei übereinstimmenden Kennungen: {{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Die Literaturangaben konnten nicht abgerufen werden. Prüfen Sie die Kennung und versuchen Sie es erneut oder importieren Sie eine PDF- oder Bibliografiedatei.",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "Bibliografische Angaben zum Prüfen vor dem Speichern suchen. Volltext-PDFs können später hinzugefügt werden.",
+    "Add from DOI or link": "Über DOI oder Link hinzufügen",
+    "DOI and arXiv links": "DOI- und arXiv-Links",
+    "Review reference details": "Bibliografische Angaben prüfen",
+    "Versioned arXiv links use the latest metadata.": "arXiv-Links mit Versionsnummer verwenden die neuesten Metadaten.",
+    "Retrieved via {{source}}.": "Über {{source}} abgerufen.",
+    "Edit reference details": "Bibliografische Angaben bearbeiten",
+    "Edit details": "Details bearbeiten",
+    "Back to review": "Zurück zur Überprüfung"
   }
 }
