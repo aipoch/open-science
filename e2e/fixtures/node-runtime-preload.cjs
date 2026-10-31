@@ -4,6 +4,40 @@ const { join } = require('node:path')
 const { readFileSync } = require('node:fs')
 const root = process.env.OPEN_SCIENCE_E2E_STORAGE_ROOT
 if (!root) throw new Error('The Node runtime fixture requires an isolated source E2E profile.')
+// Temporary controlled-mutation diagnostic; no command arguments or environment are recorded.
+if (process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS) {
+  const cp = require('node:child_process')
+  const { appendFileSync } = require('node:fs')
+  const { basename } = require('node:path')
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const record = (entry) =>
+    appendFileSync(
+      process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS,
+      JSON.stringify({ at: new Date().toISOString(), pid: process.pid, ...entry }) + '\n'
+    )
+  for (const method of ['execFileSync', 'spawnSync']) {
+    const original = cp[method]
+    cp[method] = function (...args) {
+      const started = performance.now()
+      const identity = {
+        method,
+        command: basename(String(args[0])),
+        stack: new Error().stack.split('\n').slice(2, 6)
+      }
+      record({ stage: 'sync-process-start', ...identity })
+      try {
+        return Reflect.apply(original, this, args)
+      } finally {
+        record({
+          stage: 'sync-process-end',
+          ...identity,
+          durationMs: Math.round(performance.now() - started)
+        })
+      }
+    }
+  }
+  require('node:module').syncBuiltinESMExports()
+}
 if (process.versions.electron) {
   const { app } = require('electron')
   if (app.isPackaged) throw new Error('Source fixture cannot run packaged.')
