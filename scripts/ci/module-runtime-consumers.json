@@ -187,5 +187,8 @@
   "packages/resilient-download/test/transport.mjs": [
     "scripts/check-resilient-download-package.mjs"
   ],
-  "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"]
+  "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"],
+  "src/main/pdf-annotations/agent-geometry-worker-entry.ts": [
+    "src/main/pdf-annotations/agent-geometry.ts"
+  ]
 }

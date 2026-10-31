@@ -42,7 +42,7 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('runtime certification workflow', () => {
-  it.each(['installed', 'extra', 'missing'])(
+  it.each(['installed', 'extra', 'bundled', 'missing'])(
     'loads the %s AppArmor profile layout without weakening isolation',
     (layout) => {
       for (const [name, job] of [
@@ -52,14 +52,19 @@ describe('runtime certification workflow', () => {
         const directory = mkdtempSync(join(tmpdir(), 'apparmor-profile-'))
         const installed = join(directory, 'installed-profile')
         const extra = join(directory, 'extra-profile')
+        const bundled = join(directory, 'bundled-profile')
         try {
           if (layout !== 'missing')
-            writeFileSync(layout === 'installed' ? installed : extra, 'profile')
+            writeFileSync(
+              layout === 'installed' ? installed : layout === 'extra' ? extra : bundled,
+              'profile'
+            )
           const quote = (path: string): string =>
             `'${path.replaceAll('\\', '/').replaceAll("'", "'\\''")}'`
           const run = step(workflow(name).jobs[job], 'Install Linux sandbox dependency')
             .run!.replaceAll('/etc/apparmor.d/bwrap-userns-restrict', quote(installed))
             .replaceAll('/usr/share/apparmor/extra-profiles/bwrap-userns-restrict', quote(extra))
+            .replaceAll('"$GITHUB_WORKSPACE/scripts/ci/bwrap-userns-restrict"', quote(bundled))
           const result = spawnSync(
             'bash',
             [

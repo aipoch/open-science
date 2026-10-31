@@ -1073,6 +1073,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install --yes --no-install-recommends apparmor-profiles apparmor-utils bubblewrap
+          sudo apt-get install --reinstall --yes --no-install-recommends apparmor
 
           apparmor_userns_restriction="$(
             sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
@@ -1080,6 +1081,9 @@ jobs:
           if [[ "$apparmor_userns_restriction" == "1" ]]; then
             if [[ ! -r /etc/apparmor.d/bwrap-userns-restrict ]]; then
               profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+              if [[ ! -r "$profile_source" ]]; then
+                profile_source="$GITHUB_WORKSPACE/scripts/ci/bwrap-userns-restrict"
+              fi
               test -r "$profile_source"
               sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
             fi

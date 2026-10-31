@@ -1,3 +1,4 @@
+import { PdfAnnotationAgent } from '../pdf-annotations/agent-tools'
 import { netFetchStandard } from '../network-fetch'
 import { realpath } from 'node:fs/promises'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
@@ -87,6 +88,7 @@ export async function composeDocumentReading({
   pdfTranslationOwner: PdfTranslationOwner
   localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
+  pdfAnnotationAgent: PdfAnnotationAgent
   pdfElementReader: PdfElementAgentReader
   literatureDocumentReader: LiteratureDocumentReader
 }> {
@@ -219,6 +221,27 @@ export async function composeDocumentReading({
     sessions: sessionPersistenceCoordinator
   })
 
+  const pdfAnnotationAgent = new PdfAnnotationAgent({
+    sources: sessionPdfSourceResolver,
+    sessions: sessionPersistenceCoordinator,
+    annotations: pdfAnnotationService,
+    elements: pdfElementReader,
+    withSession: (context, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(
+        context.projectId,
+        context.sessionId,
+        async () => {
+          const loaded = await sessionRepository.loadSessionWithDiagnostics(
+            context.projectId,
+            context.sessionId
+          )
+          if (loaded.status !== 'found')
+            throw new Error('PDF_ANNOTATION_TARGET_STALE: Session is unavailable.')
+          return operation(loaded.session)
+        }
+      )
+  })
+
   const literatureDocumentReader = new LiteratureDocumentReader({
     ocrModels: ocrModels,
     storageRoot: resolveDataRoot(),
@@ -271,6 +294,7 @@ export async function composeDocumentReading({
     pdfTranslationOwner,
     pdfStructureReader,
     pdfElementReader,
+    pdfAnnotationAgent,
     literatureDocumentReader
   }
 }
