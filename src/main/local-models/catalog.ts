@@ -351,7 +351,7 @@ export const OCR_LANGUAGE_PACK_REVISIONS: Readonly<Record<string, LocalModelRevi
     ]
   },
   chi_sim: {
-    revision: 'ocr-language-chi_sim-v1',
+    revision: 'ocr-language-chi-sim-v1',
     assets: [
       {
         file: 'chi_sim.traineddata.gz',
@@ -362,7 +362,7 @@ export const OCR_LANGUAGE_PACK_REVISIONS: Readonly<Record<string, LocalModelRevi
     ]
   },
   chi_tra: {
-    revision: 'ocr-language-chi_tra-v1',
+    revision: 'ocr-language-chi-tra-v1',
     assets: [
       {
         file: 'chi_tra.traineddata.gz',
