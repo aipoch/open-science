@@ -553,13 +553,15 @@ Keep these boundaries explicit when evaluating or distributing Pi:
 - **Installer replacement failures:** preparation failure preserves the previous runtime. Rename or
   disk-full failure during replacement has not been live-verified; do not extend preparation-failure
   evidence to those cases.
-- **Side chat:** model changes use the chat's own selected target and bounded history. Side chats
+- **Side chat:** model changes use the chat's own selected target and bounded history. A selection
+  made during a running turn applies to the next prompt, not the already-admitted turn. Side chats
   remain temporary, including during an active prompt: an application/backend restart discards the
   chat instead of continuing it. A renderer reload is not an application restart. Main history is
   separate; queued relay is delivered only on Main's next user turn.
 - **Visual scope:** an image-capable model is required. Text-PDF extraction, image uploads and
   foreground `host.viewImage` are distinct paths; passing one does not certify arbitrary PDFs,
-  every provider wire, or every visual model.
+  every provider wire, or every visual model. The live visual check covers MiniMax-M3.1-Flash over
+  Chat Completions; visual results on the Pi Responses and Messages routes remain unverified.
 
 This capability change introduces no database migration, persisted enum, permission scope or
 history-format change. Existing text-only settings and historical conversations remain valid.

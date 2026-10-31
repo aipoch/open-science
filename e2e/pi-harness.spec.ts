@@ -591,28 +591,57 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
     path: testInfo.outputPath('pi-side-chat-model-change.png'),
     fullPage: true
   })
-  console.log('PI_SIDE in-flight restart')
-  const entriesBeforePrompt = (await loadChat())!.entries.length
+  const startStreamingSideTurn = async (): Promise<void> => {
+    const entriesBeforePrompt = (await loadChat())!.entries.length
+    await sidePanel
+      .getByPlaceholder('Follow up…')
+      .fill('Write a detailed 5000-word essay about statistical inference. Do not call tools.')
+    await sidePanel.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
+    await expect.poll(async () => (await loadChat())?.running).toBe(true)
+    await expect
+      .poll(
+        async () =>
+          (await loadChat())?.entries
+            .slice(entriesBeforePrompt)
+            .some(
+              (entry) =>
+                entry.kind === 'message' && entry.role === 'assistant' && entry.text.length > 0
+            ),
+        { timeout: 120_000 }
+      )
+      .toBe(true)
+    await expect(
+      sidePanel.getByRole('button', { name: 'Cancel Side chat response', exact: true })
+    ).toBeVisible()
+  }
+  console.log('PI_SIDE active-turn model selection')
+  await startStreamingSideTurn()
+  await sidePanel.getByRole('button', { name: 'Select model', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^Model/ }).hover()
+  await page.getByRole('menuitemradio', { name: liveModel!, exact: true }).focus()
+  await page.keyboard.press('Enter')
+  await expect(sidePanel.getByRole('button', { name: 'Select model', exact: true })).toHaveText(
+    liveModel!
+  )
+  expect((await loadChat())?.modelSelection?.model).toBe(second.model)
+  expect((await loadChat())?.running).toBe(true)
+  await page.screenshot({
+    path: testInfo.outputPath('pi-side-chat-active-model-selection.png'),
+    fullPage: true
+  })
+  await sidePanel.getByRole('button', { name: 'Cancel Side chat response', exact: true }).click()
+  await expect.poll(async () => (await loadChat())?.running).toBe(false)
   await sidePanel
     .getByPlaceholder('Follow up…')
-    .fill('Write a detailed 5000-word essay about statistical inference. Do not call tools.')
+    .fill('What is the SIDE marker from this chat? Reply only with that marker. Do not call tools.')
   await sidePanel.getByRole('button', { name: 'Send Side chat follow up', exact: true }).click()
-  await expect.poll(async () => (await loadChat())?.running).toBe(true)
-  await expect
-    .poll(
-      async () =>
-        (await loadChat())?.entries
-          .slice(entriesBeforePrompt)
-          .some(
-            (entry) =>
-              entry.kind === 'message' && entry.role === 'assistant' && entry.text.length > 0
-          ),
-      { timeout: 120_000 }
-    )
-    .toBe(true)
-  await expect(
-    page.getByRole('button', { name: 'Cancel Side chat response', exact: true })
-  ).toBeVisible()
+  await expect(sidePanel.getByText(sideMarker, { exact: true })).toHaveCount(2, {
+    timeout: 120_000
+  })
+  await expect.poll(async () => (await loadChat())?.running).toBe(false)
+  expect((await loadChat())?.modelSelection?.model).toBe(liveModel)
+  console.log('PI_SIDE in-flight restart')
+  await startStreamingSideTurn()
   const restarting = app.restart()
   const confirmQuit = page.getByRole('button', { name: 'Quit', exact: true })
   await expect(confirmQuit).toBeVisible({ timeout: 5_000 })
@@ -639,6 +668,7 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
       {
         models: [...models],
         modelSwitchRetainedSideContext: true,
+        activeTurnModelSelection: { currentTurn: second.model, nextTurn: liveModel },
         restartDuringPrompt: 'discarded',
         mainHistoryPreserved: true
       },
