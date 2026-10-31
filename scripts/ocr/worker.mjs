@@ -9,7 +9,7 @@ let engine
 parentPort.on('message', async (image) => {
   try {
     engine ??= await createWorker(
-      ['eng', 'chi_sim'].map((code) => ({
+      ['chi_sim', 'eng'].map((code) => ({
         code,
         data: readFileSync(asset(`${code}.traineddata.gz`))
       })),

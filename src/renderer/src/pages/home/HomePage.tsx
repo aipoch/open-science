@@ -855,10 +855,9 @@ const HomePage = ({
                               session.description,
                               <button
                                 type="button"
-                                // Fixed height sized to the tallest content (status row + title +
-                                // two-line description, ~154px); cards without a description keep the
-                                // height and mt-auto sinks the project line.
-                                className="flex h-[156px] w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                                // Preserve the usual card height while allowing wrapped status copy
+                                // and time to fit on narrow screens and in longer translations.
+                                className="flex min-h-[156px] h-full w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
                                 onClick={() => openSession(session.projectId, session.id, 'user')}
                                 aria-label={
                                   waitReason
@@ -875,10 +874,10 @@ const HomePage = ({
                                 }
                               >
                                 {/* Status leads the card — the Home grid answers "what needs me" at a glance. */}
-                                <span className="flex w-full items-center justify-between gap-3">
+                                <span className="flex w-full flex-wrap items-center justify-between gap-x-3 gap-y-1">
                                   <span
                                     className={cn(
-                                      'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                                      'inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
                                       waiting
                                         ? 'bg-session-waiting/10 text-session-waiting'
                                         : completed
@@ -914,7 +913,7 @@ const HomePage = ({
                                   </span>
                                   {/* Flush right on every card — a reserved dismiss gap leaves the time
                               floating left of where a long truncated title ends. */}
-                                  <span className="shrink-0 text-xs text-text-100">
+                                  <span className="ml-auto max-w-full text-xs text-text-100">
                                     {completed
                                       ? isJustNow
                                         ? t('just now')

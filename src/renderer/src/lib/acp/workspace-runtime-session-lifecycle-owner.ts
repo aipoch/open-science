@@ -11,6 +11,7 @@ import {
 } from './workspace-operation-error'
 import type { AcpRuntimeEvent, AcpSessionAgentTarget } from '../../../../shared/acp'
 import { reportHandledRendererFailure } from '../handled-failure-diagnostics'
+import { scheduleCommittedRuntimeTranscriptAutoReview } from './workspace-events'
 import { i18next } from '../../i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
@@ -214,12 +215,17 @@ const continueInterruptedWorkspaceTurn = async (
     // Main admitted the continuation. A failed refresh is display lag, never a Resume failure.
     try {
       const authority = await loadPersistedSession({ projectId: session.projectId, sessionId })
-      if (authority)
+      if (authority) {
+        const previous = workspaceSession(sessionId)
         useSessionStore.getState().applyDurableSessionProjection({
           source: session,
           session: authority,
           mode: 'runtime-transcript-authority'
         })
+        // The refresh can precede the terminal lifecycle event. Both paths must offer the
+        // completed turn to the same review gate before its projection becomes the baseline.
+        scheduleCommittedRuntimeTranscriptAutoReview(previous, authority)
+      }
     } catch (error) {
       reportHandledRendererFailure(
         'Session refresh after an admitted Resume failed',
