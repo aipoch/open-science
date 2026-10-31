@@ -9,6 +9,7 @@ import { AcpContextUsagePolicy } from './context-usage-policy'
 import { AcpDurableContinuationContextOwner } from './durable-continuation-context-owner'
 import { AcpElicitationOwner } from './elicitation-owner'
 import { AcpPermissionContext } from './permission-context'
+import type { PiPermissionContext, PiPermissionState } from './pi-permission-correlation'
 import { AcpPermissionWaitOwner } from './permission-wait-owner'
 import { ReviewerSessionOwner } from './reviewer-session-owner'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
@@ -188,6 +189,58 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
           )
       : undefined
   )
+  // This experimental path is reachable only for a registered Pi session. Every identity and
+  // capability comes from Main's live owners; an ACP message cannot supply this context.
+  const piPermissionContextFor = (
+    appSessionId: string,
+    expectedProviderSessionId?: string
+  ): PiPermissionContext | undefined => {
+    const attachment = sessionRegistry.lookup(appSessionId)?.attachment
+    if (
+      !attachment ||
+      (expectedProviderSessionId && attachment.providerSessionId !== expectedProviderSessionId)
+    ) {
+      return undefined
+    }
+    const providerSessionId = attachment.providerSessionId
+    const generation = attachment.generation
+    const readCurrent = (): PiPermissionState | undefined => {
+      const entry = sessionRegistry.lookup(appSessionId)
+      const currentAttachment = entry?.attachment
+      const scope = base.sessionInteractions.current(appSessionId)
+      const capability = base.sessionCapabilities.piPermissionCapabilitiesFor(appSessionId)
+      // Side chat turns are not Main messages and carry no prompt message id; their interaction
+      // sequence identifies the turn instead.
+      const promptMessageId =
+        scope?.kind !== 'prompt'
+          ? undefined
+          : (scope.promptMessageId ??
+            (capability?.role === 'side-chat' ? `side-chat-turn-${scope.sequence}` : undefined))
+      if (
+        !entry ||
+        !currentAttachment ||
+        currentAttachment.providerSessionId !== providerSessionId ||
+        currentAttachment.generation !== generation ||
+        String(entry.aggregate.snapshot().frameworkId) !== 'pi' ||
+        scope?.kind !== 'prompt' ||
+        !promptMessageId ||
+        !capability
+      )
+        return undefined
+      return {
+        appSessionId,
+        providerSessionId,
+        promptMessageId,
+        interactionSequence: scope.sequence,
+        capabilityRevision: capability.revision,
+        mcpServerNames: capability.mcpServerNames,
+        allowedToolIdentities: capability.allowedToolIdentities,
+        cancelled: base.sessionInteractions.isCancellationAccepted(scope)
+      }
+    }
+    const current = readCurrent()
+    return current ? { ...current, readCurrent } : undefined
+  }
   const permissionContext = new AcpPermissionContext({
     emitPermissionRequest: (request) => publication.publishPermissionRequest(request),
     routing: {
@@ -228,10 +281,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      piPermissionContextFor,
       authorizeRuntimeBindingAdmission: options.notebook?.authorizeRuntimeBindingAdmission,
       canOwnRuntimeBindingDecision: options.notebook?.canOwnRuntimeBindingDecision,
       shellRuntimeBindingFor: (sessionId) =>
         base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
+      piReviewerPermissionContextFor: (sessionId) =>
+        reviewerSessions.piPermissionContextFor(sessionId),
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
       resolveReviewerPermission: (request) => reviewerSessions.resolvePermission(request),
       currentFramework: () => base.backendGeneration.current.framework,

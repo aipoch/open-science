@@ -12,6 +12,7 @@ const HISTORY_REPLAY_POLICIES: Record<HistoryReplayTarget, HistoryReplayPolicy> 
   'claude-code': { contextShare: 0.1, cap: 16_000 },
   opencode: { contextShare: 0.08, cap: 12_000 },
   codebuddy: { contextShare: 0.08, cap: 12_000 },
+  pi: { contextShare: 0.08, cap: 12_000 },
   'codex-response': { contextShare: 0.1, cap: 16_000 },
   'codex-bridge': { contextShare: 0.05, cap: 8_000 }
 }

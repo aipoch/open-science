@@ -1,4 +1,5 @@
 import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
+import { AGENT_FRAMEWORK_ID_VALUES, isAgentFrameworkId } from '../../shared/agent-framework-id'
 
 /** Diagnostic projections keep only known evidence fields and bounded redacted error text. */
 type ObjectValue = Record<string, unknown>
@@ -62,9 +63,9 @@ const states: Record<string, readonly string[]> = {
   cause: ['app-restart', 'cancelled', 'connection-lost'],
   originBindingState: ['root', 'validated', 'legacy-unavailable'],
   toolDisposition: ['declined', 'permission-closed'],
-  agentFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
-  frameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
-  previousFrameworkId: ['claude-code', 'opencode', 'codex', 'codebuddy'],
+  agentFrameworkId: AGENT_FRAMEWORK_ID_VALUES,
+  frameworkId: AGENT_FRAMEWORK_ID_VALUES,
+  previousFrameworkId: AGENT_FRAMEWORK_ID_VALUES,
   reasoningEffort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
   runtimeTranscriptOwner: ['main'],
   delegationPolicy: ['allow', 'deny'],
@@ -325,6 +326,7 @@ const permissionLogStates: Record<string, readonly string[]> = {
     'opencode-anthropic',
     'opencode-openai',
     'codebuddy-openai',
+    'pi',
     'codex-responses',
     'codex-responses-compatibility',
     'codex-bridge'
@@ -414,8 +416,7 @@ export function projectDiagnosticLog(
   ) {
     for (const key of ['specialistId', 'backendId'])
       if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
-    if (['claude-code', 'opencode', 'codex', 'codebuddy'].includes(data.frameworkId as string))
-      diagnostic.frameworkId = data.frameworkId
+    if (isAgentFrameworkId(data.frameworkId)) diagnostic.frameworkId = data.frameworkId
     if (permissionLogStates.modelRoute.includes(data.modelRoute as string))
       diagnostic.modelRoute = data.modelRoute
     if (['identity', 'skills'].includes(data.resolver as string))

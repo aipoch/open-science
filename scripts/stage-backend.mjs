@@ -42,6 +42,8 @@ await cp(backend, join(stage, 'out/backend'), {
   // Dependency analysis is consumed above; it is not a runtime or diagnostic source map.
   filter: (path) => !values.desktop || path !== join(backend, 'dependencies.json')
 })
+// Pi dependencies are downloaded only after an explicit runtime install.
+await cp(join(root, 'out/pi-bootstrap'), join(stage, 'out/pi-bootstrap'), { recursive: true })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,

@@ -10,8 +10,10 @@ import {
   LOAD_SKILL_TOOL_NAME,
   SKILL_RUNTIME_ALLOWED_NAMES_ENV,
   SKILL_RUNTIME_ROOT_ENV,
+  createSkillRuntimeAcpServerConfig,
   createSkillRuntimeMcpServer,
   environmentFromProcess,
+  isOwnedSkillRuntimeAcpServer,
   loadSkillDocument
 } from './runtime-mcp-server'
 
@@ -426,5 +428,32 @@ describe('Skill runtime MCP loader', () => {
         [SKILL_RUNTIME_ALLOWED_NAMES_ENV]: '["literature-review"]'
       })
     ).toEqual({ root: '/runtime/revision', allowedNames: new Set(['literature-review']) })
+  })
+
+  it('recognizes only the ACP server objects it issued', () => {
+    const issued = createSkillRuntimeAcpServerConfig({
+      command: '/runtime/node',
+      entryPath: '/runtime/server.mjs',
+      root: '/runtime/revision'
+    })
+    expect(isOwnedSkillRuntimeAcpServer(issued)).toBe(true)
+    expect(
+      isOwnedSkillRuntimeAcpServer({
+        name: 'skill-runtime',
+        command: '/runtime/node',
+        args: ['/runtime/server.mjs'],
+        env: []
+      })
+    ).toBe(false)
+  })
+
+  it('rejects an issued ACP server whose config was mutated', () => {
+    const issued = createSkillRuntimeAcpServerConfig({
+      command: '/runtime/node',
+      entryPath: '/runtime/server.mjs',
+      root: '/runtime/revision'
+    })
+    issued.args.push('--injected-flag')
+    expect(isOwnedSkillRuntimeAcpServer(issued)).toBe(false)
   })
 })

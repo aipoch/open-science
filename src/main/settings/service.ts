@@ -93,6 +93,7 @@ import type {
   ImportSkillZipRequest,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
+  InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   OpenAlexCredentialValidation,
@@ -1584,6 +1585,13 @@ class SettingsService {
     return this.runtimeManager.installCodeBuddy(request, onEvent)
   }
 
+  async installPi(
+    request: InstallPiRequest,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    return this.runtimeManager.installPi(request, onEvent)
+  }
+
   async installCodex(
     request: InstallCodexRequest,
     onEvent: (event: ClaudeInstallEvent) => void
@@ -1613,6 +1621,11 @@ class SettingsService {
 
   async uninstallCodeBuddy(): Promise<UninstallResult> {
     const { activeBackendAffected } = await this.runtimeManager.uninstallCodeBuddy()
+    return { snapshot: await this.getSettingsView(), activeBackendAffected }
+  }
+
+  async uninstallPi(): Promise<UninstallResult> {
+    const { activeBackendAffected } = await this.runtimeManager.uninstallPi()
     return { snapshot: await this.getSettingsView(), activeBackendAffected }
   }
 

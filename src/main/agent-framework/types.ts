@@ -94,6 +94,7 @@ export type AgentModelRoute =
   | 'opencode-anthropic'
   | 'opencode-openai'
   | 'codebuddy-openai'
+  | 'pi'
   | 'codex-responses'
   | 'codex-responses-compatibility'
   | 'codex-bridge'
@@ -155,6 +156,9 @@ export type ModelConfigContext = {
   // metadata only when the model/version pair is explicitly known.
   nativeVersion?: string
   responsesConnection?: ResponsesConnection
+  // Shared credential of the app-owned loopback bridges behind Pi's model catalog. The token is sent
+  // over ACP authentication and must remain out of generated config files and the child environment.
+  piModelBridge?: Readonly<{ token: string }>
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
@@ -240,8 +244,8 @@ export type CommandShellDialect = 'posix' | 'powershell'
 
 // One switchable agent backend. The ACP runtime stays generic and delegates only the framework-coupled
 // decisions to this interface. See docs/internal/pluggable-agent-framework-feasibility.md.
-export interface AgentFramework {
-  readonly id: AgentFrameworkId
+export interface AgentFramework<FrameworkId extends string = AgentFrameworkId> {
+  readonly id: FrameworkId
   readonly displayName: string
 
   // The shell grammar used for provider-native command tools. The permission Broker consumes this

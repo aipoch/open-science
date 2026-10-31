@@ -1,7 +1,10 @@
 import { AUTHORIZED_DIRECTORIES_PROMPT } from '../local-fs/authorized-directories'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
-import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
+import {
+  OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
+  inheritSkillRuntimeAcpServerOwnership
+} from '../skills/runtime-mcp-server'
 import type { McpServer } from '@agentclientprotocol/sdk'
 import type { AgentFramework, SessionSetup } from '../agent-framework/types'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
@@ -286,12 +289,17 @@ class AcpSessionPresentationPolicy {
     installedPersistentSystemPrompt: string | undefined
   ): AcpSessionSetupPresentation {
     const persistentSystemPrompt = installedPersistentSystemPrompt ?? setup.persistentSystemPrompt
-    return immutableCopy({
+    const copy = immutableCopy({
       metaArg: setup.meta ? { _meta: setup.meta } : {},
       ...(setup.mcpServers ? { mcpServers: setup.mcpServers } : {}),
       ...(setup.promptPrefix ? { promptPrefix: setup.promptPrefix } : {}),
       ...(persistentSystemPrompt ? { persistentSystemPrompt } : {})
     })
+    setup.mcpServers?.forEach((server, index) => {
+      const copiedServer = copy.mcpServers?.[index]
+      if (copiedServer) inheritSkillRuntimeAcpServerOwnership(server, copiedServer)
+    })
+    return copy
   }
 
   private systemPromptAppends(input: AcpSessionSetupPresentationInput): string[] {

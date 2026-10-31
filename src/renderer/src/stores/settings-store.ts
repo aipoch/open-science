@@ -463,7 +463,7 @@ const createSettingsStoreState = (
         await get().detectCodex()
       } else if (id === 'codebuddy') {
         await get().detectCodeBuddy()
-      } else {
+      } else if (id === 'claude-code') {
         await get().detectClaude()
       }
       await get().refreshPreflight()

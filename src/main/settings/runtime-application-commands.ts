@@ -62,6 +62,11 @@ const settingsRuntimeApplicationCommands = Object.freeze({
     readonly [],
     WorkflowResult<'uninstallRuntime'>
   >('settings:uninstall-codebuddy'),
+  uninstallPi: defineApplicationCommand<
+    'settings:uninstall-pi',
+    readonly [],
+    WorkflowResult<'uninstallRuntime'>
+  >('settings:uninstall-pi'),
   uninstallOpencode: defineApplicationCommand<
     'settings:uninstall-opencode',
     readonly [],
@@ -158,6 +163,7 @@ const settingsRuntimeApplicationCommandGroup = defineApplicationCommandGroup('se
   settingsRuntimeApplicationCommands.uninstallClaude,
   settingsRuntimeApplicationCommands.uninstallCodex,
   settingsRuntimeApplicationCommands.uninstallCodeBuddy,
+  settingsRuntimeApplicationCommands.uninstallPi,
   settingsRuntimeApplicationCommands.uninstallOpencode,
   settingsRuntimeApplicationCommands.upsertProvider,
   settingsRuntimeApplicationCommands.deleteProvider,
@@ -213,6 +219,12 @@ const registerRuntimeSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:uninstall-codebuddy')
         return dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.workflows.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
+        )
+      },
+      'settings:uninstall-pi': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:uninstall-pi')
+        return dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.workflows.uninstallRuntime('uninstallPi', 'pi')
         )
       },
       'settings:uninstall-opencode': ({ callerContext }) => {

@@ -1,7 +1,8 @@
+import { installManagedPi, uninstallManagedPi } from './managed-pi'
 import { nodeRuntimeEnvironment } from '../node-process-host'
 import { resolveClaudeExecutableForSpawn } from '../acp/claude-executable'
 import { execFile } from 'node:child_process'
-import { constants } from 'node:fs'
+import { constants, existsSync } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
@@ -19,6 +20,7 @@ import type {
   EnvironmentCheckResult,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
+  InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   ReadinessPreflight,
@@ -73,6 +75,13 @@ import {
   runAcpInitializeSmoke,
   type CodexDetectDeps
 } from './codex-detect'
+import {
+  isPiAdapterAvailable,
+  isPiRuntimeReady,
+  piAdapterPath,
+  managedPiRoot,
+  resolvePiExecutable as resolveManagedPiExecutable
+} from '../agent-framework/pi-runtime'
 import { detectNpmAvailable, runInstallWithFallback, type InstallTarget } from './claude-install'
 import { OPENCODE_INSTALL_TARGET } from './opencode-install'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
@@ -470,6 +479,12 @@ export class AgentRuntimeManager {
         this.storeReusableRuntimeProbe('environmentCheckRuntimeProbe', runtimeProbe)
 
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
+      // Settings needs a cheap availability signal to show the managed Pi card for every framework.
+      // Spawn the ACP smoke process only when Pi is selected; checkEnvironment owns the same probe.
+      const piReady =
+        agentFrameworkId === 'pi'
+          ? await isPiRuntimeReady({ configRoot: this.configRoot })
+          : isPiAdapterAvailable({ configRoot: this.configRoot })
       const framework = getAgentFramework(agentFrameworkId)
       const activeProvider = settings.activeProviderId
         ? settings.providers.find((provider) => provider.id === settings.activeProviderId)
@@ -515,6 +530,10 @@ export class AgentRuntimeManager {
         opencodePathExists: runtimeProbe.opencodeVersion !== null,
         codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
         codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
+        piRuntimeReady: piReady,
+        ...(existsSync(managedPiRoot(this.configRoot))
+          ? { piRuntimePath: piAdapterPath({ configRoot: this.configRoot }) }
+          : {}),
         agentFrameworkId,
         isProviderKeyUsable: (provider) =>
           provider.id === activeProvider?.id && activeProviderKeyUsable,
@@ -525,24 +544,34 @@ export class AgentRuntimeManager {
     })
   }
 
+  async resolvePiExecutable(): Promise<string> {
+    return resolveManagedPiExecutable({ configRoot: this.configRoot })
+  }
+
   async checkEnvironment(): Promise<EnvironmentCheckResult> {
     return this.trackDetection(async (signal) => {
       const settings = await this.repository.getSettings()
       signal.throwIfAborted()
       const agentFrameworkId = settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID
       const runtimeProbe = this.takeReusableRuntimeProbe('environmentCheckRuntimeProbe', settings)
-      const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime] = await Promise.all([
-        this.trackDetection(() =>
-          this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
-        ),
-        this.trackDetection(() =>
-          this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
-        ),
-        this.trackDetection(() =>
-          this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
-        ),
-        this.trackDetection(() => this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal))
-      ])
+      const [claudeRuntime, opencodeRuntime, codebuddyRuntime, codexRuntime, piReady] =
+        await Promise.all([
+          this.trackDetection(() =>
+            this.resolveClaudeRuntime(settings, runtimeProbe?.claudeVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveOpencodeRuntime(settings, runtimeProbe?.opencodeVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveCodeBuddyRuntime(settings, runtimeProbe?.codebuddyVersion, signal)
+          ),
+          this.trackDetection(() =>
+            this.resolveCodexRuntime(settings, runtimeProbe?.codex, signal)
+          ),
+          agentFrameworkId === 'pi'
+            ? isPiRuntimeReady({ configRoot: this.configRoot })
+            : Promise.resolve(false)
+        ])
 
       signal.throwIfAborted()
       this.storeResolvedRuntimeProbe(
@@ -576,7 +605,22 @@ export class AgentRuntimeManager {
             id: 'codebuddy',
             label: getAgentFramework('codebuddy').displayName,
             runtime: codebuddyRuntime
-          }
+          },
+          ...(agentFrameworkId === 'pi'
+            ? [
+                {
+                  id: 'pi' as const,
+                  label: getAgentFramework('pi').displayName,
+                  runtime: piReady
+                    ? {
+                        found: true,
+                        path: piAdapterPath({ configRoot: this.configRoot }),
+                        version: '0.1.8'
+                      }
+                    : { found: false }
+                }
+              ]
+            : [])
         ],
         encryptionAvailable: isEncryptionAvailable(),
         credentialStore: getCredentialStore()
@@ -808,6 +852,27 @@ export class AgentRuntimeManager {
     })
   }
 
+  async installPi(
+    _request: InstallPiRequest,
+    onEvent: (event: ClaudeInstallEvent) => void
+  ): Promise<ClaudeInstallResult> {
+    const installId = `install-pi-${Date.now()}-${this.allocateSettingsIdSequence()}`
+    return this.runExclusiveInstall(installId, (signal) =>
+      installManagedPi({ configRoot: this.configRoot, installId, onEvent, signal })
+    )
+  }
+
+  async uninstallPi(): Promise<RuntimeUninstallResult> {
+    const settings = await this.repository.getSettings()
+    const result = await this.runExclusiveInstall(`uninstall-pi-${Date.now()}`, async () => {
+      await uninstallManagedPi(this.configRoot)
+      await this.autoSwitchAwayFrom('pi')
+      return { installId: 'uninstall-pi', ok: true }
+    })
+    if (!result.ok) throw new Error(result.error)
+    return { activeBackendAffected: settings.agentFrameworkId === 'pi' }
+  }
+
   async installCodeBuddy(
     _request: InstallCodeBuddyRequest,
     onEvent: (event: ClaudeInstallEvent) => void
@@ -992,6 +1057,7 @@ export class AgentRuntimeManager {
   }
 
   isManagedRuntimePath(frameworkId: AgentFrameworkId, path: string): boolean {
+    if (frameworkId === 'pi') return path === piAdapterPath({ configRoot: this.configRoot })
     if (frameworkId === 'claude-code') return isManagedClaudePath(path, this.configRoot)
     if (frameworkId === 'opencode') return isManagedOpencodePath(path, this.configRoot)
     if (frameworkId === 'codebuddy') return isManagedCodeBuddyPath(path, this.configRoot)

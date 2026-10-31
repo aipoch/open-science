@@ -2166,6 +2166,7 @@
     "Open {{name}} configuration": "{{name}} 구성 열기",
     "Open {{scope}}": "{{scope}} 열기",
     "Open-source coding agent for the terminal.": "터미널용 오픈 소스 코딩 에이전트입니다.",
+    "Minimal open-source coding agent, installed separately through the Pi ACP adapter.": "Pi ACP 어댑터를 통해 별도로 설치되는 미니멀한 오픈 소스 코딩 에이전트입니다.",
     "OpenAI's coding agent, connected through the Codex ACP adapter.": "OpenAI의 코딩 에이전트는 Codex ACP 어댑터를 통해 연결됩니다.",
     "OpenCode is required for this framework. Install it below, or install it manually (see <docs>opencode.ai/docs</docs>) and re-detect.": "이 프레임워크에는 opencode가 필요합니다. 아래에서 설치하거나 수동으로 설치하고(<docs>opencode.ai/docs</docs> 참조) 다시 감지하세요.",
     "Opening your browser to sign in… Didn't open? Cancel and use a setup token.": "로그인하기 위해 브라우저를 여는 중… 열리지 않았나요? 취소하고 설정 토큰을 사용하세요.",

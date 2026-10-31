@@ -301,7 +301,8 @@ const OnboardingWizard = ({
         preflight.codexReady &&
         isSupportedCodexCliVersion(codexNativeVersion) &&
         (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
-      codebuddy: preflight.codebuddyReady
+      codebuddy: preflight.codebuddyReady,
+      pi: preflight.piReady === true
     }
     if (ready[agentFrameworkId]) return
     const installed = agentFrameworks.find((framework) => ready[framework.id])

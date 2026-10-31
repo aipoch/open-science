@@ -28,6 +28,7 @@ export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string
 type XaiOAuthProviderBridgeOptions = Readonly<{
   fetchImpl?: typeof fetch
   adaptChatCompletionsRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+  token?: string
 }>
 
 const log = createLogger('xai-oauth-bridge')
@@ -76,7 +77,8 @@ export class XaiOAuthProviderBridge {
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly adaptChatCompletionsRequest?: (
       request: Record<string, unknown>
-    ) => Record<string, unknown>
+    ) => Record<string, unknown>,
+    token?: string
   ) {
     this.targets = new Map(targets.map((target) => [target.id, target]))
     const initial = this.targets.get(initialTargetId)
@@ -91,6 +93,7 @@ export class XaiOAuthProviderBridge {
     this.host = new ProviderLoopbackHttpHost({
       diagnosticName: `xai-oauth-${this.wire}`,
       credentialMode: 'bearer-or-api-key',
+      ...(token ? { token } : {}),
       createConnection: (origin, token) => ({ baseUrl: origin, token }),
       onUnauthorized: (response) => json(response, 401, { error: { message: 'Unauthorized' } }),
       onError: (error, response) =>
@@ -354,6 +357,7 @@ export const createXaiOAuthProviderBridge = (
     wire,
     getAccessToken,
     options.fetchImpl ?? netFetchStandard,
-    options.adaptChatCompletionsRequest
+    options.adaptChatCompletionsRequest,
+    options.token
   )
 }
