@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
@@ -58,7 +59,7 @@ it('accepts only the three content-addressed first-party assets', () => {
 })
 
 it('verifies local bytes and publishes missing objects create-only', async () => {
-  const directory = await mkdtemp(join('/private/tmp', 'ocr-cdn-'))
+  const directory = await mkdtemp(join(tmpdir(), 'ocr-cdn-'))
   try {
     for (const [file, content] of contents) await writeFile(join(directory, file), content)
     await verifyOcrAssets(directory, catalog)

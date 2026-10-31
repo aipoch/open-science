@@ -52,7 +52,8 @@ if (query.has('updates')) {
       projectId: project.id,
       title: `Running research ${index + 1}`,
       cwd: '',
-      status: 'running' as const,
+      status:
+        query.has('waiting') && index === 0 ? ('waiting-for-user' as const) : ('running' as const),
       messages: [],
       createdAt: now,
       updatedAt: now,

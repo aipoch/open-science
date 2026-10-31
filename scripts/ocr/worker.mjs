@@ -13,7 +13,10 @@ let temporaryLanguagePath
 parentPort.on('message', async (image) => {
   try {
     const languageAssets = workerData?.languageAssets ?? {}
-    const languages = workerData?.languages ?? ['eng', 'chi_sim']
+    // Tesseract's first language biases mixed-text recognition; keep Chinese ahead of English.
+    const languages = [...(workerData?.languages ?? ['eng', 'chi_sim'])].sort(
+      (left, right) => Number(right === 'chi_sim') - Number(left === 'chi_sim')
+    )
     const paths = languages.map((code) => languageAssets[code] ?? asset(`${code}.traineddata.gz`))
     const directories = new Set(paths.map((path) => dirname(path)))
     if (!languagePath) {

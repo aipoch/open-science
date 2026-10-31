@@ -147,7 +147,11 @@ export function Fixture(): React.JSX.Element {
           failed ? (
             <TurnOutcomeNotice
               promptMessageId="prompt"
-              outcome={{ kind: 'failed', settledAt: now + 5000 }}
+              outcome={{
+                kind: 'failed',
+                settledAt: now + 5000,
+                error: 'The analysis service disconnected.'
+              }}
               actions={actions}
             />
           ) : undefined

@@ -3,6 +3,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
@@ -212,137 +213,86 @@ const delegatedArtifactHandoff = async (mcpServers) => {
   return { artifactCurrentRunFile: currentRunFile, artifactExecutionId: executionId }
 }
 
-const parseMcpResponse = (body) => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? JSON.parse(json) : {}
-}
-
-const submitReviewerPass = async (mcpServers, prompt = '') => {
-  const server = mcpServers.find(
-    (candidate) =>
-      candidate.type === 'http' &&
-      (candidate.name === 'open-science-reviewer' ||
-        candidate.name === frameworkServerName('open-science-reviewer'))
-  )
-  if (!server?.url) return false
-  const token =
-    server.headers
-      ?.find((header) => header.name?.toLowerCase() === 'authorization')
-      ?.value?.replace('Bearer ', '') ?? ''
-  const baseHeaders = {
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${token}`,
-    'content-type': 'application/json'
-  }
-  const initialize = await fetch(server.url, {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'open-science-e2e-reviewer', version: '1.0' }
-      }
-    })
-  })
-  if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
-  const initialized = parseMcpResponse(await initialize.text())
-  const sessionId = initialize.headers.get('mcp-session-id')
-  if (!sessionId || !initialized.result) {
-    throw new Error('Reviewer MCP initialize did not return a session.')
-  }
-  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
-  await fetch(server.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-  let nextId = 2
-  const callTool = async (name, args) => {
-    const response = await fetch(server.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: nextId++,
-        method: 'tools/call',
-        params: { name, arguments: args }
-      })
-    })
-    if (!response.ok) throw new Error(`${name} failed: ${response.status}`)
-    const payload = parseMcpResponse(await response.text())
-    if (payload.error) throw new Error(`${name} failed: ${payload.error.message ?? 'unknown'}`)
-    if (payload.result?.isError) {
-      throw new Error(payload.result.content?.[0]?.text ?? `${name} returned an error`)
+const submitReviewerPass = async (sessionId, prompt = '') => {
+  const server = sessionRoutes
+    .get(sessionId)
+    ?.mcpServers?.find(
+      (candidate) =>
+        candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer')
+    )
+  if (!server) return false
+  return withMcpClient(sessionId, 'open-science-reviewer', async (client) => {
+    const callTool = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args })
+      if (result.isError) throw new Error(result.content?.[0]?.text ?? name + ' returned an error')
+      return result
     }
-    return payload.result
-  }
-  const turn = await callTool('read_turn', {})
-  const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
-  const reproBlock = blocks.find(
-    (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
-  )
-  if (reproBlock) {
+    const turn = await callTool('read_turn', {})
+    const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
+    const reproBlock = blocks.find(
+      (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
+    )
+    if (reproBlock) {
+      await callTool('submit_findings', {
+        checks: [
+          {
+            status: 'fail',
+            claim: reproBlock.content,
+            evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
+            locator: {
+              blockRef: { blockIndex: reproBlock.blockIndex },
+              contentHash: reproBlock.contentHash
+            }
+          }
+        ]
+      })
+      return true
+    }
+    const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map(
+      (match) => match[1]
+    )
+    if (trackedIds.length > 0) {
+      const unresolvedBlock = blocks.find(
+        (block) => block.content === 'Recovered execution still needs correction.'
+      )
+      await callTool('submit_findings', {
+        checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
+          sourceFindingId,
+          ...(unresolvedBlock
+            ? {
+                locator: {
+                  blockRef: { blockIndex: unresolvedBlock.blockIndex },
+                  contentHash: unresolvedBlock.contentHash
+                }
+              }
+            : {}),
+          status: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'fail'
+            : 'pass',
+          claim: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
+            : 'The controlled correction completed.',
+          evidence: 'The corrected answer is present in the frozen turn.'
+        }))
+      })
+      return true
+    }
     await callTool('submit_findings', {
       checks: [
         {
-          status: 'fail',
-          claim: reproBlock.content,
-          evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
-          locator: {
-            blockRef: { blockIndex: reproBlock.blockIndex },
-            contentHash: reproBlock.contentHash
-          }
+          status: 'pass',
+          claim: 'The completed turn follows the requested production path.',
+          evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
         }
       ]
     })
     return true
-  }
-  const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map((match) => match[1])
-  if (trackedIds.length > 0) {
-    const unresolvedBlock = blocks.find(
-      (block) => block.content === 'Recovered execution still needs correction.'
-    )
-    await callTool('submit_findings', {
-      checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
-        sourceFindingId,
-        ...(unresolvedBlock
-          ? {
-              locator: {
-                blockRef: { blockIndex: unresolvedBlock.blockIndex },
-                contentHash: unresolvedBlock.contentHash
-              }
-            }
-          : {}),
-        status: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'fail'
-          : 'pass',
-        claim: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
-          : 'The controlled correction completed.',
-        evidence: 'The corrected answer is present in the frozen turn.'
-      }))
-    })
-    return true
-  }
-  await callTool('submit_findings', {
-    checks: [
-      {
-        status: 'pass',
-        claim: 'The completed turn follows the requested production path.',
-        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
-      }
-    ]
   })
-  return true
 }
 
 const recordMutationStage = async (stage) => {
@@ -358,17 +308,26 @@ const withMcpClient = async (sessionId, serverName, operation) => {
     (candidate) =>
       candidate.name === serverName || candidate.name === frameworkServerName(serverName)
   )
-  if (!route || !server?.command) {
+  if (!route || (!server?.command && !(server?.type === 'http' && server.url))) {
     const routed = route?.mcpServers?.map((candidate) => candidate.name).join(', ') || 'none'
     throw new Error(`${serverName} was not routed to ${sessionId}; routed servers: ${routed}.`)
   }
 
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args ?? [],
-    cwd: route.cwd,
-    env: stringEnvironment(server.env)
-  })
+  const transport =
+    server.type === 'http'
+      ? new StreamableHTTPClientTransport(new URL(server.url), {
+          requestInit: {
+            headers: Object.fromEntries(
+              (server.headers ?? []).map(({ name, value }) => [name, value])
+            )
+          }
+        })
+      : new StdioClientTransport({
+          command: server.command,
+          args: server.args ?? [],
+          cwd: route.cwd,
+          env: stringEnvironment(server.env)
+        })
   const client = new Client({ name: 'open-science-e2e-agent', version: VERSION })
   await recordMutationStage('mcp-connect-start')
   await client.connect(transport)
@@ -2641,12 +2600,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
-        } else if (
-          await submitReviewerPass(
-            sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [],
-            prompt
-          )
-        ) {
+        } else if (await submitReviewerPass(context.params.sessionId, prompt)) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {

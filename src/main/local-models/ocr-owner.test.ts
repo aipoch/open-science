@@ -193,39 +193,42 @@ it('ignores oversized selections and rejects selection symlinks', async () => {
   ).rejects.toThrow('Unsafe OCR model selection file.')
 })
 
-it('upgrades legacy OCR workers before saving a language selection', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-legacy-'))
-  roots.push(root)
-  const base = owner('runtime')
-  let installedRevision = 'ocr-7ed9791930e614a1'
-  let installing = false
-  base.getSnapshot = vi.fn(async () =>
-    snapshot({ installedRevision, availability: installing ? 'installing' : 'ready' })
-  )
-  base.install = vi.fn(async () => {
-    installing = true
-    setTimeout(() => {
-      installedRevision = 'runtime-v1'
-      installing = false
-    }, 20)
-    return snapshot({ installedRevision, availability: 'installing' })
-  })
-  const ocr = createLocalOcrModelOwner({
-    base,
-    languagePacks: { eng: owner('eng'), deu: owner('deu') },
-    defaultLanguages: ['eng', 'deu'],
-    dataRoot: () => root
-  })
+it.each(['ocr-7ed9791930e614a1', 'ocr-74bc858287ce927b'])(
+  'upgrades legacy OCR worker %s before saving a language selection',
+  async (legacyRevision) => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-legacy-'))
+    roots.push(root)
+    const base = owner('runtime')
+    let installedRevision = legacyRevision
+    let installing = false
+    base.getSnapshot = vi.fn(async () =>
+      snapshot({ installedRevision, availability: installing ? 'installing' : 'ready' })
+    )
+    base.install = vi.fn(async () => {
+      installing = true
+      setTimeout(() => {
+        installedRevision = 'runtime-v1'
+        installing = false
+      }, 20)
+      return snapshot({ installedRevision, availability: 'installing' })
+    })
+    const ocr = createLocalOcrModelOwner({
+      base,
+      languagePacks: { eng: owner('eng'), deu: owner('deu') },
+      defaultLanguages: ['eng', 'deu'],
+      dataRoot: () => root
+    })
 
-  await expect(ocr.getSnapshot()).resolves.toMatchObject({
-    selectedOcrLanguages: ['eng', 'chi_sim']
-  })
-  await ocr.setOcrLanguages!(['eng', 'deu'])
-  expect(base.install).toHaveBeenCalledOnce()
-  await expect(ocr.getSnapshot()).resolves.toMatchObject({
-    selectedOcrLanguages: ['eng', 'deu']
-  })
-})
+    await expect(ocr.getSnapshot()).resolves.toMatchObject({
+      selectedOcrLanguages: ['eng', 'chi_sim']
+    })
+    await ocr.setOcrLanguages!(['eng', 'deu'])
+    expect(base.install).toHaveBeenCalledOnce()
+    await expect(ocr.getSnapshot()).resolves.toMatchObject({
+      selectedOcrLanguages: ['eng', 'deu']
+    })
+  }
+)
 
 it('aggregates runtime and language-pack download progress', async () => {
   const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-progress-'))

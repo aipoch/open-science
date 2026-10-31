@@ -16,7 +16,7 @@ import type { LocalModelOwner, LocalModelUse } from './owner'
 
 const SELECTION_SCHEMA_VERSION = 1
 const SELECTION_MAX_BYTES = 16 * 1024
-const LEGACY_BASE_LANGUAGE_REVISION = 'ocr-7ed9791930e614a1'
+const LEGACY_BASE_LANGUAGE_REVISIONS = new Set(['ocr-7ed9791930e614a1', 'ocr-74bc858287ce927b'])
 class UnsafeOcrModelPathError extends Error {}
 
 type OcrSelection = Readonly<{
@@ -131,10 +131,11 @@ export const createLocalOcrModelOwner = ({
     ])
     const packs = new Map<OcrLanguage, LocalModelSnapshot | undefined>()
     OCR_LANGUAGES.forEach((code, index) => packs.set(code, packSnapshots[index]))
-    const legacyBaseLanguages =
-      baseSnapshot.installedRevision === LEGACY_BASE_LANGUAGE_REVISION
-        ? new Set<OcrLanguage>(['eng', 'chi_sim'])
-        : new Set<OcrLanguage>()
+    const legacyBaseLanguages = LEGACY_BASE_LANGUAGE_REVISIONS.has(
+      baseSnapshot.installedRevision ?? ''
+    )
+      ? new Set<OcrLanguage>(['eng', 'chi_sim'])
+      : new Set<OcrLanguage>()
     if (legacyBaseLanguages.size > 0) {
       // The legacy worker ignores workerData and always loads its embedded English and
       // Simplified Chinese files. Do not expose a selectable projection until it is upgraded.
@@ -248,7 +249,7 @@ export const createLocalOcrModelOwner = ({
   ): Promise<LocalModelSnapshot> => {
     await initialize()
     const next = normalizeLanguages(languages)
-    if ((await base.getSnapshot()).installedRevision === LEGACY_BASE_LANGUAGE_REVISION) {
+    if (LEGACY_BASE_LANGUAGE_REVISIONS.has((await base.getSnapshot()).installedRevision ?? '')) {
       await base.install()
       await waitForInstallation(base)
     }
