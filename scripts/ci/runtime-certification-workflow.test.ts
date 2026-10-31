@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { load } from 'js-yaml'
@@ -40,6 +42,54 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('runtime certification workflow', () => {
+  it.each(['installed', 'extra', 'missing'])(
+    'loads the %s AppArmor profile layout without weakening isolation',
+    (layout) => {
+      for (const [name, job] of [
+        ['runtime-certification.yml', 'source'],
+        ['pr-gate.yml', 'linux_runtime']
+      ]) {
+        const directory = mkdtempSync(join(tmpdir(), 'apparmor-profile-'))
+        const installed = join(directory, 'installed-profile')
+        const extra = join(directory, 'extra-profile')
+        try {
+          if (layout !== 'missing')
+            writeFileSync(layout === 'installed' ? installed : extra, 'profile')
+          const quote = (path: string): string =>
+            `'${path.replaceAll('\\', '/').replaceAll("'", "'\\''")}'`
+          const run = step(workflow(name).jobs[job], 'Install Linux sandbox dependency')
+            .run!.replaceAll('/etc/apparmor.d/bwrap-userns-restrict', quote(installed))
+            .replaceAll('/usr/share/apparmor/extra-profiles/bwrap-userns-restrict', quote(extra))
+          const result = spawnSync(
+            'bash',
+            [
+              '-c',
+              `
+          sudo() { if [[ "$1" == apt-get ]]; then return 0; fi; "$@"; }
+          sysctl() { echo 1; }
+          apparmor_parser() { test -r "$2" && echo profile-loaded; }
+          bwrap() { echo isolation-probed; }
+          ${run}
+        `
+            ],
+            { encoding: 'utf8' }
+          )
+          expect(result.error).toBeUndefined()
+          if (layout === 'missing') {
+            expect(result.status).not.toBe(0)
+            expect(result.stdout).not.toContain('isolation-probed')
+          } else {
+            expect(result.status, result.stderr).toBe(0)
+            expect(result.stdout).toContain('profile-loaded\nisolation-probed')
+            expect(readFileSync(installed, 'utf8')).toBe('profile')
+          }
+        } finally {
+          rmSync(directory, { recursive: true, force: true })
+        }
+      }
+    }
+  )
+
   it('provides native reusable, manually dispatchable, read-only Linux source lanes', () => {
     const runtime = workflow('runtime-certification.yml')
     const source = runtime.jobs.source
