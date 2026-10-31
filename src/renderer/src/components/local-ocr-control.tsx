@@ -99,7 +99,12 @@ export function LocalOcrControl({
       setPending(false)
     }
   }
-  const installed = snapshot?.availability === 'ready'
+  const selectedLanguagesInstalled =
+    !snapshot?.ocrLanguages ||
+    snapshot.ocrLanguages
+      .filter((language) => language.selected)
+      .every((language) => language.installed)
+  const installed = snapshot?.availability === 'ready' && selectedLanguagesInstalled
   const installing = snapshot?.availability === 'installing'
   if (compact && ((!snapshot && !failed) || (installed && !installedHere && !snapshot?.error)))
     return null
