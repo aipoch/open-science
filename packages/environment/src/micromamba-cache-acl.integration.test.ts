@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -57,4 +58,3 @@ describe.runIf(process.platform === 'win32')('Windows micromamba cache ACL integ
     ACL_INTEGRATION_TIMEOUT_MS
   )
 })
-import { execFileSync } from 'node:child_process'
