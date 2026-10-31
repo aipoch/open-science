@@ -8,7 +8,8 @@ import {
   hardenWindowsCacheAcl,
   hardenWindowsCacheAclWithIcacls,
   isTrustedWindowsCacheAcl,
-  readWindowsCacheAcl
+  readWindowsCacheAcl,
+  windowsCacheAclReadScript
 } from './micromamba-cache'
 
 // Each ACL call spawns a real PowerShell process; two cold-start module-discovery
@@ -17,13 +18,23 @@ const ACL_INTEGRATION_TIMEOUT_MS = 30_000
 
 describe.runIf(process.platform === 'win32')('Windows micromamba cache ACL integration', () => {
   it(
-    'applies an ACL accepted by the production trust verifier',
+    'reads a hardened ACL without automatic PowerShell module discovery',
     () => {
       const directory = mkdtempSync(join(tmpdir(), 'os-cache-acl-'))
       try {
         hardenWindowsCacheAcl(directory)
 
-        expect(isTrustedWindowsCacheAcl(readWindowsCacheAcl(directory))).toBe(true)
+        const raw = execFileSync(
+          join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'),
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference='Stop'; $PSModuleAutoLoadingPreference='None'; ${windowsCacheAclReadScript(directory)}`
+          ],
+          { encoding: 'utf8', windowsHide: true }
+        )
+        expect(isTrustedWindowsCacheAcl(JSON.parse(raw))).toBe(true)
       } finally {
         rmSync(directory, { recursive: true, force: true })
       }
@@ -46,3 +57,4 @@ describe.runIf(process.platform === 'win32')('Windows micromamba cache ACL integ
     ACL_INTEGRATION_TIMEOUT_MS
   )
 })
+import { execFileSync } from 'node:child_process'
