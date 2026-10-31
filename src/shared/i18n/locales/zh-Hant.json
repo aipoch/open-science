@@ -7711,6 +7711,21 @@
     "No examples available yet.": "暫無案例。",
     "View in sharing marketplace": "在分享市集中檢視",
     "Simplified Chinese": "簡體中文",
-    "Traditional Chinese": "繁體中文"
+    "Traditional Chinese": "繁體中文",
+    "For example: {{doi}} or {{url}}": "例如：{{doi}} 或 {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "不支援此識別碼或連結。請嘗試 DOI、doi.org 連結、arXiv 摘要頁或 PDF 連結，或匯入參考文獻檔案。",
+    "Find reference": "尋找文獻",
+    "DOI or arXiv link": "DOI 或 arXiv 連結",
+    "When identifiers match: {{policy}}": "識別碼相同時：{{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "無法取得文獻資訊。請檢查識別碼並重試，或匯入 PDF 或參考文獻檔案。",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "查找並核對文獻資訊後儲存，全文 PDF 可稍後新增。",
+    "Add from DOI or link": "透過 DOI 或連結新增",
+    "DOI and arXiv links": "DOI 與 arXiv 連結",
+    "Review reference details": "核對文獻資訊",
+    "Versioned arXiv links use the latest metadata.": "含版本號的 arXiv 連結使用最新的中繼資料。",
+    "Retrieved via {{source}}.": "已透過 {{source}} 取得文獻資訊。",
+    "Edit reference details": "編輯文獻資訊",
+    "Edit details": "編輯詳細資料",
+    "Back to review": "返回確認"
   }
 }

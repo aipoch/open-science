@@ -15,7 +15,7 @@ import {
 // Legacy entries require no migration of their existing authorization contract.
 const registrations: Record<
   string,
-  'allow_once' | 'inner_authorization' | 'legacy' | 'operations'
+  'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
@@ -29,6 +29,11 @@ const registrations: Record<
   'literature/mcp-server.ts:LITERATURE_READ_DOCUMENT_TOOL_NAME': 'allow_once',
   "literature/mcp-server.ts:'list_pdf_elements'": 'allow_once',
   "literature/mcp-server.ts:'read_pdf_element'": 'allow_once',
+  // Reading annotations use the verified Literature identity; read-only calls skip the prompt,
+  // while create remains a one-call Auto approval.
+  "literature/mcp-server.ts:'list_pdf_annotations'": 'allow_once',
+  "literature/mcp-server.ts:'locate_pdf_annotation_target'": 'allow_once',
+  "literature/mcp-server.ts:'create_pdf_annotation'": 'allow_once',
   'notebook/mcp-server.ts:definition.name': 'operations',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.readTurn': 'legacy',
   'reviewer/mcp-server.ts:REVIEWER_MCP_TOOLS.queryExecutionLog': 'legacy',
@@ -164,7 +169,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          '040601c73d0094e3b9d73f08a34cdeba7795093abf75cce4706651fc3292a17d',
+          '01d43ef955ccb78cb4f5a0d1a5899b972221752055a822e18b2004d6cd1e74d9',
         // Reviewed: Windows Bioconductor installer guidance only; schemas, handlers and Auto
         // operation dispositions are unchanged.
         'notebook/mcp-server.ts':

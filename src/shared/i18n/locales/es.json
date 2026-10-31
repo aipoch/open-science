@@ -8051,6 +8051,21 @@
     "No examples available yet.": "Todavía no hay ejemplos disponibles.",
     "View in sharing marketplace": "Ver en el mercado de contenido compartido",
     "Simplified Chinese": "Chino simplificado",
-    "Traditional Chinese": "Chino tradicional"
+    "Traditional Chinese": "Chino tradicional",
+    "For example: {{doi}} or {{url}}": "P. ej., {{doi}} o {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "Este identificador o enlace no es compatible. Pruebe con un DOI, un enlace de doi.org o un enlace al resumen o PDF de arXiv, o importe un archivo bibliográfico.",
+    "Find reference": "Buscar referencia",
+    "DOI or arXiv link": "DOI o enlace de arXiv",
+    "When identifiers match: {{policy}}": "Si los identificadores coinciden: {{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "No se pudieron obtener los datos de la referencia. Compruebe el identificador e inténtelo de nuevo, o importe un PDF o un archivo bibliográfico.",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "Buscar los datos de la referencia para revisarlos antes de guardar. Los PDF de texto completo se pueden añadir más adelante.",
+    "Add from DOI or link": "Añadir mediante DOI o enlace",
+    "DOI and arXiv links": "Enlaces DOI y arXiv",
+    "Review reference details": "Revisar los datos de la referencia",
+    "Versioned arXiv links use the latest metadata.": "Los enlaces de arXiv con número de versión usan los metadatos más recientes.",
+    "Retrieved via {{source}}.": "Datos obtenidos mediante {{source}}.",
+    "Edit reference details": "Editar los datos de la referencia",
+    "Edit details": "Editar detalles",
+    "Back to review": "Volver a la revisión"
   }
 }

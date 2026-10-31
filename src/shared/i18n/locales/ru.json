@@ -8197,6 +8197,21 @@
     "No examples available yet.": "Пока нет доступных примеров.",
     "View in sharing marketplace": "Посмотреть в маркетплейсе обмена",
     "Simplified Chinese": "Упрощённый китайский",
-    "Traditional Chinese": "Традиционный китайский"
+    "Traditional Chinese": "Традиционный китайский",
+    "For example: {{doi}} or {{url}}": "Например: {{doi}} или {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "Этот идентификатор или ссылка не поддерживается. Попробуйте DOI, ссылку doi.org или ссылку на аннотацию либо PDF в arXiv или импортируйте файл библиографии.",
+    "Find reference": "Найти публикацию",
+    "DOI or arXiv link": "DOI или ссылка arXiv",
+    "When identifiers match: {{policy}}": "При совпадении идентификаторов: {{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Не удалось получить сведения о публикации. Проверьте идентификатор и повторите попытку или импортируйте PDF либо файл библиографии.",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "Найдите сведения о публикации для проверки перед сохранением. PDF с полным текстом можно добавить позже.",
+    "Add from DOI or link": "Добавить по DOI или ссылке",
+    "DOI and arXiv links": "Ссылки DOI и arXiv",
+    "Review reference details": "Проверка сведений о публикации",
+    "Versioned arXiv links use the latest metadata.": "Для ссылок arXiv с номером версии используются последние метаданные.",
+    "Retrieved via {{source}}.": "Получено через {{source}}.",
+    "Edit reference details": "Редактирование сведений о публикации",
+    "Edit details": "Изменить сведения",
+    "Back to review": "Вернуться к проверке"
   }
 }

@@ -22,15 +22,22 @@ describe('LiteratureMetadataEditor', () => {
     const onSave = vi.fn()
     const props = { item, onSave, onCancel: vi.fn() }
     const { container, rerender } = render(<LiteratureMetadataEditor {...props} saving={false} />)
-    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Draft title' } })
+    const draftTitle = 'A long reference title\nwith a reviewed subtitle'
+    expect(document.activeElement).toBe(screen.getByLabelText('Title'))
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: draftTitle } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: 'Draft title' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ title: draftTitle }))
     rerender(<LiteratureMetadataEditor {...props} saving />)
+    const savingButton = screen.getByRole('button', { name: 'Saving…' })
+    expect(savingButton.getAttribute('aria-busy')).toBe('true')
+    expect(savingButton.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true')
+    fireEvent.click(savingButton)
+    expect(onSave).toHaveBeenCalledOnce()
     const controls = [...container.querySelectorAll('input, textarea, button')]
-    expect(controls.length).toBeGreaterThan(15)
     expect(controls.filter((control) => !control.matches(':disabled'))).toEqual([])
     rerender(<LiteratureMetadataEditor {...props} saving={false} error="Save failed" />)
-    expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Draft title')
+    expect(screen.getByRole('button', { name: 'Save' }).getAttribute('aria-busy')).toBe('false')
+    expect((screen.getByLabelText('Title') as HTMLTextAreaElement).value).toBe(draftTitle)
     expect(screen.getByRole('alert').textContent).toBe('Save failed')
     expect(screen.getByRole('button', { name: /Add (creator|author)/ }).matches(':disabled')).toBe(
       false
@@ -38,6 +45,108 @@ describe('LiteratureMetadataEditor', () => {
     expect(screen.getByRole('combobox', { name: 'Reference type' }).matches(':disabled')).toBe(
       false
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(props.onCancel).toHaveBeenCalledOnce()
+    expect(onSave).toHaveBeenCalledOnce()
+  })
+
+  it('keeps creators and identifiers ahead of automatically expanded publication details', () => {
+    render(
+      <LiteratureMetadataEditor
+        item={literatureItemInputSchema.parse({
+          itemType: 'journalArticle',
+          title: 'A reference to review',
+          typeFields: { volume: '42', issue: '3' },
+          creators: [
+            { nameMode: 'person', givenName: 'Ada', familyName: 'Lovelace', creatorType: 'author' }
+          ],
+          identifiers: [{ scheme: 'doi', value: '10.1234/example', isPrimary: true }]
+        })}
+        saving={false}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    const advanced = screen.getByRole('button', { name: 'Advanced settings' })
+    expect(advanced.getAttribute('aria-expanded')).toBe('true')
+    expect((screen.getByLabelText('Volume') as HTMLInputElement).value).toBe('42')
+    expect((screen.getByLabelText('Issue') as HTMLInputElement).value).toBe('3')
+    for (const control of [screen.getByLabelText('Family name'), screen.getByLabelText('DOI')]) {
+      expect(control.compareDocumentPosition(advanced) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      )
+    }
+  })
+
+  it('edits a long identifier while keeping preferences independent for each scheme', () => {
+    const doi = '10.1234/a-long-reference-identifier-that-needs-the-available-row-width'
+    const item = literatureItemInputSchema.parse({
+      itemType: 'preprint',
+      title: 'Reference identifiers',
+      identifiers: [
+        { scheme: 'doi', value: '10.1234/original', isPrimary: true },
+        { scheme: 'doi', value: doi, isPrimary: false },
+        { scheme: 'arxiv', value: '2401.12345', isPrimary: true }
+      ]
+    })
+    const onSave = vi.fn()
+    render(
+      <LiteratureMetadataEditor item={item} saving={false} onSave={onSave} onCancel={vi.fn()} />
+    )
+    fireEvent.click(screen.getAllByRole('radio', { name: 'Preferred for DOI' })[1])
+    fireEvent.change(screen.getAllByLabelText('DOI')[1], { target: { value: `${doi}-reviewed` } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        identifiers: [
+          { scheme: 'doi', value: '10.1234/original', isPrimary: false },
+          { scheme: 'doi', value: `${doi}-reviewed`, isPrimary: true },
+          { scheme: 'arxiv', value: '2401.12345', isPrimary: true }
+        ]
+      })
+    )
+  })
+
+  it('shows retry progress without resubmitting and restores the retry action after failure', () => {
+    const props = {
+      item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved draft' }),
+      onSave: vi.fn(),
+      onRetry: vi.fn(),
+      onCancel: vi.fn()
+    }
+    const { rerender } = render(<LiteratureMetadataEditor {...props} saving={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(props.onRetry).toHaveBeenCalledOnce()
+    rerender(<LiteratureMetadataEditor {...props} saving />)
+    const retrying = screen.getByRole('button', { name: 'Retrying…' })
+    expect(retrying.getAttribute('aria-busy')).toBe('true')
+    expect(retrying.matches(':disabled')).toBe(true)
+    fireEvent.click(retrying)
+    expect(props.onRetry).toHaveBeenCalledOnce()
+    expect(props.onSave).not.toHaveBeenCalled()
+    rerender(<LiteratureMetadataEditor {...props} saving={false} error="Read failed" />)
+    expect(screen.getByRole('alert').textContent).toBe('Read failed')
+    expect(screen.getByRole('button', { name: 'Retry' }).matches(':disabled')).toBe(false)
+    expect(screen.queryByRole('button', { name: 'Retrying…' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(props.onRetry).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not report active saving for a locked recovery draft', () => {
+    render(
+      <LiteratureMetadataEditor
+        item={literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Saved draft' })}
+        saving
+        busy={false}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save.matches(':disabled')).toBe(true)
+    expect(save.getAttribute('aria-busy')).toBe('false')
+    expect(screen.queryByRole('button', { name: 'Saving…' })).toBeNull()
+    expect(screen.getByLabelText('Title').matches(':disabled')).toBe(true)
   })
 })
 

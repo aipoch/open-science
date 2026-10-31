@@ -2117,6 +2117,7 @@ describe('PR Gate workflow', () => {
     expect(linuxDependencies?.run).toContain('apt-get install --yes --no-install-recommends')
     expect(linuxDependencies?.run).toContain('apparmor-profiles')
     expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
+    expect(linuxDependencies?.run).toContain('scripts/ci/bwrap-userns-restrict')
     expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
     expect(linuxDependencies?.run).not.toContain('apparmor_restrict_unprivileged_userns=0')
     expect(

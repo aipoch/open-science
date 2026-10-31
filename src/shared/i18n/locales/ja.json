@@ -7711,6 +7711,21 @@
     "No examples available yet.": "利用できる事例はまだありません。",
     "View in sharing marketplace": "共有マーケットプレイスで表示",
     "Simplified Chinese": "簡体字中国語",
-    "Traditional Chinese": "繁体字中国語"
+    "Traditional Chinese": "繁体字中国語",
+    "For example: {{doi}} or {{url}}": "例：{{doi}} または {{url}}",
+    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "この識別子またはリンクには対応していません。DOI、doi.org のリンク、arXiv の概要ページまたは PDF のリンクを試すか、文献ファイルをインポートしてください。",
+    "Find reference": "文献を検索",
+    "DOI or arXiv link": "DOI または arXiv のリンク",
+    "When identifiers match: {{policy}}": "識別子が一致する場合：{{policy}}",
+    "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "文献情報を取得できませんでした。識別子を確認して再試行するか、PDF または文献ファイルをインポートしてください。",
+    "Find reference details to review before saving. Full-text PDFs can be added later.": "文献情報を検索し、確認してから保存します。全文 PDF は後から追加できます。",
+    "Add from DOI or link": "DOI またはリンクから追加",
+    "DOI and arXiv links": "DOI と arXiv のリンク",
+    "Review reference details": "文献情報を確認",
+    "Versioned arXiv links use the latest metadata.": "バージョン付きの arXiv リンクでも最新のメタデータを使用します。",
+    "Retrieved via {{source}}.": "{{source}} から取得しました。",
+    "Edit reference details": "文献情報を編集",
+    "Edit details": "詳細を編集",
+    "Back to review": "確認に戻る"
   }
 }
