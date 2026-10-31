@@ -1597,10 +1597,39 @@ it('keeps declared contract tests as the deferred full-plan floor', () => {
   for (const unowned of [
     [{ path: 'package.json', status: 'modified' }],
     [{ path: 'src/shared/new-unregistered-contract.ts', status: 'added' }],
-    [{ path: 'src/main/literature/mcp-server.ts', status: 'deleted' }]
+    ...['deleted', 'type-changed', 'unmerged', 'unknown'].map((status) => [
+      { path: literature.path, status }
+    ]),
+    // A rename whose source has no bounded selection cannot be covered from its destination.
+    [
+      {
+        path: 'src/renderer/src/lib/format-star-count.ts',
+        previousPath: 'src/shared/new-unregistered-contract.ts',
+        status: 'renamed'
+      }
+    ]
   ]) {
     expect(createFullPlanFloor(unowned, manifest)).toBeUndefined()
   }
+})
+
+it('keeps both owners of a cross-module rename in the full-plan floor', () => {
+  const manifest = loadModuleImpactManifest()
+  const source = 'src/main/literature/mcp-server.ts'
+  const destination = 'src/renderer/src/lib/format-star-count.ts'
+  const rename = createFullPlanFloor(
+    [{ path: destination, previousPath: source, status: 'renamed' }],
+    manifest
+  )
+  expect(rename?.floorPaths).toEqual([source, destination])
+  for (const path of [source, destination]) {
+    expect(rename?.testFiles).toEqual(
+      expect.arrayContaining(
+        createFullPlanFloor([{ path, status: 'modified' }], manifest)?.testFiles ?? ['missing']
+      )
+    )
+  }
+  expect(rename?.testFiles).toContain('src/main/acp/auto-operation-inventory.test.ts')
 })
 
 it('keeps tag event consumers covered by the explicit full fallback', () => {

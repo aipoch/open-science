@@ -385,16 +385,26 @@ export function createFullPlanFloor(changes, manifest = defaultManifest, registr
     })
   )
   const floorManifest = { ...manifest, modules }
-  // Each path joins the floor only when it has its own bounded selection, so one unowned or
-  // global path cannot remove the floor of the owned changes beside it.
-  const floorChanges = changes
-    .filter(({ status }) => status !== 'deleted')
-    .map(({ path }) => ({ path, status: 'modified' }))
-    .filter(
-      (change) =>
-        createAffectedTestPlan([change], graph, floorManifest, registrationModules).mode ===
-        'selective'
-    )
+  // Each change joins the floor only when it has its own bounded selection, so one unowned or
+  // global path cannot remove the floor of the owned changes beside it. A rename joins only when
+  // both its source and destination are bounded, and selects both owners. Deleted, type-changed,
+  // unmerged and unknown changes add no floor.
+  const bounded = (path) =>
+    createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      graph,
+      floorManifest,
+      registrationModules
+    ).mode === 'selective'
+  const floorChanges = changes.flatMap((change) => {
+    if (['added', 'modified', 'copied'].includes(change.status)) {
+      return bounded(change.path) ? [{ path: change.path, status: 'modified' }] : []
+    }
+    if (change.status === 'renamed' && bounded(change.path) && bounded(change.previousPath)) {
+      return [change.previousPath, change.path].map((path) => ({ path, status: 'modified' }))
+    }
+    return []
+  })
   const plan = createAffectedTestPlan(floorChanges, graph, floorManifest, registrationModules)
   if (plan.mode !== 'selective' || plan.testFiles.length === 0) return undefined
   return {
