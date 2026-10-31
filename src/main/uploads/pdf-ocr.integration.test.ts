@@ -135,69 +135,84 @@ await import(${JSON.stringify(pathToFileURL(entry).href)});
   }
 }, 30_000)
 
-it('reads a real mixed PDF offline and reports blank pages without claiming full coverage', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'pdf-ocr-'))
-  let registeredFont: ReturnType<typeof GlobalFonts.registerFromPath> | undefined
-  try {
-    registeredFont = GlobalFonts.registerFromPath(
-      join(process.cwd(), 'packages/pdf-translation/resources/NotoSansSC-Regular.otf'),
-      'PdfOcrTest'
-    )
-    if (!registeredFont) throw new Error('OCR fixture font is unavailable.')
-    const pdf = await PDFDocument.create()
-    const font = await pdf.embedFont(StandardFonts.Helvetica)
-    pdf.addPage([600, 800]).drawText('Native clinical evidence', { x: 40, y: 700, font, size: 20 })
-    const canvas = createCanvas(1200, 400)
-    const context = canvas.getContext('2d')
-    context.fillStyle = 'white'
-    context.fillRect(0, 0, 1200, 400)
-    context.fillStyle = 'black'
-    context.font = '48px PdfOcrTest'
-    context.fillText('Clinical evidence improves research', 35, 120)
-    context.fillText('Patients received treatment daily', 35, 210)
-    context.fillText('临床证据支持科学研究', 35, 300)
-    const image = await pdf.embedPng(await canvas.encode('png'))
-    pdf.addPage([600, 800]).drawImage(image, { x: 0, y: 300, width: 600, height: 200 })
-    const headedScan = pdf.addPage([600, 800])
-    headedScan.drawText('1', { x: 40, y: 760, font, size: 12 })
-    headedScan.drawImage(image, { x: 0, y: 300, width: 600, height: 200 })
-    pdf.addPage([600, 800])
-    const path = join(root, 'mixed.pdf')
-    await writeFile(path, await pdf.save())
-    const before = await extractPdfText(path, undefined, { ocr: true })
-    expect(before.text).not.toMatch(/Patients received/)
-    expect(before.coverage?.unavailablePages).toEqual([2, 3, 4])
-    const owner = await installComponent(root)
-    const result = await extractPdfText(path, undefined, {
-      ocr: true,
-      createOcrSession: () => createPdfOcrSession(owner)
-    })
-    expect((await owner.getSnapshot()).inUse).toBe(false)
-    await owner.remove()
-    expect((await owner.getSnapshot()).availability).toBe('notInstalled')
-    await owner.close()
-    expect(result.text).toContain('Native clinical evidence')
-    expect(
-      result.text.match(/Clinical evidence improves research/gi),
-      'a native page number must not hide the scanned body'
-    ).toHaveLength(2)
-    expect(result.text.replace(/\s/g, '')).toContain('临床证据支持科学研究')
-    expect(result.coverage).toEqual({
-      textPages: [1, 3],
-      ocrPages: [2, 3],
-      unavailablePages: [4],
-      uncheckedPages: [],
-      unverifiedPages: [2, 3]
-    })
-    expect(result.truncated).toBe(false)
-    const native = await extractPdfText(path)
-    expect(native.coverage?.unavailablePages).toEqual([2, 4])
-    expect(native.text).not.toMatch(/Patients received/)
-  } finally {
+it.each([
+  ['chi_sim', '临床证据支持科学研究'],
+  ['chi_tra', '臨床證據支持科學研究']
+] as const)(
+  'reads a real mixed %s/English PDF offline without claiming full coverage',
+  async (language, chineseText) => {
+    const root = await mkdtemp(join(tmpdir(), 'pdf-ocr-'))
+    let registeredFont: ReturnType<typeof GlobalFonts.registerFromPath> | undefined
     try {
-      if (registeredFont) GlobalFonts.remove(registeredFont)
+      registeredFont = GlobalFonts.registerFromPath(
+        join(process.cwd(), 'packages/pdf-translation/resources/NotoSansSC-Regular.otf'),
+        'PdfOcrTest'
+      )
+      if (!registeredFont) throw new Error('OCR fixture font is unavailable.')
+      const pdf = await PDFDocument.create()
+      const font = await pdf.embedFont(StandardFonts.Helvetica)
+      pdf
+        .addPage([600, 800])
+        .drawText('Native clinical evidence', { x: 40, y: 700, font, size: 20 })
+      const canvas = createCanvas(1200, 400)
+      const context = canvas.getContext('2d')
+      context.fillStyle = 'white'
+      context.fillRect(0, 0, 1200, 400)
+      context.fillStyle = 'black'
+      context.font = '48px PdfOcrTest'
+      context.fillText('Clinical evidence improves research', 35, 120)
+      context.fillText('Patients received treatment daily', 35, 210)
+      context.fillText(chineseText, 35, 300)
+      const image = await pdf.embedPng(await canvas.encode('png'))
+      pdf.addPage([600, 800]).drawImage(image, { x: 0, y: 300, width: 600, height: 200 })
+      const headedScan = pdf.addPage([600, 800])
+      headedScan.drawText('1', { x: 40, y: 760, font, size: 12 })
+      headedScan.drawImage(image, { x: 0, y: 300, width: 600, height: 200 })
+      pdf.addPage([600, 800])
+      const path = join(root, 'mixed.pdf')
+      await writeFile(path, await pdf.save())
+      const before = await extractPdfText(path, undefined, { ocr: true })
+      expect(before.text).not.toMatch(/Patients received/)
+      expect(before.coverage?.unavailablePages).toEqual([2, 3, 4])
+      const owner = await installComponent(root)
+      const result = await extractPdfText(path, undefined, {
+        ocr: true,
+        createOcrSession: () =>
+          createPdfOcrSession({
+            acquireUse: async () => ({
+              ...(await owner.acquireUse()),
+              languages: ['eng', language]
+            })
+          })
+      })
+      expect((await owner.getSnapshot()).inUse).toBe(false)
+      await owner.remove()
+      expect((await owner.getSnapshot()).availability).toBe('notInstalled')
+      await owner.close()
+      expect(result.text).toContain('Native clinical evidence')
+      expect(
+        result.text.replace(/\s/g, '').match(/Clinicalevidenceimprovesresearch/gi),
+        'a native page number must not hide the scanned body'
+      ).toHaveLength(2)
+      expect(result.text.replace(/\s/g, '')).toContain(chineseText)
+      expect(result.coverage).toEqual({
+        textPages: [1, 3],
+        ocrPages: [2, 3],
+        unavailablePages: [4],
+        uncheckedPages: [],
+        unverifiedPages: [2, 3]
+      })
+      expect(result.truncated).toBe(false)
+      const native = await extractPdfText(path)
+      expect(native.coverage?.unavailablePages).toEqual([2, 4])
+      expect(native.text).not.toMatch(/Patients received/)
     } finally {
-      await rm(root, { recursive: true, force: true })
+      try {
+        if (registeredFont) GlobalFonts.remove(registeredFont)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
     }
-  }
-}, 120_000)
+  },
+  120_000
+)

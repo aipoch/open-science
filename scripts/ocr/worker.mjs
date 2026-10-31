@@ -15,7 +15,7 @@ parentPort.on('message', async (image) => {
     const languageAssets = workerData?.languageAssets ?? {}
     // Tesseract's first language biases mixed-text recognition; keep Chinese ahead of English.
     const languages = [...(workerData?.languages ?? ['eng', 'chi_sim'])].sort(
-      (left, right) => Number(right === 'chi_sim') - Number(left === 'chi_sim')
+      (left, right) => Number(right.startsWith('chi_')) - Number(left.startsWith('chi_'))
     )
     const paths = languages.map((code) => languageAssets[code] ?? asset(`${code}.traineddata.gz`))
     const directories = new Set(paths.map((path) => dirname(path)))
