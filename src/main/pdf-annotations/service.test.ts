@@ -502,6 +502,24 @@ it('holds verified sharing leases inside the writable source authority and close
   expect(operation).toHaveBeenCalledOnce()
 })
 
+it('allows read-only source verification for imported Sessions without preparing writes', async () => {
+  const { options, service } = fixture()
+  vi.mocked(options.sessions.loadSessionWithDiagnostics).mockResolvedValue({
+    status: 'found',
+    session: {
+      id: 'session-1',
+      projectId: 'project-1',
+      packageOrigin: { packageId: 'package' }
+    }
+  } as never)
+  const operation = vi.fn(async () => 'located')
+  await expect(
+    service.withVerifiedSource(request.target.source, operation, { writable: false })
+  ).resolves.toBe('located')
+  expect(operation).toHaveBeenCalledOnce()
+  expect(options.repository.registerVerifiedSource).not.toHaveBeenCalled()
+})
+
 it('reads imported package notes without querying the personal shared notebook', async () => {
   const { service, options } = fixture()
   vi.mocked(options.sessions.loadSessionWithDiagnostics).mockResolvedValue({

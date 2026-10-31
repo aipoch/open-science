@@ -1,3 +1,4 @@
+import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import type { SandboxNetworkApprovalOwner } from './sandbox-network-approval-owner'
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
@@ -202,6 +203,7 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     messageId: string
   }) => Promise<ArtifactFile[]>
   literatureReader?: Pick<LiteratureDocumentReader, 'readCurrent' | 'searchAttachment'>
+  pdfAnnotationAgent?: PdfAnnotationAgentTools
   pdfElementReader?: PdfElementTools
   literatureAttachments?: Pick<LiteratureAttachmentAuthority, 'resolveVersion'>
   literatureCatalog?: Pick<LiteratureCatalog, 'getMany' | 'searchForAgent' | 'transact'>
@@ -295,6 +297,7 @@ const createAcpRuntime = ({
   finalizeRuntimeArtifacts,
   literatureReader,
   pdfElementReader,
+  pdfAnnotationAgent,
   literatureAttachments,
   literatureCatalog,
   literaturePdfAcquisition,
@@ -511,7 +514,8 @@ const createAcpRuntime = ({
                 resolveAttachmentVersion: (versionId) =>
                   literatureAttachments.resolveVersion(versionId),
                 readDocument: (request) => literatureReader.readCurrent(request),
-                ...(pdfElementReader ? { elements: pdfElementReader } : {})
+                ...(pdfElementReader ? { elements: pdfElementReader } : {}),
+                ...(pdfAnnotationAgent ? { annotations: pdfAnnotationAgent } : {})
               }
             }
           : {}),

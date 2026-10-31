@@ -1,6 +1,14 @@
 import { LocalOcrControl } from '@/components/local-ocr-control'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import { BookOpenText, FileText, Inbox, Link2, Search, TriangleAlert } from 'lucide-react'
+import {
+  BookOpenText,
+  FileText,
+  Highlighter,
+  Inbox,
+  Link2,
+  Search,
+  TriangleAlert
+} from 'lucide-react'
 import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'
 import { LiteratureCandidateStatus } from './LiteratureCandidateStatus'
 import { useTranslation } from 'react-i18next'
@@ -9,6 +17,31 @@ import { ErrorNotice } from '@/components/error-notice'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+
+const annotationKindLabel = (kind: string | undefined, t: (key: string) => string): string => {
+  switch (kind) {
+    case 'highlight':
+      return t('Highlight')
+    case 'underline':
+      return t('Underline')
+    case 'squiggly':
+      return t('Wavy underline')
+    case 'strikethrough':
+      return t('Strikethrough')
+    case 'area':
+      return t('Area')
+    case 'page-note':
+      return t('Page note')
+    case 'document-note':
+      return t('Document note')
+    case 'text':
+      return t('Text')
+    case 'region':
+      return t('Area')
+    default:
+      return t('Annotations')
+  }
+}
 
 const WorkspaceLiteratureToolCard = ({
   summary,
@@ -20,10 +53,12 @@ const WorkspaceLiteratureToolCard = ({
   isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const annotation = summary.annotation
   const isLibrary = summary.libraryScope !== undefined
   const canOpenInbox = summary.action === 'save' && (summary.savedCount ?? 0) > 0
-  const Icon =
-    summary.action === 'save'
+  const Icon = annotation
+    ? Highlighter
+    : summary.action === 'save'
       ? Inbox
       : summary.action === 'search'
         ? Search
@@ -31,39 +66,47 @@ const WorkspaceLiteratureToolCard = ({
           ? FileText
           : BookOpenText
   const title =
-    summary.action === 'save' && !canOpenInbox && summary.existingItemIds?.length
-      ? t('Already in library')
-      : summary.pdfElements
-        ? t('PDF figures and tables')
-        : summary.action === 'save'
-          ? canOpenInbox
-            ? summary.pdfDownloaded
-              ? t('PDF downloaded to Inbox')
-              : t('Saved to Inbox')
-            : t('Save')
-          : summary.action === 'search'
-            ? t('Search')
-            : summary.action === 'format'
-              ? t('Format')
-              : t('Read')
+    annotation?.operation === 'list'
+      ? t('Notes & Annotations')
+      : annotation?.operation === 'locate'
+        ? t('Target')
+        : annotation?.operation === 'create'
+          ? t('Created')
+          : summary.action === 'save' && !canOpenInbox && summary.existingItemIds?.length
+            ? t('Already in library')
+            : summary.pdfElements
+              ? t('PDF figures and tables')
+              : summary.action === 'save'
+                ? canOpenInbox
+                  ? summary.pdfDownloaded
+                    ? t('PDF downloaded to Inbox')
+                    : t('Saved to Inbox')
+                  : t('Save')
+                : summary.action === 'search'
+                  ? t('Search')
+                  : summary.action === 'format'
+                    ? t('Format')
+                    : t('Read')
   const subtitle = canOpenInbox
     ? summary.pdfDownloaded
       ? t('PDF downloaded to Inbox')
       : t('Saved to Inbox')
-    : isLibrary
-      ? summary.action === 'format'
-        ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
-          t('Citation')
-        : summary.action === 'save'
-          ? t('Literature library')
-          : summary.libraryScope === 'project'
-            ? t('This project')
-            : summary.libraryScope === 'collection'
-              ? t('Collections')
-              : summary.libraryScope === 'items'
-                ? t('Selected references')
-                : t('All references')
-      : t('Linked PDFs')
+    : annotation
+      ? (annotation.documentId ?? t('Notes & Annotations'))
+      : isLibrary
+        ? summary.action === 'format'
+          ? [summary.styleId?.toUpperCase(), summary.locale].filter(Boolean).join(' · ') ||
+            t('Citation')
+          : summary.action === 'save'
+            ? t('Literature library')
+            : summary.libraryScope === 'project'
+              ? t('This project')
+              : summary.libraryScope === 'collection'
+                ? t('Collections')
+                : summary.libraryScope === 'items'
+                  ? t('Selected references')
+                  : t('All references')
+        : t('Linked PDFs')
   const pageLabel =
     summary.pageStart && summary.pageEnd
       ? summary.pageStart === summary.pageEnd
@@ -163,13 +206,85 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       </div>
 
-      {!isApproval &&
+      {annotation ? (
+        <div className="space-y-2 text-[12px] leading-5 text-text-200">
+          {annotation.operation === 'list' ? (
+            <>
+              <div className="flex items-center justify-between text-[11px] text-text-300">
+                <span>{t('Annotations')}</span>
+                <span className="tabular-nums">
+                  {annotation.total ?? annotation.annotations?.length ?? 0}
+                </span>
+              </div>
+              {annotation.readOnly ? (
+                <div className="text-[11px] text-text-300">{t('Read-only')}</div>
+              ) : null}
+              {annotation.annotations?.length ? (
+                <div className="space-y-1.5">
+                  {annotation.annotations.map((item, index) => (
+                    <div key={item.id ?? index} className="rounded-md bg-bg-200 px-2.5 py-2">
+                      <div className="flex items-center gap-2 text-[11px] text-text-300">
+                        <span>{annotationKindLabel(item.kind, t)}</span>
+                        {item.pageNumber ? (
+                          <span>{t('Page {{page}}', { page: item.pageNumber })}</span>
+                        ) : null}
+                      </div>
+                      {item.quote ? (
+                        <p className="mt-1 break-words text-text-100">{item.quote}</p>
+                      ) : null}
+                      {item.note ? <p className="mt-1 break-words">{item.note}</p> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-[11px] text-text-300">{t('No annotations yet.')}</div>
+              )}
+            </>
+          ) : annotation.operation === 'locate' ? (
+            <>
+              <div className="text-[11px] font-medium uppercase tracking-wide text-text-300">
+                {t('Target')}
+              </div>
+              <div className="space-y-1.5">
+                {annotation.targets?.map((target, index) => (
+                  <div key={target.targetRef ?? index} className="rounded-md bg-bg-200 px-2.5 py-2">
+                    <div className="flex items-center gap-2 text-[11px] text-text-300">
+                      <span>{annotationKindLabel(target.kind, t)}</span>
+                      {target.pageNumber ? (
+                        <span>{t('Page {{page}}', { page: target.pageNumber })}</span>
+                      ) : null}
+                    </div>
+                    {target.quote ? (
+                      <p className="mt-1 break-words text-text-100">{target.quote}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : annotation.created ? (
+            <div className="rounded-md bg-bg-200 px-2.5 py-2">
+              <div className="flex items-center gap-2 text-[11px] text-text-300">
+                <span>{annotationKindLabel(annotation.created.kind, t)}</span>
+                {annotation.created.pageNumber ? (
+                  <span>{t('Page {{page}}', { page: annotation.created.pageNumber })}</span>
+                ) : null}
+              </div>
+              {annotation.created.note ? (
+                <p className="mt-1 break-words text-text-100">{annotation.created.note}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!annotation &&
+      !isApproval &&
       summary.action === 'save' &&
       (summary.candidateIds?.length || (summary.savedCount ?? 0) > 0) ? (
         <LiteratureCandidateStatus candidateIds={summary.candidateIds} activityId={activityId} />
       ) : null}
 
-      {summary.pdfElements ? (
+      {!annotation && summary.pdfElements ? (
         <div className="space-y-2 text-[12px] leading-5 text-text-200">
           {summary.pdfElements.elementCount !== undefined ? (
             <p>{t('Elements: {{total}}', { total: summary.pdfElements.elementCount })}</p>
@@ -279,7 +394,7 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ))}
 
-      {summary.action === 'save' ? (
+      {!annotation && summary.action === 'save' ? (
         <>
           {summary.duplicateCount ? (
             <p className="text-[11px] text-text-300">
@@ -319,7 +434,7 @@ const WorkspaceLiteratureToolCard = ({
         </>
       ) : null}
 
-      {summary.query ? (
+      {!annotation && summary.query ? (
         <div className="min-w-0 rounded-md bg-bg-200 px-2.5 py-2">
           <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-text-300">
             {t('Query')}
@@ -330,11 +445,11 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ) : null}
 
-      {isLibrary && summary.action === 'search' && summary.hasMore ? (
+      {!annotation && isLibrary && summary.action === 'search' && summary.hasMore ? (
         <div className="text-[11px] text-text-300">{t('More results are available')}</div>
       ) : null}
 
-      {summary.documentNames.length > 0 || summary.itemTitles?.length ? (
+      {!annotation && (summary.documentNames.length > 0 || summary.itemTitles?.length) ? (
         <div className="flex min-w-0 items-center gap-2 border-t border-border-200 pt-2 text-xs text-text-300">
           <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="shrink-0">{t('Sources')}</span>
@@ -352,14 +467,14 @@ const WorkspaceLiteratureToolCard = ({
         </div>
       ) : null}
 
-      {summary.hasMore && !(isLibrary && summary.action === 'search') ? (
+      {!annotation && summary.hasMore && !(isLibrary && summary.action === 'search') ? (
         <div className="text-[11px] text-text-300">
           {isLibrary || summary.pdfElements
             ? t('More results are available')
             : t('More pages are available')}
         </div>
       ) : null}
-      {summary.error ? (
+      {!annotation && summary.error ? (
         <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
           {summary.error}
         </div>
@@ -373,7 +488,9 @@ const WorkspaceLiteratureToolCard = ({
   return (
     <section
       data-testid="literature-tool-card"
-      aria-label={isLibrary ? t('Literature library') : t('Reading')}
+      aria-label={
+        annotation ? t('Notes & Annotations') : isLibrary ? t('Literature library') : t('Reading')
+      }
       className={className}
     >
       {content}
