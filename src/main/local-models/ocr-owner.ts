@@ -52,6 +52,17 @@ const languageAsset = (
 ): LocalModelUse['assets'][number] | null =>
   use.assets.find((asset) => asset.file === `${code}.traineddata.gz`) ?? null
 
+const waitForInstallation = async (owner: LocalModelOwner): Promise<void> => {
+  for (;;) {
+    const current = await owner.getSnapshot()
+    if (current.availability !== 'installing') {
+      if (current.availability === 'error') throw new Error('OCR runtime upgrade failed.')
+      return
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+  }
+}
+
 export const createLocalOcrModelOwner = ({
   base,
   languagePacks,
@@ -237,8 +248,10 @@ export const createLocalOcrModelOwner = ({
   ): Promise<LocalModelSnapshot> => {
     await initialize()
     const next = normalizeLanguages(languages)
-    if ((await base.getSnapshot()).installedRevision === LEGACY_BASE_LANGUAGE_REVISION)
+    if ((await base.getSnapshot()).installedRevision === LEGACY_BASE_LANGUAGE_REVISION) {
       await base.install()
+      await waitForInstallation(base)
+    }
     const release = acquireDataRootWriter()
     try {
       const directory = await selectionDirectory(true)

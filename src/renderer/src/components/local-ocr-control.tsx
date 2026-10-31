@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Check, ScanText } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
-import { OCR_LANGUAGE_LABELS, localModelDownloadProgress } from '../../../shared/local-models'
+import { localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
@@ -16,7 +16,7 @@ const languageLabel = (
 ): string => {
   switch (code) {
     case 'eng':
-      return OCR_LANGUAGE_LABELS.eng
+      return t('English', { context: 'language' })
     case 'chi_sim':
       return t('Simplified Chinese')
     case 'chi_tra':

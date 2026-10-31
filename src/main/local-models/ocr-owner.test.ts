@@ -198,10 +198,17 @@ it('upgrades legacy OCR workers before saving a language selection', async () =>
   roots.push(root)
   const base = owner('runtime')
   let installedRevision = 'ocr-7ed9791930e614a1'
-  base.getSnapshot = vi.fn(async () => snapshot({ installedRevision }))
+  let installing = false
+  base.getSnapshot = vi.fn(async () =>
+    snapshot({ installedRevision, availability: installing ? 'installing' : 'ready' })
+  )
   base.install = vi.fn(async () => {
-    installedRevision = 'runtime-v1'
-    return snapshot({ installedRevision })
+    installing = true
+    setTimeout(() => {
+      installedRevision = 'runtime-v1'
+      installing = false
+    }, 20)
+    return snapshot({ installedRevision, availability: 'installing' })
   })
   const ocr = createLocalOcrModelOwner({
     base,

@@ -7836,6 +7836,7 @@
     "Pages with text: {{parsed}} / {{total}}": "Seiten mit Text: {{parsed}} / {{total}}",
     "Image content needs source verification. Pages with text do not establish complete evidence.": "Bildinhalte müssen am Original geprüft werden. Text auf einer Seite belegt keine vollständige Evidenz.",
     "Text recognition (OCR)": "Texterkennung (OCR)",
+    "English_language": "Englisch",
     "OCR languages": "OCR-Sprachen",
     "OCR installed. Read the PDF again.": "OCR installiert. Lesen Sie die PDF erneut.",
     "Model configuration needs attention": "Die Modellkonfiguration muss überprüft werden",
