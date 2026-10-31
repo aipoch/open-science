@@ -155,7 +155,7 @@ export const createLocalOcrModelOwner = ({
       updateAvailable:
         baseSnapshot.updateAvailable ||
         selectedPacks.some(
-          (language) => !language.installed || packs.get(language.code)?.updateAvailable
+          (language) => language.installed && Boolean(packs.get(language.code)?.updateAvailable)
         ),
       ocrLanguages: languages,
       selectedOcrLanguages: selectedLanguages
