@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { LocalModelSnapshot } from '../../shared/local-models'
+import type { LocalModelSnapshot, OcrLanguage } from '../../shared/local-models'
 import { createLocalOcrModelOwner } from './ocr-owner'
 import type { LocalModelOwner, LocalModelUse } from './owner'
 
