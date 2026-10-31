@@ -952,7 +952,12 @@ describe('HomePage activity overview', () => {
     const cardGrid = activeSection?.firstElementChild
     const cards = activeSection?.querySelectorAll<HTMLButtonElement>('button') ?? []
     expect(home?.classList.contains('h-svh')).toBe(true)
-    expect(home?.classList.contains('overflow-y-auto')).toBe(true)
+    const scrollingContent = container.querySelector('[data-home-scroll]')
+    expect(scrollingContent).not.toBeNull()
+    expect(scrollingContent?.contains(activeSection!)).toBe(true)
+    expect(scrollingContent?.contains(container.querySelector('[aria-label="Projects"]')!)).toBe(
+      true
+    )
     expect(cardGrid?.classList.contains('grid')).toBe(true)
     expect(cardGrid?.classList.contains('grid-cols-1')).toBe(true)
     expect(cardGrid?.classList.contains('md:grid-cols-2')).toBe(true)

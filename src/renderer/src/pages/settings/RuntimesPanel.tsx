@@ -657,9 +657,14 @@ const RuntimesPanel = ({
         className="rounded-lg border border-border bg-card p-3"
       >
         <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-foreground">{env.label}</span>
+              <span
+                className="min-w-0 truncate text-sm font-medium text-foreground"
+                title={env.label}
+              >
+                {env.label}
+              </span>
               <Badge variant="secondary">{providerType(env, t)}</Badge>
             </div>
             <div className="mt-0.5 flex items-center gap-1 text-[13px] text-muted-foreground">
@@ -695,7 +700,10 @@ const RuntimesPanel = ({
                 {recoveryBlocked ? blockedLabel(language) : operation.error}
               </InlineNotice>
             ) : null}
-            <code className="mt-1 block truncate text-xs text-muted-foreground">
+            <code
+              className="mt-1 block truncate text-xs text-muted-foreground"
+              title={env.interpreterPath}
+            >
               {env.interpreterPath}
             </code>
           </div>

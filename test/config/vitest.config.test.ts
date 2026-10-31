@@ -309,6 +309,7 @@ it('serializes migration and Session package round trips after other schema-usin
   expect(VITEST_DATABASE_TEST_GLOBS).toEqual([
     'scripts/database-migration-ledger-smoke.test.ts',
     'src/main/database/migration-service.test.ts',
+    'src/main/database/literature-doi-identity-migration.test.ts',
     'src/main/storage/provenance-migration-validation.test.ts',
     'src/main/session-package/service.test.ts',
     'src/main/session-package/literature.test.ts',

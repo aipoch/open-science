@@ -781,7 +781,7 @@
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/shared/run-error-classification.test.ts",
+      "src/shared/failure/legacy-recognition.test.ts",
       "src/main/session-package/fork.test.ts",
       "src/main/storage/brand-location.test.ts",
       "src/main/credential-identity/persistence.test.ts",

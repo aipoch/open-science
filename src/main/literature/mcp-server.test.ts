@@ -11,6 +11,59 @@ import {
 const proseRegions = [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
 
 describe('Literature MCP server', () => {
+  it('exposes bounded annotation tools only when mounted and rejects forged scope before writes', async () => {
+    const annotations = {
+      list: vi.fn(async () => ({ annotations: [], nextCursor: null })),
+      locate: vi.fn(async () => ({ targets: [] })),
+      create: vi.fn(async () => ({ id: 'mark' }))
+    }
+    const server = createLiteratureMcpServer({ readDocument: vi.fn(), annotations })
+    const client = new Client({ name: 'annotation-test', version: '1' })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await Promise.all([client.connect(a), server.connect(b)])
+    try {
+      const tools = (await client.listTools()).tools
+      expect(
+        tools.find((tool) => tool.name === 'create_pdf_annotation')?.annotations
+      ).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
+      expect(
+        tools.find((tool) => tool.name === 'locate_pdf_annotation_target')?.inputSchema.type
+      ).toBe('object')
+      const args = {
+        targetRef: '00000000-0000-4000-8000-000000000000',
+        requestId: 'first-mark',
+        note: 'Small cohort'
+      }
+      expect(
+        await client.callTool({
+          name: 'create_pdf_annotation',
+          arguments: { ...args, projectId: 'forged' }
+        })
+      ).toMatchObject({ isError: true })
+      expect(annotations.create).not.toHaveBeenCalled()
+      expect(
+        await client.callTool({ name: 'create_pdf_annotation', arguments: args })
+      ).not.toHaveProperty('isError', true)
+      expect(annotations.create).toHaveBeenCalledWith(args, expect.any(AbortSignal))
+      expect(
+        await client.callTool({
+          name: 'locate_pdf_annotation_target',
+          arguments: { target: { kind: 'text', pageNumber: 2, quote: 'limitations' } }
+        })
+      ).not.toHaveProperty('isError', true)
+      annotations.create.mockRejectedValueOnce(
+        new Error("ENOENT: no such file or directory, open '/private/secret/path'")
+      )
+      const error = await client.callTool({ name: 'create_pdf_annotation', arguments: args })
+      expect(error).toMatchObject({ isError: true })
+      expect(JSON.stringify(error)).toContain('PDF_ANNOTATION_FAILED')
+      expect(JSON.stringify(error)).not.toContain('/private/')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('exposes one linked-document read tool and forwards bounded retrieval input', async () => {
     const readDocument = vi.fn().mockResolvedValue({
       scope: 'relevant-passages',
@@ -25,14 +78,13 @@ describe('Literature MCP server', () => {
       const tools = (await client.listTools()).tools
       expect(tools.map(({ name }) => name)).toEqual([LITERATURE_READ_DOCUMENT_TOOL_NAME])
       expect(tools[0]?.description).toContain('instead of Notebook')
-      expect(tools[0]?.description).toContain('Desktop-confirmed')
-      expect(tools[0]?.description).toContain('current message snapshot')
+      expect(tools[0]?.description).toContain('Reading order is resolved automatically')
       expect(tools[0]?.description).toContain('search and cursor continuation')
       expect(tools[0]?.description).not.toContain('proseRegions')
       expect(tools[0]?.inputSchema.properties).not.toHaveProperty('proseRegions')
       expect(tools[0]?.inputSchema.additionalProperties).toBe(false)
-      expect(tools[0]?.description).toContain('text outside regions')
-      expect(tools[0]?.description).toContain('apply automatically to each linked PDF Version')
+      expect(tools[0]?.description).toContain('Ambiguous layouts retain native order')
+      expect(tools[0]?.description).toContain('No manual body-region configuration is required')
       const result = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { query: 'retrieval evaluator' }
@@ -136,7 +188,19 @@ describe('Literature MCP server', () => {
       scope: 'relevant-passages',
       retrievalMode: 'bm25',
       documents: [
-        { id: 'private-binding-id', name: 'paper.pdf', checksum: 'checksum', pageCount: 14 }
+        {
+          id: 'private-binding-id',
+          name: 'paper.pdf',
+          checksum: 'checksum',
+          pageCount: 14,
+          coverage: {
+            textPages: [1, 1],
+            ocrPages: [2],
+            unavailablePages: [3],
+            uncheckedPages: [4],
+            unverifiedPages: [2]
+          }
+        }
       ],
       passages: [
         { documentId: 'private-binding-id', pageStart: 3, pageEnd: 3, content: 'a'.repeat(20_000) },
@@ -169,6 +233,9 @@ describe('Literature MCP server', () => {
         openScienceLiteraturePresentation: {
           retrievalMode: 'bm25',
           documentNames: ['paper.pdf'],
+          textCoverage: [
+            { name: 'paper.pdf', total: 14, parsed: 2, ocr: 1, missing: [3, 4], unverified: [2] }
+          ],
           passageCount: 2,
           pageStart: 3,
           pageEnd: 8

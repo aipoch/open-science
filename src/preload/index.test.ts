@@ -635,6 +635,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
       'sessions.useCaseCatalog',
+      'sessions.useCaseIntroduction',
       'settings.addCustomServer',
       'settings.addSkillSource',
       'settings.authenticateCustomServer',

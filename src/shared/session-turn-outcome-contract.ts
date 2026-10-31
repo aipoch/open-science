@@ -1,10 +1,11 @@
+import type { ClassifiedFailure } from './failure/contract'
 export type TurnOutcome =
   | Readonly<{ kind: 'completed'; settledAt: number }>
   | Readonly<{
       kind: 'failed'
       settledAt: number
       error?: string
-      errorReportable?: boolean
+      failure?: ClassifiedFailure
       recovery?: 'retry-artifact-publication'
     }>
   | Readonly<{ kind: 'cancelled'; settledAt: number; recovery: 'resume' }>
@@ -13,6 +14,6 @@ export type TurnOutcome =
       settledAt: number
       cause: 'app-restart' | 'connection-lost' | 'terminal-commit-failed'
       error?: string
-      errorReportable?: false
+      failure?: ClassifiedFailure
       recovery: 'resume'
     }>

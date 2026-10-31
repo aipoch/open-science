@@ -234,7 +234,9 @@
     "src/main/service-process-recovery.ts",
     "src/main/service-process-recovery.test.ts",
     "src/main/service-process-recovery.integration.test.ts",
-    "src/main/local-service-stop-intent.integration.test.ts"
+    "src/main/local-service-stop-intent.integration.test.ts",
+    "scripts/ocr/build.mjs",
+    "scripts/ocr/worker.mjs"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -1156,7 +1158,6 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",

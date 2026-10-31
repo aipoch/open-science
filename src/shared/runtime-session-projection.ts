@@ -25,7 +25,6 @@ import {
   type PersistedMessageBranch,
   type PersistedMessageNode
 } from './conversation-graph'
-import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
 import { createRuntimeAgentMessageId } from './runtime-message-identity'
 import { resolveRuntimeToolActivityId } from './runtime-tool-identity'
 import {
@@ -180,7 +179,7 @@ const terminalize = (
   const connectionLost =
     event.kind === 'error' &&
     (event.interruptionCause === 'connection-lost' ||
-      (event.providerError === true && isClaudeApiResponseInterruption(event.text)))
+      event.failure?.reason === 'service/response-interrupted')
   const interrupted =
     connectionLost ||
     event.interruptionCause === 'app-restart' ||
@@ -271,7 +270,7 @@ const terminalize = (
             settledAt: event.timestamp,
             cause: event.interruptionCause ?? 'connection-lost',
             error: event.text || event.title,
-            errorReportable: false,
+            failure: event.failure,
             recovery: 'resume'
           }
         : failed
@@ -279,9 +278,7 @@ const terminalize = (
               kind: 'failed',
               settledAt: event.timestamp,
               error: event.text || event.title,
-              errorReportable:
-                event.errorReportable ??
-                (!event.providerError && !isExpectedRunFailure(event.text || event.title)),
+              failure: event.failure,
               ...(event.artifactFailure &&
               responses.some((response) =>
                 response.artifactIds?.some((id) => {
@@ -307,7 +304,7 @@ const terminalize = (
           ? 'waiting-for-user'
           : 'waiting-plan-approval'
       session.error = undefined
-      session.errorReportable = undefined
+      session.failure = undefined
       session.resumeRecovery = undefined
     } else {
       Object.assign(session, legacySessionStateForOutcome(outcome, scope.promptMessageId))

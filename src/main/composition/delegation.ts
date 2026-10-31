@@ -159,7 +159,8 @@ export function composeDelegation({
     repository: artifactRepository,
     runRegistry: artifactRunRegistry,
     notebookArtifactSourceScope: createNotebookArtifactSourceScopeProvider(dataRoot),
-    issueRpcCapability: (binding) => requireNotebookRpcServer().issueArtifactRunCapability(binding),
+    issueRpcCapability: (binding, isOwnerActive) =>
+      requireNotebookRpcServer().issueArtifactRunCapability(binding, undefined, isOwnerActive),
     revokeRpcCapability: (token) => requireNotebookRpcServer().revokeArtifactRunCapability(token),
     provenance: artifactProvenanceRepository
   })

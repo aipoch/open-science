@@ -232,7 +232,6 @@
         "src/main/lifecycle-shutdown.ts",
         "src/main/session-package/materialize.ts",
         "src/main/literature/pdf-structure/engine.ts",
-        "src/main/literature/pdf-translation/local.ts",
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",

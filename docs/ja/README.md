@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v1.0.5 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 10 月）_。このパッチでは、Scientific Connector にネイティブのソース API と公式のファイル検出が追加され、Literature の参照にはフィルタリングと一括更新を備えた読書状態の追跡が導入されます。セッションパッケージのエクスポートとインポートが Web UI に対応し、ローカルサービスの存続期間は明示的な維持要求に基づいて管理されるようになりました。また、インストーラー表示を伴う手動アップデートのエントリーポイントや、設定のセキュリティポリシーリンクも追加され、ネットワーク権限、OpenCode 2.x との互換性、macOS での Notebook ツール検出、Windows での Notebook 起動待機の問題も修正されています。詳細は [v1.0.5 リリースノート](../../release-notes/1.0.5/ja.md)をご覧ください。
+> 💡 **[AIPOCH Open-Science v1.0.6 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 10 月）_。Literature ではローカルの Zotero ライブラリから書誌メタデータや PDF をそのままインポートでき、PDF の読み取り順序は論理タグに基づいて自動で解決されます。Windows インストーラーは高速化されて共存する研究データを保持し、OpenCode セッションの信頼性が向上し、一晩実行するような長時間のターンでも成果物を公開できるようになりました。詳細は [v1.0.6 リリースノート](../../release-notes/1.0.6/ja.md)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

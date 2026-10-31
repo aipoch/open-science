@@ -751,7 +751,6 @@
       "src/main/desktop-runtime-electron-adapter.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
       "src/shared/pdf-translation.test.ts",

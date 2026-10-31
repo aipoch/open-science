@@ -507,6 +507,9 @@ describe('ACP runtime event normalization', () => {
       openScienceLiteraturePresentation: {
         retrievalMode: 'bm25',
         documentNames: ['paper.pdf'],
+        textCoverage: [
+          { name: 'paper.pdf', total: 3, parsed: 2, ocr: 1, missing: [3], unverified: [2] }
+        ],
         passageCount: 4
       }
     })
@@ -741,7 +744,14 @@ describe('ACP runtime event normalization', () => {
         id: 'private-binding-id',
         name: 'paper.pdf',
         checksum: 'private-checksum',
-        pageCount: 14
+        pageCount: 14,
+        coverage: {
+          textPages: [1],
+          ocrPages: [2],
+          unavailablePages: [3],
+          uncheckedPages: [],
+          unverifiedPages: [2]
+        }
       },
       passage: {
         pageStart: 1,
@@ -773,6 +783,9 @@ describe('ACP runtime event normalization', () => {
         text: JSON.stringify({
           openScienceLiteraturePresentation: {
             documentNames: ['paper.pdf'],
+            textCoverage: [
+              { name: 'paper.pdf', total: 14, parsed: 2, ocr: 1, missing: [3], unverified: [2] }
+            ],
             pageStart: 1,
             pageEnd: 5,
             hasMore: true

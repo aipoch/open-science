@@ -1,16 +1,17 @@
+import { classifyFailure } from '../../../../shared/failure/classify'
 import { i18next } from '../../i18n'
 import type { AcpStateSnapshot } from '../../../../shared/acp'
 import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
-  isClaudeCliCompatibilityError,
+  unwrapIpcErrorDetail,
   RESUME_MODEL_INCOMPATIBLE_MESSAGE,
   RESUME_RECONNECT_FAILED_MESSAGE,
   RESUME_TIMED_OUT_MESSAGE,
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE
-} from '../../../../shared/run-error-classification'
+} from '../../../../shared/failure/messages'
 import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import {
@@ -223,31 +224,26 @@ const shutdownNotebookForBranchChange = async (
   await window.api.notebook.shutdown({ sessionId, workspaceCwd, projectId })
 }
 
-const unwrapIpcErrorDetail = (message: string): string =>
-  message
-    .replace(/^Error invoking remote method '[^']*':\s*/i, '')
-    .replace(/^Error(?::\s*|$)/i, '')
-    .trim()
-
 const RESUME_UNKNOWN_ERROR_MESSAGE = 'Agent session resume failed: Unknown error'
 
 const getResumeFailureMessage = (error: unknown): string => {
   const message = error instanceof Error ? error.message : String(error)
 
-  if (message.includes('The previous execution is still using this conversation.'))
+  const failure = classifyFailure({ origin: 'operation', code: 'resume-operation', text: message })
+  if (failure.reason === 'session/previous-execution-active')
     return i18next.t(
       'The previous execution is still using this conversation. Retry to stop it before continuing.'
     )
 
-  if (isClaudeCliCompatibilityError(message)) return CLAUDE_CLI_INCOMPATIBLE_MESSAGE
+  if (failure.reason === 'configuration/claude-cli') return CLAUDE_CLI_INCOMPATIBLE_MESSAGE
 
-  if (/cwd does not exist/i.test(message)) return RESUME_WORKSPACE_MISSING_MESSAGE
-  if (/timed out/i.test(message)) return RESUME_TIMED_OUT_MESSAGE
-  if (/does not support session resume/i.test(message)) return RESUME_UNSUPPORTED_MESSAGE
-  if (/connection (failed|was superseded)|ACP connection/i.test(message)) {
+  if (failure.reason === 'environment/workspace-missing') return RESUME_WORKSPACE_MISSING_MESSAGE
+  if (failure.reason === 'session/resume-timeout') return RESUME_TIMED_OUT_MESSAGE
+  if (failure.reason === 'configuration/resume-unsupported') return RESUME_UNSUPPORTED_MESSAGE
+  if (failure.reason === 'session/reconnect-failed') {
     return RESUME_RECONNECT_FAILED_MESSAGE
   }
-  if (/active model isn'?t compatible with/i.test(message)) {
+  if (failure.reason === 'configuration/model-unavailable') {
     return RESUME_MODEL_INCOMPATIBLE_MESSAGE
   }
 

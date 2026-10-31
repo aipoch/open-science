@@ -26,6 +26,7 @@ import { useApplicationStartup } from '@/hooks/useApplicationStartup'
 import { WorkspaceAgentRuntimeProvider } from '@/lib/acp/useWorkspaceAgentRuntime'
 import { WorkspaceComputeRecoveryBridge } from '@/lib/compute/WorkspaceComputeRecoveryBridge'
 import { HomePage } from '@/pages/home/HomePage'
+import { SharingMarketplacePage } from '@/pages/marketplace/SharingMarketplacePage'
 import type { SettingsPageHandle } from '@/pages/settings/SettingsPage'
 import { EnvStatusBanner } from '@/pages/workspace/EnvStatusBanner'
 import {
@@ -321,6 +322,8 @@ const ApplicationPresentationContent = ({
                     catalogRecovery={sessions.catalogRecovery}
                     onOpenGlobalSearch={events.globalSearch.open}
                   />
+                ) : events.navigation.view === 'marketplace' ? (
+                  <SharingMarketplacePage />
                 ) : events.navigation.view === 'library' ? (
                   <StableLiteratureLibraryPage />
                 ) : (

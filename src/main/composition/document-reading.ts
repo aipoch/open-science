@@ -1,6 +1,6 @@
+import { PdfAnnotationAgent } from '../pdf-annotations/agent-tools'
 import { netFetchStandard } from '../network-fetch'
 import { realpath } from 'node:fs/promises'
-import { join } from 'node:path'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { isPathInsideWorkspace } from '../acp/workspace-path'
@@ -22,10 +22,10 @@ import { capturePdfTranslationAgentTarget } from '../literature/pdf-translation/
 import { capturePdfTranslationApiTarget } from '../literature/pdf-translation/api-target'
 import { PdfTranslationCheckpoints } from '../literature/pdf-translation/checkpoints'
 import { PdfTranslationOwner } from '../literature/pdf-translation/index'
-import { createPdfTranslationLocalRuntime } from '../literature/pdf-translation/local'
 import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
 import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
+import { OCR_MODEL_REVISIONS } from '../local-models/catalog'
 import { createLocalModelApi } from '../local-models/owner'
 import { runtimeMetadata } from '../runtime-metadata'
 import { ProviderTextGenerationService } from '../literature/pdf-translation/text-generation'
@@ -88,6 +88,7 @@ export async function composeDocumentReading({
   pdfTranslationOwner: PdfTranslationOwner
   localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
+  pdfAnnotationAgent: PdfAnnotationAgent
   pdfElementReader: PdfElementAgentReader
   literatureDocumentReader: LiteratureDocumentReader
 }> {
@@ -186,7 +187,16 @@ export async function composeDocumentReading({
     capability: undefined,
     dispose: () => owner.close()
   }))
-  const localModels = createLocalModelApi(localModelOwner, localTranslationModels)
+  const ocrModels = createLocalModelOwner({
+    namespace: 'ocr',
+    revisions: OCR_MODEL_REVISIONS
+  })
+  await modules.add({ ocrModels }, ({ ocrModels: owner }) => ({
+    name: 'ocr-models',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+  const localModels = createLocalModelApi(localModelOwner, localTranslationModels, ocrModels)
   declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const pdfStructureSources = new PdfStructureSourceAuthority({
     literature: literatureAttachmentAuthority,
@@ -211,11 +221,38 @@ export async function composeDocumentReading({
     sessions: sessionPersistenceCoordinator
   })
 
+  const pdfAnnotationAgent = new PdfAnnotationAgent({
+    sources: sessionPdfSourceResolver,
+    sessions: sessionPersistenceCoordinator,
+    annotations: pdfAnnotationService,
+    elements: pdfElementReader,
+    withSession: (context, operation) =>
+      sessionPersistenceCoordinator.runSessionMutation(
+        context.projectId,
+        context.sessionId,
+        async () => {
+          const loaded = await sessionRepository.loadSessionWithDiagnostics(
+            context.projectId,
+            context.sessionId
+          )
+          if (loaded.status !== 'found')
+            throw new Error('PDF_ANNOTATION_TARGET_STALE: Session is unavailable.')
+          return operation(loaded.session)
+        }
+      )
+  })
+
   const literatureDocumentReader = new LiteratureDocumentReader({
+    ocrModels: ocrModels,
     storageRoot: resolveDataRoot(),
     sources: sessionPdfSourceResolver,
     sessions: sessionPersistenceCoordinator
   })
+  await modules.add({ literatureDocumentReader }, ({ literatureDocumentReader: reader }) => ({
+    name: 'literature-reading',
+    capability: undefined,
+    dispose: () => reader.close()
+  }))
   const pdfTranslationOwner = await modules.add({}, () => {
     const owner = new PdfTranslationOwner({
       usage: new PdfTranslationUsageRecorder(() => getProjectDbClient(resolveConfigRoot())),
@@ -227,14 +264,6 @@ export async function composeDocumentReading({
       captureTarget: (model) => capturePdfTranslationAgentTarget(settingsService, model),
       captureApiTarget: (model) => capturePdfTranslationApiTarget(settingsService, model),
       apiRunner: new ProviderTextGenerationService(netFetchStandard),
-      localRunner: createPdfTranslationLocalRuntime(
-        join(
-          runtimeMetadata().applicationPath.replace(/app\.asar$/, 'app.asar.unpacked'),
-          'resources',
-          'pdf-translation-local'
-        ),
-        localTranslationModels
-      ),
       runner: new RestrictedInferenceRunner({
         appVersion: runtimeMetadata().version,
         configRoot: resolveConfigRoot(),
@@ -265,6 +294,7 @@ export async function composeDocumentReading({
     pdfTranslationOwner,
     pdfStructureReader,
     pdfElementReader,
+    pdfAnnotationAgent,
     literatureDocumentReader
   }
 }

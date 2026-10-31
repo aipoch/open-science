@@ -1,3 +1,4 @@
+import { readPersistedFailure } from './turn-outcome'
 import { sanitizeAcpContextUsage } from '../acp'
 import {
   createLinearConversationGraph,
@@ -350,8 +351,11 @@ export const sanitizeSession = (
   if (pendingHistoryReplay) sanitized.pendingHistoryReplay = pendingHistoryReplay
   if (session.branchContextResetRequired === true) sanitized.branchContextResetRequired = true
   if (error) sanitized.error = error
-  // Only meaningful alongside an error; persisted only when explicitly false (absent = reportable).
-  if (error && session.errorReportable === false) sanitized.errorReportable = false
+  if (error)
+    sanitized.failure = readPersistedFailure({
+      ...session,
+      kind: resumeRecovery ? 'interrupted' : 'failed'
+    })
   const artifactErrorEventIds = [...new Set(asStringArray(session.artifactErrorEventIds))]
   if (error?.startsWith('Generated file finalization') && artifactErrorEventIds.length > 0) {
     sanitized.artifactErrorEventIds = artifactErrorEventIds

@@ -260,6 +260,7 @@ export const WEB_INVOKE_CHANNELS = {
   'sessions.unlinkPdfContext': 'sessions:unlink-pdf-context',
   'sessions.updateArchive': 'sessions:update-archive',
   'sessions.useCaseCatalog': 'sessions:use-case-catalog',
+  'sessions.useCaseIntroduction': 'sessions:use-case-introduction',
   'settings.addCustomServer': 'settings:add-custom-server',
   'settings.addSkillSource': 'settings:add-skill-source',
   'settings.authenticateCustomServer': 'settings:authenticate-custom-server',

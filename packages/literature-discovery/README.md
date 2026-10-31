@@ -10,6 +10,13 @@ checkpoint versions and recovery decisions. It does not import application sourc
 - `/download`: public-HTTPS download validation and an optional caller-supplied proxy tunnel.
 - `/checkpoints`: batch journal construction with an explicit durable storage capability.
 
+For proxied downloads, uniform IPv4 Fake-IP answers in `198.18.0.0/15` use the hostname
+instead of a pinned IP. The configured proxy then owns DNS resolution and final-address
+access restrictions; the downloader cannot verify that the proxy's destination is public.
+TLS still verifies the publisher hostname. Mixed answers and direct Fake-IP connections
+remain blocked. The host's SOCKS4 adapter requires numeric IPv4 destinations and does not
+support this hostname fallback; use HTTP, HTTPS or SOCKS5 for remote resolution.
+
 Provide catalog reads/atomic commits, atomic content publication, PDF inspection, credentials and
 network transport. Batch jobs require durable checkpoint storage, write admission and oversized
 result error translation. Checkpoint storage must atomically publish writes, preserve recovery

@@ -247,7 +247,13 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   'notebook-env': ['cancel', 'provision', 'repair'],
   notebook: ['export-ipynb', 'export-ipynb-all'],
   'remote-access': ['probe'],
-  sessions: ['export-package', 'import-package', 'package-operation', 'use-case-catalog'],
+  sessions: [
+    'export-package',
+    'import-package',
+    'package-operation',
+    'use-case-catalog',
+    'use-case-introduction'
+  ],
   runtime: [
     'pick-interpreter',
     'register-interpreter',

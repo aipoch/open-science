@@ -1,12 +1,34 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BookOpen } from 'lucide-react'
 
 import { loadedCovers } from './use-case-cover-cache'
+import { useUseCaseGalleryStore } from './use-case-gallery-store'
+
+type CoverState = { status: 'loading' | 'loaded' | 'error'; source: string }
+
+const retryFailedCover = (current: CoverState, src: string, revision: number): CoverState => {
+  if (current.status !== 'error') return current
+  // Bypass a cached failed response only after an explicit refresh; healthy images keep
+  // their source and decoded pixels, and another failure never starts an automatic loop.
+  const url = new URL(src)
+  url.searchParams.set('_retry', `${revision}-${Date.now()}`)
+  return { status: 'loading', source: url.href }
+}
 
 export const UseCaseCover = ({ src }: { src: string }): React.JSX.Element => {
-  const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>(() =>
-    loadedCovers.has(src) ? 'loaded' : 'loading'
+  const [cover, setCover] = useState<CoverState>(() => ({
+    status: loadedCovers.has(src) ? 'loaded' : 'loading',
+    source: src
+  }))
+  useEffect(
+    () =>
+      useUseCaseGalleryStore.subscribe((state, previous) => {
+        if (state.coverRetryRevision !== previous.coverRetryRevision)
+          setCover((current) => retryFailedCover(current, src, state.coverRetryRevision))
+      }),
+    [src]
   )
+  const { status } = cover
   return (
     <>
       <div
@@ -27,14 +49,17 @@ export const UseCaseCover = ({ src }: { src: string }): React.JSX.Element => {
         </div>
       </div>
       <img
-        src={src}
+        src={cover.source}
         alt=""
         loading={loadedCovers.has(src) ? 'eager' : 'lazy'}
         onLoad={() => {
           loadedCovers.add(src)
-          setStatus('loaded')
+          setCover((current) => ({ ...current, status: 'loaded' }))
         }}
-        onError={() => setStatus('error')}
+        onError={() => {
+          loadedCovers.delete(src)
+          setCover((current) => ({ ...current, status: 'error' }))
+        }}
         className={`relative h-full w-full object-contain transition-opacity duration-200 motion-reduce:transition-none ${status === 'loaded' ? 'opacity-100' : 'opacity-0'}`}
       />
     </>

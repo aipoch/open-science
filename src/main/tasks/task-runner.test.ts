@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
   rebaseTaskSessionBinding,
@@ -33,7 +34,7 @@ import {
 import { EnabledComputeHostsRegistry } from '../compute/enabled-hosts-registry'
 import { SessionEnabledComputeHostsOwner } from '../compute/session-enabled-hosts-owner'
 import { loadManagedCodexErrorHandler } from '../settings/codex-error.test-utils'
-import { isProviderPromptError } from '../acp/prompt-error'
+import { collectPromptFailureFacts } from '../acp/prompt-error'
 import { randomUUID } from 'node:crypto'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { fetchLocalRpc } from '../local-rpc-transport'
@@ -43,6 +44,11 @@ import { NotebookRunRepository } from '../notebook/repository'
 import { loadSessionMutationAuthority, SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
 import { SessionPersistenceCoordinator } from '../session-persistence/coordinator'
+import {
+  RuntimeSessionOwner,
+  type RuntimeSessionTurnScope
+} from '../session-persistence/runtime-session-owner'
+import { AcpDurableContinuationContextOwner } from '../acp/durable-continuation-context-owner'
 import { FileTaskRunJournal, type TaskRunJournalEntry } from './task-run-journal'
 import {
   TASK_RUN_DISPOSAL_BUDGET_MS,
@@ -208,7 +214,7 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
         activeRun: undefined,
         taskRunCommitId: request.taskRunCommitId,
         error: request.error,
-        errorReportable: request.errorReportable,
+        failure: request.failure,
         artifacts: [...(current.artifacts ?? []), ...request.artifacts],
         updatedAt: request.updatedAt
       })
@@ -267,6 +273,191 @@ const createRunner = (overrides: TaskRunnerOverrides = {}): TaskRunner => {
   })
 }
 describe('TaskRunner', () => {
+  it.each([
+    { delayed: false, settlementFails: false },
+    { delayed: true, settlementFails: false },
+    { delayed: true, settlementFails: true }
+  ])(
+    'preserves an answered question continuation (delayed=$delayed, settlementFails=$settlementFails)',
+    async ({ delayed, settlementFails }) => {
+      const root = await mkdtemp(join(tmpdir(), 'task-question-settlement-'))
+      temporaryRoots.push(root)
+      initDataRoot(root)
+      const repository = new SessionRepository(root, {
+        hasLiveRuntimeSession: () => true,
+        hasActiveRuntimePrompt: () => true
+      })
+      const coordinator = new SessionPersistenceCoordinator(repository, {
+        syncSession: async () => [],
+        softDeleteSession: async () => 'deleted',
+        restoreSession: async () => undefined,
+        softDeleteProject: async () => 'deleted',
+        reconcileActiveSessions: async () => undefined,
+        reconcileProjectSessions: async () => undefined,
+        markReconciliationIncomplete: () => undefined
+      })
+      let clock = Date.now()
+      const now = (): number => ++clock
+      const owner = new RuntimeSessionOwner({
+        loadSession: (identity) =>
+          coordinator.loadSessionForContinuation(identity.projectId, identity.sessionId),
+        mutateSession: (identity, mutate) => coordinator.mutateRuntimeSession(identity, mutate),
+        finalizeArtifacts: async () => [],
+        scheduleFlush: () => () => undefined,
+        now
+      })
+      let scope!: RuntimeSessionTurnScope
+      let emit: ((event: AcpRuntimeEvent) => void) | undefined
+      let enterSettlement!: () => void
+      const settlementEntered = new Promise<void>((resolve) => {
+        enterSettlement = resolve
+      })
+      let releaseSettlement!: () => void
+      const settlementReleased = new Promise<void>((resolve) => {
+        releaseSettlement = resolve
+      })
+      const runner = createRunner({
+        createId: randomUUID,
+        now,
+        sessions: {
+          list: async () => (await coordinator.loadAll()).sessions,
+          save: (candidate) => coordinator.saveSession(candidate),
+          bindSession: (request) => coordinator.bindTaskSession(request),
+          admitTurn: (request) => coordinator.admitTaskTurn(request),
+          stageCompletion: (request) => coordinator.stageTaskCompletion(request),
+          settleCompletion: async (request) => {
+            enterSettlement()
+            if (delayed) await settlementReleased
+            if (settlementFails) throw new Error('Original Task settlement failed.')
+            return coordinator.settleTaskCompletion(request)
+          },
+          failRun: (request) => coordinator.failTaskRun(request)
+        },
+        runtimeEvents: {
+          subscribe: (listener) => {
+            emit = listener
+            return () => {
+              emit = undefined
+            }
+          }
+        },
+        agent: {
+          prompt: async (request) => {
+            const saved = await coordinator.loadSessionForContinuation(
+              project.id,
+              request.sessionId
+            )
+            const graph = saved.conversationGraph!
+            scope = {
+              projectId: project.id,
+              sessionId: request.sessionId,
+              promptMessageId: request.promptMessageId!,
+              agentFrameId: graph.activeFrameId,
+              messageBranchId: graph.frames.find(({ id }) => id === graph.activeFrameId)!
+                .activeBranchId,
+              runtimeSegmentId: graph.runtimeSegments.at(-1)!.id,
+              executionId: 'original-execution'
+            }
+            await owner.begin(scope)
+            owner.accept({
+              id: 'question',
+              timestamp: now(),
+              kind: 'tool',
+              level: 'info',
+              sessionId: scope.sessionId,
+              promptMessageId: scope.promptMessageId,
+              promptExecutionId: scope.executionId,
+              toolCallId: 'ask-model',
+              providerToolName: 'ask_user_question',
+              title: 'Build a prognosis model?',
+              status: 'in_progress',
+              elicitation: {
+                state: 'pending',
+                message: 'Build a prognosis model?',
+                fields: [
+                  {
+                    id: 'model',
+                    label: 'Model',
+                    kind: 'single-select',
+                    required: true,
+                    options: [
+                      { value: 'No', label: 'No' },
+                      { value: 'Yes', label: 'Yes' }
+                    ]
+                  }
+                ],
+                durable: {
+                  kind: 'agent-user-choice',
+                  requestId: 'model-choice',
+                  promptMessageId: scope.promptMessageId
+                }
+              }
+            })
+            await owner.commitTerminal(
+              {
+                id: 'stop',
+                timestamp: now(),
+                kind: 'stop',
+                level: 'info',
+                text: 'end_turn',
+                sessionId: scope.sessionId,
+                promptMessageId: scope.promptMessageId,
+                promptExecutionId: scope.executionId
+              },
+              (event) => emit?.(event)
+            )
+          }
+        }
+      })
+      try {
+        const started = await runner.startRun({
+          project: project.id,
+          prompt: 'Help plan the research.'
+        })
+        await settlementEntered
+        if (!delayed) await runner.waitForRun(started.id)
+        // This is the renderer's reload boundary; the host and original Task Run stay alive.
+        await coordinator.loadAll()
+        const decisions = new AcpDurableContinuationContextOwner(coordinator)
+        await decisions.prepareElicitation({
+          projectId: project.id,
+          sessionId: scope.sessionId,
+          requestId: 'model-choice',
+          toolCallId: 'ask-model',
+          action: 'accept',
+          answers: [{ fieldId: 'model', value: 'No' }]
+        })
+        const continued = await owner.begin({ ...scope, executionId: 'answer-execution' })
+        await owner.consumeReplay(scope.sessionId, scope.promptMessageId)
+        releaseSettlement()
+        const completed = await runner.waitForRun(started.id)
+        const latest = await coordinator.loadSessionForContinuation(project.id, scope.sessionId)
+        // Revalidate the still-running continuation through the public admission boundary.
+        const admissionError = await owner
+          .begin({ ...scope, executionId: 'answer-execution' })
+          .then(
+            () => undefined,
+            (error: Error) => error.message
+          )
+        const result = {
+          taskStatus: completed.status,
+          taskError: completed.error,
+          activeRun: latest.activeRun,
+          admissionError
+        }
+        expect(result).toEqual({
+          taskStatus: settlementFails ? 'failed' : 'completed',
+          taskError: settlementFails ? 'Original Task settlement failed.' : undefined,
+          activeRun: continued.activeRun,
+          admissionError: undefined
+        })
+      } finally {
+        releaseSettlement()
+        await runner.dispose()
+      }
+    }
+  )
+
   it.each([
     ['invalid', undefined],
     ['none', 'plan-first']
@@ -567,7 +758,7 @@ describe('TaskRunner', () => {
                 kind: 'error',
                 level: 'error',
                 text: failure.message,
-                providerError: isProviderPromptError(failure)
+                failure: classifyFailure(collectPromptFailureFacts(failure))
               })
               throw failure
             }
@@ -584,7 +775,7 @@ describe('TaskRunner', () => {
         expect(result.error).toContain(capacityError)
         expect(savedSessions.at(-1)).toMatchObject({
           status: 'error',
-          errorReportable: false
+          failure: { category: 'service' as const, diagnostics: {} }
         })
       }
     }
@@ -3926,7 +4117,7 @@ describe('TaskRunner', () => {
               sessionId: authoritative.id,
               promptMessageId: request.promptMessageId,
               text: 'provider unavailable',
-              providerError: true
+              failure: { category: 'service' as const, diagnostics: {} }
             })
             throw new Error('raw provider failure')
           }
@@ -4547,7 +4738,7 @@ describe('TaskRunner', () => {
             level: 'error',
             sessionId: 'session-tool',
             text: 'Provider quota exceeded.',
-            providerError: true
+            failure: { category: 'service' as const, diagnostics: {} }
           })
           throw new Error('opaque provider error')
         }
@@ -4572,7 +4763,7 @@ describe('TaskRunner', () => {
     expect(savedSessions.at(-1)).toMatchObject({
       status: 'error',
       error: 'Provider quota exceeded.',
-      errorReportable: false,
+      failure: { category: 'service' as const, diagnostics: {} },
       activities: [
         {
           id: 'tool-call-1',

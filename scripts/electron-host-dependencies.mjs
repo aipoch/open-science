@@ -29,7 +29,11 @@ export const backendOnlyElectronDependencies = [
   'protobufjs',
   'flatbuffers',
   'guid-typescript',
-  'fflate'
+  'fflate',
+  'tesseract.js',
+  'tesseract.js-core',
+  '@tesseract.js-data/eng',
+  '@tesseract.js-data/chi_sim'
 ]
 
 export function assertElectronHostDependencies(specifiers, root) {

@@ -32,6 +32,7 @@ export const VITEST_ARCHITECTURE_TEST_GLOBS = [
 export const VITEST_DATABASE_TEST_GLOBS = [
   'scripts/database-migration-ledger-smoke.test.ts',
   'src/main/database/migration-service.test.ts',
+  'src/main/database/literature-doi-identity-migration.test.ts',
   'src/main/storage/provenance-migration-validation.test.ts',
   // Package round trips repeatedly migrate real validation databases. Keep their disk/CPU work
   // out of the parallel unit pool instead of extending the tests' timeout budget.

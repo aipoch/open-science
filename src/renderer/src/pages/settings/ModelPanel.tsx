@@ -1,3 +1,4 @@
+import { LocalOcrControl } from '@/components/local-ocr-control'
 import type { ModelView } from '../../lib/settings-navigation'
 import { ClassificationPanel } from './ClassificationPanel'
 import { useEffect, useId, useState, type ReactNode } from 'react'
@@ -256,6 +257,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
           <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           {t('Removing models keeps your documents and existing parsing results.')}
         </p>
+        <LocalOcrControl />
       </SettingsSection>
     </div>
   )

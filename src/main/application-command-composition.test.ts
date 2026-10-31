@@ -330,6 +330,7 @@ describe('application command composition', () => {
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
       'sessions:use-case-catalog',
+      'sessions:use-case-introduction',
       'settings:get-settings',
       'tags:create',
       'tags:delete',

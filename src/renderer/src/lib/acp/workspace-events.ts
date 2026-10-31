@@ -24,9 +24,7 @@ import {
   type ReconcilePendingArtifactsRequest,
   type ReconcilePendingArtifactsResult
 } from '../../../../shared/artifacts'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import type { ReviewRunNotStartedReason, ReviewRunRequest } from '../../../../shared/reviewer'
-import { isClaudeApiResponseInterruption } from '../../../../shared/run-error-classification'
 import {
   INTERRUPTED_TURN_ERROR,
   isHiddenControlMessage,
@@ -1126,12 +1124,9 @@ const applyWorkspaceRuntimeEvent = async (
       return true
     }
     const isCompacting = activeSession?.compacting
-    // Same overflow detection the recovery effect uses (marker first, message as a fallback), so the two
-    // agree on which errors are recoverable.
+    // Use the same structured recovery facts as the recovery effect.
     const isOverflow =
-      event.recoverable === 'context-overflow' ||
-      isMediaOverflowError(event.text) ||
-      isMediaOverflowError(event.title)
+      event.recoverable === 'context-overflow' || event.failure?.reason === 'input/context-overflow'
     const isSessionLost = event.recoverable === 'session-lost'
 
     if ((isOverflow || isSessionLost) && isCompacting) {
@@ -1144,7 +1139,7 @@ const applyWorkspaceRuntimeEvent = async (
     // an app defect: settle the partial projection and reuse the durable, user-triggered Resume path.
     // Require both the structural provider tag and the fixed wrapper so unrelated provider failures
     // keep their existing terminal-error behavior.
-    if (event.providerError && isClaudeApiResponseInterruption(errorText)) {
+    if (event.failure?.reason === 'service/response-interrupted') {
       store.interruptRun(
         event.sessionId,
         'connection-lost',
@@ -1155,15 +1150,9 @@ const applyWorkspaceRuntimeEvent = async (
         event.modelCallUsage
       )
     } else {
-      // A model-provider failure (upstream LLM/HTTP error the agent relayed, tagged structurally in the
-      // runtime) keeps its message but is not a bug worth a GitHub issue — hide the report button. For
-      // everything else, defer to failRun's text tier (undefined) rather than forcing reportable=true: a
-      // non-recovered overflow reaches here (repeat inside cooldown, nothing to replay, detached session)
-      // with providerError=false but IS a client-side/size failure the text tier recognizes as expected —
-      // forcing true here would wrongly show and persist the report button over it. Opaque ACP-layer
-      // failures still fall through the text tier to reportable.
+      // Preserve the runtime's classification, including overflow failures that could not recover.
       store.failRun(event.sessionId, errorText, {
-        reportable: event.providerError ? false : undefined,
+        failure: event.failure,
         promptMessageId: event.promptMessageId ?? activeSession?.activeRun?.promptMessageId,
         contextWindowSample: getTerminalContextWindowSample(event)
       })

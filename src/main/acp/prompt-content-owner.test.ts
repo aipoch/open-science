@@ -1,3 +1,4 @@
+import { extractPdfText } from '../uploads/pdf-text-extraction'
 import sharp from 'sharp'
 import * as attachmentMedia from '../uploads/attachment-media'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
@@ -23,7 +24,6 @@ import { createLiteratureAttachmentVersionReference } from '../../shared/literat
 import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import {
-  extractPdfText,
   MAX_AUTO_PROCESS_IMAGE_BYTES,
   MAX_AUTO_EXTRACT_PDF_BYTES
 } from '../uploads/attachment-media'
@@ -57,8 +57,8 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
   }
 })
 
-vi.mock('../uploads/attachment-media', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../uploads/attachment-media')>()
+vi.mock('../uploads/pdf-text-extraction', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../uploads/pdf-text-extraction')>()
   return { ...actual, extractPdfText: vi.fn(actual.extractPdfText) }
 })
 

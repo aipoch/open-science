@@ -278,3 +278,188 @@ it('reads and searches with no index or persistence capability', async () => {
   })
   expect(onIndexError).not.toHaveBeenCalled()
 })
+
+it('preserves incomplete extraction coverage through reading, retrieval and classification', async () => {
+  const coverage = { textPages: [1], ocrPages: [2], unavailablePages: [3], uncheckedPages: [] }
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: '--- Page 1 ---\nNative clinical evidence\n\n--- Page 2 ---\nOCR clinical evidence',
+      pageCount: 3,
+      truncated: false,
+      coverage
+    })
+  })
+  expect((await reader.readDocument(reference())).document.coverage).toEqual(coverage)
+  expect((await reader.searchDocuments([reference()], 'clinical')).documents[0].coverage).toEqual(
+    coverage
+  )
+  expect((await reader.classificationEvidence(reference(), 'clinical')).coverage).toBe('passages')
+})
+
+it('never labels a truncated extraction as full-text evidence', async () => {
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: 'partial clinical evidence',
+      pageCount: 2,
+      truncated: true
+    })
+  })
+  expect((await reader.classificationEvidence(reference(), 'clinical')).coverage).toBe('passages')
+})
+
+it('retries incomplete pages and rejects cursors from the earlier extraction', async () => {
+  const first = {
+    text: '--- Page 1 ---\n' + 'clinical evidence '.repeat(1200),
+    pageCount: 2,
+    truncated: false,
+    coverage: { textPages: [1], ocrPages: [], unavailablePages: [2], uncheckedPages: [] }
+  }
+  const recovered = {
+    ...first,
+    text: first.text + '\n\n--- Page 2 ---\nrecovered evidence',
+    coverage: { textPages: [1], ocrPages: [2], unavailablePages: [], uncheckedPages: [] }
+  }
+  const extract = vi.fn().mockResolvedValueOnce(first).mockResolvedValue(recovered)
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const old = await reader.readDocument(reference())
+  expect(old.nextCursor).not.toBeNull()
+  await reader.readDocument(reference(), old.nextCursor!)
+  expect(extract).toHaveBeenCalledOnce()
+  expect((await reader.readDocument(reference())).document.coverage).toEqual(recovered.coverage)
+  await expect(reader.readDocument(reference(), old.nextCursor!)).rejects.toThrow(
+    'cursor is invalid'
+  )
+  expect(extract).toHaveBeenCalledTimes(2)
+})
+
+it('reports every unavailable page even when no text can be read or retrieved', async () => {
+  const coverage = { textPages: [], ocrPages: [], unavailablePages: [1, 2], uncheckedPages: [] }
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: '',
+      pageCount: 2,
+      truncated: false,
+      coverage
+    })
+  })
+  expect((await reader.readDocument(reference())).document.coverage).toEqual(coverage)
+  const search = await reader.searchDocuments([reference()], 'clinical')
+  expect(search.documents[0].coverage).toEqual(coverage)
+  expect(search.passages).toEqual([])
+  expect(await reader.classificationEvidence(reference(), 'clinical')).toEqual({
+    coverage: 'unavailable',
+    passages: []
+  })
+})
+
+it('pagination shares one extraction even when a page is permanently blank', async () => {
+  const extract = vi.fn(async () => ({
+    text: '--- Page 1 ---\n' + 'clinical '.repeat(6000),
+    pageCount: 2,
+    truncated: false,
+    coverage: { textPages: [1], ocrPages: [], unavailablePages: [2], uncheckedPages: [] }
+  }))
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const first = await reader.readDocument(reference())
+  const second = await reader.readDocument(reference(), first.nextCursor!)
+  await reader.readDocument(reference(), second.nextCursor!)
+  expect(
+    extract,
+    'cursor continuation must not repeat expensive OCR on a permanent gap'
+  ).toHaveBeenCalledOnce()
+})
+
+it('never treats image-bearing pages as verified complete evidence', async () => {
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: '--- Page 1 ---\n1\nrecognized clinical evidence',
+      pageCount: 1,
+      truncated: false,
+      coverage: {
+        textPages: [1],
+        ocrPages: [1],
+        unavailablePages: [],
+        uncheckedPages: [],
+        unverifiedPages: [1]
+      }
+    })
+  })
+  expect((await reader.classificationEvidence(reference(), 'clinical')).coverage).toBe('passages')
+})
+
+it('requires positive coverage of every page before declaring full-text', async () => {
+  const reader = new LiteratureReader({
+    authorize: async () => async () => ({
+      text: '--- Page 1 ---\nclinical evidence',
+      pageCount: 2,
+      truncated: false,
+      coverage: { textPages: [1], ocrPages: [], unavailablePages: [], uncheckedPages: [] }
+    })
+  })
+  expect((await reader.classificationEvidence(reference(), 'clinical')).coverage).toBe('passages')
+})
+
+it('text identity rejects stale cursors after a retry changes text without changing page coverage', async () => {
+  const coverage = { textPages: [1], ocrPages: [], unavailablePages: [2], uncheckedPages: [] }
+  const extract = vi
+    .fn()
+    .mockResolvedValueOnce({
+      text: 'old evidence '.repeat(2000),
+      pageCount: 2,
+      truncated: false,
+      coverage
+    })
+    .mockResolvedValue({
+      text: 'new evidence '.repeat(2000),
+      pageCount: 2,
+      truncated: false,
+      coverage
+    })
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const old = await reader.readDocument(reference())
+  await reader.readDocument(reference())
+  await expect(reader.readDocument(reference(), old.nextCursor!)).rejects.toThrow(
+    'cursor is invalid'
+  )
+})
+
+it('coverage-only updates preserve text cursors and still update evidence provenance', async () => {
+  const text = 'unchanged clinical evidence '.repeat(1200)
+  const before = { textPages: [1], ocrPages: [], unavailablePages: [2], uncheckedPages: [] }
+  const after = { textPages: [], ocrPages: [1], unavailablePages: [2], uncheckedPages: [] }
+  const extract = vi
+    .fn()
+    .mockResolvedValueOnce({ text, pageCount: 2, truncated: false, coverage: before })
+    .mockResolvedValue({ text, pageCount: 2, truncated: false, coverage: after })
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  const first = await reader.readDocument(reference())
+  await reader.readDocument(reference())
+  expect((await reader.readDocument(reference(), first.nextCursor!)).document.coverage).toEqual(
+    after
+  )
+})
+
+it('fresh classification retries missing OCR evidence', async () => {
+  const extract = vi
+    .fn()
+    .mockResolvedValueOnce({
+      text: '',
+      pageCount: 2,
+      truncated: false,
+      coverage: { textPages: [], ocrPages: [], unavailablePages: [1, 2], uncheckedPages: [] }
+    })
+    .mockResolvedValue({
+      text: 'Recovered clinical evidence',
+      pageCount: 2,
+      truncated: false,
+      coverage: { textPages: [], ocrPages: [1, 2], unavailablePages: [], uncheckedPages: [] }
+    })
+  const reader = new LiteratureReader({ authorize: async () => extract })
+  expect((await reader.classificationEvidence(reference(), 'clinical')).coverage).toBe(
+    'unavailable'
+  )
+  expect(
+    (await reader.classificationEvidence(reference(), 'clinical')).passages[0].content
+  ).toContain('Recovered')
+  expect(extract).toHaveBeenCalledTimes(2)
+})

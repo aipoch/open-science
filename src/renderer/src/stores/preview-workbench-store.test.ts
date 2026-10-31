@@ -8,6 +8,7 @@ import {
   createNotebookPreviewItem,
   createProjectFilesPreviewItem,
   createProjectLibraryPreviewItem,
+  createProjectMarketplacePreviewItem,
   createInitialPreviewWorkbenchState,
   PROJECT_FILES_PREVIEW_ID,
   usePreviewWorkbenchStore
@@ -387,6 +388,20 @@ describe('preview workbench store', () => {
         }
       ]
     })
+  })
+
+  it('reuses the marketplace tab and restores it when returning to its project', () => {
+    const store = usePreviewWorkbenchStore.getState()
+    store.activateProject('project-a')
+    store.upsertAndActivateItem(createProjectMarketplacePreviewItem())
+    store.upsertAndActivateItem(createProjectMarketplacePreviewItem())
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(1)
+    expect(usePreviewWorkbenchStore.getState().items[0]).toMatchObject({ toolKind: 'marketplace' })
+    expect(usePreviewWorkbenchStore.getState().panelState).toBe('open')
+    store.activateProject('project-b')
+    expect(usePreviewWorkbenchStore.getState().items).toHaveLength(0)
+    store.activateProject('project-a')
+    expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('tool:project:marketplace')
   })
 
   it('reuses the Library tab and keeps it scoped to its project', () => {

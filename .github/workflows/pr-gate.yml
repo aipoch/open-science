@@ -687,12 +687,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
-        env:
-          # CPU-only verification uses the bundled runtime, not optional NuGet GPU providers.
-          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
-      - name: Verify ONNX native loading
-        run: node -e "require('onnxruntime-node')"
       - name: Test CLI and SDK
         id: cli_sdk
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
@@ -775,8 +770,6 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
-        env:
-          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
       - uses: ./.github/actions/select-package-tests
         with:
@@ -843,14 +836,9 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install dependencies
-        env:
-          # Portable CPU tests use bundled ONNX binaries, not optional NuGet GPU providers.
-          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
       - name: Generate derived consumer index
         run: npm run generate:module-consumers
-      - name: Verify ONNX native loading
-        run: node -e "require('onnxruntime-node')"
       - name: Select independent package tests from trusted policy
         uses: ./.github/actions/select-package-tests
         with:
@@ -1076,12 +1064,7 @@ jobs:
           node-version: 24
           cache: npm
       - name: Install application dependencies
-        env:
-          # Notebook isolation uses bundled CPU binaries, not optional NuGet GPU providers.
-          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
-      - name: Verify ONNX native loading
-        run: node -e "require('onnxruntime-node')"
       - name: Install Linux sandbox dependency
         shell: bash
         env:
@@ -1090,14 +1073,20 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install --yes --no-install-recommends apparmor-profiles apparmor-utils bubblewrap
+          sudo apt-get install --reinstall --yes --no-install-recommends apparmor
 
           apparmor_userns_restriction="$(
             sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
           )"
           if [[ "$apparmor_userns_restriction" == "1" ]]; then
-            profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
-            test -r "$profile_source"
-            sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            if [[ ! -r /etc/apparmor.d/bwrap-userns-restrict ]]; then
+              profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+              if [[ ! -r "$profile_source" ]]; then
+                profile_source="$GITHUB_WORKSPACE/scripts/ci/bwrap-userns-restrict"
+              fi
+              test -r "$profile_source"
+              sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            fi
             sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
           fi
 

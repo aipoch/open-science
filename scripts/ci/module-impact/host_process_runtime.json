@@ -247,7 +247,6 @@
       "src/main/literature/pdf-structure/owner.test.ts",
       "src/main/literature/pdf-structure/reader.test.ts",
       "src/main/literature/pdf-structure/source-metadata.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/net/network-info.test.ts",
       "src/main/network-ipc.test.ts",
       "src/main/notebook/application.test.ts",

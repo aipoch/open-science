@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from '../failure/contract'
 import { z } from 'zod'
 import type { AcpContextUsage, AcpTurnTokenUsage } from '../acp-usage-contract'
 import type { PersistedConversationGraph } from '../conversation-graph'
@@ -255,7 +256,7 @@ export type PersistedChatSession = {
   // model error the agent relayed, or one of the app's own actionable reminders); true/absent for an
   // unknown ACP-layer failure. Resolved once when the run fails and persisted so the "Report error"
   // gate survives a reload. Absent on older files — treated as reportable (the prior behavior).
-  errorReportable?: boolean
+  failure?: ClassifiedFailure
   // Identifies the artifact runtime event that owns the current finalization error. Historical
   // Sessions omit it and retain the conservative replay-clearing behavior.
   artifactErrorEventIds?: string[]

@@ -15,6 +15,10 @@ const registry = packageRegistry()
 const roots = registry.packages.map(({ root }: { root: string }) => root)
 const upstream = 'packages/pdf-structure'
 const downstream = 'packages/pdf-translation'
+// Windows keeps only the first case-insensitive key; an inherited alias must not win over the stub.
+const subprocessEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(([key]) => key.toLowerCase() !== 'npm_execpath')
+)
 
 describe('independent package verification', () => {
   it('includes every registered Literature package in the targeted build and verification commands', () => {
@@ -104,8 +108,9 @@ describe('independent package verification', () => {
         ['scripts/check-reproducibility-package.mjs', '--ci'],
         {
           encoding: 'utf8',
+          timeout: 30_000,
           env: {
-            ...process.env,
+            ...subprocessEnvironment,
             npm_execpath: 'unexpected-npm-invocation.cjs',
             OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(selected),
             OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
@@ -123,8 +128,9 @@ describe('independent package verification', () => {
       ['scripts/check-environment-package.mjs', '--ci'],
       {
         encoding: 'utf8',
+        timeout: 30_000,
         env: {
-          ...process.env,
+          ...subprocessEnvironment,
           npm_execpath: 'unexpected-npm-invocation.cjs',
           OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: JSON.stringify(['packages/compute']),
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
@@ -222,7 +228,10 @@ it.each([false, true])(
         process.execPath,
         ['scripts/check-packages.mjs', `--output=${output}`, ...(skip ? ['--skip-tests'] : [])],
         {
-          env: { ...process.env, npm_execpath: npm, PACKAGE_TEST_CALLS: calls }
+          // A synchronous child otherwise blocks Vitest's own timeout indefinitely.
+          timeout: 30_000,
+          encoding: 'utf8',
+          env: { ...subprocessEnvironment, npm_execpath: npm, PACKAGE_TEST_CALLS: calls }
         }
       )
       const commands = verificationCommands(verificationPlanFromArguments([], {}))
