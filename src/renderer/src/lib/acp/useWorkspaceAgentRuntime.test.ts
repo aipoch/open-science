@@ -64,7 +64,10 @@ import {
   resetSessionContentCacheForTests,
   resetSessionPersistenceWriteFailuresForTests
 } from '../session-persistence/session-persistence'
-import { applyWorkspaceRuntimeEvent } from './workspace-events'
+import {
+  applyWorkspaceRuntimeEvent,
+  scheduleCommittedRuntimeTranscriptAutoReview
+} from './workspace-events'
 import {
   clearLinkedPendingPdfContext,
   createWorkspaceRuntimeEventProcessor,
@@ -9655,6 +9658,59 @@ describe('resuming an interrupted session on demand', () => {
     expect(userMessages[0].interrupted).toBeUndefined()
     expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('auto-reviews a resumed turn when the refresh precedes its lifecycle event', async () => {
+    const store = useSessionStore.getState()
+    store.appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the analysis',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    store.appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'answer',
+      eventId: 'answer',
+      content: 'Analysis result.'
+    })
+    store.markDisconnected('session-1')
+    store.setAutoReviewEnabled('session-1', true)
+    const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), reviewer: { run: reviewerRun } }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn(),
+      continueInterruptedTurn: vi.fn(async (request: AcpContinueInterruptedTurnRequest) => {
+        const beforeEvent = useSessionStore.getState().sessions
+        const result = await acceptTestMainContinuation(request, { kind: 'stop', text: 'end_turn' })
+        const committed = testDurableSessions.get('session-1')!
+        committed.runtimeTranscriptLastRun = {
+          promptMessageId: request.promptMessageId,
+          startedAt: Date.now()
+        }
+        committed.runtimeTranscriptReviewOwner = {
+          promptMessageId: request.promptMessageId,
+          owner: 'renderer'
+        }
+        // The durable refresh can arrive before the same terminal lifecycle broadcast.
+        useSessionStore.setState({ sessions: beforeEvent })
+        return result
+      })
+    }
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    scheduleCommittedRuntimeTranscriptAutoReview(
+      useSessionStore.getState().sessions[0],
+      testDurableSessions.get('session-1')!
+    )
+    await vi.waitFor(() => expect(reviewerRun).toHaveBeenCalledOnce(), { timeout: 1500 })
   })
 
   it('continues an interrupted turn that is still attached without reconnecting', async () => {
