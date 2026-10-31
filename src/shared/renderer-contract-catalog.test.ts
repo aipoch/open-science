@@ -23,13 +23,14 @@ describe('renderer contract catalog', () => {
     })
     expect(WEB_INVOKE_CHANNELS['remoteAccess.revokeBrowsers']).toBe('remote-access:revoke-browsers')
   })
-  it('registers all four local model methods across the intended surfaces', () => {
+  it('registers all local model methods across the intended surfaces', () => {
     const group = RENDERER_CONTRACT_GROUPS.find(({ capability }) => capability === 'local-models')
     expect(group?.contracts.map(({ publicPath }) => publicPath).sort()).toEqual([
       'localModels.cancel',
       'localModels.getSnapshot',
       'localModels.install',
-      'localModels.remove'
+      'localModels.remove',
+      'localModels.setOcrLanguages'
     ])
     for (const contract of group!.contracts) {
       expect(contract.surfaceInstallation).toMatchObject({

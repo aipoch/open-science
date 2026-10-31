@@ -12,6 +12,7 @@ import type { LocalModelOwner } from '../local-models/owner'
 import type { SessionCatalog } from '../session-persistence/coordinator'
 import { MAX_AUTO_EXTRACT_PDF_BYTES } from '../uploads/attachment-media'
 import { extractPdfText } from '../uploads/pdf-text-extraction'
+import type { OcrLanguage } from '../../shared/local-models'
 import { literatureIndex } from './full-text-index'
 import type { LiteratureReadDocumentRequest } from './mcp-server'
 import { resolveCurrentPdfContext } from './pdf-context'
@@ -48,6 +49,7 @@ type SearchLiteratureAttachmentRequest = Readonly<{
 
 type ReadingReference = SessionPdfBinding & {
   ocrRevision?: string
+  ocrLanguages?: readonly OcrLanguage[]
   projectId: string
 }
 
@@ -74,7 +76,7 @@ class LiteratureDocumentReader {
           throw new Error(
             'LINKED_PDF_UNAVAILABLE: The immutable linked PDF Version is unavailable.'
           )
-        return () => this.extract(source, context.ocrRevision)
+        return () => this.extract(source, context.ocrRevision, context.ocrLanguages)
       },
       log: (message, fields) => log.info(message, fields),
       onIndexError: (error) => log.warn('Literature BM25 search failed', errorLogFields(error))
@@ -89,10 +91,24 @@ class LiteratureDocumentReader {
     projectId: string
   ): Promise<ReadingReference> {
     const snapshot = await this.options.ocrModels?.getSnapshot()
+    const installedLanguages = snapshot?.ocrLanguages
+      ? snapshot.ocrLanguages
+          .filter((language) => language.selected && language.installed)
+          .map((language) => language.code)
+      : snapshot?.availability === 'ready'
+        ? (['eng', 'chi_sim'] as const)
+        : undefined
     return {
       ...binding,
       projectId,
-      ocrRevision: snapshot?.availability === 'ready' ? snapshot.installedRevision : undefined
+      ocrRevision:
+        snapshot?.availability === 'ready' &&
+        snapshot.installedRevision &&
+        installedLanguages &&
+        installedLanguages.length > 0
+          ? `${snapshot.installedRevision}:${installedLanguages?.join(',') ?? ''}`
+          : undefined,
+      ocrLanguages: installedLanguages
     }
   }
   private reader(
@@ -219,7 +235,8 @@ class LiteratureDocumentReader {
 
   private async extract(
     input: ResolvedSessionPdfVersion,
-    ocrRevision?: string
+    ocrRevision?: string,
+    ocrLanguages?: readonly OcrLanguage[]
   ): Promise<TextExtraction> {
     if (this.closed) throw new Error('Literature reader is closed.')
     const ocrOptions = this.options.ocrModels
@@ -230,7 +247,7 @@ class LiteratureDocumentReader {
               ocrRevision
                 ? {
                     acquireUse: async () => {
-                      const lease = await models.acquireUse()
+                      const lease = await models.acquireUse(ocrLanguages)
                       if (lease.revision !== ocrRevision || this.closed) {
                         lease.release()
                         throw new Error('PDF_MODEL_CHANGED: Retry with the current OCR component.')

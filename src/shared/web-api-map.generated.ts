@@ -120,6 +120,7 @@ export const WEB_INVOKE_CHANNELS = {
   'localModels.getSnapshot': 'local-models:get-snapshot',
   'localModels.install': 'local-models:install',
   'localModels.remove': 'local-models:remove',
+  'localModels.setOcrLanguages': 'local-models:set-ocr-languages',
   'logs.getStatus': 'logs:get-status',
   'logs.openFile': 'logs:open-file',
   'logs.revealInFolder': 'logs:reveal-in-folder',
