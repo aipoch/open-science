@@ -14,8 +14,9 @@ export type InstallReadiness = {
   canForce?: boolean
   completed: boolean
   reaped: boolean
-  // Renderer durability passed; ordinary process cleanup may be completed by bounded service stop.
+  // Update consent permits the verified service stop after best-effort saving and teardown.
   stopAuthorized?: boolean
+  shutdownDiagnostics?: { step: string; outcome: 'completed' | 'failed' | 'timeout' }[]
   // Service exit and Config Root lock were confirmed. Installer occupancy is checked separately.
   runtimeStopped?: boolean
   reason?: import('../../shared/update').UpdateFailureReason
@@ -28,7 +29,10 @@ export type InstallReadiness = {
 // Runs backend teardown before an in-place install and reports whether it is safe to proceed. The
 // in-place strategy receives it at construction and awaits it before quitAndInstall, so the installer
 // never starts while a background process still holds app files open.
-export type InstallGate = (options?: UpdateApplyOptions) => Promise<InstallReadiness>
+// The deadline is carried only on the authenticated Desktop-to-Runtime request, never accepted as
+// additional renderer update authority. It can shorten, but cannot extend, the owner shutdown budget.
+export type InstallGateOptions = UpdateApplyOptions & { shutdownDeadlineAt?: number }
+export type InstallGate = (options?: InstallGateOptions) => Promise<InstallReadiness>
 
 const restoreAfterFinalRefusal = (restore: () => void): void => {
   try {

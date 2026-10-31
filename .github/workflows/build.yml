@@ -46,6 +46,10 @@ on:
         description: Sign the stable Windows package with Azure Artifact Signing.
         type: boolean
         default: false
+      diagnostic_version:
+        description: Internal test version for the manual Windows Upgrade Smoke diagnostic mode only
+        type: string
+        default: ''
 
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
@@ -605,8 +609,20 @@ jobs:
           # The previous Node 22 x64 build on macos-26-intel defaulted to ~2 GB old-space. The renderer graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
+          DIAGNOSTIC_VERSION: ${{ inputs.diagnostic_version }}
         run: |
           eb_ver=()
+          if [ -n "$DIAGNOSTIC_VERSION" ]; then
+            if [ "$GITHUB_WORKFLOW" != 'Windows Upgrade Smoke' ] ||
+               [ "$GITHUB_EVENT_NAME" != 'workflow_dispatch' ] ||
+               [ "${{ inputs.nightly }}" = 'true' ] ||
+               ! [[ "$DIAGNOSTIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo 'Diagnostic versions are restricted to the manual, non-publishing reliability workflow.' >&2
+              exit 1
+            fi
+            npm version --no-git-tag-version --allow-same-version "$DIAGNOSTIC_VERSION"
+            eb_ver=(-c.extraMetadata.version="$DIAGNOSTIC_VERSION")
+          fi
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
             # Prefix the SHA so npm cannot normalize a numeric identifier (0189093 -> 189093).
@@ -672,6 +688,14 @@ jobs:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked
 
+      - name: Record internal diagnostic build identity
+        if: ${{ inputs.diagnostic_version != '' }}
+        shell: bash
+        env:
+          DIAGNOSTIC_VERSION: ${{ inputs.diagnostic_version }}
+        run: |
+          node -e 'require("fs").writeFileSync("dist/diagnostic-build.json", JSON.stringify({internalTestBuild:true, commit:process.env.GITHUB_SHA, version:process.env.DIAGNOSTIC_VERSION, runId:process.env.GITHUB_RUN_ID}, null, 2))'
+
       # Keep each native feed unique even when notarization is skipped. The installed app still
       # polls latest-mac.yml; only the publication job combines the two architecture artifacts.
       - name: Preserve architecture-specific mac update feed
@@ -724,4 +748,5 @@ jobs:
             dist/*.blockmap
             dist/latest*.yml
             dist/*-mac.yml
+            dist/diagnostic-build.json
           if-no-files-found: error

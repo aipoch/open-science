@@ -223,6 +223,7 @@
         "packages/compute/src/scp-runner.ts",
         "packages/compute/src/ssh-runner.ts",
         "src/main/crash-diagnostics.ts",
+        "src/main/desktop-update-integration.ts",
         "src/main/credential-identity/**",
         "src/main/delegation/process-ownership.ts",
         "src/main/immutable-input-authority.ts",

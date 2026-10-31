@@ -51,6 +51,53 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it.each([
+    { workflowName: 'Windows Upgrade Smoke', version: '1.0.6', allowed: true },
+    { workflowName: 'Release', version: '1.0.6', allowed: false },
+    {
+      workflowName: 'Windows Upgrade Smoke',
+      version: '1.0.6; echo unsafe',
+      allowed: false
+    }
+  ])(
+    'bounds internal version overrides to the non-publishing caller: $workflowName $version',
+    ({ workflowName, version, allowed }) => {
+      const root = mkdtempSync(join(tmpdir(), 'diagnostic-version-'))
+      try {
+        writeFileSync(
+          join(root, 'package.json'),
+          JSON.stringify({ name: 'internal-update-fixture', version: '1.0.5', private: true })
+        )
+        const build = step(workflow('build.yml').jobs.build, 'Build & package').run!
+        const preparation = build
+          .slice(0, build.indexOf('npm run build:e2e'))
+          .replaceAll('${{ inputs.nightly }}', 'false')
+        const run = (): void => {
+          execFileSync('bash', ['-e', '-c', preparation], {
+            cwd: root,
+            encoding: 'utf8',
+            stdio: 'pipe',
+            env: {
+              ...process.env,
+              DIAGNOSTIC_VERSION: version,
+              GITHUB_WORKFLOW: workflowName,
+              GITHUB_EVENT_NAME: 'workflow_dispatch'
+            }
+          })
+        }
+        if (allowed) {
+          expect(run).not.toThrow()
+          expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe(version)
+        } else {
+          expect(run).toThrow()
+          expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('1.0.5')
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      }
+    }
+  )
+
   it.each(['0189093', '0000000', '1234567', 'abc1234', null])(
     'keeps backend and installer versions identical for commit %s (null is stable)',
     (shortSha) => {
@@ -119,7 +166,8 @@ describe('release and scheduled workflow topology', () => {
       'performance-package-dryrun.yml:build',
       'release.yml:build',
       'runtime-resource-soak.yml:packaged_performance',
-      'signpath-test.yml:build'
+      'signpath-test.yml:build',
+      'windows-upgrade-smoke.yml:diagnostic-build'
     ])
     for (const name of [
       'nightly.yml',

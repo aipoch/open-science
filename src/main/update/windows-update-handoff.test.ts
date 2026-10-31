@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   cp,
@@ -17,6 +18,13 @@ import { join } from 'node:path'
 import { verifyDesktopRecoveryReadiness } from '../desktop-recovery-readiness'
 import type { DesktopRuntimeClient } from '../desktop-runtime-client'
 import {
+  readNativeInstallationUpdate,
+  assertInstallationStartupAllowed,
+  installationStateDirectory,
+  releaseNativeInstallationUpdate
+} from './installation-protection'
+import { isWindowsInstallationWriterActive } from './windows-installation-processes'
+import {
   acknowledgeWindowsUpdateReady,
   cleanupWindowsUpdateHandoffs,
   createWindowsUpdateRequest,
@@ -26,7 +34,13 @@ import {
   windowsUpdateHandoffRoot,
   writeWindowsUpdateFile,
   WINDOWS_UPDATE_OPERATION_ARG,
-  resolveWindowsUpdateStartup,
+  prepareWindowsUpdateStartup,
+  resumeInterruptedWindowsUpdate,
+  windowsUpdateBoundRequest,
+  windowsUpdateRequestBinding,
+  windowsInstallationRecoveryDirectory,
+  windowsInstallationRelaunchCommand,
+  readWindowsUpdateRequest,
   waitForWindowsUpdateWindow
 } from './windows-update-handoff'
 
@@ -34,14 +48,30 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return { ...actual, rename: vi.fn(actual.rename) }
 })
+vi.mock('./windows-installation-processes', () => ({
+  isWindowsInstallationWriterActive: vi.fn(async () => false)
+}))
 
 let root: string
+const resolveWindowsUpdateStartup = async (
+  options: Parameters<typeof prepareWindowsUpdateStartup>[0]
+): Promise<
+  Omit<NonNullable<ReturnType<typeof prepareWindowsUpdateStartup>>, 'settle'> | undefined
+> => {
+  const prepared = prepareWindowsUpdateStartup(options)
+  if (!prepared) return undefined
+  await prepared.settle()
+  return { startupOptions: prepared.startupOptions, confirmed: prepared.confirmed }
+}
 beforeEach(async () => {
   vi.mocked(rename).mockReset()
   root = await mkdtemp(join(tmpdir(), 'update-receipts-'))
+  vi.stubEnv('OPEN_SCIENCE_INSTALLATION_STATE_ROOT', join(root, 'state'))
+  vi.mocked(isWindowsInstallationWriterActive).mockReset().mockResolvedValue(false)
 })
 afterEach(async () => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   await rm(root, { recursive: true, force: true })
 })
 const config = (): {
@@ -93,7 +123,347 @@ async function setup(): Promise<{
   }
 }
 
+async function indexPending(fixture: Awaited<ReturnType<typeof setup>>): Promise<void> {
+  const directory = await windowsInstallationRecoveryDirectory(root, fixture.ready.applicationPath)
+  await mkdir(directory, { recursive: true })
+  await writeFile(
+    join(directory, 'update.ini'),
+    Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(`[update]\r\noperationId=${fixture.operationId}\r\n`, 'utf16le')
+    ])
+  )
+}
+
 describe('Windows update presentation receipts', () => {
+  it('keeps taskbar relaunch on the durable installation entry with Unicode paths', async () => {
+    const { ready } = await setup()
+    const directory = await windowsInstallationRecoveryDirectory(root, ready.applicationPath)
+    await mkdir(directory, { recursive: true })
+    const launcher = join(directory, `setup-${'a'.repeat(64)}.exe`)
+    await writeFile(launcher, 'persistent signed installer fixture')
+    const ini = `[installation]\r\napplicationPath=${ready.applicationPath}\r\nlauncherPath=${launcher}\r\n`
+    await writeFile(
+      join(directory, 'launch.ini'),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(ini, 'utf16le')])
+    )
+    expect(await windowsInstallationRelaunchCommand(root, ready.applicationPath)).toBe(
+      `"${launcher}" --open-science-launch`
+    )
+    await writeFile(
+      join(directory, 'launch.ini'),
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(ini.replace(ready.applicationPath, join(root, 'another.exe')), 'utf16le')
+      ])
+    )
+    await expect(windowsInstallationRelaunchCommand(root, ready.applicationPath)).rejects.toThrow(
+      'Invalid'
+    )
+  })
+
+  it('accepts a filesystem alias of the same persistent entry without trusting another directory', async () => {
+    const { ready } = await setup()
+    const alias = join(root, 'app-data-alias')
+    await symlink(root, alias, 'junction')
+    const directory = await windowsInstallationRecoveryDirectory(alias, ready.applicationPath)
+    await mkdir(directory, { recursive: true })
+    const launcher = join(directory, `setup-${'a'.repeat(64)}.exe`)
+    await writeFile(launcher, 'persistent installer fixture')
+    const metadata = (path: string): Buffer =>
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(
+          `[installation]\r\napplicationPath=${ready.applicationPath}\r\nlauncherPath=${path}\r\n`,
+          'utf16le'
+        )
+      ])
+    await writeFile(join(directory, 'launch.ini'), metadata(launcher))
+    expect(await windowsInstallationRelaunchCommand(alias, ready.applicationPath)).toBe(
+      `"${launcher}" --open-science-launch`
+    )
+    const otherLauncher = join(root, `setup-${'a'.repeat(64)}.exe`)
+    await writeFile(otherLauncher, 'unrelated entry')
+    await writeFile(join(directory, 'launch.ini'), metadata(otherLauncher))
+    await expect(windowsInstallationRelaunchCommand(alias, ready.applicationPath)).rejects.toThrow(
+      'Invalid'
+    )
+  })
+
+  async function interruptedUpdate(
+    installerUrl?: string
+  ): Promise<Awaited<ReturnType<typeof setup>>> {
+    const fixture = await setup()
+    const request = await readWindowsUpdateRequest(fixture.directory, fixture.operationId)
+    await rm(join(fixture.directory, 'installed.receipt'))
+    await writeFile(request.installerPath, 'verified installer')
+    if (installerUrl) {
+      request.installerUrl = installerUrl
+      request.installerSha256 = createHash('sha256').update('verified installer').digest('hex')
+      await writeFile(join(fixture.directory, 'request.json'), JSON.stringify(request))
+    }
+    await writeFile(
+      join(fixture.directory, 'bound-request.json'),
+      windowsUpdateBoundRequest(request)
+    )
+    const recoveryDirectory = await windowsInstallationRecoveryDirectory(
+      root,
+      request.applicationPath
+    )
+    await mkdir(recoveryDirectory, { recursive: true })
+    const launcher = join(recoveryDirectory, `setup-${'a'.repeat(64)}.exe`)
+    await writeFile(launcher, 'persistent signed NSIS fixture')
+    await writeFile(
+      join(recoveryDirectory, 'launch.ini'),
+      Buffer.concat([
+        Buffer.from([0xff, 0xfe]),
+        Buffer.from(
+          `[installation]\r\napplicationPath=${request.applicationPath}\r\nlauncherPath=${launcher}\r\n`,
+          'utf16le'
+        )
+      ])
+    )
+    const state = installationStateDirectory({ installationRoot: join(root, 'installation') })
+    await mkdir(state, { recursive: true })
+    // Persisted bytes left by an exited owner; kernel-lock death itself is tested with real
+    // subprocesses in installation-protection.test.ts.
+    await writeFile(
+      join(state, 'windows-update-in-progress.json'),
+      JSON.stringify({
+        schema: 1,
+        operationId: request.operationId,
+        phase: 'preparing',
+        installationRoot: join(root, 'installation'),
+        handoffDirectory: fixture.directory,
+        targetVersion: request.targetVersion,
+        requestSha256: windowsUpdateRequestBinding(request),
+        installerSha512: createHash('sha512').update('verified installer').digest('base64')
+      })
+    )
+    return fixture
+  }
+
+  it('ordinary startup resumes only the original verified package and operation after owner exit', async () => {
+    const { ready, operationId } = await interruptedUpdate()
+    const launch = vi.fn(async () => {})
+    try {
+      expect(
+        await resumeInterruptedWindowsUpdate({ ...ready, args: [], version: 'old' }, launch)
+      ).toBe(true)
+      expect(launch).toHaveBeenCalledWith(
+        join(
+          await windowsInstallationRecoveryDirectory(root, ready.applicationPath),
+          `setup-${'a'.repeat(64)}.exe`
+        ),
+        ['--open-science-launch']
+      )
+      expect(
+        readNativeInstallationUpdate({ installationRoot: join(root, 'installation') })?.phase
+      ).toBe('handoff')
+    } finally {
+      releaseNativeInstallationUpdate(
+        { installationRoot: join(root, 'installation') },
+        operationId,
+        'installed'
+      )
+    }
+  })
+
+  it.each(['missing', 'corrupt'])(
+    'delegates %s retained packages to the same persistent recovery entry',
+    async (kind) => {
+      const { ready, operationId } = await interruptedUpdate(
+        'https://github.com/owner/repo/releases/download/v1/setup.exe'
+      )
+      await rm(join(root, 'installer.exe'))
+      if (kind === 'corrupt') await writeFile(join(root, 'installer.exe'), 'damaged')
+      const launch = vi.fn(async () => {})
+      // The durable entry, including its embedded helper, owns writer waiting and downloads.
+      // A partial installation need not still contain the app's process-probe executable.
+      vi.mocked(isWindowsInstallationWriterActive).mockRejectedValue(
+        new Error('installed helper missing')
+      )
+      try {
+        expect(
+          await resumeInterruptedWindowsUpdate({ ...ready, args: [], version: 'old' }, launch)
+        ).toBe(true)
+        expect(launch).toHaveBeenCalledWith(
+          join(
+            await windowsInstallationRecoveryDirectory(root, ready.applicationPath),
+            `setup-${'a'.repeat(64)}.exe`
+          ),
+          ['--open-science-launch']
+        )
+        expect(isWindowsInstallationWriterActive).not.toHaveBeenCalled()
+      } finally {
+        releaseNativeInstallationUpdate(
+          { installationRoot: join(root, 'installation') },
+          operationId,
+          'installed'
+        )
+      }
+    }
+  )
+
+  it('preserves admission when the bound interrupted request has changed', async () => {
+    const { ready, directory } = await interruptedUpdate()
+    await writeFile(join(directory, 'bound-request.json'), 'changed')
+    const launch = vi.fn(async () => {})
+    await expect(
+      resumeInterruptedWindowsUpdate({ ...ready, args: [], version: 'old' }, launch)
+    ).rejects.toThrow('changed')
+    expect(launch).not.toHaveBeenCalled()
+    expect(
+      readNativeInstallationUpdate({ installationRoot: join(root, 'installation') })
+    ).toBeDefined()
+  })
+
+  it('holds durable admission through handoff and releases it only after the target writer settles', async () => {
+    const { directory, ready } = await setup()
+    await rm(directory, { recursive: true })
+    const installerPath = join(root, 'installer.exe')
+    await writeFile(installerPath, 'verified installer')
+    const handoff = await prepareWindowsUpdateHandoff(
+      root,
+      {
+        targetVersion: ready.version,
+        applicationPath: ready.applicationPath,
+        installerPath,
+        profilePath: ready.profilePath,
+        startupOptions: config()
+      },
+      { installerSha512: createHash('sha512').update('verified installer').digest('base64') }
+    )
+    const installationRoot = join(root, 'installation')
+    expect(() => assertInstallationStartupAllowed(installationRoot)).toThrow('update')
+    handoff.handoff()
+    handoff.cancel()
+    expect(readNativeInstallationUpdate({ installationRoot })?.phase).toBe('handoff')
+    await writeFile(
+      join(windowsUpdateHandoffRoot(root), handoff.operationId, 'installed.receipt'),
+      windowsUpdateReceipt(handoff.operationId, 'installed')
+    )
+    vi.mocked(isWindowsInstallationWriterActive)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+    const prepared = prepareWindowsUpdateStartup({
+      ...ready,
+      args: [WINDOWS_UPDATE_OPERATION_ARG + handoff.operationId]
+    })
+    // Profile selection and credential preflight can finish synchronously before any writer wait.
+    expect(prepared?.startupOptions).toEqual(config())
+    expect(isWindowsInstallationWriterActive).not.toHaveBeenCalled()
+    expect(
+      readWindowsUpdateRequest(
+        join(windowsUpdateHandoffRoot(root), handoff.operationId),
+        handoff.operationId
+      ).successorPid
+    ).toBeUndefined()
+    expect(() => assertInstallationStartupAllowed(installationRoot)).toThrow('update')
+    await prepared!.settle()
+    expect(readNativeInstallationUpdate({ installationRoot })).toBeUndefined()
+    expect(() => assertInstallationStartupAllowed(installationRoot)).not.toThrow()
+  })
+
+  it('leaves recovery storage absent when ordinary startup has no pending operation', async () => {
+    const installation = join(root, 'new-installation')
+    await mkdir(installation)
+    expect(
+      prepareWindowsUpdateStartup({
+        appData: root,
+        args: [],
+        version: '1.0.2',
+        applicationPath: join(installation, 'app.exe')
+      })
+    ).toBeUndefined()
+    expect(await readdir(root)).toEqual(['new-installation'])
+  })
+
+  it('rejects changed profile binding between synchronous preparation and settlement', async () => {
+    const { directory, operationId, ready } = await setup()
+    const prepared = prepareWindowsUpdateStartup(ready)!
+    const request = readWindowsUpdateRequest(directory, operationId)
+    request.startupOptions.profilePath = join(root, 'different-profile')
+    request.profilePath = request.startupOptions.profilePath
+    await writeFile(join(directory, 'request.json'), JSON.stringify(request))
+    await expect(prepared.settle()).rejects.toThrow('changed during credential preflight')
+    expect(isWindowsInstallationWriterActive).not.toHaveBeenCalled()
+  })
+
+  it('rejects changed cached installers before taking admission or stopping a service', async () => {
+    const { ready } = await setup()
+    const installerPath = join(root, 'installer.exe')
+    await writeFile(installerPath, 'changed installer')
+    await expect(
+      prepareWindowsUpdateHandoff(
+        root,
+        {
+          targetVersion: ready.version,
+          applicationPath: ready.applicationPath,
+          installerPath,
+          profilePath: ready.profilePath,
+          startupOptions: config()
+        },
+        { installerSha512: createHash('sha512').update('verified installer').digest('base64') }
+      )
+    ).rejects.toThrow('changed')
+    expect(
+      readNativeInstallationUpdate({ installationRoot: join(root, 'installation') })
+    ).toBeUndefined()
+  })
+
+  it('restores an installed but not ready update through the ordinary startup entry', async () => {
+    const fixture = await setup()
+    await indexPending(fixture)
+    const { directory, operationId, ready } = fixture
+    const ordinary = { ...ready, args: [] }
+    expect(await resolveWindowsUpdateStartup(ordinary)).toEqual({
+      startupOptions: config(),
+      confirmed: false
+    })
+    expect(await acknowledgeWindowsUpdateReady(ordinary)).toBe(true)
+    expect(await readFile(join(directory, 'ready.receipt'), 'utf8')).toBe(
+      windowsUpdateReceipt(operationId, 'ready')
+    )
+    // A later normal launch must not overwrite a user's subsequently selected profile.
+    expect(await resolveWindowsUpdateStartup(ordinary)).toBeUndefined()
+  })
+
+  it('does not discover another installation or an uninstalled target on ordinary startup', async () => {
+    const fixture = await setup()
+    await indexPending(fixture)
+    const { directory, ready } = fixture
+    expect(
+      await resolveWindowsUpdateStartup({ ...ready, args: [], version: 'old' })
+    ).toBeUndefined()
+    await mkdir(join(root, 'other'))
+    expect(
+      await resolveWindowsUpdateStartup({
+        ...ready,
+        args: [],
+        applicationPath: join(root, 'other', 'app.exe')
+      })
+    ).toBeUndefined()
+    await rm(join(directory, 'installed.receipt'))
+    expect(await resolveWindowsUpdateStartup({ ...ready, args: [] })).toBeUndefined()
+  })
+
+  it('uses only this installation index and ignores damaged unrelated historical leases', async () => {
+    const first = await setup()
+    const other = await setup()
+    await writeFile(join(other.directory, 'request.json'), 'truncated unrelated request')
+    await indexPending(first)
+    expect(await resolveWindowsUpdateStartup({ ...first.ready, args: [] })).toEqual({
+      startupOptions: config(),
+      confirmed: false
+    })
+    const duplicate = join(root, 'Open-Science-UpdateHandoffs', first.operationId)
+    await cp(first.directory, duplicate, { recursive: true })
+    await expect(resolveWindowsUpdateStartup({ ...first.ready, args: [] })).rejects.toThrow(
+      'ambiguous'
+    )
+  })
+
   it.each(['Open-Science', 'Open-Science/UpdateHandoffs'])(
     'restores the profile from safe fallback storage when installed at %s',
     async (installation) => {
@@ -280,12 +650,17 @@ describe('Windows update presentation receipts', () => {
     }
   )
   it('restores the original profile and configuration only for the matching installed target', async () => {
-    const { ready } = await setup()
+    const fixture = await setup()
+    await indexPending(fixture)
+    const { ready } = fixture
     expect((await resolveWindowsUpdateStartup(ready))?.startupOptions).toEqual(config())
     await expect(resolveWindowsUpdateStartup({ ...ready, version: 'other' })).rejects.toThrow(
       'does not match'
     )
-    expect(await resolveWindowsUpdateStartup({ ...ready, args: [] })).toBeUndefined()
+    expect(await resolveWindowsUpdateStartup({ ...ready, args: [] })).toEqual({
+      startupOptions: config(),
+      confirmed: false
+    })
   })
   it.each(['missing', 'corrupt'])(
     'rejects %s startup configuration instead of selecting a default profile',
@@ -389,7 +764,8 @@ describe('Windows update presentation receipts', () => {
     expect(ready.verifyReady).not.toHaveBeenCalled()
   })
   it('keeps ordinary launches compatible and rejects path/duplicate operation arguments', async () => {
-    const { ready } = await setup()
+    const { directory, ready } = await setup()
+    await rm(join(directory, 'installed.receipt'))
     expect(await acknowledgeWindowsUpdateReady({ ...ready, args: [] })).toBe(false)
     expect(() => windowsUpdateOperation([WINDOWS_UPDATE_OPERATION_ARG + '../outside'])).toThrow()
     expect(() => windowsUpdateOperation([...ready.args, ...ready.args])).toThrow('Ambiguous')
@@ -476,6 +852,8 @@ describe('Windows update presentation receipts', () => {
     )
     await writeFile(join(directory, 'closed.receipt.tmp'), 'partial')
     await writeFile(join(directory, `request.json.${operationId}.tmp`), 'partial')
+    await writeFile(join(directory, 'installer.exe'), 'verified operation package')
+    await writeFile(join(directory, 'bound-request.json'), 'immutable operation binding')
     vi.spyOn(process, 'kill').mockImplementation(() => {
       throw Object.assign(new Error('gone'), { code: 'ESRCH' })
     })
@@ -483,6 +861,7 @@ describe('Windows update presentation receipts', () => {
     await expect(readFile(join(directory, 'request.json'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+    await expect(readdir(directory)).rejects.toMatchObject({ code: 'ENOENT' })
   })
   it('cleans a native-only failed attempt without requiring a nonexistent helper receipt', async () => {
     const { directory, operationId } = await setup()
@@ -507,6 +886,23 @@ describe('Windows update presentation receipts', () => {
     await cleanupWindowsUpdateHandoffs(root)
     expect(JSON.parse(await readFile(path, 'utf8')).helperPid).toBe(123)
   })
+  it('preserves the native repair package and binding after an interrupted failed install', async () => {
+    const { directory, operationId } = await setup()
+    await writeFile(join(directory, 'installer.exe'), 'verified operation package')
+    await writeFile(join(directory, 'bound-request.json'), 'immutable operation binding')
+    await writeFile(join(directory, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+    })
+    await cleanupWindowsUpdateHandoffs(root)
+    expect(await readFile(join(directory, 'installer.exe'), 'utf8')).toBe(
+      'verified operation package'
+    )
+    expect(await readFile(join(directory, 'bound-request.json'), 'utf8')).toBe(
+      'immutable operation binding'
+    )
+    expect(await readFile(join(directory, 'request.json'), 'utf8')).toContain(operationId)
+  })
   it('removes only closed terminal operations with no live owner and preserves unknown resources', async () => {
     const complete = await setup(),
       active = await setup(),
@@ -515,6 +911,17 @@ describe('Windows update presentation receipts', () => {
     await acknowledgeWindowsUpdateReady(complete.ready)
     await writeFile(join(complete.directory, 'helper.exe'), 'owned binary')
     await writeFile(join(complete.directory, 'config.bin'), 'owned config')
+    for (const fixture of [complete, active, unknown]) {
+      await writeFile(join(fixture.directory, 'installer.exe'), 'verified operation package')
+      await writeFile(join(fixture.directory, 'bound-request.json'), 'immutable operation binding')
+    }
+    const persistentDirectory = await windowsInstallationRecoveryDirectory(
+      root,
+      complete.ready.applicationPath
+    )
+    await mkdir(persistentDirectory, { recursive: true })
+    const persistentLauncher = join(persistentDirectory, `setup-${'a'.repeat(64)}.exe`)
+    await writeFile(persistentLauncher, 'keep existing shortcut target')
     for (const fixture of [complete, active, unknown, foreign]) {
       await writeWindowsUpdateFile(
         join(fixture.directory, 'closed.receipt'),
@@ -527,6 +934,9 @@ describe('Windows update presentation receipts', () => {
     await cleanupWindowsUpdateHandoffs(root)
     expect(await readFile(join(complete.directory, 'request.json'), 'utf8')).toContain(
       complete.operationId
+    )
+    expect(await readFile(join(complete.directory, 'installer.exe'), 'utf8')).toBe(
+      'verified operation package'
     )
     kill.mockImplementation(() => {
       throw Object.assign(new Error('not running'), { code: 'ESRCH' })
@@ -541,11 +951,21 @@ describe('Windows update presentation receipts', () => {
     await expect(readFile(join(complete.directory, 'config.bin'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+    await expect(readFile(join(complete.directory, 'installer.exe'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+    expect(await readFile(join(complete.directory, 'bound-request.json'), 'utf8')).toBe(
+      'immutable operation binding'
+    )
+    expect(await readFile(join(unknown.directory, 'installer.exe'), 'utf8')).toBe(
+      'verified operation package'
+    )
+    expect(await readFile(persistentLauncher, 'utf8')).toBe('keep existing shortcut target')
     expect(await readFile(join(foreign.directory, 'user-file'), 'utf8')).toBe('preserve')
     expect(await readFile(join(unknown.directory, 'request.json'), 'utf8')).toContain(
       unknown.operationId
     )
-    expect(await readdir(windowsUpdateHandoffRoot(root))).toHaveLength(4)
+    expect(await readdir(windowsUpdateHandoffRoot(root))).toHaveLength(5)
   })
 })
 

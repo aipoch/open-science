@@ -130,6 +130,9 @@
     "src/main/notebook/shell-npm-environment.ts",
     "src/main/notebook/shell-process-contract.ts",
     "src/main/notebook/shell-process-ownership.windows-posix.ts",
+    "src/main/notebook/windows-process-recovery.ts",
+    "src/main/notebook/windows-process-recovery.test.ts",
+    "resources/notebook/windows_process_recovery.ps1",
     "src/main/notebook/shell-process.ts",
     "src/main/notebook/trust-bundle.test.ts",
     "src/main/notebook/trust-bundle.ts",
@@ -141,6 +144,7 @@
     "src/main/notebook/managed-skill-read.integration.test.ts"
   ],
   "interfacePaths": [
+    "src/main/notebook/windows-process-recovery.ts",
     "src/main/notebook/environment-application-commands.ts",
     "src/main/notebook/environment-lifecycle-workflows.ts",
     "src/main/notebook/environment-operations.ts",
@@ -234,6 +238,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/windows-process-recovery.test.ts",
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/notebook/windows-runtime-probe.test.ts",

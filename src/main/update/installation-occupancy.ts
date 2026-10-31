@@ -4,8 +4,73 @@ import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  queryWindowsInstallationDirect,
+  queryWindowsInstallationDirectSync,
+  WindowsInstallationQueryError
+} from './windows-installation-processes'
 
 const requireNative = createRequire(__filename)
+
+function queryDiagnostic(
+  cause: unknown,
+  root: string
+): { stage: string; code?: string; exitCode?: number | null; stderr: string } {
+  const error = cause as {
+    code?: string
+    exitCode?: number | null
+    stderr?: string
+    message?: string
+  }
+  let stderr = String(error?.stderr ?? '').slice(0, 4096)
+  for (const path of [
+    root,
+    Buffer.from(root, 'utf8').toString('base64'),
+    process.env.USERPROFILE,
+    process.env.HOME
+  ])
+    if (path) stderr = stderr.split(path).join('<path>')
+  stderr = stderr.replace(
+    /(bearer\s+|(?:token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi,
+    '$1<redacted>'
+  )
+  const stage =
+    cause instanceof SyntaxError
+      ? 'parse'
+      : ['MODULE_NOT_FOUND', 'ERR_DLOPEN_FAILED'].includes(error?.code ?? '')
+        ? 'native-loading'
+        : error?.code === 'ETIMEDOUT' || error?.message?.includes('time limit')
+          ? 'timeout'
+          : error?.code === 'ENOBUFS' || error?.message?.includes('output exceeded')
+            ? 'output-limit'
+            : error?.exitCode !== undefined
+              ? 'query-exit'
+              : error?.code === 'ENOENT' || error?.code === 'EACCES'
+                ? 'spawn'
+                : 'query'
+  return { stage, code: error?.code, exitCode: error?.exitCode, stderr: stderr.slice(0, 2048) }
+}
+
+function logQueryFailure(cause: unknown, root: string): void {
+  createLogger('update').warn(
+    'Windows installation occupancy query failed; trying independent Win32 inspection',
+    queryDiagnostic(cause, root)
+  )
+}
+
+// A valid resource list remains positive evidence even when another part of the response fails.
+function knownWindowsResourceUsers(stdout: string): number[] {
+  try {
+    const data = JSON.parse(stdout)
+    return Array.isArray(data?.resourcePids)
+      ? data.resourcePids.filter(
+          (pid: unknown) => typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0
+        )
+      : []
+  } catch {
+    return []
+  }
+}
 
 // Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
 // process-name matching, or termination authority is granted by the returned PIDs.
@@ -177,20 +242,55 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true
     })
-    if (result.status !== 0)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.'
-      )
     try {
+      if (result.error || result.status !== 0)
+        throw new WindowsInstallationQueryError(
+          'powershell-query',
+          queryDiagnostic(
+            {
+              code: (result.error as NodeJS.ErrnoException | undefined)?.code,
+              exitCode: result.status,
+              stderr: result.stderr
+            },
+            installationRoot
+          ),
+          result.error
+        )
       return parseWindowsInstallationQuery(result.stdout, installationRoot)
     } catch (cause) {
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.',
-        undefined,
-        { cause }
+      logQueryFailure(
+        cause instanceof WindowsInstallationQueryError ? cause.diagnostic : cause,
+        installationRoot
       )
+      try {
+        return [
+          ...new Set([
+            ...knownWindowsResourceUsers(result.stdout ?? ''),
+            ...parseWindowsInstallationQuery(
+              queryWindowsInstallationDirectSync(installationRoot),
+              installationRoot
+            )
+          ])
+        ]
+      } catch (fallback) {
+        createLogger('update').warn(
+          'Independent Windows installation inspection failed',
+          fallback instanceof WindowsInstallationQueryError
+            ? { stage: fallback.stage, ...fallback.diagnostic }
+            : queryDiagnostic(fallback, installationRoot)
+        )
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'Installation process occupancy could not be inspected.',
+          undefined,
+          {
+            cause: new AggregateError(
+              [cause, fallback],
+              'Both Windows installation inspections failed.'
+            )
+          }
+        )
+      }
     }
   }
   const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], {
@@ -252,8 +352,49 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot))
-    return parseWindowsInstallationQuery(stdout, installationRoot)
+    let stdout = ''
+    try {
+      ;({ stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot)))
+      return parseWindowsInstallationQuery(stdout, installationRoot)
+    } catch (cause) {
+      signal?.throwIfAborted()
+      if (!stdout && typeof (cause as { stdout?: unknown })?.stdout === 'string')
+        stdout = (cause as { stdout: string }).stdout
+      // Cleanup failure is not a query failure: a still-running probe forbids replacement.
+      const { VerificationProcessUnsettledError } = await import('./verification-process')
+      if (cause instanceof VerificationProcessUnsettledError) throw cause
+      logQueryFailure(cause, installationRoot)
+      try {
+        return [
+          ...new Set([
+            ...knownWindowsResourceUsers(stdout),
+            ...parseWindowsInstallationQuery(
+              await queryWindowsInstallationDirect(installationRoot, signal),
+              installationRoot
+            )
+          ])
+        ]
+      } catch (fallback) {
+        signal?.throwIfAborted()
+        createLogger('update').warn(
+          'Independent Windows installation inspection failed',
+          fallback instanceof WindowsInstallationQueryError
+            ? { stage: fallback.stage, ...fallback.diagnostic }
+            : queryDiagnostic(fallback, installationRoot)
+        )
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'Installation process occupancy could not be inspected.',
+          undefined,
+          {
+            cause: new AggregateError(
+              [cause, fallback],
+              'Both Windows installation inspections failed.'
+            )
+          }
+        )
+      }
+    }
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()

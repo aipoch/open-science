@@ -1304,7 +1304,7 @@ it('holds update admission through final saves and reopens only after update abo
   await composition.dispose()
 })
 
-it('keeps real handoff admission held after renderer durability and releases it on abort or refusal', async () => {
+it('keeps update admission held even if renderer durability fails until explicit abort', async () => {
   const composition = createApplicationCommandComposition(dependencies())
   const rootAbort = vi.fn()
   let durable = true
@@ -1315,16 +1315,16 @@ it('keeps real handoff admission held after renderer durability and releases it 
     settingsService: { hasActiveInstall: () => false, holdInstallAdmission: () => vi.fn() },
     sessionPackageDesktopLifecycle: { isActive: () => false },
     packageHandoffHeld: { current: false },
-    getActiveDelegatedSessions: () => [],
-    getActiveSideChatSessions: () => [],
+    getActiveDelegatedSessions: () => [{ projectId: 'project', sessionId: 'delegated' }],
+    getActiveSideChatSessions: () => [{ projectId: 'project', sessionId: 'side-chat' }],
     notebookLifecycle: {
       shutdownAll: async () => ({ reaped: true }),
-      getActiveNotebookSessions: () => []
+      getActiveNotebookSessions: () => [{ projectId: 'project', sessionId: 'notebook' }]
     },
     runtime: {
       holdUpdateAdmission: () => rootAbort,
       shutdownForUpdateGate: async () => ({ reaped: true }),
-      getQuitBlockingPromptSessions: () => []
+      getQuitBlockingPromptSessions: () => [{ projectId: 'project', sessionId: 'agent' }]
     },
     sideChatRuntime: { suspendAll: async () => ({ reaped: true }), resumeAfterHandoff: vi.fn() },
     translate: (text: string) => text,
@@ -1332,7 +1332,7 @@ it('keeps real handoff admission held after renderer durability and releases it 
     notifyRendererDurabilityAborted: vi.fn(),
     modules: { add: async () => undefined }
   } as unknown as Parameters<typeof composeHandoff>[0])
-  await expect(handoff.prepareDesktopUpdate({ force: true })).resolves.toMatchObject({
+  await expect(handoff.prepareDesktopUpdate()).resolves.toMatchObject({
     stopAuthorized: true
   })
   await expect(composition.localWeb.invoke('acp:prompt', invocation())).rejects.toMatchObject({
@@ -1344,10 +1344,13 @@ it('keeps real handoff admission held after renderer durability and releases it 
     composition.localWeb.invoke('acp:prompt', invocation()).catch((error) => error.message)
   ).resolves.not.toBe('The local service is stopping.')
   durable = false
-  await expect(handoff.prepareDesktopUpdate({ force: true })).resolves.toMatchObject({
-    completed: false,
-    reaped: false
+  await expect(handoff.prepareDesktopUpdate()).resolves.toMatchObject({
+    stopAuthorized: true
   })
+  await expect(composition.localWeb.invoke('acp:prompt', invocation())).rejects.toMatchObject({
+    code: 'command-unavailable'
+  })
+  handoff.abortDesktopUpdate()
   await expect(
     composition.localWeb.invoke('acp:prompt', invocation()).catch((error) => error.message)
   ).resolves.not.toBe('The local service is stopping.')

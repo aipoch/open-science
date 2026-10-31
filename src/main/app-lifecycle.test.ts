@@ -169,7 +169,7 @@ const setup = (
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
-      | 'rendererPersistencePreparedForUpdate'
+      | 'rendererPersistenceOutcomeForUpdate'
       | 'log'
       | 'flushLogs'
       | 'logFlushTimeoutMs'
@@ -241,7 +241,7 @@ const setup = (
         overrides.holdSettingsInstallAdmission ?? (() => () => undefined),
       abortQuitPreparation,
       flushSessionPersistence,
-      rendererPersistencePreparedForUpdate: overrides.rendererPersistencePreparedForUpdate,
+      rendererPersistenceOutcomeForUpdate: overrides.rendererPersistenceOutcomeForUpdate,
       log: overrides.log,
       flushLogs: overrides.flushLogs,
       logFlushTimeoutMs: overrides.logFlushTimeoutMs,
@@ -2241,7 +2241,7 @@ it('bounds unreachable system quit inspection and exits without a modal', async 
 })
 
 it('does not request saves from windows already closed by the native updater after preparation', async () => {
-  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  const h = setup({ rendererPersistenceOutcomeForUpdate: () => 'completed' })
   markApplicationShutdownTrigger('update')
   h.windows[0].destroyed = true
   h.app.emit('before-quit')
@@ -2250,8 +2250,28 @@ it('does not request saves from windows already closed by the native updater aft
   expect(h.shutdownBackends).toHaveBeenCalledOnce()
 })
 
+it.each(['renderer-failed', 'timeout'] as const)(
+  'continues an authorized update exit while retaining the actual %s save outcome',
+  async (outcome) => {
+    const log = { info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }
+    const h = setup({ rendererPersistenceOutcomeForUpdate: () => outcome, log })
+    markApplicationShutdownTrigger('update')
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+    expect(h.flushSessionPersistence).not.toHaveBeenCalled()
+    expect(h.confirmClose).not.toHaveBeenCalled()
+    expect(log.info).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        rendererFlushOutcome: outcome,
+        degraded: true
+      })
+    )
+  }
+)
+
 it('still flushes an ordinary quit even if an old update preparation flag remains', async () => {
-  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  const h = setup({ rendererPersistenceOutcomeForUpdate: () => 'completed' })
   h.closeOpts[0].requestQuit(true)
   h.app.emit('before-quit')
   await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))

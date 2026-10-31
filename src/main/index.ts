@@ -18,7 +18,9 @@ import { verifyDesktopRecoveryReadiness } from './desktop-recovery-readiness'
 import {
   acknowledgeWindowsUpdateReady,
   cleanupWindowsUpdateHandoffs,
-  resolveWindowsUpdateStartup,
+  resumeInterruptedWindowsUpdate,
+  windowsInstallationRelaunchCommand,
+  prepareWindowsUpdateStartup,
   waitForWindowsUpdateWindow
 } from './update/windows-update-handoff'
 import {
@@ -67,7 +69,12 @@ import {
 } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import { installationRootForEntry } from './update/installation-protection'
+import {
+  installationRootForEntry,
+  readNativeInstallationUpdate,
+  assertNativeInstallationUpdateOwned,
+  beginNativeInstallationShutdown
+} from './update/installation-protection'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -263,6 +270,35 @@ async function startDesktop(): Promise<void> {
   let startupCredentialInventoryCapturedAt: number | undefined
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
+    if (process.platform === 'win32') {
+      const identity = {
+        appData: app.getPath('appData'),
+        args: process.argv,
+        version: app.getVersion(),
+        applicationPath: process.execPath
+      }
+      try {
+        if (await resumeInterruptedWindowsUpdate(identity)) {
+          app.exit(0)
+          return
+        }
+      } catch (cause) {
+        throw new DesktopRuntimeStartupError(
+          {
+            reason: 'startup-recovery-required',
+            desktopVersion: app.getVersion(),
+            canStop: false,
+            canRecover: true,
+            diagnostics: cause instanceof Error ? cause.message : String(cause)
+          },
+          'The interrupted update could not be resumed.',
+          undefined,
+          async () => {
+            if (await resumeInterruptedWindowsUpdate(identity)) app.exit(0)
+          }
+        )
+      }
+    }
     installationStartup = await resolveDesktopInstallationStartup({
       installationRoot: installationRootForEntry(initialBackendPaths.entry),
       allowedProcessIds: allowedInstallationProcessIds,
@@ -276,10 +312,11 @@ async function startDesktop(): Promise<void> {
   const verifiedStartupOutcome = installationStartup?.outcome
   let preservedStartupOptions = installationStartup?.startupOptions
   let windowsUpdateAlreadyConfirmed = false
-  if (process.platform === 'win32') {
+  let windowsUpdateStartup: ReturnType<typeof prepareWindowsUpdateStartup>
+  if (process.platform === 'win32' && !initialRecoveryError) {
     // A supplied update identity selects data and credentials: missing/corrupt configuration must
     // fail startup, never silently fall back to a different profile.
-    const windowsUpdateStartup = await resolveWindowsUpdateStartup({
+    windowsUpdateStartup = prepareWindowsUpdateStartup({
       appData: app.getPath('appData'),
       args: process.argv,
       version: app.getVersion(),
@@ -355,6 +392,9 @@ async function startDesktop(): Promise<void> {
       bootstrapLease.release()
     }
   }
+  // Windows preparation is synchronous: bind the original profile/key before any writer wait
+  // can let Chromium initialize OSCrypt. Runtime admission remains closed until settlement.
+  await windowsUpdateStartup?.settle()
   const BLOCKED_QUIT_DEADLINE_MS = 8_000
   let startupQuitRequested = false
   let startupBlocked = false
@@ -551,6 +591,22 @@ async function startDesktop(): Promise<void> {
   )
   if (menu) Menu.setApplicationMenu(menu)
   electronApp.setAppUserModelId(APP_USER_MODEL_ID)
+  if (process.platform === 'win32' && app.isPackaged) {
+    const relaunchCommand = await windowsInstallationRelaunchCommand(
+      app.getPath('appData'),
+      process.execPath
+    )
+    if (relaunchCommand) {
+      const bindPersistentEntry = (window: BrowserWindow): void =>
+        window.setAppDetails({
+          appId: APP_USER_MODEL_ID,
+          relaunchCommand,
+          relaunchDisplayName: 'Open-Science'
+        })
+      for (const window of BrowserWindow.getAllWindows()) bindPersistentEntry(window)
+      app.on('browser-window-created', (_event, window) => bindPersistentEntry(window))
+    }
+  }
   installWindowShortcuts(app, undefined, isMainWindow)
   registerWindowZoomIpcHandler()
   registerWindowsTitleBarIpc({ isMainWindow })
@@ -1489,11 +1545,26 @@ async function startDesktop(): Promise<void> {
   const { installElectronBroadcast } = await import('./renderer-broadcast-electron')
   installElectronNetwork()
   const removeNativeBroadcast = installElectronBroadcast()
-  let rendererPreparedForUpdate = false
+  let rendererUpdateSaveOutcome:
+    | import('./session-persistence/flush-protocol').RendererSessionPersistenceFlushOutcome
+    | undefined
   const flushUpdateRenderer = createElectronSessionPersistenceFlush(() => getMainWindow())
   let preparedMacInstallation: PreparedMacInstallation | undefined
   const isLegacyInstall = (status: { localPath?: string }): boolean =>
     !status.localPath || !usesSupervisedInstall(process.platform, status.localPath)
+  const nativeUpdateOperation = (deadlineAt?: number): string => {
+    const location = { installationRoot: installationRootForEntry(backendPaths.entry) }
+    const operation = readNativeInstallationUpdate(location)
+    if (!operation)
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native update operation is unavailable.'
+      )
+    assertNativeInstallationUpdateOwned(location, operation.operationId)
+    if (deadlineAt !== undefined)
+      beginNativeInstallationShutdown(location, operation.operationId, deadlineAt)
+    return operation.operationId
+  }
   const updateIntegration = createDesktopUpdateIntegration({
     location: { installationRoot: installationRootForEntry(backendPaths.entry) },
     client: () => client!,
@@ -1508,15 +1579,67 @@ async function startDesktop(): Promise<void> {
         )
     },
     legacyInstall: isLegacyInstall,
+    installationOperation: process.platform === 'win32' ? nativeUpdateOperation : undefined,
+    closeOtherInstances:
+      process.platform === 'win32'
+        ? async (deadlineAt) => {
+            nativeUpdateOperation()
+            const { closeWindowsInstallationProcesses } =
+              await import('./update/windows-installation-processes')
+            const { UPDATE_FORCE_RESERVE_MS } = await import('./update/shutdown')
+            // Preserve a normal-stop opportunity and native verification for this Runtime.
+            const otherInstancesDeadline = deadlineAt - UPDATE_FORCE_RESERVE_MS - 500
+            const result = await closeWindowsInstallationProcesses(
+              installationRootForEntry(backendPaths.entry),
+              {
+                excludedProcessIds: [
+                  ...new Set([...allowedInstallationProcessIds(), client!.processId()])
+                ],
+                timeoutMs: Math.max(0, Math.min(30_000, otherInstancesDeadline - Date.now())),
+                deadlineAt: otherInstancesDeadline
+              }
+            )
+            diagnostics.log.info('update other installation instances closed', {
+              gracefulCount: result.graceful.length,
+              forcedCount: result.forced.length,
+              saveOutcome: 'unknown'
+            })
+          }
+        : undefined,
+    forceStopRuntime:
+      process.platform === 'win32'
+        ? async (deadlineAt) => {
+            nativeUpdateOperation()
+            const { closeWindowsInstallationProcesses } =
+              await import('./update/windows-installation-processes')
+            const result = await closeWindowsInstallationProcesses(
+              installationRootForEntry(backendPaths.entry),
+              { excludedProcessIds: allowedInstallationProcessIds(), timeoutMs: 0, deadlineAt }
+            )
+            diagnostics.log.info('update runtime forced stop', {
+              forcedCount: result.forced.length,
+              gracefulCount: result.graceful.length,
+              saveOutcome: 'unknown'
+            })
+            const remaining = deadlineAt - Date.now()
+            if (remaining <= 0)
+              throw new UpdateLifecycleError(
+                'runtime-stop-timeout',
+                'The update close deadline expired before Runtime stop verification.'
+              )
+            return client!.waitForStopped(undefined, false, remaining)
+          }
+        : undefined,
     flushRenderer: async (phase) => {
+      if (phase === 'final') rendererUpdateSaveOutcome = 'timeout'
       const outcome = await flushUpdateRenderer()
       diagnostics.log.info('update renderer persistence', { phase, outcome })
+      if (phase === 'final') rendererUpdateSaveOutcome = outcome
       if (outcome !== 'completed')
         throw new UpdateLifecycleError(
           'install-failed',
-          'Your changes could not be saved. The update was stopped; keep the app open and try again.'
+          'The update save attempt did not complete.'
         )
-      rendererPreparedForUpdate = phase === 'final'
     },
     verifyArtifact: async (status, signal) => {
       if (!status.localPath || !status.latest)
@@ -1617,7 +1740,7 @@ async function startDesktop(): Promise<void> {
     setClosing: (closing) => {
       recovery.setClosing(closing)
       if (!closing) {
-        rendererPreparedForUpdate = false
+        rendererUpdateSaveOutcome = undefined
         notifyRendererSessionPersistenceFlushAborted(() => getMainWindow())
       }
     },
@@ -1678,14 +1801,70 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
+  if (process.platform === 'win32') {
+    const { observeNativeInstallationUpdate } = await import('./update/native-update-observer')
+    const { attemptUpdateShutdownStep, UPDATE_STOP_RESERVE_MS } = await import('./update/shutdown')
+    const stopObserving = observeNativeInstallationUpdate({
+      location: { installationRoot: installationRootForEntry(backendPaths.entry) },
+      onError: (error) =>
+        diagnostics.log.warn('update instance close request failed', diagnosticErrorFields(error)),
+      close: async ({ operationId, shutdownDeadlineAt }) => {
+        recovery.setClosing(true)
+        updateCommitted = true
+        const gracefulDeadline = shutdownDeadlineAt - UPDATE_STOP_RESERVE_MS
+        const save = await attemptUpdateShutdownStep(
+          flushUpdateRenderer,
+          Math.min(gracefulDeadline, Date.now() + 5_000)
+        )
+        rendererUpdateSaveOutcome =
+          save.outcome === 'completed'
+            ? save.value
+            : save.outcome === 'failed'
+              ? 'renderer-failed'
+              : 'timeout'
+        const gate = await attemptUpdateShutdownStep(
+          () =>
+            client!.invokeHost('desktop:update-installation-gate', [
+              { operationId, shutdownDeadlineAt }
+            ]),
+          gracefulDeadline
+        )
+        const finalSave = await attemptUpdateShutdownStep(flushUpdateRenderer, gracefulDeadline)
+        rendererUpdateSaveOutcome =
+          finalSave.outcome === 'completed'
+            ? finalSave.value
+            : finalSave.outcome === 'failed'
+              ? 'renderer-failed'
+              : 'timeout'
+        const stopped = await attemptUpdateShutdownStep(
+          () =>
+            client!.invokeHost('desktop:update-installation-stop', [
+              { operationId, shutdownDeadlineAt }
+            ]),
+          shutdownDeadlineAt
+        )
+        diagnostics.log.info('update observed instance close', {
+          operationId,
+          save: save.outcome,
+          finalSave: finalSave.outcome,
+          backend: gate.outcome,
+          stop: stopped.outcome
+        })
+        // This instance closes only itself. The initiating operation still owns object-bound
+        // termination, final occupancy verification, cancellation and installer handoff.
+        app.exit(0)
+      }
+    })
+    app.once('will-quit', stopObserving)
+  }
   const update = createUpdateStrategy(process.platform, {
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
-    cancelInstall: async () => {
+    cancelInstall: async (beforeRestart) => {
       if (preparedMacInstallation?.debGate)
         await cancelDebSystemdGate(preparedMacInstallation.debGate)
-      const result = await updateIntegration.cancelInstall!()
+      const result = await updateIntegration.cancelInstall!(beforeRestart)
       if (preparedMacInstallation) {
         await discardPreparedMacInstallation(preparedMacInstallation)
         preparedMacInstallation = undefined
@@ -1871,7 +2050,8 @@ async function startDesktop(): Promise<void> {
       }
     },
     flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
-    rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
+    rendererPersistenceOutcomeForUpdate: () =>
+      runtimeStopped ? rendererUpdateSaveOutcome : undefined,
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
         getWindow,

@@ -10,6 +10,7 @@ import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
 
 import {
   assertPackagedResources,
+  assertIsolatedWindowsAccount,
   assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
@@ -111,14 +112,33 @@ describe('Windows installer smoke plan', () => {
 
     expect(run).toHaveBeenCalledWith(
       'powershell.exe',
-      [
+      expect.arrayContaining([
         '-NoProfile',
         '-NonInteractive',
-        '-Command',
-        "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        '-File',
+        expect.stringContaining('windows-certification-processes.ps1'),
+        '-Mode',
+        'Terminate',
+        '-Root',
         'D:\\installed app 程序\\'
-      ],
-      { allowNonZero: true }
+      ]),
+      { timeoutMs: 30_000 }
+    )
+  })
+
+  it('refuses to install over another Windows account registration before any mutation', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: 'existing installation', stderr: '' })
+    await expect(assertIsolatedWindowsAccount({ run, environment: {} })).rejects.toThrow(
+      /isolated Windows account/
+    )
+    expect(run).toHaveBeenCalledOnce()
+    expect(run.mock.calls[0][1][0]).toBe('query')
+  })
+
+  it('treats registry access errors as unknown isolation, never a clean account', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 1, stdout: '', stderr: 'Access is denied.' })
+    await expect(assertIsolatedWindowsAccount({ run, environment: {} })).rejects.toThrow(
+      /Cannot verify registry isolation/
     )
   })
 
@@ -699,26 +719,13 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     vi.useRealTimers()
   })
 
-  it('settles process-tree termination when taskkill never exits', async () => {
-    vi.useFakeTimers()
-    const terminator = Object.assign(new EventEmitter(), {
-      kill: vi.fn(),
-      unref: vi.fn()
-    })
-    const spawnProcess = vi.fn(() => terminator)
-    const child = { pid: 4242, kill: vi.fn() }
-
-    const termination = terminateProcessTree(child, 10, spawnProcess)
-    const assertion = expect(termination).resolves.toBeUndefined()
-
-    await vi.advanceTimersByTimeAsync(9)
-    expect(terminator.kill).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1)
-    await assertion
-    expect(terminator.kill).toHaveBeenCalledOnce()
-    expect(terminator.unref).toHaveBeenCalledOnce()
+  it('terminates the retained child handle and never reopens an exited process PID', async () => {
+    const child = { pid: 4242, kill: vi.fn(), exitCode: null as number | null }
+    await terminateProcessTree(child)
     expect(child.kill).toHaveBeenCalledOnce()
-    vi.useRealTimers()
+    child.exitCode = 0
+    await terminateProcessTree(child)
+    expect(child.kill).toHaveBeenCalledOnce()
   })
 
   it('rejects a timed-out process even when non-zero exits are otherwise allowed', async () => {
