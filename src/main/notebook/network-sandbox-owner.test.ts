@@ -93,6 +93,8 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import { WindowsRuntimeComponentStore } from './windows-runtime-components'
+import { NotebookRuntimeService } from './runtime-service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
@@ -218,6 +220,72 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([
+    { visitSettings: false, background: false },
+    { visitSettings: true, background: false },
+    { visitSettings: false, background: true }
+  ])(
+    'admits a protected PowerShell query after restart (Settings visited: $visitSettings, background: $background)',
+    async ({ visitSettings, background }) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-cold-shell-'))
+      fixtureDirectories.push(root)
+      const select = vi
+        .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+        .mockImplementation(async (releases, request) => ({
+          release: releases.find(
+            (release) => release.component === request.component && release.source === 'patched'
+          )!,
+          root,
+          executable: join(root, request.component === 'node' ? 'node.exe' : 'pwsh.exe')
+        }))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project',
+        platform: 'win32',
+        processSandbox: owner,
+        shellBackgroundExecutionEnabled: true,
+        shellRuntimeBinding: { kind: 'powershell', version: '7.6' }
+      })
+      // The component store models an already-installed verified runtime. Stop at the existing
+      // native launch boundary, without changing machine protection or running a fixture binary.
+      backend.wrap.mockRejectedValue(new Error('fixture reached native launch'))
+      try {
+        if (visitSettings) await owner.status()
+        const request = {
+          sessionId: 'cold-shell',
+          workspaceCwd: root,
+          command: '$PSVersionTable.PSVersion.ToString()'
+        }
+        if (background) {
+          const receipt = await service.executeShellBackground(request)
+          await service.waitForBackgroundRun(receipt.runId)
+          const result = await service.getBackgroundRun({ ...request, runId: receipt.runId })
+          expect(result.run.text.stderr).toBe('fixture reached native launch')
+        } else {
+          const result = await service.executeShell(request)
+          expect(result.stderr).toBe('fixture reached native launch')
+        }
+        expect(select).toHaveBeenCalledTimes(2)
+        expect(select.mock.calls.every(([, request]) => !request.allowDownload)).toBe(true)
+        expect(backend.wrap).toHaveBeenCalledOnce()
+      } finally {
+        await service.shutdownAll()
+        await owner.dispose()
+        select.mockRestore()
+      }
+    }
+  )
+
   it.each(['parent', 'shared root'])(
     'skips an R temporary candidate with a preexisting junction at its %s',
     async (location) => {

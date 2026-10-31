@@ -2029,11 +2029,9 @@ class NotebookRuntimeService {
     return this.sessionLifecycle.runProjectOperation(request, async (deletionSignal) => {
       assertNotebookCodeWithinLimit(request.command)
       const session = await this.sessionLifecycle.ensure(request)
-      return this.executionOwner.executeShell(
-        session,
-        request,
-        signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
-      )
+      const executionSignal = signal ? AbortSignal.any([signal, deletionSignal]) : deletionSignal
+      await this.prepareWindowsShellRuntime(request, executionSignal)
+      return this.executionOwner.executeShell(session, request, executionSignal)
     })
   }
 
@@ -2070,10 +2068,12 @@ class NotebookRuntimeService {
     const completion = this.sessionLifecycle
       .runProjectOperation(backgroundRequest, async (deletionSignal) => {
         const session = await this.sessionLifecycle.ensure(backgroundRequest)
+        const executionSignal = AbortSignal.any([controller.signal, deletionSignal])
+        await this.prepareWindowsShellRuntime(backgroundRequest, executionSignal)
         return this.executionOwner.executeShell(
           session,
           backgroundRequest,
-          AbortSignal.any([controller.signal, deletionSignal]),
+          executionSignal,
           (admitted) => {
             admittedRunId = admitted.runId
             this.observeBackgroundAdmission(projectId, backgroundRequest.sessionId, admitted)
@@ -2126,6 +2126,23 @@ class NotebookRuntimeService {
     }
     void completion.then(removeCompletedRun, removeCompletedRun)
     return receiptPromise
+  }
+
+  private async prepareWindowsShellRuntime(
+    request: ExecuteShellRequest,
+    signal: AbortSignal
+  ): Promise<void> {
+    const platform = this.options.platform ?? process.platform
+    const binding =
+      request.shellRuntime ??
+      this.options.shellRuntimeBinding ??
+      defaultShellRuntimeBinding(platform)
+    if (platform !== 'win32' || binding.kind !== 'powershell') return
+    // Shell admission freezes the environment and reviews code before the process adapter runs.
+    // Restore the installed runtime selection first; the adapter still rechecks mode at launch.
+    signal.throwIfAborted()
+    await this.options.processSandbox?.resolveWindowsRuntime?.({ runtime: 'bash', binding, signal })
+    signal.throwIfAborted()
   }
 
   private assertManagedShellCommand(request: ExecuteShellRequest): void {
