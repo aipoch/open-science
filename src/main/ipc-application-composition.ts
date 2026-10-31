@@ -323,7 +323,7 @@ export const createApplicationModules = async (
     ...sessionAuthority,
     modules,
     settingsService: settingsBootstrap.settingsService,
-    defaultOcrLanguages: defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
+    defaultOcrLanguages: () => defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
   })
   const projectLifecycle = composeProjectLifecycle({
     applicationEvents,

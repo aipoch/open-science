@@ -135,3 +135,29 @@ it('keeps a fresh OCR installation labeled as install', async () => {
     updateAvailable: false
   })
 })
+
+it('refreshes locale-derived defaults until the user saves a selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-defaults-'))
+  roots.push(root)
+  let defaults: OcrLanguage[] = ['eng', 'deu']
+  const ocr = createLocalOcrModelOwner({
+    base: owner('runtime'),
+    languagePacks: { eng: owner('eng'), deu: owner('deu'), fra: owner('fra') },
+    defaultLanguages: () => defaults,
+    dataRoot: () => root
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'deu']
+  })
+  defaults = ['eng', 'fra']
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'fra']
+  })
+
+  await ocr.setOcrLanguages!(['eng', 'deu'])
+  defaults = ['eng', 'fra']
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'deu']
+  })
+})

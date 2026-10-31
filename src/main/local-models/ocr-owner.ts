@@ -26,7 +26,7 @@ type OcrSelection = Readonly<{
 type OcrLanguageOwnerOptions = Readonly<{
   base: LocalModelOwner
   languagePacks: Readonly<Partial<Record<OcrLanguage, LocalModelOwner>>>
-  defaultLanguages: readonly OcrLanguage[]
+  defaultLanguages: readonly OcrLanguage[] | (() => readonly OcrLanguage[])
   dataRoot?: () => string
 }>
 
@@ -57,8 +57,11 @@ export const createLocalOcrModelOwner = ({
   defaultLanguages,
   dataRoot = resolveDataRoot
 }: OcrLanguageOwnerOptions): LocalModelOwner => {
+  const getDefaultLanguages =
+    typeof defaultLanguages === 'function' ? defaultLanguages : () => defaultLanguages
   let initialized: Promise<void> | undefined
-  let selectedLanguages = normalizeLanguages(defaultLanguages)
+  let selectedLanguages = normalizeLanguages(getDefaultLanguages())
+  let hasExplicitSelection = false
   const selectionDirectory = async (create: boolean): Promise<string | undefined> => {
     let path = dataRoot()
     if (create) await mkdir(path, { recursive: true })
@@ -87,7 +90,10 @@ export const createLocalOcrModelOwner = ({
         const selection = JSON.parse(
           await readFile(join(directory, 'languages.json'), 'utf8')
         ) as unknown
-        if (validSelection(selection)) selectedLanguages = normalizeLanguages(selection.languages)
+        if (validSelection(selection)) {
+          selectedLanguages = normalizeLanguages(selection.languages)
+          hasExplicitSelection = true
+        }
       } catch (error) {
         if (error instanceof UnsafeOcrModelPathError) throw error
         // The default follows the locale until the user explicitly changes it.
@@ -98,6 +104,7 @@ export const createLocalOcrModelOwner = ({
 
   const snapshot = async (): Promise<LocalModelSnapshot> => {
     await initialize()
+    if (!hasExplicitSelection) selectedLanguages = normalizeLanguages(getDefaultLanguages())
     const [baseSnapshot, ...packSnapshots] = await Promise.all([
       base.getSnapshot(),
       ...OCR_LANGUAGES.map((code) => languagePacks[code]?.getSnapshot())
@@ -179,6 +186,7 @@ export const createLocalOcrModelOwner = ({
         } satisfies OcrSelection)
       )
       selectedLanguages = next
+      hasExplicitSelection = true
     } finally {
       release()
     }

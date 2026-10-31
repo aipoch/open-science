@@ -81,7 +81,7 @@ export async function composeDocumentReading({
     | 'runSessionMutation'
   >
   settingsService: SettingsService
-  defaultOcrLanguages?: readonly OcrLanguage[]
+  defaultOcrLanguages?: readonly OcrLanguage[] | (() => readonly OcrLanguage[])
   modules: ApplicationModuleBuilder
 }): Promise<{
   bookmarkService: BookmarkService
