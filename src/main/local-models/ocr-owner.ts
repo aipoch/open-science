@@ -137,6 +137,57 @@ export const createLocalOcrModelOwner = ({
     const installing =
       baseSnapshot.availability === 'installing' ||
       selectedPacks.some((language) => language.availability === 'installing')
+    const downloadParts = [
+      {
+        snapshot: baseSnapshot,
+        included: !baseSnapshot.installedRevision || baseSnapshot.updateAvailable
+      },
+      ...selectedPacks.map((language) => {
+        const pack = packs.get(language.code)
+        return {
+          snapshot: pack,
+          included: Boolean(pack && (!language.installed || pack.updateAvailable))
+        }
+      })
+    ].filter(
+      (part): part is { snapshot: LocalModelSnapshot; included: boolean } =>
+        part.snapshot !== undefined && part.included
+    )
+    const downloadBytes = downloadParts.reduce(
+      (total, part) => total + part.snapshot.downloadBytes,
+      0
+    )
+    const transferredBytes = downloadParts.reduce(
+      (total, part) => total + part.snapshot.transferredBytes,
+      0
+    )
+    const activeProgress = downloadParts.flatMap((part) =>
+      part.snapshot.downloadProgress ? [part.snapshot.downloadProgress] : []
+    )
+    const bytesPerSecond = activeProgress.reduce(
+      (total, progress) => total + progress.bytesPerSecond,
+      0
+    )
+    const downloadProgress =
+      activeProgress.length === 0
+        ? undefined
+        : {
+            phase: activeProgress.some((progress) => progress.phase === 'downloading')
+              ? ('downloading' as const)
+              : ('reconnecting' as const),
+            transferred: transferredBytes,
+            total: downloadBytes,
+            percent:
+              downloadBytes > 0
+                ? Math.min(100, Math.round((transferredBytes / downloadBytes) * 100))
+                : undefined,
+            bytesPerSecond,
+            etaSeconds:
+              bytesPerSecond > 0
+                ? Math.ceil(Math.max(0, downloadBytes - transferredBytes) / bytesPerSecond)
+                : undefined,
+            attempt: Math.max(...activeProgress.map((progress) => progress.attempt))
+          }
     const availability = installing
       ? 'installing'
       : baseSnapshot.availability === 'error' || selectedPackError
@@ -148,15 +199,12 @@ export const createLocalOcrModelOwner = ({
       ...(baseSnapshot.error || selectedPackError
         ? { error: baseSnapshot.error ?? selectedPackError }
         : { error: undefined }),
-      downloadBytes:
-        baseSnapshot.downloadBytes +
-        selectedPacks.reduce(
-          (total, language) => total + (language.installed ? 0 : language.downloadBytes),
-          0
-        ),
+      downloadBytes,
       installedBytes:
         baseSnapshot.installedBytes +
         languages.reduce((total, language) => total + language.installedBytes, 0),
+      transferredBytes,
+      downloadProgress,
       hasFiles: baseSnapshot.hasFiles || languages.some((language) => language.installedBytes > 0),
       inUse: baseSnapshot.inUse || languages.some((language) => language.inUse),
       updateAvailable:

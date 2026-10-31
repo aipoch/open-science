@@ -161,3 +161,62 @@ it('refreshes locale-derived defaults until the user saves a selection', async (
     selectedOcrLanguages: ['eng', 'deu']
   })
 })
+
+it('aggregates runtime and language-pack download progress', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-progress-'))
+  roots.push(root)
+  const base = owner('runtime')
+  base.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'installing',
+      installedRevision: undefined,
+      downloadBytes: 100,
+      transferredBytes: 40,
+      downloadProgress: {
+        phase: 'downloading',
+        transferred: 40,
+        total: 100,
+        percent: 40,
+        bytesPerSecond: 10,
+        attempt: 1
+      }
+    })
+  )
+  const pack = owner('deu')
+  pack.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'installing',
+      installedRevision: undefined,
+      downloadBytes: 60,
+      transferredBytes: 20,
+      downloadProgress: {
+        phase: 'reconnecting',
+        transferred: 20,
+        total: 60,
+        percent: 33,
+        bytesPerSecond: 5,
+        attempt: 2
+      }
+    })
+  )
+  const ocr = createLocalOcrModelOwner({
+    base,
+    languagePacks: { deu: pack },
+    defaultLanguages: ['eng', 'deu'],
+    dataRoot: () => root
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    downloadBytes: 160,
+    transferredBytes: 60,
+    downloadProgress: {
+      phase: 'downloading',
+      transferred: 60,
+      total: 160,
+      percent: 38,
+      bytesPerSecond: 15,
+      etaSeconds: 7,
+      attempt: 2
+    }
+  })
+})
