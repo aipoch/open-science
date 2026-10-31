@@ -92,13 +92,20 @@ class LiteratureDocumentReader {
   ): Promise<ReadingReference> {
     const snapshot = await this.options.ocrModels?.getSnapshot()
     const installedLanguages = snapshot?.ocrLanguages
-      ?.filter((language) => language.selected && language.installed)
-      .map((language) => language.code)
+      ? snapshot.ocrLanguages
+          .filter((language) => language.selected && language.installed)
+          .map((language) => language.code)
+      : snapshot?.availability === 'ready'
+        ? (['eng', 'chi_sim'] as const)
+        : undefined
     return {
       ...binding,
       projectId,
       ocrRevision:
-        snapshot?.availability === 'ready' && snapshot.installedRevision
+        snapshot?.availability === 'ready' &&
+        snapshot.installedRevision &&
+        installedLanguages &&
+        installedLanguages.length > 0
           ? `${snapshot.installedRevision}:${installedLanguages?.join(',') ?? ''}`
           : undefined,
       ocrLanguages: installedLanguages

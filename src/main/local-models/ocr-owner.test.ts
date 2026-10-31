@@ -83,3 +83,23 @@ it('installs and acquires only the selected OCR language packs', async () => {
     JSON.parse(await readFile(join(root, 'models/ocr/languages.json'), 'utf8')).languages
   ).toEqual(['eng', 'chi_sim'])
 })
+
+it('rejects OCR use when no selected language pack is installed', async () => {
+  const unavailable = owner('eng')
+  unavailable.getSnapshot = vi.fn(async () =>
+    snapshot({
+      availability: 'notInstalled',
+      installedRevision: undefined,
+      installedBytes: 0,
+      hasFiles: false
+    })
+  )
+  const ocr = createLocalOcrModelOwner({
+    base: owner('runtime'),
+    languagePacks: { eng: unavailable },
+    defaultLanguages: ['eng'],
+    dataRoot: () => tmpdir()
+  })
+
+  await expect(ocr.acquireUse()).rejects.toThrow('Local model is not installed.')
+})

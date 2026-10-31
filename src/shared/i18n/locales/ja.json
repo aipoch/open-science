@@ -7709,6 +7709,8 @@
     "Loading examples…": "事例を読み込み中…",
     "Could not load examples. Try again.": "事例を読み込めませんでした。もう一度お試しください。",
     "No examples available yet.": "利用できる事例はまだありません。",
-    "View in sharing marketplace": "共有マーケットプレイスで表示"
+    "View in sharing marketplace": "共有マーケットプレイスで表示",
+    "Simplified Chinese": "簡体字中国語",
+    "Traditional Chinese": "繁体字中国語"
   }
 }

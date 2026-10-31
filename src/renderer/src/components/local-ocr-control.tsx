@@ -18,9 +18,9 @@ const languageLabel = (
     case 'eng':
       return OCR_LANGUAGE_LABELS.eng
     case 'chi_sim':
-      return OCR_LANGUAGE_LABELS.chi_sim
+      return t('Simplified Chinese')
     case 'chi_tra':
-      return OCR_LANGUAGE_LABELS.chi_tra
+      return t('Traditional Chinese')
     case 'deu':
       return t('German')
     case 'spa':

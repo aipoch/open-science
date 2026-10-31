@@ -1,9 +1,10 @@
-import { mkdir, readFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
   OCR_LANGUAGE_LABELS,
   OCR_LANGUAGES,
+  LOCAL_MODEL_NOT_INSTALLED,
   isOcrLanguage,
   type LocalModelSnapshot,
   type OcrLanguage
@@ -15,6 +16,7 @@ import type { LocalModelOwner, LocalModelUse } from './owner'
 
 const SELECTION_SCHEMA_VERSION = 1
 const LEGACY_BASE_LANGUAGE_REVISION = 'ocr-7ed9791930e614a1'
+class UnsafeOcrModelPathError extends Error {}
 
 type OcrSelection = Readonly<{
   schemaVersion: typeof SELECTION_SCHEMA_VERSION
@@ -57,14 +59,37 @@ export const createLocalOcrModelOwner = ({
 }: OcrLanguageOwnerOptions): LocalModelOwner => {
   let initialized: Promise<void> | undefined
   let selectedLanguages = normalizeLanguages(defaultLanguages)
-  const selectionPath = (): string => join(dataRoot(), 'models', 'ocr', 'languages.json')
+  const selectionDirectory = async (create: boolean): Promise<string | undefined> => {
+    let path = dataRoot()
+    if (create) await mkdir(path, { recursive: true })
+    for (const part of ['models', 'ocr']) {
+      path = join(path, part)
+      if (create)
+        await mkdir(path).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'EEXIST') throw error
+        })
+      const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === 'ENOENT') return undefined
+        throw error
+      })
+      if (!info) return undefined
+      if (!info.isDirectory() || info.isSymbolicLink())
+        throw new UnsafeOcrModelPathError('Unsafe OCR model directory.')
+    }
+    return path
+  }
 
   const initialize = (): Promise<void> => {
     initialized ??= (async () => {
       try {
-        const selection = JSON.parse(await readFile(selectionPath(), 'utf8')) as unknown
+        const directory = await selectionDirectory(false)
+        if (!directory) return
+        const selection = JSON.parse(
+          await readFile(join(directory, 'languages.json'), 'utf8')
+        ) as unknown
         if (validSelection(selection)) selectedLanguages = normalizeLanguages(selection.languages)
-      } catch {
+      } catch (error) {
+        if (error instanceof UnsafeOcrModelPathError) throw error
         // The default follows the locale until the user explicitly changes it.
       }
     })()
@@ -144,9 +169,10 @@ export const createLocalOcrModelOwner = ({
     const next = normalizeLanguages(languages)
     const release = acquireDataRootWriter()
     try {
-      await mkdir(join(dataRoot(), 'models', 'ocr'), { recursive: true })
+      const directory = await selectionDirectory(true)
+      if (!directory) throw new Error('OCR model directory is unavailable.')
       await writeDurableJsonFile(
-        selectionPath(),
+        join(directory, 'languages.json'),
         JSON.stringify({
           schemaVersion: SELECTION_SCHEMA_VERSION,
           languages: next
@@ -200,6 +226,7 @@ export const createLocalOcrModelOwner = ({
       const available = selected.filter(
         (code) => languageAsset(baseUse, code) || acquired.some((use) => languageAsset(use, code))
       )
+      if (available.length === 0) throw new Error(LOCAL_MODEL_NOT_INSTALLED)
       const revision = `${baseUse.revision}:${available.join(',')}`
       return {
         revision,

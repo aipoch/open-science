@@ -302,7 +302,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(82)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(83)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -318,7 +318,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(82)
+    expect(router.dispatcher.commandNames()).toHaveLength(83)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -516,8 +516,11 @@ describe('Host application commands', () => {
       hostApplicationCommands.network.checkConnectivity,
       invocation([])
     )
-    for (const command of Object.values(hostApplicationCommands.localModels)) {
-      await router.dispatcher.invoke(command, invocation([]))
+    for (const [name, command] of Object.entries(hostApplicationCommands.localModels)) {
+      await router.dispatcher.invoke(
+        command,
+        invocation(name === 'setOcrLanguages' ? [['eng']] : [])
+      )
     }
     await router.dispatcher.invoke(
       hostApplicationCommands.backgroundResults.sessionActivity,
@@ -533,6 +536,7 @@ describe('Host application commands', () => {
     expect(dependencies.backgroundResults.projectActivity).toHaveBeenCalledWith({
       projectId: 'project'
     })
+    expect(dependencies.localModels.setOcrLanguages).toHaveBeenCalledWith(['eng'])
     expect(dependencies.localFs.listDir).toHaveBeenCalledWith('/data')
     expect(dependencies.localFs.readPreview).toHaveBeenCalledWith(previewRequest)
     expect(dependencies.notifications.takePendingOpenSession).toHaveBeenCalledWith(7)
@@ -703,7 +707,7 @@ describe('Host application commands', () => {
         .filter((channel): channel is string => channel !== null)
     )
 
-    expect(localOnlyChannels).toHaveLength(43)
+    expect(localOnlyChannels).toHaveLength(44)
     for (const channel of localOnlyChannels) {
       await expect(
         router.dispatcher.invoke(
