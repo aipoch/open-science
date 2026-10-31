@@ -18,7 +18,10 @@ PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repos
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
 Failed selected checks block merging; full portable suites run in scheduled/manual Source
-Regression instead. See [Package workflows](package-workflows.md) for selection details.
+Regression instead. A full plan still runs, as a blocking floor (`unitFloor`), the declared module
+tests of each changed path that has its own bounded selection; deleted, unowned and global paths
+add no floor.
+See [Package workflows](package-workflows.md) for selection details.
 Desktop changes run the Windows
 mainline E2E journeys on one test runner, selected from the changed modules and their declared
 consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
