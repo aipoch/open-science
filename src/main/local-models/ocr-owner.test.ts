@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -157,6 +157,64 @@ it('refreshes locale-derived defaults until the user saves a selection', async (
 
   await ocr.setOcrLanguages!(['eng', 'deu'])
   defaults = ['eng', 'fra']
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'deu']
+  })
+})
+
+it('ignores oversized selections and rejects selection symlinks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-selection-'))
+  roots.push(root)
+  const directory = join(root, 'models', 'ocr')
+  await mkdir(directory, { recursive: true })
+  await expect(
+    (async () => {
+      await writeFile(join(directory, 'languages.json'), 'x'.repeat(16 * 1024 + 1))
+      const ocr = createLocalOcrModelOwner({
+        base: owner('runtime'),
+        languagePacks: {},
+        defaultLanguages: ['eng'],
+        dataRoot: () => root
+      })
+      await expect(ocr.getSnapshot()).resolves.toMatchObject({
+        selectedOcrLanguages: ['eng']
+      })
+      await rm(join(directory, 'languages.json'))
+      await writeFile(join(directory, 'selection-target.json'), '{"schemaVersion":1}')
+      await symlink('selection-target.json', join(directory, 'languages.json'))
+      const symlinked = createLocalOcrModelOwner({
+        base: owner('runtime'),
+        languagePacks: {},
+        defaultLanguages: ['eng'],
+        dataRoot: () => root
+      })
+      await symlinked.getSnapshot()
+    })()
+  ).rejects.toThrow('Unsafe OCR model selection file.')
+})
+
+it('upgrades legacy OCR workers before saving a language selection', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'open-science-ocr-owner-legacy-'))
+  roots.push(root)
+  const base = owner('runtime')
+  let installedRevision = 'ocr-7ed9791930e614a1'
+  base.getSnapshot = vi.fn(async () => snapshot({ installedRevision }))
+  base.install = vi.fn(async () => {
+    installedRevision = 'runtime-v1'
+    return snapshot({ installedRevision })
+  })
+  const ocr = createLocalOcrModelOwner({
+    base,
+    languagePacks: { eng: owner('eng'), deu: owner('deu') },
+    defaultLanguages: ['eng', 'deu'],
+    dataRoot: () => root
+  })
+
+  await expect(ocr.getSnapshot()).resolves.toMatchObject({
+    selectedOcrLanguages: ['eng', 'chi_sim']
+  })
+  await ocr.setOcrLanguages!(['eng', 'deu'])
+  expect(base.install).toHaveBeenCalledOnce()
   await expect(ocr.getSnapshot()).resolves.toMatchObject({
     selectedOcrLanguages: ['eng', 'deu']
   })

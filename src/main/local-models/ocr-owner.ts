@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile } from 'node:fs/promises'
+import { lstat, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import {
@@ -11,10 +11,11 @@ import {
 } from '../../shared/local-models'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { resolveDataRoot } from '../storage-root'
-import { writeDurableJsonFile } from '@aipoch/durable-files'
+import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
 import type { LocalModelOwner, LocalModelUse } from './owner'
 
 const SELECTION_SCHEMA_VERSION = 1
+const SELECTION_MAX_BYTES = 16 * 1024
 const LEGACY_BASE_LANGUAGE_REVISION = 'ocr-7ed9791930e614a1'
 class UnsafeOcrModelPathError extends Error {}
 
@@ -87,8 +88,16 @@ export const createLocalOcrModelOwner = ({
       try {
         const directory = await selectionDirectory(false)
         if (!directory) return
+        const selectionPath = join(directory, 'languages.json')
+        const info = await lstat(selectionPath).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return undefined
+          throw error
+        })
+        if (!info) return
+        if (!info.isFile() || info.isSymbolicLink())
+          throw new UnsafeOcrModelPathError('Unsafe OCR model selection file.')
         const selection = JSON.parse(
-          await readFile(join(directory, 'languages.json'), 'utf8')
+          await readFileWithinLimit(selectionPath, SELECTION_MAX_BYTES)
         ) as unknown
         if (validSelection(selection)) {
           selectedLanguages = normalizeLanguages(selection.languages)
@@ -115,6 +124,12 @@ export const createLocalOcrModelOwner = ({
       baseSnapshot.installedRevision === LEGACY_BASE_LANGUAGE_REVISION
         ? new Set<OcrLanguage>(['eng', 'chi_sim'])
         : new Set<OcrLanguage>()
+    if (legacyBaseLanguages.size > 0) {
+      // The legacy worker ignores workerData and always loads its embedded English and
+      // Simplified Chinese files. Do not expose a selectable projection until it is upgraded.
+      selectedLanguages = [...legacyBaseLanguages]
+      hasExplicitSelection = false
+    }
     const languages = OCR_LANGUAGES.map((code) => {
       const pack = packs.get(code)
       const installed = pack?.availability === 'ready' || legacyBaseLanguages.has(code)
@@ -222,6 +237,8 @@ export const createLocalOcrModelOwner = ({
   ): Promise<LocalModelSnapshot> => {
     await initialize()
     const next = normalizeLanguages(languages)
+    if ((await base.getSnapshot()).installedRevision === LEGACY_BASE_LANGUAGE_REVISION)
+      await base.install()
     const release = acquireDataRootWriter()
     try {
       const directory = await selectionDirectory(true)
