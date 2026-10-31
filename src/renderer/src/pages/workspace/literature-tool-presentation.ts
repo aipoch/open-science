@@ -287,9 +287,24 @@ const buildPdfAnnotationToolSummary = (
     if (operation === 'locate') return Array.isArray(record.targets)
     return typeof record.id === 'string' || typeof record.annotationId === 'string'
   })
+  const error = outputs
+    .map((record) => {
+      if (!isRecord(record.error)) return undefined
+      return asString(record.error.message) ?? asString(record.error.code)
+    })
+    .find((message): message is string => message !== undefined)
   const targetInput = isRecord(input.target) ? input.target : undefined
   const documentId =
     asString(output?.documentId) ?? asString(input.documentId) ?? asString(targetInput?.documentId)
+
+  if (!output && error) {
+    return {
+      action: 'read',
+      documentNames: [],
+      documentCount: 0,
+      error
+    }
+  }
 
   if (operation === 'list') {
     const annotations = (Array.isArray(output?.annotations) ? output.annotations : [])

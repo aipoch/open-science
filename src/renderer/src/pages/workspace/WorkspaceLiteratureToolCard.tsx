@@ -1,7 +1,6 @@
 import { LocalOcrControl } from '@/components/local-ocr-control'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 import {
-  ArrowUpRight,
   BookOpenText,
   FileText,
   Highlighter,
@@ -15,7 +14,6 @@ import { LiteratureCandidateStatus } from './LiteratureCandidateStatus'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
-import { Button } from '@/components/ui/button'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
@@ -48,13 +46,11 @@ const annotationKindLabel = (kind: string | undefined, t: (key: string) => strin
 const WorkspaceLiteratureToolCard = ({
   summary,
   activityId,
-  isApproval = false,
-  onViewAnnotation
+  isApproval = false
 }: {
   summary: LiteratureToolSummary
   activityId?: string
   isApproval?: boolean
-  onViewAnnotation?: () => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const annotation = summary.annotation
@@ -481,15 +477,6 @@ const WorkspaceLiteratureToolCard = ({
       {!annotation && summary.error ? (
         <div className="rounded-md bg-destructive/10 px-2.5 py-2 text-[11px] text-destructive">
           {summary.error}
-        </div>
-      ) : null}
-
-      {annotation?.operation === 'create' && onViewAnnotation ? (
-        <div className="flex justify-end border-t border-border-200 pt-2">
-          <Button size="sm" variant="outline" onClick={onViewAnnotation}>
-            {t('View in Literature')}
-            <ArrowUpRight aria-hidden="true" />
-          </Button>
         </div>
       ) : null}
     </>

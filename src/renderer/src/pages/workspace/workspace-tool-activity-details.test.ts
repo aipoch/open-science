@@ -177,6 +177,23 @@ describe('workspace tool activity details', () => {
     }
   )
 
+  it.each(['list_pdf_annotations', 'locate_pdf_annotation_target', 'create_pdf_annotation'])(
+    'preserves %s failures as visible Literature errors',
+    (tool) => {
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: `mcp__open-science-literature__${tool}`,
+          rawOutput: { error: { code: 'PDF_ANNOTATION_FAILED', message: 'Target unavailable.' } }
+        })
+      )
+      const section = details?.sections.find((entry) => entry.kind === 'literature')
+      expect(section).toBeDefined()
+      if (!section || section.kind !== 'literature') throw new Error('literature section required')
+      expect(section.summary.error).toBe('Target unavailable.')
+      expect(section.summary.annotation).toBeUndefined()
+    }
+  )
+
   it('keeps native Skill instruction documents out of expandable activity details', () => {
     const activity = createActivity({
       title: 'Loaded skill: mcp-pubmed',

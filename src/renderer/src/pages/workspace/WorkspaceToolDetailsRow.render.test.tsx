@@ -268,11 +268,10 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).not.toContain('INPUT')
   })
 
-  it('shows the Literature jump action only for created annotations', async () => {
+  it('renders annotation MCP failures instead of an empty success card', async () => {
     const activity = createActivity({
       providerToolName: 'mcp__open-science-literature__create_pdf_annotation',
-      rawInput: { targetRef: 'target-1', requestId: 'mark-1', note: 'Review this claim.' },
-      rawOutput: { id: 'annotation-1', documentId: 'paper-1', kind: 'highlight', pageNumber: 2 }
+      rawOutput: { error: { code: 'PDF_ANNOTATION_FAILED', message: 'Target unavailable.' } }
     })
     root = createRoot(container)
     await act(async () =>
@@ -282,16 +281,11 @@ describe('WorkspaceToolDetailsRow', () => {
           details={buildToolActivityDetails(activity)!}
           isExpanded
           onToggle={() => undefined}
-          onViewLiteratureAnnotation={() => undefined}
         />
       )
     )
-    expect(container.querySelector('[data-testid="literature-tool-card"]')).not.toBeNull()
-    expect(
-      Array.from(container.querySelectorAll('button')).some((button) =>
-        button.textContent?.includes('View in Literature')
-      )
-    ).toBe(true)
+    expect(container.textContent).toContain('Target unavailable.')
+    expect(container.textContent).not.toContain('Created')
   })
 
   it('shows the selected figure caption and image delivery without rendering Base64 as text', async () => {
