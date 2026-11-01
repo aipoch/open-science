@@ -1480,6 +1480,47 @@ class NotebookExecutionOwner {
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
+    const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
+      cwd: session.cwd,
+      handoffDir,
+      runtimeRoot,
+      notebookSessionRoot: session.notebookSessionRoot,
+      inputRoot,
+      protectedDirs,
+      environment: {},
+      timeoutMs: request.timeoutMs ?? 120_000,
+      platform
+    }
+    const replayExisting = (existing: NotebookRunRecord): NotebookShellResult => {
+      // Replaying admitted work must not depend on today's runtime readiness or environment.
+      // Keep validating the command, runtime binding and all other caller-controlled context.
+      const fingerprint = shellRunFingerprint(
+        session,
+        request,
+        { ...frozenShellContext, environment: existing.frozenShellContext?.environment ?? {} },
+        runtimeBinding
+      )
+      if (existing.submissionFingerprint !== fingerprint) {
+        throw new NotebookRunSubmissionConflictError(request.executionInvocationId!)
+      }
+      onAdmitted?.(existing)
+      return publicShellResult(existing)
+    }
+    if (request.executionInvocationId) {
+      const existing = await this.options.runTerminalization.findSubmission(
+        session,
+        request.executionInvocationId
+      )
+      const active = this.activeShellSubmissions.get(
+        `${notebookLaneKey(session.lane)}:${request.executionInvocationId}`
+      )
+      if (active) {
+        replayExisting(await active.admitted)
+        return active.promise
+      }
+      if (existing) return replayExisting(existing)
+      this.assertShellAdmissionAvailable(session)
+    }
     let environment: NodeJS.ProcessEnv = {}
     let preparationFailure: NotebookShellResult | undefined
     try {
@@ -1503,21 +1544,11 @@ class NotebookExecutionOwner {
       // No command can use this empty environment: persist the preparation failure below.
       preparationFailure = error.result
     }
-    const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
-      cwd: session.cwd,
-      handoffDir,
-      runtimeRoot,
-      notebookSessionRoot: session.notebookSessionRoot,
-      inputRoot,
-      protectedDirs,
-      environment: Object.fromEntries(
-        Object.entries(environment).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
-      ),
-      timeoutMs: request.timeoutMs ?? 120_000,
-      platform
-    }
+    frozenShellContext.environment = Object.fromEntries(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    )
     const submissionFingerprint = shellRunFingerprint(
       session,
       request,
@@ -1553,26 +1584,9 @@ class NotebookExecutionOwner {
           submissionIdentity
         )
         if (existing) {
-          // A failed runtime preparation has no executable environment. Readiness changing later
-          // must not change the identity of that failed submission; other inputs still must match.
-          const replayFingerprint =
-            existing.status === 'failed' &&
-            existing.shellRuntimeStatus === 'unavailable' &&
-            existing.recovery?.execution === 'not-started' &&
-            existing.frozenShellContext
-              ? shellRunFingerprint(
-                  session,
-                  request,
-                  { ...frozenShellContext, environment: existing.frozenShellContext.environment },
-                  runtimeBinding
-                )
-              : submissionFingerprint
-          if (existing.submissionFingerprint !== replayFingerprint) {
-            throw new NotebookRunSubmissionConflictError(submissionIdentity)
-          }
+          const result = replayExisting(existing)
           resolveAdmitted(existing)
-          onAdmitted?.(existing)
-          return publicShellResult(existing)
+          return result
         }
       }
       // A teardown may have fenced this scope while an idempotency lookup was awaiting storage.
