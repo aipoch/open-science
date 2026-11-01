@@ -24,9 +24,14 @@ import { PdfTranslationCheckpoints } from '../literature/pdf-translation/checkpo
 import { PdfTranslationOwner } from '../literature/pdf-translation/index'
 import { PdfTranslationUsageRecorder } from '../literature/pdf-translation/usage'
 import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
-import { PDF_TRANSLATION_MODEL_REVISIONS } from '../local-models/catalog'
-import { OCR_MODEL_REVISIONS } from '../local-models/catalog'
+import {
+  OCR_LANGUAGE_PACK_REVISIONS,
+  OCR_RUNTIME_REVISIONS,
+  PDF_TRANSLATION_MODEL_REVISIONS
+} from '../local-models/catalog'
 import { createLocalModelApi } from '../local-models/owner'
+import { createLocalOcrModelOwner } from '../local-models/ocr-owner'
+import type { OcrLanguage } from '../../shared/local-models'
 import { runtimeMetadata } from '../runtime-metadata'
 import { ProviderTextGenerationService } from '../literature/pdf-translation/text-generation'
 import type { SettingsService } from '../settings/service'
@@ -54,7 +59,8 @@ export async function composeDocumentReading({
   bookmarkRepository,
   sessionPersistenceCoordinator,
   modules,
-  settingsService
+  settingsService,
+  defaultOcrLanguages
 }: {
   declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   applicationEvents: ApplicationEvents
@@ -76,6 +82,7 @@ export async function composeDocumentReading({
     | 'runSessionMutation'
   >
   settingsService: SettingsService
+  defaultOcrLanguages?: readonly OcrLanguage[] | (() => readonly OcrLanguage[])
   modules: ApplicationModuleBuilder
 }): Promise<{
   bookmarkService: BookmarkService
@@ -187,9 +194,19 @@ export async function composeDocumentReading({
     capability: undefined,
     dispose: () => owner.close()
   }))
-  const ocrModels = createLocalModelOwner({
-    namespace: 'ocr',
-    revisions: OCR_MODEL_REVISIONS
+  const ocrLanguagePacks = Object.fromEntries(
+    Object.entries(OCR_LANGUAGE_PACK_REVISIONS).map(([code, revision]) => [
+      code,
+      createLocalModelOwner({
+        namespace: `ocr-language-${code}`,
+        revisions: [revision]
+      })
+    ])
+  ) as Partial<Record<OcrLanguage, ReturnType<typeof createLocalModelOwner>>>
+  const ocrModels = createLocalOcrModelOwner({
+    base: createLocalModelOwner({ namespace: 'ocr', revisions: OCR_RUNTIME_REVISIONS }),
+    languagePacks: ocrLanguagePacks,
+    defaultLanguages: defaultOcrLanguages ?? ['eng', 'chi_sim']
   })
   await modules.add({ ocrModels }, ({ ocrModels: owner }) => ({
     name: 'ocr-models',

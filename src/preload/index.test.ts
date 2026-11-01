@@ -426,6 +426,7 @@ describe('preload bridge — public surface inventory', () => {
       'localModels.getSnapshot',
       'localModels.install',
       'localModels.remove',
+      'localModels.setOcrLanguages',
       'locale.initialize',
       'locale.onChanged',
       'locale.setPreference',

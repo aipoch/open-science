@@ -19,7 +19,8 @@ import type {
 import type {
   LocalModelApi,
   LocalModelCapability,
-  LocalModelSnapshot
+  LocalModelSnapshot,
+  OcrLanguage
 } from '../shared/local-models'
 import type {
   InitializeLocalePreferenceRequest,
@@ -451,7 +452,12 @@ const localModelCommands = Object.freeze({
     'local-models:remove',
     readonly [capability?: LocalModelCapability],
     LocalModelSnapshot
-  >('local-models:remove')
+  >('local-models:remove'),
+  setOcrLanguages: defineApplicationCommand<
+    'local-models:set-ocr-languages',
+    readonly [languages: readonly OcrLanguage[]],
+    LocalModelSnapshot
+  >('local-models:set-ocr-languages')
 })
 
 const backgroundResultCommands = Object.freeze({
@@ -898,6 +904,10 @@ const registerHostApplicationCommands = (
       'local-models:remove': ({ callerContext, args }) =>
         localCommand(callerContext, 'local-models:remove', () =>
           dependencies.localModels.remove(args[0])
+        ),
+      'local-models:set-ocr-languages': ({ callerContext, args }) =>
+        localCommand(callerContext, 'local-models:set-ocr-languages', () =>
+          dependencies.localModels.setOcrLanguages(args[0])
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[10], {

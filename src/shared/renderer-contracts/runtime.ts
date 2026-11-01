@@ -1,5 +1,5 @@
 // Ordered fragments keep the public registration order when capabilities interleave.
-import type { LocalModelCapability, LocalModelSnapshot } from '../local-models'
+import type { LocalModelCapability, LocalModelSnapshot, OcrLanguage } from '../local-models'
 
 import type { NotebookLanguage } from '../notebook-language-contract'
 
@@ -94,5 +94,8 @@ export const localModelsGetSnapshotContracts = {
   >()('local-models', ['local-models:cancel', LOCAL]),
   'localModels.remove': callable<
     (capability?: LocalModelCapability) => Promise<LocalModelSnapshot>
-  >()('local-models', ['local-models:remove', LOCAL])
+  >()('local-models', ['local-models:remove', LOCAL]),
+  'localModels.setOcrLanguages': callable<
+    (languages: readonly OcrLanguage[]) => Promise<LocalModelSnapshot>
+  >()('local-models', ['local-models:set-ocr-languages', LOCAL])
 } as const

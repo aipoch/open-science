@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScanText } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { Check, ScanText } from 'lucide-react'
+import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
@@ -8,6 +10,32 @@ import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
 
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+
+const languageLabel = (
+  code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+  t: TFunction
+): string => {
+  switch (code) {
+    case 'eng':
+      return t('English', { context: 'language' })
+    case 'chi_sim':
+      return t('Simplified Chinese')
+    case 'chi_tra':
+      return t('Traditional Chinese')
+    case 'deu':
+      return t('German')
+    case 'spa':
+      return t('Spanish')
+    case 'fra':
+      return t('French')
+    case 'jpn':
+      return t('Japanese')
+    case 'kor':
+      return t('Korean')
+    case 'rus':
+      return t('Russian')
+  }
+}
 
 export function LocalOcrControl({
   compact = false
@@ -54,7 +82,30 @@ export function LocalOcrControl({
       setPending(false)
     }
   }
-  const installed = snapshot?.availability === 'ready'
+  const setLanguage = async (
+    code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+    selected: boolean
+  ): Promise<void> => {
+    if (!snapshot?.selectedOcrLanguages) return
+    setPending(true)
+    try {
+      const languages = selected
+        ? [...snapshot.selectedOcrLanguages, code]
+        : snapshot.selectedOcrLanguages.filter((value) => value !== code)
+      setSnapshot(await window.api.localModels.setOcrLanguages(languages))
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    } finally {
+      setPending(false)
+    }
+  }
+  const selectedLanguagesInstalled =
+    !snapshot?.ocrLanguages ||
+    snapshot.ocrLanguages
+      .filter((language) => language.selected)
+      .every((language) => language.installed)
+  const installed = snapshot?.availability === 'ready' && selectedLanguagesInstalled
   const installing = snapshot?.availability === 'installing'
   if (compact && ((!snapshot && !failed) || (installed && !installedHere && !snapshot?.error)))
     return null
@@ -66,11 +117,7 @@ export function LocalOcrControl({
         <div className="flex min-w-0 items-center gap-2">
           <ScanText className="size-4 shrink-0" aria-hidden="true" />
           <span className="text-sm font-medium">{t('Text recognition (OCR)')}</span>
-          {!compact && (
-            <span className="text-xs text-muted-foreground">
-              {t('English and Simplified Chinese')}
-            </span>
-          )}
+          {!compact && <span className="text-xs text-muted-foreground">{t('OCR languages')}</span>}
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {snapshot && !compact && (
@@ -125,6 +172,40 @@ export function LocalOcrControl({
       {installing && snapshot && (
         <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
       )}
+      {!compact && snapshot?.ocrLanguages ? (
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium text-muted-foreground">
+            {t('OCR languages')}
+          </legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {snapshot.ocrLanguages.map((language) => {
+              const label = languageLabel(language.code, t)
+              return (
+                <Checkbox.Root
+                  key={language.code}
+                  checked={language.selected}
+                  disabled={pending || language.code === 'eng'}
+                  aria-label={label}
+                  onCheckedChange={(checked) => {
+                    if (checked !== 'indeterminate') void setLanguage(language.code, checked)
+                  }}
+                  className="group flex min-h-8 items-center gap-2 rounded-md px-1 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
+                    <Checkbox.Indicator>
+                      <Check className="size-3" aria-hidden="true" />
+                    </Checkbox.Indicator>
+                  </span>
+                  <span>{label}</span>
+                  {!language.installed ? (
+                    <span className="text-xs text-muted-foreground">{t('Not installed')}</span>
+                  ) : null}
+                </Checkbox.Root>
+              )
+            })}
+          </div>
+        </fieldset>
+      ) : null}
       {failed || snapshot?.error ? (
         <ErrorNotice
           inline
