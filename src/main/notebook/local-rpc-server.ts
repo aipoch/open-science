@@ -38,6 +38,7 @@ import {
 } from '../../shared/artifact-version-locator'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 import {
+  AGENT_USER_CHOICE_REQUEST_CONTRACT,
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
   type AgentUserChoiceResult
@@ -2758,7 +2759,11 @@ class NotebookLocalRpcServer {
 
     if (method === 'requestUserInput') {
       const request = sanitizeAgentUserChoiceRequest(params)
-      if (!request) throw new RpcHttpError(400, 'Invalid user choice request.')
+      if (!request)
+        throw new RpcHttpError(
+          400,
+          `Invalid user choice request: expected ${AGENT_USER_CHOICE_REQUEST_CONTRACT}.`
+        )
       if (params.caller_role === 'delegate') {
         if (!this.delegatedWorkService?.requestUserInput) {
           throw new Error('Delegated user input is not configured.')

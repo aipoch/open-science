@@ -1227,10 +1227,19 @@ it.each([
   'src/main/process-tree-windows.ts',
   'src/main/process-tree.windows.integration.test.ts'
 ])('selects process ownership and lifecycle tests with Windows coverage for %s', (path) => {
-  const plan = createAffectedTestPlan([{ path, status: 'added' }], {
-    status: 'unavailable-manifest-only',
-    testFiles: []
-  })
+  const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json'))
+  const graph = { status: 'unavailable-manifest-only', testFiles: [] }
+  const changes = [{ path, status: 'added' }]
+  if (path.startsWith('src/main/delegation/')) {
+    const guarded = createAffectedTestPlan(changes, graph, manifest)
+    expect(guarded.mode).toBe('full')
+    expect(guarded.reasonChains.join('\n')).toContain(
+      manifest.modules.main_delegation.fullTestReason
+    )
+  }
+  // Test process routing separately while retaining the production full-validation guard above.
+  delete manifest.modules.main_delegation.fullTestReason
+  const plan = createAffectedTestPlan(changes, graph, manifest)
 
   expect(plan.mode).toBe('selective')
   expect(plan.modules).toContain(

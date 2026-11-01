@@ -9,6 +9,7 @@ import type {
   XaiOAuthDeviceAuthorization,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
+  InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   Preflight,
@@ -91,6 +92,10 @@ export const settingsInstallClaudeContracts = {
   'settings.installCodeBuddy': callable<
     (request: InstallCodeBuddyRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-codebuddy', LOCAL]),
+  'settings.installPi': callable<(request: InstallPiRequest) => Promise<ClaudeInstallResult>>()(
+    'settings',
+    ['settings:install-pi', LOCAL]
+  ),
   'settings.installCodex': callable<
     (request: InstallCodexRequest) => Promise<ClaudeInstallResult>
   >()('settings', ['settings:install-codex', LOCAL]),
@@ -183,6 +188,10 @@ export const settingsSetVisionModelContracts = {
   ]),
   'settings.uninstallCodeBuddy': callable<() => Promise<SettingsSnapshot>>()('settings', [
     'settings:uninstall-codebuddy',
+    LOCAL
+  ]),
+  'settings.uninstallPi': callable<() => Promise<SettingsSnapshot>>()('settings', [
+    'settings:uninstall-pi',
     LOCAL
   ]),
   'settings.uninstallCodex': callable<() => Promise<SettingsSnapshot>>()('settings', [

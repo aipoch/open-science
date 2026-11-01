@@ -2,6 +2,7 @@ import { isAbsolute } from 'node:path'
 import { classificationSettingsSchema } from './classification-config'
 
 import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { isAgentFrameworkId } from '../../shared/agent-framework-id'
 import { isLanguagePreference } from '../../shared/locale'
 import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
@@ -348,12 +349,7 @@ const sanitizeSettings = (value: unknown): StoredSettings => {
   if (dataRoot && isAbsolute(dataRoot)) settings.dataRoot = dataRoot
 
   const agentFrameworkId = asString(value.agentFrameworkId)
-  if (
-    agentFrameworkId === 'claude-code' ||
-    agentFrameworkId === 'opencode' ||
-    agentFrameworkId === 'codex' ||
-    agentFrameworkId === 'codebuddy'
-  ) {
+  if (isAgentFrameworkId(agentFrameworkId)) {
     settings.agentFrameworkId = agentFrameworkId
   }
   const reasoningEffort = asString(value.reasoningEffort)

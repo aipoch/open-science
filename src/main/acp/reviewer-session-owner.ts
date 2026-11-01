@@ -16,6 +16,8 @@ import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentFramework } from '../agent-framework'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { canonicalAppMcpServerName } from '../agent-framework/app-mcp-names'
+import { trustedMcpToolIdentity } from './permission-policy'
+import type { PiPermissionContext, PiPermissionState } from './pi-permission-correlation'
 import { extractProviderToolName } from './runtime-events'
 import { REVIEWER_MCP_PROXY_ARG } from '../mcp-server-args'
 
@@ -34,6 +36,9 @@ const REVIEWER_MCP_CLAUDE_TOOL_NAMES = new Set(
       (serverName) => `mcp__${serverName}__${toolName}`
     )
   )
+)
+const REVIEWER_MCP_TOOL_IDENTITIES: ReadonlySet<string> = new Set(
+  Object.values(REVIEWER_MCP_TOOLS).map((toolName) => `${REVIEWER_MCP_SERVER_NAME}/${toolName}`)
 )
 const REVIEWER_MCP_PROVIDER_TOOL_NAMES = new Set([
   ...REVIEWER_MCP_OPENCODE_TOOL_NAMES,
@@ -258,6 +263,29 @@ export class ReviewerSessionOwner {
     }
   }
 
+  // Pi admits a permission request only after binding it to an observed tool_call. A Reviewer
+  // session has no Main prompt, so its active owner record is both the turn and the capability
+  // revision; disposal makes every later event stale.
+  piPermissionContextFor(sessionId: string): PiPermissionContext | undefined {
+    const owner = this.activeById.get(sessionId)
+    if (!owner || owner.frameworkId !== 'pi') return undefined
+    const readCurrent = (): PiPermissionState | undefined =>
+      this.activeById.get(sessionId) === owner
+        ? {
+            appSessionId: sessionId,
+            providerSessionId: sessionId,
+            promptMessageId: `reviewer-${sessionId}`,
+            interactionSequence: 0,
+            capabilityRevision: owner,
+            mcpServerNames: owner.mcpServerNames,
+            allowedToolIdentities: REVIEWER_MCP_TOOL_IDENTITIES,
+            cancelled: false
+          }
+        : undefined
+    const current = readCurrent()
+    return current ? { ...current, readCurrent } : undefined
+  }
+
   snapshot(): ReviewerSessionSnapshot[] {
     const active = [...this.activeById.keys()].map((sessionId): ReviewerSessionSnapshot => ({
       lifecycle: 'active',
@@ -312,13 +340,17 @@ export class ReviewerSessionOwner {
       REVIEWER_MCP_CLAUDE_TOOL_NAMES.has(reportedTitle)
         ? reportedTitle
         : undefined
+    // Pi tool names are provider supplied; only the identity bound by Pi correlation counts.
+    const piIdentity = trustedMcpToolIdentity(params)
     const isReviewerMcp =
       context.mcpServerNames.length === 1 &&
       context.mcpServerNames[0] === REVIEWER_MCP_SERVER_NAME &&
-      ((toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
-        opencodeToolName != null ||
-        codexToolName != null ||
-        claudeToolName != null)
+      (context.frameworkId === 'pi'
+        ? piIdentity !== undefined && REVIEWER_MCP_TOOL_IDENTITIES.has(piIdentity)
+        : (toolName != null && REVIEWER_MCP_PROVIDER_TOOL_NAMES.has(toolName)) ||
+          opencodeToolName != null ||
+          codexToolName != null ||
+          claudeToolName != null)
 
     if (!isReviewerMcp) {
       const rejectOption =

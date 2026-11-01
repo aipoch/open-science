@@ -138,6 +138,43 @@ const setup = (
 }
 
 describe('AcpProviderPromptExecutor', () => {
+  it('counts Pi model calls once per message while keeping only the latest input as context', async () => {
+    const usage = (id: string, input: number): NextUpdate => {
+      const update = {
+        sessionUpdate: 'agent_message_chunk' as const,
+        content: { type: 'text' as const, text: '' },
+        messageId: id,
+        _meta: {
+          pi: {
+            event: 'assistant_message',
+            usage: { input, output: 10, cacheRead: 20, cacheWrite: 5 }
+          }
+        }
+      }
+      return { kind: 'session_update', update, notification: { sessionId: 'provider-1', update } }
+    }
+    const fixture = setup([
+      usage('first', 100),
+      usage('first', 100),
+      usage('second', 200),
+      stop({ stopReason: 'end_turn' } as PromptResponse)
+    ])
+    await expect(
+      fixture.executor.execute({ ...fixture.input, frameworkId: 'pi' })
+    ).resolves.toMatchObject({
+      kind: 'stopped',
+      facts: {
+        modelTurnCount: 2,
+        turnUsage: { inputTokens: 300, cacheTokens: 50, outputTokens: 20 },
+        contextUsedTokens: 225,
+        modelCalls: [
+          { sourceInvocationId: 'first', inputTokens: 100 },
+          { sourceInvocationId: 'second', inputTokens: 200 }
+        ]
+      }
+    })
+  })
+
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
     'P03 does not requeue accepted output after a receipt revision conflict on %s',
     async (frameworkId) => {

@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { Lexer } from 'marked'
 import { parseMarkdownIntoBlocks } from 'streamdown'
 
-import { createIncrementalMarkdownBlocks } from './incremental-markdown-blocks'
+import {
+  createIncrementalMarkdownBlocks,
+  dropUnsettledStreamingTableTail
+} from './incremental-markdown-blocks'
 
 describe('incremental Markdown block semantics', () => {
   const samples = [
@@ -56,6 +59,41 @@ describe('incremental Markdown block semantics', () => {
         expect(split(content)).toEqual(parseMarkdownIntoBlocks(content))
       }
     }
+  })
+})
+
+describe('unsettled streaming table tail', () => {
+  it('holds a streamed table head until its delimiter row arrives', () => {
+    expect(dropUnsettledStreamingTableTail(['| A | B |'])).toEqual([])
+    expect(dropUnsettledStreamingTableTail(['| A | B |\n| 1 |'])).toEqual([])
+    expect(dropUnsettledStreamingTableTail(['intro\n\n', '| A | B |'])).toEqual(['intro\n\n'])
+  })
+
+  it('releases the tail once the delimiter row exists', () => {
+    const table = '| A | B |\n| - | - |\n| 1 | 2 |'
+    expect(dropUnsettledStreamingTableTail([table])).toEqual([table])
+    expect(dropUnsettledStreamingTableTail(['| A | B |\n|-'])).toEqual(['| A | B |\n|-'])
+  })
+
+  it('keeps pipe text that cannot still grow into a table', () => {
+    // A blank line already sealed the block as a paragraph.
+    expect(dropUnsettledStreamingTableTail(['| A | B |\n\n'])).toEqual(['| A | B |\n\n'])
+    // Content after the rows ends the table region.
+    expect(dropUnsettledStreamingTableTail(['| A | B |\n\n', 'end'])).toEqual([
+      '| A | B |\n\n',
+      'end'
+    ])
+    // Mixed lines are prose, not rows.
+    expect(dropUnsettledStreamingTableTail(['| A |\nplain text'])).toEqual(['| A |\nplain text'])
+    // Fences and quotes legitimately contain pipes.
+    expect(dropUnsettledStreamingTableTail(['```\n| a |\n```'])).toEqual(['```\n| a |\n```'])
+    expect(dropUnsettledStreamingTableTail(['> | a |'])).toEqual(['> | a |'])
+  })
+
+  it('does not mutate the block list it filters', () => {
+    const blocks = ['intro\n\n', '| A | B |']
+    expect(dropUnsettledStreamingTableTail(blocks)).toEqual(['intro\n\n'])
+    expect(blocks).toEqual(['intro\n\n', '| A | B |'])
   })
 })
 

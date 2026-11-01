@@ -2230,6 +2230,7 @@
     "Open {{name}} configuration": "Abrir la configuración de {{name}}",
     "Open {{scope}}": "Abrir {{scope}}",
     "Open-source coding agent for the terminal.": "Agente de programación de código abierto para la terminal.",
+    "Minimal open-source coding agent, installed separately through the Pi ACP adapter.": "Agente de programación de código abierto minimalista, instalado por separado mediante el adaptador de Pi ACP.",
     "OpenAI's coding agent, connected through the Codex ACP adapter.": "Agente de programación de OpenAI conectado mediante el adaptador de Codex ACP.",
     "OpenCode is required for this framework. Install it below, or install it manually (see <docs>opencode.ai/docs</docs>) and re-detect.": "Se requiere OpenCode para este framework. Instálelo a continuación o instálelo manualmente (consulte <docs>opencode.ai/docs</docs>) y vuelva a detectarlo.",
     "Opening your browser to sign in… Didn't open? Cancel and use a setup token.": "Abriendo el navegador para iniciar sesión… ¿No se abrió? Cancele y use un token de configuración.",
