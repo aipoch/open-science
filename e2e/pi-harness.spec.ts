@@ -509,15 +509,21 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
   expect(second.model).not.toBe(liveModel)
   await app.completeOnboarding()
   let page = await app.configureLiveAgent(liveSettings!, liveModel!)
-  await page.evaluate(async (provider) => {
+  const { targetProviderId, originalProviderName } = await page.evaluate(async (provider) => {
     const snapshot = await window.api.settings.upsertProvider({
       type: 'custom',
       name: 'Pi Side chat switch target',
       supportsImageInput: true,
       ...provider
     })
-    if (!snapshot.providers.some((item) => item.name === 'Pi Side chat switch target'))
-      throw new Error('The second visual provider was not registered.')
+    const target = snapshot.providers.find((item) => item.name === 'Pi Side chat switch target')
+    if (!target) throw new Error('The second visual provider was not registered.')
+    return {
+      targetProviderId: target.id,
+      originalProviderName: snapshot.providers.find(
+        (item) => item.id === snapshot.activeProviderId
+      )!.name
+    }
   }, second)
   await selectPi(page, app)
   const projectId = await createProject(page, 'Pi Side chat model and restart')
@@ -547,7 +553,11 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
   const sidePanel = page.getByRole('tabpanel', { name: 'Side chat', exact: true })
   await sidePanel.getByRole('button', { name: 'Select model', exact: true }).click()
   await page.getByRole('menuitem', { name: /^Model/ }).hover()
-  await page.getByRole('menuitemradio', { name: second.model, exact: true }).focus()
+  await page
+    .getByRole('group')
+    .filter({ has: page.getByText('Pi Side chat switch target', { exact: true }) })
+    .getByRole('menuitemradio', { name: second.model, exact: true })
+    .focus()
   await page.keyboard.press('Enter')
   await expect(sidePanel.getByRole('button', { name: 'Select model', exact: true })).toHaveText(
     second.model
@@ -573,7 +583,10 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
       { timeout: 120_000 }
     )
     .toBe(true)
-  expect((await loadChat())?.modelSelection?.model).toBe(second.model)
+  expect((await loadChat())?.modelSelection).toMatchObject({
+    providerId: targetProviderId,
+    model: second.model
+  })
   const root = dirname(await app.createTestDirectory('side-chat-evidence'))
   const nativeRoot = join(root, 'storage/runtime-support/side-chat', side!.sideSessionId!)
   const models = new Set<string>()
@@ -618,12 +631,19 @@ test('Pi Side chat changes model with context and is discarded on an in-flight r
   await startStreamingSideTurn()
   await sidePanel.getByRole('button', { name: 'Select model', exact: true }).click()
   await page.getByRole('menuitem', { name: /^Model/ }).hover()
-  await page.getByRole('menuitemradio', { name: liveModel!, exact: true }).focus()
+  await page
+    .getByRole('group')
+    .filter({ has: page.getByText(originalProviderName, { exact: true }) })
+    .getByRole('menuitemradio', { name: liveModel!, exact: true })
+    .focus()
   await page.keyboard.press('Enter')
   await expect(sidePanel.getByRole('button', { name: 'Select model', exact: true })).toHaveText(
     liveModel!
   )
-  expect((await loadChat())?.modelSelection?.model).toBe(second.model)
+  expect((await loadChat())?.modelSelection).toMatchObject({
+    providerId: targetProviderId,
+    model: second.model
+  })
   expect((await loadChat())?.running).toBe(true)
   await page.screenshot({
     path: testInfo.outputPath('pi-side-chat-active-model-selection.png'),
