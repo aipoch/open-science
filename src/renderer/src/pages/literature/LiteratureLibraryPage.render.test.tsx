@@ -7895,12 +7895,25 @@ describe('LiteratureLibraryPage', () => {
   })
 
   it('opens Zotero import from the literature Add menu', async () => {
+    const collections =
+      Promise.withResolvers<Awaited<ReturnType<typeof window.api.literature.collect>>>()
+    vi.mocked(window.api.literature.collect).mockReturnValueOnce(collections.promise)
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openMenu(await screen.findByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Import from Zotero' }))
     expect(await screen.findByRole('dialog', { name: 'Import from Zotero' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Preview Zotero library' })).toBeTruthy()
+    expect(
+      (screen.getByRole('button', { name: 'Reading collections…' }) as HTMLButtonElement).disabled
+    ).toBe(true)
+    collections.resolve({
+      entries: [],
+      savedItemIds: [],
+      failures: [],
+      pdfCount: 0,
+      collections: []
+    })
+    expect(await screen.findByRole('button', { name: 'Preview Zotero library' })).toBeTruthy()
   })
 
   it('shows the insertion edge while dragging a table column', async () => {
