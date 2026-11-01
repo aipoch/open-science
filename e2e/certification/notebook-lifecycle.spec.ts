@@ -2,7 +2,7 @@ import { expect } from '@playwright/test'
 import { mkdir, readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { RUNTIME_LOCK_FILE } from '../../src/main/runtime-ownership'
-import { test } from '../fixtures/electron-app'
+import { test as baseTest } from '../fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './helpers'
 
 const captureLifecycleEvidence = async (
@@ -17,22 +17,33 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
-// Controlled mutations still run through the production protected Windows launcher.
-test.beforeEach(async ({ app }) => {
-  if (!controlledWindowsFixtureAvailable) return
-  test.setTimeout(180_000)
-  await app.completeOnboarding()
-  const page = await app.configureFakeAgent()
-  expect(await page.evaluate(() => window.api.settings.installNotebookNetwork())).toMatchObject({
-    kind: 'ready'
-  })
-})
-
-test.afterEach(async ({ app }) => {
-  if (!controlledWindowsFixtureAvailable) return
-  expect(await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())).toMatchObject({
-    kind: 'setupRequired'
-  })
+// Native sandbox provisioning has its own budget; it must not consume the mutation deadline.
+const test = baseTest.extend<{ controlledSandbox: void }>({
+  controlledSandbox: [
+    async ({ app }, use) => {
+      if (!controlledWindowsFixtureAvailable) {
+        await use()
+        return
+      }
+      await app.completeOnboarding()
+      const page = await app.configureFakeAgent()
+      expect(await page.evaluate(() => window.api.settings.installNotebookNetwork())).toMatchObject(
+        {
+          kind: 'ready'
+        }
+      )
+      try {
+        await use()
+      } finally {
+        expect(
+          await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
+        ).toMatchObject({
+          kind: 'setupRequired'
+        })
+      }
+    },
+    { auto: true, timeout: 180_000 }
+  ]
 })
 
 const sendReviewedPrompt = async (

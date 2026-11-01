@@ -41,7 +41,10 @@ describe('composer notice boundaries', () => {
   it('has one classifier importing recognizers; projections and renderer consume its public contract', () => {
     const offenders: string[] = []
     for (const path of sources(join(root, 'src'))) {
-      for (const specifier of runtimeModuleSpecifiers(read(path))) {
+      const source = read(path)
+      // Parse possible violations (including escaped specifiers), not every application module.
+      if (!/recognizers|run-error-classification|media-overflow|\\[ux]/.test(source)) continue
+      for (const specifier of runtimeModuleSpecifiers(source)) {
         const target = specifier.startsWith('.')
           ? resolve(dirname(path), specifier)
           : specifier.startsWith('@/')

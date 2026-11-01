@@ -180,7 +180,6 @@ const suspendSessionWrites = async () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(sessionsRoot, entry.name))
   await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
-  return async () => Promise.all(directories.map((directory) => chmod(directory, 0o700)))
 }
 
 const stringEnvironment = (overrides = []) => {
@@ -3163,30 +3162,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Parked reliable child question')) {
           reply = 'Main rendered the parked child question after branch restoration.'
         } else if (prompt.includes('Trigger reliable post-fence persistence failure')) {
-          const restoreWrites = await suspendSessionWrites()
-          try {
-            await context.client.notify(acp.methods.client.session.update, {
-              sessionId: context.params.sessionId,
-              update: {
-                sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-                content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
-              }
-            })
-            await delay(1_000)
-          } finally {
-            await restoreWrites()
-            await writeFile(
-              join(process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT, 'post-fence-released'),
-              'released'
-            )
-          }
+          // Playwright owns restoration because persistence failure can terminate this provider.
+          await suspendSessionWrites()
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
               messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-              content: { type: 'text', text: 'Persistence sabotage released.' }
+              content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
             }
           })
           // Keep the provider call in flight until the test crashes Main. Completing it would

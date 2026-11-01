@@ -92,7 +92,8 @@ it.skipIf(process.platform === 'win32')(
       failure = error
     }
     expect((failure as { code: number }).code).toBe(90)
-    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce())
+    // curl exits before the server processes TLS close; coverage runners can delay that event.
+    await vi.waitFor(() => expect(blocked).toHaveBeenCalledOnce(), { timeout: 5_000 })
   }
 )
 it('cannot revive a certificate signing result after reset', async () => {

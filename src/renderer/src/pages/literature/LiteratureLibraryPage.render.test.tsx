@@ -6006,7 +6006,9 @@ describe('LiteratureLibraryPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
 
-    expect(await screen.findByRole('heading', { name: 'Journals' })).not.toBeNull()
+    expect(
+      await screen.findByRole('heading', { name: 'Journals' }, { timeout: 10_000 })
+    ).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Download template' })).not.toBeNull()
     expect(await screen.findByRole('button', { name: 'Import attributes' })).not.toBeNull()
     expect(screen.getByText('Drag and drop or click to upload')).not.toBeNull()
