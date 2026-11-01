@@ -53,6 +53,7 @@ import type {
 import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
+  ShellPreparationError,
   buildShellEnv,
   type NotebookShellProcess
 } from './shell-process'
@@ -1479,14 +1480,29 @@ class NotebookExecutionOwner {
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
-    const environment = buildShellEnv(
-      handoffDir,
-      shellRuntimePlatform(runtimeBinding, platform),
-      process.env,
-      runtimeRoot,
-      prepareNotebookWorkloadCache(runtimeRoot),
-      runtimeBinding
-    )
+    let environment: NodeJS.ProcessEnv = {}
+    let preparationFailure: NotebookShellResult | undefined
+    try {
+      environment = this.shellProcess.prepareEnvironment
+        ? await this.shellProcess.prepareEnvironment({
+            handoffDir,
+            runtimeRoot,
+            runtimeBinding,
+            signal
+          })
+        : buildShellEnv(
+            handoffDir,
+            shellRuntimePlatform(runtimeBinding, platform),
+            process.env,
+            runtimeRoot,
+            prepareNotebookWorkloadCache(runtimeRoot),
+            runtimeBinding
+          )
+    } catch (error) {
+      if (!(error instanceof ShellPreparationError)) throw error
+      // No command can use this empty environment: persist the preparation failure below.
+      preparationFailure = error.result
+    }
     const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
       cwd: session.cwd,
       handoffDir,
@@ -1537,7 +1553,21 @@ class NotebookExecutionOwner {
           submissionIdentity
         )
         if (existing) {
-          if (existing.submissionFingerprint !== submissionFingerprint) {
+          // A failed runtime preparation has no executable environment. Readiness changing later
+          // must not change the identity of that failed submission; other inputs still must match.
+          const replayFingerprint =
+            existing.status === 'failed' &&
+            existing.shellRuntimeStatus === 'unavailable' &&
+            existing.recovery?.execution === 'not-started' &&
+            existing.frozenShellContext
+              ? shellRunFingerprint(
+                  session,
+                  request,
+                  { ...frozenShellContext, environment: existing.frozenShellContext.environment },
+                  runtimeBinding
+                )
+              : submissionFingerprint
+          if (existing.submissionFingerprint !== replayFingerprint) {
             throw new NotebookRunSubmissionConflictError(submissionIdentity)
           }
           resolveAdmitted(existing)
@@ -1639,7 +1669,8 @@ class NotebookExecutionOwner {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
           // Freeze this request before admission. The lane validates it against the live cwd and
           // activates per-command network grants when it reaches the front of its execution queue.
-          preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
+          if (!preparationFailure)
+            preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
           durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
         } catch (error) {
           rejectAdmitted(error)
@@ -1661,6 +1692,21 @@ class NotebookExecutionOwner {
           await liveRun.requestCancellation(lifecycleSignal.reason)
         }
         this.options.notifyAvailable(session, 'agent')
+        if (preparationFailure) {
+          const result = preparationFailure
+          const terminalized = await this.options.runTerminalization.runAdmitted({
+            session,
+            queuedRun: durableAdmission.run,
+            invoke: async () => ({
+              ...result,
+              status: 'failed',
+              traceback: '',
+              cwdAfter: frozenShellContext.cwd,
+              outputs: [{ type: 'stream', name: 'stderr', text: result.stderr }]
+            })
+          })
+          return publicShellResult(terminalized.run)
+        }
         try {
           lease = await this.shellAdmission.acquire(
             session.projectId,
