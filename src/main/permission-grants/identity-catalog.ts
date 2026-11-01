@@ -48,7 +48,10 @@ const PRE_REGISTERED_PERMISSION_IDENTITIES: Readonly<
     'mcp:open-science-library/acquire_pdf',
     'mcp:open-science-literature/read_document',
     'mcp:open-science-literature/list_pdf_elements',
-    'mcp:open-science-literature/read_pdf_element'
+    'mcp:open-science-literature/read_pdf_element',
+    'mcp:open-science-literature/list_pdf_annotations',
+    'mcp:open-science-literature/locate_pdf_annotation_target',
+    'mcp:open-science-literature/create_pdf_annotation'
   ],
   execution: ['exec:local/python', 'exec:local/bash'],
   file_operation: [
