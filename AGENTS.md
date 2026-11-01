@@ -283,34 +283,3 @@ Apply this to any `Tooltip` + `DropdownMenuTrigger` (or `DialogTrigger`) combo. 
 alternatives: `onCloseAutoFocus={(e) => e.preventDefault()}` breaks focus return for keyboard/screen
 reader users, and fully controlled `open` state is more code for the same behavior. Reference
 implementation: `ConversationPanel.tsx` (composer "+" and split-send triggers, commit `b363657fd`, PR #798).
-
-## Pi runtime recovery and usage
-
-- Missing Pi history is recoverable only for the pinned adapter's exact missing-session error.
-  Preserve the stable app Session and selected conversation branch; do not adopt on provider,
-  authentication, model, or arbitrary invalid-parameter errors.
-- Restore discovered MCP tools from the selected native branch against the current server
-  inventory. Discovery never restores a permission grant or enables native Pi tools.
-- Plan review uses MCP progress heartbeats while waiting for a person. Cancellation and
-  completion must stop the heartbeat; increasing a fixed timeout is not a review lifecycle.
-- Pi model-call usage arrives in assistant-message ACP metadata and uses the existing optional
-  `turnUsage.turnCount` and `modelCallUsage` fields. Older history remains valid without those
-  fields; do not fabricate historical counts. Aggregate turn tokens are not context occupancy.
-- Bootstrap changes require regenerating the adapter bundle and updating its expected digest in
-  `src/main/agent-framework/pi-runtime.ts`. Keep integrity enforcement enabled. Existing managed
-  installations need the updated adapter through the Pi install/update path.
-- Pi Side chat runs in a restricted runtime with its own Pi home, agent directory and session
-  store under the temporary Side chat profile, without Skills or Main's native session. Its
-  history is transient: closing the chat or restarting the app discards it. The only admitted
-  tool is `open-science-host-message/send_message`, and a relay is delivered to Main as a
-  `relayedFrom: side-chat` message for Main's next turn.
-- Pi permission requests are admitted only after binding to an observed `tool_call` of an
-  app-owned context. Reviewer sessions bind against `ReviewerSessionOwner`'s reviewer-only
-  context; admit reviewer MCP tools by that bound identity, never by Pi's top-level `name`/`title`.
-- These fixes add no database migration, persisted enum, or application command.
-- Focused checks: `npx vitest run` with `src/main/acp/session-resume-policy.test.ts`,
-  `src/main/acp/provider-session-resumer.test.ts`, `src/main/acp/provider-prompt-executor.test.ts`,
-  `src/main/acp/pi-turn-adapter.test.ts`, `src/main/session-plan/plan-mcp-server.test.ts`,
-  `src/renderer/src/pages/workspace/side-chat-availability.test.ts` and
-  `src/main/acp/runtime.test.ts -t reviewer`. Run Node 24 for builds and
-  `npm run typecheck:compiled` after package outputs exist.
