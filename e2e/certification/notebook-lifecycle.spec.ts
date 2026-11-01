@@ -20,9 +20,9 @@ const controlledWindowsFixtureAvailable =
 // Native sandbox provisioning has its own budget; it must not consume the mutation deadline.
 const test = baseTest.extend<{ controlledSandbox: void }>({
   controlledSandbox: [
-    async ({ app }, use) => {
+    async ({ app }, runTest) => {
       if (!controlledWindowsFixtureAvailable) {
-        await use()
+        await runTest()
         return
       }
       await app.completeOnboarding()
@@ -33,7 +33,7 @@ const test = baseTest.extend<{ controlledSandbox: void }>({
         }
       )
       try {
-        await use()
+        await runTest()
       } finally {
         expect(
           await app.page.evaluate(() => window.api.settings.removeNotebookNetwork())
