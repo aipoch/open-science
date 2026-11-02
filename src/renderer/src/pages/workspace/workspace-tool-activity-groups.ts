@@ -12,6 +12,7 @@ import {
   translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
+  isToolSearchActivity,
   getNotebookRunIdFromActivity
 } from './workspace-tool-activity-details'
 import { hasWebSearchContentEvidence } from './workspace-web-search-details'
@@ -230,7 +231,7 @@ const categorizeActivity = (
           hasToolSearchInferenceEvidence(activity) &&
           hasEarlierToolSearchWrapper)
   if (isSearch) return 'search'
-  if (isToolSearchWrapperActivity(activity)) return 'toolSearch'
+  if (isToolSearchActivity(activity)) return 'toolSearch'
 
   const providerName = getNormalizedProviderName(activity)
 
@@ -318,9 +319,15 @@ const formatActivityGroupTitle = (
 
     if (category === 'search' && !categoryCounts.has('search')) {
       // A concrete search supersedes any wrappers encountered earlier in this same pass.
-      categoryCounts.delete('toolSearch')
+      const discoveryCount = activities
+        .slice(0, activityIndex)
+        .filter(
+          (candidate) => isToolSearchActivity(candidate) && !isToolSearchWrapperActivity(candidate)
+        ).length
+      if (discoveryCount) categoryCounts.set('toolSearch', discoveryCount)
+      else categoryCounts.delete('toolSearch')
     }
-    if (category === 'toolSearch' && categoryCounts.has('search')) {
+    if (isToolSearchWrapperActivity(activity) && categoryCounts.has('search')) {
       hasEarlierToolSearchWrapper = true
       return
     }

@@ -160,6 +160,50 @@ describe('ACP runtime event normalization', () => {
     expect(event).not.toHaveProperty('previewToolKind')
   })
 
+  it.each([
+    'mcp__skills__load_skill',
+    'tool_search',
+    'mcp__open_science_notebook__notebook_execute',
+    'mcp__open_science_notebook__manage_packages',
+    'mcp__open_science_notebook__search_memories',
+    'mcp__open_science_library__search_library',
+    'mcp__open_science_literature__read_document',
+    'mcp__open_science_artifacts__write_artifact_file',
+    'mcp__open_science_activity__begin_activity_group'
+  ])('retains Pi live/replayed tool identity: %s', (name) => {
+    for (const sessionUpdate of ['tool_call', 'tool_call_update']) {
+      const event = toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate,
+            toolCallId: 'pi-tool',
+            name,
+            title: 'Human title',
+            kind: 'other',
+            status: 'completed',
+            rawInput: { skill: 'mcp-pubmed' }
+          }
+        } as unknown as SessionNotification,
+        'pi-event'
+      )
+      expect(event.providerToolName).toBe(name)
+      expect(event.rawInput).toEqual({ skill: 'mcp-pubmed' })
+      expect(event.raw).toBeUndefined()
+    }
+  })
+
+  it('keeps metadata precedence and rejects malformed Pi names', () => {
+    expect(extractProviderToolName({ name: 'pi', _meta: { toolName: 'existing' } })).toBe(
+      'existing'
+    )
+    expect(extractProviderToolName({ name: ' tool_search ', _meta: null })).toBe('tool_search')
+    for (const name of [undefined, null, 1, {}, '  ']) {
+      expect(extractProviderToolName({ name })).toBeUndefined()
+    }
+    expect(extractProviderToolName(undefined)).toBeUndefined()
+  })
+
   it('extracts CodeBuddy tool identity metadata', () => {
     expect(
       extractProviderToolName({ _meta: { 'codebuddy.ai/toolName': ' mcp__skills__load_skill ' } })

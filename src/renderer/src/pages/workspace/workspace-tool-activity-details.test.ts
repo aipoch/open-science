@@ -1870,6 +1870,33 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[0]?.kind === 'code' && details.sections[0].text).toContain('WebSearch')
   })
 
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'presents Pi tool discovery as tool search when %s',
+    (status) => {
+      const text = status === 'failed' ? 'Discovery failed' : 'No matching tools found.'
+      const details = buildToolActivityDetails(
+        createActivity({
+          providerToolName: 'tool_search',
+          title: "tool_search 'skills'",
+          toolKind: 'search',
+          status,
+          rawInput: { query: 'skills' },
+          ...(status === 'in_progress'
+            ? {}
+            : {
+                toolContent: [
+                  { type: 'content' as const, content: { type: 'text' as const, text } }
+                ]
+              })
+        })
+      )
+      expect(details?.displayName).toBe('Tool search')
+      expect(details?.subtitle).toBe('skills')
+      expect(details?.sections).toHaveLength(status === 'in_progress' ? 0 : 1)
+      if (status === 'failed') expect(details?.sections[0]).toMatchObject({ label: 'Output', text })
+    }
+  )
+
   it('keeps a ToolSearch wrapper without results as a plain chip', () => {
     const activity = createActivity({ providerToolName: 'ToolSearch', title: 'ToolSearch' })
 

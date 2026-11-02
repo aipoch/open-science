@@ -1174,12 +1174,12 @@ const buildManagePackagesDetails = (
   }
 }
 
-// Detects Claude's tool-discovery (ToolSearch) rows by provider name or synthetic title.
+// Detects structured discovery identities; human-readable Pi titles include the query.
 const isToolSearchActivity = (activity: ToolActivity): boolean => {
   const providerName = trimDetail(activity.providerToolName)?.toLowerCase()
   const title = trimDetail(activity.title)?.toLowerCase()
 
-  return providerName === 'toolsearch' || title === 'toolsearch'
+  return providerName === 'toolsearch' || providerName === 'tool_search' || title === 'toolsearch'
 }
 
 // Reads the "Tools found: A, B, C" summary the tool-search feature emits in its result content.
@@ -1196,16 +1196,27 @@ const extractFoundTools = (activity: ToolActivity): string | undefined => {
 // Summarizes a tool-search step by the tools it discovered instead of a bare "ToolSearch" label.
 const buildToolSearchDetails = (activity: ToolActivity): ToolActivityDetails | undefined => {
   const output = getOutputText(activity)
+  const query = isRecord(activity.rawInput)
+    ? getRecordString(activity.rawInput, 'query')
+    : undefined
 
   // A wrapper row with no result carries nothing useful; let it fall back to a plain chip.
-  if (!output) return undefined
+  if (!output) {
+    return activity.providerToolName === 'tool_search'
+      ? { displayName: 'Tool search', subtitle: query, sections: [] }
+      : undefined
+  }
 
   const foundTools = extractFoundTools(activity)
-  const section = createCodeSection('Tools found', output.code, output.language)
+  const section = createCodeSection(
+    activity.status === 'failed' ? 'Output' : 'Tools found',
+    output.code,
+    output.language
+  )
 
   return {
     displayName: 'Tool search',
-    subtitle: foundTools,
+    subtitle: foundTools ?? query,
     sections: section ? [section] : []
   }
 }
@@ -1406,7 +1417,8 @@ export {
   isEditActivity,
   getManagePackagesFallbackText,
   parseManagePackagesResult,
-  isSkillActivity
+  isSkillActivity,
+  isToolSearchActivity
 }
 export type {
   ToolActivityDetails,
