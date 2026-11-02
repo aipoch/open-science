@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v1.0.6 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 10월 최종 업데이트)_. 이번 업데이트는 로컬 Zotero 라이브러리에서 참조 문헌을 가져오고 PDF의 읽기 순서를 자동으로 결정하며, 애플리케이션과 공존하는 연구 데이터를 보존하는 더 빠른 Windows 설치를 제공합니다. 또한 OpenCode 세션 안정성을 개선하고 긴 턴에서도 아티팩트를 계속 게시할 수 있게 합니다. 자세한 내용은 [v1.0.6 릴리스 노트](../../release-notes/1.0.6/ko.md)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v1.0.7 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 11월 최종 업데이트)_. 이번 업데이트는 Pi를 다섯 번째 에이전트 프레임워크로 추가하고, DOI 또는 arXiv 링크에서 참고 문헌을 바로 추가할 수 있게 하며, 읽기 모드에서 에이전트가 연결된 PDF에 주석을 작성할 수 있게 합니다. 또한 스캔 PDF를 위해 9개 언어 팩의 선택적 OCR을 제공합니다. 자세한 내용은 [v1.0.7 릴리스 노트](../../release-notes/1.0.7/ko.md)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />

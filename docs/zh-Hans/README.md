@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **[AIPOCH Open-Science v1.0.6 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。本次更新为文献库新增从本地 Zotero 文库导入参考文献的功能，PDF 阅读顺序改为自动解析，Windows 安装更快且不再删除共存的研究数据，OpenCode 会话更加稳定，长时间运行的任务也能照常发布产物。详情请查看 [v1.0.6 发行说明](../../release-notes/1.0.6/zh-Hans.md)。
+> 💡 **[AIPOCH Open-Science v1.0.7 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 11 月）_。本次更新新增 Pi 作为第五个智能体框架，文献库支持从 DOI 或 arXiv 链接直接添加参考文献，阅读模式下智能体可为关联的 PDF 添加批注，扫描版 PDF 还可借助可选 OCR（提供九种语言包）获得可读文本。详情请查看 [v1.0.7 发行说明](../../release-notes/1.0.7/zh-Hans.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
