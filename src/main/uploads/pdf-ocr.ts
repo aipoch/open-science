@@ -23,13 +23,6 @@ export const createPdfOcrSession = (
     closed = true
     if (worker) stop ??= worker.terminate()
     await stop
-    if (acquiring) {
-      try {
-        await acquiring
-      } catch {
-        /* Failed acquisition owns no lease. */
-      }
-    }
     lease?.release()
     lease = undefined
   }
@@ -71,11 +64,15 @@ export const createPdfOcrSession = (
         }
       }
       try {
-        acquiring ??= models.acquireUse().then((use) => {
-          lease = use
-          return use
+        await withinDeadline(() => {
+          acquiring ??= models.acquireUse().then((use) => {
+            // Acquisition cannot be cancelled. Release a late lease without prolonging close.
+            if (closed) use.release()
+            else lease = use
+            return use
+          })
+          return acquiring
         })
-        await withinDeadline(() => acquiring!)
         if (closed) return ''
         const { createCanvas } = await withinDeadline(() => import('@napi-rs/canvas'))
         const base = page.getViewport({ scale: 1 })
