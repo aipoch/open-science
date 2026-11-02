@@ -286,6 +286,35 @@ export async function inspectInstallationProcessesAsync(
   return [...pids]
 }
 
+/** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
+export function inspectProcessNames(pids: number[]): Map<number, string> {
+  const names = new Map<number, string>()
+  if (pids.length === 0) return names
+  if (process.platform === 'darwin') {
+    const result = spawnSync('/bin/ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024
+    })
+    if (result.status === 0) {
+      for (const line of result.stdout.split('\n')) {
+        const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+        if (match) names.set(Number(match[1]), match[2].trim())
+      }
+    }
+  } else if (process.platform === 'linux') {
+    for (const pid of pids) {
+      try {
+        const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
+        if (comm) names.set(pid, comm)
+      } catch {
+        // Process exited or inaccessible; diagnostic only, no occupancy impact.
+      }
+    }
+  }
+  return names
+}
+
 /** AppImage extract-and-run keeps its runtime parent alive until Electron exits.
  * Exempt only our direct parent executing the exact outer image for our extracted executable. */
 export function inspectOwnedLinuxAppImageLauncher(): number[] {
