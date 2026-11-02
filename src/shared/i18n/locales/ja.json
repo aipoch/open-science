@@ -5772,7 +5772,6 @@
     "Cancel download": "ダウンロードをキャンセル",
     "Remove local model files?": "ローカルモデルファイルを削除しますか？",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "元の文書と既存の解析結果は保持されます。新しい解析にはモデルの再インストールが必要になる場合があります。",
-    "Removing models keeps your documents and existing parsing results.": "モデルを削除しても文書と既存の解析結果は保持されます。",
     "Model in use. Removal is available when parsing finishes.": "モデルは使用中です。解析が完了すると削除できます。",
     "Candidate table": "表の候補",
     "Clear all PDF parsing results": "PDFの解析結果をすべて消去",
