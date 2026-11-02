@@ -62,7 +62,7 @@ class LiteratureDocumentReader {
       index: literatureIndex(options.storageRoot),
       extractionFingerprint: (context) =>
         createHash('sha256')
-          .update('open-science-pdfjs-positioned-reading-evidence-ocr-v5')
+          .update('open-science-pdfjs-automatic-reading-order-ocr-v2')
           .update(options.ocrModels ? `:optional-ocr-v1:${context.ocrRevision ?? 'none'}` : '')
           .digest('hex'),
       authorize: async (context) => {
