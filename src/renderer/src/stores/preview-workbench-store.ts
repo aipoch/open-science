@@ -392,7 +392,7 @@ const createProjectMarketplacePreviewItem = (): PreviewToolItem => ({
   sessionId: '__project_marketplace__',
   type: 'tool',
   toolKind: 'marketplace',
-  title: 'Sharing marketplace'
+  title: 'Resource center'
 })
 
 const createProjectComputePreviewItem = (): PreviewToolItem => ({

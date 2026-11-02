@@ -772,12 +772,12 @@ const HomePage = ({
                         size="icon"
                         className="size-9 rounded-lg text-text-300"
                         onClick={() => openMarketplace('user')}
-                        aria-label={t('Sharing marketplace')}
+                        aria-label={t('Resource center')}
                       >
                         <Store className="size-4" strokeWidth={2} aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">{t('Sharing marketplace')}</TooltipContent>
+                    <TooltipContent side="bottom">{t('Resource center')}</TooltipContent>
                   </Tooltip>
                   <NotificationBell withTooltipProvider={false} />
                   <Tooltip>
@@ -1313,7 +1313,7 @@ const HomePage = ({
                         active: activeSection === 'projects'
                       },
                       {
-                        label: t('Use Case Marketplace'),
+                        label: t('Case library'),
                         onClick: scrollToGallery,
                         active: activeSection === 'examples'
                       }

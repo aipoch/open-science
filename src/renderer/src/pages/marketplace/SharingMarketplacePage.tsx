@@ -36,12 +36,12 @@ export const SharingMarketplacePage = (): React.JSX.Element => {
                 <Store className="size-4" aria-hidden="true" />
               </span>
               <div className="hidden min-w-0 flex-1 sm:block">
-                <h1 className="truncate text-sm font-semibold">{t('Sharing marketplace')}</h1>
+                <h1 className="truncate text-sm font-semibold">{t('Resource center')}</h1>
                 <p
                   className="truncate text-xs text-muted-foreground"
-                  title={t('Discover and reuse research examples')}
+                  title={t('Discover and reuse research resources')}
                 >
-                  {t('Discover and reuse research examples')}
+                  {t('Discover and reuse research resources')}
                 </p>
               </div>
             </>
@@ -66,17 +66,17 @@ export const SharingMarketplacePage = (): React.JSX.Element => {
           <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
           {!collapsed && <span className="hidden sm:inline">{returnLabel}</span>}
         </Button>
-        <nav aria-label={t('Sharing marketplace')} className="border-t border-border pt-3">
+        <nav aria-label={t('Resource center')} className="border-t border-border pt-3">
           <div
             aria-current="page"
-            title={t('Use Case Marketplace')}
+            title={t('Case library')}
             className={cn(
               'flex min-h-9 items-center justify-center gap-2 rounded-lg bg-bg-200 text-sm font-medium',
               !collapsed && 'sm:justify-start sm:px-3'
             )}
           >
             <GalleryHorizontalEnd className="size-4 shrink-0" aria-hidden="true" />
-            {!collapsed && <span className="hidden sm:inline">{t('Use Case Marketplace')}</span>}
+            {!collapsed && <span className="hidden sm:inline">{t('Case library')}</span>}
           </div>
         </nav>
       </aside>

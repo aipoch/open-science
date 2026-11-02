@@ -2642,7 +2642,7 @@ describe('WorkspaceSidebar accessible render', () => {
     const computeButton = buttons.find((button) => getTextContent(button).trim() === 'Compute')
 
     const marketplaceButton = buttons.find(
-      (button) => getTextContent(button).trim() === 'Sharing marketplace'
+      (button) => getTextContent(button).trim() === 'Resource center'
     )
     expect(buttons[newButtonIndex + 5]).toBe(marketplaceButton)
     expect(marketplaceButton?.props['aria-controls']).toBe('right-panel')

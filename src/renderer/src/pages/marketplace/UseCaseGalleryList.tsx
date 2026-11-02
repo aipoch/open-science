@@ -206,17 +206,17 @@ export const UseCaseGalleryList = ({
               {compact ? (
                 <Select defaultValue="use-cases">
                   <SelectTrigger
-                    aria-label={t('Marketplace')}
+                    aria-label={t('Resource type')}
                     className="-ml-1 h-8 w-auto min-w-0 gap-1 border-transparent bg-transparent px-1 font-semibold"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent align="start">
-                    <SelectItem value="use-cases">{t('Use Case Marketplace')}</SelectItem>
+                    <SelectItem value="use-cases">{t('Case library')}</SelectItem>
                   </SelectContent>
                 </Select>
               ) : (
-                t('Use Case Marketplace')
+                t('Case library')
               )}
             </h2>
             {onOpenMarketplace ? (
@@ -230,10 +230,10 @@ export const UseCaseGalleryList = ({
                     ...capturePosition(viewportRef.current)
                   })
                 }
-                aria-label={t('View in sharing marketplace')}
-                title={t('View in sharing marketplace')}
+                aria-label={t('View in case library')}
+                title={t('View in case library')}
               >
-                {t('View in sharing marketplace')}
+                {t('View in case library')}
                 <ArrowUpRight aria-hidden="true" />
               </Button>
             ) : (
@@ -328,7 +328,8 @@ export const UseCaseGalleryList = ({
         className={cn('min-h-0 flex-1 overflow-y-auto p-4', !compact && 'sm:p-6')}
         data-use-case-browser-scroll
       >
-        <div className="grid grid-cols-1 gap-5 @min-[520px]:grid-cols-2 @min-[900px]:grid-cols-3">
+        {/* Keep sparse search results at the same card width as a full row, including narrow panels. */}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-5">
           {renderCards(filtered.slice(0, count))}
         </div>
         {!items.length && catalogStatus === 'loading' ? (

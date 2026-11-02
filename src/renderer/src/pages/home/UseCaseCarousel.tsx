@@ -334,7 +334,10 @@ export const UseCaseCarousel = ({
             onClick={(event) => setBrowser({ slug: item.slug, opener: event.currentTarget })}
             className="absolute inset-0 z-10 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
-          <div className="relative aspect-[16/9] overflow-hidden bg-bg-100">
+          {/* List covers stay compact when a narrow panel can only fit one column. */}
+          <div
+            className={`relative aspect-[16/9] w-full overflow-hidden bg-bg-100 ${variant === 'marketplace' ? 'max-h-50' : ''}`}
+          >
             <div className="absolute inset-0 transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-within:scale-[1.025] motion-reduce:transform-none motion-reduce:transition-none">
               <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
             </div>
@@ -413,7 +416,7 @@ export const UseCaseCarousel = ({
                 className="inline-flex cursor-pointer items-center gap-1 rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <GalleryHorizontalEnd className="size-4 text-text-100" aria-hidden="true" />
-                {t('Use Case Marketplace')}
+                {t('Case library')}
               </button>
             </h2>
             <Button
