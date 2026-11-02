@@ -1,3 +1,9 @@
+import {
+  cancelPromptOptimizationRequestSchema,
+  optimizePromptRequestSchema,
+  optimizePromptResultSchema,
+  optimizationEventSchema
+} from './prompt-optimization'
 import { z } from 'zod'
 
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
@@ -20,6 +26,7 @@ export const projectSchema = z
     // Agent Context. The DB column is NOT NULL DEFAULT ''. Capped because it is injected verbatim
     // into every agent session's system prompt.
     agentContext: z.string().max(16000).optional(),
+    optimizationPrompt: z.string().max(16000).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     isExample: z.boolean(),
     // Optional on the wire for compatibility with older persisted payloads; absence means unpinned.
@@ -38,7 +45,8 @@ export const createProjectRequestSchema = z
   .object({
     name: z.string().max(PROJECT_NAME_MAX_LENGTH),
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
-    agentContext: z.string().max(16000).optional()
+    agentContext: z.string().max(16000).optional(),
+    optimizationPrompt: z.string().max(16000).optional()
   })
   .strict()
 
@@ -49,6 +57,7 @@ export const updateProjectRequestSchema = z
     description: z.string().max(PROJECT_DESCRIPTION_MAX_LENGTH).optional(),
     expectedUpdatedAt: z.number().int().positive(),
     agentContext: z.string().max(16000).optional(),
+    optimizationPrompt: z.string().max(16000).optional(),
     sessionDefaults: projectSessionDefaultsSchema.optional(),
     pinned: z.boolean().optional()
   })
@@ -90,6 +99,18 @@ export type ProjectDeletionCleanup = z.infer<typeof projectDeletionCleanupSchema
 export type UpdateProjectArchiveRequest = z.infer<typeof updateProjectArchiveRequestSchema>
 
 export const projectApplicationCommandContracts = Object.freeze({
+  optimizePrompt: defineApplicationCommandContract(
+    validationCodec(z.tuple([optimizePromptRequestSchema])),
+    validationCodec(optimizePromptResultSchema)
+  ),
+  cancelPromptOptimization: defineApplicationCommandContract(
+    validationCodec(z.tuple([cancelPromptOptimizationRequestSchema])),
+    validationCodec(z.undefined())
+  ),
+  recordOptimizationEvent: defineApplicationCommandContract(
+    validationCodec(z.tuple([optimizationEventSchema])),
+    validationCodec(z.undefined())
+  ),
   list: defineApplicationCommandContract(
     validationCodec(z.tuple([])),
     validationCodec(z.array(projectSchema))

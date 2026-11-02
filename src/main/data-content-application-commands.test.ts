@@ -175,6 +175,9 @@ const createDependencies = () => {
     updatedAt: 1
   }
   const projects = {
+    optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
+    cancelPromptOptimization: vi.fn(async () => undefined),
+    recordOptimizationEvent: vi.fn(async () => undefined),
     create: vi.fn(async () => project),
     delete: vi.fn(async () => ({ status: 'cleanup-pending' as const })),
     get: vi.fn(async () => project),
@@ -478,6 +481,9 @@ describe('Data and content application commands', () => {
         'project-files:repair-index',
         'project-files:resolve-file',
         'project-files:search-artifacts',
+        'projects:optimize-prompt',
+        'projects:cancel-prompt-optimization',
+        'projects:record-optimization-event',
         'projects:create',
         'projects:update-archive',
         'projects:delete',
@@ -874,6 +880,27 @@ describe('Data and content application commands', () => {
         key: 'projectFilesSearchArtifacts',
         args: [request('project-files-search')],
         owner: deps.projectFiles.searchArtifacts
+      },
+      {
+        key: 'projectOptimizePrompt',
+        args: [
+          {
+            projectId: 'project-1',
+            input: 'Research this',
+            agentConfiguration: { providerId: 'test', model: 'test', reasoningEffort: 'default' }
+          }
+        ],
+        owner: deps.projects.optimizePrompt
+      },
+      {
+        key: 'projectCancelPromptOptimization',
+        args: [{ projectId: 'project-1', requestId: '50bf17e1-f178-4253-90a0-fd5845b49d26' }],
+        owner: deps.projects.cancelPromptOptimization
+      },
+      {
+        key: 'projectRecordOptimizationEvent',
+        args: [{ action: 'undo' }],
+        owner: deps.projects.recordOptimizationEvent
       },
       { key: 'projectGet', args: ['project-1'], owner: deps.projects.get },
       { key: 'projectList', args: [], owner: deps.projects.list },

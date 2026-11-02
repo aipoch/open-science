@@ -1,3 +1,4 @@
+import { projectOptimizationPromptMigration } from './migrations/0055-project-optimization-prompt'
 import { pascalcaseTableNamesMigration } from './migrations/0049-pascalcase-table-names'
 import { pdfAnnotationSharingMigration } from './migrations/0048-pdf-annotation-sharing'
 import { journalAttributesMigration } from './migrations/0046-journal-attributes'
@@ -994,6 +995,16 @@ const MIGRATION_MANIFEST = [
       slurmJobReliabilityMigration.operations
     ),
     foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
+  },
+  {
+    ...projectOptimizationPromptMigration,
+    checksum: checksumMigrationPayload(
+      projectOptimizationPromptMigration.id,
+      projectOptimizationPromptMigration.statements,
+      projectOptimizationPromptMigration.verifiers
+    ),
     backupOnApply: 'required',
     backupRetention: 'retain'
   }

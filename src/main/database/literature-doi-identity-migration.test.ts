@@ -16,7 +16,7 @@ import { LiteratureCatalog } from '../literature/catalog'
 import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const DOI_MIGRATION_ID = '0053_literature_doi_identity'
-const CURRENT_MIGRATION_ID = '0054_slurm_job_reliability'
+const CURRENT_MIGRATION_ID = '0055_project_optimization_prompt'
 
 describe('DOI identity migration', () => {
   let root: string | undefined
@@ -210,7 +210,7 @@ describe('DOI identity migration', () => {
     expect(await migrateApplicationDatabase(client)).toMatchObject({
       from: '0052_literature_personal_note_search',
       to: CURRENT_MIGRATION_ID,
-      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+      applied: [DOI_MIGRATION_ID, '0054_slurm_job_reliability', CURRENT_MIGRATION_ID]
     })
     const after = await snapshot()
     expect(after).toEqual({
@@ -365,7 +365,7 @@ describe('DOI identity migration', () => {
     ).toEqual([])
     await client.$executeRawUnsafe('DROP TRIGGER refuse_doi_backfill')
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+      applied: [DOI_MIGRATION_ID, '0054_slurm_job_reliability', CURRENT_MIGRATION_ID]
     })
     expect(
       (await snapshot()).identifiers
@@ -449,7 +449,7 @@ describe('DOI identity migration', () => {
     expect(await readFile(archivePath)).toEqual(originalBytes)
     client = createProjectDbClient(root!)
     expect(await migrateApplicationDatabase(client, options)).toMatchObject({
-      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+      applied: [DOI_MIGRATION_ID, '0054_slurm_job_reliability', CURRENT_MIGRATION_ID]
     })
     expect(ready).toMatchObject([
       { path: backupPath, reused: false },
@@ -503,7 +503,7 @@ describe('DOI identity migration', () => {
     await client.$executeRawUnsafe(`CREATE TEMP TRIGGER refuse_unchanged_doi BEFORE UPDATE ON "LiteratureIdentifier"
       BEGIN SELECT RAISE(ABORT, 'unchanged DOI was rewritten'); END`)
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+      applied: [DOI_MIGRATION_ID, '0054_slurm_job_reliability', CURRENT_MIGRATION_ID]
     })
   })
 })

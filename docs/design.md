@@ -367,8 +367,14 @@ inside `SplitButton`. Labels arrive translated from the caller.
 - Default `kind="menu"` accepts existing `DropdownMenuItem` and radio items. Use
   `kind="popover"` for search, session pickers and custom panels; retain their focus and keyboard
   behavior. Options, selection, hover/pinning and effects belong to the caller.
+- Use `kind="actions"` with `SplitButtonSecondary` for a second direct action without menu
+  semantics. `split-button-compact` on the group reveals an icon action from 32 to 60 px over
+  220 ms, separated by a 1 × 16 px line. `hideMenu` collapses this segment and removes it from
+  keyboard and screen-reader navigation. Reduced motion skips the transition; coarse pointers
+  receive 44 px targets. Keep both segments mounted for the transition.
 - Use `open` / `onOpenChange` for controlled state, or `defaultOpen` for uncontrolled state.
   Root `disabled` or `busy` disables both buttons; each segment also accepts `disabled`.
+  A primary cancellation action may opt into `allowWhileBusy`; root `disabled` still takes precedence.
   `hideMenu` removes the arrow and panel when only the primary action is needed.
 - Both segments accept Button props, including `variant`, `size`, `className`, `ref` and
   `asChild`. Preserve existing colors and icons; custom filled segments use `border-0` to avoid

@@ -53,6 +53,7 @@ type WorkspaceConversationRuntime = Pick<
 
 type DraftSubmitIntent = {
   forcedSkillIds: string[]
+  onAccepted?: () => void
   mode?: 'continue' | 'branch' | 'plan-first' | 'retry-reconfigure'
 }
 
@@ -160,7 +161,7 @@ type WorkspaceConversationController = {
       annotations: Annotation[]
     ) => Promise<EditedMessageSendResult>
     branch: (messageId: string) => void
-    sideChat: { start: () => void }
+    sideChat: { start: (onAccepted?: () => void) => void }
     reportSessionSizeLimit: (sessionId: string) => void
     resume: () => Promise<void>
     cancel: () => Promise<void>
@@ -432,7 +433,11 @@ const useWorkspaceConversationController = (
     subscribeSessionChanges: options.subscribeSessionChanges
   })
   const [actions] = useState<WorkspaceConversationController['actions']>(() => {
-    const submitDraft = ({ forcedSkillIds, mode = 'continue' }: DraftSubmitIntent): void => {
+    const submitDraft = ({
+      forcedSkillIds,
+      mode = 'continue',
+      onAccepted
+    }: DraftSubmitIntent): void => {
       const current = optionsRef.current
       const { activeSession, composer, session, runtime } = current
       if (!current.agentConfiguration) return
@@ -488,6 +493,7 @@ const useWorkspaceConversationController = (
             specialistId: activeSession.specialistId
           })
         ) {
+          onAccepted?.()
           composer.lifecycle.consumePdfProseReading(snapshot)
           composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
         }
@@ -540,6 +546,13 @@ const useWorkspaceConversationController = (
         session.lifecycle.captureSendIntent(branchInNewSession)
 
       const dispatch = (sessionId: string | undefined): void => {
+        // Only Main admission consumes optimizer undo; optimistic append and preparation can fail.
+        let accepted = false
+        const acceptDraft = (): void => {
+          if (accepted) return
+          accepted = true
+          onAccepted?.()
+        }
         let preparationRejected = false
         let proseReadingConsumed = false
         const consumePdfProseReading = (): void => {
@@ -615,6 +628,7 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
+            onPromptAccepted: acceptDraft,
             onMessageAppended: (message) => {
               consumePdfProseReading()
               clearOptimisticMessage()
@@ -807,7 +821,7 @@ const useWorkspaceConversationController = (
           .catch((error: unknown) => current.composer.actions.setError(errorMessage(error)))
       },
       sideChat: {
-        start: (): void => {
+        start: (onAccepted): void => {
           const current = optionsRef.current
           if (!canStartSideChat(current) || !current.sideChat) return
           const snapshot = current.composer.lifecycle.captureSend()
@@ -817,6 +831,7 @@ const useWorkspaceConversationController = (
             .start(sideChatAnnotationText(docToText(snapshot.doc), snapshot.annotations))
             .then((admitted) => {
               if (admitted) {
+                onAccepted?.()
                 current.composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
               }
             })

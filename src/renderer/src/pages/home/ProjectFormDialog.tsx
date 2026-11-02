@@ -1,3 +1,4 @@
+import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
 import type { Project } from '../../../../shared/projects'
 import { LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -36,6 +37,7 @@ type ProjectFormDialogProps = {
   nameDraft: string
   descriptionDraft: string
   agentContextDraft: string
+  optimizationPromptDraft: string
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -45,6 +47,7 @@ type ProjectFormDialogProps = {
   onNameChange: (value: string) => void
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
+  onOptimizationPromptChange: (value: string) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -62,6 +65,7 @@ const ProjectFormDialog = ({
   nameDraft,
   descriptionDraft,
   agentContextDraft,
+  optimizationPromptDraft,
   isSubmitting,
   error,
   errorDetail,
@@ -71,6 +75,7 @@ const ProjectFormDialog = ({
   onNameChange,
   onDescriptionChange,
   onAgentContextChange,
+  onOptimizationPromptChange,
   discardConfirmationOpen,
   onKeepEditing,
   onDiscardChanges,
@@ -199,6 +204,46 @@ const ProjectFormDialog = ({
                   className={dialogFormTextareaClassName}
                 />
               </div>
+              <div>
+                <label className={dialogFormLabelClassName} htmlFor="project-optimization-prompt">
+                  {t('Optimization prompt')}
+                </label>
+                <p id="project-optimization-help" className={dialogFormHelpClassName}>
+                  {t(
+                    'Used only when optimizing a question in this project. Leave empty to use the built-in scientific template.'
+                  )}
+                </p>
+                <textarea
+                  id="project-optimization-prompt"
+                  aria-describedby="project-optimization-help"
+                  value={optimizationPromptDraft}
+                  onChange={(event) => onOptimizationPromptChange(event.target.value)}
+                  disabled={isSubmitting}
+                  rows={5}
+                  maxLength={16000}
+                  className={dialogFormTextareaClassName}
+                />
+                <div className="mt-2 flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isSubmitting}
+                    onClick={() => onOptimizationPromptChange(DEFAULT_OPTIMIZATION_PROMPT)}
+                  >
+                    {t('Use built-in template')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={isSubmitting || !optimizationPromptDraft}
+                    onClick={() => onOptimizationPromptChange('')}
+                  >
+                    {t('Restore default')}
+                  </Button>
+                </div>
+              </div>
             </div>
             {error ? (
               <p className="px-5 pb-4 text-sm text-danger-000" role="alert">
@@ -215,6 +260,8 @@ const ProjectFormDialog = ({
                   <dd>{conflictProject.description}</dd>
                   <dt>{t('Agent Context')}</dt>
                   <dd>{conflictProject.agentContext}</dd>
+                  <dt>{t('Optimization prompt')}</dt>
+                  <dd>{conflictProject.optimizationPrompt}</dd>
                 </dl>
                 <p className="text-sm text-muted-foreground">
                   {t(

@@ -19,7 +19,8 @@
   border-radius: var(--radius-lg) 0 0 var(--radius-lg);
   min-width: 0;
 }
-.split-button-group [data-split-trigger] {
+.split-button-group [data-split-trigger],
+.split-button-group [data-split-secondary] {
   border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
   position: relative;
 }
@@ -32,7 +33,8 @@
 .split-button-group[data-single='true'] [data-split-primary] {
   border-radius: inherit;
 }
-.split-button-group [data-split-trigger]::after {
+.split-button-group [data-split-trigger]::after,
+.split-button-group [data-split-secondary]::after {
   content: '';
   position: absolute;
   left: 0;
@@ -41,6 +43,10 @@
   width: 1px;
   background: currentColor;
   opacity: 0.2;
+  pointer-events: none;
+}
+.split-button-group[data-single='true'] [data-split-secondary] {
+  visibility: hidden;
   pointer-events: none;
 }
 .split-button-group [data-split-trigger] > svg {
@@ -120,6 +126,82 @@
     animation-duration: 0ms;
   }
   .split-button-group [data-split-trigger] > svg {
+    transition: none;
+  }
+}
+
+/* Compact icon actions reveal their secondary segment without moving the primary. */
+.split-button-group.split-button-compact {
+  width: 60px;
+  height: 32px;
+  border-radius: 7px;
+  background: var(--bg-200);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition:
+    width 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 220ms,
+    box-shadow 220ms;
+}
+.split-button-compact[data-single='true'] {
+  width: 32px;
+  background: transparent;
+  box-shadow: none;
+}
+:root:not(.dark) .split-button-compact[data-single='false'] {
+  background: var(--bg-10);
+}
+.split-button-compact [data-split-primary] {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: 7px 0 0 7px;
+}
+.split-button-compact [data-split-secondary] {
+  position: absolute;
+  right: 0;
+  width: 28px;
+  height: 32px;
+  padding: 0;
+  border-radius: 0 7px 7px 0;
+  opacity: 1;
+  transition:
+    opacity 160ms 60ms,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 220ms;
+}
+.split-button-compact [data-split-secondary]::after {
+  top: 8px;
+  bottom: auto;
+  height: 16px;
+}
+.split-button-compact[data-single='true'] [data-split-secondary] {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition-delay: 0ms;
+}
+@media (pointer: coarse) {
+  .split-button-group.split-button-compact {
+    min-width: 88px;
+    height: 44px;
+  }
+  .split-button-compact[data-single='true'] {
+    min-width: 44px;
+  }
+  .split-button-compact [data-split-primary],
+  .split-button-compact [data-split-secondary] {
+    width: 44px;
+    height: 44px;
+  }
+  .split-button-compact [data-split-secondary]::after {
+    top: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .split-button-group.split-button-compact,
+  .split-button-compact [data-split-secondary] {
     transition: none;
   }
 }

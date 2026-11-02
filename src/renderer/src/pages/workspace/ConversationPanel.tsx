@@ -1,3 +1,6 @@
+import { usePromptOptimization } from './composer/use-prompt-optimization'
+import { ErrorNotice } from '@/components/error-notice'
+
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
@@ -10,6 +13,7 @@ import {
   SplitButton,
   SplitButtonGroup,
   SplitButtonPrimary,
+  SplitButtonSecondary,
   SplitButtonTrigger,
   SplitButtonContent
 } from '@/components/ui/split-button'
@@ -91,6 +95,8 @@ import {
   ScanEye,
   Square,
   Stethoscope,
+  Undo2,
+  WandSparkles,
   X
 } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -586,8 +592,11 @@ const ConversationPanel = ({
   )
   const onValidatedDraftDocChange = (
     nextDoc: Parameters<typeof onDraftDocChange>[0],
-    caret?: Parameters<typeof onDraftDocChange>[1]
+    caret?: Parameters<typeof onDraftDocChange>[1],
+    userEdit = true
   ): void => {
+    if (userEdit && JSON.stringify(nextDoc) !== JSON.stringify(draftDoc))
+      promptOptimization.edited()
     if (caret) onDraftDocChange(nextDoc, caret)
     else onDraftDocChange(nextDoc)
     const validation = validateAnnotations(annotations, docToText(nextDoc))
@@ -694,15 +703,18 @@ const ConversationPanel = ({
   const onSpecialistChange = specialist.actions.selectSpecialist
   const onReconfigureChooseOther = specialist.actions.chooseOtherSpecialist
   const onReconfigureUseNone = specialist.actions.useMainAgent
-  const onSendMessage = (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds })
+  const submitOptimizedDraft: typeof submitDraft = (options) => {
+    submitDraft({ ...options, onAccepted: promptOptimization.sent })
+  }
+  const onSendMessage = (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds })
   const onPlanFirst = (forcedSkillIds: string[]): void =>
-    submitDraft({ forcedSkillIds, mode: 'plan-first' })
+    submitOptimizedDraft({ forcedSkillIds, mode: 'plan-first' })
   const onBranchInNewSession = activeSession
-    ? (forcedSkillIds: string[]): void => submitDraft({ forcedSkillIds, mode: 'branch' })
+    ? (forcedSkillIds: string[]): void => submitOptimizedDraft({ forcedSkillIds, mode: 'branch' })
     : undefined
   const onReconfigureRetry = (): void => {
     if (specialist.actions.retrySpecialistSelection()) return
-    submitDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
+    submitOptimizedDraft({ forcedSkillIds: docToSkillIds(draftDoc), mode: 'retry-reconfigure' })
   }
 
   const specialistItems = useSpecialistStore((state) => state.items)
@@ -1338,6 +1350,18 @@ const ConversationPanel = ({
     specialistNoticeTarget
   )
 
+  const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
+  const promptOptimization = usePromptOptimization({
+    projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
+    // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
+    sessionKey: 'composer',
+    modelConfiguration: modelUnavailable ? undefined : modelConfiguration,
+    attachmentIds: attachments.map(({ id }) => id),
+    transferIds: attachmentTransfers.map(({ transferId }) => transferId),
+    doc: draftDoc,
+    onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
+  })
+
   const handleSubmit = (): void => {
     if (canExplainUnavailableSpecialist && activeSession) {
       setSpecialistNoticeVisible(!specialistNoticeTarget)
@@ -1449,8 +1473,9 @@ const ConversationPanel = ({
       : t('Opens an empty Side chat; keeps your draft.'))
   const handleSideChat = (): void => {
     if (!canOpenSideChat) return
-    if (sendsSideChatDraft) onStartSideChat()
-    else sideChatController.createDraft?.()
+    if (sendsSideChatDraft) {
+      onStartSideChat(promptOptimization.sent)
+    } else sideChatController.createDraft?.()
   }
   const sideChatMenuItems = (
     <>
@@ -1504,6 +1529,7 @@ const ConversationPanel = ({
   }
 
   const handleRemoveAttachment = (attachment: (typeof attachments)[number]): void => {
+    promptOptimization.edited()
     onRemoveAttachment(attachment)
     if (pastedTextByAttachmentId.has(attachment.id)) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -1511,6 +1537,7 @@ const ConversationPanel = ({
   }
 
   const handleCancelAttachmentTransfer = (transfer: (typeof attachmentTransfers)[number]): void => {
+    if (transfer.pastedTextId) promptOptimization.edited()
     onCancelAttachmentTransfer(transfer)
     if (transfer.pastedTextId) {
       setComposerRestoreFocusRequest((request) => (request ?? 0) + 1)
@@ -2539,7 +2566,10 @@ const ConversationPanel = ({
                                         type="button"
                                         className={pastedTextRestoreButtonClassName}
                                         disabled={!canEditDraft}
-                                        onClick={() => onRestorePastedText(pastedText.id)}
+                                        onClick={() => {
+                                          promptOptimization.edited()
+                                          onRestorePastedText(pastedText.id)
+                                        }}
                                       >
                                         <span className="w-full truncate whitespace-nowrap text-[12px] leading-4">
                                           {pastedTextPreviewName(pastedText.text)}
@@ -2707,10 +2737,21 @@ const ConversationPanel = ({
                               onDocChange={onValidatedDraftDocChange}
                               onSubmit={handleSubmit}
                               onPaste={handleMessageDraftPaste}
-                              onLongTextPaste={onStagePastedText}
+                              onLongTextPaste={(...args) => {
+                                promptOptimization.edited()
+                                onStagePastedText(...args)
+                              }}
                               onLocatePastedText={handleLocatePastedText}
-                              onUndo={onUndo}
-                              onRedo={onRedo}
+                              onUndo={(...args) => {
+                                const changed = onUndo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
+                              onRedo={(...args) => {
+                                const changed = onRedo(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               disabled={!canEditLocalDraft}
                               placeholder={t(
                                 'Ask anything — / skills · @ files · # sessions · {{shortcut}} search · ↑↓ history',
@@ -2723,7 +2764,11 @@ const ConversationPanel = ({
                               onSelectWslSetup={() => void handleWslSetupCommand()}
                               isHistoryBrowsing={isHistoryBrowsing}
                               historyStatus={historyStatus}
-                              onNavigateHistory={onNavigateHistory}
+                              onNavigateHistory={(...args) => {
+                                const changed = onNavigateHistory(...args)
+                                if (changed) promptOptimization.edited()
+                                return changed
+                              }}
                               mentionPreviewContext={
                                 activeSession
                                   ? {
@@ -2738,7 +2783,24 @@ const ConversationPanel = ({
                             />
                           </div>
 
-                          <div className="@container/composer flex items-center gap-1">
+                          {promptOptimization.notice || promptOptimization.tooLong ? (
+                            <ErrorNotice
+                              inline
+                              level={promptOptimization.notice === 'failed' ? 'warning' : 'info'}
+                              description={
+                                promptOptimization.tooLong
+                                  ? t(
+                                      'Shorten your question to optimize it (maximum 16,000 characters).'
+                                    )
+                                  : promptOptimization.notice === 'failed'
+                                    ? t(
+                                        'Could not optimize your question. Your draft was kept. Please try again.'
+                                      )
+                                    : t('Your input changed while optimizing. Please try again.')
+                              }
+                            />
+                          ) : null}
+                          <div className="flex flex-wrap items-center gap-1">
                             {/* The + button opens a dropdown for attachments and session actions. */}
                             <DropdownMenu>
                               <>
@@ -3015,6 +3077,100 @@ const ConversationPanel = ({
                               openRequest={agentControlsOpenRequest}
                               computeOpenRequest={computeControlsOpenRequest}
                             />
+
+                            <SplitButton
+                              kind="actions"
+                              busy={promptOptimization.pending}
+                              hideMenu={!promptOptimization.canUndo}
+                            >
+                              <SplitButtonGroup
+                                className="split-button-compact"
+                                aria-label={t('Optimize question')}
+                              >
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SplitButtonPrimary
+                                      variant="ghost"
+                                      allowWhileBusy
+                                      className={cn(composerIconButtonClassName, 'group/optimize')}
+                                      aria-label={
+                                        promptOptimization.pending
+                                          ? t('Cancel optimization')
+                                          : promptOptimization.canUndo
+                                            ? t('Optimize again')
+                                            : t('Optimize question')
+                                      }
+                                      disabled={
+                                        !promptOptimization.pending &&
+                                        (!canEditLocalDraft || !promptOptimization.canOptimize)
+                                      }
+                                      onClick={() => {
+                                        if (promptOptimization.pending) promptOptimization.cancel()
+                                        else void promptOptimization.optimize()
+                                      }}
+                                    >
+                                      {promptOptimization.pending ? (
+                                        <>
+                                          <Loader2
+                                            className="size-4 animate-spin motion-reduce:animate-none group-hover/optimize:hidden group-focus-visible/optimize:hidden"
+                                            strokeWidth={2}
+                                            aria-hidden="true"
+                                          />
+                                          <Square
+                                            className="hidden size-3 fill-current group-hover/optimize:block group-focus-visible/optimize:block"
+                                            aria-hidden="true"
+                                          />
+                                        </>
+                                      ) : (
+                                        <WandSparkles
+                                          className="size-4"
+                                          strokeWidth={2}
+                                          aria-hidden="true"
+                                        />
+                                      )}
+                                    </SplitButtonPrimary>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-[11px]">
+                                    {promptOptimization.pending
+                                      ? t('Cancel optimization')
+                                      : promptOptimization.canUndo
+                                        ? t('Optimize again')
+                                        : t('Optimize question')}
+                                  </TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <SplitButtonSecondary
+                                      variant="ghost"
+                                      className={composerIconButtonClassName}
+                                      aria-label={t('Undo optimization')}
+                                      disabled={!canEditLocalDraft}
+                                      onClick={(event) => {
+                                        const group =
+                                          event.currentTarget.closest('[data-split-group]')
+                                        promptOptimization.undo()
+                                        requestAnimationFrame(() => {
+                                          group
+                                            ?.querySelector<HTMLButtonElement>(
+                                              '[data-split-primary]'
+                                            )
+                                            ?.focus()
+                                        })
+                                      }}
+                                    >
+                                      <Undo2
+                                        className="size-4"
+                                        strokeWidth={2}
+                                        aria-hidden="true"
+                                      />
+                                    </SplitButtonSecondary>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="text-[11px]">
+                                    {t('Undo optimization')}
+                                  </TooltipContent>
+                                </Tooltip>
+                              </SplitButtonGroup>
+                            </SplitButton>
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}

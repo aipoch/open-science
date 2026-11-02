@@ -15,7 +15,7 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
   const client = createProjectDbClient(root)
   try {
     await createDatabaseAtReleasedManifest(client)
-    await client.project.create({ data: { id: 'p1', name: 'Research' } })
+    await client.$executeRaw`INSERT INTO "Project" (id, name, updatedAt) VALUES ('p1', 'Research', CURRENT_TIMESTAMP)`
     await client.$executeRaw`INSERT INTO bookmarks (id, projectId, sessionId, kind, sourceKind, sourceId, sourceJson, selectorJson, quote, note, updatedAt)
       VALUES ('saved-location', 'p1', 's1', 'text', 'agent-message', 'message-1', '{}', '{}', 'Original', 'Keep this', 1234567890000)`
     const before = await client.$queryRaw`SELECT * FROM bookmarks`
@@ -48,7 +48,8 @@ it('upgrades an existing database without copying or changing Bookmarks', async 
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
-        '0054_slurm_job_reliability'
+        '0054_slurm_job_reliability',
+        '0055_project_optimization_prompt'
       ]
     })
     expect(await client.$queryRaw`SELECT * FROM "Bookmark"`).toEqual(before)
@@ -156,12 +157,8 @@ it.each(['upload-version', 'artifact-version'] as const)(
       await client.$executeRawUnsafe(
         "DELETE FROM _open_science_migrations WHERE id = '0048_pdf_annotation_sharing'"
       )
-      await client.project.createMany({
-        data: [
-          { id: 'legacy-p', name: 'Legacy' },
-          { id: 'independent-p', name: 'Independent' }
-        ]
-      })
+      await client.$executeRaw`INSERT INTO "Project" (id, name, updatedAt)
+        VALUES ('legacy-p', 'Legacy', CURRENT_TIMESTAMP), ('independent-p', 'Independent', CURRENT_TIMESTAMP)`
       for (const project of ['legacy-p', 'independent-p'])
         await client.$executeRaw`
       INSERT INTO pdf_annotations (id, projectId, sourceKind, sourceFileId, versionId, checksum, name, path, kind, selectorJson, note, updatedAt)
@@ -182,7 +179,8 @@ it.each(['upload-version', 'artifact-version'] as const)(
           '0051_literature_reading_status',
           '0052_literature_personal_note_search',
           '0053_literature_doi_identity',
-          '0054_slurm_job_reliability'
+          '0054_slurm_job_reliability',
+          '0055_project_optimization_prompt'
         ]
       })
       const rows = await client.pdfAnnotation.findMany({ orderBy: { id: 'asc' } })

@@ -256,7 +256,7 @@ describe('project repository', () => {
     await repository.create({ name: '  Trimmed  ' })
 
     expect(project.create).toHaveBeenCalledWith({
-      data: { name: 'Trimmed', description: '', agentContext: '' }
+      data: { name: 'Trimmed', description: '', agentContext: '', optimizationPrompt: '' }
     })
   })
 
@@ -504,7 +504,12 @@ describe('project repository', () => {
     await repository.create({ name: 'Research', agentContext: '  Always cite DOIs.  ' })
 
     expect(project.create).toHaveBeenCalledWith({
-      data: { name: 'Research', description: '', agentContext: 'Always cite DOIs.' }
+      data: {
+        name: 'Research',
+        description: '',
+        agentContext: 'Always cite DOIs.',
+        optimizationPrompt: ''
+      }
     })
   })
 

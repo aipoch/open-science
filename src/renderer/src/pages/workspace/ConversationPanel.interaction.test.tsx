@@ -9733,6 +9733,73 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
   }
 )
 
+describe('prompt optimization admission', () => {
+  it('keeps undo after a rejected send and clears it only after acceptance', async () => {
+    const recordOptimizationEvent = vi.fn(async () => {})
+    window.api.projects = {
+      optimizePrompt: vi.fn(async () => ({ text: 'Improved' })),
+      recordOptimizationEvent
+    } as unknown as typeof window.api.projects
+    let doc = docFromText('Original')
+    let sessionId = 'pending-session'
+    const submit = vi.fn<PanelProps['conversation']['actions']['submit']['draft']>()
+    const render = (): void =>
+      renderPanel({
+        view: {
+          activeSession: {
+            id: sessionId,
+            projectId: 'project',
+            title: 'Session',
+            cwd: '/workspace',
+            status: 'idle',
+            messages: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        },
+        composer: {
+          view: { doc },
+          actions: {
+            changeDoc: (next) => {
+              doc = next
+              render()
+            }
+          }
+        },
+        agentControls: {
+          modelConfiguration: {
+            providerId: 'session',
+            model: 'session-model',
+            reasoningEffort: 'high'
+          }
+        },
+        conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } }
+      })
+    const button = (label: string): HTMLButtonElement | undefined =>
+      container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]:not([aria-hidden="true"])`
+      ) ??
+      Array.from(container.querySelectorAll('button')).find((node) => node.textContent === label)
+    render()
+    await act(async () => button('Optimize question')!.click())
+    expect(doc).toEqual(docFromText('Improved'))
+    act(() => button('Send message')!.click())
+    expect(submit).toHaveBeenCalledOnce()
+    // WorkspacePage preserves this panel instance when its pending Session binds.
+    sessionId = 'bound-session'
+    render()
+    expect(button('Undo optimization')).toBeDefined()
+    expect(recordOptimizationEvent).not.toHaveBeenCalledWith({ action: 'send' })
+    act(() => button('Undo optimization')!.click())
+    expect(doc).toEqual(docFromText('Original'))
+    await act(async () => button('Optimize question')!.click())
+    act(() => button('Send message')!.click())
+    act(() => submit.mock.calls.at(-1)![0].onAccepted?.())
+    expect(button('Undo optimization')).toBeUndefined()
+    expect(recordOptimizationEvent).toHaveBeenCalledWith({ action: 'send' })
+  })
+})
+
 const selectAdditionalNotice = (index = 0): void => {
   const slot = container.querySelector('[data-testid="composer-notice-slot"]')
   act(() => slot?.querySelector<HTMLButtonElement>('[aria-expanded="false"]')?.click())
