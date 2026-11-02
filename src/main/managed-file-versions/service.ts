@@ -801,7 +801,13 @@ class ManagedFileVersionService {
       }
     }
 
-    if (contentChecksum === basedOn.checksum && bytes.byteLength === Number(basedOn.sizeBytes)) {
+    // Unchanged current content is a no-op; saving a historical version is an explicit restore.
+    // Keep the head comparison above so restoration cannot overwrite a concurrent publication.
+    if (
+      (!request.restore || request.basedOnVersionId === headVersionId) &&
+      contentChecksum === basedOn.checksum &&
+      bytes.byteLength === Number(basedOn.sizeBytes)
+    ) {
       return this.noOpResult(client, logicalFile, request, basedOn)
     }
 
@@ -1060,6 +1066,9 @@ class ManagedFileVersionService {
     assertSafeStorageSegment(request.basedOnVersionId, 'base version id')
     assertSafeStorageSegment(request.expectedHeadVersionId, 'expected head version id')
     assertSafeStorageSegment(request.operationId, 'operation id')
+    if (request.restore !== undefined && typeof request.restore !== 'boolean') {
+      operationError('INVALID_REQUEST', 'Restore must be a boolean.')
+    }
     if (typeof request.content !== 'string') {
       operationError('INVALID_REQUEST', 'Text edit content must be a string.')
     }
