@@ -2610,7 +2610,7 @@ describe('PreviewFileSurface managed text versions', () => {
       await click(container.querySelector('[aria-label="Edit README.md"]'))
       const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
       if (dirty) await changeTextarea(editor, '# Keep draft\n')
-      const next = container.querySelector('[aria-label="Next file version"]')
+      const next = container.querySelector<HTMLButtonElement>('[aria-label="Next file version"]')
       await click(next)
       if (dirty) {
         expect(discardConfirmation()).not.toBeNull()

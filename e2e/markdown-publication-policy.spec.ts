@@ -12,7 +12,7 @@ const original = '# Publication report\n\nOriginal result.\n'
 const edited = '# Publication report\n\nManually corrected result.\n'
 test.use({ windowMode: 'normal' })
 
-test('new Markdown publications replace the head while edits, restoration and drafts survive', async ({
+test('new Markdown publications replace the head while edits, restoration and drafts survive @pr-mainline-files', async ({
   app
 }, testInfo) => {
   await app.completeOnboarding()
