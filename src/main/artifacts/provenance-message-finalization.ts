@@ -475,7 +475,12 @@ export class ArtifactProvenanceMessageFinalizer {
         where: { id: { in: matching.map((version) => version.id) }, managedVisibleAt: null },
         data: { managedVisibleAt: publishedAt }
       })
-      await this.activateLineageHeads(transaction, matching)
+      // Visibility and head promotion commit atomically. Replaying an already visible row must
+      // not migrate historical heads suppressed by earlier app versions.
+      await this.activateLineageHeads(
+        transaction,
+        matching.filter((version) => !version.managedVisibleAt)
+      )
       return matching.map((version) => ({
         ...version,
         managedVisibleAt: version.managedVisibleAt ?? publishedAt
@@ -562,6 +567,8 @@ export class ArtifactProvenanceMessageFinalizer {
         !lineage.currentVersion ||
         lineage.currentVersion.versionNumber < latestMatching.versionNumber
       ) {
+        // Each valid new publication becomes current, even when its bytes match history.
+        // The version-number guard above keeps old completion retries from moving the head back.
         await transaction.artifactLineage.update({
           where: { id: artifactId },
           data: { currentVersionId: latestMatching.id }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { ProvenanceIntegrityError } from '../../shared/provenance-read-result'
 
 import type {
   ArtifactCodeReconstruction,
@@ -252,6 +253,13 @@ const sealedReplayRuns = (
 const sourceState = (
   provenance: ArtifactVersionReconstructionProvenance
 ): ReconstructionSource | ArtifactCodeReconstructionState => {
+  if (
+    provenance.evidence.producer &&
+    'kind' in provenance.evidence.producer &&
+    provenance.evidence.producer.kind === 'connector'
+  ) {
+    return { state: 'unavailable', reason: 'script-not-applicable' }
+  }
   if (!provenance.execution || !provenance.evidence.execution_snapshot_checksum) {
     return { state: 'unavailable', reason: 'execution-unavailable' }
   }
@@ -310,6 +318,11 @@ const sourceState = (
     ) {
       return { state: 'unavailable', reason: 'supporting-code-incomplete' }
     }
+  }
+  // Derived cache reads/writes require verified artifact bytes. This is independent of the
+  // execution checks above and must not be presented as invalid execution evidence.
+  if (provenance.contentStatus.state === 'unavailable') {
+    return { state: 'unavailable', reason: 'artifact-content-unavailable' }
   }
   return {
     provenance,
@@ -801,10 +814,24 @@ export class ArtifactCodeReconstructionService {
   private async loadSource(
     request: GetArtifactCodeReconstructionRequest
   ): Promise<ReconstructionSource | ArtifactCodeReconstructionState> {
-    return sourceState(
-      await (this.options.loadProvenance?.(request) ??
+    try {
+      const provenance = await (this.options.loadProvenance?.(request) ??
         readArtifactReconstructionEvidence(this.options.provenance, request))
-    )
+      // Identity, never identical file bytes, determines which execution can authorize a script.
+      if (
+        provenance.evidence.version_id !== request.versionId ||
+        provenance.evidence.artifact_id !== request.artifactId ||
+        provenance.evidence.project_id !== request.projectId ||
+        provenance.evidence.app_session_id !== request.appSessionId
+      ) {
+        return { state: 'unavailable', reason: 'record-invalid' }
+      }
+      return sourceState(provenance)
+    } catch (error) {
+      if (error instanceof ProvenanceIntegrityError)
+        return { state: 'unavailable', reason: 'record-invalid' }
+      throw error
+    }
   }
 }
 

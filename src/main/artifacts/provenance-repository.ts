@@ -1339,12 +1339,25 @@ class ArtifactProvenanceRepository {
     if (version.contentBlobId) {
       const verification = await this.contentRepository.verify(version.contentBlobId)
       if (verification.state === 'available') return { state: 'available' }
+      // Quarantine blocks subsequent opens; preserve the observed content failure instead of
+      // relabeling an already diagnosed checksum failure as a missing file.
+      const reason =
+        verification.reason === 'not-available'
+          ? (
+              await (
+                await this.options.getClient()
+              ).contentBlob.findUnique({
+                where: { id: version.contentBlobId },
+                select: { lastVerificationFailure: true }
+              })
+            )?.lastVerificationFailure
+          : verification.reason
       return {
         state: 'unavailable',
         reason:
-          verification.reason === 'checksum-mismatch' ||
-          verification.reason === 'size-mismatch' ||
-          verification.reason === 'changed-during-verification'
+          reason === 'checksum-mismatch' ||
+          reason === 'size-mismatch' ||
+          reason === 'changed-during-verification'
             ? 'checksum-mismatch'
             : 'missing'
       }
