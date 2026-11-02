@@ -6092,7 +6092,6 @@
     "Cancel download": "Cancelar descarga",
     "Remove local model files?": "¿Eliminar los archivos del modelo local?",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "Se conservan los documentos originales y los resultados existentes. Los nuevos análisis pueden requerir reinstalar el modelo.",
-    "Removing models keeps your documents and existing parsing results.": "Al eliminar modelos se conservan los documentos y los resultados de análisis existentes.",
     "Model in use. Removal is available when parsing finishes.": "El modelo está en uso. Se podrá eliminar cuando termine el análisis.",
     "Candidate table": "Tabla candidata",
     "Clear all PDF parsing results": "Borrar todos los resultados del análisis de PDF",

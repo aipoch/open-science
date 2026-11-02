@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Check, ScanText } from 'lucide-react'
+import { Check, ScanText, Trash2 } from 'lucide-react'
 import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
@@ -46,21 +46,25 @@ export function LocalOcrControl({
   const [snapshot, setSnapshot] = useState<LocalModelSnapshot>()
   const [failed, setFailed] = useState(false)
   const [pending, setPending] = useState(false)
+  const mutationRevision = useRef(0)
+  const mutationPending = useRef(false)
   const [installedHere, setInstalledHere] = useState(false)
   useEffect(() => {
     let live = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async (): Promise<void> => {
       let installing = false
+      const revision = mutationRevision.current
       try {
         const next = await window.api.localModels.getSnapshot('ocr')
         installing = next.availability === 'installing'
-        if (live) {
+        if (live && !mutationPending.current && revision === mutationRevision.current) {
           setSnapshot(next)
           setFailed(false)
         }
       } catch {
-        if (live) setFailed(true)
+        if (live && !mutationPending.current && revision === mutationRevision.current)
+          setFailed(true)
       }
       if (live) timer = setTimeout(() => void poll(), installing ? 750 : 2500)
     }
@@ -71,6 +75,9 @@ export function LocalOcrControl({
     }
   }, [])
   const run = async (action: 'install' | 'cancel' | 'remove'): Promise<void> => {
+    if (mutationPending.current) return
+    mutationPending.current = true
+    mutationRevision.current += 1
     setPending(true)
     try {
       setSnapshot(await window.api.localModels[action]('ocr'))
@@ -79,6 +86,8 @@ export function LocalOcrControl({
     } catch {
       setFailed(true)
     } finally {
+      mutationRevision.current += 1
+      mutationPending.current = false
       setPending(false)
     }
   }
@@ -87,6 +96,9 @@ export function LocalOcrControl({
     selected: boolean
   ): Promise<void> => {
     if (!snapshot?.selectedOcrLanguages) return
+    if (mutationPending.current) return
+    mutationPending.current = true
+    mutationRevision.current += 1
     setPending(true)
     try {
       const languages = selected
@@ -97,6 +109,8 @@ export function LocalOcrControl({
     } catch {
       setFailed(true)
     } finally {
+      mutationRevision.current += 1
+      mutationPending.current = false
       setPending(false)
     }
   }
@@ -113,11 +127,21 @@ export function LocalOcrControl({
     <div
       className={compact ? 'space-y-2' : 'space-y-3 rounded-lg border border-border bg-card p-4'}
     >
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <ScanText className="size-4 shrink-0" aria-hidden="true" />
-          <span className="text-sm font-medium">{t('Text recognition (OCR)')}</span>
-          {!compact && <span className="text-xs text-muted-foreground">{t('OCR languages')}</span>}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <ScanText
+            className={compact ? 'size-4 shrink-0' : 'mr-1 size-5 shrink-0 text-primary'}
+            aria-hidden="true"
+          />
+          <span className="text-sm font-semibold">{t('Text recognition (OCR)')}</span>
+          {!compact && snapshot && (
+            <span
+              role="status"
+              className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+            >
+              {installing ? t('Downloading…') : installed ? t('Installed') : t('Not installed')}
+            </span>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {snapshot && !compact && (
@@ -137,13 +161,13 @@ export function LocalOcrControl({
               <span role="status">{t('OCR installed. Read the PDF again.')}</span>
             ) : (
               <>
-                <span role="status">{t('Installed')}</span>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={pending || snapshot.inUse}
                   onClick={() => void run('remove')}
                 >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
                   {t('Uninstall')}
                 </Button>
               </>
@@ -173,11 +197,9 @@ export function LocalOcrControl({
         <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
       )}
       {!compact && snapshot?.ocrLanguages ? (
-        <fieldset className="space-y-2">
-          <legend className="text-xs font-medium text-muted-foreground">
-            {t('OCR languages')}
-          </legend>
-          <div className="grid gap-2 sm:grid-cols-2">
+        <fieldset aria-busy={pending} className="space-y-2 border-t border-border pt-3">
+          <legend className="sr-only">{t('OCR languages')}</legend>
+          <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
             {snapshot.ocrLanguages.map((language) => {
               const label = languageLabel(language.code, t)
               return (
@@ -189,7 +211,7 @@ export function LocalOcrControl({
                   onCheckedChange={(checked) => {
                     if (checked !== 'indeterminate') void setLanguage(language.code, checked)
                   }}
-                  className="group flex min-h-8 items-center gap-2 rounded-md px-1 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  className={`group flex min-h-10 items-center gap-2 rounded-md px-2 text-left text-sm outline-none enabled:hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 ${language.code === 'eng' ? 'opacity-50' : ''}`}
                 >
                   <span className="flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
                     <Checkbox.Indicator>

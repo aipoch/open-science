@@ -5,7 +5,7 @@ import { useEffect, useId, useState, type ReactNode } from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { Tabs } from 'radix-ui'
-import { Brain, Cpu, Download, ShieldCheck, Table2, Trash2 } from 'lucide-react'
+import { Brain, Cpu, Download, Table2, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
@@ -131,12 +131,12 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   {'microsoft/table-transformer'}
                 </ExternalTextLink>
               </p>
-              <dl className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
+              <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-xs">
                 <div>
                   <dt className="text-muted-foreground">
                     {snapshot.installedRevision ? t('Installed version') : t('Version')}
                   </dt>
-                  <dd className="mt-1 break-all">
+                  <dd className="mt-0.5 break-all">
                     {snapshot.installedRevision ?? snapshot.recommendedRevision}
                   </dd>
                 </div>
@@ -154,7 +154,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   <>
                     <div>
                       <dt className="text-muted-foreground">{t('New version')}</dt>
-                      <dd className="mt-1 break-all">{snapshot.recommendedRevision}</dd>
+                      <dd className="mt-0.5 break-all">{snapshot.recommendedRevision}</dd>
                     </div>
                     <div>
                       <dt className="text-muted-foreground">{t('Download size')}</dt>
@@ -194,11 +194,7 @@ const LocalModelsPanel = (): React.JSX.Element => {
                   {snapshot.hasFiles ? (
                     <AlertDialog.Root>
                       <AlertDialog.Trigger asChild>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={pending || snapshot.inUse}
-                        >
+                        <Button size="sm" variant="outline" disabled={pending || snapshot.inUse}>
                           <Trash2 className="size-3.5" aria-hidden="true" />
                           {t('Uninstall')}
                         </Button>
@@ -253,11 +249,9 @@ const LocalModelsPanel = (): React.JSX.Element => {
             </div>
           </div>
         )}
-        <p className="mt-4 flex items-start gap-2 text-xs leading-5 text-muted-foreground">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          {t('Removing models keeps your documents and existing parsing results.')}
-        </p>
-        <LocalOcrControl />
+        <div className="mt-4">
+          <LocalOcrControl />
+        </div>
       </SettingsSection>
     </div>
   )

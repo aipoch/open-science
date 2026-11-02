@@ -5772,7 +5772,6 @@
     "Cancel download": "取消下载",
     "Remove local model files?": "移除本地模型文件？",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "原文献和已有解析结果会保留。新的解析任务可能需要重新安装模型。",
-    "Removing models keeps your documents and existing parsing results.": "移除模型会保留文献和已有解析结果。",
     "Model in use. Removal is available when parsing finishes.": "模型正在使用中。解析完成后即可移除。",
     "Candidate table": "表格候选结果",
     "Clear all PDF parsing results": "清除所有 PDF 解析结果",

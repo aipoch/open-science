@@ -6228,7 +6228,6 @@
     "Cancel download": "Отменить загрузку",
     "Remove local model files?": "Удалить локальные файлы модели?",
     "Source documents and existing parsing results are kept. New parsing tasks may require reinstalling the model.": "Исходные документы и результаты разбора сохраняются. Для новых задач может потребоваться повторная установка модели.",
-    "Removing models keeps your documents and existing parsing results.": "При удалении моделей документы и существующие результаты разбора сохраняются.",
     "Model in use. Removal is available when parsing finishes.": "Модель используется. Её можно будет удалить после завершения анализа.",
     "Candidate table": "Кандидат таблицы",
     "Clear all PDF parsing results": "Удалить все результаты разбора PDF",
