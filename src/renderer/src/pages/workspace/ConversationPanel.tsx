@@ -1,5 +1,4 @@
 import { usePromptOptimization } from './composer/use-prompt-optimization'
-import { ErrorNotice } from '@/components/error-notice'
 
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
@@ -956,6 +955,18 @@ const ConversationPanel = ({
       ? state.failures?.[activeSession.id]
       : undefined
   )
+  const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
+  const promptOptimization = usePromptOptimization({
+    projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
+    // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
+    sessionKey: 'composer',
+    modelConfiguration: modelUnavailable ? undefined : modelConfiguration,
+    attachmentIds: attachments.map(({ id }) => id),
+    transferIds: attachmentTransfers.map(({ transferId }) => transferId),
+    doc: draftDoc,
+    onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
+  })
+
   const composerNotices = useComposerNotices({
     sessionId: activeSession?.id,
     authenticationResolved: view.authenticationRecovery?.required === false,
@@ -967,6 +978,28 @@ const ConversationPanel = ({
         ? { ...legacyDisplayState, error: resolvedRunError, updatedAt: activeSession?.updatedAt }
         : undefined,
     operations: [
+      {
+        id: 'prompt-optimization',
+        message: promptOptimization.tooLong
+          ? t('Shorten your question to optimize it (maximum 16,000 characters).')
+          : promptOptimization.notice === 'failed'
+            ? t('Could not optimize your question. Your draft was kept. Please try again.')
+            : promptOptimization.notice === 'changed'
+              ? t('Your input changed while optimizing. Please try again.')
+              : undefined,
+        failure: {
+          category:
+            promptOptimization.tooLong || promptOptimization.notice !== 'failed'
+              ? 'input'
+              : 'service',
+          reason: promptOptimization.tooLong
+            ? 'input/prompt-optimization-too-long'
+            : promptOptimization.notice === 'failed'
+              ? 'service/prompt-optimization'
+              : 'input/prompt-optimization-changed',
+          diagnostics: {}
+        }
+      },
       {
         id: 'action',
         message: actionError,
@@ -1349,18 +1382,6 @@ const ConversationPanel = ({
     () => setSpecialistNoticeTarget(undefined),
     specialistNoticeTarget
   )
-
-  const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
-  const promptOptimization = usePromptOptimization({
-    projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
-    // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
-    sessionKey: 'composer',
-    modelConfiguration: modelUnavailable ? undefined : modelConfiguration,
-    attachmentIds: attachments.map(({ id }) => id),
-    transferIds: attachmentTransfers.map(({ transferId }) => transferId),
-    doc: draftDoc,
-    onChange: (doc) => onValidatedDraftDocChange(doc, undefined, false)
-  })
 
   const handleSubmit = (): void => {
     if (canExplainUnavailableSpecialist && activeSession) {
@@ -2783,23 +2804,6 @@ const ConversationPanel = ({
                             />
                           </div>
 
-                          {promptOptimization.notice || promptOptimization.tooLong ? (
-                            <ErrorNotice
-                              inline
-                              level={promptOptimization.notice === 'failed' ? 'warning' : 'info'}
-                              description={
-                                promptOptimization.tooLong
-                                  ? t(
-                                      'Shorten your question to optimize it (maximum 16,000 characters).'
-                                    )
-                                  : promptOptimization.notice === 'failed'
-                                    ? t(
-                                        'Could not optimize your question. Your draft was kept. Please try again.'
-                                      )
-                                    : t('Your input changed while optimizing. Please try again.')
-                              }
-                            />
-                          ) : null}
                           <div className="flex flex-wrap items-center gap-1">
                             {/* The + button opens a dropdown for attachments and session actions. */}
                             <DropdownMenu>
