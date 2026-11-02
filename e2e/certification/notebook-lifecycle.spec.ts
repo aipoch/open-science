@@ -46,6 +46,10 @@ const test = baseTest.extend<{ controlledSandbox: void }>({
   ]
 })
 
+test.beforeEach(() => {
+  if (controlledWindowsFixtureAvailable) test.setTimeout(180_000)
+})
+
 const sendReviewedPrompt = async (
   page: Parameters<typeof sendPrompt>[0],
   prompt: string,
