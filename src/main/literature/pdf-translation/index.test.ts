@@ -804,3 +804,46 @@ it('does not call a provider if the durable attempt cannot be recorded', async (
   ).rejects.toThrow('database unavailable')
   expect(h.runner.run).not.toHaveBeenCalled()
 })
+
+it('rejects local starts and resumes before touching checkpoints, providers or usage', async () => {
+  const checkpoints = { open: vi.fn(), read: vi.fn() }
+  const h = setup(checkpoints as unknown as PdfTranslationCheckpoints)
+  for (const checkpoint of [
+    undefined,
+    { key: '110ce2bd-7610-453e-abfd-dbd905d1e8c5', revision: 1 }
+  ]) {
+    await expect(
+      h.owner.begin({ ...input, targetId: 'local', checkpoint }, h.caller.lease)
+    ).rejects.toThrow('[pdf-translation:unsupported-model] Local translation is unavailable.')
+  }
+  expect(checkpoints.open).not.toHaveBeenCalled()
+  expect(checkpoints.read).not.toHaveBeenCalled()
+  expect(h.captureTarget).not.toHaveBeenCalled()
+  expect(h.runner.run).not.toHaveBeenCalled()
+  expect(h.usage.start).not.toHaveBeenCalled()
+  await h.owner.shutdown()
+})
+
+it('reads a historical local translation without an inference runtime', async () => {
+  const saved = {
+    version: 1,
+    key: '110ce2bd-7610-453e-abfd-dbd905d1e8c5',
+    revision: 1,
+    attachmentVersionId: 'attachment',
+    checksum: 'a'.repeat(64),
+    fingerprint: input.fingerprint,
+    language: input.language,
+    glossary: input.glossary,
+    targetKey: 'b'.repeat(64),
+    model: { mode: 'local', frameworkId: 'local-onnx', modelId: 'qwen3-0.6b-q8' },
+    sources: input.sources,
+    translations: ['ATP 增加。'],
+    translatedSourceIndices: [0]
+  } as PdfTranslationCheckpoint
+  const checkpoints = { read: vi.fn(async () => saved), open: vi.fn() }
+  const h = setup(checkpoints as unknown as PdfTranslationCheckpoints)
+  expect(await h.owner.readCheckpoint('attachment', h.caller.lease)).toEqual(saved)
+  expect(checkpoints.open).not.toHaveBeenCalled()
+  expect(h.runner.run).not.toHaveBeenCalled()
+  await h.owner.shutdown()
+})

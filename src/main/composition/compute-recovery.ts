@@ -65,6 +65,13 @@ export async function composeComputeRecovery({
     },
     (dependencies) => {
       const jobPoller = createComputeJobRuntime(dependencies, {
+        onCancellationFailed: async (job, failure) => {
+          const host = await hostRepository.get(job.provider_id).catch(() => null)
+          await computeJobResultDelivery.observeCancellationFailure(
+            await toJobSummary(job, host?.displayName ?? job.provider_id, dataRoot),
+            failure
+          )
+        },
         broadcast: (summary) => {
           void (async () => {
             let owned = false

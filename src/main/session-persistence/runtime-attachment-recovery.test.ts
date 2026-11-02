@@ -15,7 +15,7 @@ const fixture = (): PersistedChatSession => ({
   cwd: '/workspace',
   status: 'error',
   error: 'Interrupted',
-  errorReportable: false,
+  failure: { category: 'service' as const, diagnostics: {} },
   resumeRecovery: { kind: 'resume-required', cause: 'app-restart' },
   messages: [],
   createdAt: 1,

@@ -56,7 +56,7 @@ const harness = async (
         runtimeTranscriptOwner: owner,
         status: mode === 'rearm' ? 'idle' : 'error',
         error: mode === 'rearm' ? undefined : 'Original interruption',
-        errorReportable: mode === 'rearm' ? undefined : false,
+        failure: mode === 'rearm' ? undefined : { category: 'service', diagnostics: {} },
         resumeRecovery:
           mode === 'rearm'
             ? undefined
@@ -89,6 +89,7 @@ const harness = async (
             cause: 'connection-lost',
             settledAt: 2,
             error: 'Original interruption',
+            failure: { category: 'session', diagnostics: {} },
             recovery: 'resume'
           }
     )
@@ -359,6 +360,94 @@ it.each(['new', 'resume', 'rearm'] as const)(
   }
 )
 
+it('releases a stopped submitted run durably and ignores its stale cancellation after a new rearm', async () => {
+  const h = await harness('new', 'main', true)
+  const release = {
+    kind: 'rollback-prompt' as const,
+    id: 'release-stopped-dispatch',
+    preparationId: 'prepare',
+    preserveSubmittedMessage: true,
+    timestamp: 15
+  }
+  const released = await h.main.saveSession(h.prepared, { conversationCommands: [release] })
+  expect(released.status).toBe('idle')
+  expect(released.activeRun).toBeUndefined()
+  expect(released.promptPreparation).toBeUndefined()
+  expect(released.messages).toEqual(h.prepared.messages)
+  expect(released.conversationGraph).toEqual(h.prepared.conversationGraph)
+  expect(released.messages[1].turnOutcome).toBeUndefined()
+  const reopened = (await new SessionRepository(h.root).loadSession('p', 's'))!
+  expect(reopened.messages).toEqual(released.messages)
+  expect(reopened.activeRun).toBeUndefined()
+  expect(reopened.promptPreparation).toBeUndefined()
+
+  // Even the same Message and millisecond are a new attempt: the preparation ID owns release.
+  const rearmed = await h.main.saveSession(released, {
+    conversationCommands: [
+      {
+        kind: 'prepare-prompt',
+        id: 'prepare-next',
+        promptMessageId: 'new',
+        mode: 'rearm',
+        timestamp: 16
+      },
+      {
+        kind: 'start-run',
+        id: 'start-next',
+        preparationId: 'prepare-next',
+        run: h.prepared.activeRun!,
+        timestamp: 16
+      }
+    ]
+  })
+  const late = await h.main.saveSession(h.prepared, {
+    conversationCommands: [release]
+  })
+  expect(late.activeRun).toEqual(rearmed.activeRun)
+  expect(late.promptPreparation).toEqual(rearmed.promptPreparation)
+  expect(late.messages).toEqual(rearmed.messages)
+  const admitted = await h.main.admitTaskTurn({ session: late, contextReset: false })
+  expect(admitted.activeRun).toEqual(rearmed.activeRun)
+  expect(admitted.promptPreparation).toBeUndefined()
+})
+
+it('leaves an admitted execution and its Main terminal outcome untouched by a submitted release', async () => {
+  const h = await harness('new', 'main', true)
+  vi.spyOn(h.repository, 'hasLiveRuntimeSession').mockReturnValue(true)
+  const runtime = new RuntimeSessionOwner({
+    loadSession: () => h.raw(),
+    mutateSession: (scope, mutate) => h.main.mutateRuntimeSession(scope, mutate),
+    finalizeArtifacts: vi.fn(async () => []),
+    scheduleFlush: () => () => undefined
+  })
+  await runtime.begin(h.scope)
+  const admitted = await h.raw()
+  const release = {
+    kind: 'rollback-prompt' as const,
+    id: 'release-after-admission',
+    preparationId: 'prepare',
+    preserveSubmittedMessage: true,
+    timestamp: 15
+  }
+  const unchanged = await h.main.saveSession(h.prepared, { conversationCommands: [release] })
+  expect(unchanged.activeRun).toEqual(admitted.activeRun)
+  expect(unchanged.messages).toEqual(admitted.messages)
+  expect(unchanged.runtimeSessionAdmissions).toEqual(admitted.runtimeSessionAdmissions)
+  await h.main.mutateRuntimeSession(h.scope, (latest) =>
+    setTurnOutcome({ ...latest, status: 'idle', activeRun: undefined }, 'new', {
+      kind: 'cancelled',
+      settledAt: 16,
+      recovery: 'resume'
+    })
+  )
+  const stopped = await h.raw()
+  const late = await h.main.saveSession(h.prepared, {
+    conversationCommands: [{ ...release, id: 'release-after-terminal', timestamp: 17 }]
+  })
+  expect(late.messages).toEqual(stopped.messages)
+  expect(late.activeRun).toBeUndefined()
+})
+
 it.each(['interrupted', 'cancelled', 'failed'] as const)(
   'preserves prior %s state when preparation has not appended a new prompt',
   async (kind) => {
@@ -385,10 +474,21 @@ it.each(['interrupted', 'cancelled', 'failed'] as const)(
         },
         'old',
         kind === 'failed'
-          ? { kind, settledAt: 2, error: 'Earlier provider failure' }
+          ? {
+              kind,
+              settledAt: 2,
+              error: 'Earlier provider failure',
+              failure: { category: 'service', diagnostics: {} }
+            }
           : kind === 'cancelled'
             ? { kind, settledAt: 2, recovery: 'resume' }
-            : { kind, settledAt: 2, recovery: 'resume', cause: 'connection-lost' }
+            : {
+                kind,
+                settledAt: 2,
+                recovery: 'resume',
+                cause: 'connection-lost',
+                failure: { category: 'session', diagnostics: {} }
+              }
       )
     )
     await h.main.saveSession(prior, {
@@ -419,7 +519,7 @@ it('preserves concurrent Main state while releasing only the prepared run', asyn
   await h.main.mutateRuntimeSession(h.scope, (latest) => ({
     ...latest,
     error: 'Independent Main fact',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     title: 'Concurrent rename'
   }))
   await stateOwner(new SessionRepository(h.root)).prepareRuntimeResume({
@@ -429,7 +529,7 @@ it('preserves concurrent Main state while releasing only the prepared run', asyn
   const saved = await h.raw()
   expect(saved.activeRun).toBeUndefined()
   expect(saved.error).toBe('Independent Main fact')
-  expect(saved.errorReportable).toBe(false)
+  expect(saved.failure?.category).toBe('service')
   expect(saved.title).toBe('Concurrent rename')
   expect(saved.messages[1].turnOutcome).toBeUndefined()
 })
@@ -513,7 +613,7 @@ it('releases an unadmitted preparation when its caller lease ends without invent
   await h.main.mutateRuntimeSession(h.scope, (latest) => ({
     ...latest,
     error: 'Independent Main fact',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     title: 'Concurrent rename'
   }))
   callerA.abort()

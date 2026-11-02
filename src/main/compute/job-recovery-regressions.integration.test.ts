@@ -177,7 +177,8 @@ describe('Compute Job recovery behavior', () => {
     for (let attempt = 0; attempt < 3; attempt++) await reaper.runOnce()
     expect(await db.repositories.jobs.findNonTerminal()).toEqual([])
     expect(await owner.status(job.job_id, scope)).toMatchObject({
-      cancellation_status: 'cancelled'
+      status: 'cancelled',
+      result_final: true
     })
   })
 
@@ -206,9 +207,9 @@ describe('Compute Job recovery behavior', () => {
         broker(run)
       )
       await reaper.runOnce()
-      expect((await owner.status(job.job_id, scope)).cancellation_status).toBe(
-        evidence === 'pending' ? 'cancelling' : 'cancelled'
-      )
+      const snapshot = await owner.status(job.job_id, scope)
+      if (evidence === 'pending') expect(snapshot.cancellation?.status).toBe('cancelling')
+      else expect(snapshot.status).toBe('cancelled')
       expect(run).toHaveBeenCalledTimes(evidence === 'running' ? 2 : 1)
     }
   )
@@ -227,7 +228,7 @@ describe('Compute Job recovery behavior', () => {
     )
     await reaper.runOnce()
     expect(connectionBroker.acquire).not.toHaveBeenCalled()
-    expect((await owner.status(job.job_id, scope)).cancellation_status).toBe('cancelling')
+    expect((await owner.status(job.job_id, scope)).cancellation?.status).toBe('cancelling')
     release()
   })
 
@@ -409,11 +410,15 @@ describe('Compute Job recovery behavior', () => {
       expect.soft(persisted.harvest_error).toBeUndefined()
       expect.soft(persisted.remote_cleanup_disposition).toBe('cleaned')
       expect.soft(await db.repositories.jobs.findTerminalUnharvested()).toEqual([])
+      // Cancellation now becomes deliverable before harvest. Either the notifier already won
+      // its claim or this row remains ready; harvest completion must not create another result.
+      const ready = await db.repositories.jobs.findNotificationReadyUnnotified()
       expect
         .soft(
-          (await db.repositories.jobs.findNotificationReadyUnnotified()).map((row) => row.job_id)
+          (await db.repositories.jobs.get(job.job_id))?.notified_at !== undefined ||
+            ready.some((row) => row.job_id === job.job_id)
         )
-        .toContain(job.job_id)
+        .toBe(true)
       expect(run).toHaveBeenCalledTimes(1)
     } finally {
       await runtime.stop()

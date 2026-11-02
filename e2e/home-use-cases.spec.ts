@@ -28,7 +28,7 @@ const test = base.extend<{ useCaseNetwork: void }>({
 })
 test.use({ windowMode: 'normal' })
 
-test('downloads on the card, retries and cancels, then imports verified bytes through the real Electron bridge', async ({
+test('downloads from details, retries and cancels on the card, then imports through the real Electron bridge', async ({
   app
 }, info) => {
   test.setTimeout(180000)
@@ -55,12 +55,12 @@ test('downloads on the card, retries and cancels, then imports verified bytes th
   )
   const page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  const section = page.getByRole('region', { name: 'Use Case Gallery' })
-  await section.getByRole('button', { name: 'Next examples' }).click()
+  const section = page.getByRole('region', { name: 'Use Case Marketplace' })
+  // Reach the append boundary before measuring cards so the retained list contains all seven.
+  await section.getByRole('article').last().scrollIntoViewIfNeeded()
+  await expect(section.getByRole('article')).toHaveCount(7)
   const card = section.getByRole('article', { name: 'Example 4', exact: true })
-  await expect(
-    section.getByRole('link', { name: 'Use Case Gallery', exact: true })
-  ).toHaveAttribute('href', 'https://aipoch.com/open-science/use-cases')
+  await expect(section.getByRole('button', { name: 'Browse all examples' })).toBeVisible()
   await card.hover()
   const cardSizes = async (): Promise<{ width: number; height: number }[]> =>
     section.getByRole('article').evaluateAll((cards) =>
@@ -70,7 +70,11 @@ test('downloads on the card, retries and cancels, then imports verified bytes th
       })
     )
   const initialSizes = await cardSizes()
-  await card.getByRole('button', { name: 'Import', exact: true }).click()
+  await card.getByRole('button', { name: 'Example 4', exact: true }).click()
+  const details = page.getByRole('dialog', { name: 'Case details', exact: true })
+  await details.getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(details.getByRole('alert')).toContainText('Could not download this example.')
+  await details.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(card.getByRole('alert')).toContainText('Could not download this example.')
   expect(await cardSizes()).toEqual(initialSizes)
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -99,15 +103,18 @@ test('downloads on the card, retries and cancels, then imports verified bytes th
     .toBeCloseTo(0.24, 1)
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.screenshot({ path: info.outputPath('card-download-progress.png') })
-  await section.getByRole('button', { name: 'Next examples' }).click()
-  await section.getByRole('button', { name: 'Previous examples' }).click()
+  await card.getByRole('button', { name: 'Example 4', exact: true }).click()
+  await expect(details.getByRole('button', { name: /Downloading 2[45]%/ })).toBeVisible()
+  await expect(details.getByRole('progressbar')).toHaveCount(0)
+  await details.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /2[45]/)
   await card.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(card.getByRole('progressbar')).toHaveCount(0)
   expect(await cardSizes()).toEqual(initialSizes)
   await card.hover()
-  await card.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', /2[45]/)
+  await card.getByRole('button', { name: 'Example 4', exact: true }).click()
+  await details.getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(details.getByRole('button', { name: /Downloading 2[45]%/ })).toBeVisible()
   await writeFile(info.outputPath('download-continue'), '')
   const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
   await expect(dialog).toBeVisible()
@@ -120,12 +127,12 @@ test('downloads on the card, retries and cancels, then imports verified bytes th
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
-  await expect(section.getByRole('article')).toHaveCount(3)
+  await expect(section.getByRole('article')).toHaveCount(7)
   expect(
     await section
       .getByRole('article')
       .evaluateAll((cards) => cards.map((card) => card.getAttribute('aria-label')))
-  ).toEqual(['Example 4', 'Example 5', 'Example 6'])
+  ).toEqual(Array.from({ length: 7 }, (_, index) => `Example ${index + 1}`))
   expect(await card.evaluate((element) => element.parentElement!.getAnimations().length)).toBe(0)
 })
 
@@ -135,9 +142,14 @@ test('refreshes the catalog once per launch and reuses the disk cache silently o
   test.setTimeout(180000)
   let page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  await expect(
-    page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('article')
-  ).toHaveCount(3)
+  // A tall window may already intersect the append sentinel. Check the complete fixture
+  // after scrolling instead of depending on how many cards fit in the initial viewport.
+  const expectCatalog = async (): Promise<void> => {
+    const cards = page.getByRole('region', { name: 'Use Case Marketplace' }).getByRole('article')
+    await cards.last().scrollIntoViewIfNeeded()
+    await expect(cards).toHaveCount(7)
+  }
+  await expectCatalog()
   await page.evaluate(() => window.api.sessions.useCaseCatalog('refreshed'))
   const requestCount = async (): Promise<number> =>
     (await readFile(`${info.outputPath('download-continue')}.catalog-requests`, 'utf8'))
@@ -145,20 +157,16 @@ test('refreshes the catalog once per launch and reuses the disk cache silently o
       .split('\n').length
   expect(await requestCount()).toBe(1)
   await page.reload()
-  await expect(
-    page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('article')
-  ).toHaveCount(3)
+  await expectCatalog()
   await page.evaluate(() => window.api.sessions.useCaseCatalog('refreshed'))
   expect(await requestCount()).toBe(1)
   await writeFile(`${info.outputPath('download-continue')}.catalog-offline`, '')
   page = await app.restart()
-  await expect(
-    page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('article')
-  ).toHaveCount(3)
+  await expectCatalog()
   const refreshed = await page.evaluate(() => window.api.sessions.useCaseCatalog('refreshed'))
   expect(refreshed).toHaveLength(7)
   expect(await requestCount()).toBe(2)
   await expect(
-    page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('alert')
+    page.getByRole('region', { name: 'Use Case Marketplace' }).getByRole('alert')
   ).toHaveCount(0)
 })

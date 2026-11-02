@@ -29,4 +29,16 @@ export type DocumentReference = Readonly<{
   checksum: string
   sizeBytes: number
 }>
-export type TextExtraction = Readonly<{ text: string; pageCount: number; truncated: boolean }>
+export type PdfTextCoverage = Readonly<{
+  textPages: readonly number[]
+  ocrPages: readonly number[]
+  unavailablePages: readonly number[]
+  uncheckedPages: readonly number[]
+  unverifiedPages?: readonly number[]
+}>
+export type TextExtraction = Readonly<{
+  text: string
+  pageCount: number
+  truncated: boolean
+  coverage?: PdfTextCoverage
+}>

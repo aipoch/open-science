@@ -8,7 +8,7 @@ import type { ComposerDraft } from './composer-contract'
 export { type ComposerDraft } from './composer-contract'
 
 import type { Annotation } from '../../../../shared/annotation-contract'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
 import type { SessionPdfContextSource } from '../../../../shared/session-pdf-contract'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 

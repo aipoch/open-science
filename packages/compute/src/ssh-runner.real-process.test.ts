@@ -8,6 +8,38 @@ import type { ComputeJob } from './model'
 
 // Node stands in for the SSH executable; output and process lifecycle are real OS pipes.
 describe('SSH runner real processes', () => {
+  it.each(['inline', 'streamed'] as const)(
+    'finishes an %s command whose process waits for input EOF',
+    async (mode) => {
+      const dir = await mkdtemp(join(tmpdir(), 'compute-input-eof-'))
+      try {
+        const script = join(dir, 'child.cjs')
+        await writeFile(
+          script,
+          `let input = '';
+          process.stdin.setEncoding('utf8');
+          process.stdin.on('data', chunk => input += chunk);
+          process.stdin.on('end', () => {
+            process.stdout.write(JSON.stringify({ command: process.argv[2], input }));
+          });`
+        )
+        const command = mode === 'inline' ? 'printf ready' : `# ${'x'.repeat(24_000)}`
+        const result = await createSshRunner().run(
+          { sshBinary: process.execPath, extraArgs: [], host: script },
+          command,
+          { timeoutMs: 2000, loginShell: false }
+        )
+        expect(result).toMatchObject({ exitCode: 0, timedOut: false })
+        expect(JSON.parse(result.stdout)).toEqual({
+          command: mode === 'inline' ? command : 'exec "${SHELL:-/bin/sh}"',
+          input: mode === 'inline' ? '' : command
+        })
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each(['stdout', 'stderr', 'mixed'])(
     'finishes >1 MiB %s with bounded captures',
     async (mode) => {

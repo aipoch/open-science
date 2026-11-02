@@ -68,6 +68,43 @@ const askAskpass = (env: NodeJS.ProcessEnv, prompt: string): Promise<Record<stri
   })
 
 describe('ComputeConnectionBroker SSH configuration compatibility', () => {
+  it('preserves requested remote command results while retaining default and transport failure classification', async () => {
+    const refused = {
+      exitCode: 1,
+      stdout: '',
+      stderr: 'slurm_load_jobs error: Connection refused',
+      timedOut: false,
+      truncated: false
+    }
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValueOnce(refused)
+      .mockResolvedValueOnce({ ...refused, exitCode: 255 })
+      .mockResolvedValueOnce({ ...refused, timedOut: true })
+      .mockResolvedValueOnce({
+        ...refused,
+        exitCode: 255,
+        stderr: 'Permission denied (publickey,password).'
+      })
+    const broker = new SshConfigComputeConnectionBroker({
+      getHost: async () => host,
+      runner: { run },
+      resolveTarget: async () => target
+    })
+    const lease = await broker.acquire(host.providerId, { intent: 'job_poll' })
+    await expect(lease.run('squeue', { timeoutMs: 1000 })).rejects.toMatchObject({
+      code: 'host_unreachable'
+    })
+    const options = { timeoutMs: 1000, preserveRemoteCommandErrors: true }
+    await expect(lease.run('squeue', options)).resolves.toBe(refused)
+    await expect(lease.run('squeue', options)).rejects.toMatchObject({ code: 'host_unreachable' })
+    await expect(lease.run('squeue', options)).rejects.toMatchObject({ code: 'timeout' })
+    await expect(lease.run('squeue', options)).rejects.toMatchObject({
+      code: 'authentication_failed'
+    })
+  })
+
   it.runIf(platform() === 'win32')(
     'returns one matching password through the constrained Windows askpass helper',
     async () => {

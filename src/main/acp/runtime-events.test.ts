@@ -160,11 +160,90 @@ describe('ACP runtime event normalization', () => {
     expect(event).not.toHaveProperty('previewToolKind')
   })
 
+  it.each([
+    'mcp__skills__load_skill',
+    'tool_search',
+    'mcp__open_science_notebook__notebook_execute',
+    'mcp__open_science_notebook__manage_packages',
+    'mcp__open_science_notebook__search_memories',
+    'mcp__open_science_library__search_library',
+    'mcp__open_science_literature__read_document',
+    'mcp__open_science_artifacts__write_artifact_file',
+    'mcp__open_science_activity__begin_activity_group'
+  ])('retains Pi live/replayed tool identity: %s', (name) => {
+    for (const sessionUpdate of ['tool_call', 'tool_call_update']) {
+      const event = toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate,
+            toolCallId: 'pi-tool',
+            name,
+            title: 'Human title',
+            kind: 'other',
+            status: 'completed',
+            rawInput: { skill: 'mcp-pubmed' }
+          }
+        } as unknown as SessionNotification,
+        'pi-event'
+      )
+      expect(event.providerToolName).toBe(name)
+      expect(event.rawInput).toEqual({ skill: 'mcp-pubmed' })
+      expect(event.raw).toBeUndefined()
+    }
+  })
+
+  it('keeps metadata precedence and rejects malformed Pi names', () => {
+    expect(extractProviderToolName({ name: 'pi', _meta: { toolName: 'existing' } })).toBe(
+      'existing'
+    )
+    expect(extractProviderToolName({ name: ' tool_search ', _meta: null })).toBe('tool_search')
+    for (const name of [undefined, null, 1, {}, '  ']) {
+      expect(extractProviderToolName({ name })).toBeUndefined()
+    }
+    expect(extractProviderToolName(undefined)).toBeUndefined()
+  })
+
   it('extracts CodeBuddy tool identity metadata', () => {
     expect(
       extractProviderToolName({ _meta: { 'codebuddy.ai/toolName': ' mcp__skills__load_skill ' } })
     ).toBe('mcp__skills__load_skill')
   })
+
+  it.each([
+    ['started', 'in_progress', 'Compacting context'],
+    ['completed', 'completed', 'Context compacted'],
+    ['failed', 'failed', 'Context compaction failed']
+  ] as const)(
+    'projects OpenCode %s without exposing provider internals',
+    (status, expected, title) => {
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: {
+            'opencode/compaction': {
+              status,
+              messageId: 'compact-1',
+              reason: 'auto',
+              error: { type: 'compaction.failed', message: 'INTERNAL_PATH_AND_INSTRUCTIONS' }
+            }
+          }
+        }
+      }
+      const event = toAcpRuntimeEvent(notification, 'event-compact', 1710000000002)
+      expect(event).toMatchObject({
+        kind: 'compaction',
+        sessionId: 'session-1',
+        toolCallId: 'context-compaction:compact-1',
+        compactionReason: 'automatic',
+        status: expected,
+        title
+      })
+      expect(JSON.stringify(event)).not.toContain('INTERNAL_PATH_AND_INSTRUCTIONS')
+      expect(toAcpRuntimeEvent(notification, 'replayed-event').toolCallId).toBe(event.toolCallId)
+    }
+  )
 
   it.each([true, { version: 1 }])(
     'maps Codex context-compaction metadata %j into the shared lifecycle',
@@ -472,6 +551,9 @@ describe('ACP runtime event normalization', () => {
       openScienceLiteraturePresentation: {
         retrievalMode: 'bm25',
         documentNames: ['paper.pdf'],
+        textCoverage: [
+          { name: 'paper.pdf', total: 3, parsed: 2, ocr: 1, missing: [3], unverified: [2] }
+        ],
         passageCount: 4
       }
     })
@@ -706,7 +788,14 @@ describe('ACP runtime event normalization', () => {
         id: 'private-binding-id',
         name: 'paper.pdf',
         checksum: 'private-checksum',
-        pageCount: 14
+        pageCount: 14,
+        coverage: {
+          textPages: [1],
+          ocrPages: [2],
+          unavailablePages: [3],
+          uncheckedPages: [],
+          unverifiedPages: [2]
+        }
       },
       passage: {
         pageStart: 1,
@@ -738,6 +827,9 @@ describe('ACP runtime event normalization', () => {
         text: JSON.stringify({
           openScienceLiteraturePresentation: {
             documentNames: ['paper.pdf'],
+            textCoverage: [
+              { name: 'paper.pdf', total: 14, parsed: 2, ocr: 1, missing: [3], unverified: [2] }
+            ],
             pageStart: 1,
             pageEnd: 5,
             hasMore: true

@@ -413,7 +413,7 @@
     {
       "tableName": "ComputeJob",
       "name": "ComputeJob_errorCode_check",
-      "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished')"
+      "expression": "\"errorCode\" IS NULL OR \"errorCode\" IN ('approval_denied', 'credential_required', 'credential_conflict', 'credential_unavailable', 'secure_storage_unavailable', 'authentication_failed', 'host_key_unknown', 'host_key_changed', 'host_unreachable', 'unsupported_auth_configuration', 'dispatch_failed', 'job_failed', 'timeout', 'process_vanished', 'job_cancelled', 'job_status_unavailable')"
     },
     {
       "tableName": "ComputeJob",
@@ -608,7 +608,7 @@
     {
       "tableName": "ComputeJobOperation",
       "name": "ComputeJobOperation_lifecycle_check",
-      "expression": "(\"phase\" = 'active' AND \"outcome\" IS NULL AND \"settledAt\" IS NULL) OR (\"phase\" = 'settled' AND \"outcome\" IS NOT NULL AND \"outcome\" IN ('fulfilled', 'superseded') AND \"settledAt\" IS NOT NULL)"
+      "expression": "(\"phase\" = 'active' AND \"outcome\" IS NULL AND \"settledAt\" IS NULL) OR (\"phase\" = 'settled' AND \"outcome\" IS NOT NULL AND \"outcome\" IN ('fulfilled', 'superseded', 'failed') AND \"settledAt\" IS NOT NULL)"
     },
     {
       "tableName": "ComputeJobOperation",
@@ -808,7 +808,7 @@
     {
       "tableName": "BackgroundResultDelivery",
       "name": "BackgroundResultDelivery_sourceKind_check",
-      "expression": "\"sourceKind\" IN ('local-run', 'compute-job')"
+      "expression": "\"sourceKind\" IN ('local-run', 'compute-job', 'compute-cancellation')"
     },
     {
       "tableName": "BackgroundResultDelivery",

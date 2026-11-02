@@ -571,9 +571,10 @@ it('selects durable file consumers downstream without testing unchanged prerequi
   expect(invocations.flat()).toContain('packages/durable-files/src/durable-json-file.test.ts')
 })
 
-it('routes download package changes downstream and host adapters without unchanged package units', async () => {
+it('routes download package changes downstream and honors full host owners', async () => {
   const { createAffectedTestPlan, executeModuleTestPlan } = await import('./module-test-impact.mjs')
   const graph = { status: 'not-used', testFiles: [] }
+  const localModels = loadModuleImpactManifest().modules.main_local_models
   const packageRoot = 'packages/resilient-download'
   for (const path of [
     `${packageRoot}/src/resilient-download.ts`,
@@ -615,6 +616,13 @@ it('routes download package changes downstream and host adapters without unchang
     ]
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    if (localModels.fullTestReason && path.startsWith('src/main/local-models/')) {
+      expect(plan.mode, path).toBe('full')
+      expect(plan.reasonChains).toContain(
+        `main_local_models -> ${localModels.fullTestReason} -> full`
+      )
+      continue
+    }
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(test)
     for (const entry of registry.packages)
@@ -757,10 +765,6 @@ it('keeps provider units upstream of host adapters and selects real downstream c
     [
       'src/main/settings/native-responses-compatibility.ts',
       'src/main/settings/native-responses-compatibility.test.ts'
-    ],
-    [
-      'src/main/literature/pdf-translation/local.ts',
-      'src/main/literature/pdf-translation/local.test.ts'
     ],
     [
       'src/main/literature/pdf-translation/text-generation.ts',

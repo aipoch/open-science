@@ -246,6 +246,10 @@ describe('packaged database migration ledger smoke', () => {
       {
         id: '0053_literature_doi_identity',
         checksum: '37c0bf2052799a6bdc2417d137a473b7d89f02a7826bf2dc253c3b6a376d7095'
+      },
+      {
+        id: '0054_slurm_job_reliability',
+        checksum: '1525c308d5403411490596cf7ad4e03a2fc9ae7ee43adf6d3622d0b17d97319b'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
@@ -267,6 +271,7 @@ describe('packaged database migration ledger smoke', () => {
         ['legacy-pending', false],
         ['legacy-consumed', true]
       ] as const) {
+        // This fixture predates newer nullable fields; return only a historical column.
         await client.computeJob.create({
           data: {
             id,
@@ -280,7 +285,8 @@ describe('packaged database migration ledger smoke', () => {
             commandHash: id,
             notifiedAt: new Date('2026-01-01'),
             ...(consumed ? { notificationConsumedAt: new Date('2026-01-02') } : {})
-          }
+          },
+          select: { id: true }
         })
       }
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)

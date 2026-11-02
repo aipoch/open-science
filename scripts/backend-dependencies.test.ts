@@ -229,42 +229,6 @@ describe('desktop-only dependency contents', () => {
           expect(filter(file.replaceAll('/', separator), false)).toBe(true)
         expect(filter('debug', true)).toBe(true)
       }
-      const ort = { name: 'onnxruntime-web', version: '1.26.0-dev.20260416-b7804b056c' }
-      for (const file of [
-        'dist/ort.webgpu.bundle.min.mjs',
-        'dist/ort.min.js',
-        'lib/onnxjs/backend.ts'
-      ]) {
-        // Audited TypeScript sources are unused in either mode. Runtime WebGPU bundles
-        // must still remain available when the dedicated WASM worker is not selected.
-        expect(createDesktopDependencyFilter(ort)(file, false)).toBe(!file.startsWith('lib/'))
-        expect(
-          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
-            file.replaceAll('/', separator),
-            false
-          )
-        ).toBe(false)
-        expect(
-          createDesktopDependencyFilter(
-            { ...ort, version: 'future' },
-            { localTranslationWasm: true }
-          )(file, false)
-        ).toBe(true)
-      }
-      for (const file of [
-        'dist/ort.node.min.js',
-        'dist/ort.wasm.bundle.min.mjs',
-        'dist/ort.wasm.min.mjs',
-        'dist/ort-wasm-simd-threaded.mjs',
-        'dist/ort-wasm-simd-threaded.wasm',
-        'lib/LICENSE'
-      ])
-        expect(
-          createDesktopDependencyFilter(ort, { localTranslationWasm: true })(
-            file.replaceAll('/', separator),
-            false
-          )
-        ).toBe(true)
     }
   )
 
@@ -407,6 +371,9 @@ describe('desktop-only dependency contents', () => {
       )
       const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
       for (const file of [
+        'out/pi-bootstrap/bootstrap.mjs',
+        'out/pi-bootstrap/permission-guard.mjs',
+        'out/pi-bootstrap/package-lock.json',
         'out/web/index.html',
         'LICENSE',
         'packages/open-science/README.md',
@@ -435,6 +402,10 @@ describe('desktop-only dependency contents', () => {
       expect(
         await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
       ).toContain('i18next')
+      for (const file of ['bootstrap.mjs', 'permission-guard.mjs', 'package-lock.json'])
+        expect(
+          await readFile(join(root, 'out/desktop-backend/out/pi-bootstrap', file), 'utf8')
+        ).toBe('synthetic fixture')
       for (const name of process.platform === 'win32'
         ? ['micromamba.exe', 'micromamba-compat.exe']
         : ['micromamba'])
@@ -646,11 +617,7 @@ describe('desktop-only dependency contents', () => {
   })
 
   it.each([
-    ['@huggingface/transformers', '4.2.0', 'src'],
-    ['onnxruntime-web', '1.26.0-dev.20260416-b7804b056c', 'lib'],
     ['ajv', '8.20.0', 'lib'],
-    ['onnxruntime-common', '1.24.3', 'lib'],
-    ['flatbuffers', '25.9.23', 'ts'],
     ['entities', '6.0.1', 'src']
   ])('omits audited source trees from desktop %s only', (name, version, source) => {
     const manifest = JSON.parse(readFileSync(`node_modules/${name}/package.json`, 'utf8'))
@@ -751,15 +718,7 @@ describe('desktop-only dependency contents', () => {
       for (const child of Object.keys(manifest.dependencies ?? {})) await copy(child, source)
     }
     try {
-      for (const name of [
-        'zod',
-        'ajv',
-        'ajv-formats',
-        'onnxruntime-common',
-        'flatbuffers',
-        'entities'
-      ])
-        await copy(name, process.cwd())
+      for (const name of ['zod', 'ajv', 'ajv-formats', 'entities']) await copy(name, process.cwd())
       await expect(readFile(join(root, 'node_modules/zod/src/index.ts'))).rejects.toMatchObject({
         code: 'ENOENT'
       })
@@ -808,12 +767,6 @@ describe('desktop-only dependency contents', () => {
         const JTD = require('ajv/dist/jtd.js');
         const jtd = new JTD(); const definition={properties:{name:{type:'string'}}};
         assert.deepEqual(jtd.compileParser(definition)(jtd.compileSerializer(definition)({name:'科学'})),{name:'科学'});
-        const ort = require('onnxruntime-common');
-        const tensor = new ort.Tensor('float32',new Float32Array([2,4,8]),[3]);
-        assert.deepEqual(tensor.reshape([1,3]).dims,[1,3]);
-        const fb = require('flatbuffers'); const builder = new fb.Builder(64);
-        builder.finish(builder.createString('科学'));
-        assert.equal(new fb.ByteBuffer(builder.asUint8Array()).__string(0),'科学');
         for (const api of [require('entities'),await import('entities')])
           assert.equal(api.decodeHTML('&lt;科学 &amp; data&gt;'),'<科学 & data>');
         assert.equal(require('entities/decode').decodeHTML('&amp;'),'&');
@@ -1125,81 +1078,8 @@ it.each(['/', '\\'])('retains reproduction exports and comparison worker (%s)', 
     ).toBe(true)
 })
 
-it.each(['/', '\\'])(
-  'omits optional ONNX GPU providers but retains native loading (%s)',
-  (separator) => {
-    const includes = (file: string): boolean =>
-      backendDependencyIncludes(
-        { name: 'onnxruntime-node' },
-        `bin/napi-v6/linux/x64/${file}`.replaceAll('/', separator),
-        { platform: 'linux', arch: 'x64' }
-      )
-    for (const file of ['libonnxruntime_providers_cuda.so', 'libonnxruntime_providers_tensorrt.so'])
-      expect(includes(file), file).toBe(false)
-    for (const file of [
-      'onnxruntime_binding.node',
-      'libonnxruntime.so.1',
-      'libonnxruntime_providers_shared.so'
-    ])
-      expect(includes(file), file).toBe(true)
-  }
-)
-
-it('retains ONNX JavaScript exports while omitting parallel development bundles', () => {
-  const manifest = JSON.parse(readFileSync('node_modules/onnxruntime-web/package.json', 'utf8'))
-  const paths = (value: unknown): string[] =>
-    typeof value === 'string' ? [value] : Object.values(value as object).flatMap(paths)
-  for (const separator of ['/', '\\']) {
-    for (const entry of paths(manifest.exports).filter((path) => /\.m?js$/.test(path))) {
-      // Alternate WASM glue is already excluded by the CPU-WASM packaging policy.
-      if (/ort-wasm-simd-threaded\.(?:jsep|jspi|asyncify)\./.test(entry)) continue
-      expect(
-        backendDependencyIncludes(manifest, entry.slice(2).replaceAll('/', separator)),
-        entry
-      ).toBe(true)
-    }
-    for (const file of ['ort.js', 'ort.mjs', 'ort.all.js', 'ort.webgl.mjs', 'ort.wasm.js'])
-      expect(
-        backendDependencyIncludes(manifest, `dist/${file}`.replaceAll('/', separator)),
-        file
-      ).toBe(false)
-  }
-})
-
-it.each(['darwin', 'linux', 'win32'] as const)(
-  'ships only target ONNX binaries for %s',
-  (platform) => {
-    for (const arch of ['arm64', 'x64']) {
-      for (const separator of ['/', '\\']) {
-        const includes = (path: string): boolean =>
-          backendDependencyIncludes({ name: 'onnxruntime-node' }, path.replaceAll('/', separator), {
-            platform,
-            arch
-          })
-        for (const path of ['', 'bin', 'bin/napi-v6', `bin/napi-v6/${platform}`, 'dist/binding.js'])
-          expect(includes(path), path).toBe(true)
-        for (const os of ['darwin', 'linux', 'win32']) {
-          for (const cpu of ['arm64', 'x64']) {
-            const path = `bin/napi-v6/${os}/${cpu}`
-            expect(includes(path), path).toBe(os === platform && cpu === arch)
-            expect(includes(`${path}/onnxruntime_binding.node`), path).toBe(
-              os === platform && cpu === arch
-            )
-          }
-        }
-      }
-    }
-  }
-)
-
 it('applies existing desktop asset exclusions to the standalone copy', () => {
-  for (const name of [
-    '@huggingface/transformers',
-    'onnxruntime-node',
-    'onnxruntime-web',
-    'onnxruntime-common',
-    'pdfjs-dist'
-  ]) {
+  for (const name of ['pdfjs-dist']) {
     expect(backendDependencyIncludes({ name }, 'dist/runtime.js.map')).toBe(false)
     expect(backendDependencyIncludes({ name }, 'LICENSE')).toBe(true)
   }
@@ -1217,9 +1097,6 @@ it('applies existing desktop asset exclusions to the standalone copy', () => {
     'wasm/openjpeg.wasm'
   ])
     expect(backendDependencyIncludes({ name: 'pdfjs-dist' }, path)).toBe(true)
-  expect(
-    backendDependencyIncludes({ name: 'onnxruntime-web' }, 'dist/ort-wasm-simd-threaded.wasm')
-  ).toBe(true)
   expect(backendDependencyIncludes({ name: 'unrelated-package' }, 'dist/runtime.js.map')).toBe(true)
 })
 
@@ -1236,30 +1113,14 @@ it('omits bundled Claude executables and Prisma build-time peers without droppin
     expect(isBackendRuntimeDependency(name, 'unrelated-package')).toBe(true)
   }
   expect(isBackendRuntimeDependency('typescript', 'i18next')).toBe(false)
-  for (const name of [
-    '@anthropic-ai/claude-agent-sdk',
-    '@prisma/client',
-    'onnxruntime-node',
-    'zod'
-  ])
+  for (const name of ['@anthropic-ai/claude-agent-sdk', '@prisma/client', 'zod'])
     expect(isBackendRuntimeDependency(name, 'runtime-package')).toBe(true)
 })
 
-it('keeps the native Prisma, CPU WASM and selected tokenizer runtime assets', () => {
+it('keeps the native Prisma and selected tokenizer runtime assets', () => {
   for (const [name, removed, retained] of [
     ['@prisma/client', 'runtime/query_engine_bg.sqlite.wasm-base64.js', 'runtime/library.js'],
     ['@prisma/client', 'runtime/query_compiler_bg.mysql.wasm-base64.mjs', 'index.js'],
-    [
-      'onnxruntime-web',
-      'dist/ort-wasm-simd-threaded.jsep.wasm',
-      'dist/ort-wasm-simd-threaded.wasm'
-    ],
-    ['onnxruntime-web', 'dist/ort-wasm-simd-threaded.jspi.wasm', 'dist/ort.wasm.bundle.min.mjs'],
-    [
-      'onnxruntime-web',
-      'dist/ort-wasm-simd-threaded.asyncify.wasm',
-      'dist/ort.webgpu.bundle.min.mjs'
-    ],
     ['tiktoken', 'encoders/o200k_base.json', 'tiktoken_bg.wasm'],
     ['js-tiktoken', 'dist/index.cjs', 'dist/lite.cjs'],
     ['js-tiktoken', 'dist/ranks/cl100k_base.cjs', 'dist/ranks/o200k_base.cjs']
@@ -1269,4 +1130,27 @@ it('keeps the native Prisma, CPU WASM and selected tokenizer runtime assets', ()
       expect(backendDependencyIncludes({ name }, retained.replaceAll('/', separator))).toBe(true)
     }
   }
+})
+
+it('does not declare the unopened local translation runtime or its exclusive dependencies', () => {
+  const manifest = JSON.parse(readFileSync('package.json', 'utf8'))
+  const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
+  for (const name of [
+    '@huggingface/transformers',
+    '@huggingface/tokenizers',
+    '@huggingface/jinja',
+    'onnxruntime-node',
+    'onnxruntime-web',
+    'onnxruntime-common',
+    'flatbuffers',
+    'protobufjs'
+  ]) {
+    expect(manifest.dependencies[name]).toBeUndefined()
+    expect(Object.keys(lock.packages).some((path) => path.endsWith('node_modules/' + name))).toBe(
+      false
+    )
+  }
+  expect(manifest.dependencies.sharp).toBeDefined()
+  expect(manifest.dependencies['@aipoch/pdf-structure']).toBeDefined()
+  expect(manifest.dependencies['@aipoch/pdf-translation']).toBeDefined()
 })

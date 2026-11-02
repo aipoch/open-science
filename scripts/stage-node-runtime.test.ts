@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { c as createTar } from 'tar'
@@ -111,6 +111,16 @@ it.skipIf(process.platform === 'win32')(
     await assertNpmFixture(output)
     expect(await readFile(join(output, 'LICENSE'), 'utf8')).toBe('license')
     await expect(readFile(join(output, 'bin/npm'))).rejects.toMatchObject({ code: 'ENOENT' })
+    // Launcher links must stay inside the runtime root: absolute targets dangle once the
+    // archive moves off the staging machine, breaking the bundled npm fallback.
+    for (const [name, entry] of [
+      ['npm', 'npm-entry'],
+      ['npx', 'npx-entry']
+    ]) {
+      const target = await readlink(join(output, name))
+      expect(target.startsWith('/')).toBe(false)
+      expect(await readFile(join(output, target), 'utf8')).toBe(entry)
+    }
   }
 )
 it('extracts the Windows executable and license and rejects incomplete archives', async () => {

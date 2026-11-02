@@ -413,6 +413,40 @@ describe('upload repository', () => {
     await expect(stat(attachment.path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('retries a moved upload from its original staged descriptor under the same Session owner', async () => {
+    const root = await createStorageRoot()
+    const client = createProjectDbClient(root)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
+    const repository = new UploadRepository(root, { getClient: async () => client })
+    const [original] = await stageUploadFixtures(repository, {
+      files: [
+        {
+          name: 'evidence.txt',
+          mimeType: 'text/plain',
+          content: Buffer.from('draft evidence').toString('base64')
+        }
+      ]
+    })
+    const [first] = await repository.finalizePendingSessionUploads(
+      'session-1',
+      [original],
+      'project-1'
+    )
+    await expect(readFile(original.path)).rejects.toMatchObject({ code: 'ENOENT' })
+    const [retry] = await repository.finalizePendingSessionUploads(
+      'session-1',
+      [original],
+      'project-1'
+    )
+    expect(retry.versionId).toBe(first.versionId)
+    await expect(readFile(retry.path, 'utf8')).resolves.toBe('draft evidence')
+    await expect(
+      repository.finalizePendingSessionUploads('session-2', [original], 'project-1')
+    ).rejects.toThrow('different project or session')
+  })
+
   it('keeps finalized uploads reusable for the same session', async () => {
     const root = await createStorageRoot()
     const repository = new UploadRepository(root)

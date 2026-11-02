@@ -1,4 +1,5 @@
 import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
+import { terminateProcessTree } from '../src/main/process-tree'
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
 import { test, expect } from '@playwright/test'
@@ -9,6 +10,8 @@ import type { ElectronApplication } from 'playwright'
 import {
   launchOpenScience,
   launchEnvironment,
+  disconnectFixtureServiceConnection,
+  closeElectronApplicationForCleanup,
   setFixtureServiceReconnectBlocked
 } from './fixtures/electron-app'
 import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
@@ -51,9 +54,21 @@ const cleanupRecoveryFixture = async ({
         }))
     if (app) {
       const desktop = app.process()
-      await app.evaluate(({ app }) => app.exit(0)).catch(() => undefined)
-      if (desktop.exitCode === null && desktop.signalCode === null) desktop.kill('SIGKILL')
-      await expect.poll(() => desktop.exitCode !== null || desktop.signalCode !== null).toBe(true)
+      await closeElectronApplicationForCleanup(
+        {
+          close: async () => {
+            await app.evaluate(({ app }) => app.exit(0)).catch(() => undefined)
+            await expect
+              .poll(() => desktop.exitCode !== null || desktop.signalCode !== null)
+              .toBe(true)
+          },
+          forceClose: async () => {
+            if (!(await terminateProcessTree(desktop)).reaped)
+              throw new Error('Recovery fixture desktop process tree was not reaped.')
+          }
+        },
+        { gracefulTimeoutMs: 5_000, forcedTimeoutMs: 10_000 }
+      )
     }
     try {
       // The backend belongs to this unique profile even after app.close() clears the app handle.
@@ -335,37 +350,11 @@ for (const borrowed of [false, true])
             .recoveryNetworkProbe.calls
       )
       const before = owner
-      // Pipe sockets in Electron main contain only the private desktop connection; stdio and the
-      // inspector are excluded by writable/readable handle identity. Assert before injecting loss.
       await app.evaluate(setFixtureServiceReconnectBlocked, true)
-      const destroyed = await app.evaluate(() => {
-        const handles = (
-          process as NodeJS.Process & {
-            _getActiveHandles(): {
-              constructor: { name: string }
-              readable?: boolean
-              writable?: boolean
-              _handle?: { constructor: { name: string } }
-              destroy?: () => void
-            }[]
-          }
-        )._getActiveHandles()
-        const pipes = handles.filter(
-          (handle) =>
-            handle.constructor.name === 'Socket' &&
-            handle.readable &&
-            handle.writable &&
-            handle._handle?.constructor.name === 'Pipe' &&
-            handle !== process.stdin &&
-            handle !== process.stdout &&
-            handle !== process.stderr
-        )
-        if (pipes.length !== 1)
-          throw new Error(`Expected one private desktop pipe, found ${pipes.length}.`)
-        pipes[0].destroy!()
-        return pipes.length
+      expect(await app.evaluate(disconnectFixtureServiceConnection)).toEqual({
+        url: 'ws://localhost/desktop',
+        destroyed: true
       })
-      expect(destroyed).toBe(1)
       await expect(
         page
           .getByTestId('local-service-recovery')
@@ -439,6 +428,7 @@ for (const borrowed of [false, true])
           readable?: boolean
           writable?: boolean
           _handle?: { constructor: { name: string } }
+          [key: symbol]: unknown
           emit(event: string, ...args: unknown[]): boolean
           destroy(): void
         }
@@ -447,7 +437,18 @@ for (const borrowed of [false, true])
         )._getActiveHandles()
         const pipe = handles.find(
           (handle) =>
-            handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
+            handle.readable &&
+            handle.writable &&
+            handle._handle?.constructor.name === 'Pipe' &&
+            Object.getOwnPropertySymbols(handle).some((key) => {
+              const owner = handle[key] as
+                { _socket?: Pipe; url?: string; readyState?: number } | undefined
+              return (
+                owner?._socket === handle &&
+                owner.url === 'ws://localhost/desktop' &&
+                owner.readyState === 1
+              )
+            })
         )!
         if (!pipe) throw new Error('Desktop pipe missing')
         const emit = pipe.emit
@@ -692,39 +693,7 @@ for (const scenario of [
       await expect(homeNewProjectButton(page)).toBeVisible()
       await app.evaluate(setFixtureServiceReconnectBlocked, true)
       await app.evaluate(
-        ({ BrowserWindow, ipcMain }, quitDisconnect) => {
-          const pipe = (
-            process as NodeJS.Process & {
-              _getActiveHandles(): {
-                readable?: boolean
-                writable?: boolean
-                _handle?: { constructor: { name: string } }
-                destroy(): void
-              }[]
-            }
-          )
-            ._getActiveHandles()
-            .find(
-              (handle) =>
-                handle.readable && handle.writable && handle._handle?.constructor.name === 'Pipe'
-            )
-          if (!pipe) throw new Error('Desktop pipe missing')
-          if (quitDisconnect === 'after-preflight') {
-            ipcMain.prependOnceListener('sessions:flush-response', () => pipe.destroy())
-          } else if (quitDisconnect === 'during-preflight') {
-            const contents = BrowserWindow.getAllWindows()[0].webContents
-            const send = contents.send.bind(contents)
-            contents.send = (channel, ...args) => {
-              if (channel === 'sessions:flush-request') {
-                contents.send = send
-                pipe.destroy()
-              }
-              send(channel, ...args)
-            }
-          } else {
-            pipe.destroy()
-          }
-        },
+        disconnectFixtureServiceConnection,
         scenario === 'connection loss during quit'
           ? 'during-preflight'
           : scenario === 'connection loss after quit preflight'

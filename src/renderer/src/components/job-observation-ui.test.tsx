@@ -308,6 +308,18 @@ describe('RemoteJobRow', () => {
 import { CompletedJobCard } from './CompletedJobCard'
 
 describe('CompletedJobCard', () => {
+  it('shows an external scheduler cancellation as cancelled instead of failed', () => {
+    act(() =>
+      root.render(
+        <CompletedJobCard
+          job={makeJob({ status: 'failed', error_code: 'job_cancelled' })}
+          onOpen={vi.fn()}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Cancelled')
+    expect(container.textContent).not.toContain('failed')
+  })
   it.each([
     ['success', 'finished'],
     ['failed', 'failed'],

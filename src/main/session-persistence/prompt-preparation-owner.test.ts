@@ -32,7 +32,7 @@ const fixture = (): PersistedChatSession =>
     cwd: '/workspace',
     status: 'error',
     error: 'Earlier failure',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     resumeRecovery: { kind: 'resume-required', promptMessageId: 'old', cause: 'app-restart' },
     messages: [
       {
@@ -422,7 +422,7 @@ describe('Main prompt preparation rollback authority', () => {
     const concurrent = {
       ...state,
       error: 'Independent Main failure',
-      errorReportable: true,
+      failure: { category: 'internal' as const, diagnostics: {} },
       resumeRecovery: {
         kind: 'resume-required' as const,
         promptMessageId: 'old',
@@ -432,7 +432,7 @@ describe('Main prompt preparation rollback authority', () => {
     state = commit(owner, concurrent, [append(branchId(state), 'old'), start()])
     const restored = commit(owner, state, [rollback()])
     expect(restored.error).toBe(concurrent.error)
-    expect(restored.errorReportable).toBe(true)
+    expect(restored.failure?.category).toBe('internal')
     expect(restored.resumeRecovery).toEqual(concurrent.resumeRecovery)
   })
 
@@ -440,11 +440,15 @@ describe('Main prompt preparation rollback authority', () => {
     const owner = new SessionPromptPreparationOwner()
     const original = fixture()
     let state = commit(owner, original, [prepare(), append(branchId(original), 'old')])
-    state = { ...state, error: 'New independent failure', errorReportable: true }
+    state = {
+      ...state,
+      error: 'New independent failure',
+      failure: { category: 'internal' as const, diagnostics: {} }
+    }
     state = commit(owner, state, [start()])
     const restored = commit(owner, state, [rollback()])
     expect(restored.error).toBe('New independent failure')
-    expect(restored.errorReportable).toBe(true)
+    expect(restored.failure?.category).toBe('internal')
   })
 
   it('returns to the selected branch immediately before this edit fork', () => {
@@ -707,12 +711,17 @@ describe('Main prompt preparation rollback authority', () => {
   )
 
   it('sanitizes the wire markers but refuses to execute them in the renderer projection helper', () => {
-    expect(sanitizeSessionConversationCommands([prepare(), rollback()])).toEqual([
+    const retained = { ...rollback('release'), preserveSubmittedMessage: true }
+    expect(sanitizeSessionConversationCommands([prepare(), rollback(), retained])).toEqual([
       prepare(),
-      rollback()
+      rollback(),
+      retained
     ])
     expect(() =>
       sanitizeSessionConversationCommands([{ ...rollback(), preparationId: '' }])
+    ).toThrow()
+    expect(() =>
+      sanitizeSessionConversationCommands([{ ...retained, preserveSubmittedMessage: 'yes' }])
     ).toThrow()
     expect(() => applySessionConversationCommands(fixture(), [prepare()])).toThrow(
       'Invalid Session conversation command'

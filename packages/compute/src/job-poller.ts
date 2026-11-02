@@ -450,10 +450,29 @@ export class JobPoller {
     }
     if (dispatchable.length === 0) return
 
-    let observations: Map<string, SlurmObservation>
+    const jobsById = new Map(dispatchable.map(({ job, handle }) => [handle.scheduler_job_id, job]))
+    const observed = new Set<string>()
+    let publicationFailure: unknown
     try {
-      observations = await pollSlurmJobs(dispatchable, connection)
+      const observations = await pollSlurmJobs(dispatchable, connection, {
+        readTails: false,
+        onObservation: async (id, observation) => {
+          observed.add(id)
+          try {
+            await this._applySlurmObservation(jobsById.get(id)!, observation, signal)
+          } catch (error) {
+            publicationFailure = error
+            throw error
+          }
+        }
+      })
+      // A disconnected source may return only unknown observations without a callback.
+      for (const [id, observation] of observations) {
+        if (!observed.has(id))
+          await this._applySlurmObservation(jobsById.get(id)!, observation, signal)
+      }
     } catch (error) {
+      if (publicationFailure === error) throw error
       if (signal.aborted) return
       const code =
         error instanceof ComputeConnectionError
@@ -462,65 +481,82 @@ export class JobPoller {
             ? `slurm_poll_failed: ${error.message}`
             : 'slurm_poll_failed'
       await this._recordPollError(
-        dispatchable.map(({ job }) => job),
+        dispatchable
+          .filter(({ handle }) => !observed.has(handle.scheduler_job_id))
+          .map(({ job }) => job),
         code,
         signal
       )
       return
     }
+  }
 
-    for (const { job, handle } of dispatchable) {
-      if (signal.aborted) return
-      const observation = observations.get(handle.scheduler_job_id)
-      if (!observation) continue
-      if (observation.kind === 'unknown') {
-        await this.lifecycle.recordPollError(
-          job.job_id,
-          job.status as 'submitted' | 'running',
-          observation.diagnostic,
-          false
-        )
-        continue
+  private async _applySlurmObservation(
+    job: ComputeJob,
+    observation: SlurmObservation,
+    signal: AbortSignal
+  ): Promise<void> {
+    if (signal.aborted) return
+    if (observation.kind === 'unavailable') {
+      const transition = await this.lifecycle.failJobStatus(job.job_id, observation.diagnostic)
+      if (transition.kind === 'applied') this._dispatchFinalNotification(transition.job)
+      return
+    }
+    if (observation.kind === 'unknown') {
+      await this.lifecycle.recordPollError(
+        job.job_id,
+        job.status as 'submitted' | 'running',
+        observation.diagnostic,
+        false
+      )
+      return
+    }
+    if (observation.kind === 'active') {
+      if (
+        job.status === 'submitted' &&
+        observation.state !== 'PENDING' &&
+        observation.state !== 'CONFIGURING'
+      ) {
+        await this.lifecycle.observeRunning(job.job_id, 'submitted', {
+          stdoutTail: null,
+          stderrTail: null
+        })
+      } else if (job.status === 'submitted') {
+        await this.lifecycle.observePending(job.job_id)
+      } else {
+        await this.lifecycle.observeRunning(job.job_id, 'running', {
+          stdoutTail: null,
+          stderrTail: null
+        })
       }
-      if (observation.kind === 'active') {
-        if (
-          job.status === 'submitted' &&
-          observation.state !== 'PENDING' &&
-          observation.state !== 'CONFIGURING'
-        ) {
-          await this.lifecycle.observeRunning(job.job_id, 'submitted', {
-            stdoutTail: null,
-            stderrTail: null
-          })
-        } else if (job.status === 'submitted') {
-          await this.lifecycle.recordPollError(
-            job.job_id,
-            'submitted',
-            observation.reason ? `slurm_pending: ${observation.reason}` : 'slurm_pending',
-            false
-          )
-        } else {
-          await this.lifecycle.observeRunning(job.job_id, 'running', {
-            stdoutTail: null,
-            stderrTail: null
-          })
-        }
-        continue
-      }
-      const timedOut = observation.state === 'TIMEOUT' || observation.exitCode === 124
-      const succeeded = observation.state === 'COMPLETED' && observation.exitCode === 0
-      const schedulerDiagnostic = `Slurm scheduler state: ${observation.state}.`
-      const failureStderr = `${observation.stderr}${
-        observation.stderr.length > 0 && !observation.stderr.endsWith('\n') ? '\n' : ''
-      }${schedulerDiagnostic}`.slice(-TAIL_MAX_BYTES)
-      const transition = await this.lifecycle.finishPolled(job.job_id, {
-        status: timedOut ? 'timeout' : succeeded ? 'success' : 'failed',
-        exitCode: observation.exitCode,
-        stdoutTail: observation.stdout || null,
-        stderrTail: succeeded ? observation.stderr || null : failureStderr,
-        errorCode: timedOut ? 'timeout' : succeeded ? null : 'job_failed'
-      })
-      if (transition.kind === 'applied') this.harvestScheduler?.schedule(transition.job, signal)
+      return
+    }
+    const timedOut =
+      observation.state !== 'CANCELLED' &&
+      (observation.state === 'TIMEOUT' || observation.exitCode === 124)
+    const succeeded = observation.state === 'COMPLETED' && observation.exitCode === 0
+    const schedulerDiagnostic = `Slurm scheduler state: ${observation.state}.`
+    const failureStderr = `${observation.stderr}${
+      observation.stderr.length > 0 && !observation.stderr.endsWith('\n') ? '\n' : ''
+    }${schedulerDiagnostic}`.slice(-TAIL_MAX_BYTES)
+    const transition = await this.lifecycle.finishPolled(job.job_id, {
+      status: timedOut ? 'timeout' : succeeded ? 'success' : 'failed',
+      exitCode: observation.exitCode,
+      stdoutTail: observation.stdout || null,
+      stderrTail: succeeded ? observation.stderr || null : failureStderr,
+      errorCode:
+        observation.state === 'CANCELLED'
+          ? 'job_cancelled'
+          : timedOut
+            ? 'timeout'
+            : succeeded
+              ? null
+              : 'job_failed',
+      diagnostic: observation.diagnostic
+    })
+    if (transition.kind === 'applied') {
+      if (observation.state === 'CANCELLED') this._dispatchFinalNotification(transition.job)
+      this.harvestScheduler?.schedule(transition.job, signal)
     }
   }
 
@@ -627,16 +663,16 @@ export class JobPoller {
 
     const transition = await this.lifecycle.recoverInterruptedDispatch(job.job_id)
     if (transition.kind === 'ignored') return undefined
-    this._dispatchErrorNotification(transition.job)
+    this._dispatchFinalNotification(transition.job)
     return undefined
   }
 
   private _applySubmittedRecoveryResult(result: SubmittedJobRecoveryResult): void {
     if (result.kind === 'harvest') this.harvestScheduler?.schedule(result.job)
-    if (result.kind === 'notification') this._dispatchErrorNotification(result.job)
+    if (result.kind === 'notification') this._dispatchFinalNotification(result.job)
   }
 
-  private _dispatchErrorNotification(job: ComputeJob): void {
+  private _dispatchFinalNotification(job: ComputeJob): void {
     if (!this.deps.notifyJob) return
     const task = this.deps.notifyJob(job).catch(() => {
       // Non-fatal: job status is already persisted.

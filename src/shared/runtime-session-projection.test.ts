@@ -1,3 +1,4 @@
+import { classifyFailure } from './failure/classify'
 import { describe, expect, it } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE, type AcpRuntimeEvent } from './acp'
@@ -89,7 +90,7 @@ describe('runtime Session projection', () => {
         id: 'close',
         timestamp: 4,
         text: 'ACP connection closed',
-        providerError: false,
+        failure: { category: 'session', diagnostics: {} },
         interruptionCause: 'connection-lost'
       })
     ])
@@ -99,20 +100,25 @@ describe('runtime Session projection', () => {
       cause: 'connection-lost',
       promptMessageId: scope.promptMessageId
     })
-    expect(result.errorReportable).toBe(false)
+    expect(result.failure?.category).toBe('session')
     expect(result.messages.find(({ id }) => id === scope.promptMessageId)?.interrupted).toBe(true)
     expect(result.activities?.[0].status).toBe('failed')
   })
 
   it.each([
-    ['The attached image is invalid.', false],
-    ['unknown app invariant failed', true]
-  ])('classifies Main-authored %s independently of providerError', (text, reportable) => {
+    ['The attached image is invalid.', 'input'],
+    ['unknown app invariant failed', 'internal']
+  ])('carries the Main-authored classification for %s unchanged', (text, reportable) => {
     const { session, scope } = fixture()
     const result = applyRuntimeSessionEvents(session, scope, [
-      event('error', { id: 'main-error', timestamp: 2, text })
+      event('error', {
+        id: 'main-error',
+        timestamp: 2,
+        text,
+        failure: classifyFailure({ origin: 'operation', text })
+      })
     ])
-    expect(result.errorReportable).toBe(reportable)
+    expect(result.failure?.category).toBe(reportable)
   })
 
   it('attributes a post-terminal Artifact cleanup failure without altering a newer active run', () => {
@@ -686,14 +692,14 @@ describe('Main terminal Turn Outcome attribution', () => {
           id: 'failure',
           timestamp: 4,
           text: 'Provider rejected',
-          providerError: true
+          failure: { category: 'service' as const, diagnostics: {} }
         })
       ])
       expect(failed.messages[0].turnOutcome).toEqual({
         kind: 'failed',
         settledAt: 4,
         error: 'Provider rejected',
-        errorReportable: false
+        failure: { category: 'service' as const, diagnostics: {} }
       })
     }
   )
@@ -703,7 +709,7 @@ describe('Main terminal Turn Outcome attribution', () => {
     (wait) => {
       const { session, scope } = fixture()
       session.error = 'Previous failure'
-      session.errorReportable = true
+      session.failure = { category: 'internal', diagnostics: {} }
       session.resumeRecovery = {
         kind: 'resume-required',
         cause: 'app-restart',
@@ -763,7 +769,7 @@ describe('Main terminal Turn Outcome attribution', () => {
       )
       expect(waiting.activeRun).toBeUndefined()
       expect(waiting.error).toBeUndefined()
-      expect(waiting.errorReportable).toBeUndefined()
+      expect(waiting.failure).toBeUndefined()
       expect(waiting.resumeRecovery).toBeUndefined()
     }
   )
@@ -794,13 +800,13 @@ describe('Main terminal Turn Outcome attribution', () => {
         timestamp: 4,
         text: 'Artifacts failed',
         artifactFailure: true,
-        errorReportable: false
+        failure: { category: 'service' as const, diagnostics: {} }
       })
     ])
     expect(publication.messages[0].turnOutcome).toMatchObject({
       kind: 'failed',
       recovery: 'retry-artifact-publication',
-      errorReportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
     const cleanup = applyRuntimeSessionEvents(session, scope, [
       event('error', {
@@ -814,13 +820,19 @@ describe('Main terminal Turn Outcome attribution', () => {
     expect(cleanup.messages[0].turnOutcome).not.toHaveProperty('recovery')
     for (const cause of ['app-restart', 'connection-lost', 'terminal-commit-failed'] as const) {
       const interrupted = applyRuntimeSessionEvents(session, scope, [
-        event('error', { id: cause, timestamp: 4, text: 'Interrupted', interruptionCause: cause })
+        event('error', {
+          id: cause,
+          timestamp: 4,
+          text: 'Interrupted',
+          interruptionCause: cause,
+          failure: classifyFailure({ origin: 'session' })
+        })
       ])
       expect(interrupted.messages[0].turnOutcome).toMatchObject({
         kind: 'interrupted',
         cause,
         recovery: 'resume',
-        errorReportable: false
+        failure: { category: 'session', diagnostics: {} }
       })
     }
   })

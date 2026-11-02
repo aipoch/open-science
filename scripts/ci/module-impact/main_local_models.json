@@ -5,6 +5,8 @@
     "src/main/local-models/download.test.ts",
     "src/main/local-models/download.ts",
     "src/main/local-models/ipc.ts",
+    "src/main/local-models/ocr-owner.test.ts",
+    "src/main/local-models/ocr-owner.ts",
     "src/main/local-models/owner.test.ts",
     "src/main/local-models/owner.ts",
     "src/main/local-models/ipc.test.ts"
@@ -16,7 +18,11 @@
   ],
   "consumerModules": [],
   "testFiles": {
-    "owner": ["src/main/local-models/download.test.ts", "src/main/local-models/owner.test.ts"],
+    "owner": [
+      "src/main/local-models/download.test.ts",
+      "src/main/local-models/ocr-owner.test.ts",
+      "src/main/local-models/owner.test.ts"
+    ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -163,7 +169,6 @@
       "src/main/acp/library-auto-policy.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
       "src/main/side-chat/application-commands.test.ts",
       "src/main/settings/file-commands.test.ts",
@@ -362,5 +367,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "OCR language-pack persistence adds a source outside the previously reviewed local-model boundary; retain complete validation until the expanded boundary is reviewed and reclassified."
 }

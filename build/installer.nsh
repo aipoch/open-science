@@ -1,3 +1,5 @@
+!include "${BUILD_RESOURCES_DIR}\windows-program-cleanup.nsh"
+
 !macro customInstallMode
   # Notebook AppContainer profiles are per-user durable resources. A machine-wide installation
   # cannot safely create, identify, and remove one profile for every Windows account, so keep the
@@ -6,17 +8,24 @@
 !macroend
 
 !macro customUnInstall
+  # Cleanup can fail after removing some program files. Keep retry's lifecycle scripts in the
+  # uninstaller itself, so their availability never depends on a partly removed installation.
+  InitPluginsDir
+  SetOutPath $PLUGINSDIR
+  File "${BUILD_RESOURCES_DIR}\windows-update-handoff-uninstall.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-notebook-sandbox-uninstall.ps1"
+  File "${BUILD_RESOURCES_DIR}\windows-runtime-cache-uninstall.ps1"
   # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
   # real product uninstall removes the AppContainer resources.
   ${ifNot} ${isUpdated}
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
     Pop $0
     StrCmp $0 "0" updatePresentationCleanupComplete
     DetailPrint `Open-Science update presentation cleanup failure code=$0`
     MessageBox MB_OK|MB_ICONSTOP "An Open-Science update may still be active. Finish the update and close its update window, then retry uninstall."
     Abort
     updatePresentationCleanupComplete:
-    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
     DetailPrint `Open-Science Notebook cleanup failure code=$0 sandboxRoot="$INSTDIR\resources\notebook-network-sandbox\windows"`
@@ -29,10 +38,18 @@
       DeleteRegKey HKCU "Software\Classes\open-science"
     ${endif}
   ${endif}
-  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-runtime-cache-uninstall.ps1"'
+  nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\windows-runtime-cache-uninstall.ps1"'
 !macroend
 
 !ifndef BUILD_UNINSTALLER
+!macro customCopyUninstaller
+  # Old binaries cannot accept new deletion exclusions. Use the current signed uninstaller for
+  # both the first attempt and recovery, retaining upstream registration/shortcut handling.
+  File "/oname=$PLUGINSDIR\old-uninstaller.exe" "${UNINSTALLER_OUT_FILE}"
+  # The upstream launch fallback must never execute the destructive installed old binary.
+  StrCpy $uninstallerFileName "$PLUGINSDIR\old-uninstaller.exe"
+!macroend
+
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
@@ -54,9 +71,6 @@ Var perMachineDataBackup
 Var perUserDataBackup
 Var perUserDataBackupBranded
 Var perMachineDataBackupBranded
-Var retryLegacyDataBackup
-Var retryBrandedDataBackup
-Var retryRegisteredBrandedBackup
 Var dataProtectionFailed
 Var dataRestoreFailed
 
@@ -83,9 +97,8 @@ Function normalizeRegisteredInstallPath
     Exch $R0
 FunctionEnd
 
-# Move a data root outside the installation before the OLD uninstaller sees it. A deterministic
-# sibling path lets an elevated inner installer or a later retry recover data left by an
-# interrupted outer installer without relying on process-local registers.
+# Discover deterministic backups left by an interrupted older installer. Current updates leave
+# existing data in place; these compatibility paths only restore data already moved in the past.
 !macro preserveNamedDataRoot DIR BACKUP SLOT FOLDER
   StrCpy ${BACKUP} ""
   ${if} "${DIR}" != ""
@@ -116,24 +129,16 @@ FunctionEnd
     ${else}
       StrCpy ${BACKUP} "$R2\.open-science-update-data-${SLOT}"
       ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
-        ${if} ${FileExists} "${BACKUP}\*.*"
+        ${if} ${FileExists} "${BACKUP}"
           DetailPrint `Open-Science data protection failure code=backup-already-exists path="${DIR}\${FOLDER}" backup="${BACKUP}"`
           DetailPrint `Could not safely preserve "${DIR}\${FOLDER}" because the backup path already exists: ${BACKUP}`
           MessageBox MB_OK|MB_ICONSTOP "Open-Science found both the current data folder and an earlier update backup.$\r$\nNo data was changed. Please inspect:$\r$\n${BACKUP}"
           StrCpy ${BACKUP} ""
           StrCpy $dataProtectionFailed "1"
         ${else}
-          ClearErrors
-          Rename "${DIR}\${FOLDER}" "${BACKUP}"
-          ${if} ${Errors}
-            DetailPrint `Open-Science data protection failure code=preserve-rename-failed path="${DIR}\${FOLDER}" backup="${BACKUP}"`
-            DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
-            MessageBox MB_OK|MB_ICONSTOP "Open-Science could not safely protect its data folder before updating.$\r$\nThe existing data was left untouched."
-            StrCpy ${BACKUP} ""
-            StrCpy $dataProtectionFailed "1"
-          ${else}
-            DetailPrint `Protected the data folder at: ${BACKUP}`
-          ${endif}
+          # Current cleanup excludes data. Do not move it even temporarily. Keep this preflight
+          # only to discover interrupted backups made by older installers.
+          StrCpy ${BACKUP} ""
         ${endif}
       ${elseif} ${FileExists} "${BACKUP}\*.*"
         # A previous installer exited before it could restore. Adopt that deterministic backup
@@ -219,7 +224,7 @@ FunctionEnd
     ${endif}
   ${endif}
   ${if} $dataProtectionFailed != "0"
-    # Undo any earlier successful move before refusing to start either old uninstaller.
+    # Restore any discovered historical backup before stopping this update.
     !insertmacro restoreAllNestedDataRoots
     !insertmacro quitFailedUpdate
   ${endif}
@@ -269,11 +274,9 @@ FunctionEnd
 
 !macro customInit
   Call initializeUpdateReceipts
-  # Cache both registered locations before either uninstall pass can delete their registry data.
-  # More importantly, move any nested OpenScience data root OUTSIDE the install directory before
-  # the first old uninstaller runs. Its /KEEP_APP_DATA flag only protects the normal OS app-data
-  # directory; its update algorithm otherwise moves every child of the install directory into a
-  # disposable $PLUGINSDIR and deletes it on success.
+  # Cache both registered locations before either uninstall pass deletes their registry data.
+  # Discover interrupted backups from older installers without moving current data. The bundled
+  # selective uninstaller replaces the unsafe old implementation on every attempt.
   StrCpy $perMachineInstallDirCache ""
   StrCpy $perUserInstallDirCache ""
   StrCpy $perMachineDataBackup ""
@@ -281,7 +284,7 @@ FunctionEnd
   StrCpy $dataProtectionFailed "0"
   StrCpy $dataRestoreFailed "0"
   # The assisted install section elevates silent per-machine upgrades AFTER .onInit.
-  # Match that existing decision before any write probe or data move: the outer process
+  # Match that existing decision before any write probe or historical backup restoration: the outer process
   # must reach UAC, and only its elevated child may protect/replace the old installation.
   ${if} ${Silent}
   ${andIf} $hasPerMachineInstallation == "1"
@@ -392,7 +395,7 @@ FunctionEnd
       ${endif}
 
     ensureExistingUninstallerIsWritable_cancel:
-      # customInit may already have moved nested user data outside the old installation.
+      # customInit may have discovered data left outside the installation by an older update.
       !insertmacro restoreAllNestedDataRoots
       !insertmacro quitFailedUpdate
 
@@ -445,183 +448,48 @@ FunctionEnd
   Call writeUpdateReceipt
 !macroend
 
-# Resilient replacement for handleUninstallResult's default failure handling, installed via
-# electron-builder's customUnInstallCheck hooks below. During an in-app update the new installer
-# runs the OLD uninstaller and treats any non-zero exit code as fatal ("Failed to uninstall old
-# application files. Please try running the installer again.: <code>") — aborting the update.
-# That code is not trustworthy for our assisted installer (oneClick: false): electron-builder only
-# normalizes the uninstaller's exit code (quitSuccess, "avoid exit code 2") for ONE_CLICK builds,
-# so a benign trailing error leaks out as exit code 2 even when the old version was fully removed
-# (electron-userland/electron-builder#9593). And when the code IS real, it is usually a background
-# child still running from the install dir (micromamba provisioning, the CLI in Node mode, an
-# agent child) locking files — worth one more attempt after a force-kill instead of failing.
-# Recovery order (${DIR} = the installation this pass was uninstalling):
-#   1. Exit code non-zero but the old executable is already gone -> the uninstall did its job
-#      despite the reported code; log and continue installing.
-#   2. Files remain -> force-kill processes running from the install dir, wait, and run the old
-#      uninstaller once more. Only if it still fails show the original dialog and quit.
+# Retry the bundled selective uninstaller once after releasing leftover program processes.
+# Its success callback normalizes the assisted-uninstaller exit code. A non-zero result is a
+# real failure even if the main executable has already been removed during payload cleanup.
 # Symbol constraints: handleUninstallResult is parsed BEFORE uninstallOldVersion and
 # CHECK_APP_RUNNING declare their globals ($installationDir, $PowerShellPath, ...), and makensis
 # treats unknown variables as errors — so this stays self-contained: registers, built-in
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
-!macro preserveRetryDataRoot DIR BACKUP FOLDER
-    StrCpy ${BACKUP} ""
-    ${if} ${FileExists} "${DIR}\${FOLDER}\*.*"
-      ClearErrors
-      GetFullPathName $R2 "${DIR}\.."
-      GetTempFileName ${BACKUP} "$R2"
-      ${ifNot} ${Errors}
-        Delete "${BACKUP}"
-        ClearErrors
-        Rename "${DIR}\${FOLDER}" "${BACKUP}"
-      ${endif}
-      ${if} ${Errors}
-        Delete "${BACKUP}"
-        DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
-        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0$\r$\nAny data already preserved for this retry remains at:$\r$\n$retryLegacyDataBackup$\r$\n$retryBrandedDataBackup"
-        !insertmacro restoreAllNestedDataRoots
-        !insertmacro quitFailedUpdate
-      ${endif}
-    ${endif}
+!macro uninstallFailureRecoveryAt DIR
+  DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
+  # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
+  # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
+  # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
+  # never interpolated into the script source — so a custom install dir containing an apostrophe
+  # breaks nothing and injects nothing. If inspection is unavailable, never widen the target
+  # to executable names: another installation or an unrelated tool may use the same name.
+  # $0 keeps the uninstaller arguments (/currentuser etc.) — nsExec does not touch it.
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
+  Pop $R1
+  # The existing uninstall retry remains the verdict even when process inspection fails.
+  ${if} $R1 != 0
+    DetailPrint `Could not inspect installation processes: $R1; retrying without terminating unverified processes.`
+  ${endif}
+  ClearErrors
+  Sleep 1000
+  # The bundled current uninstaller excludes data on every attempt. Never move a data root
+  # around retry and never fall back to the old installed uninstaller.
 
-!macroend
-
-!macro restoreRetryDataRoot DIR BACKUP REGISTERED_BACKUP FOLDER
-    ${if} ${BACKUP} != ""
-      ${if} "${REGISTERED_BACKUP}" != ""
-      ${andIf} ${FileExists} "${REGISTERED_BACKUP}\*.*"
-        # customInit already holds the authoritative registered data outside the install tree.
-        # Do not overwrite either copy if the old process recreated data before it was killed;
-        # retain that additional directory at its unique sibling path for manual reconciliation.
-        DetailPrint `Additional data created during the update remains at: ${BACKUP}`
-        MessageBox MB_OK|MB_ICONEXCLAMATION "Open-Science found additional data created while closing the previous version.$\r$\nYour original data will be restored; the additional data remains at:$\r$\n${BACKUP}"
-      ${else}
-        # No registered backup exists (recovery can also be used independently). The retry may
-        # have removed ${DIR}; recreate only the parent and put the retry-local data back before
-        # deciding whether the retry's exit code represents success or failure.
-        CreateDirectory "${DIR}"
-        ClearErrors
-        Rename "${BACKUP}" "${DIR}\${FOLDER}"
-        ${if} ${Errors}
-          DetailPrint `The preserved data remains at: ${BACKUP}`
-          MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n${BACKUP}"
-          !insertmacro restoreAllNestedDataRoots
-          !insertmacro quitFailedUpdate
-        ${endif}
-        StrCpy ${BACKUP} ""
-      ${endif}
-    ${endif}
-!macroend
-
-!macro uninstallFailureRecoveryAt DIR REGISTERED_BACKUP REGISTERED_BRANDED_BACKUP
-  ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
-    DetailPrint `Old uninstaller exited with $R0 but the previous installation is already removed; continuing.`
-  ${else}
-    DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
-    # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
-    # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
-    # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
-    # never interpolated into the script source — so a custom install dir containing an apostrophe
-    # breaks nothing and injects nothing. The image-name taskkills are ONLY a fallback for when
-    # the sweep could not run (PowerShell missing or policy-blocked): they match by exe name in
-    # ANY directory — open-science.exe covers the app and its Electron-as-Node children (the
-    # CLI), micromamba.exe covers in-flight provisioning — so a second install, the portable zip
-    # copy, or an unrelated micromamba would be killed too. Acceptable solely when no path-scoped
-    # option exists. Both are best-effort; the retry is the verdict.
-    # $0 keeps the uninstaller arguments (/currentuser etc.) — neither nsExec call touches it.
-    nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
-    Pop $R1
-    # nsExec pushes "error" when powershell.exe cannot even start, otherwise its exit code — any
-    # non-zero means the sweep did not run, so only then widen to the image-name kills.
-    ${if} $R1 != 0
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"`
-      Pop $R1
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM micromamba.exe`
-      Pop $R1
-      nsExec::Exec `"$SYSDIR\cmd.exe" /C taskkill /F /IM "notebook-appcontainer-host.exe"`
-      Pop $R1
-    ${endif}
-    ClearErrors
-    Sleep 1000
-    # A custom data root may live inside the installation itself (the issue reporter uses
-    # <install>\OpenScience). The updated uninstaller moves EVERY child of ${DIR} into its
-    # disposable $PLUGINSDIR, so making that move reliable without protecting the data root
-    # would turn an update failure into silent data loss. Move the directory to a unique sibling
-    # on the same volume before retrying, then restore it regardless of the retry's exit code.
-    # A failed preserve leaves the original directory in place and aborts before the retry.
-    !insertmacro preserveRetryDataRoot ${DIR} $retryLegacyDataBackup OpenScience
-    !insertmacro preserveRetryDataRoot ${DIR} $retryBrandedDataBackup Open-Science
-
-    # During an update, electron-builder's old uninstaller moves every installed file into its
-    # $PLUGINSDIR before deleting the old tree. Windows cannot atomically rename across volumes:
-    # for a custom D: install and the usual C: TEMP this becomes a slow, failure-prone copy of the
-    # whole installation. Give only the recovery child a unique temp directory beside the old
-    # install so its plugin directory stays on the same volume. If that directory cannot be
-    # created, retain the existing default-TEMP retry rather than turning recovery setup into a
-    # new fatal path. $R3/$R4 preserve this installer's environment across the child process.
-    StrCpy $R5 ""
-    ClearErrors
-    GetFullPathName $R2 "${DIR}\.."
-    GetTempFileName $R5 "$R2"
-    ${ifNot} ${Errors}
-      Delete "$R5"
-      ClearErrors
-      CreateDirectory "$R5"
-    ${endif}
-    ${ifNot} ${Errors}
-      ReadEnvStr $R3 "TEMP"
-      ReadEnvStr $R4 "TMP"
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R5").R6'
-      ${if} $R6 != 0
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R5").R6'
-      ${endif}
-      ${if} $R6 == 0
-        # A partial environment update must not leak into the rest of the new installer.
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
-        RMDir /r "$R5"
-        StrCpy $R5 ""
-      ${endif}
-    ${else}
-      StrCpy $R5 ""
-    ${endif}
-
-    ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
-    ${if} $R5 != ""
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
-      RMDir /r "$R5"
-      ClearErrors
-    ${endif}
-    !insertmacro restoreRetryDataRoot ${DIR} $retryLegacyDataBackup ${REGISTERED_BACKUP} OpenScience
-    !insertmacro restoreRetryDataRoot ${DIR} $retryBrandedDataBackup ${REGISTERED_BRANDED_BACKUP} Open-Science
-    ${if} $R0 != 0
-      ${ifNot} ${FileExists} "${DIR}\${APP_EXECUTABLE_FILENAME}"
-        DetailPrint `Retry exited with $R0 but the previous installation is already removed; continuing.`
-      ${else}
-        MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
-        DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
-        !insertmacro restoreAllNestedDataRoots
-        !insertmacro quitFailedUpdate
-      ${endif}
-    ${endif}
+  ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
+  ${if} $R0 != 0
+    MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
+    DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
+    !insertmacro restoreAllNestedDataRoots
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 
 !macro customUnInstallCheck
   # SHELL_CONTEXT resolves from the FINAL install-mode page selection, not the mode seen by
-  # customInit. Keep registered data outside the install tree through any non-zero-exit recovery:
-  # a live old process can recreate OpenScience, and restoring first would make the recovery path
-  # abort on that destination conflict. $R8 selects the authoritative backup for this pass.
+  # customInit. Finish cleanup/retry before restoring any historical interrupted-update backup.
   ${if} $R0 != 0
-    StrCpy $R8 $perUserDataBackup
-    StrCpy $retryRegisteredBrandedBackup $perUserDataBackupBranded
-    ${if} $installMode == "all"
-      StrCpy $R8 $perMachineDataBackup
-      StrCpy $retryRegisteredBrandedBackup $perMachineDataBackupBranded
-    ${endif}
     # SHELL_CONTEXT pass: the old installation sits at $INSTDIR (an update installs over it).
-    !insertmacro uninstallFailureRecoveryAt $INSTDIR $R8 $retryRegisteredBrandedBackup
+    !insertmacro uninstallFailureRecoveryAt $INSTDIR
   ${endif}
 
   # A current-user install has no second pass, so restore every cached root. An all-users install
@@ -654,7 +522,7 @@ FunctionEnd
       !insertmacro restoreAllNestedDataRoots
       !insertmacro quitFailedUpdate
     ${endif}
-    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup $perUserDataBackupBranded
+    !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache
   ${endif}
   # The old uninstall may have removed its registry key, so restore using the path cached before
   # either pass rather than reading InstallLocation here. Recovery must finish first because the

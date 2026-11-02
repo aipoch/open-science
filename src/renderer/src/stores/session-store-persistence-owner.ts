@@ -136,10 +136,16 @@ export const retainSessionRecoveryDrafts = (
   session: ChatSession,
   previous: ChatSession
 ): ChatSession => {
-  if (!previous.unsavedTitle && !previous.elicitationEditDrafts) return session
+  if (
+    !previous.unsavedTitle &&
+    !previous.elicitationEditDrafts &&
+    previous.firstPromptDraft === undefined
+  )
+    return session
   const retained: ChatSession = {
     ...session,
     elicitationEditDrafts: previous.elicitationEditDrafts,
+    firstPromptDraft: previous.firstPromptDraft,
     ...(previous.unsavedTitle ? { title: previous.title, unsavedTitle: true } : {})
   }
   const authority = externallyHydratedSessionAuthorities.get(session)
@@ -277,6 +283,7 @@ export const toPersistedSession = (
     activityGroups,
     isPending,
     pendingBindingSessionId,
+    firstPromptDraft,
     wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
@@ -310,6 +317,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void firstPromptDraft
   void pendingBindingSessionId
   void wslSetup
   void delegationPolicyAuthorityPending
@@ -513,6 +521,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,

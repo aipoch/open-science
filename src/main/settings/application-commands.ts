@@ -13,6 +13,7 @@ import type {
   ClaudeInstallEvent,
   InstallClaudeRequest,
   InstallCodeBuddyRequest,
+  InstallPiRequest,
   InstallCodexRequest,
   InstallOpencodeRequest,
   PreviewAgentHomeSkillRequest,
@@ -110,6 +111,7 @@ type CoreSettingsCommandStore = Pick<
   | 'previewCustomServerTemplateExport'
   | 'installClaude'
   | 'installCodeBuddy'
+  | 'installPi'
   | 'installCodex'
   | 'installOpencode'
   | 'installNotebookNetwork'
@@ -319,6 +321,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallCodeBuddyRequest],
     StoreResult<'installCodeBuddy'>
   >('settings:install-codebuddy'),
+  installPi: defineApplicationCommand<
+    'settings:install-pi',
+    readonly [request: InstallPiRequest],
+    StoreResult<'installPi'>
+  >('settings:install-pi'),
   installCodex: defineApplicationCommand<
     'settings:install-codex',
     readonly [request: InstallCodexRequest],
@@ -584,6 +591,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getSkillDetail,
   settingsCoreApplicationCommands.installClaude,
   settingsCoreApplicationCommands.installCodeBuddy,
+  settingsCoreApplicationCommands.installPi,
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
   settingsCoreApplicationCommands.installNotebookNetwork,
@@ -738,6 +746,12 @@ const registerCoreSettingsApplicationCommands = (
         requireLocalCaller(callerContext, 'settings:install-codebuddy')
         return dependencies.snapshotCommits.projectAfter(
           dependencies.service.installCodeBuddy(args[0], dependencies.emitInstallEvent)
+        )
+      },
+      'settings:install-pi': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:install-pi')
+        return dependencies.snapshotCommits.projectAfter(
+          dependencies.service.installPi(args[0], dependencies.emitInstallEvent)
         )
       },
       'settings:install-codex': ({ args, callerContext }) => {

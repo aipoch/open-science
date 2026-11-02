@@ -97,7 +97,9 @@ const AgentLoadingIndicator = ({
 
   return (
     <div className="flex min-h-5 flex-col gap-1" role="status" aria-live="polite">
-      {environmentProgress && !visiblePermissionPending && phase !== 'waiting-for-response' ? (
+      {phase === 'preparing' ? (
+        <OpenScienceThinkingIndicator />
+      ) : environmentProgress && !visiblePermissionPending && phase !== 'waiting-for-response' ? (
         <div className="flex items-center gap-2 text-xs text-text-000/70">
           <OpenScienceThinkingIndicator />
           <span>{provisionProgressText(t, environmentProgress.event)}</span>

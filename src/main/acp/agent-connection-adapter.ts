@@ -1,5 +1,6 @@
 import { bindMainAgentConnection, spawnMainAgentProcess } from './main-agent-process-ownership'
 import * as acp from '@agentclientprotocol/sdk'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type {
   AuthenticateRequest,
   ClientConnection,
@@ -24,6 +25,7 @@ import {
   type OpenCodeServiceLease
 } from './opencode-service'
 import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
+import { createOpenCodeCompactionStream } from './opencode-compaction-stream'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import type {
@@ -36,6 +38,7 @@ import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 type ResponsesTransportLease = ResolvedAgentBackend['responsesTransportLease']
 type MessagesBridgeLease = ResolvedAgentBackend['messagesBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
+const log = createLogger('acp-connection')
 type CandidateCleanupStage =
   | 'connection'
   | 'agent-process'
@@ -131,6 +134,7 @@ class AcpAgentConnectionAdapter {
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let cleanupUnconfirmed = false
     let framework: AgentFramework['id'] = 'claude-code'
+    let startupPhase = 'resolve-backend'
     let opening = true
     let storeWriters = 0
     const releaseRecoveredStore = (): void => {
@@ -215,6 +219,7 @@ class AcpAgentConnectionAdapter {
       bridgeLease = backend.responsesTransportLease
       messagesBridgeLease = backend.messagesBridgeLease
       providerTransportLease = backend.providerTransportLease
+      startupPhase = 'prepare-backend'
       if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion) {
         openCodeStore = await acquireOpenCodeStore(
           backend.env.XDG_DATA_HOME,
@@ -252,6 +257,7 @@ class AcpAgentConnectionAdapter {
         if (writerReaped) onProcessTreeReaped(child, writerReaped)
         return child
       }
+      startupPhase = 'framework-spawn'
       let spawnAttempted = Boolean(input.spawnAgent)
       try {
         process = input.spawnAgent
@@ -268,6 +274,7 @@ class AcpAgentConnectionAdapter {
                     proxyEnvironmentMode: backend.proxyEnvironmentMode,
                     spawnProcess: spawnProcess
                       ? (...args) => {
+                          startupPhase = 'owned-process-spawn'
                           spawnAttempted = true
                           return spawnProcess(...args)
                         }
@@ -284,6 +291,7 @@ class AcpAgentConnectionAdapter {
         throw error
       }
       hooks.onProcessSpawned(framework)
+      startupPhase = 'publish-backend'
       if (serviceExited) throw new Error('OpenCode HTTP service exited during spawn.')
       if (input.isShuttingDown() || !input.isCurrent()) {
         throw new Error(
@@ -325,9 +333,19 @@ class AcpAgentConnectionAdapter {
           pid: spawnedProcess.pid
         })
       })
-      connection = this.createClientConnection(spawnedProcess, hooks)
+      startupPhase = 'create-connection'
+      connection = this.createClientConnection(spawnedProcess, hooks, backend)
       bindMainAgentConnection(connection, spawnedProcess)
     } catch (error) {
+      try {
+        log.error('agent candidate open failed', {
+          framework,
+          startupPhase,
+          ...diagnosticErrorFields(error)
+        })
+      } catch {
+        // Logging must not change cleanup or the original failure.
+      }
       if (error instanceof OpenCodeServiceCleanupError) cleanupUnconfirmed = true
       backendAttempt?.fail()
       await cleanup()
@@ -391,14 +409,23 @@ class AcpAgentConnectionAdapter {
 
   private createClientConnection(
     process: ChildProcessWithoutNullStreams,
-    hooks: AcpAgentConnectionHooks
+    hooks: AcpAgentConnectionHooks,
+    backend: ResolvedAgentBackend
   ): ClientConnection {
-    const stream = acp.ndJsonStream(
+    let stream = acp.ndJsonStream(
       Writable.toWeb(process.stdin) as WritableStream<Uint8Array>,
       Readable.toWeb(process.stdout) as ReadableStream<Uint8Array>
     )
 
-    return acp
+    const abort = new AbortController()
+    if (backend.framework.id === 'opencode' && backend.opencodeMajorVersion === 1) {
+      stream = createOpenCodeCompactionStream(stream, {
+        api: backend.opencodeUsageApi,
+        resolveSessionCwd: hooks.filesystem.resolveSessionCwd,
+        signal: abort.signal
+      })
+    }
+    const connection = acp
       .client({ name: 'open-science' })
       .onRequest(acp.methods.client.session.requestPermission, (context) =>
         hooks.requestPermission(context.params)
@@ -430,6 +457,8 @@ class AcpAgentConnectionAdapter {
         )
       )
       .connect(stream)
+    void connection.closed.then(() => abort.abort())
+    return connection
   }
 }
 

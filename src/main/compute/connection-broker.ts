@@ -257,11 +257,17 @@ class SshConfigComputeConnectionBroker implements ComputeConnectionBroker {
       this.observeAuthentication(providerId, authenticationGeneration, host, request, {
         run: async (remoteCommand, options) => {
           const signal = request.signal ?? options.signal
+          const { preserveRemoteCommandErrors, ...runOptions } = options
           const result = await this.dependencies.runner.run(target, remoteCommand, {
-            ...options,
+            ...runOptions,
             ...(signal ? { signal } : {})
           })
-          const failure = classifyConnectionFailure(result, false)
+          const completedCommand =
+            preserveRemoteCommandErrors &&
+            !result.timedOut &&
+            result.exitCode !== null &&
+            result.exitCode !== 255
+          const failure = completedCommand ? undefined : classifyConnectionFailure(result, false)
           if (failure) throw failure
           return result
         },

@@ -13,6 +13,18 @@ const SLURM_STDOUT = [
 
 // ---------------------------------------------------------------------------
 describe('parseProbeOutput', () => {
+  it('keeps optional controller and accounting checks independent from the base scheduler', () => {
+    expect(
+      parseProbeOutput(
+        `${SLURM_STDOUT}\nscheduler_available=yes\ncontroller_available=yes\naccounting_available=no`
+      )
+    ).toMatchObject({
+      schedulerAvailable: true,
+      controllerAvailable: true,
+      accountingAvailable: false
+    })
+    expect(parseProbeOutput(SLURM_STDOUT).accountingAvailable).toBeUndefined()
+  })
   it('parses a complete slurm linux output', () => {
     const result = parseProbeOutput(SLURM_STDOUT)
     expect(result.os).toBe('Linux')

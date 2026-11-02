@@ -101,6 +101,27 @@ afterEach(async () => {
 })
 
 describe('artifact MCP server', () => {
+  it('explains how to republish existing files after authorization expiry and subsequent retries', async () => {
+    let now = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    await createStorageRoot()
+    const fixture = activeFixture!
+    const env = await fixture.environment()
+    now += 2 * 60 * 60 * 1_000 + 1
+    for (const reason of ['Artifact RPC capability expired.', 'Invalid notebook RPC token.']) {
+      await expect(
+        saveThroughMcp(fixture.compatibilityRepository, env, {
+          filename: 'report.md',
+          content: '# Report'
+        })
+      ).rejects.toThrow(
+        'Artifact publication authorization has expired or is no longer active. Start a new conversation turn and retry publishing the existing file, preserving any producerRunId. Do not regenerate the file or drop provenance to retry. ' +
+          reason
+      )
+    }
+    expect(await fixture.client.artifactVersion.count()).toBe(0)
+  })
+
   it('directs small text artifacts to inline publication without a prior disk write', () => {
     expect(writeArtifactFileToolDefinition.description).toContain(
       'For small generated text such as Markdown or plain text, pass inline content directly'

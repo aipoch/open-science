@@ -3,11 +3,12 @@ import type { DelegatedProcessOwnership } from './process-ownership'
 
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
-import type {
-  AgentFramework,
-  AgentModelConfig,
-  AgentSpawnInput,
-  SessionSetup
+import {
+  getAgentFramework,
+  type AgentFramework,
+  type AgentModelConfig,
+  type AgentSpawnInput,
+  type SessionSetup
 } from '../agent-framework'
 import { CODEX_ACP_VERSION, CODEX_VERSION } from '../settings/managed-codex'
 import type {
@@ -26,6 +27,7 @@ import {
   type PreparedCodeBuddyDelegateExecution
 } from './codebuddy-execution'
 import type { DelegateExecution, DelegateExecutionInput } from './execution-port'
+import { createPiDelegateExecution, type PreparedPiDelegateExecution } from './pi-execution'
 import {
   createOpenCodeDelegateExecution,
   type PreparedOpenCodeDelegateExecution
@@ -48,6 +50,7 @@ type ProductionFrameworkCertification = Readonly<{
   codexRuntime?: CodexRuntimeIdentity
   codexFramework?: Pick<AgentFramework, 'spawn'>
   codebuddyFramework?: Pick<AgentFramework, 'spawn'>
+  piFramework?: Pick<AgentFramework, 'spawn'>
   assertProviderAvailable(): Promise<void> | void
   prepare(
     input: DelegateExecutionInput
@@ -170,6 +173,22 @@ const createProductionDelegatedFrameworks = (
       })
     }
 
+    if (frameworkId === 'pi') {
+      const execution = createPiDelegateExecution({
+        capacity: options.capacity,
+        framework: certification.piFramework ?? getAgentFramework('pi'),
+        prepare: (input) => certification.prepare(input) as Promise<PreparedPiDelegateExecution>,
+        createRuntime: (scope, callbacks, agentProcess) =>
+          certification.createRuntime(scope, callbacks, agentProcess)
+      })
+      return Object.freeze({
+        frameworkId,
+        execution,
+        async assertAvailable() {
+          await certification.assertProviderAvailable()
+        }
+      })
+    }
     const unsupported: never = frameworkId
     throw new Error(`Unsupported delegated-work framework: ${String(unsupported)}`)
   }

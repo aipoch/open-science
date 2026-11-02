@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
@@ -14,6 +14,7 @@ import {
 } from '../agent-framework'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
+import { piModelId } from '../agent-framework/pi'
 import { netFetchStandard } from '../network-fetch'
 import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
 import type { BackendRoutePlan } from './backend-route-planner'
@@ -21,6 +22,7 @@ import {
   normalizeMessagesRootUrl,
   resolveChatCompletionsUrl,
   resolveChatCompletionsBaseUrl,
+  bufferChatCompletionsToolNames,
   type ResponsesNamespacedTool
 } from '@aipoch/providers/protocol'
 import {
@@ -63,6 +65,8 @@ type ChatCompletionsCompatibilityBridgePort = Pick<
   'start' | 'close'
 >
 type CreateXaiOAuthProviderBridge = typeof createXaiOAuthProviderBridge
+// Lets one Pi generation serve several protocol bridges under its single ACP API key.
+type LoopbackCredentialOptions = Readonly<{ token?: string }>
 
 const codeBuddyCompatibilityEndpoint = (
   provider: ProviderRuntimeTarget['provider'],
@@ -121,6 +125,7 @@ type ProviderTransportGeneration = Readonly<{
   provider?: ProviderRuntimeTarget['provider']
   providerModelCatalog?: readonly AgentModelCatalogEntry[]
   responsesConnection?: LeasedResponsesConnection
+  piModelBridge?: Readonly<{ token: string }>
   environment?: Record<string, string>
   providerConfiguration?: AgentProviderConfiguration
   messagesBridgeLease?: NonNullable<ResolvedAgentBackend['messagesBridgeLease']>
@@ -141,11 +146,13 @@ type ProviderTransportOwnerOptions = {
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
   createMessagesBridge?: (
     targets: readonly MessagesBridgeTarget[],
-    initialTargetId: string
+    initialTargetId: string,
+    options?: LoopbackCredentialOptions
   ) => MessagesBridgePort
   createProtocolForwardingBridge?: (
     targets: readonly ProtocolForwardingBridgeTarget[],
-    initialTargetId: string
+    initialTargetId: string,
+    options?: LoopbackCredentialOptions
   ) => ProtocolForwardingBridgePort
   createChatCompletionsCompatibilityBridge?: (
     target: ChatCompletionsCompatibilityTarget
@@ -165,11 +172,13 @@ class ProviderTransportOwner {
   ) => NativeResponsesProxyPort
   private readonly createMessagesBridge: (
     targets: readonly MessagesBridgeTarget[],
-    initialTargetId: string
+    initialTargetId: string,
+    options?: LoopbackCredentialOptions
   ) => MessagesBridgePort
   private readonly createProtocolForwardingBridge: (
     targets: readonly ProtocolForwardingBridgeTarget[],
-    initialTargetId: string
+    initialTargetId: string,
+    options?: LoopbackCredentialOptions
   ) => ProtocolForwardingBridgePort
   private readonly createChatCompletionsCompatibilityBridge: (
     target: ChatCompletionsCompatibilityTarget
@@ -197,11 +206,12 @@ class ProviderTransportOwner {
       ((target) => new NativeResponsesCompatibilityProxy(target, netFetchStandard))
     this.createMessagesBridge =
       options.createMessagesBridge ??
-      ((targets, initialTargetId) => new MessagesBridge(targets, initialTargetId, netFetchStandard))
+      ((targets, initialTargetId, bridgeOptions) =>
+        new MessagesBridge(targets, initialTargetId, netFetchStandard, undefined, bridgeOptions))
     this.createProtocolForwardingBridge =
       options.createProtocolForwardingBridge ??
-      ((targets, initialTargetId) =>
-        new ProtocolForwardingBridge(targets, initialTargetId, netFetchStandard))
+      ((targets, initialTargetId, bridgeOptions) =>
+        new ProtocolForwardingBridge(targets, initialTargetId, netFetchStandard, bridgeOptions))
     this.createChatCompletionsCompatibilityBridge =
       options.createChatCompletionsCompatibilityBridge ??
       ((target) => new ChatCompletionsCompatibilityBridge(target, netFetchStandard))
@@ -212,6 +222,9 @@ class ProviderTransportOwner {
   }
 
   async acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
+    if (input.plan.transport.kind === 'pi') {
+      return this.startPiTransport(input)
+    }
     if (input.plan.modelRoute === 'codebuddy-openai') {
       return this.startCodeBuddyTransport(input)
     }
@@ -262,6 +275,113 @@ class ProviderTransportOwner {
     )
       return {}
     return { onProviderFailure: (failure) => observe(target, failure) }
+  }
+
+  private async startPiTransport(
+    input: ProviderTransportRequest
+  ): Promise<ProviderTransportGeneration> {
+    const transport = input.plan.transport
+    if (transport.kind !== 'pi') throw new Error('Pi provider transport is unavailable.')
+    // Every bridge accepts the one key Pi receives over ACP authentication.
+    const token = randomBytes(24).toString('hex')
+    const bridges: Array<
+      MessagesBridgePort | ProtocolForwardingBridgePort | ReturnType<CreateXaiOAuthProviderBridge>
+    > = []
+    const targetIds = new Set<string>()
+    const catalog: AgentModelCatalogEntry[] = []
+    let activeProvider: ProviderRuntimeTarget['provider'] | undefined
+    try {
+      for (const planned of transport.targets) {
+        const candidate = planned.target
+        const model = candidate.effectiveModel ?? candidate.provider.model
+        if (!model) continue
+        const key = candidate.provider.key ? { key: candidate.provider.key } : {}
+        const bridge =
+          planned.oauth === 'xai'
+            ? this.createXaiOAuthProviderBridge(
+                [{ id: planned.id, model }],
+                planned.id,
+                'chat-completions',
+                this.getXaiOAuthAccessToken,
+                { token }
+              )
+            : planned.wire === 'messages'
+              ? this.createMessagesBridge(
+                  [
+                    {
+                      ...this.healthObservation(candidate),
+                      id: planned.id,
+                      baseUrl: planned.endpoint!,
+                      ...key,
+                      model,
+                      ...(candidate.provider.vendorId &&
+                      usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
+                        ? { useApiKeyHeader: true }
+                        : {})
+                    }
+                  ],
+                  planned.id,
+                  { token }
+                )
+              : this.createProtocolForwardingBridge(
+                  [
+                    {
+                      ...this.healthObservation(candidate),
+                      id: planned.id,
+                      wire: planned.wire,
+                      endpoint: planned.endpoint!,
+                      ...key,
+                      model
+                    }
+                  ],
+                  planned.id,
+                  { token }
+                )
+        bridges.push(bridge)
+        const connection = await bridge.start()
+        const localProvider = Object.freeze({
+          ...candidate.provider,
+          agentProviderId: piModelId(candidate.providerId, model),
+          baseUrl: connection.baseUrl,
+          chatCompletionsBaseUrl: undefined,
+          responsesBaseUrl: undefined,
+          model,
+          key: token,
+          apiEndpoints: [planned.wire] as const
+        })
+        catalog.push(
+          Object.freeze({
+            provider: localProvider,
+            ...(planned.reasoningEffort ? { reasoningEffort: planned.reasoningEffort } : {}),
+            ...(planned.reasoningEfforts ? { reasoningEfforts: planned.reasoningEfforts } : {})
+          })
+        )
+        targetIds.add(planned.id)
+        if (planned.id === transport.initialTargetId) activeProvider = localProvider
+      }
+      if (!activeProvider) throw new Error('The active Pi model was not registered.')
+      let released = false
+      const release = async (): Promise<void> => {
+        if (released) return
+        released = true
+        await Promise.all(bridges.map((bridge) => bridge.close()))
+      }
+      return Object.freeze({
+        provider: activeProvider,
+        providerModelCatalog: Object.freeze(catalog),
+        piModelBridge: Object.freeze({ token }),
+        environment: loopbackProxyBypassEnvironment(process.env),
+        providerTransportLease: {
+          // Pi selects among catalog models itself; each target keeps its own bridge.
+          setTarget: (targetId: string) => !released && targetIds.has(targetId),
+          release
+        },
+        release
+      })
+    } catch (error) {
+      await Promise.all(bridges.map((bridge) => bridge.close().catch(() => undefined)))
+      throw error
+    }
   }
 
   private async startCodeBuddyTransport(
@@ -452,6 +572,7 @@ class ProviderTransportOwner {
                       id: targetId,
                       wire: 'chat-completions',
                       endpoint: resolveChatCompletionsUrl(candidate.provider)!,
+                      adaptStream: bufferChatCompletionsToolNames,
                       ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                       model
                     }

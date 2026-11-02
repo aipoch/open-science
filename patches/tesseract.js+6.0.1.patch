@@ -1,0 +1,9 @@
+diff --git a/node_modules/tesseract.js/src/worker-script/index.js b/node_modules/tesseract.js/src/worker-script/index.js
+--- a/node_modules/tesseract.js/src/worker-script/index.js
++++ b/node_modules/tesseract.js/src/worker-script/index.js
+@@ -235,4 +235,4 @@
+ }, res) => {
+   const langs = (typeof _langs === 'string')
+     ? _langs
+-    : _langs.map((l) => ((typeof l === 'string') ? l : l.data)).join('+');
++    : _langs.map((l) => ((typeof l === 'string') ? l : l.code)).join('+');

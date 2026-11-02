@@ -22,7 +22,7 @@ import {
   resolveProviderReasoningEffortProfile
 } from '../../shared/provider-reasoning-effort'
 
-import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
+import { buildConfiguredModelUnavailableMessage } from '../../shared/failure/messages'
 import type { ProviderView } from '../../shared/settings'
 import {
   isClaudeSubscriptionProvider,

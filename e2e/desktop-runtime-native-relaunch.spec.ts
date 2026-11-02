@@ -11,7 +11,7 @@ import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { randomUUID } from 'node:crypto'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdir, mkdtemp, readFile, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -299,6 +299,13 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
   let launchStderr = ''
   let launchIdentity: unknown
   let completed = false
+  const requestQuit = async (pid: number): Promise<void> => {
+    const path = join(configRoot, 'fixture-quit-pid')
+    // The observer polls concurrently; publish complete JSON without a truncate/write window.
+    const temporary = `${path}.${randomUUID()}.tmp`
+    await writeFile(temporary, JSON.stringify({ pid, capability }))
+    await rename(temporary, path)
+  }
   const exited = (pid: number): boolean => {
     try {
       process.kill(pid, 0)
@@ -466,10 +473,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
       expect(entry.argv).toContain(`--user-data-dir=${profileRoot}`)
       if (process.platform === 'darwin') expect(entry.argv).toContain('--use-mock-keychain')
     }
-    await writeFile(
-      join(configRoot, 'fixture-quit-pid'),
-      JSON.stringify({ pid: successorPid, capability })
-    )
+    await requestQuit(successorPid!)
     await expect.poll(() => exited(successorPid!), { timeout: 25000 }).toBe(true)
     await expect.poll(() => exited(nextOwner.pid), { timeout: 10000 }).toBe(true)
     expect(JSON.parse(await readFile(join(configRoot, 'runtime-exit.json'), 'utf8'))).toMatchObject(
@@ -520,10 +524,7 @@ test('actual Electron relaunch starts a new Desktop and Runtime and reads the or
         },
         async () => {
           if (successorPid && !exited(successorPid)) {
-            await writeFile(
-              join(configRoot, 'fixture-quit-pid'),
-              JSON.stringify({ pid: successorPid, capability })
-            )
+            await requestQuit(successorPid)
             await expect.poll(() => exited(successorPid!), { timeout: 25000 }).toBe(true)
           }
         },
