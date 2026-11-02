@@ -88,6 +88,7 @@ import {
   resolveArtifactVersionDescriptor
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
+import { getFileExtension } from './preview-support'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
 import type { ActivePdfTranslation, PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
@@ -1069,6 +1070,10 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
+    const isLocalHtmlFile =
+      resolvedPreviewItem.source === 'local' &&
+      (getFileExtension(resolvedPreviewItem.name) === 'html' ||
+        getFileExtension(resolvedPreviewItem.name) === 'htm')
 
     const copyPath = async (): Promise<void> => {
       setLocalActionFailure(undefined)
@@ -1108,6 +1113,33 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           title: t('Could not download this file.'),
           detail: errorDetail(error),
           retry: () => void downloadLocalFile()
+        })
+      }
+    }
+
+    const openLocalHtmlInBrowser = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      try {
+        const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
+        if (result) throw new Error(result)
+      } catch (error) {
+        setLocalActionFailure({
+          title: t('Could not open this file.'),
+          detail: errorDetail(error),
+          retry: () => void openLocalHtmlInBrowser()
+        })
+      }
+    }
+
+    const revealLocalHtmlInFolder = async (): Promise<void> => {
+      setLocalActionFailure(undefined)
+      try {
+        await window.api.localFs.reveal(resolvedPreviewItem.path)
+      } catch (error) {
+        setLocalActionFailure({
+          title: t('Could not open that folder.'),
+          detail: errorDetail(error),
+          retry: () => void revealLocalHtmlInFolder()
         })
       }
     }
@@ -1586,6 +1618,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
               execute: copyPath,
               ...(copied ? { labelKey: 'Copied', icon: Check } : {})
             },
+            ...(isLocalHtmlFile
+              ? {
+                  'open-in-browser': { execute: openLocalHtmlInBrowser },
+                  'reveal-in-folder': { execute: revealLocalHtmlInFolder }
+                }
+              : {}),
             download: { execute: downloadLocalFile },
             'save-as-artifact': {
               execute: saveLocalFileAsArtifact,

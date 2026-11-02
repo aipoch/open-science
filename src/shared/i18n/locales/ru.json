@@ -8359,6 +8359,7 @@
     "{{count}} failed overviews_few": "Не удалось создать {{count}} обзора",
     "{{count}} failed overviews_many": "Не удалось создать {{count}} обзоров",
     "{{count}} failed overviews_other": "Не удалось создать {{count}} обзора",
-    "Could not load the overview. Try again.": "Не удалось загрузить обзор. Попробуйте ещё раз."
+    "Could not load the overview. Try again.": "Не удалось загрузить обзор. Попробуйте ещё раз.",
+    "Open in browser": "Открыть в браузере"
   }
 }

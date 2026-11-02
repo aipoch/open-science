@@ -7865,6 +7865,7 @@
     "Continue remaining": "남은 항목 계속",
     "{{done}} of {{total}} finished": "{{total}}개 중 {{done}}개 처리됨",
     "{{count}} failed overviews_other": "개요 {{count}}개 생성 실패",
-    "Could not load the overview. Try again.": "개요를 불러오지 못했습니다. 다시 시도하세요."
+    "Could not load the overview. Try again.": "개요를 불러오지 못했습니다. 다시 시도하세요.",
+    "Open in browser": "브라우저에서 열기"
   }
 }

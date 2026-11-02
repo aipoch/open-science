@@ -4744,6 +4744,15 @@ const localItem: PreviewFileItem = {
   source: 'local'
 }
 
+const localHtmlItem: PreviewFileItem = {
+  ...localItem,
+  id: 'local:/Users/example/reports/report.html',
+  title: 'report.html',
+  name: 'report.html',
+  path: '/Users/example/reports/report.html',
+  format: 'html'
+}
+
 const setupLocalApi = (): void => {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
@@ -4851,6 +4860,29 @@ describe('PreviewFileSurface local file header', () => {
       path: '/Users/example/logs/proxy.log',
       suggestedName: 'proxy.log'
     })
+  })
+
+  it('offers browser and containing-folder actions only for local HTML files', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={localHtmlItem} onClose={vi.fn()} />)
+    })
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+
+    const menu = document.body.querySelector('[role="menu"]')
+    expect(menu?.textContent).toContain('Open in browser')
+    expect(menu?.textContent).toContain('Reveal in folder')
+    expect(
+      [...(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? [])].map(
+        (item) => item.dataset.actionId
+      )
+    ).toEqual(['copy-path', 'open-in-browser', 'reveal-in-folder', 'download', 'save-as-artifact'])
+
+    await clickMenuItem('Open in browser')
+    expect(window.api.localFs.openPath).toHaveBeenCalledWith(localHtmlItem.path)
+
+    await openMenu(container.querySelector('[aria-label="More actions"]'))
+    await clickMenuItem('Reveal in folder')
+    expect(window.api.localFs.reveal).toHaveBeenCalledWith(localHtmlItem.path)
   })
 
   it('opens the local file capabilities from the preview content context menu', async () => {

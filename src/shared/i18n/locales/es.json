@@ -8211,6 +8211,7 @@
     "{{count}} failed overviews_one": "{{count}} resumen fallido",
     "{{count}} failed overviews_many": "{{count}} resúmenes fallidos",
     "{{count}} failed overviews_other": "{{count}} resúmenes fallidos",
-    "Could not load the overview. Try again.": "No se pudo cargar el resumen. Inténtelo de nuevo."
+    "Could not load the overview. Try again.": "No se pudo cargar el resumen. Inténtelo de nuevo.",
+    "Open in browser": "Abrir en el navegador"
   }
 }
