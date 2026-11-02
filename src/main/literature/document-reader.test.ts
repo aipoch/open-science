@@ -389,15 +389,12 @@ describe('LiteratureDocumentReader', () => {
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { documentIds: ['binding-1'], query: 'needle' }
       })
-      expect(scoped.structuredContent).toBeUndefined()
-      expect(JSON.parse((scoped.content as { text: string }[]).at(-1)!.text)).toMatchObject({
-        passages: []
-      })
+      expect(scoped.structuredContent).toMatchObject({ passages: [] })
       const all = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { query: 'needle' }
       })
-      expect(JSON.parse((all.content as { text: string }[]).at(-1)!.text)).toMatchObject({
+      expect(all.structuredContent).toMatchObject({
         documents: [{ id: 'binding-1' }, { id: 'binding-2' }],
         passages: [expect.objectContaining({ documentId: 'binding-2' })]
       })

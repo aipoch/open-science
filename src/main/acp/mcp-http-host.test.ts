@@ -473,25 +473,7 @@ describe('AgentMcpHttpHost', () => {
   it('serves the linked Literature reader over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
-    const source = 'An original passage long enough to use its source-unit reference.'
-    const readDocument = vi.fn(async () => ({
-      document: { id: 'doc', name: 'paper.pdf', pageCount: 1 },
-      passage: {
-        pageStart: 1,
-        pageEnd: 1,
-        text: source,
-        pageLayouts: [
-          {
-            page: 1,
-            width: 600,
-            height: 800,
-            coordinateSystem: 'top-left',
-            blocks: [{ id: 0, text: source, bounds: [40, 100, 250, 110] }]
-          }
-        ]
-      },
-      nextCursor: null
-    }))
+    const readDocument = vi.fn(async () => ({ content: 'page text', nextCursor: null }))
     host.registerLiterature('literature-session-1', { readDocument })
     const client = new Client({ name: 'literature-http-test', version: '1.0.0' })
     await client.connect(
@@ -502,12 +484,7 @@ describe('AgentMcpHttpHost', () => {
     )
 
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(['read_document'])
-    const result = await client.callTool({ name: 'read_document', arguments: {} })
-    expect(result.structuredContent).toBeUndefined()
-    expect(JSON.parse((result.content as { text: string }[]).at(-1)!.text)).toMatchObject({
-      layoutEncoding: 'source-units-v1',
-      passage: { text: [[1, 0]], pageLayouts: [{ units: [[0, source, 40, 100, 250, 110]] }] }
-    })
+    await client.callTool({ name: 'read_document', arguments: {} })
     expect(readDocument).toHaveBeenCalledWith({})
     await client.close()
   })

@@ -5,8 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   LITERATURE_MCP_SERVER_NAME,
   LITERATURE_READ_DOCUMENT_TOOL_NAME,
-  createLiteratureMcpServer,
-  compactLiteratureReadResult
+  createLiteratureMcpServer
 } from './mcp-server'
 
 const proseRegions = [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
@@ -85,10 +84,6 @@ describe('Literature MCP server', () => {
       expect(tools[0]?.inputSchema.properties).not.toHaveProperty('proseRegions')
       expect(tools[0]?.inputSchema.additionalProperties).toBe(false)
       expect(tools[0]?.description).toContain('Ambiguous layouts retain native order')
-      expect(tools[0]?.description).not.toContain('configured model')
-      expect(tools[0]?.description).toContain('extractionWarnings')
-      expect(tools[0]?.description).toContain('pageLayouts')
-      expect(tools[0]?.description).toContain('layoutOmittedPages')
       expect(tools[0]?.description).toContain('No manual body-region configuration is required')
       const result = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
@@ -96,8 +91,7 @@ describe('Literature MCP server', () => {
       })
 
       expect(readDocument).toHaveBeenCalledWith({ query: 'retrieval evaluator' })
-      expect(result.structuredContent).toBeUndefined()
-      expect(JSON.parse((result.content as { text: string }[]).at(-1)!.text)).toMatchObject({
+      expect(result.structuredContent).toMatchObject({
         scope: 'relevant-passages',
         passages: [expect.objectContaining({ pageStart: 3 })]
       })
@@ -271,180 +265,10 @@ describe('Literature MCP server', () => {
         client.callTool({ name: LITERATURE_READ_DOCUMENT_TOOL_NAME, arguments: {} })
       ).resolves.toMatchObject({
         isError: true,
-        content: [{ type: 'text', text: expect.stringContaining('NO_LINKED_PDF_CONTEXT') }]
-      })
-    } finally {
-      await client.close()
-      await server.close()
-    }
-  })
-})
-
-// Independent test decoder: compare the full business value, including native gaps and geometry.
-const expandCompactResult = (wire: unknown): unknown => {
-  const result = JSON.parse(JSON.stringify(wire))
-  if (result.layoutEncoding !== 'source-units-v1') return result
-  delete result.layoutEncoding
-  const expand = (
-    owner: {
-      pageLayouts?: {
-        page: number
-        units?: [number, string, number, number, number, number][]
-        blocks?: { id: number; text: string; bounds: number[] }[]
-      }[]
-    },
-    passages: Record<string, unknown>[]
-  ): void => {
-    const text = new Map<string, string>()
-    for (const page of owner.pageLayouts ?? []) {
-      page.blocks = page.units!.map(([id, value, left, top, right, bottom]) => {
-        text.set(`${page.page}:${id}`, value)
-        return { id, text: value, bounds: [left, top, right, bottom] }
-      })
-      delete page.units
-    }
-    for (const passage of passages) {
-      for (const key of ['text', 'content']) {
-        if (!Array.isArray(passage[key])) continue
-        passage[key] = passage[key]
-          .map((part) => {
-            if (typeof part === 'string') return part
-            const value = text.get(`${part[0]}:${part[1]}`)
-            expect(value).toBeDefined()
-            return value
-          })
-          .join('')
-      }
-    }
-  }
-  if (result.passage) expand(result.passage, [result.passage])
-  else
-    for (const document of result.documents)
-      expand(
-        document,
-        result.passages.filter(
-          (passage: { documentId?: string }) => passage.documentId === document.id
-        )
-      )
-  return result
-}
-
-const compactFixture = (
-  page: number,
-  id: number,
-  text: string
-): {
-  page: number
-  width: number
-  height: number
-  coordinateSystem: string
-  blocks: { id: number; text: string; bounds: number[] }[]
-} => ({
-  page,
-  width: 600,
-  height: 800,
-  coordinateSystem: 'top-left',
-  blocks: [{ id, text, bounds: [40.123456789, 100, 250.987654321, 110] }]
-})
-
-describe('lossless literature transport', () => {
-  it('references native text without changing Unicode, whitespace, nonsequential IDs or coordinates', () => {
-    const first = '原始😀 sentence with repeated words and exact punctuation.',
-      second = 'Different second source with enough text to benefit from a reference.'
-    const result = {
-      document: { id: 'first', extractionWarnings: ['uncertain'] },
-      passage: {
-        pageStart: 1,
-        pageEnd: 2,
-        text: `--- Page 1 ---\n\t${first}\u00a0\n--- Page 99 ---\n${second}\n`,
-        pageLayouts: [compactFixture(1, 9, first), compactFixture(2, 3, second)]
-      },
-      nextCursor: 'opaque cursor'
-    }
-    const before = JSON.stringify(result)
-    const compact = compactLiteratureReadResult(result)
-    expect(compact).toMatchObject({ layoutEncoding: 'source-units-v1' })
-    expect(expandCompactResult(compact)).toEqual(result)
-    expect(JSON.stringify(compact).length).toBeLessThan(before.length)
-    expect(JSON.stringify(result)).toBe(before)
-    expect(JSON.stringify(compact).split(first)).toHaveLength(2)
-  })
-
-  it('retains partial source units at cursor boundaries and full-page evidence outside the snippet', () => {
-    const source = 'Entire original source unit with its beginning outside this native batch.'
-    const result = {
-      passage: {
-        text: source.slice(8, -3),
-        pageLayouts: [compactFixture(1, 0, source), compactFixture(2, 1, 'Other page source.')]
-      },
-      nextCursor: 'unchanged'
-    }
-    expect(expandCompactResult(compactLiteratureReadResult(result))).toEqual(result)
-  })
-
-  it('resolves repeated text only through its own search document, preserving ranks and offsets', () => {
-    const source = 'Identical original source in distinct authorized documents.'
-    const result = {
-      documents: [
-        { id: 'a', pageLayouts: [compactFixture(1, 5, source)] },
-        { id: 'b', pageLayouts: [compactFixture(1, 8, source)] }
-      ],
-      passages: [
-        { documentId: 'b', content: source + '\n' + source, textStart: 0, textEnd: 117 },
-        { documentId: 'a', content: source, textStart: 20, textEnd: 78 }
-      ]
-    }
-    const compact = compactLiteratureReadResult(result)
-    expect(compact).toMatchObject({ layoutEncoding: 'source-units-v1' })
-    expect(expandCompactResult(compact)).toEqual(result)
-  })
-
-  it.each(['no geometry', 'tiny value', 'unsupported metadata', 'duplicate id', 'duplicate page'])(
-    'keeps the original representation when compaction is unsafe or unhelpful: %s',
-    (kind) => {
-      const page = compactFixture(1, 0, kind === 'tiny value' ? 'x' : 'long original '.repeat(10))
-      if (kind === 'unsupported metadata') Object.assign(page.blocks[0], { extra: 'retain me' })
-      if (kind === 'duplicate id') page.blocks.push({ ...page.blocks[0] })
-      const result = {
-        passage: {
-          text: page.blocks[0].text,
-          ...(kind === 'no geometry'
-            ? {}
-            : { pageLayouts: kind === 'duplicate page' ? [page, page] : [page] })
+        structuredContent: {
+          error: { code: 'NO_LINKED_PDF_CONTEXT', message: expect.any(String) }
         }
-      }
-      expect(compactLiteratureReadResult(result)).toBe(result)
-    }
-  )
-
-  it('delivers one complete business representation over the actual MCP transport', async () => {
-    const source = 'Original prose from an uncertain page with its exact source geometry.'
-    const original = {
-      scope: 'full-document',
-      document: { id: 'doc', name: 'source.pdf', pageCount: 1 },
-      passage: {
-        pageStart: 1,
-        pageEnd: 1,
-        text: source,
-        pageLayouts: [compactFixture(1, 0, source)]
-      },
-      nextCursor: null
-    }
-    const server = createLiteratureMcpServer({ readDocument: vi.fn(async () => original) })
-    const client = new Client({ name: 'compact-wire-test', version: '1.0.0' })
-    const [a, b] = InMemoryTransport.createLinkedPair()
-    await Promise.all([server.connect(a), client.connect(b)])
-    try {
-      const result = await client.callTool({
-        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
-        arguments: {}
       })
-      expect(result.structuredContent).toBeUndefined()
-      const texts = result.content as { type: string; text: string }[]
-      expect(texts).toHaveLength(2)
-      expect(JSON.parse(texts[0].text)).toHaveProperty('openScienceLiteraturePresentation')
-      expect(expandCompactResult(JSON.parse(texts[1].text))).toEqual(original)
-      expect(texts[1].text.split(source)).toHaveLength(2)
     } finally {
       await client.close()
       await server.close()
