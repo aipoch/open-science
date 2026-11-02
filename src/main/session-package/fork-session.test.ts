@@ -147,7 +147,11 @@ const copyForFork = (source: PersistedChatSession): PersistedChatSession => {
 }
 
 const legacyFailed = (): PersistedChatSession =>
-  turnSession('source', { status: 'error', error: 'Provider failed', errorReportable: true })
+  turnSession('source', {
+    status: 'error',
+    error: 'Provider failed',
+    failure: { category: 'internal' as const, diagnostics: {} }
+  })
 
 const legacyInterrupted = (): PersistedChatSession =>
   turnSession('source', {
@@ -169,7 +173,7 @@ it('keeps a legacy failed latest turn as a durable failed outcome in the fork', 
     expect(message.turnOutcome).toMatchObject({
       kind: 'failed',
       error: 'Provider failed',
-      errorReportable: true
+      failure: { category: 'internal' as const, diagnostics: {} }
     })
   expect(deriveSessionAttention(fork)).toBeUndefined()
   expect(source).toEqual(before)

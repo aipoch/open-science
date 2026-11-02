@@ -15,6 +15,36 @@ import { OptionalSecureStorageStringProtection } from './credential-vault'
 
 type RunResult = Awaited<ReturnType<ComputeConnectionLease['run']>>
 
+// This suite exercises cleanup/restart persistence, with explicit scheduler evidence supplied by
+// the transport fixture. Keep responses aligned with the fields requested by the Slurm driver;
+// scheduler commands must never fall through to the host's shell or installed Slurm binaries.
+const cancelledSchedulerResponse = (command: string): RunResult | undefined => {
+  const result = (stdout = ''): RunResult => ({
+    stdout,
+    stderr: '',
+    exitCode: 0,
+    truncated: false,
+    timedOut: false
+  })
+  if (command.startsWith('scancel ')) return result()
+  if (command.startsWith('squeue ')) {
+    const id = command.match(/\s-j (\d+)\s/)?.[1]
+    if (!id || !command.includes("--format='%i|%T|%r'"))
+      throw new Error(`Unexpected scheduler fixture query: ${command}`)
+    return result(`${id}|CANCELLED|None\n`)
+  }
+  if (command.startsWith('scontrol ')) {
+    const id = command.match(/show job (\d+) --oneliner$/)?.[1]
+    if (!id) throw new Error(`Unexpected scheduler fixture query: ${command}`)
+    return result(`JobId=${id} JobState=CANCELLED ExitCode=0:15\n`)
+  }
+  if (command.startsWith('sacct '))
+    throw new Error(
+      'Cleanup must not require accounting after an explicit controller cancellation.'
+    )
+  return undefined
+}
+
 const runCleanupShell = (command: string, storageRoot: string): RunResult => {
   if (process.platform !== 'win32') {
     const shell = spawnSync('sh', ['-c', command], { encoding: 'utf8' })
@@ -88,11 +118,7 @@ describe('remote cleanup retry after durable row deletion failure', () => {
         )
       })
       const run: ComputeConnectionLease['run'] = async (command) => {
-        if (command.startsWith('scancel '))
-          return { stdout: '', stderr: '', exitCode: 0, truncated: false, timedOut: false }
-        if (command.startsWith('squeue '))
-          return { stdout: 'CANCELLED', stderr: '', exitCode: 0, truncated: false, timedOut: false }
-        return runCleanupShell(command, db.storageRoot)
+        return cancelledSchedulerResponse(command) ?? runCleanupShell(command, db.storageRoot)
       }
       const deps = {
         hostRepository: {
@@ -161,16 +187,9 @@ it.each(['persist', 'before-rm', 'after-rm', 'partial-job'] as const)(
         })
       }
       let armed = true
-      const result = (stdout = '', exitCode = 0): RunResult => ({
-        stdout,
-        stderr: '',
-        exitCode,
-        truncated: false,
-        timedOut: false
-      })
       const run = vi.fn<ComputeConnectionLease['run']>(async (command) => {
-        if (command.startsWith('scancel ')) return result()
-        if (command.startsWith('squeue ')) return result('CANCELLED')
+        const scheduler = cancelledSchedulerResponse(command)
+        if (scheduler) return scheduler
         const destructive = command.includes('rm -rf -- "$workdir"')
         const targetFault = destructive && (fault !== 'partial-job' || command.includes('/jobs/k'))
         if (armed && targetFault && (fault === 'before-rm' || fault === 'partial-job')) {
@@ -352,11 +371,7 @@ it.each([
     if (transition.includes('no-launch'))
       await jobs.update('j', { lastPollError: 'dispatch_definitely_not_started' })
     const run = vi.fn<ComputeConnectionLease['run']>(async (command) => {
-      if (command.startsWith('scancel '))
-        return { stdout: '', stderr: '', exitCode: 0, timedOut: false, truncated: false }
-      if (command.startsWith('squeue '))
-        return { stdout: 'CANCELLED', stderr: '', exitCode: 0, timedOut: false, truncated: false }
-      return runCleanupShell(command, db.storageRoot)
+      return cancelledSchedulerResponse(command) ?? runCleanupShell(command, db.storageRoot)
     })
     const connectionBroker = { acquire: async () => ({ run, upload: vi.fn(), download: vi.fn() }) }
     const hostRepository = {

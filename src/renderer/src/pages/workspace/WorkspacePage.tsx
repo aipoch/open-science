@@ -42,6 +42,8 @@ import {
   createProjectComputePreviewItem,
   createProjectFilesPreviewItem,
   createProjectLibraryPreviewItem,
+  createProjectMarketplacePreviewItem,
+  PROJECT_MARKETPLACE_PREVIEW_ID,
   PROJECT_COMPUTE_PREVIEW_ID,
   PROJECT_FILES_PREVIEW_ID,
   PROJECT_LIBRARY_PREVIEW_ID,
@@ -1520,6 +1522,12 @@ const WorkspacePage = ({
     if (!isSessionPersistenceReady) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
   }
+
+  const openMarketplacePreview = (): boolean => {
+    if (!isSessionPersistenceReady) return false
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectMarketplacePreviewItem())
+    return usePreviewWorkbenchStore.getState().activeItemId === PROJECT_MARKETPLACE_PREVIEW_ID
+  }
   const canOpenProjectCompute =
     typeof window.api.notebook?.getProjectActivity === 'function' &&
     typeof window.api.notebook?.onChanged === 'function' &&
@@ -1599,6 +1607,8 @@ const WorkspacePage = ({
                 onOpenFiles={openFilesPreview}
                 isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
                 onOpenLiterature={openLibraryPreview}
+                isMarketplaceOpen={activePreviewItemId === PROJECT_MARKETPLACE_PREVIEW_ID}
+                onOpenMarketplace={isSessionPersistenceReady ? openMarketplacePreview : undefined}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1667,6 +1677,14 @@ const WorkspacePage = ({
                 onOpenLiterature={() => {
                   if (openLibraryPreview()) close()
                 }}
+                isMarketplaceOpen={activePreviewItemId === PROJECT_MARKETPLACE_PREVIEW_ID}
+                onOpenMarketplace={
+                  isSessionPersistenceReady
+                    ? () => {
+                        if (openMarketplacePreview()) close()
+                      }
+                    : undefined
+                }
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1780,6 +1798,7 @@ const WorkspacePage = ({
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
                   canEditLocalDraft,
+                  sendPreparing: activeSessionHasSendPreparation,
                   persistenceBlocked: persistenceBlockedSessionIds.includes(
                     activeSession?.id ?? ''
                   ),
@@ -1881,6 +1900,7 @@ const WorkspacePage = ({
                   }
                 }}
                 sessionTools={{
+                  newConversation: openNewConversation,
                   menuBindings: createSessionActionBindings({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,

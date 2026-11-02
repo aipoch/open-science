@@ -157,7 +157,7 @@ export const isShippableDependencyPath = (relativePath) => {
 // extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
 // conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
 // See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
-export function createDesktopDependencyFilter(manifest, { localTranslationWasm = false } = {}) {
+export function createDesktopDependencyFilter(manifest) {
   // These alternate distributions have no consumers in the packaged application. Keep the
   // npm/SDK closure intact, and re-audit whenever an upstream package version changes.
   const unusedDistributions = {
@@ -189,17 +189,9 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     'example',
     'examples'
   ])
-  // These audited releases execute compiled dist bundles, including their WASM loader.
-  // Avoid hundreds of unused source files on disk; retain unknown versions until audited.
-  if (manifest.name === '@huggingface/transformers' && manifest.version === '4.2.0')
-    developmentRoots.add('src')
-  if (manifest.name === 'onnxruntime-web' && manifest.version === '1.26.0-dev.20260416-b7804b056c')
-    developmentRoots.add('lib')
   if (zod) developmentRoots.add('src')
   for (const [name, version, directory] of [
     ['ajv', '8.20.0', 'lib'],
-    ['onnxruntime-common', '1.24.3', 'lib'],
-    ['flatbuffers', '25.9.23', 'ts'],
     ['entities', '6.0.1', 'src']
   ])
     if (manifest.name === name && manifest.version === version) developmentRoots.add(directory)
@@ -212,16 +204,6 @@ export function createDesktopDependencyFilter(manifest, { localTranslationWasm =
     if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
       return true
     if (unusedDistributions?.test(path)) return false
-    // The fallback Transformers entry still imports WebGPU. Prune these only after the
-    // dedicated worker has replaced it with the existing WASM implementation.
-    if (
-      localTranslationWasm &&
-      manifest.name === 'onnxruntime-web' &&
-      manifest.version === '1.26.0-dev.20260416-b7804b056c' &&
-      (/^dist\/ort(?:\.(?:all|webgl|webgpu|jspi))?(?:\.bundle)?\.min\.(?:js|mjs)$/.test(path) ||
-        /^lib\/.*\.ts$/.test(path))
-    )
-      return false
     // Zod's source condition is opt-in development only; its locale wildcard also matches
     // declarations. Neither is used by packaged Node's normal import/require resolution.
     if (zod && /^v4\/locales\/[^/]+\.d\.(?:ts|cts)$/.test(path)) return false
@@ -265,11 +247,7 @@ export function assertBackendImports(metafiles, dependencies) {
 
 // Local file: dependencies are symlinks in development. Keep the independent packages' source/fixtures
 // out of shipped runtimes, using its deliberately literal top-level npm files allowlist.
-export function backendDependencyIncludes(
-  manifest,
-  relativePath,
-  { platform = process.platform, arch = process.arch } = {}
-) {
+export function backendDependencyIncludes(manifest, relativePath) {
   const parts = relativePath.split(/[\\/]/)
   const top = parts[0]
   if (!isShippableDependencyPath(relativePath)) return false
@@ -292,33 +270,10 @@ export function backendDependencyIncludes(
     /^dist\/(?:web|esm)\/.*\.(?:js|wasm|map)$/.test(path)
   )
     return false
-  if (
-    [
-      'pdfjs-dist',
-      '@huggingface/transformers',
-      'onnxruntime-node',
-      'onnxruntime-common',
-      'onnxruntime-web',
-      '@prisma/client',
-      'pdf-lib'
-    ].includes(name) &&
-    relativePath.endsWith('.map')
-  )
+  if (['pdfjs-dist', '@prisma/client', 'pdf-lib'].includes(name) && relativePath.endsWith('.map'))
     return false
   // This generated client uses the native library engine, not WASM query engines/compilers.
   if (name === '@prisma/client' && /^runtime[\\/]query_(?:engine|compiler)_bg\./.test(relativePath))
-    return false
-  // Local inference explicitly selects CPU WASM; WebGPU/JSPI/Asyncify binaries are unused.
-  if (
-    name === 'onnxruntime-web' &&
-    /^dist[\\/]ort-wasm-simd-threaded\.(?:jsep|jspi|asyncify)\.(?:mjs|wasm)$/.test(relativePath)
-  )
-    return false
-  // Package exports use the minified builds; these parallel development bundles are never loaded.
-  if (
-    name === 'onnxruntime-web' &&
-    /^dist[\\/]ort(?:\.(?:all|wasm|webgl|webgpu|jspi|node))?\.(?:mjs|js)$/.test(relativePath)
-  )
     return false
   // The full tokenizer embeds its encodings in WASM; separate JSON/JS encoders belong to lite.
   if (name === 'tiktoken' && top === 'encoders') return false
@@ -330,13 +285,6 @@ export function backendDependencyIncludes(
   // Match the existing desktop PDF.js exclusions; extraction still needs legacy/build and font data.
   if (name === 'pdfjs-dist' && ['build', 'web', 'image_decoders', 'types'].includes(top))
     return false
-  // Transformers imports the target native binding even when inference explicitly selects WASM.
-  if (name === 'onnxruntime-node' && top === 'bin' && parts[1] === 'napi-v6') {
-    if (parts[2] && parts[2] !== platform) return false
-    if (parts[3] && parts[3] !== arch) return false
-    // Linux npm installs download optional GPU providers; local translation selects WASM.
-    if (/^libonnxruntime_providers_(?:cuda|tensorrt)\.so$/.test(parts[4] ?? '')) return false
-  }
   if (
     ![
       '@aipoch/compute',

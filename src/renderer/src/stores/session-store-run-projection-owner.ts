@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from '../../../shared/failure/contract'
 import type { StoreApi } from 'zustand'
 import {
   projectConversationMessage,
@@ -140,7 +141,7 @@ export type SessionRunProjectionActions = {
     sessionId: string,
     error: string,
     opts?: {
-      reportable?: boolean
+      failure?: ClassifiedFailure
       promptMessageId?: string
       contextWindowSample?: RunTerminalContextWindowSample
     }
@@ -741,7 +742,7 @@ export const createSessionRunProjectionOwner = <
           interrupted: undefined,
           resumeRecovery: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           pendingHistoryReplay: undefined,
           updatedAt: Date.now()
         }))
@@ -774,7 +775,7 @@ export const createSessionRunProjectionOwner = <
             projectFailedRun(
               session,
               message,
-              opts?.reportable,
+              opts?.failure,
               opts?.promptMessageId,
               opts?.contextWindowSample
             ),

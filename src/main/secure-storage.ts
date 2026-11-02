@@ -22,6 +22,20 @@ const protectedSafeStorage: SecureStorageCipher = {
   decryptString: (value) => hostCipher().decryptString(value)
 }
 
+export const PROTECTED_STRING_PREFIX = 'open-science:protected:v1:'
+
+export function revealProtectedString(
+  value: string,
+  cipher: SecureStorageCipher = protectedSafeStorage
+): string {
+  if (!value.startsWith(PROTECTED_STRING_PREFIX)) return value
+  try {
+    return cipher.decryptString(Buffer.from(value.slice(PROTECTED_STRING_PREFIX.length), 'base64'))
+  } catch {
+    throw new Error('Protected application data cannot be decrypted on this system.')
+  }
+}
+
 const isSecureStorageAvailable = (
   cipher: SecureStorageCipher = protectedSafeStorage,
   currentPlatform: NodeJS.Platform = platform()

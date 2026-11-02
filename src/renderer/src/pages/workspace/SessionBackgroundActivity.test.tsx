@@ -173,6 +173,37 @@ describe('Session background activity ledger', () => {
     expect(openJobList).toHaveBeenCalledWith('session-1')
   })
 
+  it('ends optimistic cancellation when the persisted attempt fails and allows retry', async () => {
+    const jobsCancel = vi.fn().mockResolvedValue({ status: 'running' })
+    vi.stubGlobal('window', { ...window, api: { compute: { jobsCancel } } })
+    const container = await renderLedger(baseProps({ jobs: [job()] }))
+    await act(async () => buttonByText(container, 'Cancel')?.click())
+    expect(buttonByText(container, 'Cancel')?.disabled).toBe(true)
+    await act(async () =>
+      roots[0].render(
+        <SessionBackgroundActivity
+          {...baseProps({
+            jobs: [
+              job({
+                cancellation_status: 'failed',
+                cancellation_error: {
+                  code: 'cancel_request_rejected',
+                  message: 'Permission denied'
+                }
+              })
+            ]
+          })}
+        />
+      )
+    )
+    expect(buttonByText(container, 'Cancel')?.disabled).toBe(false)
+    expect(container.textContent).toContain('Cancellation failed')
+    expect(container.textContent).toContain('Running')
+    expect(container.textContent).not.toContain('Cancelling')
+    await act(async () => buttonByText(container, 'Cancel')?.click())
+    expect(jobsCancel).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps a terminal Compute Job openable without an extra status group', async () => {
     const openComputeJob = vi.fn()
     const terminalJob = job({ status: 'success', finished_at: Date.now() })

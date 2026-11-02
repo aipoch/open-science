@@ -233,7 +233,7 @@ describe('Session Plan dismissal execution lifecycle', () => {
             : {
                 kind: 'error',
                 text: terminal === 'failed' ? 'Provider unavailable' : 'ACP connection closed',
-                providerError: true,
+                failure: { category: 'service' as const, diagnostics: {} },
                 ...(terminal === 'connection-lost' ? { interruptionCause: 'connection-lost' } : {})
               }
         )

@@ -3,6 +3,7 @@ import { describe, expect, it, type Mock, vi } from 'vitest'
 import type { AcpCreateSessionRequest, AcpCreateSessionResponse } from '../../shared/acp'
 import { createAcpCreateSessionWorkflow } from './create-session-workflow'
 import type { ManagedSessionWorkspaceLease } from './managed-session-workspace'
+import { retainSessionCreationCleanup } from './session-creation-cleanup'
 
 type AcpCreateSessionWorkflowHarness = {
   workflow: ReturnType<typeof createAcpCreateSessionWorkflow>
@@ -72,6 +73,78 @@ const createHarness = (
 }
 
 describe('ACP create-Session workflow', () => {
+  it('retains explicit-workspace Project admission after reporting a provider creation failure', async () => {
+    const failure = new Error('Provider startup failed')
+    const cleanup = createDeferred<void>()
+    let admitted = false
+    const workflow = createAcpCreateSessionWorkflow(
+      {
+        createSession: async () => {
+          retainSessionCreationCleanup(failure, cleanup.promise)
+          throw failure
+        },
+        deleteSession: vi.fn()
+      },
+      {
+        withProjectAvailable: async (_projectId, operation) => {
+          admitted = true
+          try {
+            return await operation()
+          } finally {
+            admitted = false
+          }
+        }
+      }
+    )
+    await expect(workflow.create({ cwd: '/workspace', projectId: 'project-1' })).rejects.toBe(
+      failure
+    )
+    expect(admitted).toBe(true)
+    cleanup.resolve()
+    await vi.waitFor(() => expect(admitted).toBe(false))
+  })
+  it('returns the creation error while capability and workspace cleanup retain the writer', async () => {
+    const failure = new Error('Provider startup failed')
+    const capabilityCleanup = createDeferred<void>()
+    const workspaceCleanup = createDeferred<void>()
+    const harness = createHarness(failure)
+    retainSessionCreationCleanup(failure, capabilityCleanup.promise)
+    vi.mocked(harness.lease.release).mockImplementation(async () => {
+      harness.events.push('release')
+      await workspaceCleanup.promise
+    })
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
+    expect(harness.events).not.toContain('guard:end')
+    expect(harness.lease.release).not.toHaveBeenCalled()
+    capabilityCleanup.resolve()
+    await vi.waitFor(() => expect(harness.lease.release).toHaveBeenCalledOnce())
+    expect(harness.events).not.toContain('guard:end')
+    workspaceCleanup.resolve()
+    await vi.waitFor(() => expect(harness.events).toContain('guard:end'))
+  })
+
+  it('returns publication failure before Session deletion settles without releasing the writer', async () => {
+    const failure = new Error('Workspace publication failed')
+    const cleanup = createDeferred<void>()
+    const harness = createHarness()
+    vi.mocked(harness.lease.commit).mockRejectedValueOnce(failure)
+    harness.deleteSession.mockImplementationOnce(async () => {
+      await cleanup.promise
+    })
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
+    expect(harness.events).not.toContain('guard:end')
+    expect(harness.lease.release).not.toHaveBeenCalled()
+    cleanup.resolve()
+    await vi.waitFor(() => expect(harness.events).toContain('guard:end'))
+  })
+
+  it('preserves the original error if workspace release also fails', async () => {
+    const failure = new Error('Provider startup failed')
+    const harness = createHarness(failure)
+    vi.mocked(harness.lease.release).mockRejectedValueOnce(new Error('Workspace removal failed'))
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(failure)
+    await vi.waitFor(() => expect(harness.events).toContain('guard:end'))
+  })
   it('holds Project admission through Session publication', async () => {
     const created = createDeferred<AcpCreateSessionResponse>()
     let admissionActive = false
@@ -246,9 +319,10 @@ describe('ACP create-Session workflow', () => {
       throw rollbackFailure
     })
 
-    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toMatchObject({
-      errors: [publicationFailure, rollbackFailure]
-    })
+    await expect(harness.workflow.create({ projectId: 'project-1' })).rejects.toBe(
+      publicationFailure
+    )
+    await vi.waitFor(() => expect(harness.events).toContain('guard:end'))
 
     expect(harness.lease.release).not.toHaveBeenCalled()
     expect(harness.events).toEqual([

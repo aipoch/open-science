@@ -133,6 +133,85 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it('classifies OpenCode 1.x replay before SDK observers receive summary chunks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'opencode-compaction-'))
+    const process = new FakeAgentProcess()
+    const connectionHooks = hooks()
+    vi.mocked(connectionHooks.filesystem.resolveSessionCwd).mockImplementation(() => {
+      throw new Error('Session has not been attached during load')
+    })
+    const owner = new AcpConnectionResourceOwner()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          info: { id: 'summary', sessionID: 's', role: 'assistant', summary: true, finish: 'stop' }
+        })
+      )
+    )
+    try {
+      const candidate = await openCandidate(
+        process,
+        {
+          framework: opencodeFramework,
+          executablePath: '',
+          env: { XDG_DATA_HOME: root },
+          opencodeMajorVersion: 1,
+          opencodeUsageApi: { baseUrl: 'http://localhost:1234', authorization: 'Basic test' }
+        },
+        connectionHooks
+      )
+      const ready = await owner.connect(async (attempt) => {
+        candidate.transferTo(attempt)
+        return attempt.publish({ close: false, delete: false, resume: false, steering: false })
+      })
+      const request = ready.connection.agent.request(acp.methods.agent.session.load, {
+        sessionId: 's',
+        cwd: root,
+        mcpServers: []
+      })
+      const outgoing = await new Promise<Buffer>((resolve) => process.stdin.once('data', resolve))
+      const { id } = JSON.parse(outgoing.toString())
+      process.stdout.write(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 's',
+            update: {
+              sessionUpdate: 'agent_message_chunk',
+              messageId: 'summary',
+              content: { type: 'text', text: 'INTERNAL_PATH_AND_INSTRUCTIONS' }
+            }
+          }
+        }) + '\n'
+      )
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id, result: {} }) + '\n')
+      await request
+      expect(connectionHooks.observeSessionUpdate).toHaveBeenCalledOnce()
+      expect(connectionHooks.observeSessionUpdate).toHaveBeenCalledWith({
+        sessionId: 's',
+        update: {
+          sessionUpdate: 'session_info_update',
+          _meta: {
+            'opencode/compaction': {
+              messageId: 'summary',
+              reason: 'auto',
+              status: 'completed'
+            }
+          }
+        }
+      })
+      expect(
+        JSON.stringify(vi.mocked(connectionHooks.observeSessionUpdate).mock.calls)
+      ).not.toContain('INTERNAL_PATH_AND_INSTRUCTIONS')
+    } finally {
+      await owner.teardown(owner.epoch)
+      vi.unstubAllGlobals()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('releases a late store lease without spawning when its Attempt is closing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-closing-'))
     const spawn = vi.fn()

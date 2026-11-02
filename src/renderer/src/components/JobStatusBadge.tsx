@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 
 import type { ComputeJobCancellationStatus, ComputeJobStatus } from '@aipoch/compute'
+import { isComputeJobCancelled } from '@aipoch/compute'
 
 // Maps job status to badge styling. Follows design.md §6 badge pattern (same conventions as ReviewCard).
 // Terminal statuses consolidate under semantic groups: success=Done, error/failed/timeout=Failed.
@@ -47,23 +48,30 @@ const STATUS_STYLE = {
 type JobStatusBadgeProps = {
   status: ComputeJobStatus
   cancellationStatus?: ComputeJobCancellationStatus
+  errorCode?: string
 }
 
 // Status badge for job detail modal header (top-right). Follows design.md §6 color table.
 export function JobStatusBadge({
   status,
-  cancellationStatus
+  cancellationStatus,
+  errorCode
 }: JobStatusBadgeProps): React.JSX.Element {
   const { t } = useTranslation()
-  const { labelKey, className } = cancellationStatus
-    ? {
-        labelKey: cancellationStatus === 'cancelled' ? 'Cancelled' : 'Cancelling',
-        className:
-          cancellationStatus === 'cancelled'
+  const cancelled = isComputeJobCancelled({
+    status,
+    error_code: errorCode,
+    cancellation_status: cancellationStatus
+  })
+  const { labelKey, className } =
+    cancelled || cancellationStatus === 'cancelling'
+      ? {
+          labelKey: cancelled ? 'Cancelled' : 'Cancelling',
+          className: cancelled
             ? 'border-border bg-muted text-muted-foreground'
             : 'border-transparent bg-status-warning-surface text-status-warning-foreground dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
-      }
-    : STATUS_STYLE[status]
+        }
+      : STATUS_STYLE[status]
   return (
     <span
       data-testid="job-status-badge"

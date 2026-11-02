@@ -25,8 +25,12 @@ describe('Literature identifier draft lookup contract', () => {
     const { args } = literatureApplicationCommandContracts.lookupMetadata
     expect(args.parse(['10.1007/s11914-026-00956-3'])).toEqual(['10.1007/s11914-026-00956-3'])
     expect(args.parse(['pmid:29370583'])).toEqual(['pmid:29370583'])
+    expect(args.parse(['arxiv:2401.12345'])).toEqual(['arxiv:2401.12345'])
+    expect(args.parse(['arxiv:hep-th/9901001'])).toEqual(['arxiv:hep-th/9901001'])
     for (const input of [
       ['pmid:abc'],
+      ['arxiv:invalid'],
+      ['https://arxiv.org/abs/2401.12345'],
       [],
       ['https://example.com'],
       ['10.1007/has space'],

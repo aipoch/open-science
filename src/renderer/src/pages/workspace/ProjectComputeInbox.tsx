@@ -1,6 +1,7 @@
 import { computeQueueBlockedLabel } from '@/lib/compute/queue-blocked-label'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isComputeJobCancelled } from '@aipoch/compute'
 import { ArrowUpRight, ChevronDown, Cpu, RadioTower } from 'lucide-react'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -112,14 +113,16 @@ const kernelStatusClassName = (status: NotebookProjectKernelActivity['status']):
 }
 
 const jobStatusLabel = (job: JobSummary, t: ReturnType<typeof useTranslation>['t']): string =>
-  (job.status === 'queued' && !job.cancellation_status
+  (job.status === 'queued' &&
+  job.cancellation_status !== 'cancelling' &&
+  !isComputeJobCancelled(job)
     ? computeQueueBlockedLabel(job.queue_blocked_reason, t)
     : undefined) ??
   backgroundActivityStatusLabel(
-    job.cancellation_status === 'cancelling'
-      ? 'cancelling'
-      : job.cancellation_status === 'cancelled'
-        ? 'cancelled'
+    isComputeJobCancelled(job)
+      ? 'cancelled'
+      : job.cancellation_status === 'cancelling'
+        ? 'cancelling'
         : job.status,
     undefined,
     t

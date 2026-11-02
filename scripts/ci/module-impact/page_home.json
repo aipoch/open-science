@@ -12,7 +12,15 @@
     "src/renderer/src/pages/home/UseCaseCarousel.test.tsx",
     "src/renderer/src/pages/home/UseCaseCover.tsx",
     "src/renderer/src/pages/home/use-case-gallery-store.ts",
-    "src/renderer/src/pages/home/use-case-cover-cache.ts"
+    "src/renderer/src/pages/home/use-case-cover-cache.ts",
+    "src/renderer/src/pages/home/UseCaseDetailsContent.tsx",
+    "src/renderer/src/pages/home/UseCaseDetailsDialog.tsx",
+    "src/renderer/src/pages/home/use-case-introduction-loader.test.ts",
+    "src/renderer/src/pages/home/use-case-introduction-loader.ts",
+    "src/renderer/src/pages/home/use-home-gallery-navigation.ts",
+    "src/renderer/src/pages/marketplace/SharingMarketplacePage.tsx",
+    "src/renderer/src/pages/marketplace/UseCaseDetailsPage.tsx",
+    "src/renderer/src/pages/marketplace/UseCaseGalleryList.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/home/DeleteProjectDialog.tsx",
@@ -26,7 +34,8 @@
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
       "src/renderer/src/pages/home/ProjectFormDialog.behavior.test.tsx",
       "src/renderer/src/pages/home/home-dialogs.render.test.tsx",
-      "src/renderer/src/pages/home/UseCaseCarousel.test.tsx"
+      "src/renderer/src/pages/home/UseCaseCarousel.test.tsx",
+      "src/renderer/src/pages/home/use-case-introduction-loader.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [

@@ -136,7 +136,8 @@ export function composeCommandDependencies({
   listAppIconPreviews: (() => import('../../shared/settings').AppIconPreview[]) | undefined
 }): { applicationCommandDependencies: ApplicationCommandCompositionDependencies } {
   const useCaseCatalog = new UseCaseCatalog(resolveConfigRoot())
-  void useCaseCatalog.refresh()
+  // Optional startup warm-up must not reject startup; the marketplace owns its retry UI.
+  void useCaseCatalog.refresh().catch(() => undefined)
   const sessionReplay = new SessionReplayService(
     new SessionReplayRepository(() => getProjectDbClient(resolveConfigRoot())),
     {

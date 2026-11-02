@@ -1,3 +1,5 @@
+import { classifyFailure } from '../../../../shared/failure/classify'
+import type { ClassifiedFailure } from '../../../../shared/failure/contract'
 import { create } from 'zustand'
 import {
   captureProviderValidationSnapshot,
@@ -20,12 +22,18 @@ const capturedErrorDetail = (raw: unknown): string => {
 
 type ProviderTarget = { providerId: string; model?: string }
 
-type OperationDiagnostic = { operation: 'resume'; detail: string; message: string }
+type OperationDiagnostic = {
+  occurredAt: number
+  operation: 'resume'
+  detail: string
+  message: string
+}
 
 // Operation failures belong to the initiating surface, never to the durable Session projection.
 // Keep the Session identity so an asynchronous rejection cannot appear in another conversation.
 const useWorkspaceOperationErrors = create<{
   contextResets: Record<string, boolean>
+  failures: Record<string, ClassifiedFailure>
   errors: Record<string, string>
   providerValidations: Record<string, ProviderValidationSnapshot>
   providerTargets: Record<string, ProviderTarget | undefined>
@@ -33,6 +41,7 @@ const useWorkspaceOperationErrors = create<{
 }>(() => ({
   contextResets: {},
   errors: {},
+  failures: {},
   providerValidations: {},
   providerTargets: {},
   diagnostics: {}
@@ -46,11 +55,12 @@ const reportWorkspaceOperationError = (
   )
 ): void => {
   useWorkspaceOperationErrors.setState(
-    ({ errors, providerValidations, providerTargets, diagnostics }) => {
+    ({ errors, failures, providerValidations, providerTargets, diagnostics }) => {
       const next = { ...diagnostics }
       if (context?.operation) {
         const raw = context.rawError
         next[sessionId] = {
+          occurredAt: Date.now(),
           operation: context.operation,
           message: error,
           detail: capturedErrorDetail(raw)
@@ -58,6 +68,16 @@ const reportWorkspaceOperationError = (
       } else delete next[sessionId]
       return {
         errors: { ...errors, [sessionId]: error },
+        failures: {
+          ...failures,
+          [sessionId]: classifyFailure({
+            origin: 'operation',
+            code: context?.operation === 'resume' ? 'resume-operation' : undefined,
+            text:
+              context?.operation === 'resume' ? (errorDetail(context.rawError) ?? error) : error,
+            model: context?.providerTarget?.model
+          })
+        },
         providerValidations: {
           ...providerValidations,
           [sessionId]: captureProviderValidationSnapshot()
@@ -76,9 +96,11 @@ const reportWorkspaceOperationError = (
 
 const clearWorkspaceOperationError = (sessionId: string): void => {
   useWorkspaceOperationErrors.setState(
-    ({ errors, providerValidations, providerTargets, diagnostics }) => {
+    ({ errors, failures, providerValidations, providerTargets, diagnostics }) => {
       if (!Object.hasOwn(errors, sessionId)) return { errors }
       const next = { ...errors }
+      const nextFailures = { ...failures }
+      delete nextFailures[sessionId]
       delete next[sessionId]
       const nextDiagnostics = { ...diagnostics }
       delete nextDiagnostics[sessionId]
@@ -88,6 +110,7 @@ const clearWorkspaceOperationError = (sessionId: string): void => {
       delete nextProviderTargets[sessionId]
       return {
         errors: next,
+        failures: nextFailures,
         providerValidations: nextProviderValidations,
         providerTargets: nextProviderTargets,
         diagnostics: nextDiagnostics

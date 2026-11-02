@@ -223,6 +223,39 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
       ? {
           isEnabled: options.literature.isEnabled,
           handlerFor: (appSessionId, projectId) => ({
+            ...(options.literature!.annotations
+              ? {
+                  annotations: {
+                    list: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.annotations!.list(
+                        { ...guard.context, check: guard.check },
+                        input
+                      )
+                      guard.check()
+                      return result
+                    },
+                    locate: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      const result = await options.literature!.annotations!.locate(
+                        { ...guard.context, check: guard.check },
+                        input
+                      )
+                      guard.check()
+                      return result
+                    },
+                    create: async (input, signal) => {
+                      const guard = pdfElementContext(appSessionId, projectId, signal)
+                      return options.literature!.annotations!.create(
+                        { ...guard.context, check: guard.check },
+                        input
+                      )
+                    }
+                  } satisfies NonNullable<
+                    import('../literature/mcp-server').LiteratureMcpHandler['annotations']
+                  >
+                }
+              : {}),
             ...(options.literature!.elements
               ? {
                   elements: {

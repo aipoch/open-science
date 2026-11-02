@@ -36,6 +36,22 @@ const request = (title: string): RequestPermissionRequest => ({
 })
 
 describe('Library Auto policy', () => {
+  it.each([
+    ['list_pdf_annotations', true],
+    ['locate_pdf_annotation_target', true],
+    ['create_pdf_annotation', false]
+  ] as const)('handles annotation tool %s permission', (name, readOnly) => {
+    const identity = `open-science-literature/${name}`
+    const trusted = withTrustedMcpToolIdentity(request(name), identity)
+    expect(appMcpToolIdentities()).toContain(identity)
+    expect(resolveAutomaticPermission(trusted, { profile: 'auto', mcpServerNames: servers })).toBe(
+      'once'
+    )
+    expect(resolveAutomaticPermission(trusted, { profile: 'ask', mcpServerNames: servers })).toBe(
+      readOnly ? 'once' : undefined
+    )
+  })
+
   it.each([...LIBRARY_AUTO_TOOL_IDENTITIES])(
     'only allows a verified mounted identity in Auto: %s',
     (identity) => {
@@ -51,7 +67,12 @@ describe('Library Auto policy', () => {
         )
       ).toBeUndefined()
       expect(resolveAutomaticPermission(trusted, { ...policy, mcpServerNames: [] })).toBeUndefined()
-      expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBeUndefined()
+      expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'ask' })).toBe(
+        identity.endsWith('/list_pdf_annotations') ||
+          identity.endsWith('/locate_pdf_annotation_target')
+          ? 'once'
+          : undefined
+      )
       expect(resolveAutomaticPermission(trusted, { ...policy, profile: 'full' })).toBe('once')
       expect(
         resolveAutomaticPermission({ ...trusted, options: raw.options.slice(1) }, policy)
@@ -137,7 +158,13 @@ describe('Library Auto policy', () => {
               frameworkId: framework,
               mcpServerNames: servers
             })
-          ).toBeUndefined()
+          ).toBe(
+            framework !== 'codebuddy' &&
+              (identity.endsWith('/list_pdf_annotations') ||
+                identity.endsWith('/locate_pdf_annotation_target'))
+              ? 'once'
+              : undefined
+          )
         }
       } finally {
         context.dispose()
@@ -296,6 +323,7 @@ describe('Library Auto policy', () => {
     async (elements) => {
       const server = createLiteratureMcpServer({
         readDocument: vi.fn(),
+        annotations: { list: vi.fn(), locate: vi.fn(), create: vi.fn() },
         ...(elements ? { elements: { list: vi.fn(), read: vi.fn() } } : {})
       })
       const client = new Client({ name: 'inventory', version: '1' })
@@ -310,7 +338,11 @@ describe('Library Auto policy', () => {
             .filter(
               (name) =>
                 name.startsWith('open-science-literature/') &&
-                (elements || name.endsWith('/read_document'))
+                (elements ||
+                  name.endsWith('/read_document') ||
+                  name.endsWith('/list_pdf_annotations') ||
+                  name.endsWith('/locate_pdf_annotation_target') ||
+                  name.endsWith('/create_pdf_annotation'))
             )
             .sort()
         )

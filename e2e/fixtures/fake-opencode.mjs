@@ -3,10 +3,12 @@
 import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
 import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
@@ -178,7 +180,6 @@ const suspendSessionWrites = async () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(sessionsRoot, entry.name))
   await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
-  return async () => Promise.all(directories.map((directory) => chmod(directory, 0o700)))
 }
 
 const stringEnvironment = (overrides = []) => {
@@ -211,137 +212,93 @@ const delegatedArtifactHandoff = async (mcpServers) => {
   return { artifactCurrentRunFile: currentRunFile, artifactExecutionId: executionId }
 }
 
-const parseMcpResponse = (body) => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? JSON.parse(json) : {}
-}
-
-const submitReviewerPass = async (mcpServers, prompt = '') => {
-  const server = mcpServers.find(
-    (candidate) =>
-      candidate.type === 'http' &&
-      (candidate.name === 'open-science-reviewer' ||
-        candidate.name === frameworkServerName('open-science-reviewer'))
-  )
-  if (!server?.url) return false
-  const token =
-    server.headers
-      ?.find((header) => header.name?.toLowerCase() === 'authorization')
-      ?.value?.replace('Bearer ', '') ?? ''
-  const baseHeaders = {
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${token}`,
-    'content-type': 'application/json'
-  }
-  const initialize = await fetch(server.url, {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'open-science-e2e-reviewer', version: '1.0' }
-      }
-    })
-  })
-  if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
-  const initialized = parseMcpResponse(await initialize.text())
-  const sessionId = initialize.headers.get('mcp-session-id')
-  if (!sessionId || !initialized.result) {
-    throw new Error('Reviewer MCP initialize did not return a session.')
-  }
-  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
-  await fetch(server.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-  let nextId = 2
-  const callTool = async (name, args) => {
-    const response = await fetch(server.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: nextId++,
-        method: 'tools/call',
-        params: { name, arguments: args }
-      })
-    })
-    if (!response.ok) throw new Error(`${name} failed: ${response.status}`)
-    const payload = parseMcpResponse(await response.text())
-    if (payload.error) throw new Error(`${name} failed: ${payload.error.message ?? 'unknown'}`)
-    if (payload.result?.isError) {
-      throw new Error(payload.result.content?.[0]?.text ?? `${name} returned an error`)
+const submitReviewerPass = async (sessionId, prompt = '') => {
+  const server = sessionRoutes
+    .get(sessionId)
+    ?.mcpServers?.find(
+      (candidate) =>
+        candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer')
+    )
+  if (!server) return false
+  return withMcpClient(sessionId, 'open-science-reviewer', async (client) => {
+    const callTool = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args })
+      if (result.isError) throw new Error(result.content?.[0]?.text ?? name + ' returned an error')
+      return result
     }
-    return payload.result
-  }
-  const turn = await callTool('read_turn', {})
-  const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
-  const reproBlock = blocks.find(
-    (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
-  )
-  if (reproBlock) {
+    const turn = await callTool('read_turn', {})
+    const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
+    const reproBlock = blocks.find(
+      (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
+    )
+    if (reproBlock) {
+      await callTool('submit_findings', {
+        checks: [
+          {
+            status: 'fail',
+            claim: reproBlock.content,
+            evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
+            locator: {
+              blockRef: { blockIndex: reproBlock.blockIndex },
+              contentHash: reproBlock.contentHash
+            }
+          }
+        ]
+      })
+      return true
+    }
+    const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map(
+      (match) => match[1]
+    )
+    if (trackedIds.length > 0) {
+      const unresolvedBlock = blocks.find(
+        (block) => block.content === 'Recovered execution still needs correction.'
+      )
+      await callTool('submit_findings', {
+        checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
+          sourceFindingId,
+          ...(unresolvedBlock
+            ? {
+                locator: {
+                  blockRef: { blockIndex: unresolvedBlock.blockIndex },
+                  contentHash: unresolvedBlock.contentHash
+                }
+              }
+            : {}),
+          status: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'fail'
+            : 'pass',
+          claim: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
+            : 'The controlled correction completed.',
+          evidence: 'The corrected answer is present in the frozen turn.'
+        }))
+      })
+      return true
+    }
     await callTool('submit_findings', {
       checks: [
         {
-          status: 'fail',
-          claim: reproBlock.content,
-          evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
-          locator: {
-            blockRef: { blockIndex: reproBlock.blockIndex },
-            contentHash: reproBlock.contentHash
-          }
+          status: 'pass',
+          claim: 'The completed turn follows the requested production path.',
+          evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
         }
       ]
     })
     return true
-  }
-  const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map((match) => match[1])
-  if (trackedIds.length > 0) {
-    const unresolvedBlock = blocks.find(
-      (block) => block.content === 'Recovered execution still needs correction.'
-    )
-    await callTool('submit_findings', {
-      checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
-        sourceFindingId,
-        ...(unresolvedBlock
-          ? {
-              locator: {
-                blockRef: { blockIndex: unresolvedBlock.blockIndex },
-                contentHash: unresolvedBlock.contentHash
-              }
-            }
-          : {}),
-        status: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'fail'
-          : 'pass',
-        claim: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
-          : 'The controlled correction completed.',
-        evidence: 'The corrected answer is present in the frozen turn.'
-      }))
-    })
-    return true
-  }
-  await callTool('submit_findings', {
-    checks: [
-      {
-        status: 'pass',
-        claim: 'The completed turn follows the requested production path.',
-        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
-      }
-    ]
   })
-  return true
+}
+
+const recordMutationStage = async (stage) => {
+  const path = process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS
+  if (path && path !== 'enabled') {
+    await appendFile(path, JSON.stringify({ at: new Date().toISOString(), stage }) + '\n')
+  }
 }
 
 const withMcpClient = async (sessionId, serverName, operation) => {
@@ -350,23 +307,36 @@ const withMcpClient = async (sessionId, serverName, operation) => {
     (candidate) =>
       candidate.name === serverName || candidate.name === frameworkServerName(serverName)
   )
-  if (!route || !server?.command) {
+  if (!route || (!server?.command && !(server?.type === 'http' && server.url))) {
     const routed = route?.mcpServers?.map((candidate) => candidate.name).join(', ') || 'none'
     throw new Error(`${serverName} was not routed to ${sessionId}; routed servers: ${routed}.`)
   }
 
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args ?? [],
-    cwd: route.cwd,
-    env: stringEnvironment(server.env)
-  })
+  const transport =
+    server.type === 'http'
+      ? new StreamableHTTPClientTransport(new URL(server.url), {
+          requestInit: {
+            headers: Object.fromEntries(
+              (server.headers ?? []).map(({ name, value }) => [name, value])
+            )
+          }
+        })
+      : new StdioClientTransport({
+          command: server.command,
+          args: server.args ?? [],
+          cwd: route.cwd,
+          env: stringEnvironment(server.env)
+        })
   const client = new Client({ name: 'open-science-e2e-agent', version: VERSION })
+  await recordMutationStage('mcp-connect-start')
   await client.connect(transport)
+  await recordMutationStage('mcp-connected')
   try {
     return await operation(client)
   } finally {
+    await recordMutationStage('mcp-close-start')
     await client.close()
+    await recordMutationStage('mcp-closed')
   }
 }
 
@@ -1010,17 +980,24 @@ const waitForProcessesToExit = async (pids, timeoutMs = 10_000) => {
 
 const verifyNotebookMutationCancellation = async (sessionId) =>
   withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+    await recordMutationStage('warmup-start')
     const warmup = toolResult(
       'manage_environments',
-      await client.callTool(
-        {
-          name: 'manage_environments',
-          arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
-        },
-        undefined,
-        { timeout: 60_000, resetTimeoutOnProgress: true, onprogress: () => undefined }
-      )
+      await client
+        .callTool(
+          {
+            name: 'manage_environments',
+            arguments: { action: 'create', language: 'python', name: 'e2e-warm' }
+          },
+          undefined,
+          { timeout: 60_000 }
+        )
+        .catch(async (error) => {
+          await recordMutationStage('warmup-failed')
+          throw new Error(`Mutation warm-up failed: ${String(error)}`, { cause: error })
+        })
     )
+    await recordMutationStage('warmup-complete')
     if (warmup.created?.runnable !== true) {
       throw new Error(`Mutation warm-up did not succeed: ${JSON.stringify(warmup)}`)
     }
@@ -2629,12 +2606,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
-        } else if (
-          await submitReviewerPass(
-            sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [],
-            prompt
-          )
-        ) {
+        } else if (await submitReviewerPass(context.params.sessionId, prompt)) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {
@@ -3222,30 +3194,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Parked reliable child question')) {
           reply = 'Main rendered the parked child question after branch restoration.'
         } else if (prompt.includes('Trigger reliable post-fence persistence failure')) {
-          const restoreWrites = await suspendSessionWrites()
-          try {
-            await context.client.notify(acp.methods.client.session.update, {
-              sessionId: context.params.sessionId,
-              update: {
-                sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-                content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
-              }
-            })
-            await delay(1_000)
-          } finally {
-            await restoreWrites()
-            await writeFile(
-              join(process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT, 'post-fence-released'),
-              'released'
-            )
-          }
+          // Playwright owns restoration because persistence failure can terminate this provider.
+          await suspendSessionWrites()
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
               messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-              content: { type: 'text', text: 'Persistence sabotage released.' }
+              content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
             }
           })
           // Keep the provider call in flight until the test crashes Main. Completing it would
@@ -3475,8 +3431,66 @@ if (process.argv.includes('--version')) {
     })
     .onRequest(acp.methods.agent.session.close, () => ({}))
 
-  const connection = app.connect(
-    acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
-  )
-  await connection.closed
+  // OpenCode 1.x exposes native message metadata alongside ACP. Register each emitted
+  // reply before delivery so the application's compaction guard can classify it.
+  const nativeMessages = new Map()
+  const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
+  const writer = stream.writable.getWriter()
+  const portIndex = process.argv.indexOf('--port')
+  const server =
+    portIndex === -1
+      ? undefined
+      : createServer((request, response) => {
+          const authorization = `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString('base64')}`
+          if (request.headers.authorization !== authorization) {
+            response.writeHead(401).end()
+            return
+          }
+          const url = new URL(request.url, 'http://127.0.0.1')
+          const match = /^\/session\/([^/]+)\/message\/([^/]+)$/.exec(url.pathname)
+          const sessionId = match && decodeURIComponent(match[1])
+          const messageId = match && decodeURIComponent(match[2])
+          const info = nativeMessages.get(JSON.stringify([sessionId, messageId]))
+          if (
+            request.method !== 'GET' ||
+            !info ||
+            sessionRoutes.get(sessionId)?.cwd !== url.searchParams.get('directory')
+          ) {
+            response.writeHead(404).end()
+            return
+          }
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ info, parts: [] }))
+        })
+  if (server) {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject)
+      server.listen(Number(process.argv[portIndex + 1]), '127.0.0.1', resolve)
+    })
+  }
+  try {
+    const connection = app.connect({
+      readable: stream.readable,
+      writable: new WritableStream({
+        write(message) {
+          const params = message.method === 'session/update' ? message.params : undefined
+          const update = params?.update
+          if (['agent_message_chunk', 'agent_thought_chunk'].includes(update?.sessionUpdate)) {
+            nativeMessages.set(JSON.stringify([params.sessionId, update.messageId]), {
+              id: update.messageId,
+              sessionID: params.sessionId,
+              role: 'assistant',
+              summary: false
+            })
+          }
+          return writer.write(message)
+        },
+        close: () => writer.close(),
+        abort: (reason) => writer.abort(reason)
+      })
+    })
+    await connection.closed
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve))
+  }
 }

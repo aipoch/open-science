@@ -15,8 +15,6 @@
     "src/main/literature/pdf-translation/index.ts",
     "src/main/literature/pdf-translation/ipc.test.ts",
     "src/main/literature/pdf-translation/ipc.ts",
-    "src/main/literature/pdf-translation/local.test.ts",
-    "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/pdf-cache.test.ts",
     "src/main/literature/pdf-translation/pdf-cache.ts",
     "src/main/literature/pdf-translation/reader-ownership.test.ts",
@@ -99,8 +97,6 @@
     "test/pdf-translation-native-verification.ts",
     "test/pdf-translation-preservation.test.ts",
     "test/pdf-translation-preservation.ts",
-    "resources/pdf-translation-local/worker.mjs",
-    "src/main/literature/pdf-translation/local-worker.integration.test.ts",
     "src/main/literature/pdf-translation/sqlite-checkpoint-storage.ts",
     "src/main/literature/pdf-translation/sqlite-checkpoint-storage.test.ts"
   ],
@@ -118,7 +114,6 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/checkpoints.test.ts",
       "src/main/literature/pdf-translation/index.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts",
@@ -126,7 +121,6 @@
       "src/main/literature/pdf-translation/writer.test.ts",
       "test/pdf-translation-native-verification.test.ts",
       "test/pdf-translation-preservation.test.ts",
-      "src/main/literature/pdf-translation/local-worker.integration.test.ts",
       "src/main/literature/pdf-translation/sqlite-checkpoint-storage.test.ts"
     ],
     "contract": [

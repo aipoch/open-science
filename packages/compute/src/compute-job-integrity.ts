@@ -16,6 +16,8 @@ const KNOWN_ERROR_CODES = new Set([
   'host_unreachable',
   'dispatch_failed',
   'job_failed',
+  'job_cancelled',
+  'job_status_unavailable',
   'timeout',
   'process_vanished',
   'invalid_resources',

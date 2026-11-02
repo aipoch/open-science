@@ -256,6 +256,183 @@ it('queues concurrent large reads for one document while retaining only one acti
   expect(await readdir(join(root, directory))).toEqual([next.$payload.snapshotId])
 })
 
+it('queues large reads behind retained snapshots in FIFO order without blocking pages or small reads', async () => {
+  const result = { text: 'x'.repeat(9 * 1024 * 1024) }
+  const active = Array.from({ length: 4 }, (_, index) => caller(`snapshot-${index}`))
+  const snapshots = []
+  for (const client of active) {
+    client.dispatch.mockResolvedValue(result)
+    snapshots.push(runtimePayloadDescriptorSchema.parse(await client.invoke('sessions:load-one')))
+  }
+  const waiting = [caller('waiting-first'), caller('waiting-second')]
+  const completed: number[] = []
+  const pending = waiting.map((client, index) => {
+    client.dispatch.mockResolvedValue(result)
+    return client.invoke('notebook:state').then((value) => {
+      completed.push(index)
+      return runtimePayloadDescriptorSchema.parse(value)
+    })
+  })
+  const outcomes = Promise.allSettled(pending)
+  try {
+    await vi.waitFor(() => expect(waiting[1].dispatch).toHaveBeenCalledOnce())
+    const small = caller('small-while-snapshots-retained')
+    small.dispatch.mockResolvedValue({ id: 'small' })
+    await expect(small.invoke('sessions:load-one')).resolves.toEqual({ id: 'small' })
+    await expect(
+      active[0].invoke('sessions:load-one', [], {
+        kind: 'read',
+        snapshotId: snapshots[0].$payload.snapshotId,
+        offset: 0
+      })
+    ).resolves.toMatchObject({ nextOffset: RUNTIME_PAYLOAD_PAGE_BYTES })
+    await active[0].invoke('sessions:load-one', [], {
+      kind: 'release',
+      snapshotId: snapshots[0].$payload.snapshotId
+    })
+    const first = await pending[0]
+    expect(completed).toEqual([0])
+    await waiting[0].invoke('notebook:state', [], {
+      kind: 'release',
+      snapshotId: first.$payload.snapshotId
+    })
+    await pending[1]
+    expect(completed).toEqual([0, 1])
+  } finally {
+    leases.dispose()
+    await outcomes
+  }
+})
+
+it('cancels a large read waiting for snapshot capacity when its document disconnects', async () => {
+  const active = Array.from({ length: 4 }, (_, index) => caller(`upload-${index}`))
+  for (const client of active)
+    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: 1 })
+  const waiting = caller('cancelled-read')
+  waiting.dispatch.mockResolvedValue({ text: 'x'.repeat(9 * 1024 * 1024) })
+  const pending = waiting.invoke('sessions:load-one')
+  const outcome = Promise.allSettled([pending])
+  await vi.waitFor(() => expect(waiting.dispatch).toHaveBeenCalledOnce())
+  waiting.disconnect()
+  await expect(pending).rejects.toThrow('no longer authorized')
+  await outcome
+})
+
+it('waits for enough byte capacity in FIFO order even when a snapshot slot is free', async () => {
+  const active = [caller('byte-budget-a'), caller('byte-budget-b'), caller('byte-budget-c')]
+  const snapshots = []
+  for (const [index, client] of active.entries())
+    snapshots.push(
+      runtimePayloadDescriptorSchema.parse(
+        await client.invoke('sessions:save-session', [], {
+          kind: 'upload',
+          byteLength: [512, 496, 16][index] * 1024 * 1024
+        })
+      )
+    )
+  const first = caller('large-byte-waiter')
+  const second = caller('smaller-byte-waiter')
+  first.dispatch.mockResolvedValue({ text: 'x'.repeat(20 * 1024 * 1024) })
+  second.dispatch.mockResolvedValue({ text: 'x'.repeat(9 * 1024 * 1024) })
+  const completed: string[] = []
+  const reads = [first, second].map((client, index) =>
+    client.invoke('sessions:load-one').then((value) => {
+      completed.push(index === 0 ? 'first' : 'second')
+      return value
+    })
+  )
+  const outcomes = Promise.allSettled(reads)
+  try {
+    await vi.waitFor(() => expect(second.dispatch).toHaveBeenCalledOnce())
+    await active[2].invoke('sessions:save-session', [], {
+      kind: 'release',
+      snapshotId: snapshots[2].$payload.snapshotId
+    })
+    // The second reader could fit, but must not overtake the queue head in the sixteen MiB freed.
+    expect(completed).toEqual([])
+    // Probe the reservation itself: a smaller waiter overtaking the head would consume nine
+    // MiB before its async snapshot publication completes, leaving too little for this upload.
+    const probe = caller('byte-budget-fifo-probe')
+    const probeSnapshot = runtimePayloadDescriptorSchema.parse(
+      await probe.invoke('sessions:save-session', [], {
+        kind: 'upload',
+        byteLength: 16 * 1024 * 1024
+      })
+    )
+    await probe.invoke('sessions:save-session', [], {
+      kind: 'release',
+      snapshotId: probeSnapshot.$payload.snapshotId
+    })
+    await active[1].invoke('sessions:save-session', [], {
+      kind: 'release',
+      snapshotId: snapshots[1].$payload.snapshotId
+    })
+    await Promise.all(reads)
+    expect(completed.sort()).toEqual(['first', 'second'])
+  } finally {
+    leases.dispose()
+    await outcomes
+  }
+})
+
+it('wakes a queued large read after the retained uploads expire', async () => {
+  vi.useFakeTimers()
+  const active = Array.from({ length: 4 }, (_, index) => caller(`expiring-upload-${index}`))
+  for (const client of active)
+    await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: 1 })
+  const reader = caller('read-after-expiry')
+  reader.dispatch.mockResolvedValue({ text: 'x'.repeat(9 * 1024 * 1024) })
+  const pending = reader.invoke('sessions:load-one')
+  const outcome = Promise.allSettled([pending])
+  try {
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(pending).resolves.toHaveProperty('$payload')
+    expect(reader.dispatch).toHaveBeenCalledOnce()
+  } finally {
+    leases.dispose()
+    await outcome
+  }
+})
+
+it('wakes a queued read when a committed mutation shrinks its reservation before download release', async () => {
+  const result = { text: 'x'.repeat(9 * 1024 * 1024) }
+  let finish!: () => void
+  const ready = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const mutations = [caller('shrinking-mutation'), caller('retained-reservation')]
+  for (const client of mutations)
+    client.dispatch.mockImplementation(async () => {
+      await ready
+      return result
+    })
+  const pendingMutations = mutations.map((client) => client.invoke('sessions:edit-details'))
+  const mutationOutcomes = Promise.allSettled(pendingMutations)
+  const reader = caller('read-after-shrink')
+  reader.dispatch.mockResolvedValue(result)
+  let completed = false
+  const read = reader.invoke('sessions:load-one').then((value) => {
+    completed = true
+    return value
+  })
+  const readOutcome = Promise.allSettled([read])
+  try {
+    await vi.waitFor(() => expect(mutations[1].dispatch).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(reader.dispatch).toHaveBeenCalledOnce())
+    expect(completed).toBe(false)
+    finish()
+    await Promise.all(pendingMutations)
+    // Both mutation snapshots remain retained; their smaller reservations alone free capacity.
+    await vi.waitFor(() => expect(completed).toBe(true))
+    await expect(read).resolves.toHaveProperty('$payload')
+  } finally {
+    finish()
+    leases.dispose()
+    await mutationOutcomes
+    await readOutcome
+  }
+})
+
 it('cancels both active and waiting document transfers when its lease ends', async () => {
   const client = caller()
   await client.invoke('sessions:save-session', [], { kind: 'upload', byteLength: 2 })

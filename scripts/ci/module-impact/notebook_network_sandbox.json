@@ -484,7 +484,6 @@
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/approved-handoff-outcome.test.ts",
       "src/main/literature/pdf-translation/ipc.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/local-models/ipc.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/runtime-network-node.integration.test.ts",

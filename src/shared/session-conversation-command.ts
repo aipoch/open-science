@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { AGENT_FRAMEWORK_ID_VALUES } from './agent-framework-id'
 import type { SessionConversationCommand } from './conversation-command-contract'
 import {
   activateConversationBranch,
@@ -20,7 +21,7 @@ const commandBase = {
   timestamp: z.number().finite().nonnegative(),
   preparationId: identity.optional()
 }
-const agentFrameworkId = z.enum(['claude-code', 'opencode', 'codex', 'codebuddy'])
+const agentFrameworkId = z.enum(AGENT_FRAMEWORK_ID_VALUES)
 const segmentSchema = z.object({
   id: identity,
   frameworkId: agentFrameworkId,
@@ -38,7 +39,12 @@ const wireCommands = z
         promptMessageId: identity,
         mode: z.enum(['new', 'resume', 'rearm'])
       }),
-      z.object({ ...commandBase, kind: z.literal('rollback-prompt'), preparationId: identity }),
+      z.object({
+        ...commandBase,
+        kind: z.literal('rollback-prompt'),
+        preparationId: identity,
+        preserveSubmittedMessage: z.boolean().optional()
+      }),
       z.object({
         ...commandBase,
         kind: z.literal('append-user'),
@@ -263,7 +269,7 @@ export const applySessionConversationCommands = (
           status: 'idle',
           activeRun: undefined,
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           branchContextResetRequired: true
         }
         break
@@ -345,7 +351,7 @@ export const applySessionConversationCommands = (
           activeRun: command.run,
           status: 'running',
           error: undefined,
-          errorReportable: undefined,
+          failure: undefined,
           // Resume validates this durable marker after the renderer has prepared its run.
           // Runtime admission consumes it; a different prompt must never inherit it.
           resumeRecovery:

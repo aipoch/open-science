@@ -420,6 +420,32 @@ describe('Session projection', () => {
       await client.project.create({ data: { id: 'project-1', name: 'Project' } })
     })
 
+    it('commits a projection after more than five seconds of transaction execution', async () => {
+      const projection = new SessionProjectionRepository(async () => client!)
+      const prepared = await projection.prepareSave(session('slow-projection'))
+      const slowClient = client!.$extends({
+        query: {
+          session: {
+            async update({ args, query }) {
+              const result = await query(args)
+              await new Promise((resolve) => setTimeout(resolve, 5_500))
+              return result
+            }
+          }
+        }
+      })
+      const slowProjection = new SessionProjectionRepository(
+        async () => slowClient as unknown as PrismaClient
+      )
+      await slowProjection.commitSave(prepared.session)
+      expect(await client!.sessionRun.count({ where: { sessionId: 'slow-projection' } })).toBe(1)
+      expect(
+        await client!.pendingSessionReconciliation.findUnique({
+          where: { sessionId: 'slow-projection' }
+        })
+      ).toBeNull()
+    }, 20_000)
+
     it('lets a session save and cancellation recovery wait for an active database transaction', async () => {
       const projection = new SessionProjectionRepository(async () => client!)
       const repository = new SessionRepository(storageRoot!, {}, projection)

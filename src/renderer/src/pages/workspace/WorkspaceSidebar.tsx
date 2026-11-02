@@ -17,6 +17,7 @@ import {
   Plus,
   Search,
   Settings,
+  Store,
   Toolbox,
   X
 } from 'lucide-react'
@@ -88,6 +89,8 @@ type WorkspaceSidebarProps = {
   onOpenFiles: () => void
   isLibraryOpen?: boolean
   onOpenLiterature?: () => void
+  isMarketplaceOpen?: boolean
+  onOpenMarketplace?: () => void
   isComputeOpen?: boolean
   onOpenCompute?: () => void
   onOpenSession: (sessionId: string) => void
@@ -739,6 +742,8 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     onOpenFiles,
     isLibraryOpen = false,
     onOpenLiterature,
+    isMarketplaceOpen = false,
+    onOpenMarketplace,
     isComputeOpen = false,
     onOpenCompute,
     onPreviewSession,
@@ -1231,6 +1236,24 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                 <BookOpen className="size-3.5" strokeWidth={2} />
               </span>
               <span>{t('Library')}</span>
+            </button>
+          </div>
+
+          <div className="flex h-9 items-center gap-1 px-1.5">
+            <button
+              type="button"
+              className={cn(
+                'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
+                isMarketplaceOpen && 'bg-bg-300',
+                sidebarInteractiveTransitionClassName
+              )}
+              aria-controls="right-panel"
+              aria-pressed={isMarketplaceOpen}
+              disabled={!onOpenMarketplace}
+              onClick={onOpenMarketplace}
+            >
+              <Store className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+              <span>{t('Sharing marketplace')}</span>
             </button>
           </div>
 

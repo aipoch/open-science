@@ -5106,13 +5106,13 @@ describe('normalizeSessionFile with activities', () => {
     const providerFailure = normalizeSessionFile({
       ...base,
       error: 'Invalid API key',
-      errorReportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
     // A reportable failure does not persist the field (default is reportable — no need to store true).
     const reportableFailure = normalizeSessionFile({
       ...base,
       error: 'Agent session could not be created.',
-      errorReportable: true
+      failure: { category: 'internal' as const, diagnostics: {} }
     })
     // An older session file, written before the flag existed, has no field and defaults to reportable.
     const legacy = normalizeSessionFile({ ...base, error: 'Some old failure' })
@@ -5120,13 +5120,13 @@ describe('normalizeSessionFile with activities', () => {
     const noError = normalizeSessionFile({
       ...createSessionWithActivity(undefined),
       activities: undefined,
-      errorReportable: false
+      failure: { category: 'service' as const, diagnostics: {} }
     })
 
-    expect(providerFailure?.errorReportable).toBe(false)
-    expect(reportableFailure?.errorReportable).toBeUndefined()
-    expect(legacy?.errorReportable).toBeUndefined()
-    expect(noError?.errorReportable).toBeUndefined()
+    expect(providerFailure?.failure?.category).toBe('service')
+    expect(reportableFailure?.failure?.category).toBe('internal')
+    expect(legacy?.failure?.category).toBe('internal')
+    expect(noError?.failure).toBeUndefined()
   })
 
   it('persists artifact error event ownership only with an artifact finalization error', () => {

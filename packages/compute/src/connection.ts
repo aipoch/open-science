@@ -1,7 +1,11 @@
 import type { ComputeAuthenticationErrorCode, ComputeHost } from './model'
 import type { BoundedScpResult } from './scp-runner'
 import type { SshRunner } from './ssh-runner'
-type ConnectionRunOptions = Parameters<SshRunner['run']>[2]
+type ConnectionRunOptions = Parameters<SshRunner['run']>[2] & {
+  // Scheduler clients classify their own service errors. A completed SSH command's non-255
+  // exit must remain available to those clients; transport/authentication failures still throw.
+  preserveRemoteCommandErrors?: boolean
+}
 type ConnectionRunResult = Awaited<ReturnType<SshRunner['run']>>
 
 // Machine protocols are carried by stdout. SSH banners and diagnostics on stderr must not

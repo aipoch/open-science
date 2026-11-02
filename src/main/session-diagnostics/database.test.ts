@@ -107,7 +107,10 @@ it('retains recent records under row limits and reports the retained time range'
   const insert = db.prepare(
     'INSERT INTO SessionRun (sessionId, messageId, createdAtMs) VALUES (?, ?, ?)'
   )
+  // Seed the read-limit fixture without 1,002 durable autocommit transactions.
+  db.exec('BEGIN')
   for (let index = 0; index < 1002; index++) insert.run('s', `message-${index}`, index)
+  db.exec('COMMIT')
   db.close()
   const result = [...readDiagnosticDatabase(path, 'p', 's')].find(
     (item) => item.table === 'SessionRun'

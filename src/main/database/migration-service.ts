@@ -10,6 +10,11 @@ import {
   literaturePersonalNoteSearchMigration,
   backfillLiteraturePersonalNoteSearch
 } from './migrations/0052-literature-personal-note-search'
+import {
+  slurmJobReliabilityMigration,
+  SLURM_JOB_RELIABILITY_ALLOWED_SUFFIX_CHECKS,
+  SLURM_JOB_RELIABILITY_ADDED_COLUMNS
+} from './migrations/0054-slurm-job-reliability'
 import { classificationUsageMigration } from './migrations/0042-classification-usage'
 import {
   literatureDoiIdentityMigration,
@@ -979,6 +984,18 @@ const MIGRATION_MANIFEST = [
     checksum: LITERATURE_DOI_IDENTITY_CHECKSUM,
     backupOnApply: 'required',
     backupRetention: 'retain'
+  },
+  {
+    ...slurmJobReliabilityMigration,
+    checksum: checksumMigrationPayload(
+      slurmJobReliabilityMigration.id,
+      slurmJobReliabilityMigration.statements,
+      slurmJobReliabilityMigration.verifiers,
+      slurmJobReliabilityMigration.operations
+    ),
+    foreignKeysDuringApply: 'disabled',
+    backupOnApply: 'required',
+    backupRetention: 'retain'
   }
 ] as const satisfies readonly MigrationManifestEntry[]
 // schema-locality: begin frozen-0001-repairs
@@ -1384,6 +1401,7 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(client, literatureTranslationMigration.verifiers)
   await runMigrationVerifiers(client, literatureReadingStatusMigration.verifiers)
   await runMigrationVerifiers(client, literaturePersonalNoteSearchMigration.verifiers)
+  await runMigrationVerifiers(client, slurmJobReliabilityMigration.verifiers)
   // The generated schema enforces the latest checks; frozen auxiliary verifiers also accept
   // the exact stronger expressions from the immutable suffix.
   await runMigrationVerifiers(
@@ -1406,7 +1424,10 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   await runMigrationVerifiers(
     client,
     computeJobOperationMigration.verifiers,
-    NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
+    mergeAllowedSuffixChecks(
+      NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS,
+      SLURM_JOB_RELIABILITY_ALLOWED_SUFFIX_CHECKS
+    )
   )
   await runMigrationVerifiers(client, computeJobFileEvidenceMigration.verifiers)
   // The generated contract verifies the owner-scoped source indexes introduced by the suffix.
@@ -1418,7 +1439,11 @@ const verifyCurrentApplicationSchema = async (client: PrismaClient): Promise<voi
   )
   await runMigrationVerifiers(client, literatureInboxIntegrityMigration.verifiers)
   await runMigrationVerifiers(client, computeJobRemoteCleanupMigration.verifiers)
-  await runMigrationVerifiers(client, backgroundResultDeliveryMigration.verifiers)
+  await runMigrationVerifiers(
+    client,
+    backgroundResultDeliveryMigration.verifiers,
+    SLURM_JOB_RELIABILITY_ALLOWED_SUFFIX_CHECKS
+  )
   await runMigrationVerifiers(client, literaturePdfProvenanceMigration.verifiers)
   await runMigrationVerifiers(client, contentVerificationObservationMigration.verifiers)
   await runMigrationVerifiers(client, literatureMetadataCommitReceiptMigration.verifiers)
@@ -1944,11 +1969,27 @@ const applyManifestMigration = async (
   } = {}
 ): Promise<void> => {
   const preserveCurrentSchema = await hasCurrentManagedFileVersionFoundation(client)
+  const hasSlurmColumns = async (table: string): Promise<boolean> => {
+    const columns = await migrationSqlExecutor.query<Array<{ name: string }>>(
+      client,
+      `PRAGMA table_info("${table}")`
+    )
+    return columns.some(({ name }) => SLURM_JOB_RELIABILITY_ADDED_COLUMNS[table]?.includes(name))
+  }
+  // These two frozen rebuilds need adaptation only when an earlier current-schema adoption has
+  // already introduced Slurm diagnostics. Otherwise retain their original replay boundaries.
+  const preservesSlurmColumns =
+    preserveCurrentSchema &&
+    (migration.id === computeJobRemoteCleanupMigration.id
+      ? (await hasSlurmColumns('ComputeJob')) || (await hasSlurmColumns('ComputeJobOperation'))
+      : migration.id === computeJobHarvestRetryMigration.id &&
+        (await hasSlurmColumns('ComputeJob')))
   const canAdaptCurrentSchema =
     preserveCurrentSchema &&
     migration.id !== managedFileVersionFoundationMigration.id &&
     (migration.id < managedFileVersionFoundationMigration.id ||
-      migration.id === numericAndNullConstraintsMigration.id) &&
+      migration.id === numericAndNullConstraintsMigration.id ||
+      preservesSlurmColumns) &&
     MIGRATION_MANIFEST.some(
       (candidate) => candidate.id === migration.id && candidate.checksum === migration.checksum
     )
@@ -1963,7 +2004,10 @@ const applyManifestMigration = async (
     migration.id < numericAndNullConstraintsMigration.id
       ? NUMERIC_AND_NULL_ALLOWED_SUFFIX_CHECKS
       : {},
-    migration.id < classificationUsageMigration.id ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS : {}
+    migration.id < classificationUsageMigration.id ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS : {},
+    migration.id < slurmJobReliabilityMigration.id
+      ? SLURM_JOB_RELIABILITY_ALLOWED_SUFFIX_CHECKS
+      : {}
   )
   const verifyMigrationTarget = async (targetClient: PrismaClient): Promise<void> => {
     if (
@@ -2365,6 +2409,9 @@ const migrateApplicationDatabaseWithManifest = async (
     adoptsComputeJobOperation ? COMPUTE_JOB_OPERATION_ALLOWED_SUFFIX_CHECKS : {},
     manifest.some((entry) => entry.id === classificationUsageMigration.id)
       ? CLASSIFICATION_ALLOWED_SUFFIX_CHECKS
+      : {},
+    manifest.some((entry) => entry.id === slurmJobReliabilityMigration.id)
+      ? SLURM_JOB_RELIABILITY_ALLOWED_SUFFIX_CHECKS
       : {}
   )
 

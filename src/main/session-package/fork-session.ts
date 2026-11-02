@@ -63,7 +63,7 @@ export const createForkSession = (
       kind: 'failed',
       settledAt: legacyOutcome.settledAt,
       error: legacyOutcome.error,
-      errorReportable: legacyOutcome.errorReportable
+      failure: legacyOutcome.failure
     }
     copied.messages = withLegacyFailedOutcome(copied.messages, source.messages, anchor.id, failure)
     if (copied.conversationGraph && source.conversationGraph)
@@ -124,7 +124,7 @@ export const createForkSession = (
     resumeRecovery: undefined,
     taskRunCommitId: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     artifactErrorEventIds: undefined,
     contextUsage: undefined,
     pendingHistoryReplay: { kind: 'all' },

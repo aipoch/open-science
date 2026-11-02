@@ -7,4 +7,7 @@ export const registerLocalModelIpcHandlers = (api: LocalModelApi): void => {
   ipcMainHandle('local-models:install', (_event, capability) => api.install(capability))
   ipcMainHandle('local-models:cancel', (_event, capability) => api.cancel(capability))
   ipcMainHandle('local-models:remove', (_event, capability) => api.remove(capability))
+  ipcMainHandle('local-models:set-ocr-languages', (_event, languages) =>
+    api.setOcrLanguages(languages)
+  )
 }

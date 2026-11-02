@@ -359,6 +359,44 @@ describe('AgentMarkdown streaming presentation', () => {
     expect(quotes[0].className).not.toContain('hidden')
     expect(quotes[1].className).toContain('hidden')
   })
+
+  it('does not paint raw pipe rows while a streamed table is still arriving', async () => {
+    vi.useRealTimers()
+
+    await act(async () => {
+      root.render(
+        <PresentedAgentMarkdown content={'Intro.\n\n| Col A | Col B |\n| 1 | 2 |'} isAnimating />
+      )
+    })
+    expect(container.textContent).toContain('Intro.')
+    expect(container.textContent).not.toContain('|')
+
+    const table = 'Intro.\n\n| Col A | Col B |\n| --- | --- |\n| 1 | 2 |'
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={table} isAnimating />)
+    })
+    expect(container.querySelector('table')).not.toBeNull()
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={table} />)
+    })
+    expect(container.querySelector('table')).not.toBeNull()
+  })
+
+  it('shows a pipe-led paragraph once streaming ends', async () => {
+    vi.useRealTimers()
+    const content = 'Setup:\n\n| note | kept |'
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} isAnimating />)
+    })
+    expect(container.textContent).not.toContain('| note |')
+
+    await act(async () => {
+      root.render(<PresentedAgentMarkdown content={content} />)
+    })
+    expect(container.textContent).toContain('| note | kept |')
+  })
 })
 
 describe('cost-aware Markdown parsing', () => {

@@ -197,8 +197,11 @@ export const createSessionActionBindings = (
     disabled: ({ session }) => !options.canArchiveSession?.(session)
   },
   delete: {
-    execute: ({ session }) => options.onDeleteSession?.(session),
-    hidden: !options.onDeleteSession,
+    execute: ({ session }) => {
+      if (!session.firstPromptDraft && !session.isPending) options.onDeleteSession?.(session)
+    },
+    hidden: ({ session }) =>
+      !options.onDeleteSession || Boolean(session.firstPromptDraft || session.isPending),
     disabled: !options.canDeleteConversations
   }
 })

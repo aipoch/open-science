@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { isComputeJobCancelled } from '@aipoch/compute'
 import { Circle, CircleCheck, CircleX, Clock3, Loader2 } from 'lucide-react'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -98,10 +99,12 @@ const SessionBackgroundActivityLedger = ({
   }
 
   const jobStatus = (job: JobSummary): string => {
-    const isCancelling = cancelling.has(job.job_id) || job.cancellation_status === 'cancelling'
+    const isCancelling =
+      job.cancellation_status === 'cancelling' ||
+      (cancelling.has(job.job_id) && job.cancellation_status !== 'failed')
     const effectiveStatus = isCancelling
       ? 'cancelling'
-      : job.cancellation_status === 'cancelled'
+      : isComputeJobCancelled(job)
         ? 'cancelled'
         : job.status
     return backgroundActivityStatusLabel(effectiveStatus, undefined, t)
@@ -201,7 +204,9 @@ const SessionBackgroundActivityLedger = ({
 
   const jobRow = (job: JobSummary): React.JSX.Element => {
     const isActive = isJobActive(job)
-    const isCancelling = cancelling.has(job.job_id) || job.cancellation_status === 'cancelling'
+    const isCancelling =
+      job.cancellation_status === 'cancelling' ||
+      (cancelling.has(job.job_id) && job.cancellation_status !== 'failed')
     const StatusIcon = isCancelling
       ? Loader2
       : job.status === 'success'
@@ -278,14 +283,19 @@ const SessionBackgroundActivityLedger = ({
             </Button>
           ) : null}
         </span>
-        {isActive && cancellationErrors.has(job.job_id) ? (
+        {isActive &&
+        (cancellationErrors.has(job.job_id) || job.cancellation_status === 'failed') ? (
           <ErrorNotice
             inline
             className="col-span-full"
             role="alert"
             tone="amber"
-            title={t('Cancellation request failed')}
-            description={cancellationErrors.get(job.job_id)}
+            title={
+              job.cancellation_status === 'failed'
+                ? t('Cancellation failed')
+                : t('Cancellation request failed')
+            }
+            description={cancellationErrors.get(job.job_id) ?? job.cancellation_error?.message}
           />
         ) : null}
       </div>

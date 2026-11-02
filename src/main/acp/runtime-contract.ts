@@ -157,6 +157,7 @@ export type AcpRuntimeOptions = {
     ) => Promise<SideChatSendMessageResult>
   }>
   literature?: Readonly<{
+    annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools
     elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     resolveAttachmentVersion?: (versionId: string) => Promise<
@@ -319,7 +320,10 @@ export type AcpRuntimeArtifactOptions = {
   repository?: ArtifactRepository
   runRegistry?: ArtifactRunRegistry
   getRpcConnection?: () => Promise<NotebookRpcConnection>
-  issueRpcCapability?: (binding: ArtifactRpcCapabilityBinding) => string
+  issueRpcCapability?: (
+    binding: ArtifactRpcCapabilityBinding,
+    isOwnerActive: () => boolean
+  ) => string
   revokeRpcCapability?: (token: string) => Promise<void> | void
   // When present, the caller already owns the execution Artifact turn. Runtime only provisions the
   // MCP transport against this exact handoff and never opens a competing root turn.

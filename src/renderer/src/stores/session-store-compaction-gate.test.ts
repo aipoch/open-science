@@ -14,7 +14,7 @@ const sourceSession = (): ChatSession =>
     cwd: '/workspace',
     status: 'error',
     error: 'Context window exceeded',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     messages: [
       {
         id: 'prompt',
@@ -28,7 +28,7 @@ const sourceSession = (): ChatSession =>
           kind: 'failed',
           settledAt: 2,
           error: 'Context window exceeded',
-          errorReportable: false
+          failure: { category: 'service' as const, diagnostics: {} }
         }
       }
     ],

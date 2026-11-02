@@ -43,6 +43,11 @@ type Transfer = {
   abort: () => void
 }
 
+type ReadTransferWaiter = {
+  bytes: number
+  grant(): void
+}
+
 // One process owner, shared by Desktop and Web. Domain commands still own validation and commits.
 export class RuntimePayloadTransfers {
   private readonly entries = new Map<string, Transfer>()
@@ -51,6 +56,7 @@ export class RuntimePayloadTransfers {
   private reservedBytes = 0
   private pendingReads = 0
   private readonly readWaiters = new Set<() => void>()
+  private readonly readTransferWaiters = new Set<ReadTransferWaiter>()
 
   constructor(private readonly temporaryParent = tmpdir()) {}
 
@@ -200,7 +206,10 @@ export class RuntimePayloadTransfers {
       readBytes = stringifyRpcJson(readResult ?? null)
       if (Buffer.byteLength(readBytes) <= RUNTIME_PAYLOAD_INLINE_BYTES) return readResult
     }
-    const entry = this.admit(channel, lease)
+    const entry =
+      readBytes === undefined
+        ? this.admit(channel, lease)
+        : await this.admitRead(channel, caller, lease, Buffer.byteLength(readBytes))
     try {
       return await this.use(entry, async () => {
         if (request?.kind === 'upload') {
@@ -254,6 +263,58 @@ export class RuntimePayloadTransfers {
   private authorize(caller: CallerContext, lease: ApplicationCallerLease, entry?: Transfer): void {
     if (!lease.isCurrent() || !caller.isAuthorizationCurrent() || entry?.closed)
       throw new Error('Payload transfer caller is no longer authorized.')
+  }
+
+  private admitRead(
+    channel: string,
+    caller: CallerContext,
+    lease: ApplicationCallerLease,
+    bytes: number
+  ): Promise<Transfer> {
+    // Read dispatch has already proved this needs a snapshot. Keep its pending-read admission
+    // until a slot is available, so at most four materialized results can wait here. Small reads
+    // bypass this queue; uploads and mutations still fail admission before dispatching side effects.
+    if (bytes > MAX_RUNTIME_PAYLOAD_BYTES)
+      return Promise.reject(new Error('Payload transfer exceeds the temporary byte budget.'))
+    return new Promise<Transfer>((resolve, reject) => {
+      const cleanup = (): void => {
+        this.readTransferWaiters.delete(waiter)
+        lease.signal.removeEventListener('abort', abort)
+      }
+      const abort = (): void => {
+        cleanup()
+        reject(new Error('Payload transfer caller is no longer authorized.'))
+        this.drainReadTransfers()
+      }
+      const waiter: ReadTransferWaiter = {
+        bytes,
+        grant: () => {
+          cleanup()
+          try {
+            this.authorize(caller, lease)
+            // Reserve both resources synchronously before resolving; another reader cannot take
+            // the granted slot or bytes before this continuation starts publishing its snapshot.
+            const entry = this.admit(channel, lease)
+            this.reserve(entry, bytes)
+            resolve(entry)
+          } catch (error) {
+            reject(error)
+          }
+        }
+      }
+      this.readTransferWaiters.add(waiter)
+      lease.signal.addEventListener('abort', abort, { once: true })
+      if (lease.signal.aborted) abort()
+      else this.drainReadTransfers()
+    })
+  }
+
+  private drainReadTransfers(): void {
+    for (const waiter of this.readTransferWaiters) {
+      if (this.entries.size >= MAX_TRANSFERS || this.reservedBytes + waiter.bytes > MAX_TEMP_BYTES)
+        return
+      waiter.grant()
+    }
   }
 
   private admit(channel: string, lease: ApplicationCallerLease): Transfer {
@@ -318,8 +379,10 @@ export class RuntimePayloadTransfers {
       this.reservedBytes - entry.bytes + bytes > MAX_TEMP_BYTES
     )
       throw new Error('Payload transfer exceeds the temporary byte budget.')
+    const releasedBytes = entry.bytes - bytes
     this.reservedBytes += bytes - entry.bytes
     entry.bytes = bytes
+    if (releasedBytes > 0) this.drainReadTransfers()
   }
 
   private descriptor(entry: Transfer): RuntimePayloadDescriptor {
@@ -443,6 +506,7 @@ export class RuntimePayloadTransfers {
       if (this.documents.get(entry.lease) === entry) this.documents.delete(entry.lease)
       for (const waiting of this.entries.values())
         if (waiting.lease === entry.lease) waiting.wake?.()
+      this.drainReadTransfers()
       if (this.entries.size === 0 && this.root) {
         const root = this.root
         this.root = undefined

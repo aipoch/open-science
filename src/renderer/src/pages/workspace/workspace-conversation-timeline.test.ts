@@ -112,7 +112,7 @@ describe('workspace conversation timeline', () => {
             kind: 'failed',
             settledAt: 600,
             error: 'The agent failed.',
-            errorReportable: true
+            failure: { category: 'internal' as const, diagnostics: {} }
           }
         }),
         message({

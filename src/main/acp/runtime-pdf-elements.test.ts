@@ -1,9 +1,15 @@
+import type { PdfAnnotationAgentTools } from '../pdf-annotations/agent-tools'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
+import {
+  claudeCodeFramework,
+  codeBuddyFramework,
+  codexFramework,
+  opencodeFramework
+} from '../agent-framework'
 import type { AgentMcpHttpHost } from './mcp-http-host'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
 import type { LiteratureMcpHandler } from '../literature/mcp-server'
@@ -15,6 +21,7 @@ afterEach(async () => {
 
 it.each([
   ['claude-code', claudeCodeFramework, false],
+  ['codebuddy', codeBuddyFramework, false],
   ['opencode', opencodeFramework, false],
   ['codex-response', codexFramework, false],
   ['codex-bridge', codexFramework, true]
@@ -33,6 +40,23 @@ it.each([
       await pending
       return { data: { imageIncluded: false } }
     })
+    const writes = vi.fn()
+    const annotations: PdfAnnotationAgentTools = {
+      list: vi.fn(async (context) => {
+        context.check()
+        return { annotations: [] }
+      }),
+      locate: vi.fn(async (context) => {
+        context.check()
+        return { targets: [] }
+      }),
+      create: async (context) => {
+        await pending
+        context.check()
+        writes()
+        return { id: 'created' }
+      }
+    }
     const owners = composeAcpRuntimeBaseOwners({
       appVersion: 'test',
       defaultCwd: root,
@@ -46,7 +70,12 @@ it.each([
         clear: vi.fn(),
         close: vi.fn()
       } as unknown as AgentMcpHttpHost,
-      literature: { isEnabled: async () => true, readDocument: vi.fn(), elements: { list, read } }
+      literature: {
+        isEnabled: async () => true,
+        readDocument: vi.fn(),
+        elements: { list, read },
+        annotations
+      }
     })
     const provision = await owners.sessionCapabilities.provision({
       stableAppSessionId: 'session',
@@ -61,6 +90,8 @@ it.each([
       () => provision.release({ ownsStableIdentity: true }),
       () => owners.sessionInteractions.supersedeAll()
     )
+    if (bridge)
+      expect(provision.bridgeMcpTools?.map((tool) => tool.name)).toContain('create_pdf_annotation')
     const signal = new AbortController().signal
     await expect(handler!.elements!.list({}, signal)).rejects.toThrow('NO_LINKED_PDF_CONTEXT')
     const interaction = owners.sessionInteractions.claim({
@@ -78,6 +109,12 @@ it.each([
       }),
       {}
     )
+    await handler!.annotations!.list({}, signal)
+    const staleWrite = handler!.annotations!.create(
+      { targetRef: 'ref', requestId: 'note', note: 'Note' },
+      signal
+    )
+    const rejectedWrite = expect(staleWrite).rejects.toThrow()
     const stale = handler!.elements!.read({ elementRef: 'ref' }, signal)
     const rejected = expect(stale).rejects.toThrow()
     owners.sessionInteractions.supersede(interaction)
@@ -88,6 +125,8 @@ it.each([
     })
     finish()
     await rejected
+    await rejectedWrite
+    expect(writes).not.toHaveBeenCalled()
     const cancelled = new AbortController()
     cancelled.abort()
     await expect(handler!.elements!.list({}, cancelled.signal)).rejects.toThrow()

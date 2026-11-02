@@ -7,6 +7,7 @@ import type { ComputeConnectionBroker } from './connection-broker'
 import type { harvestJob } from './harvest-engine'
 import { createComputeJobRuntime } from './job-runtime'
 import type { ComputeHostRepository } from './repository'
+import { emitJobNotification } from './job-notifier'
 
 let dispose: (() => Promise<void>) | undefined
 afterEach(async () => {
@@ -52,6 +53,7 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
     return collection
   })
   const confirmed = vi.fn<(job: ComputeJob) => Promise<void>>(async () => undefined)
+  const broadcast = vi.fn()
   const runtime = createComputeJobRuntime(
     {
       computeService: {
@@ -80,6 +82,7 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
     },
     {
       harvest,
+      broadcast,
       createPoller: () => ({
         start: vi.fn(),
         stop: vi.fn(async () => undefined),
@@ -92,6 +95,7 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
     await runtime.start()
     await vi.waitFor(() => expect(harvest).toHaveBeenCalled(), { timeout: 2000 })
     await vi.waitFor(() => expect(confirmed).toHaveBeenCalledTimes(2), { timeout: 2500 })
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(2), { timeout: 2500 })
     for (const id of ['job-1', 'job-2']) {
       expect(await operations.get(id, 'cancel')).toMatchObject({
         phase: 'settled',
@@ -99,7 +103,9 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
       })
       expect(await jobs.get(id)).toMatchObject({
         status: 'failed',
-        cancellation_status: 'cancelled'
+        cancellation_status: 'cancelled',
+        notified_at: expect.any(Number),
+        harvested_at: undefined
       })
     }
     await vi.waitFor(() => expect(harvest).toHaveBeenCalledTimes(2))
@@ -112,6 +118,16 @@ it('publishes cancellation and keeps cancelling other jobs while result collecti
     release()
     await stopping
     expect(stopped).toBe(true)
+    for (const id of ['job-1', 'job-2']) {
+      const collected = await jobs.update(id, { harvestedAt: new Date() })
+      await emitJobNotification(collected, {
+        jobRepository: jobs,
+        hostRepository: {} as ComputeHostRepository,
+        storageRoot: '/unused',
+        broadcast
+      })
+    }
+    expect(broadcast).toHaveBeenCalledTimes(2)
   } finally {
     release()
     await runtime.stop()

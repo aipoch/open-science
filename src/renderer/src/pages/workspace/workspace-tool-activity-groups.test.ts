@@ -91,6 +91,25 @@ const inferredSearchRow = (overrides: Partial<ToolActivity> = {}): ToolActivity 
   })
 
 describe('groupConversationItems', () => {
+  it('retains Pi discovery beside web search in either order', () => {
+    const discovery = createActivity({
+      id: 'discovery',
+      providerToolName: 'tool_search',
+      title: "tool_search 'pubmed'",
+      toolKind: 'search'
+    })
+    const web = createActivity({ id: 'web', providerToolName: 'WebSearch', title: 'Web search' })
+    for (const activities of [
+      [discovery, web],
+      [web, discovery]
+    ]) {
+      expect(getRenderableActivityEntries(activities)).toHaveLength(2)
+      expect(isSearchActivity(discovery, activities, activities.indexOf(discovery))).toBe(false)
+      expect(formatActivityGroupTitle(activities)).toContain('a tool search')
+      expect(formatActivityGroupTitle(activities)).toContain('a search')
+    }
+  })
+
   it('collapses consecutive activities into a single group', () => {
     const grouped = groupConversationItems([
       activityItem(createActivity({ id: 'a1', sortIndex: 1 })),

@@ -2,6 +2,7 @@ import { Zap, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import type { JobSummary } from '../../../shared/compute'
+import { isComputeJobCancelled } from '@aipoch/compute'
 
 // CompletedJobCard appears in the conversation timeline as an independent card.
 // Used when a job's job_id was NOT found in any tool-call rawOutput
@@ -14,10 +15,11 @@ type CompletedJobCardProps = {
   onOpen: (job: JobSummary) => void
 }
 
-type StatusKey = 'finished' | 'failed' | 'timed out' | 'error'
+type StatusKey = 'finished' | 'failed' | 'timed out' | 'error' | 'Cancelled'
 
 // Returns the catalog key and color class for a job's terminal status.
 function getStatusLabelKey(job: JobSummary): { key: StatusKey | null; colorClass: string } {
+  if (isComputeJobCancelled(job)) return { key: 'Cancelled', colorClass: 'text-muted-foreground' }
   switch (job.status) {
     case 'success':
       return { key: 'finished', colorClass: 'text-green-600 dark:text-green-400' }

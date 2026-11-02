@@ -11,7 +11,8 @@
     "src/main/background-result-delivery/repository.test.ts",
     "src/main/background-result-delivery/repository.ts",
     "src/main/background-result-delivery/source-resolver.test.ts",
-    "src/main/background-result-delivery/source-resolver.ts"
+    "src/main/background-result-delivery/source-resolver.ts",
+    "src/main/background-result-delivery/compute-cancellation.integration.test.ts"
   ],
   "interfacePaths": [
     "src/main/background-result-delivery/compute-adapter.ts",
@@ -29,7 +30,8 @@
       "src/main/background-result-delivery/continuation.test.ts",
       "src/main/background-result-delivery/owner.test.ts",
       "src/main/background-result-delivery/repository.test.ts",
-      "src/main/background-result-delivery/source-resolver.test.ts"
+      "src/main/background-result-delivery/source-resolver.test.ts",
+      "src/main/background-result-delivery/compute-cancellation.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -67,6 +67,8 @@ export type ChatSession = Omit<
   elicitationEditDrafts?: Record<string, ElicitationEditDraft>
   activePlanProjection?: ActivePlanProjection
   planHistoryProjections?: ActivePlanProjection[]
+  // Renderer presentation only: this new conversation has not submitted its first prompt.
+  firstPromptDraft?: boolean
   isPending?: boolean
   // Renderer-only identity of the durable seed while the optimistic Session is being prepared.
   pendingBindingSessionId?: string

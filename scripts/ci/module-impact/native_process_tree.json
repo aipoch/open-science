@@ -558,7 +558,6 @@
       "src/main/literature/pdf-translation/usage.test.ts",
       "src/main/literature/pdf-translation/diagnostics.test.ts",
       "src/main/literature/pdf-translation/reader-ownership.test.ts",
-      "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/pdf-cache.test.ts",
       "src/main/notebook/code-risk-admission.test.ts",
       "src/main/desktop-runtime-transport.integration.test.ts",

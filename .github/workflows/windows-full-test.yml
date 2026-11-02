@@ -178,6 +178,7 @@ jobs:
           scripts/ci/notebook-analysis-native.test.ts
           scripts/pdf-package-fixtures.test.ts
           scripts/ci/windows-test-sequencer.test.ts
+          scripts/package-verification-plan.test.ts
           scripts/ci/release-workflows.test.ts
           scripts/windows-release-workflows.test.ts
           src/main/database/database-null-and-version-bounds.test.ts

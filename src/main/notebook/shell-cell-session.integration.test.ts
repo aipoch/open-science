@@ -274,6 +274,8 @@ describe('persistent platform shell cells', () => {
       const workspace = join(root, 'workspace')
       const secondWorkspace = join(root, 'second-workspace')
       await mkdir(secondWorkspace)
+      // Keep npm's local prefix inside the fixture, even when TEMP is under the repository.
+      await writeFile(join(secondWorkspace, 'package.json'), JSON.stringify({ private: true }))
       const second = (code: string): NotebookShellProcessRequest => ({
         ...request(code, 'two'),
         cwd: secondWorkspace,

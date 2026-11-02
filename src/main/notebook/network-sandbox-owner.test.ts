@@ -93,6 +93,8 @@ vi.mock('@aipoch/notebook-network-sandbox', () => ({
 
 import { NotebookNetworkSandboxOwner, commandLine } from './network-sandbox-owner'
 import { WindowsNotebookRuntimeManager } from './windows-runtime-manager'
+import { WindowsRuntimeComponentStore } from './windows-runtime-components'
+import { NotebookRuntimeService } from './runtime-service'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { runShellCommand } from './shell-process'
 import { DEFAULT_R_ENV, envPrefix, legacyDefaultEnvPrefix, rScriptBin } from '@aipoch/environment'
@@ -218,6 +220,124 @@ afterEach(async () => {
 })
 
 describe('NotebookNetworkSandboxOwner', () => {
+  it.each([
+    { visitSettings: false, background: false, failure: undefined },
+    { visitSettings: true, background: false, failure: undefined },
+    { visitSettings: false, background: true, failure: undefined },
+    { visitSettings: true, background: false, failure: 'mode-change' },
+    { visitSettings: true, background: true, failure: 'mode-change' },
+    { visitSettings: false, background: false, failure: 'components' }
+  ])(
+    'admits a protected PowerShell query after restart (Settings visited: $visitSettings, background: $background, failure: $failure)',
+    async ({ visitSettings, background, failure }) => {
+      const root = await mkdtemp(join(tmpdir(), 'os-cold-shell-'))
+      fixtureDirectories.push(root)
+      const select = vi
+        .spyOn(WindowsRuntimeComponentStore.prototype, 'select')
+        .mockImplementation(async (releases, request) => ({
+          release: releases.find(
+            (release) => release.component === request.component && release.source === 'patched'
+          )!,
+          root,
+          executable: join(root, request.component === 'node' ? 'node.exe' : 'pwsh.exe')
+        }))
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: root,
+        windowsRuntimeRoot: join(root, 'protected-runtimes'),
+        temporaryRoot: join(root, 'commands'),
+        platform: 'win32',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: vi.fn(),
+        requestDecision: vi.fn()
+      })
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'project',
+        platform: 'win32',
+        processSandbox: owner,
+        shellBackgroundExecutionEnabled: true,
+        shellRuntimeBinding: { kind: 'powershell', version: '7.6' }
+      })
+      // The component store models an already-installed verified runtime. Stop at the existing
+      // native launch boundary, without changing machine protection or running a fixture binary.
+      backend.wrap.mockRejectedValue(new Error('fixture reached native launch'))
+      try {
+        if (visitSettings) await owner.status()
+        if (failure === 'mode-change')
+          backend.isWindowsProtectionConfigured.mockResolvedValue(false)
+        if (failure === 'components')
+          select.mockRejectedValueOnce(new Error('Protected components missing'))
+        const expectedError =
+          failure === 'mode-change'
+            ? 'Notebook protection changed. Retry in the same conversation after the Shell capability refresh completes.'
+            : failure === 'components'
+              ? 'Protected components missing'
+              : 'fixture reached native launch'
+        const request = {
+          sessionId: 'cold-shell',
+          executionInvocationId: 'shell-query',
+          workspaceCwd: root,
+          command: '$PSVersionTable.PSVersion.ToString()'
+        }
+        if (background) {
+          const receipt = await service.executeShellBackground(request)
+          await service.waitForBackgroundRun(receipt.runId)
+          const result = await service.getBackgroundRun({ ...request, runId: receipt.runId })
+          expect(result.run.text.stderr).toBe(expectedError)
+        } else {
+          const result = await service.executeShell(request)
+          expect(result.stderr).toBe(expectedError)
+          if (failure)
+            expect(result).toMatchObject({
+              runtimeStatus: 'unavailable',
+              errorCode: 'shell-runtime-unavailable',
+              recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+            })
+        }
+        if (failure) {
+          const state = await service.state(request)
+          expect(state.runs).toHaveLength(1)
+          expect(state.runs[0]).toMatchObject({
+            status: 'failed',
+            text: { stderr: expectedError },
+            shellRuntimeStatus: 'unavailable',
+            shellErrorCode: 'shell-runtime-unavailable',
+            recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+          })
+          expect(backend.wrap).not.toHaveBeenCalled()
+          // Restoring readiness must not execute an already admitted submission again.
+          backend.isWindowsProtectionConfigured.mockResolvedValue(true)
+          if (background) {
+            const replay = await service.executeShellBackground(request)
+            expect(replay.runId).toBe(state.runs[0].runId)
+          } else {
+            await expect(service.executeShell(request)).resolves.toMatchObject({
+              stderr: expectedError,
+              runtimeStatus: 'unavailable'
+            })
+          }
+          expect((await service.state(request)).runs).toHaveLength(1)
+          expect(backend.wrap).not.toHaveBeenCalled()
+          const changedRequest = { ...request, command: 'Write-Output different' }
+          await expect(
+            background
+              ? service.executeShellBackground(changedRequest)
+              : service.executeShell(changedRequest)
+          ).rejects.toThrow('NOTEBOOK_RUN_SUBMISSION_CONFLICT')
+        } else {
+          expect(select).toHaveBeenCalledTimes(2)
+          expect(backend.wrap).toHaveBeenCalledOnce()
+        }
+        expect(select.mock.calls.every(([, request]) => !request.allowDownload)).toBe(true)
+      } finally {
+        await service.shutdownAll()
+        await owner.dispose()
+        select.mockRestore()
+      }
+    }
+  )
+
   it.each(['parent', 'shared root'])(
     'skips an R temporary candidate with a preexisting junction at its %s',
     async (location) => {

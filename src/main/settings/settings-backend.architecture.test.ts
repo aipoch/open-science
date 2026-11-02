@@ -497,7 +497,7 @@ describe('Settings backend ownership architecture', () => {
         getComputeBookmarks getConnectorDetail getConnectors getConversationSkillImportEnabled getGitHubTokenStatus getGrantedLocalRoots getLocalShellRuntimePreference getManualInterpreters getNotebookFolderRestrictionEnabled getNotebookNetwork getNotebookNetworkStatus getNotificationsEnabled getPackageMirror
         getPreflight getRuntimeEnablement getSettingsView getShowNotificationContent getSkillDetail getSkillMarketplaceBatch getSkillMarketplaceDetail getWsl2BashPreviewStatus getWslSetupStatus hasActiveInstall holdInstallAdmission
         getStoredSettings importAgentHomeSkills importSkill importSkillArchiveBatch importSkillZip
-        cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
+        cancelNotebookNetworkSetup importSkillZipBatch installClaude installCodeBuddy installCodex installMissingWslDependencies installNotebookNetwork installOpencode installPi installRecommendedWslDistro installSkillMarketplace installWslPlatform isEncryptionAvailable
         isNpmAvailable listAgentHomeSkills listConnectors listDeviceCredentials listHostSkills listSkillMarketplace listSkills listSpecialistSkillCatalog listUserSkills
         dispose loginClaudeShared loginIsolatedClaude loginIsolatedClaudeBrowser loginIsolatedCodex
         logoutClaudeShared logoutIsolatedClaude logoutIsolatedCodex logoutXaiOAuth markOnboardingComplete
@@ -512,7 +512,7 @@ describe('Settings backend ownership architecture', () => {
         setDataRoot setDefaultPermissionProfile setDeviceCredentialAuthenticator setEnvironmentEnabled setInstallAuthorized
         setCustomServerRuntimeProjectionProvider setNcbiCredentials setNetworkProxy setNotebookFolderRestrictionEnabled setNotebookNetwork setNotificationsEnabled
         setOpenAlexCredential setPackageMirror setProjectFilesFilter setReasoningEffort setReviewerModel setSemanticScholarCredential setSessionDetailsModel setShowNotificationContent setSkillDeletionGuard setSkillEnabled setSkillsEnabled setSubagentModel setVisionModel
-        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex
+        setToolPermission skillNudgeNamesForIds skillsNeedingForceLoad startSkillMarketplaceBatch stopSkillMarketplaceBatch uninstallClaude uninstallCodeBuddy uninstallCodex uninstallPi
         uninstallOpencode updateCustomServer updateDeviceCredential updateSkill upsertProvider useWsl2Bash validateOpenAlexCredential validateProvider waitXaiOAuthLogin withHostSkillRead
       `
         .trim()

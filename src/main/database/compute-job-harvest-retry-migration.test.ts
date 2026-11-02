@@ -61,18 +61,22 @@ describe('Compute Job harvest retry migration', () => {
     await client.$executeRawUnsafe(
       `INSERT INTO "ComputeJobOperation" (id, "jobId", kind, "updatedAt") VALUES ('operation', 'pending', 'cancel', 456)`
     )
-    const jobsBefore = await client.$queryRawUnsafe('SELECT * FROM "ComputeJob" ORDER BY id')
-    const operationsBefore = await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')
+    const jobsBefore = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
+      'SELECT * FROM "ComputeJob" ORDER BY id'
+    )
+    const operationsBefore = await client.$queryRawUnsafe<Array<Record<string, unknown>>>(
+      'SELECT * FROM "ComputeJobOperation"'
+    )
     const indexesBefore = await client.$queryRawUnsafe(
       `SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ComputeJob' ORDER BY name`
     )
 
     await migrateApplicationDatabase(client, { databasePath: join(root, 'open-science.db') })
     expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJob" ORDER BY id')).toEqual(
-      jobsBefore
+      jobsBefore.map((row) => ({ ...row, errorMessage: null }))
     )
     expect(await client.$queryRawUnsafe('SELECT * FROM "ComputeJobOperation"')).toEqual(
-      operationsBefore
+      operationsBefore.map((row) => ({ ...row, errorCode: null, errorMessage: null }))
     )
     expect(
       await client.$queryRawUnsafe(

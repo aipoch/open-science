@@ -17,6 +17,7 @@ import {
 } from './session-capability-owner'
 import type { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import { retainSessionCreationCleanup } from './session-creation-cleanup'
 import type {
   AcpPrimarySessionIdentityReservationResult,
   AcpSessionRegistry
@@ -207,11 +208,20 @@ export class AcpProviderSessionCreator {
       }
       this.disposeProvisional(provisionalSession, 'primary startup session disposal failed')
       if (capability) {
-        try {
-          await capability.release({ ownsStableIdentity: true })
-        } catch (cleanupError) {
-          this.safeLogError('primary capability release failed', cleanupError, undefined, false)
-        }
+        const ownedCapability = capability
+        const ownedReservation = reservation
+        // Transfer protection to cleanup before returning the original startup error.
+        reservation = undefined
+        const cleanup = (async (): Promise<void> => {
+          try {
+            await ownedCapability.release({ ownsStableIdentity: true })
+          } catch (cleanupError) {
+            this.safeLogError('primary capability release failed', cleanupError, undefined, false)
+          } finally {
+            ownedReservation?.release()
+          }
+        })()
+        retainSessionCreationCleanup(startupError, cleanup)
       }
       this.safeLogError('createSession: failed', startupError)
       throw startupError

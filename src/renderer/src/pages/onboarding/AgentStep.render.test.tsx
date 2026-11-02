@@ -987,6 +987,12 @@ describe('AgentStep', () => {
           installLogs: [],
           installProgress: null,
           installError: undefined
+        },
+        pi: {
+          isInstalling: false,
+          installLogs: [],
+          installProgress: null,
+          installError: undefined
         }
       }
     })

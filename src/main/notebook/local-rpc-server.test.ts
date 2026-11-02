@@ -3760,7 +3760,8 @@ describe('notebook local RPC server', () => {
       ...artifactCapabilityBinding,
       sourceScope: { allowedImportRoots: roots, workspaceCwd: root }
     }
-    const token = server.issueArtifactRunCapability(binding)
+    let isOwnerActive = true
+    const token = server.issueArtifactRunCapability(binding, undefined, () => isOwnerActive)
     roots.push('/forged-after-issuance')
     const params = {
       ...artifactCapabilityBinding,
@@ -3793,6 +3794,12 @@ describe('notebook local RPC server', () => {
         expect.any(Function)
       )
       let drained = false
+      isOwnerActive = false
+      const closedOwnerResponse = await call()
+      expect(closedOwnerResponse.status).toBe(401)
+      expect(await closedOwnerResponse.json()).toEqual({
+        error: 'Artifact RPC capability is no longer active.'
+      })
       const drain = server.revokeArtifactRunCapability(token).then(() => {
         drained = true
       })

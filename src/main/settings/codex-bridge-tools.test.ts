@@ -61,7 +61,10 @@ describe('Codex bridge MCP catalogs', () => {
         'mcp__open_science_library/acquire_pdf',
         'mcp__open_science_literature/read_document',
         'mcp__open_science_literature/list_pdf_elements',
-        'mcp__open_science_literature/read_pdf_element'
+        'mcp__open_science_literature/read_pdf_element',
+        'mcp__open_science_literature/list_pdf_annotations',
+        'mcp__open_science_literature/locate_pdf_annotation_target',
+        'mcp__open_science_literature/create_pdf_annotation'
       ])
     )
   })
@@ -101,5 +104,6 @@ describe('Codex bridge MCP catalogs', () => {
     expect(names).toContain('mcp__open_science_literature/read_document')
     expect(names).not.toContain('mcp__open_science_literature/list_pdf_elements')
     expect(names).not.toContain('mcp__open_science_literature/read_pdf_element')
+    expect(names).not.toContain('mcp__open_science_literature/create_pdf_annotation')
   })
 })

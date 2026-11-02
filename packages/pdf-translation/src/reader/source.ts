@@ -351,7 +351,10 @@ async function verifyPdfTranslationSource(
       fragments.set(pageNumber, [...(fragments.get(pageNumber) ?? []), fragment])
     }
   }
-  for (const [pageNumber, pageFragments] of fragments) {
+  const verifyPage = async ([pageNumber, pageFragments]: [
+    number,
+    PdfTranslationFragment[]
+  ]): Promise<boolean> => {
     if (signal.aborted) return false
     const page = await document.getPage(pageNumber)
     if (signal.aborted) return false
@@ -394,6 +397,13 @@ async function verifyPdfTranslationSource(
             return false
         }
       }
+    return !signal.aborted
+  }
+  // Overlap cold range reads without queuing the whole document or changing page ownership.
+  const pages = [...fragments]
+  for (let index = 0; index < pages.length; index += 4) {
+    const verified = await Promise.all(pages.slice(index, index + 4).map(verifyPage))
+    if (verified.some((valid) => !valid)) return false
   }
   return !signal.aborted
 }

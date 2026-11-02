@@ -13,13 +13,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from '../literature/catalog'
-import {
-  MIGRATION_MANIFEST,
-  migrateApplicationDatabase,
-  migrateApplicationDatabaseWithManifest
-} from './migration-service'
+import { MIGRATION_MANIFEST, migrateApplicationDatabase } from './migration-service'
 
 const DOI_MIGRATION_ID = '0053_literature_doi_identity'
+const CURRENT_MIGRATION_ID = '0054_slurm_job_reliability'
 
 describe('DOI identity migration', () => {
   let root: string | undefined
@@ -34,7 +31,7 @@ describe('DOI identity migration', () => {
     root = await mkdtemp(join(tmpdir(), 'literature-doi-upgrade-'))
     client = createProjectDbClient(root)
     // Exercise the actual immutable released ledger, with no feature-owned historical DDL.
-    await migrateApplicationDatabaseWithManifest(
+    await createDatabaseAtReleasedManifest(
       client,
       MIGRATION_MANIFEST.filter(({ id }) => id < DOI_MIGRATION_ID)
     )
@@ -110,7 +107,7 @@ describe('DOI identity migration', () => {
     })
     expect(await migrateApplicationDatabase(client)).toMatchObject({
       from: '0040_literature_collection_revision',
-      to: DOI_MIGRATION_ID,
+      to: CURRENT_MIGRATION_ID,
       applied: expect.arrayContaining(['0049_pascalcase_table_names', DOI_MIGRATION_ID])
     })
     expect(
@@ -212,8 +209,8 @@ describe('DOI identity migration', () => {
 
     expect(await migrateApplicationDatabase(client)).toMatchObject({
       from: '0052_literature_personal_note_search',
-      to: DOI_MIGRATION_ID,
-      applied: [DOI_MIGRATION_ID]
+      to: CURRENT_MIGRATION_ID,
+      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
     })
     const after = await snapshot()
     expect(after).toEqual({
@@ -265,7 +262,7 @@ describe('DOI identity migration', () => {
     await client.$executeRaw`DELETE FROM "_open_science_migrations"`
     expect(await migrateApplicationDatabase(client)).toMatchObject({
       adoptedLegacy: true,
-      to: DOI_MIGRATION_ID,
+      to: CURRENT_MIGRATION_ID,
       applied: expect.arrayContaining([DOI_MIGRATION_ID])
     })
     expect(
@@ -367,7 +364,9 @@ describe('DOI identity migration', () => {
       await client.$queryRaw`SELECT id FROM "_open_science_migrations" WHERE id = ${DOI_MIGRATION_ID}`
     ).toEqual([])
     await client.$executeRawUnsafe('DROP TRIGGER refuse_doi_backfill')
-    expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [DOI_MIGRATION_ID] })
+    expect(await migrateApplicationDatabase(client)).toMatchObject({
+      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+    })
     expect(
       (await snapshot()).identifiers
         .filter(({ id }) => !id.startsWith('batch-'))
@@ -450,7 +449,7 @@ describe('DOI identity migration', () => {
     expect(await readFile(archivePath)).toEqual(originalBytes)
     client = createProjectDbClient(root!)
     expect(await migrateApplicationDatabase(client, options)).toMatchObject({
-      applied: [DOI_MIGRATION_ID]
+      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
     })
     expect(ready).toMatchObject([
       { path: backupPath, reused: false },
@@ -503,6 +502,8 @@ describe('DOI identity migration', () => {
     await identifier('unchanged', 'unchanged', '10.1234/ALREADY', '10.1234/already')
     await client.$executeRawUnsafe(`CREATE TEMP TRIGGER refuse_unchanged_doi BEFORE UPDATE ON "LiteratureIdentifier"
       BEGIN SELECT RAISE(ABORT, 'unchanged DOI was rewritten'); END`)
-    expect(await migrateApplicationDatabase(client)).toMatchObject({ applied: [DOI_MIGRATION_ID] })
+    expect(await migrateApplicationDatabase(client)).toMatchObject({
+      applied: [DOI_MIGRATION_ID, CURRENT_MIGRATION_ID]
+    })
   })
 })

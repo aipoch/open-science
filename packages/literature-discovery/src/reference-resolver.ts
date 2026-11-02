@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { parseArxivRecord } from './arxiv.js'
 import {
   discoveryRecordSchema,
   type DiscoveryRecord,
@@ -34,7 +35,7 @@ type MetadataLookup = LiteratureReferenceDiscovery & {
 
 type ReferenceKey = Readonly<{
   key: string
-  scheme: 'doi' | 'pmid'
+  scheme: 'doi' | 'pmid' | 'arxiv'
   value: string
 }>
 
@@ -42,8 +43,10 @@ const parseReference = (input: string): ReferenceKey => {
   const separator = input.indexOf(':')
   const scheme = separator >= 0 ? input.slice(0, separator).trim().toLowerCase() : ''
   const rawValue = separator >= 0 ? input.slice(separator + 1) : ''
-  if (scheme !== 'doi' && scheme !== 'pmid') {
-    throw new Error(`UNSUPPORTED_REFERENCE: Use pmid:<id> or doi:<id>; received "${input}".`)
+  if (scheme !== 'doi' && scheme !== 'pmid' && scheme !== 'arxiv') {
+    throw new Error(
+      `UNSUPPORTED_REFERENCE: Use pmid:<id>, doi:<id>, or arxiv:<id>; received "${input}".`
+    )
   }
   const value = normalizeIdentifier(scheme, rawValue)
   if (scheme === 'pmid' && !/^\d+$/u.test(value)) {
@@ -51,6 +54,9 @@ const parseReference = (input: string): ReferenceKey => {
   }
   if (scheme === 'doi' && !/^10\.\d{4,9}\/\S+$/u.test(value)) {
     throw new Error(`INVALID_DOI: "${input}" does not contain a valid DOI.`)
+  }
+  if (scheme === 'arxiv' && !/^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7})$/iu.test(value)) {
+    throw new Error('INVALID_ARXIV: Invalid arXiv identifier.')
   }
   return { key: `${scheme}:${value}`, scheme, value }
 }
@@ -255,6 +261,13 @@ class LiteratureReferenceResolver {
     })
   }
 
+  private async arxiv(id: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
+    const sourceUrl = `https://export.arxiv.org/api/query?${new URLSearchParams({ id_list: id, max_results: '1' })}`
+    const xml = await this.read(sourceUrl, 'application/atom+xml', signal)
+    const { item, rawMetadata } = parseArxivRecord(xml, id)
+    return { item, source: { provider: 'arxiv', externalId: id, sourceUrl, rawMetadata } }
+  }
+
   private async crossref(doi: string, signal?: AbortSignal): Promise<LiteratureReferenceDiscovery> {
     const sourceUrl = `${CROSSREF_BASE}${encodeURIComponent(doi)}`
     const message = parseCrossrefResponse(await this.read(sourceUrl, 'application/json', signal))
@@ -271,7 +284,7 @@ class LiteratureReferenceResolver {
   }
 
   private async europe(
-    reference: ReferenceKey,
+    reference: ReferenceKey & { scheme: 'doi' | 'pmid' },
     signal?: AbortSignal
   ): Promise<LiteratureReferenceDiscovery> {
     // Quoting and escaping keep a DOI suffix from changing the provider's query semantics.
@@ -402,6 +415,10 @@ class LiteratureReferenceResolver {
   async lookup(input: string, signal?: AbortSignal): Promise<MetadataLookup> {
     const reference = parseReference(input)
     signal?.throwIfAborted()
+    if (reference.scheme === 'arxiv') {
+      const result = await this.arxiv(reference.value, signal)
+      return { ...result, sources: [result.source], failures: [] }
+    }
     let primary: LiteratureReferenceDiscovery | undefined
     let primaryError: unknown
     const failures: LiteratureFailure[] = []
@@ -446,7 +463,7 @@ class LiteratureReferenceResolver {
     }
     if (!primary?.item.abstract || !primary.item.title.trim()) {
       try {
-        accept(await this.europe(reference, signal))
+        accept(await this.europe({ ...reference, scheme: reference.scheme }, signal))
       } catch (error) {
         signal?.throwIfAborted()
         failures.push(literatureFailure(error, 'search', 'europe-pmc'))

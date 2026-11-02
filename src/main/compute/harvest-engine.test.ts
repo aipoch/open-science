@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { BoundedScpResult, ScpResult, ScpRunner, SshRunner } from '@aipoch/compute/node'
 import {
   ComputeConnectionError,
+  createComputeExecution,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
 } from '@aipoch/compute/node'
@@ -292,6 +293,223 @@ describe('getJobHarvestDir', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — clean harvest', () => {
+  it('persists sibling scheduler states while actual harvest log I/O remains pending', async () => {
+    const storageRoot = await mkTmp()
+    const jobs = ['1', '2'].map((id) =>
+      makeJob({
+        job_id: `job-${id}`,
+        status: 'submitted',
+        execution_mode: 'slurm',
+        exit_code: undefined,
+        finished_at: undefined,
+        stdout_tail: undefined,
+        remote_workdir: `~/.openscience/jobs/job-${id}`,
+        remote_handle: JSON.stringify({
+          driver: 'slurm',
+          version: 1,
+          scheduler_job_id: id,
+          workdir: `~/.openscience/jobs/job-${id}`,
+          stdout_path: `~/.openscience/jobs/job-${id}/stdout`,
+          stderr_path: `~/.openscience/jobs/job-${id}/stderr`
+        })
+      })
+    )
+    let release!: () => void
+    let started!: () => void
+    const pending = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const tailStarted = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => {
+        if (command.startsWith('tail ') && command.includes('/stdout')) {
+          started()
+          await pending
+        }
+        return {
+          exitCode: 0,
+          timedOut: false,
+          truncated: false,
+          stderr: '',
+          stdout: command.startsWith('squeue ')
+            ? '2|RUNNING|None\n'
+            : command.startsWith('scontrol ')
+              ? 'JobId=1 JobState=COMPLETED ExitCode=0:0\n'
+              : command.startsWith('tail ') && command.includes('/stdout')
+                ? 'collected after release'
+                : ''
+        }
+      })
+    }
+    const persist = async (id: string, updates: Record<string, unknown>): Promise<ComputeJob> => {
+      const job = jobs.find((item) => item.job_id === id)!
+      if (updates.status) job.status = updates.status as ComputeJob['status']
+      if ('exitCode' in updates) job.exit_code = updates.exitCode as number
+      if ('stdoutTail' in updates) job.stdout_tail = updates.stdoutTail as string
+      if ('harvestedAt' in updates) job.harvested_at = (updates.harvestedAt as Date).getTime()
+      return { ...job }
+    }
+    const repo = {
+      get: async (id: string) => jobs.find((job) => job.job_id === id),
+      findNonTerminal: async () => jobs,
+      findTerminalUnharvested: async () => [],
+      findNotificationReadyUnnotified: async () => [],
+      updateIfStatus: async (id: string, statuses: string[], updates: Record<string, unknown>) =>
+        statuses.includes(jobs.find((job) => job.job_id === id)!.status)
+          ? persist(id, updates)
+          : undefined,
+      update: persist
+    } as unknown as ComputeJobRepository
+    const connectionBroker = brokerFromRunners(ssh, makeScpRunner())
+    const hostRepository = makeHostRepo(sampleHost())
+    const publishJobUpdated = vi.fn()
+    const poller = createComputeExecution().createPoller({
+      jobRepository: repo,
+      connectionBroker,
+      hostRepository,
+      harvestFn: (job, signal) =>
+        harvestJob(job, {
+          jobRepository: repo,
+          connectionBroker,
+          hostRepository,
+          storageRoot,
+          signal,
+          publishJobUpdated
+        })
+    })
+    const tick = poller.tick()
+    try {
+      await tailStarted
+      await tick
+      expect(jobs[0]).toMatchObject({ status: 'success', exit_code: 0, harvested_at: undefined })
+      expect(jobs[1].status).toBe('running')
+      expect(publishJobUpdated).not.toHaveBeenCalled()
+    } finally {
+      release()
+      await tick
+      await poller.pause()
+      await poller.stop()
+    }
+    expect(publishJobUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        job_id: 'job-1',
+        status: 'success',
+        stdout_tail: 'collected after release',
+        harvested_at: expect.any(Number)
+      })
+    )
+  })
+
+  it('collects bounded Slurm tails despite a zero file budget and preserves scheduler diagnostics', async () => {
+    const storageRoot = await mkTmp()
+    const remoteWorkdir = '~/.openscience/jobs/job-1'
+    const job = makeJob({
+      shape: 'scheduler_cluster',
+      execution_mode: 'slurm',
+      status: 'failed',
+      exit_code: 1,
+      error_code: 'job_failed',
+      stderr_tail: 'Slurm scheduler state: OUT_OF_MEMORY.',
+      remote_workdir: remoteWorkdir,
+      remote_handle: JSON.stringify({
+        driver: 'slurm',
+        version: 1,
+        scheduler_job_id: '123',
+        workdir: remoteWorkdir,
+        stdout_path: `${remoteWorkdir}/stdout`,
+        stderr_path: `${remoteWorkdir}/stderr`
+      }),
+      harvest_config: JSON.stringify({ max_file_mb: 0, max_total_mb: 0 })
+    })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: 0,
+        stdout: command.startsWith('tail ')
+          ? command.includes('/stdout')
+            ? 'partial output'
+            : 'workload error'
+          : '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      }))
+    }
+    const scp = makeScpRunner()
+    const { repo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, scp),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: repo,
+      storageRoot
+    })
+
+    expect(updates).toContainEqual({
+      jobId: job.job_id,
+      data: {
+        stdoutTail: 'partial output',
+        stderrTail: 'workload error\nSlurm scheduler state: OUT_OF_MEMORY.'
+      }
+    })
+    expect(ssh.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('tail -c 65536 '),
+      expect.objectContaining({ maxOutputBytes: 65_536, timeoutMs: 30_000 })
+    )
+    expect(scp.copyFromRemoteBounded).not.toHaveBeenCalled()
+    expect(updates.some(({ data }) => 'harvestedAt' in (data as object))).toBe(true)
+    expect(updates.every(({ data }) => !('status' in (data as object)))).toBe(true)
+  })
+
+  it('keeps a confirmed Slurm result and existing tails when output-tail queries time out', async () => {
+    const storageRoot = await mkTmp()
+    const remoteWorkdir = '~/.openscience/jobs/job-1'
+    const job = makeJob({
+      shape: 'scheduler_cluster',
+      execution_mode: 'slurm',
+      stdout_tail: 'previous output',
+      stderr_tail: 'Slurm scheduler state: COMPLETED.',
+      remote_workdir: remoteWorkdir,
+      remote_handle: JSON.stringify({
+        driver: 'slurm',
+        version: 1,
+        scheduler_job_id: '123',
+        workdir: remoteWorkdir,
+        stdout_path: `${remoteWorkdir}/stdout`,
+        stderr_path: `${remoteWorkdir}/stderr`
+      })
+    })
+    const ssh: SshRunner = {
+      run: vi.fn(async (_target, command) => ({
+        exitCode: command.startsWith('tail ') ? null : 0,
+        stdout: '',
+        stderr: command.startsWith('tail ') ? 'query timed out' : '',
+        truncated: false,
+        timedOut: command.startsWith('tail ')
+      }))
+    }
+    const { repo, updates } = makeJobRepo(job)
+
+    await harvestJob(job, {
+      connectionBroker: brokerFromRunners(ssh, makeScpRunner()),
+      hostRepository: makeHostRepo(sampleHost()),
+      jobRepository: repo,
+      storageRoot
+    })
+
+    expect(ssh.run).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('tail -c 65536 '),
+      expect.anything()
+    )
+    expect(updates.every(({ data }) => !('stdoutTail' in (data as object)))).toBe(true)
+    expect(updates.every(({ data }) => !('stderrTail' in (data as object)))).toBe(true)
+    expect(updates.every(({ data }) => !('status' in (data as object)))).toBe(true)
+    expect(updates.some(({ data }) => 'harvestedAt' in (data as object))).toBe(true)
+  })
+
   it('accepts an unchanged GNU fractional mtime snapshot', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })

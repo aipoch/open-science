@@ -58,6 +58,21 @@ afterEach(() => {
 })
 
 describe('WorkspaceAgentLoadingRow', () => {
+  it('renders only the existing animation during preparation, without thinking, status, or timers', () => {
+    seedRunningSession(90_000, 'Old status')
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="preparing" />))
+    expect(container.querySelector('[role="status"]')).not.toBeNull()
+    expect(
+      container.querySelector('[data-testid="open-science-thinking-indicator"]')
+    ).not.toBeNull()
+    expect(container.textContent).toBe('')
+    act(() => vi.advanceTimersByTime(30 * 60_000))
+    expect(container.textContent).toBe('')
+    act(() => root.render(<AgentLoadingIndicator sessionId="s1" phase="thinking" />))
+    expect(container.textContent).toContain('Thinking')
+    expect(container.textContent).toMatch(/\d+:\d{2}/)
+  })
+
   it('shows session environment preparation after the approval request is settled', () => {
     useNotebookEnvStore.setState({
       progress: {

@@ -16,7 +16,8 @@ import {
 } from '../../stores/session-conversation-intents'
 import type { ArtifactReference } from '../../../../shared/artifacts'
 import { SessionPdfContextOwner } from '../../../../main/session-persistence/pdf-context-owner'
-import { extractPdfText, inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
+import { inspectPdfPageCount } from '../../../../main/uploads/attachment-media'
+import { extractPdfText } from '../../../../main/uploads/pdf-text-extraction'
 import type {
   AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
@@ -63,7 +64,10 @@ import {
   resetSessionContentCacheForTests,
   resetSessionPersistenceWriteFailuresForTests
 } from '../session-persistence/session-persistence'
-import { applyWorkspaceRuntimeEvent } from './workspace-events'
+import {
+  applyWorkspaceRuntimeEvent,
+  scheduleCommittedRuntimeTranscriptAutoReview
+} from './workspace-events'
 import {
   clearLinkedPendingPdfContext,
   createWorkspaceRuntimeEventProcessor,
@@ -97,9 +101,10 @@ import {
   resumeInterruptedWorkspaceSession
 } from './workspace-runtime-session-lifecycle-owner'
 
+vi.mock('../../../../main/uploads/pdf-text-extraction', () => ({ extractPdfText: vi.fn() }))
+
 vi.mock('../../../../main/uploads/attachment-media', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../../main/uploads/attachment-media')>()),
-  extractPdfText: vi.fn(),
   inspectPdfPageCount: vi.fn()
 }))
 
@@ -164,7 +169,7 @@ const acknowledgeTestSessionCommands = (
           ...session,
           status: baseline.status,
           error: baseline.error,
-          errorReportable: baseline.errorReportable,
+          failure: baseline.failure,
           activeRun: baseline.activeRun,
           resumeRecovery: baseline.resumeRecovery,
           // Provider reset/open-segment is an ambient Main fact, outside the tagged prompt undo.
@@ -186,7 +191,7 @@ const acknowledgeTestSessionCommands = (
       const previousState = {
         status: result.status,
         error: result.error,
-        errorReportable: result.errorReportable,
+        failure: result.failure,
         resumeRecovery: result.resumeRecovery
       }
       result.promptPreparation = {
@@ -310,7 +315,7 @@ const acceptTestMainContinuation = async (
   durable = {
     ...durable,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     pendingHistoryReplay: undefined
   }
@@ -353,7 +358,7 @@ const projectTestMainAttachment = (sessionId: string): void => {
     ...toPersistedSession(source),
     status: 'idle' as const,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     runtimeTranscriptOwner: 'main' as const
   }
@@ -6015,13 +6020,14 @@ describe('workspace agent message sending', () => {
             : undefined
         continuePreparation.resolve()
         await sending
+        await flushRuntimeTasks()
         expect(runtime.sendPrompt).not.toHaveBeenCalled()
         expect(runtime.cancel).not.toHaveBeenCalled()
         if (sessionKind === 'cancel-rollback-error') {
           expect(durable?.promptPreparation).toBeDefined()
-          expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toContain(
-            'Rollback write failed'
-          )
+          expect(
+            useWorkspaceOperationErrors.getState().errors['transport-session-1']
+          ).toBeUndefined()
           failRollback = false
           await cancelWorkspaceRun(runtime, 'transport-session-1')
           expect(runtime.cancel).not.toHaveBeenCalled()
@@ -6033,18 +6039,14 @@ describe('workspace agent message sending', () => {
           expect(
             useSessionStore.getState().sessions.find(({ id }) => id === pending.id)
           ).toMatchObject({
-            isPending: true,
             activeRun: { promptMessageId: replacement.messageId }
           })
           return
         }
+        // Stop binds an already prepared upload owner before restoring its retry draft.
         expect(
           useSessionStore.getState().sessions.find(({ id }) => id === 'transport-session-1')
-        ).toMatchObject({
-          isPending: false,
-          status: 'idle',
-          activeRun: undefined
-        })
+        ).toMatchObject({ isPending: false, status: 'idle', activeRun: undefined })
         return
       }
       const sent = await sending
@@ -6874,6 +6876,7 @@ describe('workspace agent message sending', () => {
     )
 
     expect(sent).toBeUndefined()
+    await flushRuntimeTasks()
     expect(deleteSession).toHaveBeenCalledWith('transport-session-denied')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
@@ -6968,6 +6971,7 @@ describe('workspace agent message sending', () => {
     expect(onSessionSizeLimit).toHaveBeenCalledWith('transport-session-pdf-denied')
 
     runtime.state = createSnapshot(['transport-session-pdf-denied'])
+    await flushRuntimeTasks()
     const retried = await sendWorkspaceMessage(runtime, {
       sessionId: 'transport-session-pdf-denied',
       text: 'Retry the reading',
@@ -7012,7 +7016,7 @@ describe('workspace agent message sending', () => {
     })
 
     await flushRuntimeTasks()
-    expect(deleteSession).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledWith('transport-session-1')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
       status: 'idle',
@@ -7608,10 +7612,8 @@ describe('workspace agent message sending', () => {
     expect(runtime.cancel).not.toHaveBeenCalled()
 
     finalization.resolve([finalizedHistory])
-    await expect(branching).resolves.toEqual({
-      sessionId: pending.id,
-      messageId: pending.activeRun?.promptMessageId
-    })
+    await expect(branching).resolves.toBeUndefined()
+    await flushRuntimeTasks()
     await flushRuntimeTasks()
 
     expect(runtime.createSession).not.toHaveBeenCalled()
@@ -8283,7 +8285,7 @@ describe('workspace agent message sending', () => {
       "The active model isn't compatible with Codex. Open Settings → Model to pick a compatible model or switch the agent framework."
     )
     // A wrong-config start failure hides the report button.
-    expect(session.errorReportable).toBeUndefined()
+    expect(session.failure).toBeUndefined()
     expect(
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toEqual(expect.any(String))
@@ -8822,7 +8824,7 @@ describe('workspace agent message sending', () => {
       kind: 'error',
       level: 'error',
       sessionId: 'session-1',
-      providerError: true,
+      failure: { category: 'service' as const, diagnostics: {} },
       title: 'Prompt failed',
       text: 'Invalid API key'
     }
@@ -8846,7 +8848,12 @@ describe('workspace agent message sending', () => {
         const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
         await acceptTestMainContinuation(
           { sessionId, promptMessageId },
-          { kind: 'error', level: 'error', text: 'Invalid API key', providerError: true }
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Invalid API key',
+            failure: { category: 'service' as const, diagnostics: {} }
+          }
         )
         throw new Error('Invalid API key')
       })
@@ -8869,12 +8876,11 @@ describe('workspace agent message sending', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
-    expect(session.errorReportable).toBe(false)
+    expect(session.failure?.category).toBe('service')
   })
 
-  it('marks an untagged (ACP-layer) prompt failure reportable', async () => {
-    // No providerError tag on the run's error event → an app-layer failure the user should be able to
-    // report as a bug.
+  it('preserves an internal ACP prompt failure classification', async () => {
+    // The main runtime classifies unknown ACP failures before renderer projection.
     const acpErrorEvent: AcpRuntimeEvent = {
       id: 'error-acp-1',
       timestamp: Date.now(),
@@ -8882,7 +8888,8 @@ describe('workspace agent message sending', () => {
       level: 'error',
       sessionId: 'session-1',
       title: 'Prompt failed',
-      text: 'Something unexpected broke'
+      text: 'Something unexpected broke',
+      failure: { category: 'internal', diagnostics: { raw: 'Something unexpected broke' } }
     }
     vi.stubGlobal('window', {
       api: {
@@ -8904,7 +8911,12 @@ describe('workspace agent message sending', () => {
         const promptMessageId = (args[8] as RuntimeSessionScope).promptMessageId
         await acceptTestMainContinuation(
           { sessionId, promptMessageId },
-          { kind: 'error', level: 'error', text: 'Something unexpected broke' }
+          {
+            kind: 'error',
+            level: 'error',
+            text: 'Something unexpected broke',
+            failure: { category: 'internal', diagnostics: { raw: 'Something unexpected broke' } }
+          }
         )
         throw new Error('Something unexpected broke')
       })
@@ -8927,7 +8939,7 @@ describe('workspace agent message sending', () => {
 
     const session = useSessionStore.getState().sessions[0]
     expect(session.status).toBe('error')
-    expect(session.errorReportable).toBe(true)
+    expect(session.failure?.category).toBe('internal')
   })
 
   it('uses fallback message when error is empty or whitespace-only', async () => {
@@ -9646,6 +9658,59 @@ describe('resuming an interrupted session on demand', () => {
     expect(userMessages[0].interrupted).toBeUndefined()
     expect(session.activeRun?.promptMessageId).toBe(originalUserMessageId)
     expect(session.interrupted).toBeUndefined()
+  })
+
+  it('auto-reviews a resumed turn when the refresh precedes its lifecycle event', async () => {
+    const store = useSessionStore.getState()
+    store.appendUserMessage({
+      sessionId: 'session-1',
+      content: 'Continue the analysis',
+      cwd: '/workspace/project',
+      projectId: 'default-project',
+      permissionProfile: 'ask'
+    })
+    store.appendAgentMessageChunk({
+      sessionId: 'session-1',
+      streamId: 'answer',
+      eventId: 'answer',
+      content: 'Analysis result.'
+    })
+    store.markDisconnected('session-1')
+    store.setAutoReviewEnabled('session-1', true)
+    const reviewerRun = vi.fn().mockResolvedValue({ started: true })
+    vi.stubGlobal('window', {
+      api: { sessions: createSessionPolicyApi(), reviewer: { run: reviewerRun } }
+    })
+    const runtime = {
+      state: createSnapshot(['session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn(),
+      continueInterruptedTurn: vi.fn(async (request: AcpContinueInterruptedTurnRequest) => {
+        const beforeEvent = useSessionStore.getState().sessions
+        const result = await acceptTestMainContinuation(request, { kind: 'stop', text: 'end_turn' })
+        const committed = testDurableSessions.get('session-1')!
+        committed.runtimeTranscriptLastRun = {
+          promptMessageId: request.promptMessageId,
+          startedAt: Date.now()
+        }
+        committed.runtimeTranscriptReviewOwner = {
+          promptMessageId: request.promptMessageId,
+          owner: 'renderer'
+        }
+        // The durable refresh can arrive before the same terminal lifecycle broadcast.
+        useSessionStore.setState({ sessions: beforeEvent })
+        return result
+      })
+    }
+    await resumeInterruptedWorkspaceSession(runtime, 'session-1')
+    expect(useSessionStore.getState().sessions[0].status).toBe('idle')
+    scheduleCommittedRuntimeTranscriptAutoReview(
+      useSessionStore.getState().sessions[0],
+      testDurableSessions.get('session-1')!
+    )
+    await vi.waitFor(() => expect(reviewerRun).toHaveBeenCalledOnce(), { timeout: 1500 })
   })
 
   it('continues an interrupted turn that is still attached without reconnecting', async () => {
@@ -12978,7 +13043,7 @@ describe('recovering from a request-size overflow', () => {
     expect(current.compacting).toBeUndefined()
     expect(current.status).toBe(before.status)
     expect(current.error).toBe(before.error)
-    expect(current.errorReportable).toBe(before.errorReportable)
+    expect(current.failure).toBe(before.failure)
     expect(current.messages).toEqual(before.messages)
   })
 
@@ -13029,7 +13094,8 @@ describe('recovering from a request-size overflow', () => {
       level: 'error',
       sessionId: 'session-1',
       title: 'Prompt failed',
-      text: 'Internal error: Request too large (max 32MB).'
+      text: 'Internal error: Request too large (max 32MB).',
+      failure: { category: 'input', reason: 'input/context-overflow', diagnostics: {} }
     })
 
     processContextOverflowRecovery(runtime, [event], handled, cooldown, active, recover)
@@ -13725,83 +13791,87 @@ describe('resendEditedWorkspaceMessage', () => {
     expect(runtime.sendPrompt.mock.calls[0]?.[3]).toEqual(['skill-forecast'])
   })
 
-  it('routes a cross-session source Upload Version as a current attachment after branching', async () => {
-    const sourceUpload = {
-      id: 'upload-source',
-      versionId: 'upload-version-source',
-      versionNumber: 1,
-      sessionId: 'source-session',
-      name: 'measurements.csv',
-      originalName: 'measurements.csv',
-      mimeType: 'text/csv',
-      size: 24,
-      sha256: 'source-checksum'
-    }
-    useSessionStore.setState({
-      ...createInitialSessionState(),
-      sessions: [
-        {
-          id: 'session-1',
-          projectId: 'default-project',
-          title: 'Conversation',
-          cwd: '/workspace/project',
-          status: 'idle' as const,
-          messages: [
-            createMessage('user-1', 'user', 'first prompt', baseTime),
-            createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
-            createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
-              uploads: [sourceUpload]
-            }),
-            createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
-          ],
-          createdAt: baseTime,
-          updatedAt: baseTime + 300
-        }
-      ],
-      selectedSessionId: 'session-1'
-    })
-    const finalizeSession = vi.fn(
-      async ({ attachments }: FinalizeUploadSessionRequest) => attachments
-    )
-    vi.stubGlobal('window', {
-      api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
-    })
-    const runtime = {
-      state: createSnapshot(['session-1']),
-      createSession: vi.fn(),
-      resumeSession: vi.fn(),
-      resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
-      sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
-    }
-
-    const resent = await resendEditedWorkspaceMessage(runtime, {
-      sessionId: 'session-1',
-      messageId: 'user-2',
-      text: 'second prompt, edited'
-    })
-    await flushRuntimeTasks()
-
-    expect(resent).toBe(true)
-    expect(finalizeSession).not.toHaveBeenCalled()
-    expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
-      expect.objectContaining({
+  it.each(['second prompt, edited', ''])(
+    'routes a source Upload Version during retry with text %j',
+    async (text) => {
+      const sourceUpload = {
         id: 'upload-source',
         versionId: 'upload-version-source',
-        path: 'upload-version:default-project/source-session/upload-source/upload-version-source'
+        versionNumber: 1,
+        sessionId: 'source-session',
+        name: 'measurements.csv',
+        originalName: 'measurements.csv',
+        mimeType: 'text/csv',
+        size: 24,
+        sha256: 'source-checksum'
+      }
+      useSessionStore.setState({
+        ...createInitialSessionState(),
+        sessions: [
+          {
+            id: 'session-1',
+            projectId: 'default-project',
+            title: 'Conversation',
+            cwd: '/workspace/project',
+            status: 'idle' as const,
+            messages: [
+              createMessage('user-1', 'user', 'first prompt', baseTime),
+              createMessage('agent-1', 'agent', 'first answer', baseTime + 100),
+              createMessage('user-2', 'user', 'second prompt', baseTime + 200, {
+                uploads: [sourceUpload]
+              }),
+              createMessage('agent-2', 'agent', 'second answer', baseTime + 300)
+            ],
+            createdAt: baseTime,
+            updatedAt: baseTime + 300
+          }
+        ],
+        selectedSessionId: 'session-1'
       })
-    ])
-    expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+      const finalizeSession = vi.fn(
+        async ({ attachments }: FinalizeUploadSessionRequest) => attachments
+      )
+      vi.stubGlobal('window', {
+        api: { sessions: createSessionPolicyApi(), uploads: { finalizeSession } }
+      })
+      const runtime = {
+        state: createSnapshot(['session-1']),
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({ contextReset: true }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
 
-    const editedSession = useSessionStore.getState().sessions[0]
-    expect(editedSession.messages.at(-1)).toMatchObject({
-      content: 'second prompt, edited',
-      uploads: [expect.objectContaining({ versionId: 'upload-version-source' })]
-    })
-    expect(
-      editedSession.conversationGraph?.messages.find((message) => message.id === 'user-2')?.uploads
-    ).toEqual([expect.objectContaining({ versionId: 'upload-version-source' })])
-    expect(editedSession.conversationGraph?.branches).toHaveLength(2)
-  })
+      const resent = await resendEditedWorkspaceMessage(runtime, {
+        sessionId: 'session-1',
+        messageId: 'user-2',
+        text
+      })
+      await flushRuntimeTasks()
+
+      expect(resent).toBe(true)
+      expect(finalizeSession).not.toHaveBeenCalled()
+      expect(runtime.sendPrompt.mock.calls[0]?.[2]).toEqual([
+        expect.objectContaining({
+          id: 'upload-source',
+          versionId: 'upload-version-source',
+          path: 'upload-version:default-project/source-session/upload-source/upload-version-source'
+        })
+      ])
+      expect(runtime.sendPrompt.mock.calls[0]?.[6]).toBeUndefined()
+
+      const editedSession = useSessionStore.getState().sessions[0]
+      expect(editedSession.messages.at(-1)).toMatchObject({
+        content: text,
+        uploads: [expect.objectContaining({ versionId: 'upload-version-source' })]
+      })
+      expect(
+        editedSession.conversationGraph?.messages.find((message) => message.id === 'user-2')
+          ?.uploads
+      ).toEqual([expect.objectContaining({ versionId: 'upload-version-source' })])
+      expect(editedSession.conversationGraph?.branches).toHaveLength(2)
+    }
+  )
 
   it('keeps edited attachments newest within the Composer replay limit', async () => {
     const versionedUpload = (id: string): NonNullable<ChatMessage['uploads']>[number] => ({

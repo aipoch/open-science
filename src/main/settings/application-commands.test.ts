@@ -66,6 +66,7 @@ const expectedChannels = [
   'settings:get-skill-detail',
   'settings:install-claude',
   'settings:install-codebuddy',
+  'settings:install-pi',
   'settings:install-codex',
   'settings:install-opencode',
   'settings:install-notebook-network',

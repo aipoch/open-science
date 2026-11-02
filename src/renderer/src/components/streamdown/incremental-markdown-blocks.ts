@@ -55,3 +55,26 @@ export const createIncrementalMarkdownBlocks = (): ((markdown: string) => string
     return previousBlocks
   }
 }
+
+// A table head tokenizes as a plain paragraph until its `| --- |` delimiter row exists,
+// so streamed pipe-delimited text renders as raw `| A | B |` lines while rows are still
+// arriving. While streaming, hold back a tail whose lines can only be table rows; it is
+// released by the arriving delimiter, by a line that disqualifies it, or when streaming
+// ends and the caller stops applying this filter.
+const GFM_TABLE_DELIMITER_ROW = /^\|?[ \t]*:?-{1,}:?[ \t]*(\|[ \t]*:?-{1,}:?[ \t]*)*\|?$/
+
+const TABLE_ROW_START = /^[ \t]*\|/
+
+export const dropUnsettledStreamingTableTail = (blocks: string[]): string[] => {
+  let index = blocks.length - 1
+  while (index >= 0 && !blocks[index]!.trim()) index--
+  const tail = index >= 0 ? blocks[index]! : ''
+  // A block already split by a blank line can no longer grow into a table.
+  if (!tail || tail.includes('\n\n')) return blocks
+  const lines = tail.split('\n')
+  const unsettled =
+    lines.every((line) => !line.trim() || TABLE_ROW_START.test(line)) &&
+    !lines.some((line) => GFM_TABLE_DELIMITER_ROW.test(line))
+  if (!unsettled) return blocks
+  return [...blocks.slice(0, index), ...blocks.slice(index + 1)]
+}

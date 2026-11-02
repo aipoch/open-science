@@ -5,6 +5,7 @@ import {
   CodexMono,
   NvidiaColor,
   OpenCodeMono,
+  PiColor,
   TencentCloudColor
 } from './provider-brand-icons'
 
@@ -49,6 +50,7 @@ export const AgentFrameworkIcon = ({
   if (frameworkId === 'codebuddy') {
     return <img src={codebuddyLogo} alt="" width={size} height={size} className={className} />
   }
+  if (frameworkId === 'pi') return <PiColor size={size} className={className} />
   return <CodexMono size={size} className={cn('text-foreground', className)} />
 }
 

@@ -11,12 +11,12 @@ import {
 } from './workspace-operation-error'
 import type { AcpRuntimeEvent, AcpSessionAgentTarget } from '../../../../shared/acp'
 import { reportHandledRendererFailure } from '../handled-failure-diagnostics'
+import { scheduleCommittedRuntimeTranscriptAutoReview } from './workspace-events'
 import { i18next } from '../../i18n'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
-import { isMediaOverflowError } from '../../../../shared/media-overflow'
-import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
+import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/failure/messages'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
 import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import {
@@ -215,12 +215,17 @@ const continueInterruptedWorkspaceTurn = async (
     // Main admitted the continuation. A failed refresh is display lag, never a Resume failure.
     try {
       const authority = await loadPersistedSession({ projectId: session.projectId, sessionId })
-      if (authority)
+      if (authority) {
+        const previous = workspaceSession(sessionId)
         useSessionStore.getState().applyDurableSessionProjection({
           source: session,
           session: authority,
           mode: 'runtime-transcript-authority'
         })
+        // The refresh can precede the terminal lifecycle event. Both paths must offer the
+        // completed turn to the same review gate before its projection becomes the baseline.
+        scheduleCommittedRuntimeTranscriptAutoReview(previous, authority)
+      }
     } catch (error) {
       reportHandledRendererFailure(
         'Session refresh after an admitted Resume failed',
@@ -726,7 +731,7 @@ const cancelWorkspaceRun = async (
   cancelledSessionIds?: Set<string>
 ): Promise<void> => {
   clearWorkspaceOperationError(sessionId)
-  if (await cancelPreparingWorkspacePrompt(sessionId)) return
+  if (cancelPreparingWorkspacePrompt(sessionId)) return
   // A run that only exists because a failed rollback kept its preparation was never admitted, so
   // there is nothing for the provider to cancel; releasing the exact preparation is the stop.
   if (hasPendingWorkspacePromptRollback(sessionId)) {
@@ -781,12 +786,9 @@ const processContextOverflowRecovery = (
     if (handledEventIds.has(event.id)) continue
     if (event.kind !== 'error' || !event.sessionId) continue
 
-    // Prefer the runtime's explicit marker; fall back to matching the message so an unmarked overflow
-    // (older event, or a path that didn't tag it) is still recovered.
+    // Accept the runtime's recovery marker or its classified overflow reason.
     const isOverflow =
-      event.recoverable === 'context-overflow' ||
-      isMediaOverflowError(event.text) ||
-      isMediaOverflowError(event.title)
+      event.recoverable === 'context-overflow' || event.failure?.reason === 'input/context-overflow'
     const isSessionLost = event.recoverable === 'session-lost'
 
     if (!isOverflow && !isSessionLost) continue

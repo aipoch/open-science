@@ -96,6 +96,7 @@ export function WorkflowDialogFrame({
   description,
   busy,
   onClose,
+  onCloseAutoFocus,
   children,
   footer,
   className,
@@ -105,6 +106,7 @@ export function WorkflowDialogFrame({
   description?: string
   busy: boolean
   onClose: () => void
+  onCloseAutoFocus?: React.ComponentProps<typeof Dialog.Content>['onCloseAutoFocus']
   children: ReactNode
   footer: ReactNode
   className?: string
@@ -160,6 +162,7 @@ export function WorkflowDialogFrame({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           onOpenAutoFocus={
             stage === undefined
               ? undefined

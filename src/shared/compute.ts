@@ -9,6 +9,9 @@ import type {
   ComputeJobStatus,
   ComputeQueueBlockedReason,
   ComputeJob as ExecutionJob,
+  AgentJobStatus,
+  AgentJobCancellation,
+  JobError,
   SshOverrides
 } from '@aipoch/compute'
 
@@ -109,6 +112,7 @@ export type ComputeHostDeletionBlocker = Readonly<{
   sessionId: string
   status: ComputeJobStatus
   cancellationStatus?: ComputeJobCancellationStatus
+  errorCode?: string
   // Optional for additive compatibility; absence fails closed for terminal cleanup.
   harvested?: boolean
   intent: string
@@ -219,13 +223,13 @@ export type JobResult = {
   // local file so cross-turn provenance resolves to the actual producing execution.
   producer_run_id?: string
   scheduler_job_id?: string
-  error_code?: string
+  error?: JobError
   last_poll_error?: string
-  status: ComputeJobStatus
+  status: AgentJobStatus
   // Mirrors the exact snapshot returned by this read; avoids a second-read TOCTOU when deciding
   // whether an Agent has observed the durable final result.
   result_final: boolean
-  cancellation_status?: ComputeJobCancellationStatus
+  cancellation?: AgentJobCancellation
   exit_code: number | undefined
   // Absolute canonical Notebook Session root. Join workspace-relative output paths to this root
   // before passing a harvested file to write_artifact_file as an absolute localPath.
@@ -258,6 +262,7 @@ export type JobSummary = {
   // Read-side scheduling diagnostics; never persisted as a Job status.
   queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string
+  scheduler_job_id?: string
   provider_id: string
   // Human-readable host name, denormalized from ComputeHost.displayName at query time.
   display_name: string
@@ -270,12 +275,15 @@ export type JobSummary = {
   integrity_issues?: ComputeJobIntegrityIssue[]
   needs_attention?: boolean
   cancellation_status?: ComputeJobCancellationStatus
+  cancellation_error?: JobError
+  cancellation_revision?: number
   intent: string
   created_at: number
   started_at: number | undefined
   finished_at: number | undefined
   exit_code: number | undefined
   error_code: string | undefined
+  error_message?: string
   last_poll_error?: string
   remote_workdir: string | undefined
   stdout_tail: string | undefined
