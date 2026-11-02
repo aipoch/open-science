@@ -116,7 +116,7 @@ describe('LiteratureReferenceResolver', () => {
       vi.fn(async () => new Response(pubmedResponse)) as typeof fetch
     )
 
-    await expect(resolver.resolve(['arxiv:2401.00001'])).rejects.toThrow('UNSUPPORTED_REFERENCE')
+    await expect(resolver.resolve(['isbn:9780123456789'])).rejects.toThrow('UNSUPPORTED_REFERENCE')
     await expect(resolver.resolve(['pmid:not-a-number'])).rejects.toThrow('INVALID_PMID')
     await expect(resolver.resolve(['pmid:999'])).rejects.toThrow('REFERENCE_NOT_FOUND')
   })
@@ -413,4 +413,151 @@ it('rejects a PubMed response above 8 MiB before parsing', async () => {
     new LiteratureReferenceResolver(fetchFn, { parseReferences }).lookup('pmid:35486828')
   ).rejects.toThrow('Metadata response is too large.')
   expect(parseReferences).not.toHaveBeenCalled()
+})
+
+describe('arXiv reference lookup', () => {
+  const feed = (
+    id = '2401.12345v2',
+    title = 'A paper &amp; its findings'
+  ): string => `<?xml version="1.0"?>
+    <feed xmlns="http://www.w3.org/2005/Atom"><title>Query results</title><entry>
+    <id>http://arxiv.org/abs/${id}</id><title>${title}</title>
+    <summary>A complete abstract.</summary><published>2024-01-23T12:00:00Z</published>
+    <author><name>Alice Example</name></author><author><name>Bob Researcher</name></author>
+    </entry></feed>`
+  it('resolves arXiv metadata with exact identity and provenance, without DOI provider calls', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response(feed()))
+    const [result] = await new LiteratureReferenceResolver(fetchFn).resolve(['arxiv:2401.12345'])
+    expect(result.item).toMatchObject({
+      itemType: 'preprint',
+      title: 'A paper & its findings',
+      abstract: 'A complete abstract.',
+      issuedYear: 2024,
+      issuedText: '2024-01-23',
+      url: 'https://arxiv.org/abs/2401.12345',
+      identifiers: [{ scheme: 'arxiv', value: '2401.12345', isPrimary: true }],
+      creators: [
+        expect.objectContaining({ familyName: 'Alice Example' }),
+        expect.objectContaining({ familyName: 'Bob Researcher' })
+      ]
+    })
+    expect(result.source).toMatchObject({ provider: 'arxiv', externalId: '2401.12345' })
+    expect(fetchFn).toHaveBeenCalledExactlyOnceWith(
+      'https://export.arxiv.org/api/query?id_list=2401.12345&max_results=1',
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+  })
+  it.each([
+    feed('2401.99999'),
+    feed('2401.12345', ''),
+    '<feed xmlns="http://www.w3.org/2005/Atom"/>',
+    '<feed>'
+  ])('rejects missing, mismatched or invalid metadata', async (xml) => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+    await expect(
+      new LiteratureReferenceResolver(fetchFn).resolve(['arxiv:2401.12345'])
+    ).rejects.toThrow()
+  })
+  it.each([
+    [
+      'duplicate identities',
+      feed().replace('</entry>', '<id>http://arxiv.org/abs/2401.99999</id></entry>')
+    ],
+    [
+      'duplicate DOI fields',
+      feed().replace(
+        '</entry>',
+        '<arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1234/one</arxiv:doi><arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1234/two</arxiv:doi></entry>'
+      )
+    ],
+    ['a DTD on an otherwise valid response', feed().replace('<feed ', '<!DOCTYPE feed><feed ')],
+    [
+      'excessive XML nesting',
+      feed().replace('</entry>', '<nested>'.repeat(20) + '</nested>'.repeat(20) + '</entry>')
+    ],
+    [
+      'a foreign Atom namespace',
+      feed().replace('http://www.w3.org/2005/Atom', 'https://example.test/atom')
+    ]
+  ])('rejects %s before using metadata', async (_case, xml) => {
+    await expect(
+      new LiteratureReferenceResolver(
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+      ).lookup('arxiv:2401.12345')
+    ).rejects.toThrow()
+  })
+  it('bounds arXiv response bytes before parsing', async () => {
+    const xml = feed().replace('</feed>', '<!--' + 'x'.repeat(2 * 1024 * 1024) + '--></feed>')
+    await expect(
+      new LiteratureReferenceResolver(
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+      ).lookup('arxiv:2401.12345')
+    ).rejects.toThrow('Metadata response is too large.')
+  })
+  it('does not accept an identity hidden by a nested closing element', async () => {
+    const xml = feed().replace('2401.12345v2</id>', '2401.12345v2<id/>wrong</id>')
+    await expect(
+      new LiteratureReferenceResolver(
+        vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+      ).lookup('arxiv:2401.12345')
+    ).rejects.toThrow()
+  })
+  it('preserves the complete title when a nested element reuses the field name', async () => {
+    const xml = feed().replace('A paper &amp; its findings', 'A <title>nested</title> title')
+    const result = await new LiteratureReferenceResolver(
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+    ).lookup('arxiv:2401.12345')
+    expect(result.item.title).toBe('A nested title')
+  })
+  it.each([
+    ['10.1234/PAPER', '10.1234/paper'],
+    ['10.1234/Á', '10.1234/Á'],
+    ['10.1234/á', '10.1234/á'],
+    ['10.1234/foo(bar)', '10.1234/foo(bar)']
+  ])('retains the exact published DOI identity for %s', async (rawDoi, expectedDoi) => {
+    const xml = feed().replace(
+      '</entry>',
+      `<arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">${rawDoi}</arxiv:doi></entry>`
+    )
+    const result = await new LiteratureReferenceResolver(
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+    ).lookup('arxiv:2401.12345')
+    expect(result.item.identifiers).toContainEqual({
+      scheme: 'doi',
+      value: expectedDoi,
+      isPrimary: false
+    })
+  })
+  it('omits a malformed secondary DOI while retaining its provenance', async () => {
+    const xml = feed().replace(
+      '</entry>',
+      '<arxiv:doi xmlns:arxiv="http://arxiv.org/schemas/atom">10.1234/has space</arxiv:doi></entry>'
+    )
+    const result = await new LiteratureReferenceResolver(
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(xml))
+    ).lookup('arxiv:2401.12345')
+    expect(result.item.identifiers).toEqual([
+      { scheme: 'arxiv', value: '2401.12345', isPrimary: true }
+    ])
+    expect(result.source.rawMetadata).toMatchObject({ 'arxiv:doi': ['10.1234/has space'] })
+  })
+  it('does not fetch malformed identifiers', async () => {
+    const fetchFn = vi.fn<typeof fetch>()
+    await expect(
+      new LiteratureReferenceResolver(fetchFn).resolve(['arxiv:invalid'])
+    ).rejects.toThrow('INVALID_ARXIV')
+    expect(fetchFn).not.toHaveBeenCalled()
+  })
+  it('propagates cancellation and provider errors', async () => {
+    const fetchFn = vi.fn<typeof fetch>().mockResolvedValue(new Response('', { status: 429 }))
+    await expect(
+      new LiteratureReferenceResolver(fetchFn).lookup('arxiv:2401.12345')
+    ).rejects.toThrow()
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      new LiteratureReferenceResolver(fetchFn).lookup('arxiv:2401.12345', controller.signal)
+    ).rejects.toThrow()
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+  })
 })

@@ -1,3 +1,4 @@
+import type { ClassifiedFailure } from './failure/contract'
 export type PersistedSessionStatus =
   'idle' | 'running' | 'waiting-for-user' | 'waiting-permission' | 'waiting-plan-approval' | 'error'
 
@@ -27,7 +28,7 @@ export type PersistedPromptPreparation = {
   previousState: {
     status: PersistedSessionStatus
     error?: string
-    errorReportable?: boolean
+    failure?: ClassifiedFailure
     resumeRecovery?: PersistedSessionResumeRecovery
   }
   // Immutable Main-owned display evidence written on every prepare-prompt (new send, Resume,

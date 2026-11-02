@@ -1373,8 +1373,11 @@ class CommandGateway {
         }
         parser.on('upgrade', (request) => unsupported(request))
         parser.on('connect', (request) => unsupported(request, true))
-        parser.on('clientError', () => {
-          malformed = true
+        parser.on('clientError', (error: NodeJS.ErrnoException) => {
+          // A reset before any HTTP bytes can be a TLS pin rejection, not malformed HTTP.
+          if (error.code !== 'ECONNRESET' || buffered.length > 0 || completeHeader) {
+            malformed = true
+          }
           tls!.destroy()
         })
         parser.emit('connection', tls!)

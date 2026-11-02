@@ -1,3 +1,11 @@
+import {
+  listPdfAnnotationsInput,
+  locatePdfAnnotationInput,
+  createPdfAnnotationInput,
+  type ListPdfAnnotationsInput,
+  type LocatePdfAnnotationInput,
+  type CreatePdfAnnotationInput
+} from '../pdf-annotations/agent-tools'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -22,6 +30,20 @@ type LiteratureReadDocumentRequest = Readonly<{
 
 type LiteratureMcpHandler = Readonly<{
   readDocument: (request: LiteratureReadDocumentRequest) => Promise<unknown>
+  annotations?: {
+    list: (
+      request: ListPdfAnnotationsInput,
+      signal: AbortSignal
+    ) => Promise<Record<string, unknown>>
+    locate: (
+      request: LocatePdfAnnotationInput,
+      signal: AbortSignal
+    ) => Promise<Record<string, unknown>>
+    create: (
+      request: CreatePdfAnnotationInput,
+      signal: AbortSignal
+    ) => Promise<Record<string, unknown>>
+  }
   elements?: {
     list: (request: ListPdfElementsInput, signal: AbortSignal) => Promise<PdfElementOutput>
     read: (request: ReadPdfElementInput, signal: AbortSignal) => Promise<PdfElementOutput>
@@ -63,9 +85,44 @@ const literatureReadPresentation = (result: unknown): UnknownRecord | undefined 
     result.retrievalMode === 'bm25' || result.retrievalMode === 'fallback'
       ? result.retrievalMode
       : undefined
+  const textCoverage = documents
+    .flatMap((document) => {
+      const total = positiveInteger(document.pageCount)
+      if (!total || !isRecord(document.coverage)) return []
+      const coverage = document.coverage
+      const pages = (value: unknown): number[] =>
+        Array.isArray(value)
+          ? [
+              ...new Set(
+                value.filter(
+                  (page): page is number => Number.isSafeInteger(page) && page > 0 && page <= total
+                )
+              )
+            ]
+          : []
+      const text = pages(coverage.textPages)
+      const ocr = pages(coverage.ocrPages)
+      return [
+        {
+          name: typeof document.name === 'string' ? document.name.trim().slice(0, 512) : '',
+          total,
+          parsed: new Set([...text, ...ocr]).size,
+          ocr: ocr.length,
+          // The card lists at most 20 missing pages; retain one more for its ellipsis.
+          missing: [
+            ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
+          ]
+            .sort((a, b) => a - b)
+            .slice(0, 21),
+          unverified: pages(coverage.unverifiedPages).slice(0, 21)
+        }
+      ]
+    })
+    .slice(0, 3)
   const presentation = {
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(documentNames.length > 0 ? { documentNames } : {}),
+    ...(textCoverage.length > 0 ? { textCoverage } : {}),
     ...(passages.length > 0 ? { passageCount: passages.length } : {}),
     ...(pageStarts.length > 0 ? { pageStart: Math.min(...pageStarts) } : {}),
     ...(pageEnds.length > 0 ? { pageEnd: Math.max(...pageEnds) } : {}),
@@ -90,7 +147,7 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
     {
       title: 'Read linked literature',
       description:
-        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId. Reading order is resolved automatically from PDF logical structure or page layout, including search and cursor continuation. Ambiguous layouts retain native order. No manual body-region configuration is required.',
+        'Read prose passages from one to three multi-page PDFs explicitly linked to the current Open-Science message. Omit query and provide documentId to read one document in bounded sequential batches, following nextCursor until null. Provide query to retrieve relevant passages across documentIds, or all linked documents when documentIds is omitted. Search requests must not include documentId or cursor; sequential requests must not include documentIds. Use this instead of Notebook, shell, filesystem, or Python for linked-PDF reading. For specific figures, tables, algorithms, exact table values or visual relationships, use list_pdf_elements and then read_pdf_element. Combine prose and element evidence when both are needed; do not infer visual evidence from prose or list elements for every summary. Library itemId is not a linked-PDF documentId. Reading order is resolved automatically from PDF logical structure or page layout, including search and cursor continuation. Ambiguous layouts retain native order. No manual body-region configuration is required. Local OCR is limited to nonempty pages without selectable text, or raster pages whose only selectable text is a decimal page number; readable native prose is not re-recognized. Inspect document.coverage for unread, unchecked or unverified pages, verify image content against the PDF, and never treat text presence as proof of complete evidence.',
       inputSchema: z
         .object({
           documentId: z.string().trim().min(1).max(512).optional(),
@@ -202,6 +259,75 @@ const createLiteratureMcpServer = (handler: LiteratureMcpHandler): ModelContextP
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
       },
       (request, extra) => output(() => handler.elements!.read(request, extra.signal))
+    )
+  }
+  if (handler.annotations) {
+    const output = async (run: () => Promise<Record<string, unknown>>): Promise<CallToolResult> =>
+      withDataRootWrite(async () => {
+        try {
+          const result = await run()
+          return { content: [{ type: 'text', text: JSON.stringify(result) }] }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : ''
+          const known =
+            /^(PDF_ANNOTATION_(?:TARGET_STALE|TARGET_UNAVAILABLE|CANCELLED|NOTE_REQUIRED|READ_ONLY)|PDF_DOCUMENT_SELECTION_REQUIRED):\s*(.+)$/.exec(
+              message
+            )
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  error: {
+                    code: known?.[1] ?? 'PDF_ANNOTATION_FAILED',
+                    message:
+                      known?.[2] ??
+                      'The annotation operation failed. Read existing annotations before retrying a write.'
+                  }
+                })
+              }
+            ]
+          }
+        }
+      })
+    server.registerTool(
+      'list_pdf_annotations',
+      {
+        title: 'Read linked PDF annotations',
+        description:
+          'Read existing Notes & Annotations for one PDF linked to the current Reading message. Returns bounded note/quote previews and nextCursor. Use this to inspect existing marks or recover a write whose reply was interrupted. These notes are shared across Literature and Workspace.',
+        inputSchema: listPdfAnnotationsInput,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      (input, extra) => output(() => handler.annotations!.list(input, extra.signal))
+    )
+    server.registerTool(
+      'locate_pdf_annotation_target',
+      {
+        title: 'Locate linked PDF annotation target',
+        description:
+          'Locate a target before creating a note or mark. Supply target.kind: document-note, page-note with physical PDF pageNumber, text with pageNumber and an exact quote (optional prefix/suffix distinguish repeated text), or element with an elementRef from list_pdf_elements. Read prose or element evidence first. Returns application-issued targetRefs; text matches are alternatives, while element targets are separate regions of one element. Choose the intended match; do not annotate every alternative. Missing/ambiguous text must not be guessed. Uses selectable text or existing Structure caches, not OCR or arbitrary visual grounding. References expire and are valid only for this message.',
+        inputSchema: locatePdfAnnotationInput,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      (input, extra) => output(() => handler.annotations!.locate(input, extra.signal))
+    )
+    server.registerTool(
+      'create_pdf_annotation',
+      {
+        title: 'Create linked PDF annotation',
+        description:
+          'Create one persistent note, text highlight or area mark from a targetRef returned by locate_pdf_annotation_target, only when requested by the user. note is required (empty is allowed for highlights/areas); color is optional. Use a distinct requestId for each intended mark and reuse that same requestId and content on retry. A committed mark survives cancellation and is shared by all references to the same PDF in Literature and Workspace. Multiple marks are separate writes, not an atomic batch. Does not modify/delete existing notes or source PDF bytes; no automatic Ctrl+Z batch undo. Inspect list_pdf_annotations if a reply is lost.',
+        inputSchema: createPdfAnnotationInput,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          openWorldHint: false,
+          idempotentHint: true
+        }
+      },
+      (input, extra) => output(() => handler.annotations!.create(input, extra.signal))
     )
   }
   return server

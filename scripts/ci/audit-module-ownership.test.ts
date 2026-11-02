@@ -245,7 +245,16 @@ it.each(['certification-contract', 'execution-contract'])(
   'expands consumers of the shared Delegation %s test contract',
   (name) => {
     const path = `src/main/delegation/${name}.test.ts`
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    const changes = [{ path, status: 'modified' }]
+    const guarded = createAffectedTestPlan(changes, graph)
+    expect(guarded.mode).toBe('full')
+    expect(guarded.reasonChains.join('\n')).toContain(
+      manifest.modules.main_delegation.fullTestReason
+    )
+    // Keep checking contract expansion independently of Pi's temporary full-validation boundary.
+    const reviewed = structuredClone(manifest)
+    delete reviewed.modules.main_delegation.fullTestReason
+    const plan = createAffectedTestPlan(changes, graph, reviewed)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(path)
     expect(plan.testFiles).toContain('src/main/delegation/acp-execution.test.ts')

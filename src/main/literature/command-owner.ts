@@ -123,7 +123,7 @@ export const createLiteratureCommandOwner = ({
     withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
   lookupMetadata: async (doi) => {
     const [resolved] = await literatureReferenceResolver.resolve([
-      doi.startsWith('pmid:') ? doi : 'doi:' + doi
+      doi.startsWith('pmid:') || doi.startsWith('arxiv:') ? doi : 'doi:' + doi
     ])
     return resolved.item
   },

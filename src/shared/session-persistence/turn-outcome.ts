@@ -1,11 +1,67 @@
+import type {
+  ClassifiedFailure,
+  FailureCategory,
+  FailureDiagnostics,
+  FailureReason
+} from '../failure/contract'
 import { resolveActiveConversationMessages } from '../conversation-graph'
 import type { PersistedChatMessage } from '../session-message-contract'
 import { asNumber, isRecord } from './primitives'
-import { INTERRUPTED_TURN_ERROR } from './restore'
+import { INTERRUPTED_TURN_ERROR } from '../failure/messages'
 import type { PersistedChatSession } from './session'
 import { latestTurnAnchor } from './turn-anchor'
 import type { TurnOutcome } from '../session-turn-outcome-contract'
 export { type TurnOutcome } from '../session-turn-outcome-contract'
+
+// Legacy booleans are consumed only here, including Session and preparation snapshots.
+export const readPersistedFailure = (value: Record<string, unknown>): ClassifiedFailure => {
+  const raw = typeof value.error === 'string' ? value.error : undefined
+  const failure = value.failure
+  const categories: readonly FailureCategory[] = [
+    'configuration',
+    'service',
+    'environment',
+    'input',
+    'session',
+    'internal'
+  ]
+  if (
+    isRecord(failure) &&
+    categories.includes(failure.category as FailureCategory) &&
+    isRecord(failure.diagnostics)
+  ) {
+    const category = failure.category as FailureCategory
+    const diagnostics: { -readonly [K in keyof FailureDiagnostics]: FailureDiagnostics[K] } = {}
+    const source = failure.diagnostics
+    if (
+      typeof source.status === 'number' &&
+      Number.isInteger(source.status) &&
+      source.status >= 100 &&
+      source.status <= 599
+    )
+      diagnostics.status = source.status
+    for (const key of ['code', 'provider', 'model', 'requestId', 'raw'] as const)
+      if (typeof source[key] === 'string') diagnostics[key] = source[key]
+    return {
+      category,
+      ...(typeof failure.reason === 'string' &&
+      failure.reason.startsWith(`${category}/`) &&
+      failure.reason.length > category.length + 1
+        ? { reason: failure.reason as FailureReason }
+        : {}),
+      diagnostics
+    }
+  }
+  return {
+    category:
+      value.failure === undefined && value.errorReportable === false
+        ? value.kind === 'interrupted'
+          ? 'session'
+          : 'service'
+        : 'internal',
+    diagnostics: raw === undefined ? {} : { raw }
+  }
+}
 
 // Reject malformed variants rather than converting an unknown outcome into a completed turn.
 // Forward compatibility: a known kind keeps only the fields this version understands, so extra
@@ -25,7 +81,11 @@ export const sanitizeTurnOutcome = (value: unknown): TurnOutcome | undefined => 
       : undefined
   }
   if (value.error !== undefined && typeof value.error !== 'string') return undefined
-  if (value.errorReportable !== undefined && typeof value.errorReportable !== 'boolean')
+  if (
+    value.failure === undefined &&
+    value.errorReportable !== undefined &&
+    typeof value.errorReportable !== 'boolean'
+  )
     return undefined
   const error = typeof value.error === 'string' ? { error: value.error } : {}
   if (value.kind === 'failed') {
@@ -33,9 +93,7 @@ export const sanitizeTurnOutcome = (value: unknown): TurnOutcome | undefined => 
       kind: 'failed',
       settledAt,
       ...error,
-      ...(typeof value.errorReportable === 'boolean'
-        ? { errorReportable: value.errorReportable }
-        : {}),
+      failure: readPersistedFailure(value),
       ...(value.recovery === 'retry-artifact-publication' ? { recovery: value.recovery } : {})
     }
   }
@@ -43,8 +101,7 @@ export const sanitizeTurnOutcome = (value: unknown): TurnOutcome | undefined => 
     // Terminal commit exhaustion is deliberately live-only; never accept it from Session JSON.
     if (
       (value.cause !== 'app-restart' && value.cause !== 'connection-lost') ||
-      value.recovery !== 'resume' ||
-      (value.errorReportable !== undefined && value.errorReportable !== false)
+      value.recovery !== 'resume'
     )
       return undefined
     return {
@@ -52,7 +109,7 @@ export const sanitizeTurnOutcome = (value: unknown): TurnOutcome | undefined => 
       settledAt,
       cause: value.cause,
       ...error,
-      ...(value.errorReportable === false ? { errorReportable: false as const } : {}),
+      failure: readPersistedFailure(value),
       recovery: 'resume'
     }
   }
@@ -98,7 +155,7 @@ export const resolveTurnOutcome = (
       settledAt,
       cause: recovery.cause,
       error: session.error,
-      errorReportable: false,
+      failure: session.failure ?? { category: 'session', diagnostics: {} },
       recovery: 'resume'
     }
   if (session.status === 'error') {
@@ -124,7 +181,7 @@ export const resolveTurnOutcome = (
       kind: 'failed',
       settledAt,
       error: session.error,
-      errorReportable: session.errorReportable,
+      failure: session.failure,
       ...(artifactFailure ? { recovery: 'retry-artifact-publication' as const } : {})
     }
   }
@@ -145,7 +202,7 @@ export const resolveTurnOutcome = (
 export const legacySessionStateForOutcome = (
   outcome: TurnOutcome,
   promptMessageId: string
-): Pick<PersistedChatSession, 'status' | 'error' | 'errorReportable' | 'resumeRecovery'> => ({
+): Pick<PersistedChatSession, 'status' | 'error' | 'failure' | 'resumeRecovery'> => ({
   status: outcome.kind === 'failed' || outcome.kind === 'interrupted' ? 'error' : 'idle',
   error:
     outcome.kind === 'cancelled'
@@ -153,12 +210,8 @@ export const legacySessionStateForOutcome = (
       : outcome.kind === 'completed'
         ? undefined
         : outcome.error,
-  errorReportable:
-    outcome.kind === 'failed'
-      ? outcome.errorReportable
-      : outcome.kind === 'interrupted'
-        ? false
-        : undefined,
+  failure:
+    outcome.kind === 'failed' || outcome.kind === 'interrupted' ? outcome.failure : undefined,
   resumeRecovery:
     outcome.kind === 'cancelled' || outcome.kind === 'interrupted'
       ? {

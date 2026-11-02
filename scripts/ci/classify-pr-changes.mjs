@@ -333,7 +333,7 @@ function escapeHtml(value) {
 }
 
 // Apply platform policy after dependency/consumer expansion, using trusted base code.
-export function platformExecutionPlan(plan, changes, event) {
+export function platformExecutionPlan(plan, changes, event, { unitFloor = false } = {}) {
   if (!['pull_request', 'merge_group'].includes(event)) return plan
   const paths = changes.flatMap(({ path, previousPath }) =>
     [path, previousPath].filter((value) => value && value !== workflowContractTest)
@@ -371,6 +371,9 @@ export function platformExecutionPlan(plan, changes, event) {
   const lanes = new Set(plan.lanes)
   const deferFullPortable =
     plan.bundles.includes('unit') && (plan.mode === 'full' || !plan.lanes.includes('unit_macos'))
+  // A deferred full plan keeps its declared module test floor as blocking unit execution.
+  const keepUnitFloor =
+    deferFullPortable && unitFloor && plan.mode === 'full' && plan.lanes.includes('unit_macos')
   const hasDesktop = plan.bundles.includes('macos_e2e')
   if (hasDesktop && event === 'pull_request') {
     lanes.add('e2e_functional_windows')
@@ -380,7 +383,7 @@ export function platformExecutionPlan(plan, changes, event) {
   for (const lane of lanes) {
     if (
       defaultManifest.laneBundles[lane] === 'macos_e2e' ||
-      (deferFullPortable && defaultManifest.laneBundles[lane] === 'unit') ||
+      (deferFullPortable && !keepUnitFloor && defaultManifest.laneBundles[lane] === 'unit') ||
       (event === 'merge_group' && defaultManifest.laneBundles[lane] === 'windows_e2e')
     ) {
       lanes.delete(lane)
@@ -397,11 +400,13 @@ export function platformExecutionPlan(plan, changes, event) {
     lanes: selectedLanes,
     bundles: defaultManifest.bundleOrder.filter((bundle) => bundles.has(bundle)),
     macosProfile: sensitive ? 'expanded' : 'smoke',
+    ...(keepUnitFloor ? { unitFloor: true } : {}),
     reasonChains: [
       ...plan.reasonChains,
       ...(deferFullPortable
         ? [`${event}: full portable tests and coverage deferred to scheduled/manual acceptance`]
         : []),
+      ...(keepUnitFloor ? [`${event}: declared module test floor remains blocking`] : []),
       event === 'pull_request'
         ? 'pull_request: selective portable tests and Windows business E2E; Mac validation deferred to merge queue'
         : `merge_group: one Mac core job${sensitive ? ' with native checks' : ''}; complete Mac regression scheduled twice daily`
@@ -445,6 +450,7 @@ export function toGitHubOutputPlan(plan) {
   }
   if (plan.windowsCoreChecks) output.windowsCoreChecks = [...plan.windowsCoreChecks]
   if (plan.macosProfile) output.macosProfile = plan.macosProfile
+  if (plan.unitFloor) output.unitFloor = true
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output
 }

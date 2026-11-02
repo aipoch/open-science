@@ -76,7 +76,7 @@ import {
   writeReadyMarker,
   writeRReadyMarker
 } from '@aipoch/environment'
-import type { NotebookShellProcess } from './shell-process'
+import { ShellPreparationError, type NotebookShellProcess } from './shell-process'
 import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
 import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
@@ -4540,6 +4540,63 @@ describe('notebook runtime service', () => {
       expect(await service.executeShell(request)).toEqual(unavailable)
       expect(execute).toHaveBeenCalledOnce()
     })
+
+    it.each([false, true])(
+      'replays completed Shell work without checking current runtime readiness (background: %s)',
+      async (background) => {
+        const root = await createStorageRoot()
+        const result = { stdout: 'completed', stderr: '', exitCode: 0 }
+        const execute = vi.fn<NotebookShellProcess['execute']>().mockResolvedValue(result)
+        const prepareEnvironment = vi.fn().mockResolvedValue({ PATH: 'verified-runtime' })
+        const service = new NotebookRuntimeService({
+          configRoot: root,
+          dataRoot: root,
+          projectId: 'default-project',
+          platform: 'win32',
+          shellRuntimeBinding: { kind: 'powershell', version: '7.6' },
+          shellBackgroundExecutionEnabled: true,
+          shellProcess: { execute, prepareEnvironment }
+        })
+        const request = {
+          sessionId: 'completed-retry',
+          workspaceCwd: root,
+          command: '$PSVersionTable.PSVersion.ToString()',
+          executionInvocationId: 'same-invocation'
+        }
+        try {
+          let runId: string | undefined
+          if (background) {
+            const receipt = await service.executeShellBackground(request)
+            runId = receipt.runId
+            await service.waitForBackgroundRun(runId)
+          } else expect(await service.executeShell(request)).toEqual(result)
+          prepareEnvironment.mockRejectedValue(
+            new ShellPreparationError({
+              stdout: '',
+              stderr: 'Notebook protection changed.',
+              exitCode: null,
+              runtimeStatus: 'unavailable',
+              errorCode: 'shell-runtime-unavailable',
+              recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+            })
+          )
+          if (background) {
+            expect((await service.executeShellBackground(request)).runId).toBe(runId)
+            expect((await service.getBackgroundRun({ ...request, runId })).run.status).toBe(
+              'completed'
+            )
+          } else await expect(service.executeShell(request)).resolves.toEqual(result)
+          expect(prepareEnvironment).toHaveBeenCalledOnce()
+          expect(execute).toHaveBeenCalledOnce()
+          const changed = { ...request, command: 'Write-Output different' }
+          await expect(
+            background ? service.executeShellBackground(changed) : service.executeShell(changed)
+          ).rejects.toThrow('NOTEBOOK_RUN_SUBMISSION_CONFLICT')
+        } finally {
+          await service.shutdownAll()
+        }
+      }
+    )
 
     it('blocks unmanaged WSL Bash detachment on a Windows host', async () => {
       const root = await createStorageRoot()

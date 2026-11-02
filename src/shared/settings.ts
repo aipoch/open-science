@@ -18,6 +18,8 @@ import {
 import { type ReasoningEffort } from './model-preference-contract'
 import { customProviderRequiresKey } from './provider-url-policy'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
+import type { AgentFrameworkId } from './agent-framework-id'
+export type { AgentFrameworkId } from './agent-framework-id'
 export type { ModelProtocol } from '@aipoch/providers'
 export type { ReasoningEffort } from './model-preference-contract'
 
@@ -441,10 +443,6 @@ export const providerValidationSucceeded = (
     providerValidationTargetMatches(provider.lastValidatedTarget, target)) &&
   !providerValidationFailed(provider, target)
 
-// The agent backends the app can drive over ACP. Persisted settings and the UI reference these ids;
-// the main-process AgentFramework registry is keyed by the same union.
-export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex' | 'codebuddy'
-
 // How much reasoning effort the user asks the agent to spend. 'default' means "don't override": the
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
 // (low < medium < high < xhigh < max): the active model's static profile maps the level onto its
@@ -735,6 +733,10 @@ export type Preflight = {
   opencodeReady: boolean
   codebuddyReady: boolean
   codexReady: boolean
+  // Missing on older Main processes; Pi is selectable only when Main reports true.
+  piReady?: boolean
+  // Location of the separately installed Pi ACP adapter, reported while a managed installation exists.
+  piRuntimePath?: string
   // Readiness of the selected agent framework, plus which one it is.
   agentFrameworkId: AgentFrameworkId
   agentReady: boolean
@@ -982,6 +984,10 @@ export type InstallClaudeRequest = {
 // is the recommended default and the only cross-platform-guaranteed path (no user Node/npm needed).
 export type InstallOpencodeRequest = {
   source: ClaudeInstallSource
+}
+
+export type InstallPiRequest = {
+  source: 'managed'
 }
 
 export type InstallCodeBuddyRequest = {

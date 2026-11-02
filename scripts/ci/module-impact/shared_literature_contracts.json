@@ -8,7 +8,9 @@
     "src/shared/literature.test.ts",
     "src/shared/smart-collection-rule.test.ts",
     "src/shared/literature-collector.ts",
-    "src/shared/literature-collector.test.ts"
+    "src/shared/literature-collector.test.ts",
+    "src/shared/literature-link.ts",
+    "src/shared/literature-link.test.ts"
   ],
   "interfacePaths": [
     "src/shared/literature.ts",
@@ -16,7 +18,8 @@
     "src/shared/literature-jobs.ts",
     "src/shared/literature-save.ts",
     "src/shared/journal-attributes.ts",
-    "src/shared/literature-collector.ts"
+    "src/shared/literature-collector.ts",
+    "src/shared/literature-link.ts"
   ],
   "consumerModules": [
     "host_command_runtime",
@@ -28,7 +31,8 @@
     "owner": [
       "src/shared/literature.test.ts",
       "src/shared/smart-collection-rule.test.ts",
-      "src/shared/literature-collector.test.ts"
+      "src/shared/literature-collector.test.ts",
+      "src/shared/literature-link.test.ts"
     ],
     "contract": [
       "src/preload/electron-renderer-contract-adapter.test.ts",

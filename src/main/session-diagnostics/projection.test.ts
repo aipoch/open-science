@@ -382,3 +382,36 @@ it('preserves permission trace classifications and rejects spoofed raw identity 
   })
   expect(JSON.stringify(invalid)).not.toContain('private-')
 })
+
+it('retains classified failure evidence in session and turn diagnostics with redaction and limits', () => {
+  const failure = {
+    category: 'service',
+    reason: 'service/unavailable',
+    diagnostics: {
+      status: 503,
+      code: 'overloaded',
+      provider: 'Example',
+      model: 'example-model',
+      requestId: 'request-example',
+      raw: 'Authorization: Bearer secret-example\n' + 'x'.repeat(5000),
+      secret: 'DO NOT EXPORT'
+    }
+  }
+  const projection = projectDiagnosticSession({
+    failure,
+    messages: [{ id: 'prompt', turnOutcome: { kind: 'failed', settledAt: 1, failure } }]
+  })
+  expect(projection).toMatchObject({
+    session: {
+      failure: {
+        category: 'service',
+        diagnostics: { status: 503, provider: 'Example', requestId: 'request-example' }
+      },
+      messages: [{ turnOutcome: { failure: { category: 'service' } } }]
+    }
+  })
+  const serialized = JSON.stringify(projection)
+  expect(serialized).not.toContain('secret-example')
+  expect(serialized).not.toContain('DO NOT EXPORT')
+  expect(serialized).toContain('[truncated]')
+})

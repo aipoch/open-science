@@ -141,6 +141,11 @@
     "scripts/backend-dependencies.test.ts",
     "scripts/build-backend.mjs",
     "scripts/build-notebook-host.mjs",
+    "scripts/build-pi-acp.mjs",
+    "src/main/pi-acp/bootstrap.mjs",
+    "src/main/pi-acp/package.json",
+    "src/main/pi-acp/package-lock.json",
+    "src/main/pi-acp/permission-guard.mjs",
     "scripts/windows-dev-notebook-host.integration.test.ts",
     "scripts/wsl2-build-flags.mjs",
     "scripts/wsl2-build-flags.d.mts",
@@ -229,7 +234,9 @@
     "src/main/service-process-recovery.ts",
     "src/main/service-process-recovery.test.ts",
     "src/main/service-process-recovery.integration.test.ts",
-    "src/main/local-service-stop-intent.integration.test.ts"
+    "src/main/local-service-stop-intent.integration.test.ts",
+    "scripts/ocr/build.mjs",
+    "scripts/ocr/worker.mjs"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",

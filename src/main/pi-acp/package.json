@@ -1,0 +1,14 @@
+{
+  "name": "open-science-managed-pi",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@openma/pi-acp": "0.1.8"
+  },
+  "overrides": {
+    "@earendil-works/pi-coding-agent@1.4.0": {
+      "undici": "8.12.2"
+    }
+  }
+}
