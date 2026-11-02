@@ -7736,6 +7736,11 @@
     "Retrieved via {{source}}.": "{{source}}을(를) 통해 가져왔습니다.",
     "Edit reference details": "문헌 정보 편집",
     "Edit details": "세부 정보 편집",
-    "Back to review": "검토로 돌아가기"
+    "Back to review": "검토로 돌아가기",
+    "Optimization prompt scope": "프롬프트 최적화 범위",
+    "Prompt optimization": "프롬프트 최적화",
+    "Select the model and provider used to optimize questions.": "질문 최적화에 사용할 모델과 모델 제공업체를 선택합니다.",
+    "Prompt optimization model Model": "프롬프트 최적화 모델",
+    "Prompt optimization model Reasoning effort": "프롬프트 최적화 모델 추론 강도"
   }
 }

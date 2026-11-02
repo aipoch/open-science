@@ -13,6 +13,32 @@ Keep simple or already clear questions concise; avoid unnecessary expansion.
 Preserve code, formulas, document identifiers, and reference markers exactly.
 Return only the improved prompt, without commentary or surrounding quotation marks.`
 
+export const optimizationPromptScopeSchema = z.enum(['current', 'all'])
+export type OptimizationPromptScope = z.infer<typeof optimizationPromptScopeSchema>
+export type OptimizationPromptProject = Readonly<{
+  id: string
+  optimizationPrompt?: string
+  optimizationPromptScope?: OptimizationPromptScope
+  updatedAt?: number
+}>
+
+export const resolveOptimizationPrompt = (
+  currentProject: OptimizationPromptProject | undefined,
+  projects: readonly OptimizationPromptProject[]
+): string => {
+  const currentPrompt = currentProject?.optimizationPrompt?.trim()
+  if (currentPrompt && (currentProject?.optimizationPromptScope ?? 'current') === 'current') {
+    return currentPrompt
+  }
+
+  const globalProject = [...projects]
+    .filter(
+      (project) => project.optimizationPrompt?.trim() && project.optimizationPromptScope === 'all'
+    )
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0]
+  return globalProject?.optimizationPrompt?.trim() || DEFAULT_OPTIMIZATION_PROMPT
+}
+
 export const optimizePromptRequestSchema = z
   .object({
     projectId: z.string().min(1),

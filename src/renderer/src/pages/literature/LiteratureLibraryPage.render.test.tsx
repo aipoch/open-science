@@ -5793,7 +5793,8 @@ describe('LiteratureLibraryPage', () => {
         name: 'Reading project',
         description: '',
         agentContext: '',
-        optimizationPrompt: ''
+        optimizationPrompt: '',
+        optimizationPromptScope: 'current'
       })
     )
     await waitFor(() =>

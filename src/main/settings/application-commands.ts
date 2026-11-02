@@ -31,6 +31,7 @@ import type {
   SetNetworkProxyRequest,
   SetNotebookNetworkRequest,
   SetProjectFilesFilterRequest,
+  SetPromptOptimizationModelRequest,
   SetReviewerModelRequest,
   SetSessionDetailsModelRequest,
   SetSubagentModelRequest,
@@ -152,6 +153,7 @@ type CoreSettingsCommandStore = Pick<
   | 'setNotebookNetwork'
   | 'setProjectFilesFilter'
   | 'setReviewerModel'
+  | 'setPromptOptimizationModel'
   | 'selectWslProfile'
   | 'setSessionDetailsModel'
   | 'setSubagentModel'
@@ -514,6 +516,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: SetReviewerModelRequest],
     StoreResult<'setReviewerModel'>
   >('settings:set-reviewer-model'),
+  setPromptOptimizationModel: defineApplicationCommand<
+    'settings:set-prompt-optimization-model',
+    readonly [request: SetPromptOptimizationModelRequest],
+    StoreResult<'setPromptOptimizationModel'>
+  >('settings:set-prompt-optimization-model'),
   selectWslProfile: defineApplicationCommand<
     'settings:select-wsl-profile',
     readonly [request: SelectWslProfileRequest],
@@ -634,6 +641,7 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.setNotebookNetwork,
   settingsCoreApplicationCommands.setProjectFilesFilter,
   settingsCoreApplicationCommands.setReviewerModel,
+  settingsCoreApplicationCommands.setPromptOptimizationModel,
   settingsCoreApplicationCommands.selectWslProfile,
   settingsCoreApplicationCommands.switchLocalShellToPowerShell,
   settingsCoreApplicationCommands.useWsl2Bash,
@@ -904,6 +912,10 @@ const registerCoreSettingsApplicationCommands = (
       'settings:set-reviewer-model': ({ args }) =>
         dependencies.snapshotCommits.currentSnapshotAfter(
           dependencies.service.setReviewerModel(readReviewerModel(args[0]))
+        ),
+      'settings:set-prompt-optimization-model': ({ args }) =>
+        dependencies.snapshotCommits.currentSnapshotAfter(
+          dependencies.service.setPromptOptimizationModel(readSubagentModel(args[0]))
         ),
       'settings:select-wsl-profile': ({ args, callerContext }) => {
         requireLocalCaller(callerContext, 'settings:select-wsl-profile')

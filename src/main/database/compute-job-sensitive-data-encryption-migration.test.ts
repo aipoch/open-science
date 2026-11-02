@@ -102,10 +102,11 @@ describe('Compute Job sensitive data encryption migration', () => {
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
         '0054_slurm_job_reliability',
-        '0055_project_optimization_prompt'
+        '0055_project_optimization_prompt',
+        '0056_project_optimization_prompt_scope'
       ],
       from: '0015_session_model_call_usage',
-      to: '0055_project_optimization_prompt'
+      to: '0056_project_optimization_prompt_scope'
     })
     await expect(
       access(`${databasePath}.before-0016_compute_job_sensitive_data_encryption.backup`)

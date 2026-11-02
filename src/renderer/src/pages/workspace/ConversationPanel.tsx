@@ -956,11 +956,25 @@ const ConversationPanel = ({
       : undefined
   )
   const optimizationProjectId = useNavigationStore((state) => state.activeProjectId)
+  const promptOptimizationModel = useSettingsStore((state) => state.promptOptimizationModel)
+  const optimizationModelConfiguration =
+    promptOptimizationModel.mode === 'fixed'
+      ? {
+          providerId: promptOptimizationModel.providerId,
+          model: promptOptimizationModel.model,
+          reasoningEffort: promptOptimizationModel.reasoningEffort
+        }
+      : modelConfiguration
   const promptOptimization = usePromptOptimization({
     projectId: activeSession?.projectId ?? optimizationProjectId ?? undefined,
     // WorkspacePage keys this panel by composer identity, preserving its own Session binding.
     sessionKey: 'composer',
-    modelConfiguration: modelUnavailable ? undefined : modelConfiguration,
+    modelConfiguration:
+      promptOptimizationModel.mode === 'fixed'
+        ? optimizationModelConfiguration
+        : modelUnavailable
+          ? undefined
+          : optimizationModelConfiguration,
     attachmentIds: attachments.map(({ id }) => id),
     transferIds: attachmentTransfers.map(({ transferId }) => transferId),
     doc: draftDoc,

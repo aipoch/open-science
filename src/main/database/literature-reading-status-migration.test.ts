@@ -15,7 +15,7 @@ import {
 } from './migration-service'
 
 const migrationId = '0051_literature_reading_status'
-const currentMigrationId = '0055_project_optimization_prompt'
+const currentMigrationId = '0056_project_optimization_prompt_scope'
 const historicalManifest = MIGRATION_MANIFEST.filter(({ id }) => id < migrationId)
 let root: string
 let client: PrismaClient
@@ -61,6 +61,7 @@ it('upgrades the 0050 schema with unread defaults while preserving items, relati
       '0052_literature_personal_note_search',
       '0053_literature_doi_identity',
       '0054_slurm_job_reliability',
+      '0055_project_optimization_prompt',
       currentMigrationId
     ]
   })
@@ -145,6 +146,7 @@ it('rolls back the added column and ledger entry if migration verification fails
       '0052_literature_personal_note_search',
       '0053_literature_doi_identity',
       '0054_slurm_job_reliability',
+      '0055_project_optimization_prompt',
       currentMigrationId
     ]
   })

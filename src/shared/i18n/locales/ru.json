@@ -8224,6 +8224,11 @@
     "Retrieved via {{source}}.": "Получено через {{source}}.",
     "Edit reference details": "Редактирование сведений о публикации",
     "Edit details": "Изменить сведения",
-    "Back to review": "Вернуться к проверке"
+    "Back to review": "Вернуться к проверке",
+    "Optimization prompt scope": "Область оптимизации промпта",
+    "Prompt optimization": "Оптимизация промпта",
+    "Select the model and provider used to optimize questions.": "Выберите модель и поставщика для оптимизации вопросов.",
+    "Prompt optimization model Model": "Модель оптимизации промпта",
+    "Prompt optimization model Reasoning effort": "Глубина рассуждений модели оптимизации промпта"
   }
 }

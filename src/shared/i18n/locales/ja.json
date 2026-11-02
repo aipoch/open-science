@@ -7738,6 +7738,11 @@
     "Retrieved via {{source}}.": "{{source}} から取得しました。",
     "Edit reference details": "文献情報を編集",
     "Edit details": "詳細を編集",
-    "Back to review": "確認に戻る"
+    "Back to review": "確認に戻る",
+    "Optimization prompt scope": "プロンプト最適化の範囲",
+    "Prompt optimization": "プロンプト最適化",
+    "Select the model and provider used to optimize questions.": "質問の最適化に使用するモデルとプロバイダーを選択します。",
+    "Prompt optimization model Model": "プロンプト最適化モデル",
+    "Prompt optimization model Reasoning effort": "プロンプト最適化モデルの推論強度"
   }
 }

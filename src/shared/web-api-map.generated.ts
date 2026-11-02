@@ -376,6 +376,7 @@ export const WEB_INVOKE_CHANNELS = {
   'settings.setOpenAlexCredential': 'settings:set-openalex-credential',
   'settings.setPackageMirror': 'settings:set-package-mirror',
   'settings.setProjectFilesFilter': 'settings:set-project-files-filter',
+  'settings.setPromptOptimizationModel': 'settings:set-prompt-optimization-model',
   'settings.setReasoningEffort': 'settings:set-reasoning-effort',
   'settings.setReviewerModel': 'settings:set-reviewer-model',
   'settings.setSemanticScholarCredential': 'settings:set-semantic-scholar-credential',

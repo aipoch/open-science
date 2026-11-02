@@ -7738,6 +7738,11 @@
     "Retrieved via {{source}}.": "已透過 {{source}} 取得文獻資訊。",
     "Edit reference details": "編輯文獻資訊",
     "Edit details": "編輯詳細資料",
-    "Back to review": "返回確認"
+    "Back to review": "返回確認",
+    "Optimization prompt scope": "提示詞優化範圍",
+    "Prompt optimization": "提示詞優化",
+    "Select the model and provider used to optimize questions.": "選擇用於優化問題的模型和供應商。",
+    "Prompt optimization model Model": "提示詞優化模型",
+    "Prompt optimization model Reasoning effort": "提示詞優化模型推理強度"
   }
 }

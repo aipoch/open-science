@@ -767,6 +767,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.setOpenAlexCredential',
       'settings.setPackageMirror',
       'settings.setProjectFilesFilter',
+      'settings.setPromptOptimizationModel',
       'settings.setReasoningEffort',
       'settings.setReviewerModel',
       'settings.setSemanticScholarCredential',

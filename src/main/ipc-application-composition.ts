@@ -343,6 +343,7 @@ export const createApplicationModules = async (
   }))
   const promptOptimization = new PromptOptimizationService({
     getProject: (id) => sessionPackages.projectRepository.get(id),
+    listProjects: () => sessionPackages.projectRepository.list(),
     resolveTarget: settingsBootstrap.resolveSessionAgentTarget,
     runner: optimizationRunner
   })

@@ -59,6 +59,7 @@ import {
   type SetShowNotificationContentRequest,
   type SetProjectFilesFilterRequest,
   type SetReasoningEffortRequest,
+  type SetPromptOptimizationModelRequest,
   type SetReviewerModelRequest,
   type SetSessionDetailsModelRequest,
   type SetSubagentModelRequest,
@@ -233,6 +234,13 @@ const registerSettingsIpcHandlers = ({
     const configuration = readReviewerModel(request)
     return snapshotCommits.currentSnapshotAfter(service.setReviewerModel(configuration))
   })
+  ipcMainHandle(
+    'settings:set-prompt-optimization-model',
+    async (_event, request: SetPromptOptimizationModelRequest) =>
+      snapshotCommits.currentSnapshotAfter(
+        service.setPromptOptimizationModel(readSubagentModel(request))
+      )
+  )
   ipcMainHandle(
     'settings:set-session-details-model',
     async (_event, request: SetSessionDetailsModelRequest) => {

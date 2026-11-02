@@ -413,4 +413,26 @@ const VisionModelSelect = (): React.JSX.Element => {
   )
 }
 
-export { ReviewerModelSelect, SessionDetailsModelSelect, SubagentModelSelect, VisionModelSelect }
+const PromptOptimizationModelSelect = (): React.JSX.Element => {
+  const { t } = useTranslation()
+
+  return (
+    <ModelPolicySelect
+      variant="standard"
+      modelAriaLabel={t('Prompt optimization model Model')}
+      reasoningEffortAriaLabel={t('Prompt optimization model Reasoning effort')}
+      inheritLabel={t('Same as main model')}
+      configuration={useSettingsStore((state) => state.promptOptimizationModel)}
+      pending={useSettingsStore((state) => state.promptOptimizationModelPending)}
+      setConfiguration={(next) => useSettingsStore.getState().setPromptOptimizationModel(next)}
+    />
+  )
+}
+
+export {
+  PromptOptimizationModelSelect,
+  ReviewerModelSelect,
+  SessionDetailsModelSelect,
+  SubagentModelSelect,
+  VisionModelSelect
+}

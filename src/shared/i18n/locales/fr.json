@@ -8078,6 +8078,11 @@
     "Retrieved via {{source}}.": "Informations obtenues via {{source}}.",
     "Edit reference details": "Modifier les informations bibliographiques",
     "Edit details": "Modifier les détails",
-    "Back to review": "Revenir à la vérification"
+    "Back to review": "Revenir à la vérification",
+    "Optimization prompt scope": "Portée de l’optimisation du prompt",
+    "Prompt optimization": "Optimisation du prompt",
+    "Select the model and provider used to optimize questions.": "Sélectionnez le modèle et le fournisseur utilisés pour optimiser les questions.",
+    "Prompt optimization model Model": "Modèle d’optimisation du prompt",
+    "Prompt optimization model Reasoning effort": "Effort de raisonnement du modèle d’optimisation du prompt"
   }
 }

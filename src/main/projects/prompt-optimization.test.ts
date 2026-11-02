@@ -42,7 +42,10 @@ const setup = (
   }
   return new PromptOptimizationService({
     getProject: async (id: string) =>
-      id === 'deleted' ? null : { optimizationPrompt: id === 'custom' ? 'Keep it concise.' : '' },
+      id === 'deleted'
+        ? null
+        : { id, optimizationPrompt: id === 'custom' ? 'Keep it concise.' : '' },
+    listProjects: async () => [],
     resolveTarget: async (source) => resolveValidatedSessionAgentTarget(source, settings),
     runner,
     timeoutMs

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { optimizePromptRequestSchema } from './prompt-optimization'
+import {
+  optimizePromptRequestSchema,
+  resolveOptimizationPrompt,
+  type OptimizationPromptProject
+} from './prompt-optimization'
 import { createProjectRequestSchema, updateProjectRequestSchema } from './projects'
 
 describe('project optimization prompt', () => {
@@ -30,5 +34,29 @@ describe('project optimization prompt', () => {
         optimizationPrompt: 'x'.repeat(16001)
       }).success
     ).toBe(false)
+  })
+
+  it('resolves a current-project prompt before an all-project prompt and then the built-in default', () => {
+    const allProjects: OptimizationPromptProject[] = [
+      {
+        id: 'global',
+        optimizationPrompt: 'Use the global template.',
+        optimizationPromptScope: 'all'
+      },
+      {
+        id: 'current',
+        optimizationPrompt: 'Use the current template.',
+        optimizationPromptScope: 'current'
+      }
+    ]
+
+    expect(resolveOptimizationPrompt(allProjects[1], allProjects)).toBe('Use the current template.')
+    expect(
+      resolveOptimizationPrompt(
+        { id: 'other', optimizationPrompt: '', optimizationPromptScope: 'current' },
+        allProjects
+      )
+    ).toBe('Use the global template.')
+    expect(resolveOptimizationPrompt(undefined, [])).toBeDefined()
   })
 })

@@ -7904,6 +7904,11 @@
     "Retrieved via {{source}}.": "Über {{source}} abgerufen.",
     "Edit reference details": "Bibliografische Angaben bearbeiten",
     "Edit details": "Details bearbeiten",
-    "Back to review": "Zurück zur Überprüfung"
+    "Back to review": "Zurück zur Überprüfung",
+    "Optimization prompt scope": "Geltungsbereich der Prompt-Optimierung",
+    "Prompt optimization": "Prompt-Optimierung",
+    "Select the model and provider used to optimize questions.": "Wählen Sie das Modell und den Anbieter für die Optimierung von Fragen aus.",
+    "Prompt optimization model Model": "Modell für Prompt-Optimierung",
+    "Prompt optimization model Reasoning effort": "Reasoning-Aufwand des Prompt-Optimierungsmodells"
   }
 }
