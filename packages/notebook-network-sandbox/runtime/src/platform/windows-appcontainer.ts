@@ -13,6 +13,7 @@ import {
 } from './electron-as-node-launch-policy.js'
 import type { DependencyCheck } from './linux-isolation.js'
 import {
+  CommandGateway,
   LOCAL_RPC_BROKER_HOST,
   sharedGatewayPortActive,
   type GatewayCredentials
@@ -254,13 +255,18 @@ const verifyWindowsNetworkFence = async (
   gatewayPort: number
 ): Promise<void> => {
   let outside: Server | undefined
-  let gateway: Server | undefined
+  let gateway: CommandGateway | undefined
   try {
     outside = await listen(0)
     const outsideAddress = outside.address()
     if (!outsideAddress || typeof outsideAddress === 'string')
       throw new Error('The outside-port probe listener is unavailable.')
-    if (!sharedGatewayPortActive(gatewayPort)) gateway = await listen(gatewayPort)
+    // Keep the shared listener alive even if the last command finishes during either probe.
+    gateway = await CommandGateway.open({
+      sharedPort: gatewayPort,
+      credentials: { username: randomUUID(), password: randomBytes(32).toString('hex') },
+      decide: async () => ({ allowed: false })
+    })
     const outsideProbe = await runCapture(hostPath, [
       'launch',
       installationId,
@@ -284,7 +290,7 @@ const verifyWindowsNetworkFence = async (
       { cause }
     )
   } finally {
-    await Promise.all([closeServer(outside), closeServer(gateway)])
+    await Promise.all([closeServer(outside), gateway?.close()])
   }
 }
 
