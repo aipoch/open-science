@@ -3,6 +3,7 @@ import { open, readFile, realpath, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { TextExtraction } from '@aipoch/literature-reading'
 import type { Sharp } from 'sharp'
 import { ResourceBudgetExceededError } from '../resource-budget'
 import {
@@ -127,7 +128,7 @@ export class ImageContentError extends Error {
   }
 }
 
-export type PdfTextResult = import('@aipoch/literature-reading').TextExtraction
+export type PdfTextResult = TextExtraction
 
 export type AttachmentByteSource = {
   size: number
