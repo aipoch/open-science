@@ -1,4 +1,5 @@
 import type { PDFPageProxy } from 'pdfjs-dist'
+import type { LocalModelUse } from '../local-models/owner'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createPdfOcrSession as createSession, PDF_OCR_TIMEOUT_MS } from './pdf-ocr'
 
@@ -275,14 +276,22 @@ it('close joins worker termination before releasing ownership', async () => {
       })
   )
   let released = false
-  const closing = session.close().then(() => {
+  const closing = Promise.all([session.close(), session.close()]).then(() => {
     released = true
   })
-  await Promise.resolve()
-  await Promise.resolve()
-  expect(released, 'ownership must be retained until termination is confirmed').toBe(false)
-  finish()
-  await closing
+  try {
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(released, 'ownership must be retained until termination is confirmed').toBe(false)
+    expect(
+      release,
+      'model files must stay leased until the worker has exited'
+    ).not.toHaveBeenCalled()
+    expect(state.terminate).toHaveBeenCalledOnce()
+  } finally {
+    finish()
+    await closing
+  }
   expect(released).toBe(true)
   expect(release).toHaveBeenCalledOnce()
 })
@@ -294,3 +303,97 @@ it('does not render or spawn when the optional component is absent', async () =>
   expect(state.postMessage).not.toHaveBeenCalled()
   await session.close()
 })
+
+it.each([
+  { trigger: 'deadline', result: 'resolve' },
+  { trigger: 'deadline', result: 'reject' },
+  { trigger: 'setup-deadline', result: 'resolve' },
+  { trigger: 'setup-deadline', result: 'reject' },
+  { trigger: 'close', result: 'resolve' },
+  { trigger: 'close', result: 'reject' }
+])(
+  'settles a stalled OCR acquisition after $trigger with late $result',
+  async ({ trigger, result }) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    let resolveUse!: (use: LocalModelUse) => void
+    let rejectUse!: (error: Error) => void
+    const acquiring = new Promise<LocalModelUse>((resolve, reject) => {
+      resolveUse = resolve
+      rejectUse = reject
+    })
+    const acquireUse = vi.fn(() => {
+      if (trigger === 'setup-deadline') vi.advanceTimersByTime(PDF_OCR_TIMEOUT_MS + 1)
+      return acquiring
+    })
+    const session = createSession({ acquireUse })
+    const value = page()
+    const render = vi.spyOn(value, 'render')
+    const lateError = new Error('Component acquisition failed.')
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    let failure: unknown
+    let settled = false
+    const pending = session
+      .recognize(value)
+      .catch((error) => {
+        failure = error
+      })
+      .finally(() => {
+        settled = true
+      })
+    let closing: Promise<void> | undefined
+    const finish = (): void => {
+      if (result === 'resolve') resolveUse({ revision: 'late', assets: [], release })
+      else rejectUse(lateError)
+    }
+    try {
+      if (trigger !== 'close') {
+        await vi.advanceTimersByTimeAsync(trigger === 'deadline' ? PDF_OCR_TIMEOUT_MS + 1 : 0)
+        expect(settled, 'pending component acquisition must not hold the expired page wait').toBe(
+          true
+        )
+        expect(failure).toBeInstanceOf(Error)
+        expect((failure as Error).message).toContain('deadline exceeded')
+      } else {
+        let closed = false
+        closing = session.close().then(() => {
+          closed = true
+        })
+        await vi.advanceTimersByTimeAsync(0)
+        expect(
+          closed,
+          'closing before worker creation must not wait for component acquisition'
+        ).toBe(true)
+      }
+      expect(release).not.toHaveBeenCalled()
+      finish()
+      await pending
+      await closing
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      expect(
+        unhandled,
+        'late acquisition failure must remain observed after deadline cleanup'
+      ).not.toHaveBeenCalled()
+      expect(acquireUse).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledTimes(result === 'resolve' ? 1 : 0)
+      expect(render).not.toHaveBeenCalled()
+      expect(state.canvasSizes).toEqual([])
+      expect(state.postMessage).not.toHaveBeenCalled()
+      expect(state.terminate).not.toHaveBeenCalled()
+      if (trigger === 'close') expect(failure).toBe(result === 'reject' ? lateError : undefined)
+      await session.close()
+      await session.close()
+      expect(release).toHaveBeenCalledTimes(result === 'resolve' ? 1 : 0)
+    } finally {
+      try {
+        finish()
+        await pending
+        await closing
+        await session.close()
+        await new Promise<void>((resolve) => setImmediate(resolve))
+      } finally {
+        process.off('unhandledRejection', unhandled)
+      }
+    }
+  }
+)

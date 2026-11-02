@@ -56,8 +56,8 @@ export const variants = [
   {
     name: 'control-comment',
     file: ocr,
-    from: '// This worker owns Tesseract',
-    to: '// Control: this worker owns Tesseract',
+    from: '// A late worker failure must not become an uncaught backend error between pages.',
+    to: '// Control: a late worker failure must not become an uncaught backend error between pages.',
     control: true
   },
   {
@@ -77,8 +77,8 @@ export const variants = [
   {
     name: 'without-page-attempt-limit',
     file: ocr,
-    from: 'if (closed || attempts >= MAX_PDF_OCR_PAGES)',
-    to: 'if (closed)',
+    from: 'if (closed || !models || attempts >= MAX_PDF_OCR_PAGES)',
+    to: 'if (closed || !models)',
     test: 'bounds automatic OCR pages'
   },
   {
@@ -96,6 +96,20 @@ export const variants = [
     test: 'shares the 120-second admission budget'
   },
   {
+    name: 'wait-for-stalled-acquisition',
+    file: ocr,
+    from: 'await stop\n    lease?.release()',
+    to: 'await stop\n    await acquiring?.catch(() => {})\n    lease?.release()',
+    test: 'settles a stalled OCR acquisition'
+  },
+  {
+    name: 'without-late-lease-release',
+    file: ocr,
+    from: 'if (closed) use.release()',
+    to: 'if (closed) void 0',
+    test: 'settles a stalled OCR acquisition'
+  },
+  {
     name: 'extra-separator-charge',
     file: media,
     from: 'totalChars += block.length + (pageTexts.length ? 2 : 0)',
@@ -105,9 +119,9 @@ export const variants = [
   {
     name: 'without-ocr',
     file: media,
-    from: 'const ocr = options.ocr ? createPdfOcrSession() : undefined',
+    from: 'const ocr = options.ocr ? (options.createOcrSession ?? createPdfOcrSession)() : undefined',
     to: 'const ocr = undefined as ReturnType<typeof createPdfOcrSession> | undefined',
-    test: 'reads a real mixed PDF'
+    test: 'reads a real mixed'
   },
   {
     name: 'without-native-preservation',
@@ -121,7 +135,7 @@ export const variants = [
     file: media,
     from: '(hasPageContent && !nativeText) || (hasRaster && /^\\d+$/.test(nativeText))',
     to: 'hasPageContent && !nativeText',
-    test: 'reads a real mixed PDF'
+    test: 'reads a real mixed'
   },
   {
     name: 'broad-mixed-page-ocr',
@@ -229,11 +243,18 @@ export const variants = [
     test: 'close joins worker termination'
   },
   {
+    name: 'release-before-worker-exit',
+    file: ocr,
+    from: 'await stop\n    lease?.release()\n    lease = undefined',
+    to: 'lease?.release()\n    lease = undefined\n    await stop',
+    test: 'close joins worker termination'
+  },
+  {
     name: 'without-timeout-worker-termination',
     file: ocr,
     from: 'if (worker) stop ??= worker.terminate()',
     to: 'if (worker) stop ??= Promise.resolve(0)',
-    test: 'joins the real OCR owner and Tesseract descendant'
+    test: 'joins the real downloaded worker and descendant'
   },
   {
     name: 'without-worker-owner-stop',
