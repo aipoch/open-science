@@ -13,7 +13,7 @@ import {
   sideChatAnnotationText
 } from '../../../../shared/annotations'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/failure/messages'
 import {
   normalizeDelegationPolicy,
   type DelegationPolicy
@@ -747,7 +747,13 @@ const useWorkspaceConversationController = (
       revise: async (messageId, doc, annotations = []): Promise<EditedMessageSendResult> => {
         const current = optionsRef.current
         const sessionId = current.activeSession?.id
-        if (!sessionId || (docIsEmpty(doc) && annotations.length === 0)) return { ok: false }
+        if (
+          !sessionId ||
+          (docIsEmpty(doc) &&
+            annotations.length === 0 &&
+            !current.activeSession?.messages.find(({ id }) => id === messageId)?.uploads?.length)
+        )
+          return { ok: false }
         if (current.supportsImageInput !== true && annotations.some(annotationRequiresImageInput)) {
           current.composer.actions.setError(VISION_MODEL_NOT_CONFIGURED_MESSAGE)
           return { ok: false, displayMessage: VISION_MODEL_NOT_CONFIGURED_MESSAGE }

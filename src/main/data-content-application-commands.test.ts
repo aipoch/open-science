@@ -330,6 +330,7 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionImportPackage',
   'sessionPackageOperation',
   'useCaseCatalog',
+  'useCaseIntroduction',
   'sessionInspectDiagnostics',
   'sessionExportDiagnostics',
   'sessionCancelDiagnostics',
@@ -378,6 +379,46 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
+  it('routes manual catalog reloads to a fresh fetch and rejects remote callers', async () => {
+    const deps = createDependencies()
+    const refresh = vi.fn(async () => [])
+    const router = createApplicationCommandRouter()
+    registerDataContentApplicationCommands(router.registrar, {
+      ...deps.dependencies,
+      useCaseCatalog: {
+        refresh
+      } as unknown as DataContentApplicationCommandDependencies['useCaseCatalog']
+    })
+    await expect(dispatchCommand(router, 'useCaseCatalog', ['reload']).result).resolves.toEqual([])
+    expect(refresh).toHaveBeenCalledExactlyOnceWith(true)
+    await expect(
+      dispatchCommand(router, 'useCaseCatalog', ['reload'], remoteCaller).result
+    ).rejects.toThrow()
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+
+  it('routes introduction reads by validated slug and rejects remote callers', async () => {
+    const deps = createDependencies()
+    const introduction = vi.fn(async () => '# Research')
+    const router = createApplicationCommandRouter()
+    registerDataContentApplicationCommands(router.registrar, {
+      ...deps.dependencies,
+      useCaseCatalog: {
+        introduction
+      } as unknown as DataContentApplicationCommandDependencies['useCaseCatalog']
+    })
+    await expect(dispatchCommand(router, 'useCaseIntroduction', ['research']).result).resolves.toBe(
+      '# Research'
+    )
+    expect(introduction).toHaveBeenCalledExactlyOnceWith('research')
+    await expect(
+      dispatchCommand(router, 'useCaseIntroduction', ['../private']).result
+    ).rejects.toThrow()
+    await expect(
+      dispatchCommand(router, 'useCaseIntroduction', ['research'], remoteCaller).result
+    ).rejects.toThrow()
+    expect(introduction).toHaveBeenCalledOnce()
+  })
   it('routes explicit terminal retries to their exact Main execution and rejects malformed identity', async () => {
     const deps = createDependencies()
     const router = createApplicationCommandRouter()
@@ -465,6 +506,7 @@ describe('Data and content application commands', () => {
         'sessions:import-package',
         'sessions:package-operation',
         'sessions:use-case-catalog',
+        'sessions:use-case-introduction',
         'sessions:filter-pdf-context-candidates',
         'sessions:link-pdf-context',
         'sessions:list',

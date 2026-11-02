@@ -56,7 +56,14 @@ const APP_MCP_SERVERS: readonly AppMcpServerDefinition[] = [
   {
     canonicalName: 'open-science-literature',
     openCodeName: 'open_science_literature',
-    tools: ['read_document', 'list_pdf_elements', 'read_pdf_element']
+    tools: [
+      'read_document',
+      'list_pdf_elements',
+      'read_pdf_element',
+      'list_pdf_annotations',
+      'locate_pdf_annotation_target',
+      'create_pdf_annotation'
+    ]
   },
   {
     canonicalName: 'open-science-library',

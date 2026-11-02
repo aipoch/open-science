@@ -648,7 +648,8 @@ const parseCache = (
       (cache.frameworkId === 'claude-code' ||
         cache.frameworkId === 'opencode' ||
         cache.frameworkId === 'codex' ||
-        cache.frameworkId === 'codebuddy')
+        cache.frameworkId === 'codebuddy' ||
+        cache.frameworkId === 'pi')
     ) {
       return {
         ...common,

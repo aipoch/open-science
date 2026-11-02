@@ -41,7 +41,7 @@ const fixture = (): PersistedChatSession =>
     cwd: '/workspace',
     status: 'error',
     error: 'Historical failure',
-    errorReportable: false,
+    failure: { category: 'service' as const, diagnostics: {} },
     agentFrameworkId: 'codex',
     createdAt: 1,
     updatedAt: 1,

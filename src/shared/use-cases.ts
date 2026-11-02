@@ -29,6 +29,9 @@ const manifestSchema = z
       name: useCaseSourceSchema.shape.useCase,
       title: z.string().trim().min(1).max(1000),
       cover: z.object({ file_name: filename }),
+      catalog: z.string().trim().max(200).optional(),
+      catalog_name: z.string().trim().max(200).optional(),
+      introduction: z.object({ file_name: filename }).optional(),
       case: z.object({
         file_name: filename.refine((value) => /\.science$/i.test(value)),
         bytes: z
@@ -49,6 +52,9 @@ export type UseCase = {
   packageUrl: string
   sizeBytes: number
   sha256: string
+  category?: string
+  categoryKey?: string
+  introductionUrl?: string
 }
 
 // Mirror the website's published slug/filename contract; source paths and release URLs are not resource authority.
@@ -65,13 +71,18 @@ export const parseUseCases = (value: unknown): UseCase[] => {
       imageUrl: resource(item.cover.file_name),
       packageUrl: resource(item.case.file_name),
       sizeBytes: item.case.bytes,
-      sha256: item.case.sha256.toLowerCase()
+      sha256: item.case.sha256.toLowerCase(),
+      ...(item.catalog ? { category: item.catalog } : {}),
+      ...(item.catalog_name || item.catalog
+        ? { categoryKey: item.catalog_name || item.catalog }
+        : {}),
+      ...(item.introduction ? { introductionUrl: resource(item.introduction.file_name) } : {})
     }
   })
 }
 
 export const useCaseCatalogContract = defineApplicationCommandContract(
-  z.tuple([z.enum(['cached', 'refreshed'])]),
+  z.tuple([z.enum(['cached', 'refreshed', 'reload'])]),
   z.array(
     z.object({
       slug: useCaseSourceSchema.shape.useCase,
@@ -79,7 +90,19 @@ export const useCaseCatalogContract = defineApplicationCommandContract(
       imageUrl: z.string(),
       packageUrl: z.string(),
       sizeBytes: z.number(),
-      sha256: z.string()
+      sha256: z.string(),
+      category: z.string().optional(),
+      categoryKey: z.string().optional(),
+      introductionUrl: z.string().optional()
     })
   )
+)
+
+// Only catalog identities cross the boundary; callers cannot supply an arbitrary fetch URL.
+export const useCaseIntroductionContract = defineApplicationCommandContract(
+  z.tuple([useCaseSourceSchema.shape.useCase]),
+  z
+    .string()
+    .max(1024 * 1024)
+    .nullable()
 )

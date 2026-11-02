@@ -53,6 +53,7 @@ import type {
 import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
+  ShellPreparationError,
   buildShellEnv,
   type NotebookShellProcess
 } from './shell-process'
@@ -1479,14 +1480,6 @@ class NotebookExecutionOwner {
     const handoffDir = join(session.notebookSessionRoot, 'handoff')
     const inputRoot = this.inputRoot(session)
     const protectedDirs = [getAppClaudeConfigDir(this.options.configRoot)]
-    const environment = buildShellEnv(
-      handoffDir,
-      shellRuntimePlatform(runtimeBinding, platform),
-      process.env,
-      runtimeRoot,
-      prepareNotebookWorkloadCache(runtimeRoot),
-      runtimeBinding
-    )
     const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
       cwd: session.cwd,
       handoffDir,
@@ -1494,14 +1487,68 @@ class NotebookExecutionOwner {
       notebookSessionRoot: session.notebookSessionRoot,
       inputRoot,
       protectedDirs,
-      environment: Object.fromEntries(
-        Object.entries(environment).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined
-        )
-      ),
+      environment: {},
       timeoutMs: request.timeoutMs ?? 120_000,
       platform
     }
+    const replayExisting = (existing: NotebookRunRecord): NotebookShellResult => {
+      // Replaying admitted work must not depend on today's runtime readiness or environment.
+      // Keep validating the command, runtime binding and all other caller-controlled context.
+      const fingerprint = shellRunFingerprint(
+        session,
+        request,
+        { ...frozenShellContext, environment: existing.frozenShellContext?.environment ?? {} },
+        runtimeBinding
+      )
+      if (existing.submissionFingerprint !== fingerprint) {
+        throw new NotebookRunSubmissionConflictError(request.executionInvocationId!)
+      }
+      onAdmitted?.(existing)
+      return publicShellResult(existing)
+    }
+    if (request.executionInvocationId) {
+      const existing = await this.options.runTerminalization.findSubmission(
+        session,
+        request.executionInvocationId
+      )
+      const active = this.activeShellSubmissions.get(
+        `${notebookLaneKey(session.lane)}:${request.executionInvocationId}`
+      )
+      if (active) {
+        replayExisting(await active.admitted)
+        return active.promise
+      }
+      if (existing) return replayExisting(existing)
+      this.assertShellAdmissionAvailable(session)
+    }
+    let environment: NodeJS.ProcessEnv = {}
+    let preparationFailure: NotebookShellResult | undefined
+    try {
+      environment = this.shellProcess.prepareEnvironment
+        ? await this.shellProcess.prepareEnvironment({
+            handoffDir,
+            runtimeRoot,
+            runtimeBinding,
+            signal
+          })
+        : buildShellEnv(
+            handoffDir,
+            shellRuntimePlatform(runtimeBinding, platform),
+            process.env,
+            runtimeRoot,
+            prepareNotebookWorkloadCache(runtimeRoot),
+            runtimeBinding
+          )
+    } catch (error) {
+      if (!(error instanceof ShellPreparationError)) throw error
+      // No command can use this empty environment: persist the preparation failure below.
+      preparationFailure = error.result
+    }
+    frozenShellContext.environment = Object.fromEntries(
+      Object.entries(environment).filter(
+        (entry): entry is [string, string] => entry[1] !== undefined
+      )
+    )
     const submissionFingerprint = shellRunFingerprint(
       session,
       request,
@@ -1537,12 +1584,9 @@ class NotebookExecutionOwner {
           submissionIdentity
         )
         if (existing) {
-          if (existing.submissionFingerprint !== submissionFingerprint) {
-            throw new NotebookRunSubmissionConflictError(submissionIdentity)
-          }
+          const result = replayExisting(existing)
           resolveAdmitted(existing)
-          onAdmitted?.(existing)
-          return publicShellResult(existing)
+          return result
         }
       }
       // A teardown may have fenced this scope while an idempotency lookup was awaiting storage.
@@ -1639,7 +1683,8 @@ class NotebookExecutionOwner {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
           // Freeze this request before admission. The lane validates it against the live cwd and
           // activates per-command network grants when it reaches the front of its execution queue.
-          preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
+          if (!preparationFailure)
+            preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
           durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
         } catch (error) {
           rejectAdmitted(error)
@@ -1661,6 +1706,21 @@ class NotebookExecutionOwner {
           await liveRun.requestCancellation(lifecycleSignal.reason)
         }
         this.options.notifyAvailable(session, 'agent')
+        if (preparationFailure) {
+          const result = preparationFailure
+          const terminalized = await this.options.runTerminalization.runAdmitted({
+            session,
+            queuedRun: durableAdmission.run,
+            invoke: async () => ({
+              ...result,
+              status: 'failed',
+              traceback: '',
+              cwdAfter: frozenShellContext.cwd,
+              outputs: [{ type: 'stream', name: 'stderr', text: result.stderr }]
+            })
+          })
+          return publicShellResult(terminalized.run)
+        }
         try {
           lease = await this.shellAdmission.acquire(
             session.projectId,

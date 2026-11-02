@@ -1,10 +1,9 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react'
 import {
   ArrowUpRight,
-  ChevronLeft,
   ChevronRight,
   Download,
-  Shuffle,
+  GalleryHorizontalEnd,
   LoaderCircle
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -13,21 +12,78 @@ import { ErrorNotice } from '@/components/error-notice'
 import { importSessionPackage } from '@/lib/session-package-import'
 import { sessionPackageImportAvailable } from '@/lib/session-package-capabilities'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
+import { UseCaseIntroductionLoader } from './use-case-introduction-loader'
 import { UseCaseCover } from './UseCaseCover'
-import { preloadUseCaseCovers } from './use-case-cover-cache'
+import { UseCaseDetailsDialog } from './UseCaseDetailsDialog'
+import { UseCaseGalleryList } from '../marketplace/UseCaseGalleryList'
+import { UseCaseDetailsPage } from '../marketplace/UseCaseDetailsPage'
+import { useNavigationStore, type MarketplaceListSnapshot } from '@/stores/navigation-store'
 import { useUseCaseGalleryStore } from './use-case-gallery-store'
 import type { UseCase } from '../../../../shared/use-cases'
 
-export const UseCaseCarousel = (): React.JSX.Element | null => {
+export const UseCaseCarousel = ({
+  sectionRef,
+  variant = 'home',
+  compact = false
+}: {
+  sectionRef?: Ref<HTMLElement>
+  variant?: 'home' | 'marketplace'
+  compact?: boolean
+}): React.JSX.Element | null => {
   const { t } = useTranslation()
   const headingId = useId()
-  const { items, slugs, page, receive, select } = useUseCaseGalleryStore()
-  const [transition, setTransition] = useState<'random' | 'previous' | 'next'>('random')
-  const [previous, setPrevious] = useState<UseCase[]>()
-  const gridRef = useRef<HTMLDivElement>(null)
-  const randomIconRef = useRef<SVGSVGElement>(null)
-  const preparationRef = useRef<AbortController | undefined>(undefined)
-  useEffect(() => () => preparationRef.current?.abort(), [])
+  const projectId = useNavigationStore((state) => state.activeProjectId)
+  const initialListState = useNavigationStore((state) =>
+    state.marketplaceListContext?.projectId === state.activeProjectId
+      ? state.marketplaceListContext?.list
+      : undefined
+  )
+  // Capture the owning Project so a late list update cannot overwrite a different Project.
+  const updateListFilters = useCallback(
+    (snapshot: MarketplaceListSnapshot): void => {
+      if (projectId) useNavigationStore.getState().updateMarketplaceList(projectId, snapshot)
+    },
+    [projectId]
+  )
+  const [introductions] = useState(() => new UseCaseIntroductionLoader())
+  useEffect(() => () => introductions.cancelPrefetch(), [introductions])
+  const openMarketplace = (): void => {
+    setBrowser(null)
+    useNavigationStore.getState().openMarketplace('user')
+  }
+  const [browser, setBrowser] = useState<{ slug: string; opener: HTMLElement } | null>(null)
+  const { items, slugs, receive, loadMore, refreshRevision } = useUseCaseGalleryStore()
+  const [catalogStatus, setCatalogStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  // Every mounted gallery rechecks its warm renderer cache after the native refresh completes.
+  useEffect(() => {
+    if (refreshRevision)
+      void introductions.refreshCached(useUseCaseGalleryStore.getState().items ?? [])
+  }, [introductions, refreshRevision])
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshCompletion, setRefreshCompletion] = useState<number | null>(null)
+  const refreshInFlight = useRef(false)
+  const catalogRevision = useRef(0)
+  const refreshCatalog = async (): Promise<void> => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
+    catalogRevision.current++
+    setRefreshing(true)
+    setRefreshCompletion(null)
+    useUseCaseGalleryStore.getState().retryFailedCovers()
+    if (!useUseCaseGalleryStore.getState().items?.length) setCatalogStatus('loading')
+    try {
+      receive(await window.api.sessions.useCaseCatalog('reload'), true)
+      setCatalogStatus('ready')
+    } catch {
+      // A failed request leaves the current catalog intact.
+      setCatalogStatus('error')
+    } finally {
+      setRefreshCompletion(catalogRevision.current)
+      refreshInFlight.current = false
+      setRefreshing(false)
+    }
+  }
+  const sentinelRef = useRef<HTMLDivElement>(null)
   const [pending, setPending] = useState<string>()
   const operation = usePackageOperationStore((state) => state.operation)
   const useCaseFailure = usePackageOperationStore((state) => state.useCaseFailure)
@@ -43,18 +99,28 @@ export const UseCaseCarousel = (): React.JSX.Element | null => {
       setCancelFailed(true)
     }
   }
-  const pages = Math.ceil((items?.length ?? 0) / 3)
 
   useEffect(() => {
     let active = true
+    const revision = catalogRevision.current
     const load = async (): Promise<void> => {
       try {
-        const cached = await window.api.sessions.useCaseCatalog('cached')
-        if (active && !useUseCaseGalleryStore.getState().items) receive(cached)
+        const cached = await window.api.sessions.useCaseCatalog('cached').catch(() => undefined)
+        if (
+          cached &&
+          active &&
+          revision === catalogRevision.current &&
+          !useUseCaseGalleryStore.getState().items
+        )
+          receive(cached)
         const refreshed = await window.api.sessions.useCaseCatalog('refreshed')
-        if (active) receive(refreshed)
+        if (active && revision === catalogRevision.current) {
+          receive(refreshed)
+          setCatalogStatus('ready')
+        }
       } catch {
         // Keep the cached list when the application transport is temporarily unavailable.
+        if (active && revision === catalogRevision.current) setCatalogStatus('error')
       }
     }
     void load()
@@ -78,245 +144,207 @@ export const UseCaseCarousel = (): React.JSX.Element | null => {
     return item ? [item] : []
   })
   const visibleKey = visible.map((item) => item.slug).join(',')
-  useLayoutEffect(() => {
-    const grid = gridRef.current
-    if (!previous) return
-    if (!grid?.animate || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setPrevious(undefined)
-      return
+  // Observe the shared homepage viewport so reaching the list end appends one batch.
+  useEffect(() => {
+    const sentinel = sentinelRef.current
+    if (!sentinel || slugs.length >= (items?.length ?? 0)) return
+    let active = true
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!active || !entries.some((entry) => entry.isIntersecting)) return
+        active = false
+        observer.disconnect()
+        loadMore()
+      },
+      { root: sentinel.closest('[data-home-scroll]'), rootMargin: '0px 0px 80px 0px' }
+    )
+    observer.observe(sentinel)
+    return () => {
+      active = false
+      observer.disconnect()
     }
-    // Leave the old group opaque underneath until the new cards fully cover it.
-    const offset = transition === 'random' ? 0 : transition === 'previous' ? -6 : 6
-    const animation = grid.animate(
-      [
-        { opacity: 0, transform: `translateX(${offset}px)` },
-        { opacity: 1, transform: 'translateX(0)' }
-      ],
-      { duration: 180, easing: 'ease-out' }
-    )
-    void animation.finished.then(
-      () => setPrevious(undefined),
-      () => {}
-    )
-    return () => animation.cancel()
-  }, [visibleKey, transition, previous])
+  }, [visibleKey, slugs.length, items?.length, loadMore])
 
-  const changePage = (direction: 'previous' | 'next'): void => {
-    if (!items?.length) return
-    preparationRef.current?.abort()
-    const nextPage = (page + (direction === 'next' ? 1 : pages - 1)) % pages
-    setTransition(direction)
-    setPrevious(visible)
-    select(
-      Array.from(
-        { length: Math.min(3, items.length) },
-        (_, index) => items[(nextPage * 3 + index) % items.length].slug
-      ),
-      nextPage
+  const renderImport = (item: UseCase): React.JSX.Element => {
+    const download =
+      operation?.useCaseDownload?.slug === item.slug ? operation.useCaseDownload : undefined
+    const downloading = Boolean(download && operationActive)
+    const ownsOperation =
+      operation?.kind === 'import' &&
+      operationActive &&
+      (useCaseSlug === item.slug || pending === item.slug)
+    const waiting = ownsOperation && !download && operation?.state === 'awaiting-selection'
+    const importing = ownsOperation || downloading || pending === item.slug
+    const busy = importing && !waiting
+    const percent = download?.totalBytes
+      ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
+      : undefined
+    // Detail imports keep the primary action in place as its label becomes live progress.
+    const label = waiting
+      ? t('Continue')
+      : busy
+        ? operation?.state === 'cancelling'
+          ? t('Cancelling…')
+          : downloading
+            ? percent === undefined
+              ? t('Preparing download…')
+              : percent === 100
+                ? t('Verifying download…')
+                : t('Downloading {{percent}}%', { percent })
+            : t('Importing…')
+        : t('Import')
+    return (
+      <>
+        <Button
+          variant="default"
+          size="lg"
+          className="min-w-32 rounded-lg px-4 text-sm hover:bg-[color-mix(in_oklch,var(--primary),black_10%)] aria-busy:disabled:opacity-100"
+          aria-busy={busy}
+          disabled={
+            !waiting && (Boolean(pending) || operationActive || !sessionPackageImportAvailable())
+          }
+          onClick={() =>
+            waiting ? usePackageOperationStore.getState().setOpen(true) : void importExample(item)
+          }
+        >
+          {busy ? (
+            <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
+          ) : waiting ? (
+            <ChevronRight className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Download className="size-3.5" aria-hidden="true" />
+          )}
+          <span aria-live="polite">{label}</span>
+        </Button>
+        {downloading && (
+          <Button
+            variant="ghost"
+            size="lg"
+            className="px-3 text-muted-foreground"
+            disabled={operation?.state === 'cancelling'}
+            onClick={() => void cancelDownload()}
+          >
+            {t('Cancel')}
+          </Button>
+        )}
+      </>
     )
   }
 
-  const randomize = async (): Promise<void> => {
-    if (!items?.length) return
-    const shuffled = [...items]
-    for (let index = shuffled.length - 1; index > 0; index--) {
-      const target = Math.floor(Math.random() * (index + 1))
-      ;[shuffled[index], shuffled[target]] = [shuffled[target], shuffled[index]]
-    }
-    const next = shuffled.slice(0, 3)
-    if (
-      items.length > 3 &&
-      next.every((item) => visible.some((current) => current.slug === item.slug))
-    ) {
-      next[2] = shuffled[3]
-    } else if (next.length > 1 && next.every((item, index) => item.slug === visible[index]?.slug)) {
-      next.push(next.shift()!)
-    }
-    preparationRef.current?.abort()
-    const preparation = new AbortController()
-    preparationRef.current = preparation
-    const grid = gridRef.current
-    if (grid?.animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const icon = randomIconRef.current
-      icon?.getAnimations({ subtree: true }).forEach((animation) => animation.cancel())
-      // Lucide draws each arrowhead separately; keep it in sync with its own shaft segments.
-      const [downHead, upHead, upShaft, downStart, downEnd] = icon?.querySelectorAll('path') ?? []
-      const arrows = [
-        [downHead, downStart, downEnd],
-        [upHead, upShaft]
-      ]
-      arrows.forEach((segments, index) =>
-        segments.forEach((segment) =>
-          segment?.animate(
-            [
-              { transform: 'scaleY(1)', transformOrigin: '12px 12px', opacity: 1 },
-              { transform: 'scaleY(-1)', transformOrigin: '12px 12px', opacity: 0.65 },
-              { transform: 'scaleY(1)', transformOrigin: '12px 12px', opacity: 1 }
-            ],
-            { duration: 220, delay: index * 30, easing: 'ease-in-out' }
-          )
-        )
-      )
-    }
-    await preloadUseCaseCovers(
-      next.map((item) => item.imageUrl),
-      preparation.signal
-    )
-    if (preparation.signal.aborted) return
-    // Reconcile again if a background refresh removed a candidate during image preparation.
-    const latest = useUseCaseGalleryStore.getState().items ?? []
-    const selected = next.filter((item) => latest.some((entry) => entry.slug === item.slug))
-    for (const item of latest) {
-      if (selected.length >= Math.min(3, latest.length)) break
-      if (!selected.some((entry) => entry.slug === item.slug)) selected.push(item)
-    }
-    setPrevious(visible)
-    setTransition('random')
-    select(
-      selected.map((item) => item.slug),
-      page
+  // Share download progress and recovery between the card and its open detail dialog.
+  const renderDownloadStatus = (item: UseCase, inline = false): React.JSX.Element => {
+    const download =
+      operation?.useCaseDownload?.slug === item.slug ? operation.useCaseDownload : undefined
+    const downloading = Boolean(download && operationActive)
+    const downloadFailed =
+      (download && operation?.state === 'failed') || useCaseFailure === item.slug
+    const percent = download?.totalBytes
+      ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
+      : 0
+    const progressLabel = download?.totalBytes
+      ? percent === 100
+        ? t('Verifying download…')
+        : t('Downloading {{percent}}%', { percent })
+      : t('Preparing download…')
+    return (
+      <>
+        {downloading && !inline && (
+          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 bg-background/95 pr-3 text-xs sm:pr-4">
+            <div className="relative flex h-[35px] min-w-0 flex-1 items-center overflow-hidden px-3 sm:px-4">
+              <div
+                role="progressbar"
+                aria-label={t('Example download progress')}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={download?.totalBytes ? percent : undefined}
+                aria-valuetext={progressLabel}
+                className="pointer-events-none absolute inset-0"
+              >
+                <span
+                  style={{ transform: `scaleX(${percent / 100})` }}
+                  className="block h-full w-full origin-left bg-primary/25 transition-transform duration-150 ease-linear motion-reduce:transition-none"
+                />
+              </div>
+              <span role="status" className="relative tabular-nums text-text-100">
+                {operation?.state === 'cancelling' ? t('Cancelling…') : progressLabel}
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-status-warning-foreground hover:bg-status-warning-surface hover:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface dark:hover:text-status-warning-dark-foreground"
+              disabled={operation?.state === 'cancelling'}
+              onClick={() => void cancelDownload()}
+            >
+              {t('Cancel')}
+            </Button>
+          </div>
+        )}
+        {(downloadFailed || (downloading && cancelFailed)) && (
+          <div
+            className={
+              inline
+                ? 'mt-2'
+                : `absolute inset-0 z-10 overflow-auto bg-background/95 p-3 sm:p-4 ${downloading ? 'pb-14' : ''}`
+            }
+          >
+            <ErrorNotice
+              inline
+              role="alert"
+              tone="amber"
+              description={
+                cancelFailed && downloading
+                  ? t('Could not cancel download. Try again.')
+                  : t('Could not download this example. Try again.')
+              }
+              primaryButton={
+                downloadFailed
+                  ? {
+                      label: t('Try again'),
+                      disabled: Boolean(pending) || operationActive,
+                      onClick: () => void importExample(item)
+                    }
+                  : undefined
+              }
+            />
+          </div>
+        )}
+      </>
     )
   }
 
   const renderCards = (cases: UseCase[]): React.JSX.Element[] =>
     cases.map((item) => {
-      const download =
-        operation?.useCaseDownload?.slug === item.slug ? operation.useCaseDownload : undefined
-      const downloading = Boolean(download && operationActive)
-      const ownsOperation =
-        operation?.kind === 'import' &&
-        operationActive &&
-        (useCaseSlug === item.slug || pending === item.slug)
-      const waiting = ownsOperation && !download && operation?.state === 'awaiting-selection'
-      const importing = ownsOperation || downloading || pending === item.slug
-      const busy = importing && !waiting
-      const downloadFailed =
-        (download && operation?.state === 'failed') || useCaseFailure === item.slug
-      const percent = download?.totalBytes
-        ? Math.min(100, Math.floor((download.completedBytes / download.totalBytes) * 100))
-        : 0
-      const progressLabel = download?.totalBytes
-        ? percent === 100
-          ? t('Verifying download…')
-          : t('Downloading {{percent}}%', { percent })
-        : t('Preparing download…')
       return (
         <article
           key={item.slug}
+          data-case-slug={item.slug}
           aria-label={item.title}
-          className="group relative min-w-0 overflow-hidden rounded-xl border border-border bg-bg-000"
+          onMouseEnter={() => introductions.schedulePrefetch(item)}
+          onMouseLeave={() => introductions.cancelPrefetch()}
+          onFocusCapture={() => introductions.schedulePrefetch(item)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) introductions.cancelPrefetch()
+          }}
+          className="group relative min-w-0 overflow-hidden rounded-xl border border-border bg-bg-000 transition-[box-shadow,border-color] duration-300 ease-out hover:border-primary/25 hover:shadow-card-opaque focus-within:border-primary/40 focus-within:shadow-card-opaque motion-reduce:transition-none"
         >
+          <button
+            type="button"
+            aria-label={item.title}
+            onClick={(event) => setBrowser({ slug: item.slug, opener: event.currentTarget })}
+            className="absolute inset-0 z-10 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
           <div className="relative aspect-[16/9] overflow-hidden bg-bg-100">
-            <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
-            {/* Active imports retain their actions independently of hover or pointer focus. */}
-            <div
-              data-active={importing || undefined}
-              className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/40 p-2 opacity-0 transition-opacity group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 data-[active=true]:opacity-100 [@media(hover:none)]:opacity-100 sm:flex-row"
-            >
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 cursor-pointer gap-1 rounded-md px-3 text-xs"
-                asChild
-              >
-                <a
-                  href={`https://aipoch.com/open-science/use-cases/${item.slug}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <ArrowUpRight className="size-3.5" aria-hidden="true" />
-                  {t('Details')}
-                </a>
-              </Button>
-              <Button
-                variant="default"
-                size="sm"
-                className="h-8 gap-1 rounded-md px-3 text-xs hover:bg-[color-mix(in_oklch,var(--primary),black_10%)] aria-busy:disabled:opacity-100"
-                aria-busy={busy}
-                disabled={
-                  !waiting &&
-                  (Boolean(pending) || operationActive || !sessionPackageImportAvailable())
-                }
-                onClick={() =>
-                  waiting
-                    ? usePackageOperationStore.getState().setOpen(true)
-                    : void importExample(item)
-                }
-              >
-                {busy ? (
-                  <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
-                ) : waiting ? (
-                  <ChevronRight className="size-3.5" aria-hidden="true" />
-                ) : (
-                  <Download className="size-3.5" aria-hidden="true" />
-                )}
-                {waiting ? t('Continue') : t('Import')}
-              </Button>
+            <div className="absolute inset-0 transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-within:scale-[1.025] motion-reduce:transform-none motion-reduce:transition-none">
+              <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
             </div>
-            {/* Transient status overlays the cover so every card keeps its original size. */}
-            {downloading && (
-              <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 bg-background/95 pr-3 text-xs sm:pr-4">
-                <div className="relative flex h-[35px] min-w-0 flex-1 items-center overflow-hidden px-3 sm:px-4">
-                  <div
-                    role="progressbar"
-                    aria-label={t('Example download progress')}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={download?.totalBytes ? percent : undefined}
-                    aria-valuetext={progressLabel}
-                    className="pointer-events-none absolute inset-0"
-                  >
-                    <span
-                      style={{ transform: `scaleX(${percent / 100})` }}
-                      className="block h-full w-full origin-left bg-primary/25 transition-transform duration-150 ease-linear motion-reduce:transition-none"
-                    />
-                  </div>
-                  <span role="status" className="relative tabular-nums text-text-100">
-                    {operation?.state === 'cancelling' ? t('Cancelling…') : progressLabel}
-                  </span>
-                </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="text-status-warning-foreground hover:bg-status-warning-surface hover:text-status-warning-foreground dark:text-status-warning-dark-foreground dark:hover:bg-status-warning-dark-surface dark:hover:text-status-warning-dark-foreground"
-                  disabled={operation?.state === 'cancelling'}
-                  onClick={() => void cancelDownload()}
-                >
-                  {t('Cancel')}
-                </Button>
-              </div>
-            )}
-            {(downloadFailed || (downloading && cancelFailed)) && (
-              <div
-                className={`absolute inset-0 z-10 overflow-auto bg-background/95 p-3 sm:p-4 ${downloading ? 'pb-14' : ''}`}
-              >
-                <ErrorNotice
-                  inline
-                  role="alert"
-                  tone="amber"
-                  description={
-                    cancelFailed && downloading
-                      ? t('Could not cancel download. Try again.')
-                      : t('Could not download this example. Try again.')
-                  }
-                  primaryButton={
-                    downloadFailed
-                      ? {
-                          label: t('Try again'),
-                          disabled: Boolean(pending) || operationActive,
-                          onClick: () => void importExample(item)
-                        }
-                      : undefined
-                  }
-                />
-              </div>
-            )}
+            {renderDownloadStatus(item)}
           </div>
           {/* Keep padding outside the clamped text so a third line cannot bleed into it. */}
           <div className="h-16 px-3 py-3 sm:px-4">
             <h3
               title={item.title}
-              className="line-clamp-2 font-serif text-sm leading-5 text-text-000 [overflow-wrap:anywhere] sm:text-base sm:leading-5"
+              className="line-clamp-2 font-medium text-sm leading-5 text-text-000 [overflow-wrap:anywhere] sm:text-base sm:leading-5"
             >
               {item.title}
             </h3>
@@ -325,70 +353,98 @@ export const UseCaseCarousel = (): React.JSX.Element | null => {
       )
     })
 
-  if (!items?.length) return null
+  const selected = items?.find((item) => item.slug === browser?.slug)
+  const inlineDetails = variant === 'marketplace' && compact
+  if (!items?.length && variant === 'home') return null
 
   return (
-    <section
-      aria-labelledby={headingId}
-      className="mt-auto pt-10 [&_button:enabled]:cursor-pointer"
-    >
-      <div className="mb-3 flex items-center justify-between gap-4">
-        <h2 id={headingId} className="text-base font-medium text-text-000">
-          <a
-            href="https://aipoch.com/open-science/use-cases"
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex cursor-pointer items-center gap-1 rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            {t('Use Case Gallery')}
-            <ArrowUpRight className="size-3.5" aria-hidden="true" />
-          </a>
-        </h2>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('Random examples')}
-            title={t('Random examples')}
-            disabled={items.length < 2}
-            onClick={randomize}
-          >
-            <Shuffle ref={randomIconRef} className="size-4 origin-center" aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('Previous examples')}
-            disabled={pages < 2}
-            onClick={() => changePage('previous')}
-          >
-            <ChevronLeft className="size-4" aria-hidden="true" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t('Next examples')}
-            disabled={pages < 2}
-            onClick={() => changePage('next')}
-          >
-            <ChevronRight className="size-4" aria-hidden="true" />
-          </Button>
-        </div>
-      </div>
-      <div className="relative">
-        {previous && (
+    <>
+      {variant === 'marketplace' ? (
+        <div className="flex min-h-0 flex-1 flex-col">
           <div
-            aria-hidden="true"
-            inert
-            className="pointer-events-none absolute inset-x-0 top-0 grid grid-cols-3 gap-3 sm:gap-5"
+            className={
+              inlineDetails && browser && selected ? 'hidden' : 'flex min-h-0 flex-1 flex-col'
+            }
           >
-            {renderCards(previous)}
+            <UseCaseGalleryList
+              items={items ?? []}
+              catalogStatus={catalogStatus}
+              renderCards={renderCards}
+              refreshing={refreshing}
+              refreshCompletion={refreshCompletion}
+              onResetRefreshCompletion={() => setRefreshCompletion(null)}
+              onRefresh={() => void refreshCatalog()}
+              initialState={initialListState}
+              onFiltersChange={updateListFilters}
+              onOpenMarketplace={
+                compact
+                  ? (snapshot) => useNavigationStore.getState().openMarketplace('user', snapshot)
+                  : undefined
+              }
+            />
           </div>
-        )}
-        <div ref={gridRef} className="relative grid grid-cols-3 gap-3 sm:gap-5">
-          {renderCards(visible)}
+          {inlineDetails && browser && selected && (
+            <UseCaseDetailsPage
+              item={selected}
+              introductions={introductions}
+              onBack={() => {
+                const opener = browser.opener
+                setBrowser(null)
+                requestAnimationFrame(() => {
+                  if (opener.isConnected) opener.focus({ preventScroll: true })
+                })
+              }}
+              renderImport={renderImport}
+              renderDownloadStatus={(item) => renderDownloadStatus(item, true)}
+            />
+          )}
         </div>
-      </div>
-    </section>
+      ) : (
+        <section
+          ref={sectionRef}
+          aria-labelledby={headingId}
+          className="mt-auto -mx-3 overflow-clip px-3 pt-10 [&_button:enabled]:cursor-pointer"
+        >
+          <div className="sticky top-0 z-20 -mx-3 mb-3 flex items-center justify-between gap-4 bg-bg-10 px-3 py-2">
+            <h2 id={headingId} className="text-base font-medium text-text-000">
+              <button
+                type="button"
+                onClick={openMarketplace}
+                className="inline-flex cursor-pointer items-center gap-1 rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <GalleryHorizontalEnd className="size-4 text-text-100" aria-hidden="true" />
+                {t('Use Case Marketplace')}
+              </button>
+            </h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={t('Browse all examples')}
+              title={t('Browse all examples')}
+              onClick={openMarketplace}
+            >
+              <ArrowUpRight className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
+            {renderCards(visible)}
+          </div>
+          {slugs.length < (items?.length ?? 0) && (
+            <div ref={sentinelRef} className="h-px" aria-hidden="true" />
+          )}
+        </section>
+      )}
+      {!inlineDetails && browser && selected && (
+        <UseCaseDetailsDialog
+          item={selected}
+          introductions={introductions}
+          opener={browser.opener}
+          onClose={() => setBrowser(null)}
+          onOpenMarketplace={variant === 'home' ? openMarketplace : undefined}
+          renderImport={renderImport}
+          renderDownloadStatus={(item) => renderDownloadStatus(item, true)}
+        />
+      )}
+    </>
   )
 }

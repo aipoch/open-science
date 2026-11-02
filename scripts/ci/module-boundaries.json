@@ -1885,6 +1885,7 @@
         "src/main/local-models/download-sources.ts",
         "src/main/local-models/download.ts",
         "src/main/local-models/ipc.ts",
+        "src/main/local-models/ocr-owner.ts",
         "src/main/local-models/owner.ts"
       ],
       "layer": "host-owner",
@@ -1893,6 +1894,7 @@
       "requiredTests": [
         "src/main/local-models/download.test.ts",
         "src/main/local-models/owner.test.ts",
+        "src/main/local-models/ocr-owner.test.ts",
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",

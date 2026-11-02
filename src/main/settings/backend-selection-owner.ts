@@ -2,7 +2,7 @@ import { type ReasoningEffort } from '../../shared/model-preference-contract'
 import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
 import { type ResolvedReasoningEffort } from '@aipoch/providers'
 
-import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
+import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/failure/messages'
 import { DEFAULT_REASONING_EFFORT } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
 import type { ExplicitAgentBackendTarget } from './backend-target'
@@ -134,7 +134,8 @@ class BackendSelectionOwner {
     return forced === 'opencode' ||
       forced === 'claude-code' ||
       forced === 'codex' ||
-      forced === 'codebuddy'
+      forced === 'codebuddy' ||
+      forced === 'pi'
       ? forced
       : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
   }

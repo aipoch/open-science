@@ -24,6 +24,7 @@ import { LiteratureDetailDialog } from './detail/LiteratureDetailDialog'
 import { LiteratureDetailOverview } from './detail/LiteratureDetailOverview'
 import { LiteratureMergeDialog } from './duplicates/LiteratureMergeDialog'
 import { useLiteratureMerge } from './duplicates/useLiteratureMerge'
+import { LiteratureLinkImportDialog } from './imports/LiteratureLinkImportDialog'
 import { LiteratureCreateItemDialog } from './imports/LiteratureCreateItemDialog'
 import {
   LiteraturePdfBatchImportDialog,
@@ -1215,6 +1216,28 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     }
   }
 
+  const [isAddingLink, setIsAddingLink] = useState(false)
+  const linkImportTrigger = useRef<HTMLButtonElement | null>(null)
+  const openLinkImport = (trigger: HTMLButtonElement | null): void => {
+    linkImportTrigger.current = trigger
+    setIsAddingLink(true)
+  }
+  const restoreLinkImportFocus = (event: Event): void => {
+    if (!linkImportTrigger.current) return
+    event.preventDefault()
+    // Preserve the next dialog's focus during lookup → review → detail transitions.
+    if (
+      document.querySelector(
+        '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]'
+      )
+    )
+      return
+    const trigger = linkImportTrigger.current
+    linkImportTrigger.current = null
+    if (trigger.isConnected) trigger.focus()
+    else libraryEntryRef.current?.focus()
+  }
+
   const {
     isCreatingItem,
     isSavingNewItem,
@@ -1226,6 +1249,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     isImportingRecords,
     createManualItem,
     beginPdfImport,
+    beginLinkImport,
     closeItemEditor,
     previewRecordImport,
     previewRecordSelection,
@@ -1736,6 +1760,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
               importRecordsInputRef={importRecordsInputRef}
               beginManualImport={beginManualImport}
               onImportZotero={() => setZoteroOpen(true)}
+              beginLinkImport={openLinkImport}
               query={query}
               searchResetRevision={searchResetRevision}
               setQuery={setQuery}
@@ -2511,6 +2536,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           <LiteratureAddMenu
                             onImportZotero={() => setZoteroOpen(true)}
                             label={t('Add reference')}
+                            onAddLink={openLinkImport}
                             onAddReference={() => {
                               beginManualImport()
                             }}
@@ -2576,7 +2602,18 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           />
         ) : null}
 
+        {isAddingLink ? (
+          <LiteratureLinkImportDialog
+            onCloseAutoFocus={restoreLinkImportFocus}
+            onClose={() => setIsAddingLink(false)}
+            onResolved={(item, source) => {
+              setIsAddingLink(false)
+              beginLinkImport(item, source)
+            }}
+          />
+        ) : null}
         <LiteratureCreateItemDialog
+          onCloseAutoFocus={dialogItemEditor?.linkSource ? restoreLinkImportFocus : undefined}
           isCreatingItem={isCreatingItem}
           isSavingNewItem={isSavingNewItem}
           closeItemEditor={closeItemEditor}

@@ -471,6 +471,14 @@ describe('ConnectorAddForm copy', () => {
     const t = i18next.getFixedT('en')
     const fallback = 'runtime fallback'
     const connectorCases = [
+      ['europepmc', 'Independent Europe PMC core literature search and abstracts.'],
+      [
+        'research-datasets',
+        'Official research-data access requirements and public file discovery.'
+      ],
+      ['chea3', 'Transcription-factor enrichment rankings and official GMT library links.'],
+      ['biodbnet', 'Identifier discovery, conversion, recognition, orthology and pathways.'],
+      ['ctd', 'Official CTD public report entry points and access terms.'],
       [
         'cellosaurus',
         'Cell line identity, origin, diseases, quality records and database mappings from Cellosaurus.'

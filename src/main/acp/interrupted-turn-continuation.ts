@@ -64,6 +64,7 @@ const expectedFrameworkForReplayTarget = (
     'claude-code': 'claude-code',
     opencode: 'opencode',
     codebuddy: 'codebuddy',
+    pi: 'pi',
     'codex-response': 'codex',
     'codex-bridge': 'codex'
   }

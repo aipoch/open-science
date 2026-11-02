@@ -1,3 +1,8 @@
+import {
+  listPdfAnnotationsInput,
+  locatePdfAnnotationInput,
+  createPdfAnnotationInput
+} from '../pdf-annotations/agent-tools'
 import { z } from 'zod'
 
 import {
@@ -213,9 +218,33 @@ const LITERATURE_CORE_TOOLS: ResponsesNamespacedTool[] = [
   )
 ]
 
-const literatureTools = (options: { elements?: boolean } = {}): ResponsesNamespacedTool[] => [
+const literatureTools = (
+  options: { elements?: boolean; annotations?: boolean } = {}
+): ResponsesNamespacedTool[] => [
   LITERATURE_CORE_TOOLS[0]!,
-  ...(options.elements === false ? [] : LITERATURE_CORE_TOOLS.slice(1))
+  ...(options.elements === false ? [] : LITERATURE_CORE_TOOLS.slice(1)),
+  ...(options.annotations
+    ? [
+        tool(
+          LITERATURE_MCP_SERVER_NAME,
+          'list_pdf_annotations',
+          'Read bounded Notes & Annotations for a PDF linked to this Reading message; follow nextCursor.',
+          listPdfAnnotationsInput
+        ),
+        tool(
+          LITERATURE_MCP_SERVER_NAME,
+          'locate_pdf_annotation_target',
+          'Resolve a target before writing: target.kind document-note, page-note, text (physical pageNumber, exact quote, optional prefix/suffix), or element (elementRef from list_pdf_elements). Read evidence first. Text matches are alternatives; element targets are separate regions. Never guess an ambiguous match. References are current-message-only and expire. No OCR.',
+          locatePdfAnnotationInput
+        ),
+        tool(
+          LITERATURE_MCP_SERVER_NAME,
+          'create_pdf_annotation',
+          'Create a user-requested persistent PDF note/highlight/area from a located targetRef. Use a distinct requestId per mark and reuse it with identical content on retries. Notes/marks share across Literature and Workspace. Committed writes survive cancellation; multiple marks are not atomic and have no batch undo. Use list_pdf_annotations if a reply is lost. Does not edit/delete existing marks.',
+          createPdfAnnotationInput
+        )
+      ]
+    : [])
 ]
 
 const ARTIFACT_TOOLS: ResponsesNamespacedTool[] = [
@@ -249,7 +278,7 @@ export const createCodexBridgeMcpTools = (options: {
         prepareLatexBundle?: boolean
         acquirePdf?: boolean
       }
-  literature?: boolean | { elements?: boolean }
+  literature?: boolean | { elements?: boolean; annotations?: boolean }
   artifacts?: boolean
 }): ResponsesNamespacedTool[] => {
   const tools = [
@@ -270,7 +299,7 @@ export const codexBridgeStaticMcpTools = (): ResponsesNamespacedTool[] =>
   createCodexBridgeMcpTools({
     notebook: { memoryTools: false, wslSetupTools: false },
     library: true,
-    literature: true,
+    literature: { annotations: true },
     artifacts: true
   })
 

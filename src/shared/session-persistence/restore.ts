@@ -18,7 +18,7 @@ import { latestTurnAnchor } from './turn-anchor'
 // Restored interrupted sessions carry this error verbatim; the resume banner itself is driven by the Turn Outcome cause.
 export const INTERRUPTED_SESSION_ERROR = 'Session was interrupted before the app closed.'
 
-export const INTERRUPTED_TURN_ERROR = 'This turn was interrupted. Resume to continue.'
+export { INTERRUPTED_TURN_ERROR } from '../failure/messages'
 
 const isPermissionAuthorityBoundToActivePrompt = (
   session: PersistedChatSession,
@@ -177,7 +177,7 @@ export const rearmUnacceptedElicitationContinuations = (
     status: 'waiting-for-user',
     activeRun: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     resumeRecovery: undefined,
     messages: session.messages.map((message) =>
       message.id === promptId ? { ...message, interrupted: undefined } : message
@@ -254,7 +254,7 @@ export const restorePendingElicitationWait = (
     activeRun: undefined,
     resumeRecovery: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     messages: session.messages.map(clearInterrupted),
     conversationGraph: { ...graph, messages: graph.messages.map(clearInterrupted) }
   }
@@ -327,7 +327,7 @@ export const normalizeSessionAfterRestore = (
         },
         resumeRecovery: undefined,
         error: undefined,
-        errorReportable: undefined,
+        failure: undefined,
         messages: session.messages.map(normalizeMessageAfterRestore)
       }
     }
@@ -340,7 +340,7 @@ export const normalizeSessionAfterRestore = (
       activeRun: undefined,
       resumeRecovery: undefined,
       error: undefined,
-      errorReportable: undefined,
+      failure: undefined,
       messages: session.messages.map(normalizeMessageAfterRestore)
     }
   }
@@ -404,7 +404,7 @@ export const normalizeSessionAfterRestore = (
       status: 'idle',
       activeRun: undefined,
       error: undefined,
-      errorReportable: undefined,
+      failure: undefined,
       messages: session.messages.map(normalizeMessageAfterRestore)
     }
   }

@@ -1,5 +1,9 @@
 import type { UseCaseCatalog } from './session-package/use-case-catalog'
-import { useCaseCatalogContract, type UseCase } from '../shared/use-cases'
+import {
+  useCaseCatalogContract,
+  useCaseIntroductionContract,
+  type UseCase
+} from '../shared/use-cases'
 import type { OfficePreviewCommands } from './office-preview/application-commands'
 import type { FileSaveCommands } from './file-save'
 import type { ArtifactReproducibilityCommands } from './artifacts/artifact-reproducibility-commands'
@@ -244,9 +248,14 @@ const electronCommand = invocationCommandFor<ElectronDataContentApplicationComma
 const uploadCommand = invocationCommandFor<UploadApplicationCommandOwner>()
 
 const dataContentApplicationCommands = Object.freeze({
+  useCaseIntroduction: defineApplicationCommand<
+    'sessions:use-case-introduction',
+    readonly [string],
+    string | null
+  >('sessions:use-case-introduction', useCaseIntroductionContract),
   useCaseCatalog: defineApplicationCommand<
     'sessions:use-case-catalog',
-    readonly ['cached' | 'refreshed'],
+    readonly ['cached' | 'refreshed' | 'reload'],
     UseCase[]
   >('sessions:use-case-catalog', useCaseCatalogContract),
   officePreviewOpen: invocationCommandFor<OfficePreviewCommands>()('office-preview:open', 'open'),
@@ -721,6 +730,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.sessionImportPackage,
     dataContentApplicationCommands.sessionPackageOperation,
     dataContentApplicationCommands.useCaseCatalog,
+    dataContentApplicationCommands.useCaseIntroduction,
     dataContentApplicationCommands.sessionFilterPdfContextCandidates,
     dataContentApplicationCommands.sessionLinkPdfContext,
     dataContentApplicationCommands.sessionList,
@@ -1095,11 +1105,15 @@ const registerDataContentApplicationCommands = (
         )
         return dependencies.electron.importSessionPackage(invocation)
       },
+      'sessions:use-case-introduction': (invocation) => {
+        assertLocalCaller(invocation, dataContentApplicationCommands.useCaseIntroduction.name)
+        return dependencies.useCaseCatalog.introduction(invocation.args[0])
+      },
       'sessions:use-case-catalog': (invocation) => {
         assertLocalCaller(invocation, dataContentApplicationCommands.useCaseCatalog.name)
         return invocation.args[0] === 'cached'
           ? dependencies.useCaseCatalog.cached()
-          : dependencies.useCaseCatalog.refresh()
+          : dependencies.useCaseCatalog.refresh(invocation.args[0] === 'reload')
       },
       'sessions:package-operation': (invocation) => {
         assertElectronOrLocalWebCaller(

@@ -18,6 +18,8 @@
     "src/main/agent-framework/opencode-skill-reference.integration.test.ts",
     "src/main/agent-framework/opencode.test.ts",
     "src/main/agent-framework/opencode.ts",
+    "src/main/agent-framework/pi-runtime.ts",
+    "src/main/agent-framework/pi.ts",
     "src/main/agent-framework/registry.test.ts",
     "src/main/agent-framework/registry.ts",
     "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
@@ -32,6 +34,8 @@
     "src/main/agent-framework/codex.ts",
     "src/main/agent-framework/index.ts",
     "src/main/agent-framework/opencode.ts",
+    "src/main/agent-framework/pi-runtime.ts",
+    "src/main/agent-framework/pi.ts",
     "src/main/agent-framework/types.ts"
   ],
   "consumerModules": [],
@@ -544,5 +548,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "The Pi harness adds new framework owners (pi.ts, pi-execution.ts) and a bundled permission guard beyond the reviewed agent-framework boundary; retain full CI validation until the expanded boundary is reviewed and reclassified."
 }

@@ -101,6 +101,7 @@ export function useLiteratureImport({
         error: string | undefined
         duplicatePolicy: LiteratureDuplicatePolicy
         createdItemId: string | undefined
+        linkSource: 'DOI' | 'arXiv' | undefined
       }
     | undefined
   recordImport:
@@ -112,6 +113,7 @@ export function useLiteratureImport({
   setDuplicatePolicy: React.Dispatch<React.SetStateAction<LiteratureDuplicatePolicy>>
   isImportingRecords: boolean
   createManualItem: (item?: LiteratureItemInput) => Promise<void>
+  beginLinkImport: (item: LiteratureItemInput, source: 'DOI' | 'arXiv') => void
   beginPdfImport: (file: File | PdfAnnotationSource) => void
   closeItemEditor: () => void
   previewRecordImport: (file: File) => Promise<void>
@@ -155,6 +157,7 @@ export function useLiteratureImport({
   const [pendingImportPdf, setPendingImportPdf] = useState<File | PdfAnnotationSource>()
   const [pendingImportMetadataNotice, setPendingImportMetadataNotice] = useState<string>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
+  const [linkSource, setLinkSource] = useState<'DOI' | 'arXiv'>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
   const [recordImport, setRecordImport] = useState<
     RecordImportDraft & { destination: { name: string; projectId?: string; collectionId?: string } }
@@ -171,7 +174,8 @@ export function useLiteratureImport({
               reading: isReadingImportMetadata,
               error: createItemError,
               duplicatePolicy,
-              createdItemId
+              createdItemId,
+              linkSource
             }
           : undefined,
       [
@@ -182,7 +186,8 @@ export function useLiteratureImport({
         isReadingImportMetadata,
         createItemError,
         duplicatePolicy,
-        createdItemId
+        createdItemId,
+        linkSource
       ]
     )
   )
@@ -274,7 +279,16 @@ export function useLiteratureImport({
     }
   }
 
+  const beginLinkImport = (item: LiteratureItemInput, source: 'DOI' | 'arXiv'): void => {
+    resetItemEditor()
+    setPendingImportMetadataNotice(undefined)
+    setPendingImportDraft(item)
+    setLinkSource(source)
+    setIsCreatingItem(true)
+  }
+
   const beginPdfImport = (file: File | PdfAnnotationSource): void => {
+    setLinkSource(undefined)
     setDuplicatePolicy('reuse')
     const fallback = { ...emptyLiteratureItem(), title: titleFromPdfFilename(file.name) }
     const generation = ++importMetadataGenerationRef.current
@@ -324,6 +338,7 @@ export function useLiteratureImport({
     setIsCreatingItem(false)
     setPendingImportPdf(undefined)
     setPendingImportDraft(undefined)
+    setLinkSource(undefined)
     setIsReadingImportMetadata(false)
     setCreateItemError(undefined)
   }
@@ -489,6 +504,7 @@ export function useLiteratureImport({
   }
 
   const beginManualImport = (resetDraft = false): void => {
+    setLinkSource(undefined)
     if (resetDraft) {
       setPendingImportPdf(undefined)
       setPendingImportDraft(undefined)
@@ -514,6 +530,7 @@ export function useLiteratureImport({
     isImportingRecords,
     createManualItem,
     beginPdfImport,
+    beginLinkImport,
     closeItemEditor,
     previewRecordImport,
     previewRecordSelection,

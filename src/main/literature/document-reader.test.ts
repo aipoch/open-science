@@ -222,12 +222,16 @@ describe('LiteratureDocumentReader', () => {
       passages: [expect.objectContaining({ content: expect.stringContaining('cohort') })]
     })
     expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
+      ocr: true,
       maxChars: 24 * 1024 * 1024
     })
   })
 
   it.each([
     'open-science-pdfjs-verified-bytes-native-v4',
+    'open-science-pdfjs-verified-bytes-native-ocr-v7',
+    'open-science-pdfjs-automatic-reading-order-v1',
+    `open-science-pdfjs-verified-bytes-explicit-prose-regions-ocr-v5:${JSON.stringify(regions)}`,
     `open-science-pdfjs-verified-bytes-explicit-prose-regions-v2:${JSON.stringify(regions)}`
   ])('rebuilds old extraction caches and rejects old cursors: %s', async (oldFingerprint) => {
     const hash = (value: string): string => createHash('sha256').update(value).digest('hex')
@@ -308,7 +312,7 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(
       join(root, 'verified.pdf'),
       expect.objectContaining({ size: 42, readBytes: expect.any(Function) }),
-      { maxChars: 24 * 1024 * 1024 }
+      { ocr: true, maxChars: 24 * 1024 * 1024 }
     )
     expect(close).toHaveBeenCalledOnce()
     expect(verifyUnchanged).not.toHaveBeenCalled()
@@ -545,6 +549,7 @@ describe('LiteratureDocumentReader', () => {
     })
 
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'paper.pdf'), undefined, {
+      ocr: true,
       maxChars: 24 * 1024 * 1024
     })
   })
@@ -698,6 +703,7 @@ describe('LiteratureDocumentReader', () => {
       ]
     })
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
+      ocr: true,
       maxChars: 24 * 1024 * 1024
     })
   })
@@ -778,6 +784,35 @@ describe('LiteratureDocumentReader', () => {
         ).rejects.toThrow(code)
       }
     )
+
+    it('preserves all-unavailable OCR coverage in reading and search responses', async () => {
+      const coverage = { textPages: [], ocrPages: [], unavailablePages: [1, 2], uncheckedPages: [] }
+      vi.mocked(extractPdfText).mockResolvedValue({
+        text: '',
+        pageCount: 2,
+        truncated: false,
+        coverage
+      })
+      const { reader } = createReader()
+      await expect(reader.classificationEvidence(request)).resolves.toEqual({
+        coverage: 'unavailable',
+        passages: []
+      })
+      await expect(
+        reader.searchAttachment({ ...request, projectId: 'project-1' })
+      ).resolves.toMatchObject({
+        documents: [expect.objectContaining({ coverage })],
+        passages: []
+      })
+      await expect(
+        reader.readCurrent({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          promptMessageId: 'message-1',
+          input: { documentId: 'binding-1' }
+        })
+      ).resolves.toMatchObject({ document: { coverage }, passage: { text: '' } })
+    })
 
     it('returns unavailable for an oversized PDF without resolving or extracting it', async () => {
       const { reader, resolveVersion } = createReader()

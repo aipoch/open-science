@@ -3,8 +3,47 @@ import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-s
 
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
 
+type LiteratureAnnotationOperation = 'list' | 'locate' | 'create'
+
+type LiteratureAnnotationSummary = Readonly<{
+  operation: LiteratureAnnotationOperation
+  documentId?: string
+  total?: number
+  readOnly?: boolean
+  annotations?: readonly Readonly<{
+    id?: string
+    kind?: string
+    pageNumber?: number
+    quote?: string
+    note?: string
+    color?: string
+  }>[]
+  targets?: readonly Readonly<{
+    targetRef?: string
+    kind?: string
+    pageNumber?: number
+    quote?: string
+  }>[]
+  created?: Readonly<{
+    id?: string
+    kind?: string
+    pageNumber?: number
+    note?: string
+    color?: string
+  }>
+}>
+
 type LiteratureToolSummary = Readonly<{
   action: LiteratureToolAction
+  annotation?: LiteratureAnnotationSummary
+  textCoverage?: readonly Readonly<{
+    name: string
+    parsed: number
+    total: number
+    ocr: number
+    missing: readonly number[]
+    unverified?: readonly number[]
+  }>[]
   pdfElements?: Readonly<{
     caption?: string
     elementCount?: number
@@ -119,6 +158,33 @@ const pdfElementToolAction = (
   return undefined
 }
 
+const pdfAnnotationToolAction = (
+  ...identities: Array<string | undefined>
+): LiteratureAnnotationOperation | undefined => {
+  for (const identity of identities) {
+    if (!identity) continue
+    const name = normalizeIdentity(identity)
+    for (const operation of ['list', 'locate', 'create'] as const) {
+      if (
+        name === `open-science-literature/${operation}-pdf-annotations` ||
+        name === `open-science-literature-${operation}-pdf-annotations`
+      )
+        return operation
+    }
+    if (
+      name === 'open-science-literature/locate-pdf-annotation-target' ||
+      name === 'open-science-literature-locate-pdf-annotation-target'
+    )
+      return 'locate'
+    if (
+      name === 'open-science-literature/create-pdf-annotation' ||
+      name === 'open-science-literature-create-pdf-annotation'
+    )
+      return 'create'
+  }
+  return undefined
+}
+
 const buildPdfElementToolSummary = (
   action: 'search' | 'read',
   outputValue: unknown
@@ -205,6 +271,112 @@ const buildPdfElementToolSummary = (
       imageIncluded: typeof output?.imageIncluded === 'boolean' ? output.imageIncluded : undefined,
       incomplete,
       limitations
+    }
+  }
+}
+
+const buildPdfAnnotationToolSummary = (
+  operation: LiteratureAnnotationOperation,
+  inputValue: unknown,
+  outputValue: unknown
+): LiteratureToolSummary => {
+  const input = unwrapArguments(inputValue)
+  const outputs = collectOutputRecords(outputValue)
+  const output = outputs.find((record) => {
+    if (operation === 'list') return Array.isArray(record.annotations)
+    if (operation === 'locate') return Array.isArray(record.targets)
+    return typeof record.id === 'string' || typeof record.annotationId === 'string'
+  })
+  const error = outputs
+    .map((record) => {
+      if (!isRecord(record.error)) return undefined
+      return asString(record.error.message) ?? asString(record.error.code)
+    })
+    .find((message): message is string => message !== undefined)
+  const targetInput = isRecord(input.target) ? input.target : undefined
+  const documentId =
+    asString(output?.documentId) ?? asString(input.documentId) ?? asString(targetInput?.documentId)
+
+  if (!output && error) {
+    return {
+      action: 'read',
+      documentNames: [],
+      documentCount: 0,
+      error
+    }
+  }
+
+  if (operation === 'list') {
+    const annotations = (Array.isArray(output?.annotations) ? output.annotations : [])
+      .filter(isRecord)
+      .map((annotation) => ({
+        ...(asString(annotation.id) ? { id: asString(annotation.id) } : {}),
+        ...(asString(annotation.kind) ? { kind: asString(annotation.kind) } : {}),
+        ...(asPositiveInteger(annotation.pageNumber)
+          ? { pageNumber: asPositiveInteger(annotation.pageNumber) }
+          : {}),
+        ...(asString(annotation.quote) ? { quote: asString(annotation.quote) } : {}),
+        ...(asString(annotation.note) ? { note: asString(annotation.note) } : {}),
+        ...(asString(annotation.color) ? { color: asString(annotation.color) } : {})
+      }))
+    return {
+      action: 'read',
+      documentNames: [],
+      documentCount: 0,
+      annotation: {
+        operation,
+        ...(documentId ? { documentId } : {}),
+        total: asNonNegativeInteger(output?.total) ?? annotations.length,
+        readOnly: output?.readOnly === true,
+        annotations
+      }
+    }
+  }
+
+  if (operation === 'locate') {
+    const targets = (Array.isArray(output?.targets) ? output.targets : [])
+      .filter(isRecord)
+      .map((target) => ({
+        ...(asString(target.targetRef) ? { targetRef: asString(target.targetRef) } : {}),
+        ...(asString(target.kind) ? { kind: asString(target.kind) } : {}),
+        ...(asPositiveInteger(target.pageNumber)
+          ? { pageNumber: asPositiveInteger(target.pageNumber) }
+          : {}),
+        ...(asString(target.quote) ? { quote: asString(target.quote) } : {})
+      }))
+    return {
+      action: 'read',
+      documentNames: [],
+      documentCount: 0,
+      annotation: {
+        operation,
+        ...(documentId ? { documentId } : {}),
+        targets
+      }
+    }
+  }
+
+  const created = output
+    ? {
+        ...(asString(output.id ?? output.annotationId)
+          ? { id: asString(output.id ?? output.annotationId) }
+          : {}),
+        ...(asString(output.kind) ? { kind: asString(output.kind) } : {}),
+        ...(asPositiveInteger(output.pageNumber)
+          ? { pageNumber: asPositiveInteger(output.pageNumber) }
+          : {}),
+        ...(asString(output.note) ? { note: asString(output.note) } : {}),
+        ...(asString(output.color) ? { color: asString(output.color) } : {})
+      }
+    : undefined
+  return {
+    action: 'read',
+    documentNames: [],
+    documentCount: 0,
+    annotation: {
+      operation,
+      ...(documentId ? { documentId } : {}),
+      ...(created ? { created } : {})
     }
   }
 }
@@ -352,6 +524,52 @@ const pageRangeFromOutput = (
   }
 }
 
+const textCoverageFromOutput = (
+  output: UnknownRecord | undefined
+): LiteratureToolSummary['textCoverage'] => {
+  const documents = isRecord(output?.document)
+    ? [output.document]
+    : Array.isArray(output?.documents)
+      ? output.documents.filter(isRecord)
+      : []
+  const result = documents.flatMap((document) => {
+    const coverage = isRecord(document.coverage) ? document.coverage : undefined
+    const total = asPositiveInteger(document.pageCount)
+    if (!coverage || !total) return []
+    const pages = (value: unknown): number[] =>
+      Array.isArray(value)
+        ? [
+            ...new Set(
+              value.filter(
+                (page): page is number =>
+                  typeof page === 'number' &&
+                  Number.isSafeInteger(page) &&
+                  page > 0 &&
+                  page <= total
+              )
+            )
+          ]
+        : []
+    const text = pages(coverage.textPages)
+    const ocr = pages(coverage.ocrPages)
+    const unverified = pages(coverage.unverifiedPages)
+    const missing = [
+      ...new Set([...pages(coverage.unavailablePages), ...pages(coverage.uncheckedPages)])
+    ].sort((a, b) => a - b)
+    return [
+      {
+        name: asString(document.name) ?? '',
+        total,
+        parsed: new Set([...text, ...ocr]).size,
+        ocr: ocr.length,
+        missing,
+        ...(unverified.length ? { unverified } : {})
+      }
+    ]
+  })
+  return result.length ? result : undefined
+}
+
 const buildLiteratureToolSummary = (
   inputValue: unknown,
   outputValue?: unknown
@@ -393,11 +611,46 @@ const buildLiteratureToolSummary = (
         ? output.nextCursor !== null
         : undefined
 
+  // ACP retains the bounded presentation block even when the passage JSON is truncated.
+  const textCoverage =
+    textCoverageFromOutput(output) ??
+    (Array.isArray(presentation?.textCoverage)
+      ? presentation.textCoverage.slice(0, 3).flatMap((entry) => {
+          if (!isRecord(entry)) return []
+          const total = asPositiveInteger(entry.total)
+          const parsed = asNonNegativeInteger(entry.parsed)
+          const ocr = asNonNegativeInteger(entry.ocr)
+          if (!total || parsed === undefined || ocr === undefined || parsed > total || ocr > parsed)
+            return []
+          const pages = (value: unknown): number[] =>
+            Array.isArray(value)
+              ? [
+                  ...new Set(
+                    value.filter(
+                      (page): page is number =>
+                        Number.isSafeInteger(page) && page > 0 && page <= total
+                    )
+                  )
+                ].slice(0, 21)
+              : []
+          return [
+            {
+              name: asString(entry.name)?.slice(0, 512) ?? '',
+              total,
+              parsed,
+              ocr,
+              missing: pages(entry.missing),
+              unverified: pages(entry.unverified)
+            }
+          ]
+        })
+      : undefined)
   return {
     action,
     ...(query ? { query } : {}),
     documentNames,
     documentCount: documentNames.length || requestedIds.length,
+    ...(textCoverage ? { textCoverage } : {}),
     ...(passageCount !== undefined ? { passageCount } : {}),
     ...(pageStart !== undefined ? { pageStart } : {}),
     ...(pageEnd !== undefined ? { pageEnd } : {}),
@@ -625,6 +878,13 @@ export {
   isLiteratureLibraryLatexTool,
   isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool,
-  pdfElementToolAction
+  pdfElementToolAction,
+  pdfAnnotationToolAction,
+  buildPdfAnnotationToolSummary
 }
-export type { LiteratureToolAction, LiteratureToolSummary }
+export type {
+  LiteratureAnnotationOperation,
+  LiteratureAnnotationSummary,
+  LiteratureToolAction,
+  LiteratureToolSummary
+}

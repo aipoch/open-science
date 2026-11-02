@@ -407,3 +407,18 @@ describe('selected reference import', () => {
     ).toBe(true)
   })
 })
+
+it.each([
+  ['10.1234/paper', 'doi:10.1234/paper'],
+  ['pmid:12345', 'pmid:12345'],
+  ['arxiv:2401.12345', 'arxiv:2401.12345']
+])('looks up %s without mutating the library', async (input, reference) => {
+  const item = { title: 'Resolved reference' }
+  const resolve = vi.fn().mockResolvedValue([{ item }])
+  const owner = createLiteratureCommandOwner({
+    literatureReferenceResolver: { resolve }
+  } as unknown as Services)
+  await expect(owner.lookupMetadata(input)).resolves.toBe(item)
+  expect(resolve).toHaveBeenCalledWith([reference])
+  expect(broadcastToRenderers).not.toHaveBeenCalled()
+})

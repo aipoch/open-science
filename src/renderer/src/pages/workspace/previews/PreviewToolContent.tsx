@@ -31,6 +31,9 @@ import { respondToSessionPlan } from '../session-plan/respond-to-session-plan'
 import { PlanPreviewSurface, type RestoredPlanResponder } from '../session-plan/SessionPlanSurfaces'
 
 const LibraryPreview = lazy(() => import('./LibraryPreview'))
+const MarketplacePreview = lazy(() =>
+  import('../../home/UseCaseCarousel').then((module) => ({ default: module.UseCaseCarousel }))
+)
 const SessionReplayPreview = lazy(() =>
   import('../SessionReplayPreview').then((module) => ({ default: module.SessionReplayPreview }))
 )
@@ -349,6 +352,20 @@ export const PreviewToolContent = ({
           isActive={isActive}
           scopeRequest={item.libraryScopeRequest}
         />
+      </Suspense>
+    )
+  }
+
+  if (item.toolKind === 'marketplace') {
+    return (
+      <Suspense fallback={null}>
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <MarketplacePreview
+            key={activeProjectId ?? 'no-active-project'}
+            variant="marketplace"
+            compact
+          />
+        </div>
       </Suspense>
     )
   }
