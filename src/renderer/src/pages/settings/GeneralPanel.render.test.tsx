@@ -7,7 +7,9 @@ import { useUpdateStore } from '@/stores/update-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { i18next } from '@/i18n'
+import { AppearancePanel } from './AppearancePanel'
 import { GeneralPanel } from './GeneralPanel'
+import { NotificationsPanel } from './NotificationsPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/logo-dark.png', () => ({ default: 'logo-dark.png' }))
@@ -252,7 +254,7 @@ describe('GeneralPanel command line tool', () => {
   })
 })
 
-describe('GeneralPanel About', () => {
+describe('GeneralPanel app information', () => {
   it('keeps app identity and resources at the top of General settings', async () => {
     await act(async () => {
       root.render(<GeneralPanel />)
@@ -262,16 +264,17 @@ describe('GeneralPanel About', () => {
     // The dialog header bar is the single panel title; the panel itself starts with sections.
     expect(container.querySelector('[data-slot="settings-panel-header"]')).toBeNull()
     expect(container.querySelector('h2')).toBeNull()
+    expect(container.querySelector('[data-settings-anchor="general.about"] h3')).toBeNull()
 
     const sections = Array.from(container.querySelectorAll('[data-slot="settings-section"]'))
-    expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('About')
+    expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('Window behavior')
   })
 })
 
-describe('GeneralPanel notifications', () => {
+describe('NotificationsPanel', () => {
   it('toggles task notifications off via the settings API', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -293,7 +296,7 @@ describe('GeneralPanel notifications', () => {
 
   it('keeps task content private by default and can verify native delivery', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -319,7 +322,7 @@ describe('GeneralPanel notifications', () => {
 
   it('reserves the test-notification feedback slot so a result causes no layout shift', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -339,13 +342,25 @@ describe('GeneralPanel notifications', () => {
   })
 })
 
-describe('GeneralPanel appearance', () => {
+describe('AppearancePanel', () => {
+  it('renders appearance controls in their own settings panel', async () => {
+    await act(async () => {
+      root.render(<AppearancePanel />)
+    })
+    await flush()
+
+    expect(
+      container.querySelector('[data-settings-anchor="appearance.preferences"]')
+    ).not.toBeNull()
+    expect(container.textContent).toContain('Language')
+  })
+
   it('sets the theme preference from the segmented control and reflects it on <html>', async () => {
     useThemeStore.getState().setPreference('light')
     document.documentElement.classList.remove('dark')
 
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -382,13 +397,27 @@ describe('GeneralPanel appearance', () => {
     window.api.platform = 'darwin'
 
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
     expect(container.textContent).toContain('The Dock icon follows the resolved theme.')
     expect(document.body.querySelector('[role="radiogroup"][aria-label="App icon"]')).toBeNull()
     expect(settingsApi.listAppIcons).not.toHaveBeenCalled()
+  })
+})
+
+describe('NotificationsPanel', () => {
+  it('renders notification controls in their own settings panel', async () => {
+    await act(async () => {
+      root.render(<NotificationsPanel />)
+    })
+    await flush()
+
+    expect(
+      container.querySelector('[data-settings-anchor="notifications.preferences"]')
+    ).not.toBeNull()
+    expect(container.textContent).toContain('Task notifications')
   })
 })
 
@@ -569,10 +598,10 @@ describe('GeneralPanel diagnostics', () => {
   })
 })
 
-describe('GeneralPanel app icon', () => {
+describe('AppearancePanel app icon', () => {
   it('renders a preview tile per variant and switches the icon on click', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -602,7 +631,7 @@ describe('GeneralPanel app icon', () => {
 
   it('uses one App icon Tab stop and selects with ArrowRight', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -635,10 +664,10 @@ describe('GeneralPanel app icon', () => {
   })
 })
 
-describe('GeneralPanel appearance scale', () => {
+describe('AppearancePanel scale', () => {
   it('renders the interface scale control in Appearance', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 

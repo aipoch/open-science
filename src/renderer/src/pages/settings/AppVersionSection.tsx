@@ -1,7 +1,7 @@
 import { useManualUpdate } from '@/components/use-manual-update'
 import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-/* Hallmark · component: Settings About · macrostructure: identity + resource list
+/* Hallmark · component: Settings app information · macrostructure: identity + resource list
  * genre: modern-minimal · theme: Open-Science Settings
  * states: default · hover · focus · active · disabled · loading · error · success
  * contrast: pass (semantic Settings tokens) · slop: pass
@@ -17,8 +17,12 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import { useLocaleStore } from '@/stores/locale-store'
 import { useUpdateStore } from '@/stores/update-store'
-import { APP, getDocumentationUrl } from '../../../../shared/app-config'
-import { SettingsRow, SettingsSection } from './SettingsLayout'
+import {
+  APP,
+  getDocumentationUrl,
+  getInstallationDocumentationUrl
+} from '../../../../shared/app-config'
+import { SettingsRow } from './SettingsLayout'
 import { SETTINGS_MANUAL_UPDATE_GUIDE_CLOSE } from './settings-manual-update-guide'
 
 export type AppVersionSectionPreviewState =
@@ -116,7 +120,7 @@ const AppVersionSection = ({
         <ManualUpdateGuide manual={manual} status={status} backLabel={t('Back to settings')} />
       ) : null}
       <div hidden={manual.guideOpen} className={manual.guideOpen ? 'hidden' : 'contents'}>
-        <SettingsSection title={t('About')} aria-label={t('App version')}>
+        <div role="region" data-settings-anchor="general.about" aria-label={t('App version')}>
           <SettingsRow
             label={
               <div className="flex min-w-0 items-center gap-3">
@@ -173,10 +177,36 @@ const AppVersionSection = ({
           </SettingsRow>
 
           <div className="mb-5 pl-[3.75rem]">
-            <ManualUpdateLinks manual={manual} align="start" />
+            <ManualUpdateLinks manual={manual} align="start" showGuide={false} />
           </div>
 
           <div>
+            <ExternalTextLink
+              href={getInstallationDocumentationUrl(locale)}
+              data-settings-anchor="general.manual-install"
+              aria-label={t('Open manual installation and update guidance in your browser')}
+              className={resourceLinkClassName}
+            >
+              <Download
+                data-slot="about-resource-icon"
+                className={resourceIconClassName}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span data-slot="about-resource-title" className={resourceTitleClassName}>
+                  {t('Manual install or update')}
+                </span>
+                <span
+                  data-slot="about-resource-description"
+                  className={resourceDescriptionClassName}
+                >
+                  {t(
+                    'If an update runs into a problem, try replacing the current installation manually.'
+                  )}
+                </span>
+              </span>
+            </ExternalTextLink>
+
             <ExternalTextLink
               href={getDocumentationUrl(locale)}
               data-settings-anchor="general.help-center"
@@ -268,7 +298,7 @@ const AppVersionSection = ({
               </span>
             </ExternalTextLink>
           </div>
-        </SettingsSection>
+        </div>
       </div>
     </div>
   )
