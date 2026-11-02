@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ScanText } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { Check, ScanText, Trash2 } from 'lucide-react'
+import { Checkbox } from 'radix-ui'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
@@ -8,6 +10,32 @@ import { ErrorNotice } from './error-notice'
 import { DownloadProgressLine } from './DownloadProgressLine'
 
 const size = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+
+const languageLabel = (
+  code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+  t: TFunction
+): string => {
+  switch (code) {
+    case 'eng':
+      return t('English', { context: 'language' })
+    case 'chi_sim':
+      return t('Simplified Chinese')
+    case 'chi_tra':
+      return t('Traditional Chinese')
+    case 'deu':
+      return t('German')
+    case 'spa':
+      return t('Spanish')
+    case 'fra':
+      return t('French')
+    case 'jpn':
+      return t('Japanese')
+    case 'kor':
+      return t('Korean')
+    case 'rus':
+      return t('Russian')
+  }
+}
 
 export function LocalOcrControl({
   compact = false
@@ -18,21 +46,25 @@ export function LocalOcrControl({
   const [snapshot, setSnapshot] = useState<LocalModelSnapshot>()
   const [failed, setFailed] = useState(false)
   const [pending, setPending] = useState(false)
+  const mutationRevision = useRef(0)
+  const mutationPending = useRef(false)
   const [installedHere, setInstalledHere] = useState(false)
   useEffect(() => {
     let live = true
     let timer: ReturnType<typeof setTimeout>
     const poll = async (): Promise<void> => {
       let installing = false
+      const revision = mutationRevision.current
       try {
         const next = await window.api.localModels.getSnapshot('ocr')
         installing = next.availability === 'installing'
-        if (live) {
+        if (live && !mutationPending.current && revision === mutationRevision.current) {
           setSnapshot(next)
           setFailed(false)
         }
       } catch {
-        if (live) setFailed(true)
+        if (live && !mutationPending.current && revision === mutationRevision.current)
+          setFailed(true)
       }
       if (live) timer = setTimeout(() => void poll(), installing ? 750 : 2500)
     }
@@ -43,6 +75,9 @@ export function LocalOcrControl({
     }
   }, [])
   const run = async (action: 'install' | 'cancel' | 'remove'): Promise<void> => {
+    if (mutationPending.current) return
+    mutationPending.current = true
+    mutationRevision.current += 1
     setPending(true)
     try {
       setSnapshot(await window.api.localModels[action]('ocr'))
@@ -51,10 +86,40 @@ export function LocalOcrControl({
     } catch {
       setFailed(true)
     } finally {
+      mutationRevision.current += 1
+      mutationPending.current = false
       setPending(false)
     }
   }
-  const installed = snapshot?.availability === 'ready'
+  const setLanguage = async (
+    code: NonNullable<LocalModelSnapshot['ocrLanguages']>[number]['code'],
+    selected: boolean
+  ): Promise<void> => {
+    if (!snapshot?.selectedOcrLanguages) return
+    if (mutationPending.current) return
+    mutationPending.current = true
+    mutationRevision.current += 1
+    setPending(true)
+    try {
+      const languages = selected
+        ? [...snapshot.selectedOcrLanguages, code]
+        : snapshot.selectedOcrLanguages.filter((value) => value !== code)
+      setSnapshot(await window.api.localModels.setOcrLanguages(languages))
+      setFailed(false)
+    } catch {
+      setFailed(true)
+    } finally {
+      mutationRevision.current += 1
+      mutationPending.current = false
+      setPending(false)
+    }
+  }
+  const selectedLanguagesInstalled =
+    !snapshot?.ocrLanguages ||
+    snapshot.ocrLanguages
+      .filter((language) => language.selected)
+      .every((language) => language.installed)
+  const installed = snapshot?.availability === 'ready' && selectedLanguagesInstalled
   const installing = snapshot?.availability === 'installing'
   if (compact && ((!snapshot && !failed) || (installed && !installedHere && !snapshot?.error)))
     return null
@@ -62,13 +127,19 @@ export function LocalOcrControl({
     <div
       className={compact ? 'space-y-2' : 'space-y-3 rounded-lg border border-border bg-card p-4'}
     >
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <ScanText className="size-4 shrink-0" aria-hidden="true" />
-          <span className="text-sm font-medium">{t('Text recognition (OCR)')}</span>
-          {!compact && (
-            <span className="text-xs text-muted-foreground">
-              {t('English and Simplified Chinese')}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <ScanText
+            className={compact ? 'size-4 shrink-0' : 'mr-1 size-5 shrink-0 text-primary'}
+            aria-hidden="true"
+          />
+          <span className="text-sm font-semibold">{t('Text recognition (OCR)')}</span>
+          {!compact && snapshot && (
+            <span
+              role="status"
+              className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+            >
+              {installing ? t('Downloading…') : installed ? t('Installed') : t('Not installed')}
             </span>
           )}
         </div>
@@ -90,13 +161,13 @@ export function LocalOcrControl({
               <span role="status">{t('OCR installed. Read the PDF again.')}</span>
             ) : (
               <>
-                <span role="status">{t('Installed')}</span>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={pending || snapshot.inUse}
                   onClick={() => void run('remove')}
                 >
+                  <Trash2 className="size-3.5" aria-hidden="true" />
                   {t('Uninstall')}
                 </Button>
               </>
@@ -125,6 +196,38 @@ export function LocalOcrControl({
       {installing && snapshot && (
         <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
       )}
+      {!compact && snapshot?.ocrLanguages ? (
+        <fieldset aria-busy={pending} className="space-y-2 border-t border-border pt-3">
+          <legend className="sr-only">{t('OCR languages')}</legend>
+          <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2">
+            {snapshot.ocrLanguages.map((language) => {
+              const label = languageLabel(language.code, t)
+              return (
+                <Checkbox.Root
+                  key={language.code}
+                  checked={language.selected}
+                  disabled={pending || language.code === 'eng'}
+                  aria-label={label}
+                  onCheckedChange={(checked) => {
+                    if (checked !== 'indeterminate') void setLanguage(language.code, checked)
+                  }}
+                  className={`group flex min-h-10 items-center gap-2 rounded-md px-2 text-left text-sm outline-none enabled:hover:bg-muted/60 focus-visible:ring-3 focus-visible:ring-ring/50 ${language.code === 'eng' ? 'opacity-50' : ''}`}
+                >
+                  <span className="flex size-4 shrink-0 items-center justify-center rounded border border-border-100 bg-bg-000 text-text-000 group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary group-data-[state=checked]:text-primary-foreground">
+                    <Checkbox.Indicator>
+                      <Check className="size-3" aria-hidden="true" />
+                    </Checkbox.Indicator>
+                  </span>
+                  <span>{label}</span>
+                  {!language.installed ? (
+                    <span className="text-xs text-muted-foreground">{t('Not installed')}</span>
+                  ) : null}
+                </Checkbox.Root>
+              )
+            })}
+          </div>
+        </fieldset>
+      ) : null}
       {failed || snapshot?.error ? (
         <ErrorNotice
           inline

@@ -218,6 +218,46 @@ describe('fixture service connection evidence', () => {
     expect(destroy).not.toHaveBeenCalled()
   })
 
+  it.each(['during-preflight', 'after-preflight'] as const)(
+    'targets only the service pipe when disconnecting %s',
+    (timing) => {
+      const unrelated = {
+        readable: true,
+        writable: true,
+        _handle: { constructor: { name: 'Pipe' } },
+        destroy: vi.fn()
+      }
+      const socket = { ...unrelated, destroyed: false, destroy: vi.fn() }
+      socket.destroy.mockImplementation(() => {
+        socket.destroyed = true
+      })
+      Object.assign(socket, {
+        [Symbol('websocket')]: { _socket: socket, url: 'ws://localhost/desktop', readyState: 1 }
+      })
+      const ipcMain = new EventEmitter()
+      const send = vi.fn()
+      const contents = { send }
+      const disconnect = runInNewContext(`(${disconnectFixtureServiceConnection.toString()})`, {
+        process: { _getActiveHandles: () => [unrelated, socket] }
+      })
+      disconnect(
+        { ipcMain, BrowserWindow: { getAllWindows: () => [{ webContents: contents }] } },
+        timing
+      )
+      expect(socket.destroy).not.toHaveBeenCalled()
+      if (timing === 'during-preflight') {
+        contents.send('sessions:flush-request', { requestId: 'closing' })
+        expect(contents.send).toBe(send)
+        expect(send).toHaveBeenCalledWith('sessions:flush-request', { requestId: 'closing' })
+      } else {
+        ipcMain.emit('sessions:flush-response')
+        expect(ipcMain.listenerCount('sessions:flush-response')).toBe(0)
+      }
+      expect(socket.destroy).toHaveBeenCalledOnce()
+      expect(unrelated.destroy).not.toHaveBeenCalled()
+    }
+  )
+
   it('requires a newer connected epoch of the same service rather than old connected or a no-op', () => {
     const before = { phase: 'connected', epoch: 4 }
     expect(hasFixtureReconnected(before, before, 'generation-A', 'generation-A')).toBe(false)

@@ -57,6 +57,7 @@ const SUBAGENT_MODEL_ROUTES = new Set<ResolvedSubagentModelSnapshot['modelRoute'
   'opencode-anthropic',
   'opencode-openai',
   'codebuddy-openai',
+  'pi',
   'codex-responses',
   'codex-responses-compatibility',
   'codex-bridge'

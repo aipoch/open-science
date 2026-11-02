@@ -219,7 +219,7 @@ const WEB_UNAVAILABLE_CHANNELS = [
 
 const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
   'pdf-structure': ['read-cached', 'parse', 'cancel', 'read-thumbnail', 'clear-cache'],
-  'local-models': ['get-snapshot', 'install', 'cancel', 'remove'],
+  'local-models': ['get-snapshot', 'install', 'cancel', 'remove', 'set-ocr-languages'],
   artifacts: ['open-file'],
   cli: ['install', 'uninstall'],
   compute: [
@@ -291,6 +291,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'install-notebook-network',
     'cancel-notebook-network-setup',
     'install-opencode',
+    'install-pi',
     'install-recommended-wsl-distro',
     'install-wsl-platform',
     'list-device-credentials',
@@ -332,6 +333,7 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
     'uninstall-codebuddy',
     'uninstall-codex',
     'uninstall-opencode',
+    'uninstall-pi',
     'update-classification',
     'update-custom-server',
     'update-device-credential',

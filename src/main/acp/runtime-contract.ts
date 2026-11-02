@@ -157,6 +157,7 @@ export type AcpRuntimeOptions = {
     ) => Promise<SideChatSendMessageResult>
   }>
   literature?: Readonly<{
+    annotations?: import('../pdf-annotations/agent-tools').PdfAnnotationAgentTools
     elements?: import('../literature/pdf-structure/agent-reader').PdfElementTools
     isEnabled: (appSessionId: string, projectId: string) => Promise<boolean>
     resolveAttachmentVersion?: (versionId: string) => Promise<

@@ -79,11 +79,11 @@ const hasRawImagePayload = (value: unknown): boolean => {
 }
 
 // Extracts a safe tool identity (e.g. "WebFetch") from ACP extension metadata without exposing
-// arguments. Accepts anything carrying `_meta`, so both stream updates and permission tool calls reuse it.
-const extractProviderToolName = (source: { _meta?: unknown } | undefined): string | undefined => {
-  const meta = source?._meta
-
-  if (!isRecord(meta)) return undefined
+// arguments. Pi carries its canonical identity in top-level `name`, including native replay.
+const extractProviderToolName = (
+  source: { _meta?: unknown; name?: unknown } | undefined
+): string | undefined => {
+  const meta = isRecord(source?._meta) ? source._meta : {}
 
   const claudeCodeMeta = meta.claudeCode
 
@@ -96,7 +96,8 @@ const extractProviderToolName = (source: { _meta?: unknown } | undefined): strin
   return (
     trimProviderValue(meta.toolName) ??
     trimProviderValue(meta.tool_name) ??
-    trimProviderValue(meta['codebuddy.ai/toolName'])
+    trimProviderValue(meta['codebuddy.ai/toolName']) ??
+    trimProviderValue(source?.name)
   )
 }
 

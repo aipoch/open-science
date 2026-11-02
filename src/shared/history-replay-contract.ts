@@ -1,5 +1,5 @@
 export type HistoryReplayTarget =
-  'claude-code' | 'opencode' | 'codebuddy' | 'codex-response' | 'codex-bridge'
+  'claude-code' | 'opencode' | 'codebuddy' | 'pi' | 'codex-response' | 'codex-bridge'
 
 export type HistoryReplayDescriptor = {
   target: HistoryReplayTarget

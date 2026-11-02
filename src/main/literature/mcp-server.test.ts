@@ -11,6 +11,59 @@ import {
 const proseRegions = [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
 
 describe('Literature MCP server', () => {
+  it('exposes bounded annotation tools only when mounted and rejects forged scope before writes', async () => {
+    const annotations = {
+      list: vi.fn(async () => ({ annotations: [], nextCursor: null })),
+      locate: vi.fn(async () => ({ targets: [] })),
+      create: vi.fn(async () => ({ id: 'mark' }))
+    }
+    const server = createLiteratureMcpServer({ readDocument: vi.fn(), annotations })
+    const client = new Client({ name: 'annotation-test', version: '1' })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await Promise.all([client.connect(a), server.connect(b)])
+    try {
+      const tools = (await client.listTools()).tools
+      expect(
+        tools.find((tool) => tool.name === 'create_pdf_annotation')?.annotations
+      ).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true })
+      expect(
+        tools.find((tool) => tool.name === 'locate_pdf_annotation_target')?.inputSchema.type
+      ).toBe('object')
+      const args = {
+        targetRef: '00000000-0000-4000-8000-000000000000',
+        requestId: 'first-mark',
+        note: 'Small cohort'
+      }
+      expect(
+        await client.callTool({
+          name: 'create_pdf_annotation',
+          arguments: { ...args, projectId: 'forged' }
+        })
+      ).toMatchObject({ isError: true })
+      expect(annotations.create).not.toHaveBeenCalled()
+      expect(
+        await client.callTool({ name: 'create_pdf_annotation', arguments: args })
+      ).not.toHaveProperty('isError', true)
+      expect(annotations.create).toHaveBeenCalledWith(args, expect.any(AbortSignal))
+      expect(
+        await client.callTool({
+          name: 'locate_pdf_annotation_target',
+          arguments: { target: { kind: 'text', pageNumber: 2, quote: 'limitations' } }
+        })
+      ).not.toHaveProperty('isError', true)
+      annotations.create.mockRejectedValueOnce(
+        new Error("ENOENT: no such file or directory, open '/private/secret/path'")
+      )
+      const error = await client.callTool({ name: 'create_pdf_annotation', arguments: args })
+      expect(error).toMatchObject({ isError: true })
+      expect(JSON.stringify(error)).toContain('PDF_ANNOTATION_FAILED')
+      expect(JSON.stringify(error)).not.toContain('/private/')
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('exposes one linked-document read tool and forwards bounded retrieval input', async () => {
     const readDocument = vi.fn().mockResolvedValue({
       scope: 'relevant-passages',

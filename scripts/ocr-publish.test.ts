@@ -1,9 +1,15 @@
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { load } from 'js-yaml'
-import { publishOcrAssets, validateOcrCatalog, verifyOcrAssets } from './publish-ocr-assets.mjs'
+import {
+  checkOcrCdn,
+  publishOcrAssets,
+  validateOcrCatalog,
+  verifyOcrAssets
+} from './publish-ocr-assets.mjs'
 
 type Asset = { file: string; url: string; size: number; sha256: string }
 type Workflow = {
@@ -30,6 +36,65 @@ const asset = (file: string, content: string): Asset => {
 const contents = new Map(files.map((file) => [file, `${file} fixture`]))
 const assets = files.map((file) => asset(file, contents.get(file)!))
 const catalog = { revision: 'ocr-0123456789abcdef', assets }
+
+it.each([undefined, '7'])(
+  'verifies decoded CDN bytes with compressed content-length %s',
+  async (length) => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      const item = assets.find((entry) => entry.url === url)!
+      return new Response(contents.get(item.file), {
+        headers: {
+          'content-encoding': 'br',
+          ...(length ? { 'content-length': length } : {})
+        }
+      })
+    })
+    await expect(checkOcrCdn(catalog, fetchImpl, { verifyBytes: true })).resolves.toBeUndefined()
+    expect(fetchImpl).toHaveBeenCalledWith(
+      assets[0].url,
+      expect.objectContaining({ method: 'GET' })
+    )
+  }
+)
+
+it.each(['truncated', 'oversized', 'corrupt', 'unavailable'])(
+  'rejects %s CDN responses even with the expected content-length',
+  async (mode) => {
+    const item = assets[0]
+    const content = contents.get(item.file)!
+    const body =
+      mode === 'truncated'
+        ? content.slice(1)
+        : mode === 'oversized'
+          ? content + 'x'
+          : 'x'.repeat(item.size)
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(body, {
+          status: mode === 'unavailable' ? 403 : 200,
+          headers: { 'content-length': String(item.size) }
+        })
+    )
+    await expect(checkOcrCdn({ assets: [item] }, fetchImpl, { verifyBytes: true })).rejects.toThrow(
+      mode === 'corrupt' ? 'wrong SHA-256' : 'unavailable or has the wrong size'
+    )
+  }
+)
+
+it('retains content-length checks for HEAD probes', async () => {
+  const item = assets[0]
+  const fetchImpl = vi.fn(
+    async () =>
+      new Response(null, {
+        headers: { 'content-length': String(item.size) }
+      })
+  )
+  await expect(checkOcrCdn({ assets: [item] }, fetchImpl)).resolves.toBeUndefined()
+  expect(fetchImpl).toHaveBeenCalledWith(item.url, expect.objectContaining({ method: 'HEAD' }))
+  await expect(checkOcrCdn({ assets: [item] }, async () => new Response(null))).rejects.toThrow(
+    'unavailable or has the wrong size'
+  )
+})
 
 it('accepts only the three content-addressed first-party assets', () => {
   expect(validateOcrCatalog(catalog, environment)).toEqual(catalog)
@@ -58,7 +123,7 @@ it('accepts only the three content-addressed first-party assets', () => {
 })
 
 it('verifies local bytes and publishes missing objects create-only', async () => {
-  const directory = await mkdtemp(join('/private/tmp', 'ocr-cdn-'))
+  const directory = await mkdtemp(join(tmpdir(), 'ocr-cdn-'))
   try {
     for (const [file, content] of contents) await writeFile(join(directory, file), content)
     await verifyOcrAssets(directory, catalog)

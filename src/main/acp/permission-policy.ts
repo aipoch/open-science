@@ -321,7 +321,15 @@ const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
   'open-science-library/acquire_pdf',
   'open-science-literature/read_document',
   'open-science-literature/list_pdf_elements',
-  'open-science-literature/read_pdf_element'
+  'open-science-literature/read_pdf_element',
+  'open-science-literature/list_pdf_annotations',
+  'open-science-literature/locate_pdf_annotation_target',
+  'open-science-literature/create_pdf_annotation'
+])
+
+const LIBRARY_READ_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
+  'open-science-literature/list_pdf_annotations',
+  'open-science-literature/locate_pdf_annotation_target'
 ])
 
 const APP_INTERACTION_TOOLS = new Set([
@@ -361,6 +369,14 @@ const resolveLegacyAutomaticPermissionReason = (
   }
 
   const libraryIdentity = trustedMcpToolIdentity(params)
+  if (
+    libraryIdentity &&
+    LIBRARY_READ_TOOL_IDENTITIES.has(libraryIdentity) &&
+    context?.mcpServerNames?.map(canonicalAppMcpServerName).includes('open-science-literature')
+  ) {
+    return 'library_read'
+  }
+
   if (
     context?.profile === 'auto' &&
     libraryIdentity &&
@@ -446,8 +462,10 @@ const isManagedSkillPermission = (
   context: PermissionPolicyContext | undefined
 ): boolean =>
   isOpenCodeNativeSkillPermission(params, context) ||
-  ((context?.frameworkId === 'claude-code' || context?.frameworkId === 'codex') &&
-    context.mcpServerNames?.includes('skills') === true &&
+  ((context?.frameworkId === 'claude-code' ||
+    context?.frameworkId === 'codex' ||
+    String(context?.frameworkId) === 'pi') &&
+    context?.mcpServerNames?.includes('skills') === true &&
     trustedMcpToolIdentity(params) === 'skills/load_skill')
 
 export {

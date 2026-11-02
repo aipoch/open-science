@@ -75,7 +75,8 @@ describe('production delegated framework factory composition', () => {
       'claude-code',
       'opencode',
       'codex',
-      'codebuddy'
+      'codebuddy',
+      'pi'
     ])
   })
 

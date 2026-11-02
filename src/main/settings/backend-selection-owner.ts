@@ -134,7 +134,8 @@ class BackendSelectionOwner {
     return forced === 'opencode' ||
       forced === 'claude-code' ||
       forced === 'codex' ||
-      forced === 'codebuddy'
+      forced === 'codebuddy' ||
+      forced === 'pi'
       ? forced
       : (settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
   }

@@ -415,9 +415,11 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
     ;(element as HTMLElement).dataset.instance = 'original'
     // Freeze both the clip and Radix Presence animation partway through the exit.
     // Driver round trips on a busy CI runner must not consume the 160 ms reversal window.
+    let frame = 0
     const observer = new MutationObserver(() => {
+      cancelAnimationFrame(frame)
       if (element.getAttribute('data-state') !== 'closed') return
-      requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
         if (element.getAttribute('data-state') !== 'closed') return
         for (const animation of element.getAnimations()) {
           animation.pause()
@@ -426,7 +428,17 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
       })
     })
     observer.observe(element, { attributes: true, attributeFilter: ['data-state'] })
-    element.addEventListener('stop-freezing-exit', () => observer.disconnect(), { once: true })
+    element.addEventListener(
+      'stop-freezing-exit',
+      () => {
+        observer.disconnect()
+        cancelAnimationFrame(frame)
+        for (const animation of element.getAnimations()) {
+          if (animation.playState === 'paused') animation.play()
+        }
+      },
+      { once: true }
+    )
   })
   await page.keyboard.press('Escape')
   await expect
@@ -470,7 +482,6 @@ test('skip menu reverses its edge animation smoothly and keeps the arrow in sync
   await expect(menu).toHaveAttribute('data-instance', 'original')
   await menu.dispatchEvent('stop-freezing-exit')
   await page.getByRole('heading', { name: 'Which outputs?' }).click()
-  await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(menu).toHaveCount(0)
 })
 

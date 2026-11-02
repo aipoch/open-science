@@ -101,12 +101,24 @@ export async function checkOcrCdn(catalog, fetchImpl = fetch, { verifyBytes = fa
         redirect: 'error',
         signal: AbortSignal.timeout(30_000)
       })
-      if (!response.ok || Number(response.headers.get('content-length')) !== asset.size)
+      if (
+        !response.ok ||
+        (!verifyBytes && Number(response.headers.get('content-length')) !== asset.size)
+      )
         throw new Error(`OCR CDN is unavailable or has the wrong size: ${asset.file}`)
       if (verifyBytes) {
         if (!response.body) throw new Error(`OCR CDN has no readable body: ${asset.file}`)
         const hash = createHash('sha256')
-        for await (const chunk of response.body) hash.update(chunk)
+        // Fetch decodes CDN compression; Content-Length describes the encoded transfer, if present.
+        let bytes = 0
+        for await (const chunk of response.body) {
+          bytes += chunk.byteLength
+          if (bytes > asset.size)
+            throw new Error(`OCR CDN is unavailable or has the wrong size: ${asset.file}`)
+          hash.update(chunk)
+        }
+        if (bytes !== asset.size)
+          throw new Error(`OCR CDN is unavailable or has the wrong size: ${asset.file}`)
         if (hash.digest('hex') !== asset.sha256)
           throw new Error(`OCR CDN has the wrong SHA-256: ${asset.file}`)
       }

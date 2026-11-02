@@ -110,7 +110,18 @@ export const createPdfOcrSession = (
         if (!worker) {
           const entry = lease!.assets.find((asset) => asset.file === 'ocr-worker.mjs')
           if (!entry) throw new Error('OCR component worker is missing.')
-          worker = new Worker(pathToFileURL(entry.path))
+          const languages = lease!.languages ?? ['eng', 'chi_sim']
+          const languageAssets = Object.fromEntries(
+            languages.flatMap((code) => {
+              const asset = lease!.assets.find(
+                (candidate) => candidate.file === `${code}.traineddata.gz`
+              )
+              return asset ? [[code, asset.path]] : []
+            })
+          )
+          worker = new Worker(pathToFileURL(entry.path), {
+            workerData: { languages, languageAssets }
+          })
           // A late worker failure must not become an uncaught backend error between pages.
           worker.on('error', () => {
             closed = true

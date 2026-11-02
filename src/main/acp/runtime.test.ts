@@ -68,6 +68,7 @@ import {
   claudeCodeFramework,
   codeBuddyFramework,
   codexFramework,
+  createPiFramework,
   opencodeFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -219,6 +220,16 @@ const createDeferred = <Value = void>(): Deferred<Value> => {
   return { promise, resolve, reject }
 }
 
+type FakePromptContext = {
+  sessionId: string
+  text: string
+  prompt: ContentBlock[]
+  notifySessionUpdate: (update: SessionNotification['update']) => Promise<void>
+  requestPermission: (
+    toolCall: acp.RequestPermissionRequest['toolCall']
+  ) => Promise<acp.RequestPermissionResponse>
+}
+
 // Starts an in-memory fake agent that can create sessions, stream replies, and close sessions.
 const startFakeAgent = (
   process: FakeAgentProcess,
@@ -240,6 +251,7 @@ const startFakeAgent = (
     // When true, the resume handler rejects with the ACP "Resource not found" (-32002) — the signal a
     // replaced agent (e.g. after a provider switch) gives for a session id it does not hold.
     resumeNotFound?: boolean
+    resumePiSessionMissing?: boolean
     // When true, the resume handler rejects with a detail-free generic "Internal error" (-32603).
     resumeInternalError?: boolean
     // A plain handler error is serialized by the ACP SDK as -32603 with the original message in
@@ -265,11 +277,9 @@ const startFakeAgent = (
     onResume?: (sessionId: string) => Promise<void> | void
     onSetMode?: (context: { sessionId: string; modeId: string }) => Promise<void> | void
     onClose?: (sessionId: string) => Promise<void> | void
-    onPrompt?: (context: {
-      sessionId: string
-      text: string
-      prompt: ContentBlock[]
-    }) => Promise<PromptResponse | void> | PromptResponse | void
+    onPrompt?: (
+      context: FakePromptContext
+    ) => Promise<PromptResponse | void> | PromptResponse | void
     updatesForPrompt?: (text: string) => SessionNotification['update'][]
     elicitationForPrompt?: (context: {
       sessionId: string
@@ -382,6 +392,9 @@ const startFakeAgent = (
       if (options.resumeNotFound) {
         throw acp.RequestError.resourceNotFound(ctx.params.sessionId)
       }
+      if (options.resumePiSessionMissing) {
+        throw acp.RequestError.invalidParams(undefined, `unknown session: ${ctx.params.sessionId}`)
+      }
 
       if (options.resumeInternalError) {
         throw acp.RequestError.internalError()
@@ -453,7 +466,21 @@ const startFakeAgent = (
       const promptResponse = await options.onPrompt?.({
         sessionId: ctx.params.sessionId,
         text,
-        prompt: ctx.params.prompt
+        prompt: ctx.params.prompt,
+        notifySessionUpdate: (update) =>
+          ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update
+          }),
+        requestPermission: (toolCall) =>
+          ctx.client.request(acp.methods.client.session.requestPermission, {
+            sessionId: ctx.params.sessionId,
+            toolCall,
+            options: [
+              { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+              { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+            ]
+          })
       })
       const elicitation = options.elicitationForPrompt?.({
         sessionId: ctx.params.sessionId,
@@ -4448,7 +4475,16 @@ describe('ACP runtime session management', () => {
       'codex-responses-compatibility',
       'codex:provider-a'
     ],
-    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a']
+    ['Codex Bridge', codexFramework, 'codex-bridge', 'codex:provider-a'],
+    [
+      'Pi',
+      createPiFramework({
+        assertApprovedAdapter: () => undefined,
+        mapPermissionProfile: claudeCodeFramework.mapPermissionProfile
+      }),
+      'pi',
+      'pi:provider-a'
+    ]
   ] as const
 
   const createSideChatMcpHost = (): {
@@ -4471,12 +4507,68 @@ describe('ACP runtime session management', () => {
     }
   }
 
+  const probePiSideChatPermissions = async (
+    context: FakePromptContext,
+    responses: Map<string, acp.RequestPermissionResponse>
+  ): Promise<void> => {
+    const relayName = 'mcp__open_science_host_message__send_message'
+    const relayInput = { target: 'main', text: 'relay' }
+    const calls = [
+      { toolCallId: 'relay', name: relayName, rawInput: relayInput },
+      {
+        toolCallId: 'notebook',
+        name: 'mcp__open_science_notebook__repl_execute',
+        rawInput: { code: '1 + 1' }
+      },
+      { toolCallId: 'native', name: 'bash', rawInput: { command: 'ls' } },
+      { toolCallId: 'changed-input', name: relayName, rawInput: relayInput }
+    ]
+    for (const call of calls) {
+      const toolCall = { ...call, title: relayName, kind: 'other' as const }
+      await context.notifySessionUpdate({
+        sessionUpdate: 'tool_call',
+        status: 'pending',
+        ...toolCall
+      } as SessionNotification['update'])
+      responses.set(
+        call.toolCallId,
+        await context.requestPermission({
+          ...toolCall,
+          ...(call.toolCallId === 'changed-input'
+            ? { rawInput: { target: 'main', text: 'injected' } }
+            : {}),
+          ...(['notebook', 'native'].includes(call.toolCallId)
+            ? { _meta: { toolName: relayName } }
+            : {})
+        })
+      )
+    }
+  }
+
+  const expectPiSideChatPermissions = (
+    responses: Map<string, acp.RequestPermissionResponse>
+  ): void => {
+    expect(Object.fromEntries(responses)).toEqual({
+      relay: { outcome: { outcome: 'selected', optionId: 'allow-once' } },
+      notebook: { outcome: { outcome: 'cancelled' } },
+      native: { outcome: { outcome: 'cancelled' } },
+      'changed-input': { outcome: { outcome: 'cancelled' } }
+    })
+  }
+
   it.each(sideChatRecoveryCases)(
     'keeps the host-message-only capability when a %s Side chat resumes',
     async (_name, framework, modelRoute, backendId) => {
       const process = new FakeAgentProcess()
+      const permissionResponses = new Map<string, acp.RequestPermissionResponse>()
       const fakeAgent = startFakeAgent(process, [], {
         supportsResume: true,
+        ...(framework.id === 'pi'
+          ? {
+              onPrompt: (context: FakePromptContext) =>
+                probePiSideChatPermissions(context, permissionResponses)
+            }
+          : {}),
         ...(framework.id === 'codex'
           ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
           : {})
@@ -4496,7 +4588,24 @@ describe('ACP runtime session management', () => {
         }),
         mcpHttpHost: host,
         sessionCapabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
-        sideChat: { sendMessage }
+        sideChat: { sendMessage },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            const allow =
+              request.mcpIdentity === 'open-science-host-message/send_message'
+                ? request.options.find((option) => option.kind === 'allow_once')
+                : undefined
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              ...(allow ? { optionId: allow.optionId } : { cancelled: true })
+            })
+          }
+        },
+        notebook: {
+          projectId: 'side-project',
+          mcpEntryPath: '/app/main.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4', token: 'notebook' })
+        }
       })
 
       await runtime.resumeSession({
@@ -4520,6 +4629,13 @@ describe('ACP runtime session management', () => {
         'side-chat-restored',
         expect.objectContaining({ sendMessage: expect.any(Function) })
       )
+      if (framework.id === 'pi') {
+        await runtime.sendPrompt({
+          sessionId: 'side-chat-restored',
+          text: 'Explicitly relay to Main.'
+        })
+        expectPiSideChatPermissions(permissionResponses)
+      }
       await registerHostMessage.mock.lastCall?.[1].sendMessage({ target: 'main', text: 'relay' })
       expect(sendMessage).toHaveBeenCalledWith('side-chat-restored', {
         target: 'main',
@@ -4536,9 +4652,16 @@ describe('ACP runtime session management', () => {
       const process = new FakeAgentProcess()
       const freshProviderSessionId =
         framework.id === 'codex' ? '019fb8c8-6c66-7f22-9653-17b5b287dbbc' : 'fresh-provider-session'
+      const permissionResponses = new Map<string, acp.RequestPermissionResponse>()
       const fakeAgent = startFakeAgent(process, [freshProviderSessionId], {
         supportsResume: true,
-        resumeNotFound: true,
+        ...(framework.id === 'pi'
+          ? {
+              resumePiSessionMissing: true,
+              onPrompt: (context: FakePromptContext) =>
+                probePiSideChatPermissions(context, permissionResponses)
+            }
+          : { resumeNotFound: true }),
         ...(framework.id === 'codex'
           ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
           : {})
@@ -4558,7 +4681,24 @@ describe('ACP runtime session management', () => {
         }),
         mcpHttpHost: host,
         sessionCapabilityPolicy: SIDE_CHAT_SESSION_CAPABILITY_POLICY,
-        sideChat: { sendMessage }
+        sideChat: { sendMessage },
+        callbacks: {
+          onPermissionRequest: (request) => {
+            const allow =
+              request.mcpIdentity === 'open-science-host-message/send_message'
+                ? request.options.find((option) => option.kind === 'allow_once')
+                : undefined
+            void runtime.respondToPermission({
+              requestId: request.requestId,
+              ...(allow ? { optionId: allow.optionId } : { cancelled: true })
+            })
+          }
+        },
+        notebook: {
+          projectId: 'side-project',
+          mcpEntryPath: '/app/main.js',
+          getRpcConnection: async () => ({ endpoint: 'http://127.0.0.1:4', token: 'notebook' })
+        }
       })
 
       const restored = await runtime.resumeSession({
@@ -4587,6 +4727,13 @@ describe('ACP runtime session management', () => {
         'side-chat-restored',
         expect.objectContaining({ sendMessage: expect.any(Function) })
       )
+      if (framework.id === 'pi') {
+        await runtime.sendPrompt({
+          sessionId: 'side-chat-restored',
+          text: 'Explicitly relay to Main.'
+        })
+        expectPiSideChatPermissions(permissionResponses)
+      }
       await registerHostMessage.mock.lastCall?.[1].sendMessage({ target: 'main', text: 'relay' })
       expect(sendMessage).toHaveBeenCalledWith('side-chat-restored', {
         target: 'main',
@@ -16994,6 +17141,87 @@ describe('ACP runtime session management', () => {
     })
   })
 
+  // Regression: Pi Reviewer sessions had no permission correlation context, so every reviewer MCP
+  // call was cancelled and Request review never finished under Pi.
+  it('admits only bound reviewer MCP calls in a Pi Reviewer session', async () => {
+    const process = new FakeAgentProcess()
+    const calls = [
+      ['read', 'mcp__open-science-reviewer__read_turn', { turnId: 'turn-1' }],
+      ['submit', 'mcp__open-science-reviewer__submit_findings', { checks: [] }],
+      ['notebook', 'mcp__open-science-notebook__notebook_execute', { code: 'print(1)' }],
+      ['native', 'bash', { command: 'ls' }]
+    ] as const
+    const responses = new Map<string, unknown>()
+    acp
+      .agent({ name: 'pi-reviewer-probe' })
+      .onRequest(acp.methods.agent.initialize, () => ({
+        protocolVersion: acp.PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: false, sessionCapabilities: { close: {} } },
+        authMethods: []
+      }))
+      .onRequest(acp.methods.agent.session.new, () => ({ sessionId: 'pi-reviewer-1' }))
+      .onRequest(acp.methods.agent.session.prompt, async (ctx) => {
+        for (const [toolCallId, name, rawInput] of calls) {
+          // Pi names the tool only through top-level name/title, not _meta.
+          const toolCall = { toolCallId, name, title: name, kind: 'other' as const, rawInput }
+          await ctx.client.notify(acp.methods.client.session.update, {
+            sessionId: ctx.params.sessionId,
+            update: { sessionUpdate: 'tool_call', status: 'pending', ...toolCall }
+          } as acp.SessionNotification)
+          responses.set(
+            toolCallId,
+            await ctx.client.request(acp.methods.client.session.requestPermission, {
+              sessionId: ctx.params.sessionId,
+              toolCall,
+              options: [
+                { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' },
+                { optionId: 'reject-once', name: 'Reject', kind: 'reject_once' }
+              ]
+            } as acp.RequestPermissionRequest)
+          )
+        }
+        return { stopReason: 'end_turn' }
+      })
+      .onNotification(acp.methods.agent.session.cancel, () => undefined)
+      .onRequest(acp.methods.agent.session.close, () => ({}))
+      .connect(
+        acp.ndJsonStream(
+          Writable.toWeb(process.stdout) as WritableStream<Uint8Array>,
+          Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+        )
+      )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process),
+      framework: createPiFramework({
+        assertApprovedAdapter: () => undefined,
+        mapPermissionProfile: claudeCodeFramework.mapPermissionProfile
+      })
+    })
+
+    const { session } = await runtime.buildReviewerSession({
+      cwd: '/workspace',
+      mcpServers: [
+        { type: 'http', name: 'open-science-reviewer', url: 'http://127.0.0.1:1/mcp', headers: [] }
+      ]
+    })
+    await session.prompt([{ type: 'text', text: 'review the audited turn' }])
+
+    const allowed = { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+    const rejected = { outcome: { outcome: 'selected', optionId: 'reject-once' } }
+    expect(Object.fromEntries(responses)).toEqual({
+      read: allowed,
+      submit: allowed,
+      notebook: rejected,
+      native: rejected
+    })
+    expect(runtime.disposeReviewerSession(session)).toEqual({
+      rejectedToolCalls: 2,
+      reviewerBridgeScoped: undefined
+    })
+  })
+
   it('refuses a non-loopback reviewer MCP before starting an agent connection', async () => {
     const process = new FakeAgentProcess()
     const spawnAgent = vi.fn(() => asAgentProcess(process))
@@ -28293,6 +28521,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'not-found',
       framework: 'claude-code',
       generation: 1,
@@ -28377,6 +28606,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'error',
       framework: 'opencode',
       generation: 1,
@@ -28474,6 +28704,7 @@ describe('ACP runtime — connect failure logging', () => {
     const call = errorLogSpy.mock.calls.find(([message]) => message === 'agent connection failed')
     expect(call).toBeDefined()
     expect(call?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'string',
       framework: 'opencode',
       generation: 1,
@@ -30404,6 +30635,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
       ([message]) => message === 'agent connection failed'
     )
     expect(failure?.[1]).toEqual({
+      connectionPhase: 'open-candidate',
       errorCategory: 'not-found',
       framework: 'opencode',
       generation: 1,
