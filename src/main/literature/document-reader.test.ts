@@ -223,7 +223,8 @@ describe('LiteratureDocumentReader', () => {
     })
     expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 
@@ -312,7 +313,7 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(
       join(root, 'verified.pdf'),
       expect.objectContaining({ size: 42, readBytes: expect.any(Function) }),
-      { ocr: true, maxChars: 24 * 1024 * 1024 }
+      { ocr: true, maxChars: 24 * 1024 * 1024, includeLayout: true }
     )
     expect(close).toHaveBeenCalledOnce()
     expect(verifyUnchanged).not.toHaveBeenCalled()
@@ -388,12 +389,15 @@ describe('LiteratureDocumentReader', () => {
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { documentIds: ['binding-1'], query: 'needle' }
       })
-      expect(scoped.structuredContent).toMatchObject({ passages: [] })
+      expect(scoped.structuredContent).toBeUndefined()
+      expect(JSON.parse((scoped.content as { text: string }[]).at(-1)!.text)).toMatchObject({
+        passages: []
+      })
       const all = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { query: 'needle' }
       })
-      expect(all.structuredContent).toMatchObject({
+      expect(JSON.parse((all.content as { text: string }[]).at(-1)!.text)).toMatchObject({
         documents: [{ id: 'binding-1' }, { id: 'binding-2' }],
         passages: [expect.objectContaining({ documentId: 'binding-2' })]
       })
@@ -550,7 +554,8 @@ describe('LiteratureDocumentReader', () => {
 
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 
@@ -704,7 +709,8 @@ describe('LiteratureDocumentReader', () => {
     })
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 

@@ -4,7 +4,6 @@ import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { Sharp } from 'sharp'
-import type { PdfTextCoverage } from '@aipoch/literature-reading'
 import { ResourceBudgetExceededError } from '../resource-budget'
 import {
   exceedsDecodedImagePixelLimit,
@@ -128,12 +127,7 @@ export class ImageContentError extends Error {
   }
 }
 
-export type PdfTextResult = {
-  coverage?: PdfTextCoverage
-  text: string
-  pageCount: number
-  truncated: boolean
-}
+export type PdfTextResult = import('@aipoch/literature-reading').TextExtraction
 
 export type AttachmentByteSource = {
   size: number

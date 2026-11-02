@@ -4,7 +4,14 @@ import type {
   LiteratureIndex,
   LiteratureIndexChunk
 } from './full-text-index.js'
-import type { DocumentReference, TextExtraction, PdfTextCoverage } from './ports.js'
+import type { DocumentReference, TextExtraction, PdfTextCoverage, PageTextLayout } from './ports.js'
+
+type LayoutEvidence = {
+  /** Full-page source units; top-left coordinates, bounds=[left,top,right,bottom]. */
+  pageLayouts?: readonly PageTextLayout[]
+  /** Relevant pages whose complete geometry did not fit or could not be established. */
+  layoutOmittedPages?: readonly number[]
+}
 export type ReadingOptions<Reference extends DocumentReference> = {
   index?: LiteratureIndex
   /** Resolve current authority first, then return a loader for verified bounded text. */
@@ -23,8 +30,9 @@ export type ReadDocumentResult = {
     pageCount: number
     extractionTruncated: boolean
     coverage?: PdfTextCoverage
+    extractionWarnings?: readonly string[]
   }
-  passage: { pageStart: number; pageEnd: number; text: string }
+  passage: { pageStart: number; pageEnd: number; text: string } & LayoutEvidence
   nextCursor: string | null
 }
 type RetrievedPassage = {
@@ -39,13 +47,14 @@ type RetrievedPassage = {
 }
 export type SearchDocumentsResult = {
   scope: 'relevant-passages'
-  documents: {
+  documents: ({
     id: string
     name: string
     checksum: string
     pageCount: number
     coverage?: PdfTextCoverage
-  }[]
+    extractionWarnings?: readonly string[]
+  } & LayoutEvidence)[]
 } & (
   | {
       retrievalMode: 'bm25'
@@ -57,7 +66,7 @@ export type SearchDocumentsResult = {
     }
 )
 const EXTRACTOR_FINGERPRINT = createHash('sha256')
-  .update('literature-reading-provided-text-v1')
+  .update('literature-reading-provided-text-v2')
   .digest('hex')
 const DOCUMENT_BATCH_CHARS = 16_000
 const INDEX_CHUNK_CHARS = 5_000
@@ -76,8 +85,55 @@ type ExtractedDocument = Readonly<{
   pageCount: number
   truncated: boolean
   coverage?: PdfTextCoverage
+  pageStarts?: TextExtraction['pageStarts']
+  warnings?: readonly string[]
+  pageLayouts?: readonly PageTextLayout[]
+  layoutOmittedPages?: readonly number[]
 }>
-const pageSections = (text: string): Array<{ page: number; text: string; start: number }> => {
+
+// Keep the native text/index offsets intact. Geometry is additional evidence, not a new order.
+// Whole pages fit or are explicitly omitted; never imply that a partial page is complete.
+const layoutEvidence = (
+  document: ExtractedDocument,
+  ranges: readonly Readonly<{ pageStart: number; pageEnd: number }>[]
+): LayoutEvidence => {
+  const relevant = (page: number): boolean =>
+    ranges.some((range) => page >= range.pageStart && page <= range.pageEnd)
+  const pageLayouts: PageTextLayout[] = []
+  const omitted = new Set(document.layoutOmittedPages?.filter(relevant))
+  let chars = 2
+  const prioritized = (document.pageLayouts ?? [])
+    .map((page) => ({
+      page,
+      priority: ranges.findIndex(
+        (range) => page.page >= range.pageStart && page.page <= range.pageEnd
+      )
+    }))
+    .filter(({ priority }) => priority >= 0)
+    .sort((a, b) => a.priority - b.priority || a.page.page - b.page.page)
+  for (const { page } of prioritized) {
+    const size = JSON.stringify(page).length + Number(pageLayouts.length > 0)
+    if (chars + size > DOCUMENT_BATCH_CHARS) omitted.add(page.page)
+    else {
+      pageLayouts.push(page)
+      chars += size
+    }
+  }
+  return {
+    ...(pageLayouts.length ? { pageLayouts } : {}),
+    ...(omitted.size ? { layoutOmittedPages: [...omitted].sort((a, b) => a - b) } : {})
+  }
+}
+const pageSections = (
+  text: string,
+  pageStarts?: TextExtraction['pageStarts']
+): Array<{ page: number; text: string; start: number }> => {
+  if (pageStarts?.length)
+    return pageStarts.map(({ page, offset }, index) => ({
+      page,
+      start: offset,
+      text: text.slice(offset, pageStarts[index + 1]?.offset ?? text.length).trim()
+    }))
   const markers = [...text.matchAll(PAGE_MARKER)]
   if (markers.length === 0) return [{ page: 1, text, start: 0 }]
   return markers.map((marker, index) => {
@@ -90,9 +146,10 @@ const pageSections = (text: string): Array<{ page: number; text: string; start: 
 const pageRangeForOffsets = (
   text: string,
   start: number,
-  end: number
+  end: number,
+  pageStarts?: TextExtraction['pageStarts']
 ): Readonly<{ pageStart: number; pageEnd: number }> => {
-  const sections = pageSections(text)
+  const sections = pageSections(text, pageStarts)
   const pageAt = (offset: number): number => {
     for (let index = sections.length - 1; index >= 0; index -= 1) {
       const section = sections[index]
@@ -106,8 +163,11 @@ const pageRangeForOffsets = (
   }
 }
 
-const indexChunks = (text: string): LiteratureIndexChunk[] =>
-  pageSections(text).flatMap(({ page, text: pageText, start }) => {
+const indexChunks = (
+  text: string,
+  pageStarts?: TextExtraction['pageStarts']
+): LiteratureIndexChunk[] =>
+  pageSections(text, pageStarts).flatMap(({ page, text: pageText, start }) => {
     const chunks: LiteratureIndexChunk[] = []
     for (
       let offset = 0;
@@ -237,7 +297,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
   }> {
     const document = await this.resolveDocument(reference, true)
     if (!document.text.trim()) return { coverage: 'unavailable', passages: [] }
-    const chunks = indexChunks(document.text)
+    const chunks = indexChunks(document.text, document.pageStarts)
     const complete =
       !document.truncated &&
       (!document.coverage ||
@@ -285,8 +345,31 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
     this.trimExtractedCache()
     try {
       const resolved = await extraction
+      // These offsets come from the extractor, never from page-like strings in document data.
+      if (
+        resolved.pageStarts &&
+        ((resolved.text.length > 0 && resolved.pageStarts.length === 0) ||
+          resolved.pageStarts.some(
+            ({ page, offset }, index, starts) =>
+              !Number.isSafeInteger(page) ||
+              page <= 0 ||
+              page > resolved.pageCount ||
+              !Number.isSafeInteger(offset) ||
+              offset < 0 ||
+              offset >= resolved.text.length ||
+              (index === 0
+                ? offset !== 0
+                : offset <= starts[index - 1].offset || page <= starts[index - 1].page)
+          ))
+      )
+        throw new Error('Literature extraction contains invalid physical page boundaries.')
       if (this.extracted.get(extractionId) === entry) {
-        this.extractedChars.set(extractionId, resolved.text.length)
+        this.extractedChars.set(
+          extractionId,
+          resolved.text.length +
+            JSON.stringify(resolved.pageLayouts ?? []).length +
+            JSON.stringify(resolved.pageStarts ?? []).length
+        )
         this.trimExtractedCache()
       }
       entry.incomplete =
@@ -328,9 +411,29 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
       throw new Error(
         'Literature read cursor is out of range. Restart read_document for the intended documentId without cursor; continue with the returned nextCursor.'
       )
-    const end = Math.min(document.text.length, offset + DOCUMENT_BATCH_CHARS)
+    let end = Math.min(document.text.length, offset + DOCUMENT_BATCH_CHARS)
+    // When complete geometry fits on its own, continue at that page instead of
+    // silently losing it to the preceding batch's budget. Text offsets stay native.
+    if (document.pageLayouts?.length) {
+      const layouts = new Map(document.pageLayouts.map((page) => [page.page, page]))
+      let chars = 2
+      const sections = pageSections(document.text, document.pageStarts)
+      for (const [index, section] of sections.entries()) {
+        if (section.start >= end) break
+        const layout = layouts.get(section.page)
+        const sectionEnd = sections[index + 1]?.start ?? document.text.length
+        if (!layout || sectionEnd <= offset) continue
+        const size = JSON.stringify(layout).length + 1
+        if (size > DOCUMENT_BATCH_CHARS) continue
+        if (chars + size > DOCUMENT_BATCH_CHARS && section.start > offset) {
+          end = section.start
+          break
+        }
+        chars += size
+      }
+    }
     const content = document.text.slice(offset, end)
-    const pages = pageRangeForOffsets(document.text, offset, end)
+    const pages = pageRangeForOffsets(document.text, offset, end, document.pageStarts)
     const nextCursor =
       end < document.text.length
         ? encodeCursor(document.context.bindingId, document.extractionId, end)
@@ -350,12 +453,14 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
         checksum: document.context.checksum,
         pageCount: document.pageCount,
         extractionTruncated: document.truncated,
-        ...(document.coverage ? { coverage: document.coverage } : {})
+        ...(document.coverage ? { coverage: document.coverage } : {}),
+        ...(document.warnings?.length ? { extractionWarnings: document.warnings } : {})
       },
       passage: {
         pageStart: pages.pageStart,
         pageEnd: pages.pageEnd,
-        text: content
+        text: content,
+        ...layoutEvidence(document, [pages])
       },
       nextCursor
     }
@@ -383,7 +488,7 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
         descriptorByExtractionId.set(extractionId, {
           document,
           extractionId,
-          chunks: indexChunks(document.text)
+          chunks: indexChunks(document.text, document.pageStarts)
         })
       }
     }
@@ -408,7 +513,12 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
           name: document.context.name,
           checksum: document.context.checksum,
           pageCount: document.pageCount,
-          ...(document.coverage ? { coverage: document.coverage } : {})
+          ...(document.coverage ? { coverage: document.coverage } : {}),
+          ...(document.warnings?.length ? { extractionWarnings: document.warnings } : {}),
+          ...layoutEvidence(
+            document,
+            passages.filter((passage) => passage.extractionId === document.extractionId)
+          )
         })),
         passages: passages.flatMap((passage) => {
           const associatedDocuments = byExtractionId.get(passage.extractionId)
@@ -460,7 +570,12 @@ export class LiteratureReader<Reference extends DocumentReference = DocumentRefe
           name: document.context.name,
           checksum: document.context.checksum,
           pageCount: document.pageCount,
-          ...(document.coverage ? { coverage: document.coverage } : {})
+          ...(document.coverage ? { coverage: document.coverage } : {}),
+          ...(document.warnings?.length ? { extractionWarnings: document.warnings } : {}),
+          ...layoutEvidence(
+            document,
+            passages.filter((passage) => passage.extractionId === document.extractionId)
+          )
         })),
         passages: passages.flatMap((passage) => {
           const associatedDocuments = byExtractionId.get(passage.extractionId)

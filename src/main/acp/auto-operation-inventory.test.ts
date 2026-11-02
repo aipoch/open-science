@@ -165,11 +165,10 @@ describe('Auto operation completeness against real tool registrations', () => {
           'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
-        // Reviewed: linked-PDF reading order is resolved automatically from logical structure
-        // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
-        // single-use authorization are unchanged.
+        // Reviewed: one lossless MCP payload uses optional source-unit references and exact coordinates.
+        // Tool inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          '01d43ef955ccb78cb4f5a0d1a5899b972221752055a822e18b2004d6cd1e74d9',
+          '6c3eb507432a0ba2a218aeb234230e762cd446701de977370f91914a9dff7b3d',
         // Reviewed: Windows Bioconductor installer guidance, plus non-blank patterns on required
         // ask_user_question strings that only narrow accepted inputs; handlers and Auto operation
         // dispositions are unchanged.
