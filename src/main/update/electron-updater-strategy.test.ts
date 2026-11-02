@@ -5,7 +5,11 @@ import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { Logger } from '@aipoch/diagnostics/node'
-import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
+import {
+  ElectronUpdaterStrategy,
+  windowsRecoveryArtifactUrl,
+  type ElectronUpdaterDeps
+} from './electron-updater-strategy'
 import { createActiveResearchSafeInstallGate, createDurableInstallGate } from './strategy'
 import {
   clearApplicationShutdownTrigger,
@@ -110,6 +114,30 @@ const createStrategy = (deps: ElectronUpdaterDeps): ElectronUpdaterStrategy =>
   new ElectronUpdaterStrategy({ platform: 'darwin', arch: 'arm64', ...deps })
 
 describe('ElectronUpdaterStrategy', () => {
+  it('binds recovery to one resolved full installer with the completed version and digest', () => {
+    const updater = new FakeUpdater()
+    const snapshot = {
+      info: { version: '1.2.3' },
+      provider: {
+        resolveFiles: vi.fn(() => [
+          {
+            url: new URL('https://example.test/releases/1.2.3/setup.exe'),
+            info: { sha512: 'verified' }
+          }
+        ])
+      }
+    }
+    Reflect.set(updater, 'updateInfoAndProvider', snapshot)
+    expect(windowsRecoveryArtifactUrl(updater, '1.2.3', 'verified')).toBe(
+      'https://example.test/releases/1.2.3/setup.exe'
+    )
+    expect(windowsRecoveryArtifactUrl(updater, '1.2.4', 'verified')).toBeUndefined()
+    expect(windowsRecoveryArtifactUrl(updater, '1.2.3', 'different')).toBeUndefined()
+    snapshot.provider.resolveFiles.mockReturnValue([
+      { url: new URL('https://secret@example.test/setup.exe'), info: { sha512: 'verified' } }
+    ])
+    expect(windowsRecoveryArtifactUrl(updater, '1.2.3', 'verified')).toBeUndefined()
+  })
   it.each(['up-to-date', 'error'])(
     'releases a waiting download after a provider check returns %s',
     async (outcome) => {
@@ -1551,6 +1579,55 @@ describe('ElectronUpdaterStrategy', () => {
 
 describe('Windows native installer handoff', () => {
   const platform = 'win32' as const
+  it('releases the native operation at the cancellation restart boundary after cleanup settles', async () => {
+    const updater = new FakeUpdater()
+    const order: string[] = []
+    let settle!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      settle = resolve
+    })
+    let cancelled = false
+    const cancelHandoff = vi.fn(() => {
+      order.push('release-native')
+    })
+    const installGate = vi.fn(async () => {
+      await cleanup
+      order.push('cleanup')
+      return { completed: true, reaped: true, runtimeStopped: true }
+    })
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform,
+      broadcast: vi.fn(),
+      installGate,
+      prepareInstallHandoff: async () => ({
+        operationId: 'operation',
+        handoff: vi.fn(),
+        cancel: cancelHandoff
+      }),
+      beforeInstallHandoff: async () => {
+        if (cancelled) throw new Error('cancelled')
+      },
+      cancelInstall: async (beforeRestart) => {
+        cancelled = true
+        await cleanup
+        beforeRestart?.()
+        order.push('restart')
+        return { outcome: 'cancelled', recovery: undefined }
+      }
+    })
+    await markUpdateReady(strategy, updater)
+    const applying = strategy.apply()
+    await vi.waitFor(() => expect(installGate).toHaveBeenCalledOnce())
+    const cancelling = strategy.cancel()
+    expect(cancelHandoff).not.toHaveBeenCalled()
+    settle()
+    await applying
+    await cancelling
+    expect(order).toEqual(['cleanup', 'release-native', 'restart'])
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
   it('keeps the application alive until its profile handoff is durably prepared', async () => {
     const updater = new FakeUpdater()
     let acknowledge!: (value: WindowsUpdateHandoff) => void
@@ -1680,7 +1757,7 @@ describe('Windows native installer handoff', () => {
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
   })
 
-  it('does not prepare a successor profile for non-relaunching updates', async () => {
+  it('keeps Windows installation admission even for non-relaunching updates', async () => {
     const updater = new FakeUpdater()
     const prepareInstallHandoff = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
@@ -1691,7 +1768,8 @@ describe('Windows native installer handoff', () => {
     })
     await markUpdateReady(strategy, updater)
     await strategy.apply({ relaunch: false })
-    expect(prepareInstallHandoff).not.toHaveBeenCalled()
+    if (platform === 'win32') expect(prepareInstallHandoff).toHaveBeenCalledOnce()
+    else expect(prepareInstallHandoff).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
   })
 })

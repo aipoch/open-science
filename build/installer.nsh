@@ -1,4 +1,5 @@
 !include "${BUILD_RESOURCES_DIR}\windows-program-cleanup.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
 
 !macro customInstallMode
   # Notebook AppContainer profiles are per-user durable resources. A machine-wide installation
@@ -53,7 +54,7 @@
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
 !include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
-!include "${BUILD_RESOURCES_DIR}\windows-app-running.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-installation-launch.nsh"
 
 # Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
 # receipt at each explicit failure exit so the detached presentation can become dismissible.
@@ -355,6 +356,7 @@ FunctionEnd
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
   !insertmacro defineUpdateReceiptFunctions
+  !insertmacro definePersistentLaunchFunctions
   # NSIS extracts the new uninstaller after the application package. Probe the same write access
   # its File command will request before uninstalling the old app, and again before extraction.
   # Checking only after uninstalling can reject the update with the old executable already gone.
@@ -433,6 +435,7 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  Call installPersistentLaunch
   # NSIS does not consume electron-builder's protocols option. Run after the old uninstaller
   # and file publication on EVERY install, including silent and in-app updates.
   ClearErrors
@@ -457,15 +460,11 @@ FunctionEnd
 # constants, and the literal temp-uninstaller path uninstallOldVersion uses.
 !macro uninstallFailureRecoveryAt DIR
   DetailPrint `Old uninstaller exited with $R0; closing leftover app processes and retrying once.`
-  # Force-kill anything still running from the install dir, then retry. The PowerShell sweep
-  # matches on ExecutablePath (Win32_Process has no Path property) with a trailing-backslash
-  # boundary so a sibling directory can never match, and receives the directory as an ARGUMENT —
-  # never interpolated into the script source — so a custom install dir containing an apostrophe
-  # breaks nothing and injects nothing. If inspection is unavailable, never widen the target
-  # to executable names: another installation or an unrelated tool may use the same name.
+  # Use the same held-object close as the first check, including after partial uninstall.
   # $0 keeps the uninstaller arguments (/currentuser etc.) — nsExec does not touch it.
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -C "$$root = $$args[0].TrimEnd('\') + '\'; Get-CimInstance -ClassName Win32_Process | ? { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$root, 'CurrentCultureIgnoreCase') } | % { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }" "${DIR}"`
+  nsExec::ExecToStack /TIMEOUT=25000 '"$PLUGINSDIR\windows-installation-processes.exe" close "${DIR}" "" 10000'
   Pop $R1
+  Pop $R2
   # The existing uninstall retry remains the verdict even when process inspection fails.
   ${if} $R1 != 0
     DetailPrint `Could not inspect installation processes: $R1; retrying without terminating unverified processes.`

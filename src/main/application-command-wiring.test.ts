@@ -439,9 +439,10 @@ describe('production application command wiring', () => {
     const updateStrategy = compact(
       between(domain('handoff'), 'const updateStrategy', 'const updateCommandOwner')
     )
-    expect(updateGate).toContain(
-      'shutdownCoordinator.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, { holdSideChatAdmission: true, legacyShellRecoveryToken: options?.legacyShellRecoveryToken })'
-    )
+    expect(updateGate).toContain('shutdownCoordinator.runForUpdateGate(')
+    expect(updateGate).toContain('Math.max(0, deadlineAt - Date.now())')
+    expect(updateGate).toContain('holdSideChatAdmission: true')
+    expect(updateGate).toContain('legacyShellRecoveryToken: options?.legacyShellRecoveryToken')
     expect(updateStrategy).toContain('releaseInstallHandoff: abortUpdateHandoff')
   })
 

@@ -13,6 +13,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { recoverLegacyWindowsProcess } from './windows-process-recovery'
 
 import {
   isOwnedPosixProcessGroupAlive,
@@ -45,6 +46,7 @@ type KernelProcessRecord = KernelProcessSpawnScope & {
   pid?: number
   processStartToken?: string
   commandIdentityMarker?: string
+  jobName?: string
   bootToken?: string
 }
 
@@ -129,6 +131,8 @@ const decodeRecord = (contents: string): KernelProcessRecord | undefined => {
       (value.processStartToken !== undefined && typeof value.processStartToken !== 'string') ||
       (value.commandIdentityMarker !== undefined &&
         typeof value.commandIdentityMarker !== 'string') ||
+      (value.jobName !== undefined &&
+        value.jobName !== `Local\\OpenScience.Delegation.${value.receiptId}`) ||
       (value.bootToken !== undefined && !isValidBootToken(value.bootToken))
     ) {
       return undefined
@@ -188,22 +192,21 @@ const processEvidence = async (
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }
 
-const terminateWindowsPid = async (pid: number): Promise<ProcessTreeKillResult> => {
-  await capture('taskkill.exe', ['/pid', String(pid), '/T', '/F'])
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (!pidIsAlive(pid)) return { reaped: true }
-    await new Promise<void>((resolve) => setTimeout(resolve, 50))
-  }
-  return { reaped: false }
-}
-
 const defaultController = (
   platform: NodeJS.Platform,
-  currentBootToken: () => string | undefined = readBootToken
+  currentBootToken: () => string | undefined = readBootToken,
+  receiptDirectory?: string
 ): KernelProcessRecoveryController => ({
   probe: async (record) => {
     if (record.platform !== platform) return 'dead'
     if (!record.pid) return 'unknown'
+    // Job receipts require confirmation even after the host exits. The object-bound recovery
+    // adapter closes the host's late-spawn window and checks the original Job's active count.
+    if (
+      platform === 'win32' &&
+      record.jobName === `Local\\OpenScience.Delegation.${record.receiptId}`
+    )
+      return 'owned'
 
     if (platform !== 'win32') {
       const bootToken = currentBootToken()
@@ -239,7 +242,19 @@ const defaultController = (
   terminate: (record) => {
     if (!record.pid) return Promise.resolve({ reaped: false })
     return platform === 'win32'
-      ? terminateWindowsPid(record.pid)
+      ? Promise.resolve(
+          receiptDirectory && record.commandIdentityMarker === record.receiptId
+            ? recoverLegacyWindowsProcess({
+                pid: record.pid,
+                receiptId: record.receiptId,
+                jobName: record.jobName,
+                pendingPath: join(
+                  receiptDirectory,
+                  `${recordFilePrefix(record)}.pending.${record.receiptId}.json`
+                )
+              })
+            : { reaped: false }
+        )
       : terminateOwnedPosixProcessGroupById(record.pid)
   }
 })
@@ -260,7 +275,8 @@ class KernelProcessLifecycleOwner {
     this.directory = join(options.storageRoot, 'runtime', 'kernel-processes')
     this.platform = options.platform ?? process.platform
     this.readBootToken = options.readBootToken ?? readBootToken
-    this.controller = options.controller ?? defaultController(this.platform, this.readBootToken)
+    this.controller =
+      options.controller ?? defaultController(this.platform, this.readBootToken, this.directory)
   }
 
   ensureReady(): Promise<void> {
@@ -347,6 +363,10 @@ class KernelProcessLifecycleOwner {
     if (!isPositivePid(child.pid)) throw new Error('Kernel process did not expose a valid pid.')
     const record = {
       ...intent.record,
+      ...(intent.record.platform === 'win32' &&
+      child.commandIdentityMarker === intent.record.receiptId
+        ? { jobName: `Local\\OpenScience.Delegation.${intent.record.receiptId}` }
+        : {}),
       pid: child.pid,
       ...(child.processStartToken ? { processStartToken: child.processStartToken } : {}),
       ...(child.commandIdentityMarker ? { commandIdentityMarker: child.commandIdentityMarker } : {})

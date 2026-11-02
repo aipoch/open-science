@@ -15,8 +15,17 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import {
   advanceInstallationUpdate,
+  acquireNativeInstallationUpdate,
+  advanceNativeInstallationUpdate,
+  readNativeInstallationUpdate,
+  releaseNativeInstallationUpdate,
+  claimNativeInstallationUpdateRecovery,
+  assertNativeInstallationUpdateAuthorized,
+  beginNativeInstallationShutdown,
+  isNativeInstallationUpdateOwner,
   advanceInstallationUpdateAsync,
   captureInstallationManifestAsync,
   finishInstallationRecoveryAsync,
@@ -562,4 +571,235 @@ describe('stale registration garbage collection', () => {
     expect(existsSync(join(directory, `${live.identity.generation}.sqlite`))).toBe(true)
     live.release()
   })
+})
+
+it('blocks runtime registration and real CLI bootstrap behind the native installer admission marker', () => {
+  const f = fixture()
+  const directory = installationStateDirectory(f.location)
+  mkdirSync(directory, { recursive: true })
+  writeFileSync(
+    join(directory, 'windows-update-in-progress.json'),
+    JSON.stringify({
+      schema: 1,
+      operationId: '11111111-1111-4111-8111-111111111111',
+      installationRoot: realpathSync(f.location.installationRoot),
+      phase: 'preparing',
+      handoffDirectory: f.directory,
+      targetVersion: '2',
+      installerSha512: Buffer.alloc(64).toString('base64'),
+      requestSha256: 'a'.repeat(64)
+    })
+  )
+  expect(() =>
+    assertInstallationStartupAllowed(f.location.installationRoot, f.location.stateRoot)
+  ).toThrow('installation update')
+  expect(() => registerInstallationRuntime({ ...f.location, ...f.runtime })).toThrow(
+    'installation update'
+  )
+  const script = `const { protectInstallationStartup } = require(${JSON.stringify(join(process.cwd(), 'packages/open-science/installation-startup.cjs'))}); protectInstallationStartup(${JSON.stringify(f.entry)}, 'other-profile', ${JSON.stringify(f.location.stateRoot)});`
+  const child = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', windowsHide: true })
+  expect(child.status).not.toBe(0)
+  expect(child.stderr).toContain('Installation update requires recovery')
+})
+
+describe('native installer admission', () => {
+  const operation = (directory: string): Parameters<typeof acquireNativeInstallationUpdate>[1] => ({
+    operationId: '11111111-1111-4111-8111-111111111111',
+    handoffDirectory: directory,
+    targetVersion: '2',
+    installerSha512: Buffer.alloc(64, 1).toString('base64'),
+    requestSha256: 'a'.repeat(64)
+  })
+
+  it('admits one operation, retains it across handoff, and releases only the exact verified target', () => {
+    const f = fixture()
+    const input = operation(f.directory)
+    const record = acquireNativeInstallationUpdate(f.location, input)
+    expect(record).toMatchObject({ ...input, phase: 'preparing' })
+    expect(() => acquireNativeInstallationUpdate(f.location, input)).toThrow(
+      'already requires recovery'
+    )
+    expect(() => beginInstallationUpdate(f.options)).toThrow('already requires recovery')
+    expect(() => releaseNativeInstallationUpdate(f.location, 'another-operation')).toThrow(
+      'operation has changed'
+    )
+    expect(readNativeInstallationUpdate(f.location)).toEqual(record)
+    advanceNativeInstallationUpdate(f.location, record.operationId)
+    expect(() => releaseNativeInstallationUpdate(f.location, record.operationId)).toThrow(
+      'requires recovery'
+    )
+    expect(() =>
+      assertInstallationStartupAllowed(f.location.installationRoot, f.location.stateRoot)
+    ).toThrow()
+    releaseNativeInstallationUpdate(f.location, record.operationId, 'installed')
+    expect(readNativeInstallationUpdate(f.location)).toBeUndefined()
+    protectInstallationStartup(f.entry, 'next-profile', f.location.stateRoot).release()
+  })
+
+  it('reopens admission on pre-handoff cancellation without changing another installation', () => {
+    const first = fixture()
+    const other = fixture()
+    const record = acquireNativeInstallationUpdate(first.location, operation(first.directory))
+    protectInstallationStartup(
+      other.entry,
+      'other-installation',
+      other.location.stateRoot
+    ).release()
+    releaseNativeInstallationUpdate(first.location, record.operationId)
+    expect(readNativeInstallationUpdate(first.location)).toBeUndefined()
+    protectInstallationStartup(first.entry, 'restored', first.location.stateRoot).release()
+  })
+
+  it('publishes a shared close deadline that cannot be extended and only the owner can begin', () => {
+    const f = fixture()
+    const record = acquireNativeInstallationUpdate(f.location, operation(f.directory))
+    expect(isNativeInstallationUpdateOwner(f.location, record.operationId)).toBe(true)
+    expect(isNativeInstallationUpdateOwner(f.location, 'different-operation')).toBe(false)
+    expect(() => assertNativeInstallationUpdateAuthorized(f.location, record.operationId)).toThrow(
+      'has not started'
+    )
+    const deadlineAt = Date.now() + 10_000
+    expect(
+      beginNativeInstallationShutdown(f.location, record.operationId, deadlineAt).shutdownDeadlineAt
+    ).toBe(deadlineAt)
+    expect(
+      beginNativeInstallationShutdown(f.location, record.operationId, deadlineAt + 10_000)
+        .shutdownDeadlineAt
+    ).toBe(deadlineAt)
+    expect(assertNativeInstallationUpdateAuthorized(f.location, record.operationId)).toBe(
+      deadlineAt
+    )
+    expect(() =>
+      beginNativeInstallationShutdown(f.location, 'different-operation', deadlineAt)
+    ).toThrow('authority')
+    expect(() => beginNativeInstallationShutdown(f.location, record.operationId, Infinity)).toThrow(
+      'deadline'
+    )
+    releaseNativeInstallationUpdate(f.location, record.operationId)
+    expect(isNativeInstallationUpdateOwner(f.location, record.operationId)).toBe(false)
+  })
+
+  it('rejects an internal state path, an invalid package digest and a marker for another root', () => {
+    const f = fixture()
+    expect(() =>
+      acquireNativeInstallationUpdate(f.location, operation(f.location.installationRoot))
+    ).toThrow('outside')
+    expect(() =>
+      acquireNativeInstallationUpdate(f.location, {
+        ...operation(f.directory),
+        installerSha512: 'unverified'
+      })
+    ).toThrow()
+    const record = acquireNativeInstallationUpdate(f.location, operation(f.directory))
+    writeFileSync(
+      join(installationStateDirectory(f.location), 'windows-update-in-progress.json'),
+      JSON.stringify({
+        ...record,
+        installationRoot: f.directory
+      })
+    )
+    expect(() => readNativeInstallationUpdate(f.location)).toThrow('identity has changed')
+    expect(() =>
+      releaseNativeInstallationUpdate(f.location, record.operationId, 'installed')
+    ).toThrow('identity has changed')
+    writeFileSync(
+      join(installationStateDirectory(f.location), 'windows-update-in-progress.json'),
+      JSON.stringify(record)
+    )
+    releaseNativeInstallationUpdate(f.location, record.operationId)
+  })
+
+  it('keeps recovery excluded while a real update owner lives and reclaims only after its death', async () => {
+    const f = fixture()
+    const input = operation(f.directory)
+    const output = join(f.directory, 'native-owner.cjs')
+    buildSync({
+      stdin: {
+        contents: `import { acquireNativeInstallationUpdate, beginNativeInstallationShutdown } from ${JSON.stringify(join(process.cwd(), 'src/main/update/installation-protection.ts'))}; const record = acquireNativeInstallationUpdate(${JSON.stringify(f.location)}, ${JSON.stringify(input)}); beginNativeInstallationShutdown(${JSON.stringify(f.location)}, record.operationId, Date.now() + 20000); process.stdout.write('owner-ready'); setInterval(() => {}, 1000);`,
+        resolveDir: process.cwd()
+      },
+      bundle: true,
+      platform: 'node',
+      format: 'cjs',
+      packages: 'external',
+      outfile: output,
+      logLevel: 'silent'
+    })
+    const child = spawn(process.execPath, [output], {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_PATH: join(process.cwd(), 'node_modules') },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let stdout = '',
+          stderr = ''
+        child.stdout.on('data', (part: Buffer) => {
+          stdout += part.toString()
+          if (stdout.includes('owner-ready')) resolve()
+        })
+        child.stderr.on('data', (part: Buffer) => {
+          stderr += part.toString()
+        })
+        child.once('error', reject)
+        child.once('exit', () =>
+          reject(new Error(`native owner exited before readiness: ${stderr}`))
+        )
+      })
+      expect(claimNativeInstallationUpdateRecovery(f.location, input.operationId)).toBeUndefined()
+      expect(() =>
+        assertNativeInstallationUpdateAuthorized(f.location, input.operationId)
+      ).not.toThrow()
+      expect(() => releaseNativeInstallationUpdate(f.location, input.operationId)).toThrow(
+        'coordination is busy'
+      )
+      expect(readNativeInstallationUpdate(f.location)?.operationId).toBe(input.operationId)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+        child.kill('SIGKILL')
+        await exited
+      }
+    }
+    expect(() => assertNativeInstallationUpdateAuthorized(f.location, input.operationId)).toThrow(
+      'owner has exited'
+    )
+    const release = claimNativeInstallationUpdateRecovery(f.location, input.operationId)
+    expect(release).toBeTypeOf('function')
+    expect(claimNativeInstallationUpdateRecovery(f.location, input.operationId)).toBeUndefined()
+    advanceNativeInstallationUpdate(f.location, input.operationId)
+    releaseNativeInstallationUpdate(f.location, input.operationId, 'installed')
+    release!()
+    expect(readNativeInstallationUpdate(f.location)).toBeUndefined()
+  }, 15_000)
+
+  it('serializes native admission against a real process holding the startup coordinator', async () => {
+    const f = fixture()
+    const directory = installationStateDirectory(f.location)
+    mkdirSync(directory, { recursive: true })
+    const script = `const { DatabaseSync } = require('node:sqlite'); const db = new DatabaseSync(${JSON.stringify(join(directory, 'coordinator.sqlite'))}); db.exec('BEGIN EXCLUSIVE'); process.stdout.write('ready'); setInterval(() => {}, 1000)`
+    const child = spawn(process.execPath, ['-e', script], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.stdout.once('data', () => resolve())
+        child.once('error', reject)
+        child.once('exit', () => reject(new Error('coordinator owner exited before ready')))
+      })
+      expect(() => acquireNativeInstallationUpdate(f.location, operation(f.directory))).toThrow(
+        'coordination is busy'
+      )
+      expect(existsSync(join(directory, 'windows-update-in-progress.json'))).toBe(false)
+    } finally {
+      const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+      child.kill('SIGKILL')
+      await exited
+    }
+    const record = acquireNativeInstallationUpdate(f.location, operation(f.directory))
+    expect(readNativeInstallationUpdate(f.location)?.operationId).toBe(record.operationId)
+    releaseNativeInstallationUpdate(f.location, record.operationId)
+  }, 15_000)
 })

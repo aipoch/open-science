@@ -74,6 +74,31 @@ export interface MinimalAutoUpdater {
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
 }
 
+// Resolve the exact full artifact selected by the existing provider while its completed
+// download is current. Store no headers or credentials in the persistent recovery request.
+export function windowsRecoveryArtifactUrl(
+  updater: MinimalAutoUpdater,
+  version: string,
+  sha512: string
+): string | undefined {
+  const snapshot = Reflect.get(updater, 'updateInfoAndProvider') as
+    | {
+        info: { version: string }
+        provider: { resolveFiles(info: unknown): Array<{ url: URL; info: { sha512: string } }> }
+      }
+    | undefined
+  if (!snapshot || snapshot.info.version !== version) return undefined
+  const files = snapshot.provider
+    .resolveFiles(snapshot.info)
+    .filter(
+      (file) => file.info.sha512 === sha512 && file.url.pathname.toLowerCase().endsWith('.exe')
+    )
+  if (files.length !== 1) return undefined
+  const url = files[0].url
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return undefined
+  return url.href
+}
+
 export type UpdateInstallationHooks = {
   getStartupOptions?: () => RuntimeStartupOptions
   // Resolving 'legacy' defers to electron-updater's own quitAndInstall for uncertified channels.
@@ -83,7 +108,7 @@ export type UpdateInstallationHooks = {
     options: UpdateApplyOptions
   ) => Promise<Partial<UpdateStatus> | void>
   beforeInstallHandoff?: (status: UpdateStatus) => Promise<void>
-  cancelInstall?: () => Promise<Partial<UpdateStatus>>
+  cancelInstall?: (beforeRestart?: () => void) => Promise<Partial<UpdateStatus>>
   recoverInstall?: () => Promise<Partial<UpdateStatus>>
   recheckInstall?: () => Promise<Partial<UpdateStatus>>
 }
@@ -312,13 +337,27 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             if (!installerPath) throw new Error('Downloaded installer path is unavailable')
             const startupOptions = deps.getStartupOptions?.()
             if (!startupOptions) throw new Error('Update startup configuration is unavailable')
-            return prepareWindowsUpdateHandoff(app.getPath('appData'), {
-              installerPath,
-              applicationPath: process.execPath,
-              profilePath: app.getPath('userData'),
-              targetVersion: this.status.latest ?? '',
-              startupOptions
-            })
+            const installerSha512 = this.status.artifactSha512
+            if (!installerSha512) throw new Error('Verified update installer digest is unavailable')
+            const recovery = this.recoveryArtifact
+            if (
+              !recovery ||
+              recovery.version !== this.status.latest ||
+              recovery.sha512 !== installerSha512
+            )
+              throw new Error('Verified update recovery source is unavailable')
+            return prepareWindowsUpdateHandoff(
+              app.getPath('appData'),
+              {
+                installerPath,
+                installerUrl: recovery.url,
+                applicationPath: process.execPath,
+                profilePath: app.getPath('userData'),
+                targetVersion: this.status.latest ?? '',
+                startupOptions
+              },
+              { installerSha512 }
+            )
           }
         : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
@@ -329,6 +368,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private readonly installationHooks: UpdateInstallationHooks
+  private recoveryArtifact?: { version: string; sha512: string; url: string }
 
   private subscribe(): void {
     this.updater.on('checking-for-update', () => {
@@ -448,6 +488,25 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         progress: 100,
         artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
         localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
+      }
+      this.recoveryArtifact = undefined
+      if (this.platform === 'win32' && readyStatus.latest && readyStatus.artifactSha512) {
+        try {
+          const url = windowsRecoveryArtifactUrl(
+            this.updater,
+            readyStatus.latest,
+            readyStatus.artifactSha512
+          )
+          if (url)
+            this.recoveryArtifact = {
+              version: readyStatus.latest,
+              sha512: readyStatus.artifactSha512,
+              url
+            }
+        } catch {
+          // Normal download remains inspectable; prepare refuses an unrecoverable handoff.
+          this.log.warn('The verified update recovery source could not be resolved')
+        }
       }
       delete readyStatus.installerMissing
       this.installerInvalidated = false
@@ -783,7 +842,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       // Invoke cancellation now so it can abort a read-only recheck; publishing its result waits
       // for the older status writer to settle, preventing late checks from reviving stale state.
       const previous = this.recoveryAction
-      const cancellation = this.installationHooks.cancelInstall()
+      const cancellation = this.installationHooks.cancelInstall(() => {
+        const handoff = this.updateHandoff
+        handoff?.cancel()
+        this.updateHandoff = undefined
+        this.updater.openScienceUpdateOperation = undefined
+      })
       const settled = cancellation.then(
         (result) => ({ result }),
         (error) => ({ error })
@@ -909,7 +973,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
 
     // Persist the next profile before stopping the backend. A failed write must leave the current
     // application usable; NSIS alone owns the subsequent installation UI.
-    if (options.relaunch !== false && this.prepareInstallHandoff) {
+    if ((options.relaunch !== false || this.platform === 'win32') && this.prepareInstallHandoff) {
       try {
         this.updateHandoff = await this.prepareInstallHandoff()
         if (!this.applying) {
