@@ -18,6 +18,7 @@
     "src/main/agent-framework/opencode-skill-reference.integration.test.ts",
     "src/main/agent-framework/opencode.test.ts",
     "src/main/agent-framework/opencode.ts",
+    "src/main/agent-framework/pi-runtime.test.ts",
     "src/main/agent-framework/pi-runtime.ts",
     "src/main/agent-framework/pi.ts",
     "src/main/agent-framework/registry.test.ts",
@@ -52,6 +53,7 @@
       "src/main/agent-framework/opencode-session-header.integration.test.ts",
       "src/main/agent-framework/opencode-skill-reference.integration.test.ts",
       "src/main/agent-framework/opencode.test.ts",
+      "src/main/agent-framework/pi-runtime.test.ts",
       "src/main/agent-framework/registry.test.ts",
       "src/main/agent-framework/resolved-agent-backend-leases.test.ts",
       "src/main/agent-framework/session-mcp-isolation.integration.test.ts"
