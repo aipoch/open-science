@@ -7696,19 +7696,20 @@
     "Loading introduction…": "正在載入介紹…",
     "Could not load this introduction. Try again.": "無法載入案例介紹，請重試。",
     "No introduction is available for this example yet.": "此案例尚未提供介紹。",
-    "Sharing marketplace": "分享市集",
-    "Use Case Marketplace": "案例市場",
     "Browse all examples": "瀏覽全部案例",
-    "Discover and reuse research examples": "探索並重用研究案例",
+    "Discover and reuse research resources": "探索並重用研究資源",
     "Refresh examples": "重新整理案例",
     "Home section navigation": "首頁區域導覽",
     "Case details": "案例詳情",
     "Back to list": "返回清單",
-    "Go to Use Case Marketplace": "前往案例市集",
     "Discover shared research examples and import them to start your own work.": "探索公開分享的研究案例，匯入後展開自己的研究。",
     "Loading examples…": "正在載入案例…",
     "Could not load examples. Try again.": "無法載入案例，請重試。",
     "No examples available yet.": "暫無案例。",
-    "View in sharing marketplace": "在分享市集中檢視"
+    "Resource center": "資源中心",
+    "Go to case library": "前往案例庫",
+    "Case library": "案例庫",
+    "View in case library": "在案例庫中檢視",
+    "Resource type": "資源類型"
   }
 }

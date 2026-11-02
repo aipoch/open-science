@@ -7696,19 +7696,20 @@
     "Loading introduction…": "正在加载介绍…",
     "Could not load this introduction. Try again.": "无法加载案例介绍，请重试。",
     "No introduction is available for this example yet.": "此案例暂未提供介绍。",
-    "Sharing marketplace": "分享市场",
-    "Use Case Marketplace": "案例市场",
     "Browse all examples": "浏览全部案例",
-    "Discover and reuse research examples": "发现并复用研究案例",
+    "Discover and reuse research resources": "发现并复用研究资源",
     "Refresh examples": "刷新案例",
     "Home section navigation": "首页区域导航",
     "Case details": "案例详情",
     "Back to list": "返回列表",
-    "Go to Use Case Marketplace": "前往案例市场",
     "Discover shared research examples and import them to start your own work.": "探索公开分享的研究案例，导入后开启自己的研究。",
     "Loading examples…": "正在加载案例…",
     "Could not load examples. Try again.": "无法加载案例，请重试。",
     "No examples available yet.": "暂无案例。",
-    "View in sharing marketplace": "在分享市场中查看"
+    "Resource center": "资源中心",
+    "Go to case library": "前往案例库",
+    "Case library": "案例库",
+    "View in case library": "在案例库中查看",
+    "Resource type": "资源类型"
   }
 }

@@ -55,7 +55,7 @@ test('downloads from details, retries and cancels on the card, then imports thro
   )
   const page = await app.completeOnboarding()
   await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-  const section = page.getByRole('region', { name: 'Use Case Marketplace' })
+  const section = page.getByRole('region', { name: 'Case library' })
   // Reach the append boundary before measuring cards so the retained list contains all seven.
   await section.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(section.getByRole('article')).toHaveCount(7)
@@ -145,7 +145,7 @@ test('refreshes the catalog once per launch and reuses the disk cache silently o
   // A tall window may already intersect the append sentinel. Check the complete fixture
   // after scrolling instead of depending on how many cards fit in the initial viewport.
   const expectCatalog = async (): Promise<void> => {
-    const cards = page.getByRole('region', { name: 'Use Case Marketplace' }).getByRole('article')
+    const cards = page.getByRole('region', { name: 'Case library' }).getByRole('article')
     await cards.last().scrollIntoViewIfNeeded()
     await expect(cards).toHaveCount(7)
   }
@@ -166,7 +166,5 @@ test('refreshes the catalog once per launch and reuses the disk cache silently o
   const refreshed = await page.evaluate(() => window.api.sessions.useCaseCatalog('refreshed'))
   expect(refreshed).toHaveLength(7)
   expect(await requestCount()).toBe(2)
-  await expect(
-    page.getByRole('region', { name: 'Use Case Marketplace' }).getByRole('alert')
-  ).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Case library' }).getByRole('alert')).toHaveCount(0)
 })

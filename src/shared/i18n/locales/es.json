@@ -8036,19 +8036,20 @@
     "Loading introduction…": "Cargando introducción…",
     "Could not load this introduction. Try again.": "No se pudo cargar esta introducción. Inténtelo de nuevo.",
     "No introduction is available for this example yet.": "Todavía no hay una introducción disponible para este ejemplo.",
-    "Sharing marketplace": "Mercado de contenido compartido",
-    "Use Case Marketplace": "Mercado de casos de uso",
     "Browse all examples": "Explorar todos los ejemplos",
-    "Discover and reuse research examples": "Descubrir y reutilizar ejemplos de investigación",
+    "Discover and reuse research resources": "Descubrir y reutilizar recursos de investigación",
     "Refresh examples": "Actualizar ejemplos",
     "Home section navigation": "Navegación por las secciones de inicio",
     "Case details": "Detalles del caso",
     "Back to list": "Volver a la lista",
-    "Go to Use Case Marketplace": "Ir al mercado de casos de uso",
     "Discover shared research examples and import them to start your own work.": "Descubra ejemplos de investigación compartidos e impórtelos para iniciar su propio trabajo.",
     "Loading examples…": "Cargando ejemplos…",
     "Could not load examples. Try again.": "No se pudieron cargar los ejemplos. Inténtelo de nuevo.",
     "No examples available yet.": "Todavía no hay ejemplos disponibles.",
-    "View in sharing marketplace": "Ver en el mercado de contenido compartido"
+    "Resource center": "Centro de recursos",
+    "Go to case library": "Ir a la biblioteca de casos",
+    "Case library": "Biblioteca de casos",
+    "View in case library": "Ver en la biblioteca de casos",
+    "Resource type": "Tipo de recurso"
   }
 }

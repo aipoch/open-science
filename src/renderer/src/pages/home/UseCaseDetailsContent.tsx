@@ -166,7 +166,7 @@ export const UseCaseDetailsContent = ({
               onClick={onOpenMarketplace}
               className="gap-2 text-muted-foreground"
             >
-              {t('Go to Use Case Marketplace')}
+              {t('Go to case library')}
               <ArrowUpRight className="size-4" aria-hidden="true" />
             </Button>
           )}

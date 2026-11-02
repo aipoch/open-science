@@ -100,16 +100,14 @@ it('opens details inside the app and imports through the existing flow', async (
 it('routes the gallery title and detail marketplace action to the marketplace page', async () => {
   await render()
   await act(async () =>
-    fireEvent.click(within(container).getByRole('button', { name: 'Use Case Marketplace' }))
+    fireEvent.click(within(container).getByRole('button', { name: 'Case library' }))
   )
   expect(useNavigationStore.getState().view).toBe('marketplace')
   expect(within(document.body).queryByRole('dialog')).toBeNull()
   await act(async () => fireEvent.click(within(container).getByRole('button', { name: 'Case 1' })))
   const dialog = within(within(document.body).getByRole('dialog'))
   expect(dialog.queryByRole('button', { name: 'Back to examples' })).toBeNull()
-  await act(async () =>
-    fireEvent.click(dialog.getByRole('button', { name: 'Go to Use Case Marketplace' }))
-  )
+  await act(async () => fireEvent.click(dialog.getByRole('button', { name: 'Go to case library' })))
   expect(useNavigationStore.getState().view).toBe('marketplace')
   expect(within(document.body).queryByRole('dialog')).toBeNull()
 })
@@ -376,7 +374,7 @@ it('prefetches only a settled hover and shares that request with the opened deta
 it('opens the case from its whole card and offers marketplace navigation beside detail import', async () => {
   await render()
   const ui = within(container)
-  expect(ui.getByRole('button', { name: 'Use Case Marketplace' })).toBeTruthy()
+  expect(ui.getByRole('button', { name: 'Case library' })).toBeTruthy()
   expect(ui.queryByRole('button', { name: 'Random examples' })).toBeNull()
   const card = within(ui.getAllByRole('article')[0])
   expect(card.queryByRole('button', { name: 'Details' })).toBeNull()
@@ -385,9 +383,7 @@ it('opens the case from its whole card and offers marketplace navigation beside 
   const dialog = within(within(document.body).getByRole('dialog', { name: 'Case details' }))
   expect(dialog.getByRole('button', { name: 'Import' })).toBeTruthy()
   expect(dialog.queryByRole('button', { name: 'View more' })).toBeNull()
-  await act(async () =>
-    fireEvent.click(dialog.getByRole('button', { name: 'Go to Use Case Marketplace' }))
-  )
+  await act(async () => fireEvent.click(dialog.getByRole('button', { name: 'Go to case library' })))
   expect(useNavigationStore.getState().view).toBe('marketplace')
 })
 
@@ -402,7 +398,7 @@ it('opens workbench marketplace details inline and returns to the retained list'
   await act(async () => fireEvent.click(ui.getByRole('button', { name: 'Case 1' })))
   expect(within(document.body).queryByRole('dialog')).toBeNull()
   const details = within(ui.getByRole('region', { name: 'Case details' }))
-  expect(details.queryByRole('button', { name: 'Go to Use Case Marketplace' })).toBeNull()
+  expect(details.queryByRole('button', { name: 'Go to case library' })).toBeNull()
   expect(details.getByRole('button', { name: 'Import' })).toBeTruthy()
   await act(async () => fireEvent.click(details.getByRole('button', { name: 'Back to list' })))
   expect(ui.queryByRole('region', { name: 'Case details' })).toBeNull()
@@ -521,8 +517,8 @@ it.each(['success', 'failure'] as const)(
 it('defaults the workbench market selector to cases while keeping category controls separate', async () => {
   await act(async () => root.render(<UseCaseCarousel variant="marketplace" compact />))
   const ui = within(container)
-  const selector = ui.getByRole('combobox', { name: 'Marketplace' })
-  expect(selector.textContent).toContain('Use Case Marketplace')
+  const selector = ui.getByRole('combobox', { name: 'Resource type' })
+  expect(selector.textContent).toContain('Case library')
   expect(ui.getByRole('group', { name: 'Category' })).toBeTruthy()
   expect(ui.getAllByRole('article')).toHaveLength(6)
 })

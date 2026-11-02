@@ -30,7 +30,7 @@ test('opens whole cards with mouse and keyboard without overlay actions', async 
   page
 }, info) => {
   await page.goto('/home-use-cases.html')
-  const section = page.getByRole('region', { name: 'Use Case Marketplace' })
+  const section = page.getByRole('region', { name: 'Case library' })
   await expect(section.getByRole('article')).toHaveCount(6)
   const card = section.getByRole('article').first()
   await expect(card.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
@@ -68,7 +68,7 @@ test('appends six cases per scroll without replacing cards or repeating the fina
     return route.fulfill({ json: many })
   })
   await page.goto('/home-use-cases.html?long')
-  const section = page.getByRole('region', { name: 'Use Case Marketplace' })
+  const section = page.getByRole('region', { name: 'Case library' })
   const cards = section.getByRole('article')
   await expect(cards).toHaveCount(6)
   const first = await cards.first().boundingBox()
@@ -160,10 +160,7 @@ test('browses and filters the marketplace, preserving the loaded list when detai
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  await page
-    .getByRole('heading', { name: 'Use Case Marketplace', exact: true })
-    .getByRole('button')
-    .click()
+  await page.getByRole('heading', { name: 'Case library', exact: true }).getByRole('button').click()
   const dialog = page.getByRole('dialog', { name: 'Case details', exact: true })
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:')
   await expect(dialog).toHaveCount(0)
@@ -178,7 +175,7 @@ test('browses and filters the marketplace, preserving the loaded list when detai
   await cards.nth(8).getByRole('button').first().click()
   await expect(dialog.getByRole('heading', { name: 'Published findings' })).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Back to list', exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('button', { name: 'Go to Use Case Marketplace' })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Go to case library' })).toHaveCount(0)
   await expect(dialog.getByRole('button', { name: 'Browse all examples' })).toHaveCount(0)
   await dialog.getByRole('button', { name: 'Close', exact: true }).click()
   await expect(cards).toHaveCount(12)
@@ -216,15 +213,13 @@ test('browses and filters the marketplace, preserving the loaded list when detai
   await expect(dialog).toHaveCount(0)
 })
 
-test('opens the same marketplace from the toolbar and detail Go to Use Case Marketplace action', async ({
+test('opens the same marketplace from the toolbar and detail Go to case library action', async ({
   page
 }, info) => {
   await page.goto('/home-use-cases.html?long')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Sharing marketplace' })).toBeVisible()
-  await expect(
-    page.getByRole('heading', { name: 'Use Case Marketplace', exact: true })
-  ).toHaveCount(1)
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await expect(page.getByRole('navigation', { name: 'Resource center' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Case library', exact: true })).toHaveCount(1)
   await expect(page.getByRole('textbox', { name: 'Search examples' })).toBeVisible()
   await page.getByRole('button', { name: 'Collapse sidebar panel' }).click()
   await expect(page.getByRole('button', { name: 'Expand sidebar panel' })).toBeVisible()
@@ -242,7 +237,7 @@ test('opens the same marketplace from the toolbar and detail Go to Use Case Mark
   expect(inset).toBeLessThanOrEqual(24)
   expect((await dialog.boundingBox())!.width).toBeLessThanOrEqual(960)
   const [importBounds, browseBounds] = await dialog.evaluate((element) =>
-    ['Import', 'Go to Use Case Marketplace'].map((label) => {
+    ['Import', 'Go to case library'].map((label) => {
       const button = Array.from(element.querySelectorAll('button')).find(
         (button) => button.textContent?.trim() === label
       )!
@@ -253,7 +248,7 @@ test('opens the same marketplace from the toolbar and detail Go to Use Case Mark
   expect(browseBounds.x).toBeGreaterThan(importBounds.x + importBounds.width)
   expect(browseBounds.y).toBe(importBounds.y)
   await expect(dialog.getByRole('button', { name: 'View more', exact: true })).toHaveCount(0)
-  await dialog.getByRole('button', { name: 'Go to Use Case Marketplace' }).click()
+  await dialog.getByRole('button', { name: 'Go to case library' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:')
   await page.setViewportSize({ width: 390, height: 700 })
@@ -270,9 +265,7 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  const title = page
-    .getByRole('heading', { name: 'Use Case Marketplace', exact: true })
-    .getByRole('button')
+  const title = page.getByRole('heading', { name: 'Case library', exact: true }).getByRole('button')
   await page.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(page.getByRole('article')).toHaveCount(12)
   const scroll = page.locator('[data-home-scroll]')
@@ -289,7 +282,7 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   await expect(
     page
       .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Use Case Marketplace', exact: true })
+      .getByRole('button', { name: 'Case library', exact: true })
   ).toHaveAttribute('aria-current', 'location')
 })
 
@@ -443,9 +436,13 @@ test('continues the existing import from the card at project selection and confi
 
 test('renders Chinese copy in dark mode', async ({ page }, info) => {
   await page.goto('/home-use-cases.html?zh&dark')
-  await expect(page.getByRole('region', { name: '案例市场' }).getByRole('article')).toHaveCount(6)
+  await expect(page.getByRole('region', { name: '案例库' }).getByRole('article')).toHaveCount(6)
   await page.getByRole('article').first().hover()
   await page.screenshot({ path: info.outputPath('home-examples-dark-zh.png') })
+  await page.getByRole('button', { name: '资源中心', exact: true }).click()
+  await expect(page.getByRole('navigation', { name: '资源中心', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '案例库', exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath('case-library-dark-zh.png') })
 })
 
 test('keeps a full-size cover placeholder until an image loads, including failed covers', async ({
@@ -464,7 +461,7 @@ test('keeps a full-size cover placeholder until an image loads, including failed
     })
   })
   await page.goto('/home-use-cases.html', { waitUntil: 'domcontentloaded' })
-  const cards = page.getByRole('region', { name: 'Use Case Marketplace' }).getByRole('article')
+  const cards = page.getByRole('region', { name: 'Case library' }).getByRole('article')
   await expect(cards).toHaveCount(6)
   await cards.first().scrollIntoViewIfNeeded()
   const sizes = (): Promise<number[]> =>
@@ -505,7 +502,7 @@ for (const catalogFails of [false, true]) {
           })
     })
     await page.goto('/home-use-cases.html')
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
     const cards = page.getByRole('main').getByRole('article')
     await expect(cards).toHaveCount(2)
     const failed = cards.nth(0).locator('img')
@@ -565,10 +562,10 @@ test('home navigation has two capsule targets beside the shared scrolling conten
 }, info) => {
   await page.setViewportSize({ width: 1760, height: 900 })
   await page.goto('/home-use-cases.html?long&updates')
-  const gallery = page.getByRole('region', { name: 'Use Case Marketplace' })
+  const gallery = page.getByRole('region', { name: 'Case library' })
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Marketplace', exact: true })
+    .getByRole('button', { name: 'Case library', exact: true })
   const back = page
     .locator('[data-home-navigation]')
     .getByRole('button', { name: 'Projects', exact: true })
@@ -595,7 +592,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
     await scroller
       .locator('..')
       .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Use Case Marketplace', exact: true })
+      .getByRole('button', { name: 'Case library', exact: true })
       .count()
   ).toBe(1)
   const capsule = jump.locator('[data-home-navigation-capsule]')
@@ -610,7 +607,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
   await jump.hover()
   await expect(capsule).toHaveCSS('height', '7px')
   await expect(capsule).toHaveCSS('width', '24px')
-  await expect(page.getByRole('tooltip')).toHaveText('Use Case Marketplace')
+  await expect(page.getByRole('tooltip')).toHaveText('Case library')
   const expandedBounds = (await capsule.boundingBox())!
   expect(expandedBounds.x).toBeGreaterThan(recentBounds.x + recentBounds.width)
   expect(expandedBounds.x + expandedBounds.width).toBeLessThanOrEqual(
@@ -651,9 +648,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
   await expect(jump).toBeFocused()
   await expect(back).toBeVisible()
   await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
-  await expect(
-    gallery.getByRole('button', { name: 'Use Case Marketplace', exact: true })
-  ).toBeInViewport()
+  await expect(gallery.getByRole('button', { name: 'Case library', exact: true })).toBeInViewport()
   expect((await updates.boundingBox())!.y).toBeLessThan(updatesBefore!.y)
   expect(await jump.boundingBox()).toEqual(jumpBounds)
   await expect(jump).toHaveAttribute('aria-current', 'location')
@@ -701,7 +696,7 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.goto('/home-use-cases.html')
   await expect(page.getByRole('article')).toHaveCount(3)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Marketplace' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Case library' })
   ).toBeHidden()
   await expect(
     page.locator('[data-home-navigation]').getByRole('button', { name: 'Projects' })
@@ -709,9 +704,9 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: [] }))
   await page.goto('/home-use-cases.html?long')
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Use Case Marketplace' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Case library' })).toHaveCount(0)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Marketplace' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Case library' })
   ).toHaveCount(0)
 })
 
@@ -723,7 +718,7 @@ test('home navigation capsules fit small windows with reduced motion and scrolli
   await page.goto('/home-use-cases.html?long&updates&many-updates&zh&dark')
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: '案例市场', exact: true })
+    .getByRole('button', { name: '案例库', exact: true })
   const back = page
     .locator('[data-home-navigation]')
     .getByRole('button', { name: '项目', exact: true })
@@ -748,8 +743,8 @@ test('home navigation capsules fit small windows with reduced motion and scrolli
   await jump.click()
   await expect(back).toBeVisible()
   expect(await jump.boundingBox()).toEqual(jumpBounds)
-  const gallery = page.getByRole('region', { name: '案例市场' })
-  await expect(gallery.getByRole('button', { name: '案例市场', exact: true })).toBeInViewport()
+  const gallery = page.getByRole('region', { name: '案例库' })
+  await expect(gallery.getByRole('button', { name: '案例库', exact: true })).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await expect(jump).toHaveAttribute('aria-current', 'location')
   await expect(back).not.toHaveAttribute('aria-current')
@@ -788,9 +783,9 @@ test('refreshes marketplace data on demand, preserves filters and recovers from 
     })
   })
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   await expect(
-    page.getByText('Discover and reuse research examples', { exact: true })
+    page.getByText('Discover and reuse research resources', { exact: true })
   ).toBeVisible()
   await page.getByRole('button', { name: 'Biology', exact: true }).click()
   const search = page.getByRole('textbox', { name: 'Search examples' })
@@ -881,7 +876,7 @@ test('animates the capsule shape without moving its bounds and respects reduced 
   await page.goto('/home-use-cases.html?long')
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Use Case Marketplace', exact: true })
+    .getByRole('button', { name: 'Case library', exact: true })
   const capsule = jump.locator('[data-home-navigation-capsule]')
   const shape = jump.locator('[data-home-navigation-shape]')
   const initialBounds = await capsule.boundingBox()
@@ -913,17 +908,17 @@ test('opens the marketplace in the conversation workbench and browses details in
   await page.goto('/home-use-cases.html?panel')
   const draft = page.getByRole('textbox', { name: 'Conversation draft' })
   await draft.fill('An unfinished research question')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   await expect(panel).toBeVisible()
   await expect(page.getByTestId('navigation')).toHaveText('workspace:research')
   await expect(draft).toHaveValue('An unfinished research question')
   expect((await panel.boundingBox())!.x).toBeGreaterThan((await draft.boundingBox())!.x)
-  const heading = panel.getByRole('combobox', { name: 'Marketplace', exact: true })
+  const heading = panel.getByRole('combobox', { name: 'Resource type', exact: true })
   await expect(heading).toHaveCSS('font-size', '14px')
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   const categories = panel.getByRole('group', { name: 'Category' })
-  const openMarket = panel.getByRole('button', { name: 'View in sharing marketplace' })
+  const openMarket = panel.getByRole('button', { name: 'View in case library' })
   await expect(openMarket).toBeVisible()
   const headingBounds = (await heading.boundingBox())!
   const searchBounds = (await search.boundingBox())!
@@ -947,8 +942,8 @@ test('opens the marketplace in the conversation workbench and browses details in
   const first = (await cards.first().boundingBox())!
   const second = (await cards.nth(1).boundingBox())!
   const third = (await cards.nth(2).boundingBox())!
-  expect(first.y).toBe(second.y)
-  expect(third.y).toBeGreaterThan(first.y)
+  expect(second.y).toBeGreaterThan(first.y)
+  expect(third.y).toBeGreaterThan(second.y)
   await cards.first().getByRole('button').click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   const details = panel.getByRole('region', { name: 'Case details', exact: true })
@@ -978,21 +973,19 @@ test('opens the marketplace in the conversation workbench and browses details in
   await details.getByRole('button', { name: 'Back to list', exact: true }).click()
   await expect(cards).toHaveCount(6)
   await expect(cards.first().getByRole('button')).toBeFocused()
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  await expect(page.getByRole('tab', { name: 'Sharing marketplace', exact: true })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Resource center', exact: true })).toHaveCount(1)
   await page.screenshot({ path: info.outputPath('marketplace-workspace-list.png') })
-  await page
-    .getByRole('button', { name: 'Close preview of Sharing marketplace', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Close preview of Resource center', exact: true }).click()
   await expect(draft).toHaveValue('An unfinished research question')
   await expect(panel).toHaveCount(0)
 })
 
 test('opens the full marketplace from its compact workbench header', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
+  await panel.getByRole('button', { name: 'View in case library' }).click()
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:research')
   await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Back to Project', exact: true }).click()
@@ -1013,8 +1006,8 @@ test('preserves the compact marketplace filters and visible case across full-pag
   await page.route('**/manifest.json', (route) => route.fulfill({ json: manyCases }))
   await page.setViewportSize({ width: 1600, height: 700 })
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   await panel.getByRole('textbox', { name: 'Search examples' }).fill('Research example')
   await panel.getByRole('button', { name: 'Biology', exact: true }).click()
   const scroller = panel.locator('[data-use-case-browser-scroll]')
@@ -1029,7 +1022,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
     const viewport = el.closest('[data-use-case-browser-scroll]')!
     viewport.scrollTop += el.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 20
   })
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in case library' }).click()
   const full = page.getByRole('main')
   await expect(full.getByRole('textbox', { name: 'Search examples' })).toHaveValue(
     'Research example'
@@ -1055,7 +1048,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
   )
   await expect(anchor).toBeInViewport()
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   await expect(full.getByRole('textbox', { name: 'Search examples' })).toHaveValue('')
   await expect(full.getByRole('button', { name: 'All categories', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -1068,15 +1061,15 @@ test('preserves the compact marketplace filters and visible case across full-pag
 
 test('syncs changed and cleared full-page filters back to the project panel', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = (surface: Locator): Locator =>
     surface.getByRole('textbox', { name: 'Search examples' })
   const category = (surface: Locator, name: string): Locator =>
     surface.getByRole('button', { name, exact: true })
   await search(panel).fill('Research example 2')
   await category(panel, 'Biology').click()
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in case library' }).click()
   const full = page.getByRole('main')
   await search(full).fill('Research example 3')
   await category(full, 'Science').click()
@@ -1093,7 +1086,7 @@ test('syncs changed and cleared full-page filters back to the project panel', as
   )
 
   // A second round trip must also transfer an empty query and the all-categories selection.
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in case library' }).click()
   await expect(search(full)).toHaveValue('Research example 3')
   await search(full).fill('')
   await category(full, 'All categories').click()
@@ -1111,7 +1104,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
 }, info) => {
   await page.goto('/home-use-cases.html?long')
   const scroller = page.locator('[data-home-scroll]')
-  const gallery = page.getByRole('region', { name: 'Use Case Marketplace', exact: true })
+  const gallery = page.getByRole('region', { name: 'Case library', exact: true })
   const card = gallery.getByRole('article').first()
   await card.scrollIntoViewIfNeeded()
   const viewport = (await scroller.boundingBox())!
@@ -1124,9 +1117,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
   )
   const bounds = (await card.boundingBox())!
   const grid = (await card.locator('..').boundingBox())!
-  const header = gallery
-    .getByRole('heading', { name: 'Use Case Marketplace', exact: true })
-    .locator('..')
+  const header = gallery.getByRole('heading', { name: 'Case library', exact: true }).locator('..')
   const headerBounds = (await header.boundingBox())!
   expect(headerBounds.y).toBeCloseTo(viewport.y, 0)
   const clip = {
@@ -1151,7 +1142,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
 
 test('returns home when the full marketplace was opened from home', async ({ page }) => {
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Back to Project', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
   await expect(page.getByTestId('navigation')).toHaveText('home:')
@@ -1161,15 +1152,15 @@ test('selects the case marketplace without resetting its filters or opening deta
   page
 }, info) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example 1')
-  const selector = panel.getByRole('combobox', { name: 'Marketplace', exact: true })
-  await expect(selector).toHaveText('Use Case Marketplace')
+  const selector = panel.getByRole('combobox', { name: 'Resource type', exact: true })
+  await expect(selector).toHaveText('Case library')
   await selector.click()
   await expect(page.getByRole('option')).toHaveCount(1)
-  const option = page.getByRole('option', { name: 'Use Case Marketplace', exact: true })
+  const option = page.getByRole('option', { name: 'Case library', exact: true })
   await expect(option).toHaveAttribute('aria-selected', 'true')
   await page.screenshot({ path: info.outputPath('marketplace-type-selector.png') })
   await option.click()
@@ -1200,11 +1191,11 @@ for (const surface of ['panel', 'dialog'] as const) {
     await page.setViewportSize({ width: 1100, height: 800 })
     await page.goto(`/home-use-cases.html?download${surface === 'panel' ? '&panel' : ''}`)
     if (surface === 'panel')
-      await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+      await page.getByRole('button', { name: 'Resource center', exact: true }).click()
     const owner =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
-        : page.getByRole('region', { name: 'Use Case Marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
+        : page.getByRole('region', { name: 'Case library', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1243,12 +1234,12 @@ for (const surface of ['panel', 'dialog'] as const) {
     )
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
     if (surface === 'panel') {
-      await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+      await page.getByRole('button', { name: 'Resource center', exact: true }).click()
     }
     const owner =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
-        : page.getByRole('region', { name: 'Use Case Marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
+        : page.getByRole('region', { name: 'Case library', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1315,8 +1306,8 @@ for (const outcome of ['changed', 'unchanged', 'failed'] as const) {
       })
     })
     await page.goto('/home-use-cases.html?panel')
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-    const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+    const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
     const search = panel.getByRole('textbox', { name: 'Search examples' })
     await search.fill('Research example 1')
     await panel.getByRole('button', { name: 'Science', exact: true }).click()
@@ -1374,10 +1365,10 @@ for (const surface of ['panel', 'standalone'] as const) {
         : route.fulfill({ json: outcome === 'empty' ? [] : catalog })
     })
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+    await page.getByRole('button', { name: 'Resource center', exact: true }).click()
     const market =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
         : page.getByRole('main')
     await expect(market.getByRole('status')).toHaveText('Loading examples…')
     await expect(market.getByText('No matching examples')).toHaveCount(0)
@@ -1409,8 +1400,8 @@ test('recovers from a retired category without losing search or restoring the re
   let current = many
   await page.route('**/manifest.json', (route) => route.fulfill({ json: current }))
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const market = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const market = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
   const search = market.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example')
   await market.getByRole('button', { name: 'Biology', exact: true }).click()
@@ -1439,4 +1430,111 @@ test('recovers from a retired category without losing search or restoring the re
     'aria-pressed',
     'true'
   )
+})
+
+test('adapts the case library to wide windows and fills the viewport before waiting for scroll', async ({
+  page
+}, info) => {
+  const many = Array.from({ length: 60 }, (_, index) => ({
+    ...catalog[index % catalog.length],
+    name: `case-${index + 1}`,
+    title: `Research example ${index + 1}`
+  }))
+  await page.route('**/manifest.json', (route) => route.fulfill({ json: many }))
+  await page.goto('/home-use-cases.html')
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const viewport = page.locator('[data-use-case-browser-scroll]')
+  const cards = page.getByRole('main').getByRole('article')
+  await expect(cards).toHaveCount(6)
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await expect
+    .poll(async () => {
+      const boxes = await cards.evaluateAll((elements) =>
+        elements.map((el) => el.getBoundingClientRect())
+      )
+      return boxes.filter((box) => box.y === boxes[0].y).length
+    })
+    .toBe(5)
+  await expect.poll(() => cards.count()).toBeGreaterThan(6)
+  await expect.poll(() => viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  const loaded = await cards.count()
+  expect(loaded).toBeLessThan(60)
+  const first = (await cards.first().boundingBox())!
+  expect(first.width).toBeGreaterThanOrEqual(280)
+  expect(first.width).toBeLessThan(400)
+  expect(first.height).toBeLessThan(280)
+  await page.screenshot({ path: info.outputPath('case-library-wide.png') })
+  await viewport.evaluate((el) => {
+    el.scrollTop = el.scrollHeight
+  })
+  await expect(cards).toHaveCount(loaded + 6)
+  expect(
+    await cards.evaluateAll(
+      (elements) => new Set(elements.map((el) => el.getAttribute('data-case-slug'))).size
+    )
+  ).toBe(loaded + 6)
+  const search = page.getByRole('textbox', { name: 'Search examples' })
+  await search.fill('Research example 60')
+  await expect(cards).toHaveCount(1)
+  expect((await cards.first().boundingBox())!.width).toBeLessThan(400)
+  await search.fill('no matching example')
+  await expect(cards).toHaveCount(0)
+  await search.fill('')
+  await expect.poll(() => cards.count()).toBeGreaterThan(6)
+  await page.setViewportSize({ width: 390, height: 700 })
+  await expect.poll(() => viewport.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+  const narrowFirst = (await cards.first().boundingBox())!
+  const narrowSecond = (await cards.nth(1).boundingBox())!
+  expect(narrowSecond.y).toBeGreaterThan(narrowFirst.y)
+  await page.screenshot({ path: info.outputPath('case-library-narrow.png') })
+})
+
+test('reflows the case library within the project panel without losing filters or overflowing', async ({
+  page
+}, info) => {
+  await page.setViewportSize({ width: 1440, height: 800 })
+  await page.goto('/home-use-cases.html?panel')
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Resource center', exact: true })
+  const search = panel.getByRole('textbox', { name: 'Search examples' })
+  await search.fill('Research example')
+  await panel.getByRole('button', { name: 'Biology', exact: true }).click()
+  const cards = panel.getByRole('article')
+  await expect(cards).toHaveCount(3)
+  const cover = cards.first().locator('img').locator('../..')
+  expect((await cover.boundingBox())!.width).toBeCloseTo(
+    (await cards.first().boundingBox())!.width - 2,
+    0
+  )
+  const shell = page.locator('[data-workspace-preview]')
+  await shell.evaluate((el) => {
+    el.style.width = '360px'
+  })
+  const first = (await cards.first().boundingBox())!
+  const second = (await cards.nth(1).boundingBox())!
+  expect(second.y).toBeGreaterThan(first.y)
+  expect(first.height).toBeLessThan(280)
+  await expect.poll(() => panel.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+  await page.screenshot({ path: info.outputPath('case-library-panel-narrow.png') })
+  await shell.evaluate((el) => {
+    el.style.width = '680px'
+  })
+  await expect
+    .poll(
+      async () => (await cards.first().boundingBox())!.y === (await cards.nth(1).boundingBox())!.y
+    )
+    .toBe(true)
+  expect((await cards.nth(2).boundingBox())!.y).toBeGreaterThan(
+    (await cards.first().boundingBox())!.y
+  )
+  await expect(search).toHaveValue('Research example')
+  await expect(panel.getByRole('button', { name: 'Biology', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  await cards.first().getByRole('button').click()
+  await panel.getByRole('button', { name: 'Back to list', exact: true }).click()
+  await expect(search).toHaveValue('Research example')
+  await expect(cards).toHaveCount(3)
+  await page.screenshot({ path: info.outputPath('case-library-panel-wide.png') })
 })

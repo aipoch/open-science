@@ -1253,7 +1253,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               onClick={onOpenMarketplace}
             >
               <Store className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span>{t('Sharing marketplace')}</span>
+              <span>{t('Resource center')}</span>
             </button>
           </div>
 

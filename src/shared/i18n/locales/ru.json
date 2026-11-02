@@ -8182,19 +8182,20 @@
     "Loading introduction…": "Загрузка описания…",
     "Could not load this introduction. Try again.": "Не удалось загрузить описание. Повторите попытку.",
     "No introduction is available for this example yet.": "Описание этого примера пока недоступно.",
-    "Sharing marketplace": "Маркетплейс обмена",
-    "Use Case Marketplace": "Маркетплейс примеров",
     "Browse all examples": "Посмотреть все примеры",
-    "Discover and reuse research examples": "Находите и используйте примеры исследований",
+    "Discover and reuse research resources": "Находите и используйте исследовательские ресурсы",
     "Refresh examples": "Обновить примеры",
     "Home section navigation": "Навигация по разделам главной страницы",
     "Case details": "Сведения о примере",
     "Back to list": "Вернуться к списку",
-    "Go to Use Case Marketplace": "Перейти в маркетплейс примеров",
     "Discover shared research examples and import them to start your own work.": "Изучайте опубликованные примеры исследований и импортируйте их, чтобы начать собственную работу.",
     "Loading examples…": "Загрузка примеров…",
     "Could not load examples. Try again.": "Не удалось загрузить примеры. Повторите попытку.",
     "No examples available yet.": "Пока нет доступных примеров.",
-    "View in sharing marketplace": "Посмотреть в маркетплейсе обмена"
+    "Resource center": "Центр ресурсов",
+    "Go to case library": "Перейти в библиотеку примеров",
+    "Case library": "Библиотека примеров",
+    "View in case library": "Посмотреть в библиотеке примеров",
+    "Resource type": "Тип ресурса"
   }
 }
