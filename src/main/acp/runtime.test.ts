@@ -9196,9 +9196,8 @@ describe('ACP runtime session management', () => {
       if (scenario.startsWith('prepared')) {
         await coordinator.respondToElicitation({ ...response, prepareContinuation: true })
         expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
-        expect(
-          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
-        ).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationPending).toBe(true)
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
       }
       if (scenario === 'prepared-rotation') await coordinator.requestSkillsReload()
       if (scenario === 'prepared-restart') {

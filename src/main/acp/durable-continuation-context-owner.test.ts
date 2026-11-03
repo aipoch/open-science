@@ -96,6 +96,41 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it('publishes the saved decision without declaring a continuation failure', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    setActivities(session, [pendingChoice()])
+    const publish = vi.fn()
+    const owner = new AcpDurableContinuationContextOwner(
+      {
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = { ...mutate(structuredClone(session)), runtimeTranscriptOwner: 'main' }
+          return structuredClone(session)
+        }
+      },
+      publish
+    )
+    await owner.prepareElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+    })
+    expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+    expect(session.activities?.[0].elicitation).toMatchObject({
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      continuationPending: true
+    })
+    expect(session.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+    const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    expect(restarted.activities?.[0].elicitation?.state).toBe('answered')
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.error).toBeTruthy()
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBeUndefined()
+  })
+
   it.each(
     (['accept', 'decline', 'cancel'] as const).flatMap((action) =>
       ['success', 'question-changed', 'write-failed'].map((scenario) => ({ action, scenario }))

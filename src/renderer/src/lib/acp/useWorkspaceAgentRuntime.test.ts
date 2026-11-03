@@ -1626,12 +1626,10 @@ describe('workspace durable elicitation', () => {
           await owner.prepareElicitation({
             ...input,
             continuePrepared: !!response.continuationFailure,
-            ...(response.continuationFailure || response.prepareContinuation
+            ...(response.continuationFailure
               ? {
                   recovery: {
-                    error:
-                      response.continuationFailure ??
-                      'The task could not continue. Your response is saved.'
+                    error: response.continuationFailure
                   }
                 }
               : {})
@@ -1654,9 +1652,14 @@ describe('workspace durable elicitation', () => {
       expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
       if (!failSecondMutation) expect(resumeSession).toHaveBeenCalledTimes(1)
       if (resumeSession.mock.calls.length > 0) expect(savedBeforeResume).toBe(true)
-      expect
-        .soft(stored.activities?.[0].elicitation?.continuationRecovery)
-        .toEqual(expect.objectContaining({ error: expect.any(String) }))
+      if (failSecondMutation) {
+        expect(stored.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
+      } else {
+        expect(stored.activities?.[0].elicitation?.continuationRecovery).toEqual({
+          error: 'The bound specialist is unavailable.'
+        })
+      }
       expect
         .soft(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0]))
         .toHaveLength(1)

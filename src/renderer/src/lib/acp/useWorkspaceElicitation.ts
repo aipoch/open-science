@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { create } from 'zustand'
 
 import type {
   AcpResumeSessionRequest,
@@ -18,6 +19,12 @@ import {
   type WorkspaceElicitationRuntime
 } from './workspace-elicitation-runtime'
 
+// A failed recovery write cannot enter durable history. Keep its disclosure scoped to
+// the saved question across responder remounts; only Main can grant retry permission.
+const useWorkspaceElicitationFailures = create<{
+  failures: Record<string, { requestId: string; error: string }>
+}>(() => ({ failures: {} }))
+
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
 ): PendingElicitationRequest[] => {
@@ -32,7 +39,10 @@ const pendingWorkspaceElicitations = (
   return (session.activities ?? []).flatMap((activity) => {
     const elicitation = activity.elicitation
     return elicitation &&
-      (elicitation.state === 'pending' || elicitation.continuationRecovery) &&
+      (elicitation.state === 'pending' ||
+        elicitation.continuationRecovery ||
+        (elicitation.continuationPending &&
+          (elicitation.state === 'answered' || elicitation.state === 'declined'))) &&
       elicitation.durable
       ? [
           {
@@ -112,6 +122,14 @@ const useWorkspaceElicitation = (
         ? useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId)
         : undefined
       const selected = session ? resolveSessionRuntimeSelection(session.id) : undefined
+      if (sessionId) {
+        useWorkspaceElicitationFailures.setState(({ failures }) => {
+          if (!failures[sessionId]) return {}
+          const next = { ...failures }
+          delete next[sessionId]
+          return { failures: next }
+        })
+      }
 
       try {
         await respondToWorkspaceElicitation(await createWorkspaceElicitationRuntime(), response, {
@@ -125,6 +143,28 @@ const useWorkspaceElicitation = (
           historyReplayDescriptor: selected?.historyReplayDescriptor
         })
       } catch (error) {
+        const saved = useSessionStore
+          .getState()
+          .sessions.find((candidate) => candidate.id === sessionId)
+          ?.activities?.find(
+            (activity) => activity.elicitation?.durable?.requestId === response.requestId
+          )?.elicitation
+        if (
+          sessionId &&
+          saved?.continuationPending &&
+          !saved.continuationRecovery &&
+          (saved.state === 'answered' || saved.state === 'declined')
+        ) {
+          useWorkspaceElicitationFailures.setState(({ failures }) => ({
+            failures: {
+              ...failures,
+              [sessionId]: {
+                requestId: response.requestId,
+                error: error instanceof Error ? error.message : String(error)
+              }
+            }
+          }))
+        }
         if (sessionId && isSessionSizeLimitError(error)) onSessionSizeLimit?.(sessionId)
         throw error
       }
@@ -135,4 +175,9 @@ const useWorkspaceElicitation = (
   return { respondToElicitation }
 }
 
-export { createWorkspaceElicitationRuntime, pendingWorkspaceElicitations, useWorkspaceElicitation }
+export {
+  createWorkspaceElicitationRuntime,
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitation,
+  useWorkspaceElicitationFailures
+}

@@ -14,7 +14,10 @@ import {
   SplitButtonContent
 } from '@/components/ui/split-button'
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
-import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
+import {
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitationFailures
+} from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -1052,11 +1055,28 @@ const ConversationPanel = ({
   const pendingElicitationActivity = pendingElicitationRequest
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
+  const continuationFailure = useWorkspaceElicitationFailures((state) =>
+    activeSession ? state.failures[activeSession.id] : undefined
+  )
+  const failedContinuation =
+    pendingElicitationActivity?.elicitation?.continuationPending &&
+    !pendingElicitationActivity.elicitation.continuationRecovery &&
+    continuationFailure?.requestId === pendingElicitationRequest?.requestId
+      ? continuationFailure
+      : undefined
   const pendingElicitation: ElicitationProjection | undefined =
     pendingElicitationActivity?.elicitation &&
     (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationPending ||
       pendingElicitationActivity.elicitation.continuationRecovery)
-      ? pendingElicitationActivity.elicitation
+      ? {
+          ...pendingElicitationActivity.elicitation,
+          ...(failedContinuation
+            ? {
+                continuationRecovery: { error: failedContinuation.error }
+              }
+            : {})
+        }
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
             message: pendingElicitationRequest.message,

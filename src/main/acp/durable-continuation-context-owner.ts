@@ -150,7 +150,7 @@ class AcpDurableContinuationContextOwner {
         }
       }
     })
-    if (input.recovery) await this.publishSessionUpdated?.(structuredClone(committed))
+    await this.publishSessionUpdated?.(structuredClone(committed))
 
     return {
       ...continuation,

@@ -154,6 +154,56 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it.each(['answered', 'declined'] as const)(
+    'shows progress for a saved %s decision while its continuation is pending',
+    async (state) => {
+      const durableRequest = {
+        ...request,
+        durable: { kind: 'agent-user-choice' as const, requestId: request.requestId }
+      }
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            elicitation={{
+              ...activity.elicitation!,
+              state,
+              durable: durableRequest.durable,
+              continuationPending: true
+            }}
+            request={durableRequest}
+            onRespond={vi.fn()}
+            embedded
+          />
+        )
+      )
+      expect(
+        container.querySelector('[data-testid="elicitation-continuation-progress"]')
+      ).not.toBeNull()
+      expect(container.textContent).toContain('Resuming session')
+      expect(container.querySelector('form')).toBeNull()
+      expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+      expect(container.querySelector('button')).toBeNull()
+    }
+  )
+
+  it('keeps the transcript answer visible while its continuation is pending', async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            ...activity.elicitation!,
+            state: 'answered',
+            answers: [{ fieldId: 'question_0', value: 'clinical' }],
+            continuationPending: true
+          }}
+          request={request}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Clinical statistics')
+    expect(container.querySelector('[data-testid="elicitation-continuation-progress"]')).toBeNull()
+  })
+
   it('keeps an uncommitted durable answer editable after validation rejects it', async () => {
     const durableRequest = {
       ...request,
