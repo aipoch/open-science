@@ -345,7 +345,7 @@ $target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)
 Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" | Out-Null
 [Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')
 [Console]::Out.Flush()
-$deadline = [DateTime]::UtcNow.AddMinutes(1)
+$deadline = [DateTime]::UtcNow.AddMinutes(3)
 $candidate = $null
 $handle = [IntPtr]::Zero
 do {
@@ -394,7 +394,7 @@ exit $exitCode
       allowNonZero: true,
       env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
       signal,
-      timeoutMs: 370_000,
+      timeoutMs: 490_000,
       onStdout: (output) => {
         if (output.split(/\r?\n/).includes('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')) markReady()
       }
@@ -546,12 +546,12 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const closed = waitForShutdownExit(exit, child, diagnosticOutput)
     const applied = await invoke('apply')
     if (applied.state !== 'applying') {
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
-    const exitCode = await closed
+    // Preflight can perform a cold resource scan. Its time must not consume the app-exit budget.
+    const exitCode = await waitForShutdownExit(exit, child, diagnosticOutput)
     if (exitCode !== 0)
       throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
     const ownedProcessRecovery = ownedEvidence
