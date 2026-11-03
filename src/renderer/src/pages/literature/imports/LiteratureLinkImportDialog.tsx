@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 import { parseLiteratureLink } from '../../../../../shared/literature-link'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import { useLiteratureHost } from '../renderer-host'
+import { LiteratureTable, LiteratureTextTooltip } from '../LiteratureTable'
 import { LiteratureImportDialogFrame } from './LiteratureImportDialogFrame'
 
 export function LiteratureLinkImportDialog({
@@ -201,7 +202,10 @@ export function LiteratureLinkImportDialog({
           <p role="status">{t('References checked: {{checked}}', { checked: results.length })}</p>
         ) : null}
         {results.length ? (
-          <table className="w-full table-fixed text-left text-sm" aria-label={t('Lookup results')}>
+          <LiteratureTable
+            className="w-full table-fixed text-left text-sm"
+            aria-label={t('Lookup results')}
+          >
             <thead className="border-b border-border-300/80 text-xs text-muted-foreground">
               <tr>
                 <th scope="col" className="w-2/5 px-2 py-2 font-medium">
@@ -215,23 +219,30 @@ export function LiteratureLinkImportDialog({
             <tbody className="divide-y divide-border-300/60">
               {results.map((row, index) => (
                 <tr key={index}>
-                  <th
-                    scope="row"
-                    className="wrap-anywhere px-2 py-3 align-top font-normal text-muted-foreground"
-                  >
-                    {row.input}
+                  <th scope="row" className="px-2 py-3 align-top font-normal text-muted-foreground">
+                    <LiteratureTextTooltip text={row.input} overflowOnly>
+                      <span tabIndex={0} className="block truncate">
+                        {row.input}
+                      </span>
+                    </LiteratureTextTooltip>
                   </th>
-                  <td className="wrap-anywhere px-2 py-3 align-top">
-                    {row.item ? (
-                      row.item.title
-                    ) : (
-                      <span className="text-muted-foreground">{t('Lookup failed')}</span>
-                    )}
+                  <td className="px-2 py-3 align-top">
+                    <LiteratureTextTooltip
+                      text={row.item?.title ?? t('Lookup failed')}
+                      overflowOnly
+                    >
+                      <span
+                        tabIndex={0}
+                        className={cn('block truncate', !row.item && 'text-muted-foreground')}
+                      >
+                        {row.item?.title ?? t('Lookup failed')}
+                      </span>
+                    </LiteratureTextTooltip>
                   </td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </LiteratureTable>
         ) : null}
         {error ? (
           <div id={`${id}-error`}>

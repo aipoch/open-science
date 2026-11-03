@@ -52,6 +52,24 @@ for (const foreign of [false, true]) {
       .toBe(2)
     await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(1))
     await expect(page.getByText('invalid', { exact: true })).toBeVisible()
+    if (!foreign) {
+      await page.setViewportSize({ width: 375, height: 812 })
+      const table = page.getByRole('table', { name: 'Lookup results' })
+      const title = table.getByRole('cell').first().locator('span').first()
+      expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true
+      )
+      await title.hover()
+      await expect(page.getByRole('tooltip')).toHaveText(await title.innerText())
+      await page.getByRole('heading', { name: 'Add from DOI or link', exact: true }).hover()
+      const input = table.getByRole('rowheader').last().locator('span').first()
+      expect(await input.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true
+      )
+      await input.focus()
+      await expect(page.getByRole('tooltip')).toHaveText(await input.innerText())
+      await input.press('Tab')
+    }
     const readImports = (): Promise<Array<{ mode?: string; items?: unknown[] }>> =>
       page.evaluate(() =>
         (
