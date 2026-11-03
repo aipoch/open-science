@@ -25,6 +25,7 @@ export class AcpConnectionTransitionOwner {
   private idleReleaseIntent = false
   private retirementIntent = false
   private retirementStarted = false
+  private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
   private barrierGeneration = 0
@@ -40,6 +41,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestProviderReconnect(): Promise<void> {
+    if (this.plannedDisconnect) return this.plannedDisconnect
     if (this.options.blockers().reconnect) {
       this.providerIntent = true
       this.armBarrier()
@@ -74,6 +76,7 @@ export class AcpConnectionTransitionOwner {
       return
     }
 
+    if (this.plannedDisconnect) return
     if (this.options.blockers().reconnect) return
     if (!this.providerIntent && !this.skillsIntent) {
       if (!this.idleReleaseIntent || this.options.blockers().retirement) return
@@ -119,7 +122,18 @@ export class AcpConnectionTransitionOwner {
     }
   }
 
-  private async disconnectPlanned(): Promise<void> {
+  private disconnectPlanned(): Promise<void> {
+    if (this.plannedDisconnect) return this.plannedDisconnect
+    const completion = Promise.withResolvers<void>()
+    // Publish ownership before disconnect's synchronous cleanup can notify activity changes.
+    this.plannedDisconnect = completion.promise.finally(() => {
+      this.plannedDisconnect = undefined
+    })
+    void this.performPlannedDisconnect().then(completion.resolve, completion.reject)
+    return this.plannedDisconnect
+  }
+
+  private async performPlannedDisconnect(): Promise<void> {
     const disconnect = this.options.disconnect(false)
     const teardownGeneration = this.options.connectionGeneration()
     await disconnect
@@ -135,7 +149,7 @@ export class AcpConnectionTransitionOwner {
     this.idleReleaseIntent = false
 
     try {
-      await this.options.disconnect(false)
+      await (this.plannedDisconnect ?? this.options.disconnect(false))
     } catch (error) {
       this.reportFailure('retired runtime disconnect failed', error)
     } finally {

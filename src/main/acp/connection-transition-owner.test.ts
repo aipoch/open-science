@@ -3,6 +3,56 @@ import { describe, expect, it, vi } from 'vitest'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 
 describe('AcpConnectionTransitionOwner', () => {
+  it.each([false, true])(
+    'coalesces reconnects with an in-flight idle release; failure=%s',
+    async (fail) => {
+      const gate = Promise.withResolvers<void>()
+      const failure = new Error('idle teardown failed')
+      const disconnect = vi.fn(async () => {
+        await gate.promise
+        if (fail) throw failure
+      })
+      const recoverFailedDeferredDisconnect = vi.fn()
+      const publishIdle = vi.fn()
+      const owner = new AcpConnectionTransitionOwner({
+        blockers: () => ({ reconnect: false, retirement: false }),
+        connectionGeneration: () => 1,
+        disconnect,
+        onRetired: vi.fn(),
+        publishIdle,
+        recoverFailedDeferredDisconnect,
+        reportFailure: vi.fn()
+      })
+      owner.requestIdleRelease()
+      let reconnectSettled = false
+      const reconnect = owner.requestProviderReconnect().then(
+        () => {
+          reconnectSettled = true
+        },
+        (error) => {
+          reconnectSettled = true
+          return error
+        }
+      )
+      owner.requestSkillsReload()
+      owner.requestIdleRelease()
+      await Promise.resolve()
+      expect(disconnect).toHaveBeenCalledOnce()
+      expect(reconnectSettled).toBe(false)
+      expect(owner.barrier).toBeDefined()
+      gate.resolve()
+      await Promise.all([reconnect, owner.barrier])
+      expect(await reconnect).toBe(fail ? failure : undefined)
+      expect(owner.barrier).toBeUndefined()
+      expect(disconnect).toHaveBeenCalledOnce()
+      expect(publishIdle).toHaveBeenCalledTimes(fail ? 0 : 1)
+      expect(recoverFailedDeferredDisconnect).toHaveBeenCalledTimes(fail ? 1 : 0)
+      disconnect.mockResolvedValue(undefined)
+      await owner.requestProviderReconnect()
+      expect(disconnect).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it('waits for operation leases before idle release and fences startup during teardown', async () => {
     let operationActive = true
     let finish!: () => void
