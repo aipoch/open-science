@@ -518,6 +518,13 @@ const runElectronUpdater = async ({
       },
       UPDATE_TIMEOUT_MS
     )
+    if (
+      windowsRecovery &&
+      (!output().includes('LiteralPath:') || /Ignoring signature validation/i.test(output()))
+    )
+      throw new Error(
+        'The installed updater did not complete Authenticode verification with an empty PATH.'
+      )
     await onDownloaded(ownedEvidence)
     await beforeApply?.({ invoke, page })
 
@@ -569,7 +576,11 @@ const runElectronUpdater = async ({
     )
     console.log(`Updated application presentation and backend ready: ${JSON.stringify(successor)}`)
     const windowsRecoveryEvidence = staleNotebookFixture
-      ? { applicationPathEmpty: true, ...(await staleNotebookFixture.assertRecovered()) }
+      ? {
+          applicationPathEmpty: true,
+          downloadSignatureVerified: true,
+          ...(await staleNotebookFixture.assertRecovered())
+        }
       : undefined
     return {
       ...successor,

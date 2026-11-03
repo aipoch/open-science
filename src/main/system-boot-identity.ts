@@ -2,6 +2,7 @@ import { execFile, execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
 import { UpdateLifecycleError } from '../shared/update'
+import { resolveWindowsPowerShellExecutable } from './windows-powershell'
 
 // Fixed read-only OS query. No wall-clock fallback: an unknown boot cannot authorize recovery.
 const WINDOWS_BOOT_ID_SCRIPT = `Add-Type -TypeDefinition @'
@@ -52,7 +53,7 @@ export function prefetchSystemBootIdentity(): Promise<string> {
   }
   const read = (pendingWindowsRead ??= new Promise<string>((resolve, reject) => {
     execFile(
-      'powershell.exe',
+      resolveWindowsPowerShellExecutable(),
       WINDOWS_POWERSHELL_ARGS,
       { encoding: 'utf8', timeout: 5000, windowsHide: true },
       (error, stdout) => {
