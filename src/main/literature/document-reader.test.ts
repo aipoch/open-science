@@ -223,7 +223,8 @@ describe('LiteratureDocumentReader', () => {
     })
     expect(extractPdfText).toHaveBeenCalledExactlyOnceWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 
@@ -312,7 +313,7 @@ describe('LiteratureDocumentReader', () => {
     expect(extractPdfText).toHaveBeenCalledWith(
       join(root, 'verified.pdf'),
       expect.objectContaining({ size: 42, readBytes: expect.any(Function) }),
-      { ocr: true, maxChars: 24 * 1024 * 1024 }
+      { ocr: true, maxChars: 24 * 1024 * 1024, includeLayout: true }
     )
     expect(close).toHaveBeenCalledOnce()
     expect(verifyUnchanged).not.toHaveBeenCalled()
@@ -550,7 +551,8 @@ describe('LiteratureDocumentReader', () => {
 
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 
@@ -704,7 +706,8 @@ describe('LiteratureDocumentReader', () => {
     })
     expect(extractPdfText).toHaveBeenCalledWith(join(root, 'library-paper.pdf'), undefined, {
       ocr: true,
-      maxChars: 24 * 1024 * 1024
+      maxChars: 24 * 1024 * 1024,
+      includeLayout: true
     })
   })
 
