@@ -161,3 +161,28 @@ export const assertOwnedAgentReaped = async (evidence) => {
   }
   return { ...evidence, processTreeReaped: true }
 }
+
+export const startUpdateNotebook = async (page, evidencePath) => {
+  const protection = await page.evaluate(() => window.api.settings.getNotebookNetworkStatus())
+  console.log(`Notebook protection status: ${protection.kind}`)
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Prepare Notebook for Windows update.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  const reply = page.getByText('Notebook update ready:', { exact: false })
+  await expect(reply).toContainText(/Notebook update ready: \{"replPid":\d+,"shellPid":\d+\}/, {
+    timeout: 480_000
+  })
+  const evidence = JSON.parse(
+    (await reply.innerText()).match(/Notebook update ready: (\{[^\n]+\})/)[1]
+  )
+  for (const pid of [evidence.replPid, evidence.shellPid]) process.kill(pid, 0)
+  await page.screenshot({ path: `${evidencePath}.notebook.png` })
+  console.log(`Notebook REPL and Shell running: ${JSON.stringify(evidence)}`)
+  return evidence
+}
+
+export const assertUpdateNotebookReaped = async (evidence) => {
+  await assertOwnedAgentReaped({ leaderPid: evidence.replPid, descendantPid: evidence.shellPid })
+  return { ...evidence, processTreeReaped: true }
+}

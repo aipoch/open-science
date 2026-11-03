@@ -3,9 +3,9 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
@@ -16,7 +16,9 @@ import {
   prepareOwnedAgentFixture,
   startOwnedAgentFixture,
   assertOwnedAgentReaped,
-  prepareStaleNotebookFixture
+  prepareStaleNotebookFixture,
+  startUpdateNotebook,
+  assertUpdateNotebookReaped
 } from './windows-updater-owned-processes.mjs'
 
 import {
@@ -66,7 +68,8 @@ const parseArguments = (argv) => {
     output: resolve(output),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
     ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
-    ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {})
+    ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
+    ...(argv.includes('--notebook') ? { notebook: true } : {})
   }
 }
 
@@ -416,6 +419,7 @@ const runElectronUpdater = async ({
   beforeApply,
   ownedAgentFixture,
   windowsRecovery,
+  notebook,
   evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
@@ -483,6 +487,7 @@ const runElectronUpdater = async ({
     const ownedEvidence = ownedAgentFixture
       ? await startOwnedAgentFixture(page, ownedAgentFixture)
       : undefined
+    const notebookEvidence = notebook ? await startUpdateNotebook(page, evidencePath) : undefined
     if (windowsRecovery) {
       const { dataRoot } = await page.evaluate(() => window.api.storage.getStatus())
       staleNotebookFixture = await prepareStaleNotebookFixture(dataRoot)
@@ -552,6 +557,11 @@ const runElectronUpdater = async ({
     const ownedProcessRecovery = ownedEvidence
       ? await assertOwnedAgentReaped(ownedEvidence)
       : undefined
+    const notebookRecovery = notebookEvidence
+      ? await assertUpdateNotebookReaped(notebookEvidence)
+      : undefined
+    if (notebookRecovery)
+      console.log(`Notebook processes released: ${JSON.stringify(notebookRecovery)}`)
     if (ownedProcessRecovery)
       console.log(
         `Application-owned processes released before installer completion: ${JSON.stringify(ownedProcessRecovery)}`
@@ -584,6 +594,7 @@ const runElectronUpdater = async ({
       : undefined
     return {
       ...successor,
+      ...(notebookRecovery ? { notebookRecovery } : {}),
       ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}),
       ...(windowsRecoveryEvidence ? { windowsRecovery: windowsRecoveryEvidence } : {})
     }
@@ -606,6 +617,7 @@ const runElectronUpdater = async ({
     }
     throw error
   } finally {
+    if (evidencePath) await writeFile(`${evidencePath}.application.log`, diagnosticOutput(), 'utf8')
     await browser?.close()
     await staleNotebookFixture?.cleanup()
   }
@@ -708,10 +720,9 @@ const main = async () => {
   // The disposable runner still isolates application state through the explicit profile below.
   const env = { ...process.env }
   env.OPEN_SCIENCE_USER_DATA = join(profileDirectory, 'electron-profile')
-  const legacyConfigRoots = [
-    win32.join(homedir(), '.open-science'),
-    win32.join(profileDirectory, '.open-science')
-  ]
+  env.OPEN_SCIENCE_E2E_STORAGE_ROOT = join(profileDirectory, 'config')
+  console.log(`Updater isolated root: ${root}`)
+  const legacyConfigRoots = [env.OPEN_SCIENCE_E2E_STORAGE_ROOT]
   const profileGuard = createUpgradeProfileGuard(true, `updater-${randomUUID()}`)
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
@@ -814,6 +825,7 @@ const main = async () => {
       onDownloaded: persistObservation,
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
+      notebook: options.notebook,
       ...(options.foreignProcess
         ? {
             beforeApply: async ({ invoke, page }) => {
@@ -877,11 +889,7 @@ const main = async () => {
       },
       UPDATE_TIMEOUT_MS
     )
-    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {
-      allowNonZero: true,
-      env,
-      timeoutMs: 10_000
-    })
+    await terminateDirectoryProcesses(installDirectory)
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
       expectedVersion: currentVersion,
@@ -906,13 +914,14 @@ const main = async () => {
       console.error('Updater cleanup failed:', error)
     }
   }
-  await cleanup(() =>
-    runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {
-      allowNonZero: true,
-      env,
-      timeoutMs: 10_000
-    })
-  )
+  await cleanup(() => terminateDirectoryProcesses(installDirectory))
+  await cleanup(async () => {
+    const logDirectory = join(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, 'logs')
+    for (const name of await readdir(logDirectory).catch(() => [])) {
+      if (name.endsWith('.log'))
+        await copyFile(join(logDirectory, name), `${options.output}.${name}`)
+    }
+  })
   console.log('Updater cleanup: closing asset server.')
   if (assetServer) await cleanup(() => assetServer.close())
   console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')
