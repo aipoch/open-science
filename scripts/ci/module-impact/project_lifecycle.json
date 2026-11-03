@@ -281,5 +281,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Prompt optimization adds a project-owned inference service beyond the trusted main boundary; run the full suite until the expanded boundary is reviewed."
 }
