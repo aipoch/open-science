@@ -7922,6 +7922,9 @@
     "Lookup results": "Suchergebnisse",
     "Pasted references": "Eingefügte Referenzen",
     "References could not be prepared for import.": "Die Referenzen konnten nicht für den Import vorbereitet werden.",
-    "Lookup failed": "Abfrage fehlgeschlagen"
+    "Lookup failed": "Abfrage fehlgeschlagen",
+    "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
+    "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
+    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
   }
 }

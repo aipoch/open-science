@@ -7754,6 +7754,9 @@
     "Lookup results": "검색 결과",
     "Pasted references": "붙여넣은 참고문헌",
     "References could not be prepared for import.": "참고문헌 가져오기를 준비하지 못했습니다.",
-    "Lookup failed": "조회 실패"
+    "Lookup failed": "조회 실패",
+    "Another app is using Open-Science files": "다른 앱이 Open-Science 파일을 사용 중입니다",
+    "Quit {{name}}, then recheck.": "{{name}}을(를) 종료한 후 다시 확인하세요.",
+    "Quit the other app, then recheck.": "다른 앱을 종료한 후 다시 확인하세요."
   }
 }

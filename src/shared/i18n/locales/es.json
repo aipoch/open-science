@@ -8096,6 +8096,9 @@
     "Lookup results": "Resultados de búsqueda",
     "Pasted references": "Referencias pegadas",
     "References could not be prepared for import.": "No se pudieron preparar las referencias para importar.",
-    "Lookup failed": "Error de consulta"
+    "Lookup failed": "Error de consulta",
+    "Another app is using Open-Science files": "Otra aplicación está usando archivos de Open-Science",
+    "Quit {{name}}, then recheck.": "Cierra {{name}} y vuelve a verificar.",
+    "Quit the other app, then recheck.": "Cierra la otra aplicación y vuelve a verificar."
   }
 }

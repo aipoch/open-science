@@ -81,7 +81,9 @@
     "packages/connector-builtins/src/hmmer.ts",
     "packages/connector-builtins/src/human-genetics.test.ts",
     "packages/connector-builtins/src/human-genetics.ts",
+    "packages/connector-builtins/src/humangenetics-eqtl-tabix.test.ts",
     "packages/connector-builtins/src/humangenetics-eqtl.test.ts",
+    "packages/connector-builtins/src/humangenetics-eqtl-tabix.ts",
     "packages/connector-builtins/src/humangenetics-eqtl.ts",
     "packages/connector-builtins/src/humangenetics-gwas.test.ts",
     "packages/connector-builtins/src/humangenetics-gwas.ts",
@@ -186,7 +188,8 @@
     "packages/connector-builtins/src/molecular-data.ts",
     "packages/connector-builtins/src/literature-europepmc.ts",
     "packages/connector-builtins/src/scientific-data.test.ts",
-    "scripts/verify-scientific-data-live.mjs"
+    "scripts/verify-scientific-data-live.mjs",
+    "scripts/eqtl-ablation.mjs"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -313,6 +316,7 @@
       "packages/connector-builtins/src/genomes.test.ts",
       "packages/connector-builtins/src/hmmer.test.ts",
       "packages/connector-builtins/src/human-genetics.test.ts",
+      "packages/connector-builtins/src/humangenetics-eqtl-tabix.test.ts",
       "packages/connector-builtins/src/humangenetics-eqtl.test.ts",
       "packages/connector-builtins/src/humangenetics-gwas.test.ts",
       "packages/connector-builtins/src/humangenetics-phewas.test.ts",

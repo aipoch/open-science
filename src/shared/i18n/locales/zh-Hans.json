@@ -7756,6 +7756,9 @@
     "Lookup results": "查询结果",
     "Pasted references": "粘贴的参考文献",
     "References could not be prepared for import.": "无法准备要导入的参考文献。",
-    "Lookup failed": "查询失败"
+    "Lookup failed": "查询失败",
+    "Another app is using Open-Science files": "其他程序正在使用 Open-Science 文件",
+    "Quit {{name}}, then recheck.": "退出 {{name}}，然后重新检查。",
+    "Quit the other app, then recheck.": "退出该程序，然后重新检查。"
   }
 }

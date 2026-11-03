@@ -31,6 +31,7 @@ describe('runtime update fact projection', () => {
   })
   it.each([
     ['other-runtime', 'S07'],
+    ['foreign-process', 'S36'],
     ['occupancy-unknown', 'S33'],
     ['unsupported-channel', 'S32']
   ] as const)('does not invent an occupying service for %s', (detail, expected) => {
@@ -56,6 +57,31 @@ describe('runtime update fact projection', () => {
       )
     ).toBe('S11')
   })
+  it.each(['stopped-clean', 'stopped-unclean'] as const)(
+    'offers a foreign-process recheck after %s without hiding installation uncertainty',
+    (runtime) => {
+      const blocked = status({
+        reason: 'installation-busy',
+        recovery: recovery({
+          phase: 'stopped',
+          runtime,
+          detail: 'foreign-process',
+          canRecover: true,
+          blockingProcesses: [{ pid: 123 }]
+        })
+      })
+      expect(runtimeUpdateState(blocked)).toBe('S36')
+      for (const [installation, expected] of [
+        ['unknown', 'S13'],
+        ['pending', 'S13'],
+        ['incomplete', 'S14']
+      ] as const) {
+        expect(
+          runtimeUpdateState({ ...blocked, recovery: { ...blocked.recovery!, installation } })
+        ).toBe(expected)
+      }
+    }
+  )
   it('never retries an unverified or incomplete installation', () => {
     for (const [installation, expected] of [
       ['unknown', 'S13'],

@@ -7756,6 +7756,9 @@
     "Lookup results": "查詢結果",
     "Pasted references": "貼上的參考文獻",
     "References could not be prepared for import.": "無法準備要匯入的參考文獻。",
-    "Lookup failed": "查詢失敗"
+    "Lookup failed": "查詢失敗",
+    "Another app is using Open-Science files": "其他程式正在使用 Open-Science 檔案",
+    "Quit {{name}}, then recheck.": "結束 {{name}}，然後重新檢查。",
+    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。"
   }
 }

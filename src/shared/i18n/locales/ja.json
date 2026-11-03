@@ -7756,6 +7756,9 @@
     "Lookup results": "検索結果",
     "Pasted references": "貼り付けた参考文献",
     "References could not be prepared for import.": "参考文献をインポートする準備ができませんでした。",
-    "Lookup failed": "検索に失敗しました"
+    "Lookup failed": "検索に失敗しました",
+    "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
+    "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
+    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
   }
 }

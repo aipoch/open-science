@@ -8242,6 +8242,9 @@
     "Lookup results": "Результаты поиска",
     "Pasted references": "Вставленные источники",
     "References could not be prepared for import.": "Не удалось подготовить источники к импорту.",
-    "Lookup failed": "Не удалось получить данные"
+    "Lookup failed": "Не удалось получить данные",
+    "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
+    "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
   }
 }
