@@ -73,7 +73,9 @@
     "src/main/literature/collector.ts",
     "src/main/literature/collector.test.ts",
     "src/main/literature/collector-identity.test.ts",
-    "src/main/literature/pdf-attachment.ts"
+    "src/main/literature/pdf-attachment.ts",
+    "src/main/literature/study-snapshot.ts",
+    "src/main/literature/study-snapshot.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -100,7 +102,8 @@
     "src/main/literature/screening-store.ts",
     "src/main/literature/package-source.ts",
     "src/main/literature/full-text-index-sqlite-fixture.ts",
-    "src/main/literature/collector.ts"
+    "src/main/literature/collector.ts",
+    "src/main/literature/study-snapshot.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -141,7 +144,8 @@
       "src/main/literature/supplement-attachments.test.ts",
       "src/main/literature/publication-check.test.ts",
       "src/main/literature/collector.test.ts",
-      "src/main/literature/collector-identity.test.ts"
+      "src/main/literature/collector-identity.test.ts",
+      "src/main/literature/study-snapshot.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",

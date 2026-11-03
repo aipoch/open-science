@@ -111,7 +111,18 @@ describe('Literature command workflows', () => {
     expect(run).toHaveBeenCalledWith(request, signal)
     expect(withDataRootWrite).not.toHaveBeenCalled()
   })
-
+  it('forwards study snapshot requests and cancellation without writing to the catalog', async () => {
+    const run = vi.fn().mockResolvedValue({ itemId: 'paper' })
+    const owner = createLiteratureCommandOwner({
+      literatureStudySnapshot: { run }
+    } as unknown as Services)
+    const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'en' }
+    const signal = new AbortController().signal
+    await owner.studySnapshot(request, signal)
+    expect(run).toHaveBeenCalledWith(request, signal)
+    expect(withDataRootWrite).not.toHaveBeenCalled()
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
   it('forwards citation relationship queries and caller cancellation without publishing changes', async () => {
     const run = vi.fn().mockResolvedValue({ records: [] })
     const owner = createLiteratureCommandOwner({
