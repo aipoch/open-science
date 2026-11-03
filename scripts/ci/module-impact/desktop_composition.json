@@ -10,6 +10,7 @@
     "src/main/composition/backend-lifecycle.ts",
     "src/main/composition/background-results.ts",
     "src/main/composition/command-dependencies.ts",
+    "src/main/composition/command-dependencies.test.ts",
     "src/main/composition/compute-recovery.ts",
     "src/main/composition/compute.ts",
     "src/main/composition/connectors.ts",
@@ -25,6 +26,7 @@
     "src/main/composition/project-lifecycle.ts",
     "src/main/composition/project-lifecycle.test.ts",
     "src/main/composition/research-catalog.ts",
+    "src/main/composition/research-catalog.test.ts",
     "src/main/composition/session-authority.ts",
     "src/main/composition/session-foundation.ts",
     "src/main/composition/session-packages.ts",
@@ -305,6 +307,8 @@
   "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
+      "src/main/composition/command-dependencies.test.ts",
+      "src/main/composition/research-catalog.test.ts",
       "src/main/composition/settings-bootstrap.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
