@@ -19,6 +19,7 @@ import {
 } from './fixtures/electron-app'
 import type { UpdateStatus, UpdateRecoveryStatus } from '../src/shared/update'
 import type { RuntimeStartupState } from '../src/shared/runtime-startup'
+import { terminateProcessTree } from '../src/main/process-tree'
 
 // Actual Electron source application and preload. Only the update/startup IPC results below are
 // injected. These images certify presentation and user-action routing, NOT stopping or installation.
@@ -53,7 +54,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
       false,
       false,
       join(root, 'remote'),
-      'hidden',
+      process.platform === 'win32' && process.env.OPEN_SCIENCE_E2E_EXECUTABLE ? 'normal' : 'hidden',
       false
     )
     desktopProcess = captureFixtureProcess(application.process())
@@ -671,9 +672,16 @@ test('captures all runtime update states in isolated Electron (presentation-only
           await closeElectronApplicationForCleanup(
             {
               close: () => application!.close(),
-              forceClose: () => cleanupFixtureProcess(desktopProcess)
+              forceClose: async () => {
+                const result = await terminateProcessTree(desktopProcess!.child)
+                if (!result.reaped)
+                  throw new Error('Electron E2E forced close did not reap the tree.')
+              }
             },
-            { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
+            {
+              gracefulTimeoutMs: process.platform === 'win32' ? 30_000 : 5000,
+              forcedTimeoutMs: 30_000
+            }
           )
         },
         () => cleanupObservedFixtureService(service),
