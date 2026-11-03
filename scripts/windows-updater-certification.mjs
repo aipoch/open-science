@@ -27,8 +27,7 @@ import {
   terminateProcessTree,
   uninstallAndVerify,
   waitFor,
-  waitForShutdownExit,
-  windowsProfileEnvironment
+  waitForShutdownExit
 } from './windows-installer-smoke.mjs'
 
 const UPDATE_TIMEOUT_MS = 180_000
@@ -256,13 +255,14 @@ const inspectUpdaterSuccessor = async ({
           const receipt = await readFile(join(directory, `${stage}.receipt`), 'utf8').catch(
             () => ''
           )
-          if (receipt !== `${name}\r\n${stage}\r\n`) return undefined
+          if (receipt !== `${name}\r\n${stage}\r\n`)
+            throw new Error(`Update ${name} has no valid ${stage} receipt in ${directory}.`)
         }
         return { operationId: name, successorReadyVerified: true }
       }
     }
   }
-  return undefined
+  throw new Error('No handoff request matches the source process, executable and target version.')
 }
 
 const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
@@ -650,7 +650,10 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'app')
   const profileDirectory = join(root, 'profile')
-  const env = windowsProfileEnvironment(profileDirectory)
+  // NSIS relaunches through the user's Windows shell. Preserve its native user folders so the
+  // source, installer and successor resolve the same handoff and updater-cache directories.
+  // The disposable runner still isolates application state through the explicit profile below.
+  const env = { ...process.env }
   env.OPEN_SCIENCE_USER_DATA = join(profileDirectory, 'electron-profile')
   const legacyConfigRoots = [
     win32.join(homedir(), '.open-science'),
@@ -824,6 +827,7 @@ const main = async () => {
       await operation()
     } catch (error) {
       cleanupErrors.push(error)
+      console.error('Updater cleanup failed:', error)
     }
   }
   await cleanup(() =>

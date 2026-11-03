@@ -45,9 +45,11 @@ describe('Windows updater certification', () => {
         })
       )
       await writeFile(join(directory, 'installed.receipt'), `${operationId}\r\ninstalled\r\n`)
-      expect(await inspectUpdaterSuccessor(input)).toBeUndefined()
+      await expect(inspectUpdaterSuccessor(input)).rejects.toThrow('no valid ready receipt')
       await writeFile(join(directory, 'ready.receipt'), `${operationId}\r\nready\r\n`)
-      expect(await inspectUpdaterSuccessor({ ...input, parentPid: 456 })).toBeUndefined()
+      await expect(inspectUpdaterSuccessor({ ...input, parentPid: 456 })).rejects.toThrow(
+        'No handoff request matches'
+      )
       expect(await inspectUpdaterSuccessor(input)).toEqual({
         operationId,
         successorReadyVerified: true
