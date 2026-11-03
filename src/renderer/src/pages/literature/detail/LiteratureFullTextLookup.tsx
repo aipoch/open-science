@@ -49,6 +49,7 @@ export const LiteratureFullTextLookup = ({
 
   const { t } = useTranslation()
   const [attempt, setAttempt] = useState(0)
+  const retryRequested = useRef(false)
   const [result, setResult] = useState<Extract<LiteratureFullTextResult, { mode: 'search' }>>()
   const [searching, setSearching] = useState(true)
   const [adding, setAdding] = useState<string>()
@@ -69,6 +70,7 @@ export const LiteratureFullTextLookup = ({
   useEffect(() => {
     lifecycle.current += 1
     notifiedCandidate.current = undefined
+    retryRequested.current = false
     return () => {
       lifecycle.current += 1
     }
@@ -134,6 +136,8 @@ export const LiteratureFullTextLookup = ({
   }, [adding, hostApi.literature, item.id, notifyAdded, restoreFailure])
   useEffect(() => {
     let active = true
+    const explicitRetry = retryRequested.current
+    retryRequested.current = false
     void (async () => {
       if (typeof hostApi.literature.fullText !== 'function') {
         throw new Error("No handler registered for 'literature:full-text'")
@@ -158,7 +162,7 @@ export const LiteratureFullTextLookup = ({
       const found = await hostApi.literature.fullText({ mode: 'search', itemId: item.id })
       if (active && found.mode === 'search') {
         setResult(found)
-        if (attempt > 0) setError((current) => (current === 'attach' ? undefined : current))
+        if (explicitRetry) setError((current) => (current === 'attach' ? undefined : current))
       }
     })()
       .catch((failure: unknown) => {
@@ -179,6 +183,7 @@ export const LiteratureFullTextLookup = ({
   }, [item.id, item.metadataRevision, attempt, t, notifyAdded, restoreFailure, hostApi.literature])
 
   const retry = (): void => {
+    retryRequested.current = true
     setSearching(true)
     setResult(undefined)
     setError(undefined)

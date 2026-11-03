@@ -88,7 +88,7 @@ describe('LiteratureFullTextLookup', () => {
         transfer: { id: 'failed-task', itemId: item.id, status: 'failed', candidate, retryAt }
       })
       fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
-      render(<LiteratureFullTextLookup {...props} />)
+      const { rerender } = render(<LiteratureFullTextLookup {...props} />)
       await results().findByRole('button', { name: limited ? /^Retry in/ : 'Add attachment' })
       expect(screen.getByRole('alert')).not.toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Search again' }))
@@ -103,6 +103,16 @@ describe('LiteratureFullTextLookup', () => {
           ).disabled
         ).toBe(Boolean(retryAt))
       })
+      if (!limited) {
+        fullText.mockRejectedValueOnce(new Error('Download failed again'))
+        fireEvent.click(results().getByRole('button', { name: 'Add attachment' }))
+        await screen.findByRole('alert')
+        await act(async () => {
+          rerender(<LiteratureFullTextLookup {...props} onAdded={vi.fn()} />)
+        })
+        expect(fullText).toHaveBeenLastCalledWith({ mode: 'search', itemId: item.id })
+        expect(screen.getByRole('alert')).not.toBeNull()
+      }
     }
   )
   it.each(['attached', 'reopened'])(
