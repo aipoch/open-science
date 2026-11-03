@@ -1,11 +1,11 @@
 import {
   captureFixtureProcess,
-  captureFixtureService,
+  observeFixtureService,
   cleanupFixtureProcess,
-  cleanupFixtureService,
+  cleanupObservedFixtureService,
   runFixtureCleanup,
   type CapturedFixtureProcess,
-  type CapturedService
+  type ObservedFixtureService
 } from './fixtures/local-service-cleanup'
 import { test, expect } from '@playwright/test'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -32,7 +32,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
   await mkdir(output, { recursive: true })
   let application: ElectronApplication | undefined
   let desktopProcess: CapturedFixtureProcess | undefined
-  let capturedService: CapturedService | undefined
+  let capturedService: ObservedFixtureService | undefined
   let failure: unknown
   const capturedStates: string[] = []
   const views: {
@@ -63,7 +63,7 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await expect
       .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60_000 })
       .toMatchObject({ phase: 'ready' })
-    capturedService = await captureFixtureService(storageRoot)
+    capturedService = await observeFixtureService(storageRoot)
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
     await page.reload({ waitUntil: 'domcontentloaded' })
@@ -653,12 +653,12 @@ test('captures all runtime update states in isolated Electron (presentation-only
     failure = error
     throw error
   } finally {
-    let service: CapturedService | undefined
+    let service: ObservedFixtureService | undefined
     await runFixtureCleanup(
       [
         () => testInfo.attach('fixture-root', { body: root, contentType: 'text/plain' }),
         async () => {
-          service = await captureFixtureService(storageRoot)
+          service = await observeFixtureService(storageRoot)
         },
         async () => {
           if (
@@ -676,8 +676,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
             { gracefulTimeoutMs: 5000, forcedTimeoutMs: 25_000 }
           )
         },
-        () => cleanupFixtureService(service),
-        () => cleanupFixtureService(capturedService),
+        () => cleanupObservedFixtureService(service),
+        () => cleanupObservedFixtureService(capturedService),
         () => cleanupFixtureProcess(desktopProcess)
       ],
       failure

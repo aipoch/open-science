@@ -35,6 +35,10 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      require_windows_signing:
+        description: Verify Authenticode signatures and update recovery UI for a signed Windows artifact
+        type: boolean
+        default: false
       artifact_run_id:
         description: Reuse a same-repository build run for a diagnostic smoke; emit no release certification
         type: string
