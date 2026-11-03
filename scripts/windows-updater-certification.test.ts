@@ -1,5 +1,6 @@
 import { load } from 'js-yaml'
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { get } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -15,10 +16,47 @@ import {
   parseSingleRange,
   redactPackagedAppOutput,
   rewriteFeedPaths,
-  observeInstaller
+  observeInstaller,
+  startAssetServer
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('closes pending fixture downloads during cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'updater-server-'))
+    const asset = join(root, 'installer.exe')
+    const file = await open(asset, 'w')
+    await file.truncate(32 * 1024 * 1024)
+    await file.close()
+    const server = await startAssetServer({
+      assets: [{ route: '/installer.exe', path: asset }],
+      currentInstallerRoute: '/installer.exe'
+    })
+    const response = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
+      get(`${server.url}/installer.exe`, resolve).on('error', reject)
+    })
+    // Leave the response unread, as an interrupted updater can do. Idle-only shutdown cannot
+    // finish while this owned response is backpressured.
+    response.pause()
+    const closing = server.close()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        closing,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Fixture server cleanup remained blocked.')),
+            2_000
+          )
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+      response.destroy()
+      await closing
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    }
+  })
+
   it('keeps the actual blocker until release and requires a retryable status afterward', async () => {
     let held = false
     const invoke = vi.fn(async () =>

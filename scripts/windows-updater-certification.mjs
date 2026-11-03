@@ -182,9 +182,11 @@ const startAssetServer = async ({ assets, currentInstallerRoute }) => {
     metrics,
     url: `http://127.0.0.1:${address.port}`,
     close: () =>
-      new Promise((resolveClose, rejectClose) =>
+      new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()))
-      )
+        // The fixture owns every connection; no download remains after updater certification.
+        server.closeAllConnections()
+      })
   }
 }
 
@@ -213,6 +215,15 @@ const observeChildExit = (child) =>
   })
 
 const redactPackagedAppOutput = (output) => output.replace(/([?&]token=)[^\s&#]+/gi, '$1<redacted>')
+
+const summarizeUpdateStatus = ({ state, current, latest, reason, error, recovery }) => ({
+  state,
+  current,
+  latest,
+  reason,
+  error,
+  recovery
+})
 
 const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
   const response = await fetchWithTimeout(
@@ -419,7 +430,9 @@ const runElectronUpdater = async ({
         page.evaluate((name) => window.api.update[name](), action),
         `desktop update ${action}`
       )
-      console.log(`Updater command completed: ${action} ${JSON.stringify(status)}`)
+      console.log(
+        `Updater command completed: ${action} ${JSON.stringify(summarizeUpdateStatus(status))}`
+      )
       return status
     }
 
@@ -498,7 +511,11 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
   const command = async (action) => {
     const started = Date.now()
     const status = await withTimeout(invoke(action), `blocked update ${action}`, 30_000)
-    observations.push({ action, elapsedMs: Date.now() - started, status })
+    observations.push({
+      action,
+      elapsedMs: Date.now() - started,
+      status: summarizeUpdateStatus(status)
+    })
     return status
   }
   const assertBlocked = (status) => {
@@ -762,12 +779,16 @@ const main = async () => {
       timeoutMs: 10_000
     })
   )
+  console.log('Updater cleanup: closing asset server.')
   if (assetServer) await cleanup(() => assetServer.close())
+  console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')
   await cleanup(() => profileGuard.cleanup(primaryError))
   if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))
+  console.log('Updater cleanup: removing fixture root.')
   await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))
   if (primaryError) throw primaryError
   if (cleanupErrors[0]) throw cleanupErrors[0]
+  console.log('Windows updater certification and cleanup completed.')
 }
 
 const invokedAsScript =
@@ -789,5 +810,6 @@ export {
   observeInstaller,
   parseArguments,
   parseSingleRange,
-  rewriteFeedPaths
+  rewriteFeedPaths,
+  startAssetServer
 }
