@@ -1,5 +1,5 @@
 import { load } from 'js-yaml'
-import { copyFile, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
 import { get } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +12,7 @@ import {
   classifyUpdaterDownloadStatus,
   certifyForeignProcessRecovery,
   invokeWebRpc,
+  inspectUpdaterSuccessor,
   parseArguments,
   parseSingleRange,
   redactPackagedAppOutput,
@@ -21,6 +22,41 @@ import {
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('requires the matching update operation and real successor readiness before cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'updater-ready-'))
+    const operationId = '00000000-0000-4000-8000-000000000001'
+    const directory = join(root, 'Open-Science', 'UpdateHandoffs', operationId)
+    const input = {
+      appDataRoots: [root],
+      executable: 'C:\\app\\open-science.exe',
+      parentPid: 123,
+      expectedVersion: '1.2.3'
+    }
+    try {
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        join(directory, 'request.json'),
+        JSON.stringify({
+          schema: 1,
+          operationId,
+          applicationPath: input.executable,
+          parentPid: 123,
+          targetVersion: '1.2.3'
+        })
+      )
+      await writeFile(join(directory, 'installed.receipt'), `${operationId}\r\ninstalled\r\n`)
+      expect(await inspectUpdaterSuccessor(input)).toBeUndefined()
+      await writeFile(join(directory, 'ready.receipt'), `${operationId}\r\nready\r\n`)
+      expect(await inspectUpdaterSuccessor({ ...input, parentPid: 456 })).toBeUndefined()
+      expect(await inspectUpdaterSuccessor(input)).toEqual({
+        operationId,
+        successorReadyVerified: true
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('closes pending fixture downloads during cleanup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'updater-server-'))
     const asset = join(root, 'installer.exe')

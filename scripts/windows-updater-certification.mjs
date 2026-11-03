@@ -226,6 +226,45 @@ const summarizeUpdateStatus = ({ state, current, latest, reason, error, recovery
   recovery
 })
 
+const inspectUpdaterSuccessor = async ({
+  appDataRoots,
+  executable,
+  parentPid,
+  expectedVersion
+}) => {
+  for (const appData of new Set(appDataRoots.filter(Boolean))) {
+    for (const suffix of ['Open-Science/UpdateHandoffs', 'Open-Science-UpdateHandoffs']) {
+      const root = join(appData, suffix)
+      for (const name of await readdir(root).catch(() => [])) {
+        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(name)) continue
+        const directory = join(root, name)
+        const request = await readFile(join(directory, 'request.json'), 'utf8')
+          .then(JSON.parse)
+          .catch(() => undefined)
+        if (
+          !request ||
+          request.schema !== 1 ||
+          request.operationId !== name ||
+          request.parentPid !== parentPid ||
+          request.targetVersion !== expectedVersion ||
+          typeof request.applicationPath !== 'string' ||
+          win32.normalize(request.applicationPath).toLowerCase() !==
+            win32.normalize(executable).toLowerCase()
+        )
+          continue
+        for (const stage of ['installed', 'ready']) {
+          const receipt = await readFile(join(directory, `${stage}.receipt`), 'utf8').catch(
+            () => ''
+          )
+          if (receipt !== `${name}\r\n${stage}\r\n`) return undefined
+        }
+        return { operationId: name, successorReadyVerified: true }
+      }
+    }
+  }
+  return undefined
+}
+
 const invokeWebRpc = async ({ endpoint, auth, protocolVersion, channel, fetchImpl = fetch }) => {
   const response = await fetchWithTimeout(
     `${endpoint}/rpc/${encodeURIComponent(channel)}?${auth}`,
@@ -483,6 +522,19 @@ const runElectronUpdater = async ({
         `Updater installer exited with ${installerResult.code}.${installerResult.stderr ? `\n${installerResult.stderr}` : ''}`
       )
     }
+    const successor = await waitFor(
+      'the updated application readiness receipt',
+      () =>
+        inspectUpdaterSuccessor({
+          appDataRoots: [env.APPDATA, process.env.APPDATA],
+          executable,
+          parentPid: child.pid,
+          expectedVersion
+        }),
+      UPDATE_TIMEOUT_MS
+    )
+    console.log(`Updated application presentation and backend ready: ${JSON.stringify(successor)}`)
+    return successor
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
@@ -683,7 +735,7 @@ const main = async () => {
       })
       await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
     }
-    await runElectronUpdater({
+    const successor = await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
       evidencePath: options.output,
@@ -758,6 +810,7 @@ const main = async () => {
       legacyConfigRoots: [previousConfigRoot]
     })
     await profileGuard.verifyCycle('current', currentConfigRoot)
+    Object.assign(observation, successor)
     observation.installedVersionVerified = currentVersion
     await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
     console.log('Windows electron-updater differential certification completed successfully.')
@@ -787,7 +840,25 @@ const main = async () => {
   // A completed update can retain an NSIS helper in the fixture Temp. It must release the
   // uninstaller mutex before starting the separate cleanup uninstall.
   await cleanup(() => terminateDirectoryProcesses(root))
-  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))
+  if (installed)
+    await cleanup(async () => {
+      // Surface the real uninstall guard's reason without leaving an unattended NSIS message box.
+      await runProcess(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          resolve('build/windows-update-handoff-uninstall.ps1'),
+          '-InstallPath',
+          installDirectory
+        ],
+        { env }
+      )
+      await uninstallAndVerify(installDirectory, env)
+    })
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.
   await cleanup(() => terminateDirectoryProcesses(root))
@@ -813,6 +884,7 @@ export {
   classifyUpdaterDownloadStatus,
   certifyForeignProcessRecovery,
   invokeWebRpc,
+  inspectUpdaterSuccessor,
   redactPackagedAppOutput,
   observeInstaller,
   parseArguments,
