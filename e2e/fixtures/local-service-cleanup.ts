@@ -159,7 +159,10 @@ export async function cleanupObservedFixtureService(
   const lease = acquireRuntimeDirectorySync(observed.configRoot)
   try {
     for (const namespace of ['main-agent-process-ownership', 'delegation-process-ownership']) {
-      if (new DelegatedProcessOwnership(observed.configRoot, namespace).receipts().length)
+      const ownership = new DelegatedProcessOwnership(observed.configRoot, namespace)
+      // The dead service may leave receipts; recovery still requires real tree/Job proof.
+      await ownership.recover()
+      if (ownership.receipts().length)
         throw new Error(
           `Fixture agent ownership remains unresolved; preserve ${observed.configRoot}`
         )
