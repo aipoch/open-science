@@ -848,16 +848,16 @@ export async function advanceInstallationUpdateAsync(
       (pid) => pid !== process.pid && !options.allowedProcessIds?.includes(pid)
     )
     if (foreignProcesses.length) {
+      const record = inspectInstallationUpdate(location)
+      if (!record || record.operationId !== operationId)
+        throw new UpdateLifecycleError('install-failed', 'The installation operation has changed.')
       const processNames = inspectProcessNames(foreignProcesses)
       throw new UpdateLifecycleError(
         'installation-busy',
         'Another process is using this installation.',
         {
-          phase: 'handoff',
-          runtime: stoppedClean ? 'stopped-clean' : 'stopped-unclean',
-          installation: 'pending',
-          canCancel: true,
-          canRecover: false,
+          // Occupancy refused the transition; retain the persisted phase and stop evidence.
+          ...installationRecoveryStatus(record),
           canRetryInstall: false,
           detail: 'foreign-process',
           blockingProcesses: foreignProcesses.map((pid) => ({ pid, name: processNames.get(pid) }))

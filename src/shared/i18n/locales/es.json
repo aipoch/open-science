@@ -8091,9 +8091,9 @@
     "Retrieved via {{source}}.": "Datos obtenidos mediante {{source}}.",
     "Edit reference details": "Editar los datos de la referencia",
     "Edit details": "Editar detalles",
-    "Back to review": "Volver a la revisión"
-  },
-  "Another app is using Open-Science files": "Otra aplicación está usando archivos de Open-Science",
-  "Quit {{name}}, then recheck.": "Cierra {{name}} y vuelve a verificar.",
-  "Quit the other app, then recheck.": "Cierra la otra aplicación y vuelve a verificar."
+    "Back to review": "Volver a la revisión",
+    "Another app is using Open-Science files": "Otra aplicación está usando archivos de Open-Science",
+    "Quit {{name}}, then recheck.": "Cierra {{name}} y vuelve a verificar.",
+    "Quit the other app, then recheck.": "Cierra la otra aplicación y vuelve a verificar."
+  }
 }

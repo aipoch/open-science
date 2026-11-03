@@ -7917,9 +7917,9 @@
     "Retrieved via {{source}}.": "Über {{source}} abgerufen.",
     "Edit reference details": "Bibliografische Angaben bearbeiten",
     "Edit details": "Details bearbeiten",
-    "Back to review": "Zurück zur Überprüfung"
-  },
-  "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
-  "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
-  "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
+    "Back to review": "Zurück zur Überprüfung",
+    "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
+    "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
+    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
+  }
 }

@@ -307,7 +307,17 @@ test('captures all runtime update states in isolated Electron (presentation-only
       },
       S32: { reason: 'installation-busy', recovery: rec({ detail: 'unsupported-channel' }) },
       S33: { reason: 'installation-busy', recovery: rec({ detail: 'occupancy-unknown' }) },
-      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) }
+      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) },
+      S36: {
+        reason: 'installation-busy',
+        recovery: rec({
+          phase: 'stopped',
+          runtime: 'stopped-clean',
+          detail: 'foreign-process',
+          canRecover: true,
+          blockingProcesses: [{ pid: 4218 }]
+        })
+      }
     }
     for (const [id, extra] of Object.entries(states)) {
       const status = { ...base, ...extra }
@@ -326,6 +336,13 @@ test('captures all runtime update states in isolated Electron (presentation-only
           page.locator(`[data-runtime-update-state="${id}"] [role="status"]`)
         ).toBeVisible()
       else await expect(page.locator(`[data-runtime-update-state="${id}"]`).first()).toBeVisible()
+      if (id === 'S36') {
+        const dialog = page.getByTestId('runtime-update-dialog')
+        await expect(dialog).toContainText('其他程序正在使用 Open-Science 文件')
+        await expect(dialog).toContainText('退出该程序，然后重新检查。')
+        await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeEnabled()
+        await expect(dialog.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
+      }
       if (await page.getByTestId('runtime-update-dialog').isVisible()) {
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
