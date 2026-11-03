@@ -347,6 +347,7 @@ async function readSource(source: Source): Promise<{
   note?: string
   partial?: boolean
   readBytes?: number
+  boundaryProbeBytes?: number
   omittedBytes?: number
 }> {
   await checkPath(source.root, source.path!)
@@ -356,28 +357,39 @@ async function readSource(source: Source): Promise<{
     if (!before.isFile() || (!source.tailBytes && before.size > FILE_LIMIT))
       throw new DiagnosticCollectionError('Source exceeds file limit or is not regular')
     const start = Math.max(0, before.size - (source.tailBytes ?? before.size))
-    const buffer = Buffer.alloc(before.size - start)
+    // One preceding byte distinguishes a complete first record from a cut-off line.
+    // It is not part of the bounded tail payload and is accounted for separately.
+    const boundaryProbe = start > 0 ? 1 : 0
+    const readStart = start - boundaryProbe
+    const buffer = Buffer.alloc(before.size - readStart)
     let offset = 0
     while (offset < buffer.length) {
       const { bytesRead } = await handle.read(
         buffer,
         offset,
         buffer.length - offset,
-        start + offset
+        readStart + offset
       )
       if (!bytesRead) break
       offset += bytesRead
     }
     const after = await handle.stat()
-    // The tail may begin inside a UTF-8 sequence or JSON record. Omit that partial line.
+    // A newline in the probe preserves the complete first record. Otherwise omit the
+    // partial line, which may begin inside a UTF-8 sequence or JSON record.
     const firstLine = start > 0 ? buffer.subarray(0, offset).indexOf(10) : -1
     const skip = start > 0 ? (firstLine < 0 ? offset : firstLine + 1) : 0
     const text = buffer.subarray(skip, offset).toString('utf8')
-    const tailMetadata = source.tailBytes ? { readBytes: offset, omittedBytes: start + skip } : {}
+    const tailMetadata = source.tailBytes
+      ? {
+          readBytes: Math.max(0, offset - boundaryProbe),
+          boundaryProbeBytes: Math.min(boundaryProbe, offset),
+          omittedBytes: readStart + skip
+        }
+      : {}
     if (source.kind === 'log') {
       const current = await lstat(source.path!).catch(() => undefined)
       const rotated = !current || current.ino !== before.ino || current.dev !== before.dev
-      const truncated = start + offset < before.size || after.size < before.size
+      const truncated = readStart + offset < before.size || after.size < before.size
       if (rotated || truncated)
         return {
           text,
@@ -850,7 +862,11 @@ export async function runSessionDiagnosticWorker(
                   encode({
                     ...metadata,
                     ...(source.tailBytes
-                      ? { readBytes: observation.readBytes, omittedBytes: observation.omittedBytes }
+                      ? {
+                          readBytes: observation.readBytes,
+                          boundaryProbeBytes: observation.boundaryProbeBytes,
+                          omittedBytes: observation.omittedBytes
+                        }
                       : {}),
                     retainedRecords: projected.length,
                     omittedLines,
@@ -864,7 +880,11 @@ export async function runSessionDiagnosticWorker(
               state.sourceMetadata = {
                 ...metadata,
                 ...(source.tailBytes
-                  ? { readBytes: observation.readBytes, omittedBytes: observation.omittedBytes }
+                  ? {
+                      readBytes: observation.readBytes,
+                      boundaryProbeBytes: observation.boundaryProbeBytes,
+                      omittedBytes: observation.omittedBytes
+                    }
                   : {}),
                 retainedRecords: projected.length,
                 omittedLines,
@@ -938,7 +958,7 @@ export async function runSessionDiagnosticWorker(
     await writeBestEffort(
       'README.txt',
       () =>
-        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. Backend startup logs/backend/desktop-backend-*.log contain projected structured records and recognized native fatal/exception stacks from at most the last 256 KiB of each of the newest 20 files; unrelated process output is omitted. Per-file metadata records read and omitted bytes. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
+        `Local diagnostic observations, not a restore package. No upload or LLM is involved. Start with manifest.json for selected, missing, failed and truncated sources, then inspect session.json, notebook run histories, db/*.json, Runtime logs/main*.log and Desktop logs/desktop/main*.log. Backend startup logs/backend/desktop-backend-*.log contain projected structured records and recognized native fatal/exception stacks from at most the last 256 KiB of each of the newest 20 files; unrelated process output is omitted. A one-byte boundary probe preserves complete records at the tail edge; metadata accounts for probe, tail and omitted bytes separately. environment.json contains stored settings observed at export time and App/OS/runtime versions; it does not prove effective settings at failure time. Session, Notebook and DB records are scoped to the selected session. Logs are application-global and may include other sessions; they must not be attributed to this session without matching identities. Event messages, exception stacks/causes and Notebook stderr/traceback are bounded and credential/path-redacted, but may still contain research content or personal information. ${includeExecutionCode ? 'Execution scripts are included only in selected Notebook run histories, with best-effort credential redaction and a 16000 UTF-16 character limit per run; scripts may still contain research content, private paths or credentials. Missing and truncated scripts are marked per run and counted in manifest.json.' : 'Notebook execution scripts are omitted because code inclusion was not requested.'} Full conversations, standalone code files, arbitrary payloads, environment values and raw settings are excluded. Sensitive-content evidence is structurally redacted; original sensitive-content files are included only when explicitly selected and may contain credentials or research content. A missing field means unknown, not success or absence. Sources may reflect different times. Database rows are queried read-only after selection; no snapshot, recovery, migration or checkpoint is performed.\n`,
       undefined,
       true
     )

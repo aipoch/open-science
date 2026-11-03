@@ -45,6 +45,27 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
 const sessionPath = (input: SessionDiagnosticWorkerInput): string =>
   join(input.configRoot, 'sessions/project/session.json')
 describe('session diagnostics isolated collector', () => {
+  it('retains a complete fatal record at the backend tail boundary', async () => {
+    const input = await fixture()
+    const logs = join(input.configRoot, 'logs')
+    await mkdir(logs)
+    const name = 'desktop-backend-42-1700000000000.log'
+    const fatal = 'FATAL ERROR: Reached heap limit Allocation failed\n'
+    const tail = fatal + 'x'.repeat(256 * 1024 - Buffer.byteLength(fatal))
+    await writeFile(join(logs, name), `older output\n${tail}`)
+    const result = await runSessionDiagnosticWorker({
+      ...input,
+      selectedItems: [`backend-log:${name}`]
+    })
+    expect(result.kind).toBe('archive')
+    const output = join(input.directory!, 'content', 'logs/backend', name)
+    expect(await readFile(output, 'utf8')).toContain('FATAL ERROR: Reached heap limit')
+    expect(JSON.parse(await readFile(`${output}.metadata.json`, 'utf8'))).toMatchObject({
+      omittedBytes: Buffer.byteLength('older output\n'),
+      readBytes: 256 * 1024,
+      boundaryProbeBytes: 1
+    })
+  })
   it('discovers recent backend logs and exports bounded redacted fatal evidence', async () => {
     const input = await fixture()
     const logs = join(input.configRoot, 'logs')
