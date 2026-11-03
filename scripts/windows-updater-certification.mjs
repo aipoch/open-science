@@ -12,6 +12,11 @@ import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
 import { chromium, expect } from '@playwright/test'
+import {
+  prepareOwnedAgentFixture,
+  startOwnedAgentFixture,
+  assertOwnedAgentReaped
+} from './windows-updater-owned-processes.mjs'
 
 import {
   cleanupSmokeRoot,
@@ -58,7 +63,8 @@ const parseArguments = (argv) => {
     currentDirectory: resolve(currentDirectory),
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
-    ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {})
+    ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
+    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {})
   }
 }
 
@@ -406,6 +412,7 @@ const runElectronUpdater = async ({
   expectedInstaller,
   onDownloaded,
   beforeApply,
+  ownedAgentFixture,
   evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
@@ -463,6 +470,9 @@ const runElectronUpdater = async ({
     )
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    const ownedEvidence = ownedAgentFixture
+      ? await startOwnedAgentFixture(page, ownedAgentFixture)
+      : undefined
     const invoke = async (action) => {
       phase = action
       console.log(`Updater command started: ${action}`)
@@ -491,7 +501,7 @@ const runElectronUpdater = async ({
       },
       UPDATE_TIMEOUT_MS
     )
-    await onDownloaded()
+    await onDownloaded(ownedEvidence)
     await beforeApply?.({ invoke, page })
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
@@ -515,6 +525,13 @@ const runElectronUpdater = async ({
     const exitCode = await closed
     if (exitCode !== 0)
       throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
+    const ownedProcessRecovery = ownedEvidence
+      ? await assertOwnedAgentReaped(ownedEvidence)
+      : undefined
+    if (ownedProcessRecovery)
+      console.log(
+        `Application-owned processes released before installer completion: ${JSON.stringify(ownedProcessRecovery)}`
+      )
     const installerResult = await installerExit
     console.log(`Updater installer observation: ${installerResult.stdout}`)
     if (installerResult.code !== 0) {
@@ -534,7 +551,7 @@ const runElectronUpdater = async ({
       UPDATE_TIMEOUT_MS
     )
     console.log(`Updated application presentation and backend ready: ${JSON.stringify(successor)}`)
-    return successor
+    return { ...successor, ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}) }
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
@@ -681,6 +698,13 @@ const main = async () => {
     })
     installed = true
     await profileGuard.verifyCycle('previous', previousConfigRoot)
+    const ownedAgentFixture = options.ownedProcesses
+      ? await prepareOwnedAgentFixture({
+          installDirectory,
+          configRoot: previousConfigRoot,
+          directory: join(root, 'owned-agent')
+        })
+      : undefined
 
     const localFeed = join(root, 'latest.yml')
     await writeFile(
@@ -725,7 +749,7 @@ const main = async () => {
     }
 
     const installerBytes = (await stat(currentInstaller)).size
-    const persistObservation = async () => {
+    const persistObservation = async (ownedEvidence) => {
       observation = assertDifferentialObservation({
         schemaVersion: 1,
         mode: 'electron-updater-differential',
@@ -736,6 +760,8 @@ const main = async () => {
         versionedFeed: true,
         previousInstallerCacheVerified: true
       })
+      if (ownedEvidence)
+        observation.ownedProcessRecovery = { ...ownedEvidence, processTreeReaped: false }
       await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`, 'utf8')
     }
     const successor = await runElectronUpdater({
@@ -750,6 +776,7 @@ const main = async () => {
         basename(currentInstaller)
       ),
       onDownloaded: persistObservation,
+      ownedAgentFixture,
       ...(options.foreignProcess
         ? {
             beforeApply: async ({ invoke, page }) => {
@@ -779,6 +806,18 @@ const main = async () => {
                   await page.screenshot({ path: `${options.output}.blocked.png` })
                 }
               })
+              if (observation.ownedProcessRecovery) {
+                const { leaderPid, descendantPid } = observation.ownedProcessRecovery
+                for (const pid of [leaderPid, descendantPid]) {
+                  process.kill(pid, 0)
+                  if (
+                    observation.foreignProcessRecovery.some((entry) =>
+                      entry.status.recovery?.blockingProcesses?.some((item) => item.pid === pid)
+                    )
+                  )
+                    throw new Error('An application-owned process was reported as foreign.')
+                }
+              }
               await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
             }
           }
