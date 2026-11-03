@@ -23,6 +23,7 @@ import {
   launchAndProbe,
   launchUninstallerLockHolder,
   runProcess,
+  terminateDirectoryProcesses,
   terminateProcessTree,
   uninstallAndVerify,
   waitFor,
@@ -784,6 +785,9 @@ const main = async () => {
   console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')
   await cleanup(() => profileGuard.cleanup(primaryError))
   if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))
+  // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
+  // have finished. Reap only executables inside our owned root before removing their files.
+  await cleanup(() => terminateDirectoryProcesses(root))
   console.log('Updater cleanup: removing fixture root.')
   await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))
   if (primaryError) throw primaryError
