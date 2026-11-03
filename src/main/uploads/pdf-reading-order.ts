@@ -318,8 +318,10 @@ export const readPdfPageText = async (
     text.match(/[\p{L}\p{N}]+(?:['’\u2010-][\p{L}\p{N}]+)*/gu)?.length ?? 0
   const lanes: (typeof blocks)[] = []
   for (const block of blocks) {
-    const lane = lanes.find((candidate) =>
-      Math.abs(candidate[0].rect.x - block.rect.x) <= Math.min(candidate[0].rect.font, block.rect.font)
+    const lane = lanes.find(
+      (candidate) =>
+        Math.abs(candidate[0].rect.x - block.rect.x) <=
+        Math.min(candidate[0].rect.font, block.rect.font)
     )
     if (lane) lane.push(block)
     else lanes.push([block])
