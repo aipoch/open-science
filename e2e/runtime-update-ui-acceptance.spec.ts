@@ -338,11 +338,12 @@ test('captures all runtime update states in isolated Electron (presentation-only
         ).toBeVisible()
       else await expect(page.locator(`[data-runtime-update-state="${id}"]`).first()).toBeVisible()
       if (id === 'S36') {
+        await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
         const dialog = page.getByTestId('runtime-update-dialog')
-        await expect(dialog).toContainText('其他程序正在使用 Open-Science 文件')
-        await expect(dialog).toContainText('退出该程序，然后重新检查。')
-        await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeEnabled()
-        await expect(dialog.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
+        await expect(dialog).toContainText('Another app is using Open-Science files')
+        await expect(dialog).toContainText('Quit the other app, then recheck.')
+        await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled()
+        await expect(dialog.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
       }
       if (await page.getByTestId('runtime-update-dialog').isVisible()) {
         await expect(page.getByRole('dialog')).toHaveCount(1)
@@ -401,6 +402,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
         await expect(releaseNotes).toBeFocused()
       }
       await capture(id)
+      if (id === 'S36')
+        await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
       if (['S13', 'S14', 'S23', 'S24', 'S25'].includes(id)) {
         await page.keyboard.press('Escape')
         await expect(page.getByTestId('runtime-update-dialog')).toBeVisible()
