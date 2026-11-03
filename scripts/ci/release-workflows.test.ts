@@ -291,7 +291,7 @@ describe('release and scheduled workflow topology', () => {
       'packages/notebook-network-sandbox/src/gateway.test.ts',
       'packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts'
     ]) {
-      expect(regressions.run).toContain(file)
+      expect(regressions.run?.split(/\s+/).filter((argument) => argument === file)).toHaveLength(1)
     }
   })
 
