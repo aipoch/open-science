@@ -94,8 +94,11 @@ export async function composeBackgroundResults({
         new Map(
           (
             await Promise.all(
-              sources.map(async ({ sourceId }) => {
-                const job = await getJobRepository().get(sourceId)
+              sources.map(async ({ sourceId, sourceKind, sourceSnapshot }) => {
+                const jobId =
+                  sourceKind === 'compute-cancellation' ? sourceSnapshot?.jobId : sourceId
+                if (!jobId) return undefined
+                const job = await getJobRepository().get(jobId)
                 if (!job) return undefined
                 const host = await getHostRepository()
                   .get(job.provider_id)

@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { hasPendingSandboxNetworkApproval } from '../../shared/sandbox-network-approval'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { isDeepStrictEqual } from 'node:util'
@@ -1095,7 +1096,7 @@ export class RuntimeSessionOwner {
       interruptionCause: 'terminal-commit-failed',
       terminalCommitFailure: missing ? 'missing-record' : 'storage',
       terminalCommitError: message,
-      errorReportable: false,
+      failure: classifyFailure({ origin: 'session' }),
       publicationOwner: 'main'
     }
     try {

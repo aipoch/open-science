@@ -39,6 +39,30 @@ describe('BackgroundResultDeliveryRepository', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it('keeps an unreadable cancellation event from blocking another pending result', async () => {
+    await client.backgroundResultDelivery.create({
+      data: {
+        id: 'compute-cancellation:broken:4',
+        sourceKind: 'compute-cancellation',
+        sourceId: 'broken:4',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        state: 'pending',
+        sourceSnapshot: 'corrupt'
+      }
+    })
+    await repository.enqueue(localRun('healthy'))
+    const claimed = await repository.claimPending('session-1', {
+      token: 'claim',
+      expiresAt: Date.now() + 30_000,
+      limit: 8
+    })
+    expect(claimed).toHaveLength(2)
+    expect(claimed.find((item) => item.sourceId === 'broken:4')?.sourceSnapshot).toBeUndefined()
+    expect(claimed.find((item) => item.sourceId === 'healthy')).toMatchObject({ state: 'claimed' })
+    expect(await repository.listProjectVisible('project-1')).toHaveLength(2)
+  })
+
   it('preserves an unsent continuation for a new owner after disposal during dispatch preparation', async () => {
     const source = localRun('run-dispose')
     await repository.enqueue(source)

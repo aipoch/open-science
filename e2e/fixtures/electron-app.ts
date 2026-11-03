@@ -465,7 +465,9 @@ const launchEnvironment = (
       'kde_session_version'
     ])
     if (process.platform === 'win32')
-      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432']) osInputs.add(key)
+      // Native OpenSSH requires ProgramData during initialization, even for version/config queries.
+      for (const key of ['programfiles', 'programfiles(x86)', 'programw6432', 'programdata'])
+        osInputs.add(key)
     for (const key of Object.keys(environment)) {
       if (
         !osInputs.has(key.toLowerCase()) &&
@@ -572,7 +574,10 @@ const setFixtureServiceReconnectBlocked = (_electron: unknown, blocked: boolean)
 }
 
 /** Playwright serializes this callback into Electron's main process; keep it self-contained. */
-const disconnectFixtureServiceConnection = (): { url: string; destroyed: boolean } => {
+const disconnectFixtureServiceConnection = (
+  electron?: Pick<typeof import('electron'), 'BrowserWindow' | 'ipcMain'>,
+  timing?: 'during-preflight' | 'after-preflight' | void
+): { url: string; destroyed: boolean } => {
   type Socket = {
     readable?: boolean
     writable?: boolean
@@ -607,7 +612,22 @@ const disconnectFixtureServiceConnection = (): { url: string; destroyed: boolean
   if (matches.length !== 1)
     throw new Error(`Expected one verified Desktop service pipe, found ${matches.length}.`)
   const { socket, websocket } = matches[0]
-  socket.destroy()
+  if (timing) {
+    if (!electron) throw new Error('Electron is required to schedule service disconnection.')
+    if (timing === 'after-preflight') {
+      electron.ipcMain.prependOnceListener('sessions:flush-response', () => socket.destroy())
+    } else {
+      const contents = electron.BrowserWindow.getAllWindows()[0].webContents
+      const send = contents.send
+      contents.send = (channel, ...args) => {
+        if (channel === 'sessions:flush-request') {
+          contents.send = send
+          socket.destroy()
+        }
+        send.call(contents, channel, ...args)
+      }
+    }
+  } else socket.destroy()
   return { url: websocket.url!, destroyed: socket.destroyed === true }
 }
 
@@ -1976,7 +1996,11 @@ class ElectronAppHarness implements ElectronApp {
           : undefined
       )
       this.recordResourceTiming(timingName, performance.now() - launchStartedAt)
-      if (process.platform === 'win32' || process.env.OPEN_SCIENCE_E2E_FLUSH_DIAGNOSTICS === '1') {
+      if (
+        process.platform === 'win32' ||
+        this.resourceProfiler ||
+        process.env.OPEN_SCIENCE_E2E_FLUSH_DIAGNOSTICS === '1'
+      ) {
         this.stopFlushDiagnostics = await observeElectronFlushDiagnostics(
           this.application,
           this.currentPage,

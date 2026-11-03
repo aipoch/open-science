@@ -133,7 +133,7 @@ export const withdrawWorkspacePrompt = (preparation: WorkspacePromptPreparation)
         ...source,
         status: preparation.authority.status,
         error: preparation.authority.error,
-        errorReportable: preparation.authority.errorReportable,
+        failure: preparation.authority.failure,
         activeRun: undefined,
         activeRunRuntimeSegmentId: undefined,
         agentStatus: undefined,

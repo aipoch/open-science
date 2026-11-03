@@ -63,8 +63,7 @@ describe('ACP Runtime lifecycle composition', () => {
       promptMessageId: 'prompt',
       promptExecutionId: prompt.turnToken,
       interruptionCause: 'connection-lost',
-      providerError: false,
-      errorReportable: false
+      failure: { category: 'session', diagnostics: {} }
     })
     expect(observed[0]).toMatchObject({ publicationOwner: 'main' })
     expect(retryTerminalCommits).toHaveBeenCalledWith('s1')

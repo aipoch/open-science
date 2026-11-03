@@ -1,9 +1,10 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import { describe, expect, it } from 'vitest'
 import { RequestError } from '@agentclientprotocol/sdk'
 
 import {
   describePromptError,
-  isProviderPromptError,
+  collectPromptFailureFacts,
   isOpenCodeSessionServiceFailure,
   withAgentAuthenticationRecovery
 } from './prompt-error'
@@ -113,7 +114,7 @@ describe('describePromptError', () => {
   })
 })
 
-describe('isProviderPromptError', () => {
+describe('provider origin', () => {
   it.each([
     [-32603, 'serverOverloaded', true],
     [-32002, 'serverOverloaded', false],
@@ -128,7 +129,7 @@ describe('isProviderPromptError', () => {
         name: 'RequestError'
       }
     )
-    expect(isProviderPromptError(error)).toBe(expected)
+    expect(collectPromptFailureFacts(error).origin === 'provider').toBe(expected)
   })
 
   it('flags an upstream APIError (auth/rate/quota/5xx all share this tag)', () => {
@@ -146,7 +147,7 @@ describe('isProviderPromptError', () => {
       name: 'RequestError'
     })
 
-    expect(isProviderPromptError(error)).toBe(true)
+    expect(collectPromptFailureFacts(error).origin === 'provider').toBe(true)
   })
 
   it.each([400, 401, 422, 499])(
@@ -156,7 +157,7 @@ describe('isProviderPromptError', () => {
         errorKind: 'unknown'
       })
 
-      expect(isProviderPromptError(error)).toBe(true)
+      expect(collectPromptFailureFacts(error).origin === 'provider').toBe(true)
     }
   )
 
@@ -167,7 +168,7 @@ describe('isProviderPromptError', () => {
         errorKind: 'unknown'
       })
 
-      expect(isProviderPromptError(error)).toBe(true)
+      expect(collectPromptFailureFacts(error).origin === 'provider').toBe(true)
     }
   )
 
@@ -178,7 +179,7 @@ describe('isProviderPromptError', () => {
           errorKind: 'unknown'
         })
       )
-    ).toBe(false)
+    ).toBe(true)
     expect(
       isProviderPromptError(
         agentError('Internal error: validation failed with status 400', {
@@ -224,7 +225,7 @@ describe('isProviderPromptError', () => {
       'Internal error: Not Found: {"error":{"message":"unknown model","type":"resource_not_found_error"}}'
     )
 
-    expect(isProviderPromptError(error)).toBe(true)
+    expect(collectPromptFailureFacts(error).origin === 'provider').toBe(true)
   })
 
   it('does NOT flag an ACP-layer exception (no provider signal) — these stay reportable', () => {
@@ -271,7 +272,7 @@ describe('ACP authentication recovery boundary', () => {
     })
   ])('normalizes a protocol-owned authentication failure before transport', async (error) => {
     expect(describePromptError(error)).toBe('Authentication required')
-    expect(isProviderPromptError(error)).toBe(true)
+    expect(collectPromptFailureFacts(error).origin === 'provider').toBe(true)
     await expect(
       withAgentAuthenticationRecovery(async () => {
         throw error
@@ -289,7 +290,7 @@ describe('ACP authentication recovery boundary', () => {
   ])('preserves generic -32000 errors: %s', async (message) => {
     const error = new RequestError(-32000, message)
     expect(describePromptError(error)).toBe(message)
-    expect(isProviderPromptError(error)).toBe(false)
+    expect(collectPromptFailureFacts(error).origin === 'provider').toBe(false)
     await expect(
       withAgentAuthenticationRecovery(async () => {
         throw error
@@ -314,5 +315,124 @@ describe('ACP authentication recovery boundary', () => {
     Object.assign(new Error('unrelated RPC'), { code: -32000 })
   ])('preserves other failures', (error) => {
     expect(describePromptError(error)).toBe(error.message)
+  })
+})
+
+describe('classified failure facts across agent execution paths', () => {
+  it.each([
+    [
+      'claude-code',
+      agentError('Internal error: API Error: 401 Unauthorized', { errorKind: 'unknown' }),
+      'configuration',
+      401
+    ],
+    [
+      'opencode',
+      agentError('upstream failure', {
+        errorName: 'APIError',
+        statusCode: 429,
+        requestId: 'request-example'
+      }),
+      'service',
+      429
+    ],
+    [
+      'codex-response',
+      agentError('upstream failure', {
+        codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
+        errorKind: 'provider-error'
+      }),
+      'service',
+      503
+    ],
+    [
+      'codex-bridge',
+      agentError('upstream failure', { errorKind: 'provider-error', status: 403 }),
+      'configuration',
+      403
+    ]
+  ] as const)(
+    'captures and classifies the %s wire shape',
+    (_framework, error, category, status) => {
+      const facts = collectPromptFailureFacts(error, { model: 'example-model' })
+      expect(facts.status).toBe(status)
+      expect(facts.model).toBe('example-model')
+      expect(classifyFailure(facts).category).toBe(category)
+    }
+  )
+  it('keeps an opaque protocol error internal even when its prose mentions a status', () => {
+    expect(
+      classifyFailure(collectPromptFailureFacts(agentError('Record 503 could not be decoded', {})))
+        .category
+    ).toBe('internal')
+  })
+})
+
+const isProviderPromptError = (error: unknown): boolean =>
+  collectPromptFailureFacts(error).origin === 'provider'
+
+describe('native framework failure facts', () => {
+  it.each([
+    [{ service: 'session', errorName: 'APIError', statusCode: 401 }, 'configuration'],
+    [{ service: 'session', errorName: 'APIError', statusCode: 429 }, 'service'],
+    [
+      { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 403 } }, message: 'Rejected' },
+      'configuration'
+    ],
+    [
+      { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 503 } }, message: 'Unavailable' },
+      'service'
+    ],
+    [{ codexErrorInfo: 'usageLimitExceeded', message: 'Limit reached' }, 'configuration'],
+    [{ codexErrorInfo: 'contextWindowExceeded', message: 'Too long' }, 'input'],
+    [{ codexErrorInfo: 'internalServerError', message: 'Protocol inconsistency' }, 'internal']
+  ] as const)('classifies native data without an invented provider flag: %j', (data, category) => {
+    const facts = collectPromptFailureFacts(agentError('Internal error', data))
+    expect(classifyFailure(facts).category).toBe(category)
+  })
+})
+
+describe('compatibility bridge upstream status preservation', () => {
+  // Compose the bridge's tested HTTP body with each adapter's tested RequestError boundary.
+  // These are deterministic boundary fixtures, not a captured native model invocation.
+  for (const path of ['codex-bridge', 'claude-code'] as const) {
+    it.each([
+      [401, 'configuration'],
+      [403, 'configuration'],
+      [404, 'configuration'],
+      [413, 'input']
+    ] as const)(
+      `${path} restores original status %i from the typed bridge envelope`,
+      (status, category) => {
+        const payload = JSON.stringify({
+          error: { type: 'upstream_error', message: 'Upstream request rejected', status }
+        })
+        const error =
+          path === 'codex-bridge'
+            ? RequestError.internalError(
+                { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 400 } } },
+                `400 Bad Request: ${payload}`
+              )
+            : agentError(`Internal error: API Error: 400 ${payload}`, { errorKind: 'unknown' })
+        const facts = collectPromptFailureFacts(error)
+        expect(facts.status).toBe(status)
+        expect(classifyFailure(facts).category).toBe(category)
+      }
+    )
+  }
+  it.each([
+    { type: 'other_error', status: 401 },
+    { type: 'upstream_error', status: '401' },
+    { type: 'upstream_error', status: 999 }
+  ])('rejects an unrelated or invalid nested status %j', (payload) => {
+    const error = RequestError.internalError(
+      { codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 400 } } },
+      JSON.stringify({ error: { message: 'Rejected', ...payload } })
+    )
+    expect(collectPromptFailureFacts(error).status).toBe(400)
+  })
+  it('does not turn an unowned ACP payload into a provider error', () => {
+    const error = RequestError.resourceNotFound('file:///missing')
+    expect(classifyFailure(collectPromptFailureFacts(error)).category).toBe('internal')
   })
 })

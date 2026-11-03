@@ -33,6 +33,8 @@ type ProviderLoopbackHttpHostOptions<Connection extends ProviderLoopbackConnecti
   diagnosticName: string
   diagnostics?: Pick<Logger, 'info' | 'error'>
   credentialMode: 'bearer' | 'bearer-or-api-key'
+  // Several loopback hosts can serve one agent generation under a single in-memory credential.
+  token?: string
   createConnection: (origin: string, token: string) => Connection
   handle: (request: ProviderLoopbackHttpRequest, response: ServerResponse) => Promise<void>
   onUnauthorized: (response: ServerResponse) => void
@@ -163,7 +165,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   }
 
   private async startServer(): Promise<Connection> {
-    const token = randomBytes(24).toString('hex')
+    const token = this.options.token ?? randomBytes(24).toString('hex')
     const diagnostics = this.options.diagnostics ?? defaultDiagnostics
     const bridgeId = randomUUID()
     const startedAt = Date.now()

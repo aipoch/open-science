@@ -24,6 +24,7 @@ import {
   type ScanRepoRequest,
   type InstallClaudeRequest,
   type InstallCodeBuddyRequest,
+  type InstallPiRequest,
   type InstallCodexRequest,
   type InstallOpencodeRequest,
   type ClaudeInstallEvent,
@@ -158,6 +159,9 @@ const registerSettingsIpcHandlers = ({
   ipcMainHandle('settings:install-codebuddy', (_event, request: InstallCodeBuddyRequest) =>
     snapshotCommits.projectAfter(service.installCodeBuddy(request, broadcastInstallEvent))
   )
+  ipcMainHandle('settings:install-pi', (_event, request: InstallPiRequest) =>
+    snapshotCommits.projectAfter(service.installPi(request, broadcastInstallEvent))
+  )
   ipcMainHandle('settings:install-codex', (_event, request: InstallCodexRequest) =>
     snapshotCommits.projectAfter(service.installCodex(request, broadcastInstallEvent))
   )
@@ -182,6 +186,9 @@ const registerSettingsIpcHandlers = ({
     snapshotCommits.currentSnapshotAfter(
       workflows.runtime.uninstallRuntime('uninstallCodeBuddy', 'codebuddy')
     )
+  )
+  ipcMainHandle('settings:uninstall-pi', () =>
+    snapshotCommits.currentSnapshotAfter(workflows.runtime.uninstallRuntime('uninstallPi', 'pi'))
   )
 
   ipcMainHandle('settings:uninstall-codex', () =>

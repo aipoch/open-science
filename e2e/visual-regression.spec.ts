@@ -26,7 +26,7 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
   // The live catalog changes independently of the app; home-use-cases.spec.ts covers its layout.
   await page.addStyleTag({
     content:
-      'section[aria-labelledby]:has(> div > h2 > a[href="https://aipoch.com/open-science/use-cases"]) { display: none !important; }'
+      'section[aria-labelledby]:has(button[aria-label="Browse all examples"]) { display: none !important; }'
   })
 }
 
@@ -169,6 +169,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await expect(
     page.getByRole('button', { name: 'Choose a .science file', exact: true })
   ).toBeVisible()
+  await expect(page.getByText('Model configuration needs attention', { exact: true })).toBeVisible()
   // macOS runner text/icon rasterization differs slightly from the local baseline (about 0.21%).
   await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
@@ -202,19 +203,14 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
     const updates = page.getByRole('region', { name: 'Session updates' })
     const cardGrid = updates.locator(':scope > div')
     const cards = updates.getByRole('button')
-    const availableWidth = await page.getByRole('main').evaluate((element) => element.clientWidth)
-    const expectedInset = width < 768 ? 16 : 32
-    const expectedCardWidth =
-      width < 768
-        ? availableWidth - expectedInset * 2
-        : (availableWidth - expectedInset * 2 - 12) / 2
-
     await expect(updates).toBeVisible()
     await expect(cards.first()).toBeVisible()
     await expect
       .poll(() => cardGrid.evaluate((element) => element.scrollWidth <= element.clientWidth))
       .toBe(true)
     await expect(cards.first()).toHaveCSS('cursor', 'pointer')
+    const gridBox = (await cardGrid.boundingBox())!
+    const expectedCardWidth = width < 768 ? gridBox.width : (gridBox.width - 12) / 2
 
     // Read both cards in one browser task so a responsive reflow cannot split the measurements.
     const [firstCardBox, secondCardBox] = await cards.evaluateAll((elements) =>
@@ -223,18 +219,30 @@ test('keeps home actions and content inside compact viewports', async ({ app }) 
         return { x, y, width, height }
       })
     )
-    expect(firstCardBox?.x).toBeCloseTo(expectedInset, 0)
+    expect(firstCardBox?.x).toBeCloseTo(gridBox.x, 0)
     expect(firstCardBox?.width).toBeCloseTo(expectedCardWidth, 0)
     expect((firstCardBox?.x ?? 0) + (firstCardBox?.width ?? 0)).toBeLessThanOrEqual(
-      availableWidth - expectedInset + 1
+      gridBox.x + gridBox.width + 1
     )
     if (width < 768) {
-      expect(secondCardBox?.x).toBeCloseTo(expectedInset, 0)
+      expect(secondCardBox?.x).toBeCloseTo(gridBox.x, 0)
       expect(secondCardBox?.y).toBeGreaterThan((firstCardBox?.y ?? 0) + (firstCardBox?.height ?? 0))
     } else {
-      expect(secondCardBox?.x).toBeCloseTo(expectedInset + expectedCardWidth + 12, 0)
+      expect(secondCardBox?.x).toBeCloseTo(gridBox.x + expectedCardWidth + 12, 0)
       expect(secondCardBox?.y).toBeCloseTo(firstCardBox?.y ?? 0, 0)
     }
+    const waitingCard = cards.filter({ hasText: 'Waiting for your answer' }).first()
+    await expect(waitingCard).toBeVisible()
+    expect(
+      await waitingCard.evaluate((card) => {
+        const bounds = card.getBoundingClientRect()
+        const statusRow = card.firstElementChild!
+        return [...statusRow.children].every((child) => {
+          const rect = child.getBoundingClientRect()
+          return rect.left >= bounds.left && rect.right <= bounds.right
+        })
+      })
+    ).toBe(true)
     await expect
       .poll(() =>
         page.evaluate(

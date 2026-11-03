@@ -204,6 +204,7 @@ export function ComputeHostRemovalDialog({
                           <JobStatusBadge
                             status={job.status}
                             cancellationStatus={job.cancellationStatus}
+                            errorCode={job.errorCode}
                           />
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">

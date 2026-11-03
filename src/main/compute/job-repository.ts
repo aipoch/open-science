@@ -32,7 +32,13 @@ import {
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
 type ComputeJobClientProvider = () => Promise<ComputeJobClient>
 type PrismaComputeJobWithOperation = PrismaComputeJob & {
-  operations?: Array<{ phase: string; outcome: string | null }>
+  operations?: Array<{
+    phase: string
+    outcome: string | null
+    revision?: number
+    errorCode?: string | null
+    errorMessage?: string | null
+  }>
 }
 type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
@@ -115,6 +121,8 @@ type SensitiveJobProjection = Readonly<{
   stdoutTail: string | undefined
   stderrTail: string | undefined
   lastPollError: string | undefined
+  errorMessage: string | undefined
+  cancellationErrorMessage: string | undefined
   harvestError: string | undefined
   leftOnRemote: string | undefined
   unavailable: boolean
@@ -267,7 +275,9 @@ export class ComputeJobRepository {
     const rows = await client.computeJob.findMany({
       where: {
         status: { in: ['queued', 'submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        operations: {
+          none: { kind: 'cancel', OR: [{ phase: 'active' }, { outcome: 'fulfilled' }] }
+        }
       },
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
@@ -306,6 +316,8 @@ export class ComputeJobRepository {
         notifiedAt: null,
         OR: [
           { status: 'error' },
+          { status: 'failed', errorCode: 'job_cancelled' },
+          { operations: { some: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } } },
           { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: { not: null } }
         ]
       },
@@ -322,7 +334,9 @@ export class ComputeJobRepository {
       where: {
         providerId,
         status: { in: ['queued', 'submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        operations: {
+          none: { kind: 'cancel', OR: [{ phase: 'active' }, { outcome: 'fulfilled' }] }
+        }
       },
       include: { operations: { where: { kind: 'cancel' } } },
       orderBy: { createdAt: 'asc' }
@@ -378,7 +392,16 @@ export class ComputeJobRepository {
         const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
         if (!current || !this.isOwnerMutable(current.projectId, current.sessionId)) return null
         const claimed = await transaction.computeJob.updateMany({
-          where: { id: jobId, notifiedAt: null },
+          where: {
+            id: jobId,
+            notifiedAt: null,
+            OR: [
+              { status: 'error' },
+              { status: 'failed', errorCode: 'job_cancelled' },
+              { operations: { some: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } } },
+              { status: { in: ['success', 'failed', 'timeout'] }, harvestedAt: { not: null } }
+            ]
+          },
           data: { notifiedAt }
         })
         if (claimed.count === 0) return null
@@ -406,7 +429,9 @@ export class ComputeJobRepository {
           where: {
             id: jobId,
             status: { in: [...expectedStatuses] },
-            operations: { none: { kind: 'cancel' } }
+            operations: {
+              none: { kind: 'cancel', OR: [{ phase: 'active' }, { outcome: 'fulfilled' }] }
+            }
           },
           data: this.toUpdateData(
             this.preserveCleanupStopEvidence(current, updates),
@@ -577,7 +602,10 @@ export class ComputeJobRepository {
   ): Promise<Pick<ComputeJob, 'status' | 'provider_id'>[]> {
     const client = await this.getClient()
     const rows = await client.computeJob.findMany({
-      where: { sessionId },
+      where: {
+        sessionId,
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
+      },
       select: { status: true, providerId: true }
     })
     return rows.map((row) => ({ status: asStatus(row.status), provider_id: row.providerId }))
@@ -611,7 +639,7 @@ export class ComputeJobRepository {
       where: {
         providerId,
         status: { in: ['queued', 'submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
       }
     })
     return count > 0
@@ -810,7 +838,7 @@ export class ComputeJobRepository {
       where: {
         providerId,
         status: { in: ['queued', 'submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
       }
     })
   }
@@ -823,7 +851,7 @@ export class ComputeJobRepository {
       where: {
         sessionId,
         status: { in: ['queued', 'submitted', 'running'] },
-        operations: { none: { kind: 'cancel' } }
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
       }
     })
   }
@@ -835,7 +863,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         sessionId,
-        status: { in: ['submitted', 'running'] }
+        status: { in: ['submitted', 'running'] },
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
       }
     })
   }
@@ -847,7 +876,8 @@ export class ComputeJobRepository {
     return await client.computeJob.count({
       where: {
         providerId,
-        status: { in: ['submitted', 'running'] }
+        status: { in: ['submitted', 'running'] },
+        operations: { none: { kind: 'cancel', phase: 'settled', outcome: 'fulfilled' } }
       }
     })
   }
@@ -896,7 +926,20 @@ export class ComputeJobRepository {
           ? 'cancelling'
           : row.operations?.[0]?.outcome === 'fulfilled'
             ? 'cancelled'
-            : undefined,
+            : row.operations?.[0]?.outcome === 'failed'
+              ? 'failed'
+              : undefined,
+      ...(row.operations?.[0]?.outcome === 'failed' &&
+      row.operations[0].errorCode &&
+      sensitive.cancellationErrorMessage
+        ? {
+            cancellation_error: {
+              code: row.operations[0].errorCode,
+              message: sensitive.cancellationErrorMessage
+            },
+            cancellation_revision: row.operations[0].revision
+          }
+        : {}),
       intent: sensitive.intent,
       command: sensitive.command,
       command_hash: row.commandHash,
@@ -915,6 +958,7 @@ export class ComputeJobRepository {
       stdout_tail: sensitive.stdoutTail,
       stderr_tail: sensitive.stderrTail,
       error_code: row.errorCode ?? undefined,
+      error_message: sensitive.errorMessage,
       last_poll_error: sensitive.lastPollError,
       harvest_error: sensitive.harvestError,
       left_on_remote: sensitive.leftOnRemote,
@@ -931,7 +975,7 @@ export class ComputeJobRepository {
     }
   }
 
-  private projectSensitiveFields(row: PrismaComputeJob): SensitiveJobProjection {
+  private projectSensitiveFields(row: PrismaComputeJobWithOperation): SensitiveJobProjection {
     const encrypted = row.sensitiveDataEncrypted === true
     let unavailable = false
     const safely = <Value>(operation: () => Value, fallback: Value): Value => {
@@ -970,6 +1014,11 @@ export class ComputeJobRepository {
       stdoutTail: safely(() => this.revealOptional(row.stdoutTail, encrypted), undefined),
       stderrTail: safely(() => this.revealOptional(row.stderrTail, encrypted), undefined),
       lastPollError: safely(() => this.revealOptional(row.lastPollError, encrypted), undefined),
+      errorMessage: safely(() => this.revealOptional(row.errorMessage, encrypted), undefined),
+      cancellationErrorMessage: safely(
+        () => this.revealOptional(row.operations?.[0]?.errorMessage ?? null, encrypted),
+        undefined
+      ),
       harvestError: safely(() => this.revealOptional(row.harvestError, encrypted), undefined),
       leftOnRemote: safely(
         () => this.revealJsonOptional(row.leftOnRemote, 'array', encrypted),
@@ -1027,6 +1076,11 @@ export class ComputeJobRepository {
           ? null
           : this.protectOptional(updates.stderrTail, sensitiveDataEncrypted)
     if ('errorCode' in updates) data.errorCode = updates.errorCode
+    if ('errorMessage' in updates)
+      data.errorMessage =
+        updates.errorMessage === null
+          ? null
+          : this.protectOptional(updates.errorMessage, sensitiveDataEncrypted)
     if ('lastPollError' in updates)
       data.lastPollError =
         updates.lastPollError === null

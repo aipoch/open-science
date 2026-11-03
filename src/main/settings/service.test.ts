@@ -2471,6 +2471,7 @@ describe('SettingsService: preflight & spawn config', () => {
       opencodeReady: false,
       codexReady: false,
       codebuddyReady: false,
+      piReady: false,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true,
@@ -5936,7 +5937,8 @@ describe('SettingsService: managed-runtime flags', () => {
       { id: 'claude-code', supportsDelegatedWork: true },
       { id: 'opencode', supportsDelegatedWork: true },
       { id: 'codex', supportsDelegatedWork: true },
-      { id: 'codebuddy', supportsDelegatedWork: true }
+      { id: 'codebuddy', supportsDelegatedWork: true },
+      { id: 'pi', supportsDelegatedWork: true }
     ])
   })
 

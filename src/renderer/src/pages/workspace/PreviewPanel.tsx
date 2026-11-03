@@ -1,7 +1,7 @@
 import { OverlayLayerProvider } from '@/components/ui/overlay-layer'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { SideChatWorkbenchContent } from './SideChatWorkbench'
-import { BookOpen, Cpu, FolderOpen, Globe2, MessageSquare, Play, X } from 'lucide-react'
+import { BookOpen, Cpu, FolderOpen, Globe2, MessageSquare, Play, Store, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels'
@@ -310,7 +310,9 @@ const PreviewTab = ({
         ? t('Library')
         : tab.type === 'tool' && tab.toolKind === 'files'
           ? t('Files')
-          : tab.title
+          : tab.type === 'tool' && tab.toolKind === 'marketplace'
+            ? t('Sharing marketplace')
+            : tab.title
 
   return (
     <div
@@ -379,6 +381,8 @@ const PreviewTab = ({
             <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
           ) : tab.toolKind === 'compute' ? (
             <Cpu className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
+          ) : tab.toolKind === 'marketplace' ? (
+            <Store className="size-3.5 shrink-0" aria-hidden="true" />
           ) : tab.toolKind === 'side-chat' ? (
             <MessageSquare className="size-3.5 shrink-0" aria-hidden="true" />
           ) : tab.toolKind === 'replay' ? (

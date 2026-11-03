@@ -1,3 +1,4 @@
+import { extractPdfText } from '../uploads/pdf-text-extraction'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile, stat } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
@@ -32,7 +33,6 @@ import {
   buildImageContentData,
   canInlineImageInSession,
   consumeInlineImageBudget,
-  extractPdfText,
   ImageContentError,
   MAX_AUTO_EXTRACT_PDF_BYTES,
   MAX_AUTO_PROCESS_IMAGE_BYTES,

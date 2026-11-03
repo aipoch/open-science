@@ -1,4 +1,5 @@
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { once } from 'node:events'
 import {
   cpSync,
   existsSync,
@@ -9,6 +10,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -263,7 +265,9 @@ SectionEnd
         )
         expect(result, result).toContain('|restoreFailed=0')
         if (scenario === 'existing-data' || scenario === 'interrupted-backup') {
-          expect(result).toContain(`|backup=${backup}`)
+          expect(result).toContain(
+            scenario === 'existing-data' ? '|backup=|restoreFailed=0' : `|backup=${backup}`
+          )
           expect(readFileSync(join(data, 'sentinel.txt'), 'utf8')).toBe(
             scenario === 'existing-data' ? 'existing user data' : 'preserved user data'
           )
@@ -286,7 +290,393 @@ SectionEnd
   }
 )
 
+it.skipIf(!nsisCompiler).each(['direct', 'external-alias', 'linked-ancestor'] as const)(
+  'preserves co-located data in place when replacing an old installation (%s)',
+  (layout) => {
+    // Leave enough shortenable ancestor characters for the 270-character payload to reach
+    // managed cleanup without first exceeding the existing NSIS staging-directory limit.
+    const root = mkdtempSync(
+      join(tmpdir(), 'nsis-workspace-safety-with-configured-data-and-long-program-path-')
+    )
+    const install = join(root, 'Open-Science')
+    const longProgramDirectory = 'p'.repeat(
+      Math.max(1, 270 - join(install, 'resources', 'index.js').length - 1)
+    )
+    const restoreAcl = join(root, 'restore-program-acl.ps1')
+    const powershell = join(
+      process.env.SystemRoot!,
+      'System32/WindowsPowerShell/v1.0/powershell.exe'
+    )
+    const psQuote = (value: string): string => `'${value.replaceAll("'", "''")}'`
+    const powershellEnv = {
+      ...process.env,
+      PSModulePath: join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/Modules')
+    }
+    const dataRelative =
+      layout === 'linked-ancestor' ? 'resources/configured-link/research' : 'resources/custom-data'
+    const content = 'sample,value\nA,3935\n'
+    const paths = [
+      'workspaces/project',
+      'content/blobs',
+      'custom-research',
+      'OpenScience/workspaces/project',
+      'Open-Science/workspaces/project',
+      `${dataRelative}/content`,
+      'locales/custom-config'
+    ]
+    try {
+      if (layout === 'linked-ancestor') {
+        mkdirSync(join(root, 'external-data'))
+        mkdirSync(join(install, 'resources'), { recursive: true })
+        symlinkSync(
+          join(root, 'external-data'),
+          join(install, 'resources/configured-link'),
+          'junction'
+        )
+      }
+      for (const path of paths) {
+        mkdirSync(join(install, path), { recursive: true })
+        writeFileSync(join(install, path, 'research.csv'), content)
+      }
+      const configRoot = join(install, 'locales/custom-config')
+      let dataRoot = join(install, dataRelative)
+      if (layout === 'external-alias') {
+        symlinkSync(dataRoot, join(root, 'data-alias'), 'junction')
+        dataRoot = join(root, 'data-alias')
+      }
+      writeFileSync(join(configRoot, 'settings.json'), JSON.stringify({ dataRoot }))
+      const applicationFile = join(install, 'open-science.exe')
+      writeFileSync(applicationFile, 'old application')
+      mkdirSync(join(install, 'resources'), { recursive: true })
+      const retryFiles = [
+        'resources/windows-update-handoff-uninstall.ps1',
+        'resources/windows-notebook-sandbox-uninstall.ps1',
+        'resources/windows-runtime-cache-uninstall.ps1',
+        'Uninstall open-science.exe'
+      ]
+      retryFiles.forEach((file, index) =>
+        writeFileSync(join(install, file), `retry-payload-${index}`)
+      )
+      const lateProgramFile = join(install, 'vulkan-1.dll')
+      const savedAcl = join(root, 'program-acl.txt')
+      writeFileSync(lateProgramFile, 'old program library')
+      // NSIS clears READONLY before deletion. Deny only WriteAttributes on this owned file:
+      // rename still works, while final deletion fails without a production test seam.
+      writeFileSync(
+        restoreAcl,
+        `$ErrorActionPreference='Stop'\nImport-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force\nif (Test-Path -LiteralPath ${psQuote(savedAcl)}) {\n@(${psQuote(install)}) + @(Get-ChildItem -LiteralPath ${psQuote(install)} -Directory | ForEach-Object FullName) | ForEach-Object { Get-Item -LiteralPath (Join-Path $_ 'vulkan-1.dll') -ErrorAction SilentlyContinue } | ForEach-Object {\n$acl=New-Object Security.AccessControl.FileSecurity\n$acl.SetSecurityDescriptorSddlForm([IO.File]::ReadAllText(${psQuote(savedAcl)}))\nSet-Acl -LiteralPath $_.FullName -AclObject $acl\n[IO.File]::SetAttributes($_.FullName,[IO.FileAttributes]::Normal)\n}\n}`
+      )
+      const prepareAcl = `$ErrorActionPreference='Stop'\nImport-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Security/Microsoft.PowerShell.Security.psd1') -Force\n$file=${psQuote(lateProgramFile)}\n$acl=Get-Acl -LiteralPath $file\n[IO.File]::WriteAllText(${psQuote(savedAcl)},$acl.Sddl)\n[IO.File]::SetAttributes($file,[IO.FileAttributes]::ReadOnly)\n$rule=[Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User,[Security.AccessControl.FileSystemRights]::WriteAttributes,[Security.AccessControl.AccessControlType]::Deny)\n$acl.AddAccessRule($rule)\nSet-Acl -LiteralPath $file -AclObject $acl`
+      const acl = spawnSync(
+        powershell,
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(prepareAcl, 'utf16le').toString('base64')
+        ],
+        { encoding: 'utf8', windowsHide: true, timeout: 15_000, env: powershellEnv }
+      )
+      expect(acl.status, acl.stderr).toBe(0)
+      symlinkSync(
+        join(install, 'workspaces'),
+        join(install, 'resources', 'linked-data'),
+        'junction'
+      )
+      const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+      const macros = [
+        'preserveNamedDataRoot',
+        'restoreNamedDataRoot',
+        'preserveNestedDataRoot',
+        'restoreNestedDataRoot'
+      ]
+        .map((name) => {
+          const match = include.match(new RegExp(`!macro ${name} [\\s\\S]*?!macroend`))
+          expect(match, name).not.toBeNull()
+          return match![0]
+        })
+        .join('\n')
+        .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+        .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+      const upstream = readFileSync(
+        join(appBuilderLibRoot, 'templates/nsis/uninstaller.nsh'),
+        'utf8'
+      )
+      const functions = ['un.atomicRMDir', 'un.restoreFiles']
+        .map((name) => {
+          const match = upstream.match(
+            new RegExp(`Function ${name.replace('.', '\\.')}\\r?\\n[\\s\\S]*?FunctionEnd`)
+          )
+          expect(match, name).not.toBeNull()
+          return match![0]
+        })
+        .join('\n')
+      const deletion = upstream.match(
+        / {2}# delete the installed files[\s\S]*?(?= {2}\$\{ifNot\} \$\{isKeepShortcuts\})/
+      )?.[0]
+      expect(deletion).toBeDefined()
+      const compileAndRun = (name: string, body: string): void => {
+        const executable = join(root, `${name}.exe`)
+        const source = join(root, `${name}.nsi`)
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true\n!include LogicLib.nsh\n!define BUILD_RESOURCES_DIR "${join(repoRoot, 'build')}"\n!define PROJECT_DIR "${root}"\nName "Isolated update"\nOutFile "${executable}"\nInstallDir "${install}"\nRequestExecutionLevel user\nSilentInstall silent\nSilentUnInstall silent\n${body}`
+        )
+        const compiled = spawnSync(nsisCompiler!, ['/V2', source], {
+          windowsHide: true,
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+        expect(compiled.status, compiled.stderr || compiled.stdout).toBe(0)
+        const run = spawnSync(executable, ['/S'], {
+          windowsHide: true,
+          // The probe runs repeated native uninstall/PowerShell processes for fault and retry cases.
+          timeout: 60_000,
+          env: {
+            ...powershellEnv,
+            OPEN_SCIENCE_E2E_STORAGE_ROOT: '',
+            OPEN_SCIENCE_CONFIG_ROOT: configRoot
+          }
+        })
+        expect(run.error).toBeUndefined()
+        expect(run.status).toBe(0)
+      }
+      const cleanupPath = join(repoRoot, 'build/windows-program-cleanup.nsh')
+      const cleanup = existsSync(cleanupPath) ? readFileSync(cleanupPath, 'utf8') : ''
+      require('./compile-windows-install-publication.cjs')(
+        join(repoRoot, 'build/windows-install-publication.cs'),
+        join(root, 'out/windows-installer/ia32/windows-install-publication.dll')
+      )
+      for (const version of ['old', 'current']) {
+        compileAndRun(
+          `generate-${version}`,
+          `
+!define BUILD_UNINSTALLER
+!define isUpdated "1 == 1"
+!define APP_EXECUTABLE_FILENAME "open-science.exe"
+!define UNINSTALL_FILENAME "Uninstall open-science.exe"
+${version === 'current' ? cleanup : ''}
+${functions}
+Section
+WriteUninstaller "${root}\\${version}-uninstaller.exe"
+SectionEnd
+Section "un.fixture"
+InitPluginsDir
+${deletion}
+SectionEnd
+`
+        )
+      }
+      const installUtil = readFileSync(
+        join(appBuilderLibRoot, 'templates/nsis/include/installUtil.nsh'),
+        'utf8'
+      )
+      const selection = installUtil.match(
+        / {2}StrCpy \$uninstallerFileNameTemp "\$PLUGINSDIR\\old-uninstaller.exe"[\s\S]*?(?= {2}ExecWait)/
+      )?.[0]
+      expect(selection).toBeDefined()
+      const copyOverride = include.match(/!macro customCopyUninstaller[\s\S]*?!macroend/)?.[0] ?? ''
+      // Run the production preservation hooks around the real upstream uninstall deletion section.
+      // Only fixture files are touched: no application registration, services or user profile writes.
+      compileAndRun(
+        'probe',
+        `
+!define UNINSTALLER_OUT_FILE "${root}\\current-uninstaller.exe"
+Var uninstallerFileName
+Var uninstallerFileNameTemp
+!macro copyFile FROM TO
+CopyFiles /SILENT "\${FROM}" "\${TO}"
+!macroend
+${copyOverride}
+Var backup
+Var backupBranded
+Var dataProtectionFailed
+Var dataRestoreFailed
+${macros}
+Section
+InitPluginsDir
+FileOpen $9 "${join(root, 'result.txt')}" w
+  # Windows CI can provide TEMP through an 8.3 alias. Exercise that spelling when the volume
+  # supports it; the configured roots still use their original paths.
+  System::Call 'kernel32::GetShortPathName(t "$INSTDIR", t .R1, i \${NSIS_MAX_STRLEN}) i.R0'
+  \${If} $R0 > 0
+  \${AndIf} $R0 < \${NSIS_MAX_STRLEN}
+    StrCpy $INSTDIR $R1
+  \${EndIf}
+StrCpy $dataProtectionFailed "0"
+StrCpy $dataRestoreFailed "0"
+StrCpy $uninstallerFileName "${root}\\old-uninstaller.exe"
+!insertmacro preserveNestedDataRoot "$INSTDIR" $backup fixture
+FileWriteUTF16LE $9 "|protection=$dataProtectionFailed"
+${paths.map((path, index) => `IfFileExists "${join(install, path, 'research.csv')}" 0 +2\nFileWriteUTF16LE $9 "|in-place-${index}"`).join('\n')}
+\${If} $dataProtectionFailed == "0"
+${selection}
+  # A live reader blocks deleting the application executable. Failed cleanup must preserve data
+  # and leave the executable available to identify an incomplete uninstall; the next attempt works.
+  System::Call 'kernel32::CreateFile(t "${applicationFile}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|locked=$0"
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|still-locked=$0"
+  IfFileExists "${applicationFile}" 0 +2
+  FileWriteUTF16LE $9 "|application-retained"
+${retryFiles.map((file, index) => `FileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|retry-${index}=$7"`).join('\n')}
+  System::Call 'kernel32::CloseHandle(p R6)'
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|cleanup-failed=$0"
+  IfFileExists "${join(install, 'Uninstall open-science.exe')}" 0 +2
+  FileWriteUTF16LE $9 "|uninstaller-retained"
+${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|restored-${index}=$7"`).join('\n')}
+  ExecWait '"${powershell}" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${restoreAcl}"' $0
+  FileWriteUTF16LE $9 "|acl-restored=$0"
+  # Start the entrypoint fault with a complete payload even on the unfixed baseline. The byte
+  # observations above still capture the earlier failure independently.
+  CreateDirectory "$INSTDIR\\resources"
+${[['open-science.exe', 'old application'], ...retryFiles.map((file, index) => [file, `retry-payload-${index}`])].map(([file, bytes]) => `FileOpen $8 "${join(install, file)}" w\nFileWrite $8 "${bytes}"\nFileClose $8`).join('\n')}
+  System::Call 'kernel32::CreateFile(t "${join(install, 'Uninstall open-science.exe')}", i 0x80000000, i 1, p 0, i 3, i 0, p 0) p.R6'
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|uninstaller-locked=$0"
+${['open-science.exe', ...retryFiles].map((file, index) => `StrCpy $7 "missing"\nFileOpen $8 "${join(install, file)}" r\nFileRead $8 $7\nFileClose $8\nFileWriteUTF16LE $9 "|entrypoint-restored-${index}=$7"`).join('\n')}
+  System::Call 'kernel32::CloseHandle(p R6)'
+  # An ordinary read-only program file remains removable when attribute access is allowed.
+  SetFileAttributes "${lateProgramFile}" READONLY
+  # A short installation alias can address a payload whose expanded path exceeds MAX_PATH.
+  # Volumes without short names retain the ordinary fixture instead of failing in NSIS staging.
+  StrCmp $INSTDIR "${install}" noLongPayload
+  CreateDirectory "$INSTDIR\\resources\\${longProgramDirectory}"
+  FileOpen $8 "$INSTDIR\\resources\\${longProgramDirectory}\\index.js" w
+  FileWrite $8 "deep program bytes"
+  FileClose $8
+  StrCpy $7 "missing"
+  FileOpen $8 "$INSTDIR\\resources\\${longProgramDirectory}\\index.js" r
+  FileRead $8 $7
+  FileClose $8
+  FileWriteUTF16LE $9 "|long-payload=$7"
+  Goto longPayloadReady
+  noLongPayload:
+  FileWriteUTF16LE $9 "|long-payload=unavailable"
+  longPayloadReady:
+  ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  FileWriteUTF16LE $9 "|first-uninstall=$0"
+  # Match the updater's existing one-retry budget. A standalone uninstall can truthfully fail
+  # on a transient program-file lock; data must remain readable before that retry too.
+  \${If} $0 != 0
+    FileWriteUTF16LE $9 "|retried"
+${paths.map((path, index) => `FileOpen $8 "${join(install, path, 'research.csv')}" r\nFileRead $8 $7\nFileWriteUTF16LE $9 "|retry-data-${index}=$7"\nFileRead $8 $7\nFileWriteUTF16LE $9 "$7"\nFileClose $8`).join('\n')}
+    Sleep 1000
+    ExecWait '"$uninstallerFileNameTemp" /S _?=$INSTDIR' $0
+  \${EndIf}
+  FileWriteUTF16LE $9 "|uninstall=$0"
+  !insertmacro restoreNestedDataRoot "$INSTDIR" $backup
+\${EndIf}
+FileWriteUTF16LE $9 "|restore=$dataRestoreFailed"
+FileClose $9
+SectionEnd
+`
+      )
+      const result = readFileSync(join(root, 'result.txt'), 'utf16le')
+      expect(result).toMatch(/\|long-payload=(?:deep program bytes|unavailable)\|/)
+      if (result.includes('|retried'))
+        paths.forEach((_, index) => expect(result).toContain(`|retry-data-${index}=${content}`))
+      expect(result).toContain('|restore=0')
+      expect(result).toContain('|protection=0')
+      expect(result).toContain('|uninstall=0')
+      expect(existsSync(applicationFile)).toBe(false)
+      // Co-located data is supported: the update must proceed and preserve all research bytes at
+      // their original paths. Blocking updates or requiring relocation does not satisfy the contract.
+      for (const path of paths) {
+        const file = join(install, path, 'research.csv')
+        expect(existsSync(file), `Research file deleted during update: ${path}`).toBe(true)
+        expect(readFileSync(file, 'utf8')).toBe(content)
+      }
+      paths.forEach((_, index) => expect(result).toContain(`|in-place-${index}`))
+      expect(result).toContain('|locked=2|still-locked=2|application-retained')
+      expect(result).toContain('|cleanup-failed=2|uninstaller-retained')
+      expect(result).toContain('|acl-restored=0')
+      expect(result).toContain('|restored-0=old application')
+      expect(result).toContain('|uninstaller-locked=2')
+      expect(result).toContain('|entrypoint-restored-0=old application')
+      retryFiles.forEach((_, index) =>
+        expect(result).toContain(`|restored-${index + 1}=retry-payload-${index}`)
+      )
+      retryFiles.forEach((_, index) =>
+        expect(result).toContain(`|entrypoint-restored-${index + 1}=retry-payload-${index}`)
+      )
+      retryFiles.forEach((_, index) =>
+        expect(result).toContain(`|retry-${index}=retry-payload-${index}`)
+      )
+      expect(
+        readdirSync(install).sort(),
+        readdirSync(install, { recursive: true }).join('\n')
+      ).toEqual(
+        [
+          'workspaces',
+          'content',
+          'custom-research',
+          'OpenScience',
+          'Open-Science',
+          'resources',
+          'locales'
+        ].sort()
+      )
+    } finally {
+      if (existsSync(restoreAcl)) {
+        const restored = spawnSync(
+          powershell,
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', restoreAcl],
+          { windowsHide: true, timeout: 15_000, env: powershellEnv }
+        )
+        expect(restored.status, 'restore fixture-only ACL before cleanup').toBe(0)
+      }
+      rmSync(root, { recursive: true, force: true })
+    }
+  },
+  90_000
+)
+
 describe('packaging config', () => {
+  it('uses the bundled selective uninstaller for the first attempt, fallback and retry', () => {
+    const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+    const util = readFileSync(
+      join(appBuilderLibRoot, 'templates/nsis/include/installUtil.nsh'),
+      'utf8'
+    )
+    const selection = include.match(/!macro customCopyUninstaller[\s\S]*?!macroend/)?.[0] ?? ''
+    expect(selection).toContain(
+      'File "/oname=$PLUGINSDIR\\old-uninstaller.exe" "${UNINSTALLER_OUT_FILE}"'
+    )
+    expect(selection).toContain('StrCpy $uninstallerFileName "$PLUGINSDIR\\old-uninstaller.exe"')
+    expect(util).toContain('!insertmacro customCopyUninstaller')
+    expect(util.indexOf('!insertmacro customCopyUninstaller')).toBeLessThan(
+      util.indexOf('  ExecWait')
+    )
+    const retry = include.match(/!macro uninstallFailureRecoveryAt[\s\S]*?!macroend/)?.[0] ?? ''
+    expect(retry).toContain('"$PLUGINSDIR\\old-uninstaller.exe" /S /KEEP_APP_DATA')
+    expect(retry).not.toContain('Rename ')
+    expect(retry).not.toContain('preserveRetryDataRoot')
+  })
+
+  it.skipIf(process.platform !== 'win32')(
+    'covers the installed Electron program payload without a wildcard sweep',
+    () => {
+      const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
+      const electronRoot = dirname(require('electron') as string)
+      for (const name of readdirSync(electronRoot)) {
+        // electron-builder renames the executable/LICENSE and excludes its development version file.
+        const installed =
+          name === 'electron.exe'
+            ? '${APP_EXECUTABLE_FILENAME}'
+            : name === 'LICENSE'
+              ? 'LICENSE.electron.txt'
+              : name
+        if (name === 'version') continue
+        expect(cleanup, installed).toContain(installed)
+      }
+      expect(cleanup).not.toMatch(/^\s*RMDir \/r/m)
+      expect(cleanup).not.toContain('Delete "$INSTDIR\\*')
+    }
+  )
+
   it('excludes previous dist artifacts when the output directory is overridden', () => {
     const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
       files: string[]
@@ -514,46 +904,128 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(checkResult).not.toContain('Goto UninstallLoop')
   })
 
-  it('continues the install when the old version is already gone despite a non-zero exit code', () => {
-    // The spurious-exit-2 case: the uninstall completed but a benign trailing error leaked as the
-    // process exit code. Detect it by the old executable no longer existing and keep installing.
-    // The sentinel is parameterized on the pass's own install dir ($INSTDIR for SHELL_CONTEXT,
-    // the registry-read per-user dir for HKEY_CURRENT_USER).
-    expect(include).toContain('${FileExists} "${DIR}\\${APP_EXECUTABLE_FILENAME}"')
+  it('normalizes completed uninstalls without hiding partial cleanup failures', () => {
+    const cleanup = readFileSync(join(repoRoot, 'build/windows-program-cleanup.nsh'), 'utf8')
+    expect(cleanup).toMatch(/Function un.onUninstSuccess\s+SetErrorLevel 0\s+FunctionEnd/)
+    const recovery =
+      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
+    expect(recovery).not.toContain('${FileExists}')
+    expect(recovery.slice(recovery.indexOf('ExecWait'))).toMatch(
+      /\$\{if\} \$R0 != 0[\s\S]*!insertmacro quitFailedUpdate/
+    )
+    for (const script of [
+      'windows-update-handoff-uninstall.ps1',
+      'windows-notebook-sandbox-uninstall.ps1',
+      'windows-runtime-cache-uninstall.ps1'
+    ]) {
+      expect(include).toContain(`File "\${BUILD_RESOURCES_DIR}\\${script}"`)
+      expect(include).toContain(`-File "$PLUGINSDIR\\${script}"`)
+    }
   })
 
   it('force-kills install-dir processes and retries the old uninstaller once before failing', () => {
     // The real-lock case: a background child running from the install dir (micromamba
     // provisioning, the CLI in Node mode, an agent child) still holds files. Sweep by executable
-    // path (Win32_Process has ExecutablePath, NOT Path) and by image name (taskkill fallback),
+    // path (Win32_Process has ExecutablePath, NOT Path),
     // then retry once; only a repeated failure keeps the original fatal dialog + exit code 2.
     expect(include).toContain('$$_.ExecutablePath')
     expect(include).not.toContain('$$_.Path.')
-    expect(include).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
     expect(include).toContain('$(uninstallFailed): $R0')
     expect(include).toContain('SetErrorLevel 2')
   })
 
-  it('runs the image-name taskkill only as a fallback when the PowerShell sweep cannot run', () => {
-    // taskkill /IM matches the exe name in ANY directory — a second install or the portable zip
-    // copy would be killed too, discarding unsaved work. It must fire only when the path-scoped
-    // PowerShell sweep failed to run (nsExec pushes "error" or a non-zero exit code). micromamba
-    // and the Notebook AppContainer host are included: their image names differ from the app exe,
-    // so the app-exe kill alone cannot cover an in-flight provisioning or sandbox-host lock on
-    // PowerShell-blocked machines.
-    const code = include
-      .split('\n')
-      .filter((line) => !/^\s*#/.test(line))
-      .join('\n')
-    expect(code.match(/taskkill/g) ?? []).toHaveLength(3)
-    // Capture the whole guard block and assert BOTH kills live inside it — asserting only the
-    // first one's position would still pass with micromamba's taskkill moved outside the guard.
-    const guardBlock = code.match(/\$\{if\} \$R1 != 0([\s\S]*?)\$\{endif\}/)?.[1] ?? ''
-    expect(guardBlock).toContain('taskkill /F /IM "${APP_EXECUTABLE_FILENAME}"')
-    expect(guardBlock).toContain('taskkill /F /IM micromamba.exe')
-    expect(guardBlock).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
-    expect(guardBlock.match(/taskkill/g) ?? []).toHaveLength(3)
-  })
+  it.skipIf(!nsisCompiler).each(['missing', 'existing'])(
+    'keeps another installation running when recovery cannot inspect processes (%s target)',
+    async (target) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-process-recovery-'))
+      const name = `${root.split(/[/\\]/).at(-1)}.exe`
+      const portable = join(root, 'portable')
+      const install = join(root, 'target')
+      mkdirSync(portable)
+      mkdirSync(install)
+      if (target === 'existing') writeFileSync(join(install, name), 'target application')
+      const compile = (executable: string, body: string): void => {
+        const source = `${executable}.nsi`
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true\nRequestExecutionLevel user\nSilentInstall silent\nOutFile "${executable}"\n${body}`
+        )
+        const result = spawnSync(nsisCompiler!, ['/V2', source], {
+          windowsHide: true,
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+        expect(result.status, result.stderr || result.stdout).toBe(0)
+      }
+      const executable = join(portable, name)
+      const retry = join(root, 'retry.exe')
+      const receipt = join(root, 'retried.txt')
+      let child: ReturnType<typeof spawn> | undefined
+      let exited: Promise<unknown> | undefined
+      try {
+        compile(executable, 'Section\nSleep 30000\nSectionEnd')
+        compile(
+          retry,
+          `Section\nFileOpen $1 "${receipt}" w\nFileWrite $1 "retried"\nFileClose $1\nSectionEnd`
+        )
+        const recovery = include.match(
+          /!macro uninstallFailureRecoveryAt DIR[\s\S]*?!macroend/
+        )?.[0]
+        expect(recovery).toBeDefined()
+        // Simulate an unavailable process inspector without changing the host's PowerShell.
+        // All image names are unique fixture names: never target real application processes.
+        const isolated = recovery!
+          .replaceAll(
+            '$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe',
+            join(root, 'missing-powershell.exe')
+          )
+          .replaceAll('micromamba.exe', `mamba-${name}`)
+          .replaceAll('notebook-appcontainer-host.exe', `host-${name}`)
+        const probe = join(root, 'probe.exe')
+        compile(
+          probe,
+          `
+!include LogicLib.nsh
+!include FileFunc.nsh
+!define APP_EXECUTABLE_FILENAME "${name}"
+LoadLanguageFile "\${NSISDIR}/Contrib/Language files/English.nlf"
+LangString uninstallFailed 1033 "Fixture retry failed"
+!macro restoreAllNestedDataRoots
+!macroend
+!macro quitFailedUpdate
+SetErrorLevel 2
+Quit
+!macroend
+${isolated}
+Section
+InitPluginsDir
+SetOutPath $PLUGINSDIR
+File /oname=old-uninstaller.exe "${retry}"
+StrCpy $R0 2
+StrCpy $0 ""
+!insertmacro uninstallFailureRecoveryAt "${install}"
+SectionEnd
+`
+        )
+        child = spawn(executable, ['/S'], { windowsHide: true, stdio: 'ignore' })
+        exited = once(child, 'exit')
+        await once(child, 'spawn')
+        const run = spawnSync(probe, ['/S'], { windowsHide: true, timeout: 15_000 })
+        expect(run.error).toBeUndefined()
+        expect(run.status).toBe(0)
+        expect(readFileSync(receipt, 'utf8')).toBe('retried')
+        expect(
+          () => process.kill(child!.pid!, 0),
+          'unrelated installation was terminated'
+        ).not.toThrow()
+      } finally {
+        child?.kill()
+        if (exited) await exited
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    45_000
+  )
 
   it('retries the old uninstaller exactly once', () => {
     // A single follow-up attempt after the kill; the original ExecWait lives in
@@ -566,107 +1038,9 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(include).toContain('_?=${DIR}')
   })
 
-  it('runs the retry with TEMP and TMP on the old installation volume', () => {
-    // electron-builder's updated uninstall atomically moves the old installation into the
-    // uninstaller's $PLUGINSDIR. A custom D: install with the ordinary C: TEMP turns that into a
-    // cross-volume move/copy — including a nested OpenScience data root — and can abort with exit
-    // code 2. The recovery attempt must give the child uninstaller a same-volume plugin directory,
-    // then restore this installer's environment after ExecWait returns.
-    const recovery =
-      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
-    const retryAt = recovery.indexOf('ExecWait')
-
-    expect(recovery).toContain('GetFullPathName $R2 "${DIR}\\.."')
-    expect(recovery).toContain('GetTempFileName $R5 "$R2"')
-    expect(recovery).toMatch(/SetEnvironmentVariable\(t, t\)i \("TEMP", "\$R5"\)/)
-    expect(recovery).toMatch(/SetEnvironmentVariable\(t, t\)i \("TMP", "\$R5"\)/)
-    expect(recovery.indexOf('("TEMP", "$R5")')).toBeLessThan(retryAt)
-    expect(recovery.indexOf('("TMP", "$R5")')).toBeLessThan(retryAt)
-    expect(recovery.lastIndexOf('("TEMP", "$R3")')).toBeGreaterThan(retryAt)
-    expect(recovery.lastIndexOf('("TMP", "$R4")')).toBeGreaterThan(retryAt)
-  })
-
-  it('preserves a nested OpenScience data root around the uninstall retry', () => {
-    // The reporter's configured data root is <install dir>\OpenScience. An updated NSIS
-    // uninstaller moves every child of the install directory into its disposable $PLUGINSDIR, so
-    // a successful retry must first move that data root to a separate sibling and restore it
-    // before the new installer continues.
-    const preserve =
-      include.match(/!macro preserveRetryDataRoot DIR BACKUP FOLDER([\s\S]*?)!macroend/)?.[1] ?? ''
-    const restore =
-      include.match(
-        /!macro restoreRetryDataRoot DIR BACKUP REGISTERED_BACKUP FOLDER([\s\S]*?)!macroend/
-      )?.[1] ?? ''
-    const recovery = (
-      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
-    )
-      .replace(
-        '!insertmacro preserveRetryDataRoot ${DIR} $retryLegacyDataBackup OpenScience',
-        preserve.replaceAll('${BACKUP}', '$R7').replaceAll('${FOLDER}', 'OpenScience')
-      )
-      .replace(
-        '!insertmacro restoreRetryDataRoot ${DIR} $retryLegacyDataBackup ${REGISTERED_BACKUP} OpenScience',
-        restore.replaceAll('${BACKUP}', '$R7').replaceAll('${FOLDER}', 'OpenScience')
-      )
-    const preserveAt = recovery.indexOf('Rename "${DIR}\\OpenScience" "$R7"')
-    const retryAt = recovery.indexOf('ExecWait')
-    const restoreAt = recovery.indexOf('Rename "$R7" "${DIR}\\OpenScience"')
-    const preserveErrorAt = recovery.indexOf('Could not safely preserve')
-    const preserveQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', preserveErrorAt)
-    const restoreErrorAt = recovery.indexOf('The preserved data remains at: $R7')
-    const restoreQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', restoreErrorAt)
-    const retryResultAt = recovery.indexOf('${if} $R0 != 0', retryAt)
-    const clearPreservedPathAt = recovery.indexOf('StrCpy $R7 ""', restoreAt)
-
-    expect(preserveAt).toBeGreaterThan(-1)
-    expect(preserveAt).toBeLessThan(retryAt)
-    expect(preserveErrorAt).toBeLessThan(preserveQuitAt)
-    expect(preserveQuitAt).toBeLessThan(retryAt)
-    expect(restoreAt).toBeGreaterThan(retryAt)
-    expect(restoreAt).toBeLessThan(retryResultAt)
-    expect(restoreErrorAt).toBeLessThan(restoreQuitAt)
-    expect(restoreQuitAt).toBeLessThan(retryResultAt)
-    expect(clearPreservedPathAt).toBeGreaterThan(restoreQuitAt)
-  })
-
-  it('keeps registered data backups outside the install tree until recovery finishes', () => {
-    // A still-running old process can recreate <install>\OpenScience after customInit moved the
-    // registered data aside. Run force-kill + retry before restoring the authoritative backup in
-    // both uninstall hooks. If recovery also preserves a newly-created directory, retain it at
-    // its unique sibling path instead of overwriting either copy or feeding it to the uninstaller.
-    const recovery =
-      include.match(
-        /!macro restoreRetryDataRoot DIR BACKUP REGISTERED_BACKUP FOLDER([\s\S]*?)!macroend/
-      )?.[1] ?? ''
-    const shellCheck = include.match(/!macro customUnInstallCheck([\s\S]*?)!macroend/)?.[1] ?? ''
-    const userCheck =
-      include.match(/!macro customUnInstallCheckCurrentUser([\s\S]*?)!macroend/)?.[1] ?? ''
-    const conflictBranch =
-      recovery
-        .replaceAll('${BACKUP}', '$R7')
-        .match(/\$\{if\} "\$\{REGISTERED_BACKUP\}" != ""([\s\S]*?)\$\{else\}/)?.[1] ?? ''
-    const shellRecoveryAt = shellCheck.indexOf('!insertmacro uninstallFailureRecoveryAt')
-    const shellRestoreAt = shellCheck.indexOf('!insertmacro restoreNestedDataRoot')
-    const userRecoveryAt = userCheck.indexOf('!insertmacro uninstallFailureRecoveryAt')
-    const userRestoreAt = userCheck.indexOf('!insertmacro restoreNestedDataRoot')
-
-    expect(shellRecoveryAt).toBeGreaterThan(-1)
-    expect(shellRecoveryAt).toBeLessThan(shellRestoreAt)
-    expect(userRecoveryAt).toBeGreaterThan(-1)
-    expect(userRecoveryAt).toBeLessThan(userRestoreAt)
-    expect(shellCheck).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR $R8')
-    expect(userCheck).toContain(
-      '!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup'
-    )
-    expect(conflictBranch).toContain('Additional data created during the update remains at: $R7')
-    expect(conflictBranch).not.toContain('Rename "$R7" "${DIR}\\OpenScience"')
-  })
-
-  it('protects registered nested data roots before the first old-uninstaller attempt', () => {
-    // Recovery-only protection is too late: the first old uninstaller can succeed after moving
-    // <install>\OpenScience into its disposable $PLUGINSDIR. customInit runs before the install
-    // section, so it must move registered data roots out first; each post-uninstall hook restores
-    // its root even when the first attempt returns zero.
+  it('discovers interrupted data backups before uninstall and restores them afterwards', () => {
+    // Only historical backups are adopted. Live data stays in place; each post-uninstall hook
+    // restores the historical root even when the first attempt returns zero.
     const init = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
     const machineProtection =
       include.match(/!macro protectMachineDataRootForSelectedMode([\s\S]*?)!macroend/)?.[1] ?? ''
@@ -777,24 +1151,6 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     expect(normalizeUserAt).toBeLessThan(firstSharedPathCheckAt)
   })
 
-  it('accepts a non-zero retry after the old executable was removed', () => {
-    // The old assisted uninstaller can finish removing the application and still leak exit code 2.
-    // Recovery already recognizes that result before retrying; it must make the same filesystem
-    // check after the retry instead of showing a fatal dialog for a completed uninstall.
-    const recovery =
-      include.match(/!macro uninstallFailureRecoveryAt DIR([\s\S]*?)!macroend/)?.[1] ?? ''
-    const afterRetry = recovery.slice(recovery.indexOf('ExecWait'))
-    const removedCheck = '${FileExists} "${DIR}' + '\\' + '${APP_EXECUTABLE_FILENAME}"'
-
-    expect(
-      recovery.match(/\$\{FileExists\} "\$\{DIR\}\\\$\{APP_EXECUTABLE_FILENAME\}"/g) ?? []
-    ).toHaveLength(2)
-    expect(afterRetry.indexOf(removedCheck)).toBeGreaterThan(afterRetry.indexOf('${if} $R0 != 0'))
-    expect(afterRetry.indexOf(removedCheck)).toBeLessThan(
-      afterRetry.indexOf('MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"')
-    )
-  })
-
   it('passes the install dir to PowerShell as an argument, with a directory-boundary match', () => {
     // Custom install dirs may contain apostrophes: interpolating the path into the script source
     // would break the command (or worse, inject into it). The dir goes in as $args[0] and the
@@ -811,10 +1167,8 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     // value and fall back to the default fatal handling only when no per-user install was
     // registered at install start.
     expect(include).toMatch(/\$\{if\} \$perUserInstallDirCache == ""/)
-    expect(include).toContain(
-      '!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup'
-    )
-    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR $R8')
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache')
+    expect(include).toContain('!insertmacro uninstallFailureRecoveryAt $INSTDIR')
     // The installer-only guard keeps the cache variables out of the separately compiled
     // uninstaller, where file-scope declarations would be unused and fail makensis warnings.
     const initHook = include.match(/!macro customInit([\s\S]*?)!macroend/)?.[1] ?? ''
@@ -889,33 +1243,12 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     for (const code of [
       'parent-path-unresolved',
       'backup-already-exists',
-      'preserve-rename-failed',
       'restore-destination-exists',
       'restore-rename-failed'
     ]) {
       expect(include).toContain(`Open-Science data protection failure code=${code}`)
     }
   })
-})
-
-it('protects both re-created branded data folders before retrying the old uninstaller', () => {
-  const include = readFileSync(join(process.cwd(), 'build/installer.nsh'), 'utf8')
-  const recovery =
-    include.match(/!macro uninstallFailureRecoveryAt DIR[\s\S]*?!macroend/)?.[0] ?? ''
-  for (const name of ['OpenScience', 'Open-Science']) {
-    expect(recovery).toMatch(
-      new RegExp('!insertmacro preserveRetryDataRoot[^\\n]+ ' + name + '(?:\\n|$)')
-    )
-    expect(recovery).toMatch(
-      new RegExp('!insertmacro restoreRetryDataRoot[^\\n]+ ' + name + '(?:\\n|$)')
-    )
-  }
-  expect(recovery.indexOf('!insertmacro preserveRetryDataRoot')).toBeLessThan(
-    recovery.indexOf('ExecWait')
-  )
-  expect(recovery.indexOf('!insertmacro restoreRetryDataRoot')).toBeGreaterThan(
-    recovery.indexOf('ExecWait')
-  )
 })
 
 describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {

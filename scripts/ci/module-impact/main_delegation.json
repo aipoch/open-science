@@ -47,6 +47,7 @@
     "src/main/delegation/opencode-runtime-preparation.integration.test.ts",
     "src/main/delegation/opencode-runtime-preparation.test.ts",
     "src/main/delegation/opencode-runtime-preparation.ts",
+    "src/main/delegation/pi-execution.ts",
     "src/main/delegation/production-composition.test.ts",
     "src/main/delegation/production-composition.ts",
     "src/main/delegation/production-framework-runtime.test.ts",
@@ -582,5 +583,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Pi execution joins the delegated-work surface as a new owner beyond the reviewed delegation boundary; retain full CI validation until the expanded boundary is reviewed and reclassified."
 }

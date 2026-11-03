@@ -20,7 +20,8 @@ import { deriveSessionAttention } from '../../shared/session-persistence'
 // Session projection writes contend with upload publication and other metadata writes on the
 // shared single-connection SQLite client. Keep transaction admission bounded, but allow the
 // Windows disk contention seen during large upload batches to drain before failing the save.
-// Execution deadlines and rollback behavior remain Prisma defaults.
+// Large projections can also exceed Prisma's default five-second execution budget under load.
+// Bound execution separately from admission; failed transactions still roll back atomically.
 const runProjectionTransaction = async <Result>(
   client: Pick<PrismaClient, '$transaction'>,
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
@@ -33,7 +34,7 @@ const runProjectionTransaction = async <Result>(
         admittedAt = performance.now()
         return operation(transaction)
       },
-      { maxWait: 30_000 }
+      { maxWait: 30_000, timeout: 10_000 }
     )
   } catch (error) {
     const failedAt = performance.now()

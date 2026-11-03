@@ -6,7 +6,11 @@ export {
   computeProbeSnapshot,
   computeProviderId
 } from './model'
+export { isComputeJobCancelled, projectComputeJobConclusion } from './compute-job-status'
 export type {
+  AgentJobCancellation,
+  AgentJobStatus,
+  JobError,
   CancelComputeJobRequest,
   ComputeAuthenticationErrorCode,
   ComputeAuthenticationMode,
@@ -55,6 +59,7 @@ export type {
   ComputeJobOperationRecord,
   ComputeJobOperationRepository,
   ComputeJobOperationScope,
+  ComputeJobOperationSettlement,
   ComputeJobOwner,
   ComputeJobRepository,
   ComputeJobSessionOwner,

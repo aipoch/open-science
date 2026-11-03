@@ -1,6 +1,32 @@
 import { expect, test } from '@playwright/test'
-import { delimiter, join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join, win32 } from 'node:path'
 import { electronLaunchTarget, launchEnvironment } from './fixtures/electron-app'
+
+test('starts native Windows OpenSSH without exposing operator credentials', () => {
+  test.skip(process.platform !== 'win32', 'Requires the Windows OpenSSH client.')
+  const ssh = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
+  test.skip(!existsSync(ssh), 'Requires the native Windows OpenSSH client.')
+  const environment = launchEnvironment(
+    join(tmpdir(), 'open-science-ssh-environment', 'storage'),
+    undefined,
+    {
+      ...process.env,
+      OPENAI_API_KEY: 'operator-credential-must-not-escape'
+    }
+  )
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+  const result = spawnSync(ssh, ['-V'], {
+    env: environment,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10_000
+  })
+  expect(result.status).toBe(0)
+  expect(/OpenSSH_for_Windows/i.test(result.stdout + result.stderr)).toBe(true)
+})
 
 test('normalizes a Windows-style Path before injecting the fake Agent directory', () => {
   const environment = launchEnvironment('storage-root', 'fake-agent-bin', {

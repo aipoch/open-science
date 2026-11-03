@@ -1,4 +1,8 @@
-import type { RequestPermissionRequest, RequestPermissionResponse } from '@agentclientprotocol/sdk'
+import type {
+  RequestPermissionRequest,
+  RequestPermissionResponse,
+  SessionNotification
+} from '@agentclientprotocol/sdk'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +14,7 @@ import { createPermissionGrantRegistry } from '../permission-grants/registry'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import type { PiPermissionState } from './pi-permission-correlation'
 
 // Regression for report 7: native web reading was Once-only even under Auto.
 it.each([
@@ -389,3 +394,169 @@ it.each(['grant-before-enqueue', 'dispose-during-lookup', 'cancel-during-lookup'
     }
   }
 )
+
+// Regression: Pi released ordinary tools one call at a time and ignored app-owned grants, so a
+// default global grant and a remembered conversation grant both prompted again.
+it('honors app-owned grants for Pi tools while answering with provider allow_once', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pi-permission-frequency-'))
+  const client = createProjectDbClient(root)
+  const contexts: AcpPermissionContext[] = []
+  try {
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-pi', name: 'Pi permissions' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client })
+    await seedDefaultPermissionGrants(registry, client)
+    const servers = ['open-science-notebook', 'pubmed']
+    const allowedToolIdentities = new Set([
+      'open-science-notebook/list_authorized_directories',
+      'open-science-notebook/repl_execute',
+      'pubmed/search_articles'
+    ])
+    const capabilityRevision = {}
+    const piState = (appSessionId: string): PiPermissionState => ({
+      appSessionId,
+      providerSessionId: `pi-${appSessionId}`,
+      promptMessageId: `prompt-${appSessionId}`,
+      interactionSequence: 1,
+      capabilityRevision,
+      mcpServerNames: servers,
+      allowedToolIdentities,
+      cancelled: false
+    })
+    const connect = (
+      emit: () => void,
+      grants: PermissionGrantRegistry = registry
+    ): AcpPermissionContext => {
+      const context = new AcpPermissionContext({
+        emitPermissionRequest: emit,
+        permissionGrantRegistry: grants,
+        routing: {
+          resolveAppSessionId: (id) => id.replace(/^pi-/, ''),
+          sessionSnapshot: () => ({
+            cwd: root,
+            frameworkId: 'pi',
+            permissionProfile: { selectedProfile: 'ask', autoReviewStrategy: 'conservative' }
+          }),
+          hasActivePrimarySession: () => true,
+          capturePrompt: (id) => ({
+            sequence: 1,
+            promptMessageId: `prompt-${id}`,
+            isCancellationAccepted: () => false
+          }),
+          currentInteractionSequence: () => 1,
+          mcpServerNamesFor: () => servers,
+          reviewerContextFor: () => undefined,
+          resolveReviewerPermission: () => undefined,
+          currentFramework: () => getAgentFramework('pi'),
+          resolveProjectId: () => 'project-pi',
+          piPermissionContextFor: (appSessionId) => {
+            const state = piState(appSessionId)
+            return { ...state, readCurrent: () => state }
+          }
+        }
+      })
+      contexts.push(context)
+      return context
+    }
+    const call = (
+      context: AcpPermissionContext,
+      appSessionId: string,
+      callId: string,
+      name: string,
+      rawInput: Record<string, unknown>
+    ): Promise<RequestPermissionResponse> => {
+      const toolCall = { toolCallId: callId, name, title: name, kind: 'other' as const, rawInput }
+      context.observeProviderUpdate({
+        sessionId: `pi-${appSessionId}`,
+        update: { sessionUpdate: 'tool_call', status: 'pending', ...toolCall }
+      } as SessionNotification)
+      return context.handleProviderRequest({
+        sessionId: `pi-${appSessionId}`,
+        toolCall,
+        options: [
+          { optionId: 'once', name: 'Allow once', kind: 'allow_once' },
+          { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+        ]
+      } as RequestPermissionRequest)
+    }
+    const allowed = { outcome: { outcome: 'selected', optionId: 'once' } }
+    const search = (
+      context: AcpPermissionContext,
+      session: string,
+      id: string
+    ): Promise<RequestPermissionResponse> =>
+      call(context, session, id, 'mcp__pubmed__search_articles', { query: `sickle ${id}` })
+
+    // The app's seeded global grant releases directory discovery on every call, without a card.
+    const emit = vi.fn()
+    const context = connect(emit)
+    for (const id of ['dirs-1', 'dirs-2'])
+      await expect(
+        call(context, 'chat-a', id, 'mcp__open-science-notebook__list_authorized_directories', {})
+      ).resolves.toEqual(allowed)
+    expect(emit).not.toHaveBeenCalled()
+
+    // An ungranted tool offers the app's reusable scopes; a conversation grant covers later calls.
+    const first = search(context, 'chat-a', 'search-1')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+    const pending = context.getPendingRequests()[0]
+    expect(pending.options.map(({ scope }) => scope).filter(Boolean)).toEqual([
+      'once',
+      'session',
+      'project',
+      'global'
+    ])
+    await context.respondToPermission(
+      {
+        requestId: pending.requestId,
+        optionId: pending.options.find(({ scope }) => scope === 'session')!.optionId
+      },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(first).resolves.toEqual(allowed)
+    await expect(search(context, 'chat-a', 'search-2')).resolves.toEqual(allowed)
+    expect(emit).toHaveBeenCalledOnce()
+    const grant = (await registry.list()).find(
+      ({ capability }) => capability.key === 'mcp:pubmed/search_articles'
+    )!
+    expect(grant.scope).toEqual({ kind: 'session', projectId: 'project-pi', sessionId: 'chat-a' })
+
+    // Reconnecting with a recreated registry keeps the grant; another conversation does not get it.
+    const restored = await createPermissionGrantRegistry({ getClient: async () => client })
+    const reconnectEmit = vi.fn()
+    const reconnected = connect(reconnectEmit, restored)
+    await expect(search(reconnected, 'chat-a', 'search-3')).resolves.toEqual(allowed)
+    expect(reconnectEmit).not.toHaveBeenCalled()
+    const isolated = search(reconnected, 'chat-b', 'search-4')
+    await vi.waitFor(() => expect(reconnectEmit).toHaveBeenCalledOnce())
+    await reconnected.respondToPermission(
+      { requestId: reconnected.getPendingRequests()[0].requestId, optionId: 'deny' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(isolated).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+
+    // Revocation takes effect on the next call.
+    await restored.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+    const afterRevoke = search(reconnected, 'chat-a', 'search-5')
+    await vi.waitFor(() => expect(reconnectEmit).toHaveBeenCalledTimes(2))
+    await reconnected.respondToPermission(
+      { requestId: reconnected.getPendingRequests()[0].requestId, optionId: 'once' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(afterRevoke).resolves.toEqual(allowed)
+
+    // Notebook code keeps its per-code host admission: no reusable scope is offered or stored.
+    const grantsBefore = (await restored.list()).length
+    await expect(
+      call(reconnected, 'chat-a', 'repl-1', 'mcp__open-science-notebook__repl_execute', {
+        code: 'return 1 + 1;'
+      })
+    ).resolves.toEqual(allowed)
+    expect(reconnectEmit).toHaveBeenCalledTimes(2)
+    expect(await restored.list()).toHaveLength(grantsBefore)
+  } finally {
+    for (const context of contexts) context.dispose()
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
+})

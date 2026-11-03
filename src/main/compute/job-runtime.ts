@@ -11,7 +11,7 @@ import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
 import { harvestJob } from './harvest-engine'
 import { broadcastJobUpdated } from './ipc'
-import { createNotifyingJobPoller } from './job-notifier'
+import { createNotifyingJobPoller, emitJobNotification } from './job-notifier'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
 
@@ -38,6 +38,13 @@ type ComputeJobRuntimeDeps = {
 }
 
 type ComputeJobRuntimeAdapters = {
+  onCancellationFailed?: (
+    job: import('../../shared/compute').ComputeJob,
+    failure: Omit<
+      import('../../shared/background-result-delivery').ComputeCancellationFailureSnapshot,
+      'jobStatus'
+    >
+  ) => Promise<void>
   broadcast?: typeof broadcastJobUpdated
   harvest?: typeof harvestJob
   createPoller?: (deps: JobPollerDeps) => ComputeJobRuntime & Pick<JobPoller, 'pause' | 'resume'>
@@ -133,8 +140,21 @@ export const createComputeJobRuntime = (
             // Execution settlement must be observable independently of result collection. A slow
             // download must neither hold the cancellation reaper nor delay releasing queue slots.
             // The shared scheduler owns collection, deduplication, and its shutdown drain.
-            void harvestScheduler.schedule(job, harvestAbortController.signal)
+            if (job.status !== 'error')
+              void harvestScheduler.schedule(job, harvestAbortController.signal)
             await deps.computeService.handleJobCancellationConfirmed(job)
+            await emitJobNotification(job, {
+              jobRepository: deps.jobRepository,
+              hostRepository: deps.hostRepository,
+              storageRoot: deps.storageRoot,
+              broadcast
+            })
+          },
+          onFailed: async (jobId, failure) => {
+            const job = await deps.jobRepository.get(jobId)
+            if (!job) return
+            deps.computeService.handleJobUpdated(job)
+            await adapters.onCancellationFailed?.(job, { ...failure, jobId })
           }
         }
       ))

@@ -232,7 +232,6 @@
         "src/main/lifecycle-shutdown.ts",
         "src/main/session-package/materialize.ts",
         "src/main/literature/pdf-structure/engine.ts",
-        "src/main/literature/pdf-translation/local.ts",
         "src/main/local-rpc-transport.ts",
         "packages/notebook-code-risk/src/index.ts",
         "src/main/notebook/runtime-service.ts",
@@ -452,6 +451,7 @@
         "e2e/workspace-project-switcher.spec.ts",
         "e2e/workspace-conversation.spec.ts",
         "e2e/workspace-files.spec.ts",
+        "e2e/markdown-publication-policy.spec.ts",
         "e2e/office-spreadsheet-search.spec.ts",
         "e2e/fixtures/pptx.ts"
       ],
@@ -525,6 +525,7 @@
         "e2e/pdf-translation-performance.spec.ts",
         "e2e/runtime-approval.spec.ts",
         "e2e/network-destination-approval.spec.ts",
+        "e2e/pi-harness.spec.ts",
         "e2e/session-wait-status.spec.ts",
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",
@@ -647,6 +648,7 @@
       "paths": [
         "e2e/workspace-conversation.spec.ts",
         "e2e/workspace-files.spec.ts",
+        "e2e/markdown-publication-policy.spec.ts",
         "e2e/fixtures/pptx.ts"
       ],
       "capabilities": ["e2e_windows_workspace"]

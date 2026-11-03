@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
+import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/failure/messages'
 import { BackendSelectionOwner } from './backend-selection-owner'
 import type { StoredSettings } from './types'
 

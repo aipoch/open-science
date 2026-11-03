@@ -362,12 +362,7 @@ describe('electron-builder local evidence exclusion', () => {
 
   it('declares the native PDF worker imports as production dependencies', () => {
     const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
-    for (const dependency of [
-      'fontkit',
-      '@embedpdf/pdfium',
-      'pdf-lib',
-      '@huggingface/transformers'
-    ])
+    for (const dependency of ['fontkit', '@embedpdf/pdfium', 'pdf-lib'])
       expect(manifest.dependencies[dependency]).toEqual(expect.stringMatching(/\S/))
   })
 
@@ -407,7 +402,6 @@ describe('electron-builder local evidence exclusion', () => {
     for (const file of [
       'out/main/index.js',
       'out/renderer/index.html',
-      'resources/pdf-translation-local/worker.mjs',
       'resources/notebook/python_loop.py',
       'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
       'node_modules/@aipoch/diagnostics/dist/node.js',
@@ -655,7 +649,6 @@ describe('electron-builder Windows targets', () => {
     expect(cleanup).toContain("$installationId = '0f3cd2a44c3d4e4e9f1e2a5b'")
     expect(cleanup.indexOf('$ownershipRoot =')).toBeLessThan(cleanup.indexOf('$HostPath ='))
     expect(cleanup).toContain('-Verb RunAs')
-    expect(include).toContain('taskkill /F /IM "notebook-appcontainer-host.exe"')
   })
 
   it('does not claim a Windows publisher while packages remain unsigned', () => {

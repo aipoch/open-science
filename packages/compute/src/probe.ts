@@ -8,6 +8,8 @@ export type ProbeScriptOutput = {
   scratchPath?: string
   scratchWritable?: boolean
   schedulerAvailable?: boolean
+  controllerAvailable?: boolean
+  accountingAvailable?: boolean
 }
 
 const aggregateGpus = (raw: string): Array<{ type: string; count: number }> => {
@@ -60,6 +62,18 @@ export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
       values['scheduler_available'] === 'yes'
         ? true
         : values['scheduler_available'] === 'no'
+          ? false
+          : undefined,
+    controllerAvailable:
+      values['controller_available'] === 'yes'
+        ? true
+        : values['controller_available'] === 'no'
+          ? false
+          : undefined,
+    accountingAvailable:
+      values['accounting_available'] === 'yes'
+        ? true
+        : values['accounting_available'] === 'no'
           ? false
           : undefined
   }

@@ -38,7 +38,7 @@ const step = (job: Job, name: string): Step =>
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 0],
   ['e2e_functional_windows', 'test:e2e:journey', 3],
-  ['e2e_workspace_windows', 'test:e2e:workspace', 3]
+  ['e2e_workspace_windows', 'test:e2e:workspace', 4]
 ] as const
 
 it.each([
@@ -276,6 +276,7 @@ it('discovers the reviewed mainline subset and retains every other case in the f
       'workspace-conversation.spec.ts: resolves Agent permission requests through both Allow and Deny decisions'
     ],
     files: [
+      'markdown-publication-policy.spec.ts: new Markdown publications replace the head while edits, restoration and drafts survive',
       'workspace-files.spec.ts: edits uploaded Markdown versions and keeps diff navigation coherent'
     ],
     notebook: [

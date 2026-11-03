@@ -1279,7 +1279,7 @@ describe('workspace message queue controller', () => {
       currentSession = {
         ...session('error'),
         error: resumeError,
-        errorReportable: true,
+        failure: { category: 'internal' as const, diagnostics: {} },
         updatedAt: currentSession.updatedAt + 1
       }
       return undefined
@@ -1394,7 +1394,7 @@ describe('workspace message queue controller', () => {
       currentSession = {
         ...session('error'),
         error: resumeError,
-        errorReportable: true,
+        failure: { category: 'internal' as const, diagnostics: {} },
         updatedAt: currentSession.updatedAt + 1
       }
       return undefined
@@ -1506,7 +1506,12 @@ describe('workspace message queue controller', () => {
     })
     await vi.waitFor(() => expect(steerFollowUp).toHaveBeenCalledOnce())
 
-    currentSession = { ...session('error'), error: staleError, errorReportable: true, updatedAt: 1 }
+    currentSession = {
+      ...session('error'),
+      error: staleError,
+      failure: { category: 'internal' as const, diagnostics: {} },
+      updatedAt: 1
+    }
     hook.rerender(
       options(currentSession, {
         ...input,

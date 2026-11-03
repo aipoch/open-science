@@ -1,3 +1,4 @@
+import { readPersistedFailure } from './turn-outcome'
 import { resolveMessageBranchPath } from '../conversation-graph'
 import { asNumber, asString, isRecord } from './primitives'
 import type { PersistedPromptPreparation } from '../session-run-contract'
@@ -104,7 +105,9 @@ const readPreparationState = (value: unknown): PreparationState | undefined => {
     !isRecord(value) ||
     !PREPARATION_STATUSES.includes(value.status as string) ||
     (value.error !== undefined && typeof value.error !== 'string') ||
-    (value.errorReportable !== undefined && typeof value.errorReportable !== 'boolean')
+    (value.failure === undefined &&
+      value.errorReportable !== undefined &&
+      typeof value.errorReportable !== 'boolean')
   )
     return undefined
   const recovery = readResumeRecovery(value.resumeRecovery)
@@ -112,9 +115,14 @@ const readPreparationState = (value: unknown): PreparationState | undefined => {
   return {
     status: value.status as PreparationState['status'],
     ...(value.error === undefined ? {} : { error: value.error as string }),
-    ...(value.errorReportable === undefined
+    ...(value.error === undefined && value.failure === undefined
       ? {}
-      : { errorReportable: value.errorReportable as boolean }),
+      : {
+          failure: readPersistedFailure({
+            ...value,
+            kind: recovery.value ? 'interrupted' : 'failed'
+          })
+        }),
     ...(recovery.value === undefined ? {} : { resumeRecovery: recovery.value })
   }
 }

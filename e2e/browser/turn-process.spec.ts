@@ -27,7 +27,11 @@ test('failed turn retains the error and last partial output outside its disclosu
   await expect(
     page.getByRole('button', { name: '2 previous messages Failed', exact: true })
   ).toHaveAttribute('aria-expanded', 'false')
-  await expect(page.getByRole('alert')).toContainText('The analysis service disconnected.')
+  const notice = page.getByTestId('composer-notice-slot')
+  await expect(notice.getByRole('alert')).toContainText('An unexpected application error occurred')
+  await expect(notice.locator('pre')).toBeHidden()
+  await notice.locator('summary').click()
+  await expect(notice.locator('pre')).toContainText('The analysis service disconnected.')
   await expect(page.getByText('These results are partial. Reconnect and try again.')).toBeVisible()
 })
 

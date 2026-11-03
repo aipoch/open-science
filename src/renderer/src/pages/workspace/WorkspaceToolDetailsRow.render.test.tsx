@@ -241,6 +241,53 @@ describe('WorkspaceToolDetailsRow', () => {
     expect(container.textContent).not.toContain('passages')
   })
 
+  it('renders annotation MCP results as the Literature card surface', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__list_pdf_annotations',
+      rawInput: { documentId: 'paper-1' },
+      rawOutput: {
+        documentId: 'paper-1',
+        total: 1,
+        annotations: [{ id: 'a1', kind: 'highlight', pageNumber: 2, quote: 'Result' }]
+      }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.querySelector('[data-testid="literature-tool-card"]')).not.toBeNull()
+    expect(container.textContent).toContain('Notes & Annotations')
+    expect(container.textContent).toContain('Result')
+    expect(container.textContent).not.toContain('INPUT')
+  })
+
+  it('renders annotation MCP failures instead of an empty success card', async () => {
+    const activity = createActivity({
+      providerToolName: 'mcp__open-science-literature__create_pdf_annotation',
+      rawOutput: { error: { code: 'PDF_ANNOTATION_FAILED', message: 'Target unavailable.' } }
+    })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <WorkspaceToolDetailsRow
+          activity={activity}
+          details={buildToolActivityDetails(activity)!}
+          isExpanded
+          onToggle={() => undefined}
+        />
+      )
+    )
+    expect(container.textContent).toContain('Target unavailable.')
+    expect(container.textContent).not.toContain('Created')
+  })
+
   it('shows the selected figure caption and image delivery without rendering Base64 as text', async () => {
     const activity = createActivity({
       providerToolName: 'mcp.open-science-literature.read_pdf_element',

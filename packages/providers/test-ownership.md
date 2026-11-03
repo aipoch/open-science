@@ -43,12 +43,10 @@ session integration consumers are preserved.
 | Native Responses namespace operations and provider reasoning normalization                | `src/responses/native.test.ts`; restore obtains its private map from a prepared request                                                                                                        | HTTP authorization/error mapping, scoped tool policy, stream arguments, artifact promotion, lifecycle and captured MCP image fixture remain in native Responses host tests                                                     |
 | Classification wire request/answer/usage logic embedded in settings                       | `src/models/classification.test.ts`: endpoint encoding, immutable definitions, generic labels, malformed answers, usage-before-failure, response bounds, cancellation and discard-before-retry | Existing classification settings matrix retains feature questions, distribution checks, credentials, stale decisions, retries and billed usage; those scenarios jointly exercise several host owners and are not blindly moved |
 
-Local inference is deferred from this extraction. The existing host worker resource, pinned model
-manifest, runtime and tests (`host:main/literature/pdf-translation/local.test.ts` and
-`local-worker.integration.test.ts`) are restored to their pre-extraction owners. The package-only
-local generator, runtime and lifecycle tests are withdrawn together with that unsupported implementation;
-they are not claimed as package coverage. Host behavior and baseline assertions remain intact.
-The generated ONNX fixture remains owned by the host integration test. No fixture is copied into this package.
+Local inference remains outside this package. The unopened application local PDF translation
+worker and its dedicated tests were removed with the bundled inference dependencies. Historical
+local translation contracts remain in `@aipoch/pdf-translation`; the host owner tests cover rejection
+when no local runtime is supplied. API and agent translation evidence remains intact.
 
 ## Bound model management
 

@@ -10,9 +10,11 @@ import {
 } from '@/components/ui/dialog-chrome'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import { LoaderCircle, X } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
+import { LiteratureLinkReview } from './LiteratureLinkReview'
 import {
   emptyLiteratureItem,
   titleFromPdfFilename,
@@ -24,6 +26,7 @@ export function LiteratureCreateItemDialog({
   isCreatingItem,
   isSavingNewItem,
   closeItemEditor,
+  onCloseAutoFocus,
   discardMetadataDialog,
   dialogItemEditor,
   pdfStaging,
@@ -36,6 +39,7 @@ export function LiteratureCreateItemDialog({
   isCreatingItem: boolean
   isSavingNewItem: boolean
   closeItemEditor: () => void
+  onCloseAutoFocus?: (event: Event) => void
   discardMetadataDialog: React.JSX.Element
   dialogItemEditor: ReturnType<typeof useLiteratureImport>['dialogItemEditor']
   pdfStaging: ReturnType<typeof useLiteraturePdfStaging>
@@ -46,6 +50,7 @@ export function LiteratureCreateItemDialog({
   createManualItem: (item?: LiteratureItemInput) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
+  const [editingLinkDetails, setEditingLinkDetails] = useState(false)
   return (
     <Dialog.Root
       open={isCreatingItem}
@@ -58,20 +63,31 @@ export function LiteratureCreateItemDialog({
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
+          onCloseAutoFocus={onCloseAutoFocus}
           className={dialogPanelClassName('flex w-[min(640px,calc(100vw-2rem))] flex-col p-0')}
         >
           {discardMetadataDialog}
           <div className={dialogHeaderClassName}>
             <div>
               <Dialog.Title className={dialogTitleClassName}>
-                {dialogItemEditor?.file ? t('Import PDF') : t('Add reference')}
+                {dialogItemEditor?.linkSource
+                  ? editingLinkDetails
+                    ? t('Edit reference details')
+                    : t('Review reference details')
+                  : dialogItemEditor?.file
+                    ? t('Import PDF')
+                    : t('Add reference')}
               </Dialog.Title>
               <Dialog.Description className={dialogDescriptionClassName}>
-                {dialogItemEditor?.file
-                  ? t('Review reference details before importing {{name}}.', {
-                      name: dialogItemEditor?.file.name
+                {dialogItemEditor?.linkSource
+                  ? t('Retrieved via {{source}}.', {
+                      source: dialogItemEditor.linkSource
                     })
-                  : t('Create a reference in your library.')}
+                  : dialogItemEditor?.file
+                    ? t('Review reference details before importing {{name}}.', {
+                        name: dialogItemEditor?.file.name
+                      })
+                    : t('Create a reference in your library.')}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -108,6 +124,22 @@ export function LiteratureCreateItemDialog({
                 {t('Reading…')}
               </span>
             </div>
+          ) : dialogItemEditor?.linkSource && dialogItemEditor.draft ? (
+            <LiteratureLinkReview
+              item={dialogItemEditor.draft}
+              saving={isSavingNewItem}
+              createdItemId={createdItemId}
+              error={dialogItemEditor.error}
+              duplicatePolicy={dialogItemEditor.duplicatePolicy}
+              onDuplicatePolicyChange={setDuplicatePolicy}
+              onDirtyChange={trackNewMetadataDirty}
+              onEditingChange={setEditingLinkDetails}
+              onCancel={closeItemEditor}
+              onSave={(item) => {
+                if (isCreatingItem) void createManualItem(item)
+              }}
+              onRetry={() => void createManualItem()}
+            />
           ) : (
             <LiteratureMetadataEditor
               onDirtyChange={trackNewMetadataDirty}

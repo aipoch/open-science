@@ -8,6 +8,31 @@ import { parseSkillDocument } from '@aipoch/skills/document'
 const skillPath = join(process.cwd(), 'resources', 'skills', 'remote-compute-ssh', 'SKILL.md')
 
 describe('remote-compute-ssh saved-id result guidance', () => {
+  it('documents final cancellation, operation failure, and concrete Slurm recovery without flat compatibility fields', async () => {
+    const skill = await readFile(skillPath, 'utf8')
+    const reference = await readFile(
+      join(skillPath, '..', 'references', 'slurm-troubleshooting.md'),
+      'utf8'
+    )
+    expect(skill).toContain("'cancelled' | 'error'")
+    expect(skill).toContain('`error: { code, message }`')
+    expect(skill).toContain("cancellation: { status: 'failed', error: ... }")
+    expect(skill).toContain('After final `error` or `cancelled`, end waiting')
+    expect(skill).not.toContain('cancellation_status')
+    for (const term of [
+      'job_status_unavailable',
+      'cancel_request_rejected',
+      'cancel_confirmation_failed',
+      'compute.callCommand',
+      'idempotency',
+      'accounting',
+      'application database'
+    ]) {
+      expect(reference).toContain(term)
+    }
+    expect(reference).toContain('does not prove')
+    expect(reference).toContain('existing task authorization')
+  })
   it('keeps valid public Skill identity metadata', async () => {
     const skill = parseSkillDocument(await readFile(skillPath, 'utf8'))
     expect(skill).toMatchObject({
