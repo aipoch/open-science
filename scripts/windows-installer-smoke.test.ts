@@ -104,23 +104,36 @@ describe('Windows installer smoke plan', () => {
     await expect(findSetupInstaller(root)).rejects.toThrow(/exactly one Windows setup executable/)
   })
 
-  it('force-kills leftover processes whose executable still lives under the install directory', async () => {
-    const run = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+  it.each(['', '.', 'C:\\', '\\\\server\\share\\'])(
+    'rejects broad or relative process cleanup paths: %s',
+    async (directory) => {
+      const run = vi.fn()
+      await expect(terminateDirectoryProcesses(directory, run)).rejects.toThrow(
+        'absolute directory below a volume root'
+      )
+      expect(run).not.toHaveBeenCalled()
+    }
+  )
 
-    await terminateDirectoryProcesses('D:\\installed app 程序\\', run)
-
-    expect(run).toHaveBeenCalledWith(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-        'D:\\installed app 程序\\'
-      ],
-      { allowNonZero: true }
-    )
-  })
+  it.skipIf(process.platform !== 'win32')(
+    'passes the exact cleanup directory through actual PowerShell parsing',
+    async () => {
+      let result: Awaited<ReturnType<typeof runProcess>> | undefined
+      const directory = "D:\\installed app's files\\"
+      await terminateDirectoryProcesses(directory, async (executable, args, options) => {
+        // Keep the real argument binding, but replace process enumeration/termination with a
+        // read-only probe. This must never inspect or stop processes on the test host.
+        const script = args[3].replace(/Get-CimInstance[\s\S]*$/, '[Console]::Write($root)')
+        result = await runProcess(executable, [...args.slice(0, 3), script, ...args.slice(4)], {
+          ...options,
+          allowNonZero: true
+        })
+        return result
+      })
+      expect(result?.code, result?.stderr).toBe(0)
+      expect(result?.stdout).toBe(directory)
+    }
+  )
 
   it('derives the packaged version from stable and nightly installer names', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-win-x64-setup.exe')).toBe('0.8.0')

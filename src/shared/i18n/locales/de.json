@@ -7938,6 +7938,9 @@
     "Too many overviews are being generated. Try again shortly.": "Es werden zu viele Überblicke erstellt. Versuchen Sie es in Kürze erneut.",
     "The available source exceeds the overview input limit.": "Die verfügbare Quelle überschreitet das Eingabelimit für den Überblick.",
     "Could not generate the overview. Please try again.": "Der Überblick konnte nicht erstellt werden. Bitte versuchen Sie es erneut.",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Der Überblick konnte nicht erneut erstellt werden. Das vorherige Ergebnis wird weiterhin angezeigt. Bitte versuchen Sie es erneut."
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Der Überblick konnte nicht erneut erstellt werden. Das vorherige Ergebnis wird weiterhin angezeigt. Bitte versuchen Sie es erneut.",
+    "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
+    "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
+    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
   }
 }

@@ -8258,6 +8258,9 @@
     "Too many overviews are being generated. Try again shortly.": "Создаётся слишком много обзоров. Повторите попытку чуть позже.",
     "The available source exceeds the overview input limit.": "Доступный источник превышает лимит входных данных для обзора.",
     "Could not generate the overview. Please try again.": "Не удалось создать обзор. Повторите попытку.",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Не удалось повторно создать обзор. По-прежнему отображается предыдущий результат. Повторите попытку."
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Не удалось повторно создать обзор. По-прежнему отображается предыдущий результат. Повторите попытку.",
+    "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
+    "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
   }
 }

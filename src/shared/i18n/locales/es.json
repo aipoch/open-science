@@ -8112,6 +8112,9 @@
     "Too many overviews are being generated. Try again shortly.": "Se están generando demasiados panoramas. Vuelva a intentarlo en breve.",
     "The available source exceeds the overview input limit.": "La fuente disponible supera el límite de entrada del panorama.",
     "Could not generate the overview. Please try again.": "No se ha podido generar el panorama. Vuelva a intentarlo.",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "No se ha podido regenerar el panorama. Se sigue mostrando el resultado anterior. Vuelva a intentarlo."
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "No se ha podido regenerar el panorama. Se sigue mostrando el resultado anterior. Vuelva a intentarlo.",
+    "Another app is using Open-Science files": "Otra aplicación está usando archivos de Open-Science",
+    "Quit {{name}}, then recheck.": "Cierra {{name}} y vuelve a verificar.",
+    "Quit the other app, then recheck.": "Cierra la otra aplicación y vuelve a verificar."
   }
 }

@@ -7772,6 +7772,9 @@
     "Too many overviews are being generated. Try again shortly.": "正在產生的概覽過多。請稍後重試。",
     "The available source exceeds the overview input limit.": "可用來源超出了概覽的輸入限制。",
     "Could not generate the overview. Please try again.": "無法產生概覽。請重試。",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "無法重新產生概覽。仍顯示先前的結果。請重試。"
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "無法重新產生概覽。仍顯示先前的結果。請重試。",
+    "Another app is using Open-Science files": "其他程式正在使用 Open-Science 檔案",
+    "Quit {{name}}, then recheck.": "結束 {{name}}，然後重新檢查。",
+    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。"
   }
 }

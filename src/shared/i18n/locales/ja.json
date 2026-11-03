@@ -7772,6 +7772,9 @@
     "Too many overviews are being generated. Try again shortly.": "生成中の概要が多すぎます。しばらくしてから再試行してください。",
     "The available source exceeds the overview input limit.": "利用可能な資料が概要の入力上限を超えています。",
     "Could not generate the overview. Please try again.": "概要を生成できませんでした。再試行してください。",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "概要を再生成できませんでした。前の結果を引き続き表示しています。再試行してください。"
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "概要を再生成できませんでした。前の結果を引き続き表示しています。再試行してください。",
+    "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
+    "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
+    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
   }
 }

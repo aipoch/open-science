@@ -185,3 +185,59 @@ Hit counts reflect these limits and are not an exhaustive inventory of all PDB c
 the query chain can appear among the hits. Invalid or unsupported chains remain errors.
 This tool uses the existing family switch, shared request deadline, cancellation
 and response-size budget; it requires no credentials and adds no persistence.
+
+### eQTL Catalogue file access
+
+`./human-genetics` retains `eqtl_list_datasets` and `eqtl_associations`, replacing the
+retired REST API with the official release-7 TSV file catalogue and HTTPS Tabix reads.
+The manifest is pinned to a Git revision; response `reference_data` records that revision,
+GRCh38, file/index URLs and whether the file contains full nominal (`.all`) or filtered
+(`.cc`) statistics. Upstream file URLs themselves are not immutable release snapshots.
+
+Dataset listing applies exact metadata filters locally and reports the actual matched total.
+Association calls require explicit `genome_build: 'GRCh38'`, with no default. Missing builds,
+GRCh37 and other values fail before network access. For a GRCh37 variant, first call the existing
+Variants `liftover_variant` tool with `source_build: 'GRCh37'`; proceed only with a unique GRCh38
+mapping, retaining the original variant and mapping provenance. That lookup table does not map
+every variant. No automatic conversion or region liftover is performed, and converting only a
+region's endpoints does not establish a complete corresponding region.
+Association queries use 1-based inclusive GRCh38 regions (up to 5 Mb), exact gene/rsID/variant
+filters and a local significance threshold. Explicit `pos`/`variant` queries need no coordinate
+service. Calls containing only `gene_id`/`rsid` now fail with an actionable coordinate
+requirement. Those identifiers remain exact filters when `pos` or `variant` is supplied.
+The connector does not silently infer historical cis windows from current Ensembl annotations:
+even a one-base TSS shift can omit a boundary observation. Resolve annotation-appropriate
+coordinates explicitly through the existing genome tools. Results retain ALT as the effect
+allele, missing values as null, original `pvalue_text` and derived `nlog10p` (including nonzero decimal p-values
+that underflow JavaScript numbers). An upstream literal zero has unknown `nlog10p` and does not
+pass a significance threshold.
+
+A native read-only TBI/BGZF reader requires no installed Tabix executable, Python package or
+new runtime dependency. It shares process-local admission of at most one file request every
+two seconds, requires strong ETags across data ranges, validates exact HTTP ranges, and caps
+compressed and inflated reads. It accepts only the official 1-based point-coordinate TBI layout;
+unsupported interval layouts fail explicitly. It searches all covering TBI levels, including
+parent-packed chunks, without assuming a particular writer's leaf-bin representation. Header
+coordinate columns must agree with the indexed layout and malformed UTF-8 fails explicitly.
+Linear-index pruning is omitted as a conservative implementation choice, not as a claim that
+it can never improve performance.
+Malformed metadata, HTTP failures, corrupt indexes/blocks, changed files and exceeded budgets
+fail explicitly rather than returning a plausible empty result. A query collects one extra
+matching record to prove truncation; an exact-cap exhausted result is complete. Published
+files cover only tested cis windows and `.cc` files omit some molecular traits: no returned
+rows is not evidence of no biological association. File queries create no files, persistent
+cache, application tables or background jobs. Large/bulk analyses should use the official
+local-file/Tabix workflow described at https://www.ebi.ac.uk/eqtl/Data_access/.
+
+The protocol tests compare 47 base queries and 18 writer-packing queries across all six TBI
+levels against a full-TSV-scan oracle. They cover chromosomes, bin boundaries, overlapping
+chunks and nonzero BGZF offsets. Changing unused linear metadata is an invariance regression,
+not a mechanism ablation or proof of no performance benefit. The opt-in command
+`node scripts/eqtl-ablation.mjs /tmp/eqtl-ablation-report.json` copies sources/tests to disposable
+temporary directories and removes one retained mechanism at a time. It records source hashes,
+a passing baseline, a comment-only negative control, and the specific failed behavioral
+assertions for each ablation. Compilation/runner failures, changed test inventories and
+blanket hook failures do not count as detected mechanisms. It never
+edits production files, adds runtime switches, calls external services or runs the full suite.
+These finite experiments do not prove correctness for every upstream file or replace live
+service verification; index/data semantic agreement still relies on the official publisher.

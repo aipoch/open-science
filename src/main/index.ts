@@ -1499,6 +1499,16 @@ async function startDesktop(): Promise<void> {
     client: () => client!,
     currentVersion: app.getVersion(),
     allowedProcessIds: allowedInstallationProcessIds,
+    ...(process.platform === 'win32'
+      ? {
+          ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
+            const pids = await runtime.invokeHost('desktop:update-owned-processes')
+            if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
+              throw new Error('The service returned invalid process ownership evidence.')
+            return pids as number[]
+          }
+        }
+      : {}),
     preparedDebGate: () => preparedMacInstallation?.debGate,
     verifyInstallerReady: async () => {
       const gate = preparedMacInstallation?.debGate

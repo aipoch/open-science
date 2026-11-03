@@ -8112,6 +8112,9 @@
     "Too many overviews are being generated. Try again shortly.": "Trop de vues d’ensemble sont en cours de génération. Réessayez dans un instant.",
     "The available source exceeds the overview input limit.": "La source disponible dépasse la limite d’entrée de la vue d’ensemble.",
     "Could not generate the overview. Please try again.": "Impossible de générer la vue d’ensemble. Veuillez réessayer.",
-    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Impossible de régénérer la vue d’ensemble. Le résultat précédent reste affiché. Veuillez réessayer."
+    "Could not regenerate the overview. The previous result is still shown. Please try again.": "Impossible de régénérer la vue d’ensemble. Le résultat précédent reste affiché. Veuillez réessayer.",
+    "Another app is using Open-Science files": "Une autre application utilise des fichiers Open-Science",
+    "Quit {{name}}, then recheck.": "Quittez {{name}}, puis revérifiez.",
+    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez."
   }
 }
