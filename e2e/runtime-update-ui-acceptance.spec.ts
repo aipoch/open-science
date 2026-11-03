@@ -645,9 +645,9 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
     // The separate force confirmation S05 was removed; S19 has no current surface. Assert every supported state by identity.
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
-      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
-        (id) => id !== 'S19' && id !== 'S05'
-      )
+      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`)
+        .filter((id) => id !== 'S19' && id !== 'S05')
+        .concat('S36')
     )
   } catch (error) {
     failure = error
