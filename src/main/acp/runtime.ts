@@ -2122,7 +2122,7 @@ class AcpRuntime {
         .some(({ requestId }) => requestId === response.requestId)
     ) {
       const request = response.request
-      if (this.sessionInteractions.current(request.sessionId)) {
+      if (this.sessionInteractions.has(request.sessionId)) {
         throw new Error('Wait for the current Agent run to finish before ending this wait.')
       }
       const projectId =
@@ -2792,6 +2792,9 @@ class AcpRuntime {
             !providerDispatched &&
             typeof code === 'string' &&
             ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          if (!providerDispatched) {
+            await this.options.runtimeSessions?.assertAdmissionAvailable(sessionId)
+          }
           await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
           this.pushEvent({

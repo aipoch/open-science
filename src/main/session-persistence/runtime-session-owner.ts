@@ -36,6 +36,7 @@ export const TERMINAL_COMMIT_RETRY_BUDGET_MS = 2_000
 export const TERMINAL_COMMIT_INITIAL_BUDGET_MS = 500
 export const TERMINAL_ADMISSION_WAIT_BUDGET_MS =
   TERMINAL_COMMIT_INITIAL_BUDGET_MS + TERMINAL_COMMIT_RETRY_BUDGET_MS
+export const TERMINAL_CONTINUATION_WAIT_BUDGET_MS = 30_000
 
 export type RuntimeSessionTurnScope = RuntimeSessionScope & {
   projectId: string
@@ -548,14 +549,46 @@ export class RuntimeSessionOwner {
     }
   }
 
-  async assertAdmissionAvailable(sessionId: string): Promise<void> {
-    const pending = [...this.turns.values()]
-      .filter(
-        (turn) =>
-          turn.scope.sessionId === sessionId &&
-          (turn.terminalCommit || (turn.terminalObserved && turn.pending.length > 0))
+  private pendingTerminalTurns(sessionId: string): Turn[] {
+    return [...this.turns.values()].filter(
+      (turn) =>
+        turn.scope.sessionId === sessionId &&
+        (turn.terminalCommit || (turn.terminalObserved && turn.pending.length > 0))
+    )
+  }
+
+  async waitForTerminalWrites(sessionId: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted()
+    let onAbort!: () => void
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = () => reject(signal.reason)
+    })
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('Main runtime completion has not committed yet.')),
+        TERMINAL_CONTINUATION_WAIT_BUDGET_MS
       )
-      .map((turn) => turn.tail)
+    })
+    signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      for (;;) {
+        const pending = this.pendingTerminalTurns(sessionId).map((turn) => ({
+          turn,
+          tail: turn.tail
+        }))
+        await Promise.race([Promise.all(pending.map(({ tail }) => tail)), aborted, timedOut])
+        signal.throwIfAborted()
+        if (pending.every(({ turn, tail }) => turn.tail === tail)) return
+      }
+    } finally {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+    }
+  }
+
+  async assertAdmissionAvailable(sessionId: string): Promise<void> {
+    const pending = this.pendingTerminalTurns(sessionId).map((turn) => turn.tail)
     if (pending.length === 0) return
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
