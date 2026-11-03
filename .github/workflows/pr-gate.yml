@@ -1685,9 +1685,10 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Mainline-only on every PR Gate entry point. Complete suites live in regression.
+        # All seven serial journeys already take ~10 minutes on hosted Windows runners.
         run: |
           if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
-          npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"
+          npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true

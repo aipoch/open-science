@@ -186,7 +186,9 @@ const literatureApplicationCommandContracts = Object.freeze({
           .trim()
           .min(1)
           .max(2048)
-          .regex(/^(?:10\.\d{4,9}\/\S+|pmid:\d+|arxiv:(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7}))$/u)
+          .regex(
+            /^(?:10\.\d{4,9}\/\S+|pmid:\d+|pmcid:PMC[1-9]\d{0,8}|arxiv:(?:\d{4}\.\d{4,5}|[a-z][a-z.-]*\/\d{7}))$/u
+          )
       ])
     ),
     validationCodec(literatureItemInputSchema)

@@ -21,13 +21,27 @@ export function parseLiteratureLink(input: string): string | undefined {
     }
     const host = url.hostname.toLowerCase()
     if (host === 'doi.org' || host === 'dx.doi.org') {
+      // A resolver URL must name its own identifier kind, never a PMID or arXiv ID.
+      if (!value.startsWith('10.')) return undefined
       // Query strings and fragments belong to the browser URL, not the DOI.
     } else if (host === 'arxiv.org' || host === 'www.arxiv.org') {
       const match = /^(?:abs|pdf)\/(.+?)(?:\.pdf)?\/?$/u.exec(value)
       if (!match) return undefined
       value = `arxiv:${match[1]}`
+    } else if (host === 'pubmed.ncbi.nlm.nih.gov') {
+      const match = /^([1-9]\d{0,8})\/?$/u.exec(value)
+      if (!match) return undefined
+      value = `pmid:${match[1]}`
+    } else if (host === 'pmc.ncbi.nlm.nih.gov' || host === 'www.ncbi.nlm.nih.gov') {
+      const match = /^(?:pmc\/)?articles\/(PMC[1-9]\d{0,8})\/?$/iu.exec(value)
+      if (!match || (host === 'www.ncbi.nlm.nih.gov' && !value.startsWith('pmc/'))) return undefined
+      value = `pmcid:${match[1]}`
     } else return undefined
   }
+  const pmid = /^(?:pmid:\s*)?([1-9]\d{0,8})$/iu.exec(value)
+  if (pmid) return `pmid:${pmid[1]}`
+  const pmcid = /^(?:pmcid:\s*)?(PMC[1-9]\d{0,8})$/iu.exec(value)
+  if (pmcid) return `pmcid:${pmcid[1].toUpperCase()}`
   value = value.replace(/^doi:\s*/iu, '')
   if (hasControlCharacter(value)) return undefined
   if (/^10\.\d{4,9}\/\S+$/u.test(value)) {
@@ -36,7 +50,7 @@ export function parseLiteratureLink(input: string): string | undefined {
     return doi.normalize('NFKC') === doi ? doi : undefined
   }
   const arxiv =
-    /^arxiv:((?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z.-]*\/(?:\d{2}(?:0[1-9]|1[0-2]))\d{3})(?:v[1-9]\d*)?)$/iu.exec(
+    /^(?:arxiv:)?((?:\d{2}(?:0[1-9]|1[0-2])\.\d{4,5}|[a-z][a-z.-]*\/(?:\d{2}(?:0[1-9]|1[0-2]))\d{3})(?:v[1-9]\d*)?)$/iu.exec(
       value
     )
   return arxiv ? `arxiv:${arxiv[1].replace(/v\d+$/iu, '').toLowerCase()}` : undefined
