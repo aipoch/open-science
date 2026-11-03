@@ -371,7 +371,10 @@ it.runIf(process.platform === 'linux')(
       )
       await expect(inspectInstallationAvailability(f.location)).rejects.toMatchObject({
         reason: 'installation-busy',
-        recovery: { detail: 'other-runtime' }
+        recovery: {
+          detail: 'foreign-process',
+          blockingProcesses: [{ pid: child.pid }]
+        }
       })
       expect(child.exitCode).toBeNull()
       expect(inspectInstallationUpdate(f.location)).toBeUndefined()
