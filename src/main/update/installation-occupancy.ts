@@ -268,11 +268,24 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run(
-      resolveWindowsPowerShellExecutable(),
-      windowsInstallationQuery(installationRoot)
-    )
-    return parseWindowsInstallationQuery(stdout, installationRoot)
+    // A cold Restart Manager scan of a real 7,314-file installation took 70 seconds on Windows;
+    // the same scan took ~2 seconds once warm. Keep the asynchronous scan cancellable and bounded,
+    // without treating the old 15-second process-list budget as proof of unknown occupancy.
+    const started = Date.now()
+    try {
+      const { stdout } = await runVerificationProcess(
+        resolveWindowsPowerShellExecutable(),
+        windowsInstallationQuery(installationRoot),
+        { signal, timeoutMs: 120_000 }
+      )
+      return parseWindowsInstallationQuery(stdout, installationRoot)
+    } catch (cause) {
+      createLogger('update').warn('Windows installation occupancy inspection failed', {
+        durationMs: Date.now() - started,
+        message: cause instanceof Error ? cause.message : 'Unknown inspection error'
+      })
+      throw cause
+    }
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()

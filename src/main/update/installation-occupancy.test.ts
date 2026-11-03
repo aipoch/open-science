@@ -43,8 +43,30 @@ beforeEach(() => {
   })
 })
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+it('allows a cold Windows resource scan to finish while preserving cancellation', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+  const controller = new AbortController()
+  mocks.run.mockImplementation((_command, _args, { timeoutMs, signal }) => {
+    expect(signal).toBe(controller.signal)
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('resource scan timed out')), timeoutMs)
+      setTimeout(() => {
+        clearTimeout(deadline)
+        resolve({ stdout: JSON.stringify({ resourcePids: [42], processes: [] }), stderr: '' })
+      }, 70_000)
+    })
+  })
+  const result = inspectInstallationProcessesAsync('C:\\Apps\\Science', controller.signal)
+  const assertion = expect(result).resolves.toEqual([42])
+  void assertion.catch(() => undefined)
+  await vi.advanceTimersByTimeAsync(70_000)
+  await assertion
 })
 
 it('defers native loading until macOS inspection and retains occupancy when the binding fails', () => {
