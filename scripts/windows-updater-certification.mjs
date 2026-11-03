@@ -15,7 +15,8 @@ import { chromium, expect } from '@playwright/test'
 import {
   prepareOwnedAgentFixture,
   startOwnedAgentFixture,
-  assertOwnedAgentReaped
+  assertOwnedAgentReaped,
+  prepareStaleNotebookFixture
 } from './windows-updater-owned-processes.mjs'
 
 import {
@@ -64,7 +65,8 @@ const parseArguments = (argv) => {
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
-    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {})
+    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
+    ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {})
   }
 }
 
@@ -413,14 +415,21 @@ const runElectronUpdater = async ({
   onDownloaded,
   beforeApply,
   ownedAgentFixture,
+  windowsRecovery,
   evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
   // update commands through renderer IPC over CDP, without attaching the Node debugger. The Node
   // backend's web RPC intentionally does not own desktop updates.
+  const appEnv = windowsRecovery
+    ? {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== 'path')),
+        PATH: ''
+      }
+    : env
   const child = spawn(executable, ['--remote-debugging-port=0'], {
-    env,
+    env: appEnv,
     windowsHide: true
   })
   let stdout = ''
@@ -440,6 +449,7 @@ const runElectronUpdater = async ({
   let installerExit
   let browser
   let page
+  let staleNotebookFixture
   let phase = 'desktop-startup'
   try {
     const port = await Promise.race([
@@ -473,6 +483,13 @@ const runElectronUpdater = async ({
     const ownedEvidence = ownedAgentFixture
       ? await startOwnedAgentFixture(page, ownedAgentFixture)
       : undefined
+    if (windowsRecovery) {
+      const { dataRoot } = await page.evaluate(() => window.api.storage.getStatus())
+      staleNotebookFixture = await prepareStaleNotebookFixture(dataRoot)
+      console.log(
+        'Seeded a stale Notebook host receipt with a live unrelated PID; app PATH is empty.'
+      )
+    }
     const invoke = async (action) => {
       phase = action
       console.log(`Updater command started: ${action}`)
@@ -551,7 +568,14 @@ const runElectronUpdater = async ({
       UPDATE_TIMEOUT_MS
     )
     console.log(`Updated application presentation and backend ready: ${JSON.stringify(successor)}`)
-    return { ...successor, ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}) }
+    const windowsRecoveryEvidence = staleNotebookFixture
+      ? { applicationPathEmpty: true, ...(await staleNotebookFixture.assertRecovered()) }
+      : undefined
+    return {
+      ...successor,
+      ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}),
+      ...(windowsRecoveryEvidence ? { windowsRecovery: windowsRecoveryEvidence } : {})
+    }
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
@@ -572,6 +596,7 @@ const runElectronUpdater = async ({
     throw error
   } finally {
     await browser?.close()
+    await staleNotebookFixture?.cleanup()
   }
 }
 
@@ -777,6 +802,7 @@ const main = async () => {
       ),
       onDownloaded: persistObservation,
       ownedAgentFixture,
+      windowsRecovery: options.windowsRecovery,
       ...(options.foreignProcess
         ? {
             beforeApply: async ({ invoke, page }) => {

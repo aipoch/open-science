@@ -205,6 +205,17 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
   })
 
+  it('resolves Windows PowerShell independently of PATH', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
+    output(JSON.stringify({ resourcePids: [], processes: [] }))
+    expect(await inspect('C:\\Apps\\Science')).toEqual([])
+    expect((mode === 'sync' ? mocks.spawnSync : mocks.run).mock.calls[0][0]).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    )
+  })
+
   it('finds Linux mapped files without checking ordinary open descriptors', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
     output('10 unrelated\n20 unrelated\n30 unrelated\n')
@@ -405,8 +416,13 @@ describe('Windows crash reporter ownership', () => {
     mocks.spawnSync.mockReturnValue({ status: 0, stdout: JSON.stringify(rows) })
   }
   it('recognizes its own handler using native parsed arguments and actual executable identity', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
     snapshot([row()])
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
+    expect(mocks.spawnSync.mock.calls[0][0]).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    )
   })
   it.each([
     ['another parent', { ParentProcessId: process.pid + 1 }],
