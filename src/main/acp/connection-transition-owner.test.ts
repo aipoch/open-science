@@ -3,6 +3,36 @@ import { describe, expect, it, vi } from 'vitest'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 
 describe('AcpConnectionTransitionOwner', () => {
+  it('waits for operation leases before idle release and fences startup during teardown', async () => {
+    let operationActive = true
+    let finish!: () => void
+    const teardown = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const disconnect = vi.fn(() => teardown)
+    const owner = new AcpConnectionTransitionOwner({
+      blockers: () => ({ reconnect: false, retirement: operationActive }),
+      connectionGeneration: () => 1,
+      disconnect,
+      onRetired: vi.fn(),
+      publishIdle: vi.fn(),
+      recoverFailedDeferredDisconnect: vi.fn(),
+      reportFailure: vi.fn()
+    })
+    owner.requestIdleRelease()
+    expect(disconnect).not.toHaveBeenCalled()
+    expect(owner.barrier).toBeUndefined()
+    operationActive = false
+    owner.activityChanged()
+    expect(disconnect).toHaveBeenCalledExactlyOnceWith(false)
+    expect(owner.barrier).toBeDefined()
+    finish()
+    await owner.barrier
+    owner.activityChanged()
+    expect(owner.barrier).toBeUndefined()
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
+
   it.each([false, true])(
     'holds a Skill-only reload barrier until teardown settles; failure=%s',
     async (fail) => {

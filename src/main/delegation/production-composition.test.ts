@@ -1094,6 +1094,8 @@ describe('production delegated-work composition', () => {
         finish(request, attempt, false)
       )
       const runtime = {
+        withPromptAdmission: async (work: () => Promise<unknown>) => work(),
+        requestIdleRelease: () => undefined,
         getState: () => snapshot,
         getSnapshot: () => snapshot,
         getActivePromptSessions: () => [],
@@ -1333,6 +1335,8 @@ describe('production delegated-work composition', () => {
       return runTurn(request, promptAttemptId, completion)
     })
     const runtime = {
+      withPromptAdmission: async (work: () => Promise<unknown>) => work(),
+      requestIdleRelease: () => undefined,
       getSnapshot: () => snapshot,
       sendPrompt,
       sendAppContinuation

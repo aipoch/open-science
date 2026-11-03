@@ -22,6 +22,7 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
 export class AcpConnectionTransitionOwner {
   private providerIntent = false
   private skillsIntent = false
+  private idleReleaseIntent = false
   private retirementIntent = false
   private retirementStarted = false
   private barrierPromise: Promise<void> | undefined
@@ -54,6 +55,11 @@ export class AcpConnectionTransitionOwner {
     this.activityChanged()
   }
 
+  requestIdleRelease(): void {
+    this.idleReleaseIntent = true
+    this.activityChanged()
+  }
+
   async requestRetirement(): Promise<void> {
     if (this.retirementStarted) return
     this.retirementIntent = true
@@ -69,10 +75,13 @@ export class AcpConnectionTransitionOwner {
     }
 
     if (this.options.blockers().reconnect) return
-    if (!this.providerIntent && !this.skillsIntent) return
+    if (!this.providerIntent && !this.skillsIntent) {
+      if (!this.idleReleaseIntent || this.options.blockers().retirement) return
+    }
 
     this.providerIntent = false
     this.skillsIntent = false
+    this.idleReleaseIntent = false
     void this.disconnectDeferred()
   }
 
@@ -123,6 +132,7 @@ export class AcpConnectionTransitionOwner {
     this.retirementIntent = false
     this.providerIntent = false
     this.skillsIntent = false
+    this.idleReleaseIntent = false
 
     try {
       await this.options.disconnect(false)
@@ -156,6 +166,7 @@ export class AcpConnectionTransitionOwner {
     this.providerIntent = false
     this.skillsIntent = false
     const resolve = this.resolveBarrier
+    this.idleReleaseIntent = false
     this.barrierPromise = undefined
     this.resolveBarrier = undefined
     resolve?.()
