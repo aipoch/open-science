@@ -45,7 +45,6 @@ const setup = (
       id === 'deleted'
         ? null
         : { id, optimizationPrompt: id === 'custom' ? 'Keep it concise.' : '' },
-    listProjects: async () => [],
     resolveTarget: async (source) => resolveValidatedSessionAgentTarget(source, settings),
     runner,
     timeoutMs

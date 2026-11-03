@@ -3,15 +3,8 @@ import { sessionAgentConfigurationSchema } from './session-configuration'
 
 export const PROMPT_OPTIMIZATION_INPUT_LIMIT = 16000
 export const PROMPT_OPTIMIZATION_OUTPUT_LIMIT = 32000
-export const DEFAULT_OPTIMIZATION_PROMPT = `You are Open Science's scientific prompt optimizer.
-Rewrite the user's current input into a clear, actionable research task, in the user's language.
-Identify whether it is a scientific question, literature review, paper interpretation, study design, data analysis, or academic writing task, and use an appropriate structure.
-Preserve the user's intent and technical terminology. Never answer the question itself.
-Do not invent research context, data, experimental conditions, conclusions, papers, or citations.
-Add useful task steps, output structure, evidence requirements, and uncertainty boundaries only when appropriate. Leave unspecified facts unspecified.
-Keep simple or already clear questions concise; avoid unnecessary expansion.
-Preserve code, formulas, document identifiers, and reference markers exactly.
-Return only the improved prompt, without commentary or surrounding quotation marks.`
+export const DEFAULT_OPTIMIZATION_PROMPT =
+  "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
 
 export const optimizationPromptScopeSchema = z.enum(['current', 'all'])
 export type OptimizationPromptScope = z.infer<typeof optimizationPromptScopeSchema>
@@ -24,19 +17,9 @@ export type OptimizationPromptProject = Readonly<{
 
 export const resolveOptimizationPrompt = (
   currentProject: OptimizationPromptProject | undefined,
-  projects: readonly OptimizationPromptProject[]
+  _projects?: readonly OptimizationPromptProject[]
 ): string => {
-  const currentPrompt = currentProject?.optimizationPrompt?.trim()
-  if (currentPrompt && (currentProject?.optimizationPromptScope ?? 'current') === 'current') {
-    return currentPrompt
-  }
-
-  const globalProject = [...projects]
-    .filter(
-      (project) => project.optimizationPrompt?.trim() && project.optimizationPromptScope === 'all'
-    )
-    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0))[0]
-  return globalProject?.optimizationPrompt?.trim() || DEFAULT_OPTIMIZATION_PROMPT
+  return currentProject?.optimizationPrompt?.trim() || DEFAULT_OPTIMIZATION_PROMPT
 }
 
 export const optimizePromptRequestSchema = z

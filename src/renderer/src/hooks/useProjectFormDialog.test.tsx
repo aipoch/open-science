@@ -184,8 +184,7 @@ describe('useProjectFormDialog', () => {
       name: 'Trimmed',
       description: 'Notes',
       agentContext: 'Always cite DOIs.',
-      optimizationPrompt: '',
-      optimizationPromptScope: 'current'
+      optimizationPrompt: ''
     })
     expect(hook.current().dialogProps.open).toBe(false)
     expect(openProject).toHaveBeenCalledWith('created-1', 'user')
@@ -233,7 +232,6 @@ describe('useProjectFormDialog', () => {
       description: 'A project',
       agentContext: 'Always cite DOIs.',
       optimizationPrompt: '',
-      optimizationPromptScope: 'current',
       expectedUpdatedAt: 1
     })
     expect(hook.current().dialogProps.open).toBe(false)

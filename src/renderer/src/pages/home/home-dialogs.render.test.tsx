@@ -134,14 +134,12 @@ describe('home dialogs shared chrome', () => {
       descriptionDraft: '',
       agentContextDraft: '',
       optimizationPromptDraft: '',
-      optimizationPromptScope: 'current',
       isSubmitting: false,
       error: undefined,
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange: vi.fn(),
       onOptimizationPromptChange: vi.fn(),
-      onOptimizationPromptScopeChange: vi.fn(),
       discardConfirmationOpen: false,
       onKeepEditing: vi.fn(),
       onDiscardChanges: vi.fn(),
@@ -158,6 +156,12 @@ describe('home dialogs shared chrome', () => {
       "Shown in the project list for your reference — not included in the agent's prompt."
     )
     const elements = collectElements(tree)
+    expect(
+      elements.find((element) => element.props.id === 'project-optimization-scope')
+    ).toBeUndefined()
+    expect(getTextContent(tree)).toContain(
+      'Used only when optimizing a question in this project. Leave empty to use the built-in default.'
+    )
     const nameField = elements.find((element) => element.props.id === 'project-form-name')
     const descriptionField = elements.find((element) => element.type === 'textarea')
     const agentContextField = elements.find(
@@ -215,14 +219,12 @@ describe('home dialogs shared chrome', () => {
       descriptionDraft: '',
       agentContextDraft: 'Always cite DOIs.',
       optimizationPromptDraft: '',
-      optimizationPromptScope: 'current',
       isSubmitting: false,
       error: undefined,
       onNameChange: vi.fn(),
       onDescriptionChange: vi.fn(),
       onAgentContextChange,
       onOptimizationPromptChange: vi.fn(),
-      onOptimizationPromptScopeChange: vi.fn(),
       discardConfirmationOpen: false,
       onKeepEditing: vi.fn(),
       onDiscardChanges: vi.fn(),

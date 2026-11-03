@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { Project } from '../../../shared/projects'
-import type { OptimizationPromptScope } from '../../../shared/prompt-optimization'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 
@@ -19,7 +18,6 @@ type ProjectFormDialogProps = {
   descriptionDraft: string
   agentContextDraft: string
   optimizationPromptDraft: string
-  optimizationPromptScope: OptimizationPromptScope
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -30,7 +28,6 @@ type ProjectFormDialogProps = {
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
   onOptimizationPromptChange: (value: string) => void
-  onOptimizationPromptScopeChange: (value: OptimizationPromptScope) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -65,8 +62,6 @@ const useProjectFormDialog = (
   const [descriptionDraft, setDescriptionDraft] = useState('')
   const [agentContextDraft, setAgentContextDraft] = useState('')
   const [optimizationPromptDraft, setOptimizationPromptDraft] = useState('')
-  const [optimizationPromptScope, setOptimizationPromptScope] =
-    useState<OptimizationPromptScope>('current')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorDetail, setErrorDetail] = useState<string>()
   const [conflictProject, setConflictProject] = useState<Project>()
@@ -76,8 +71,7 @@ const useProjectFormDialog = (
     name: '',
     description: '',
     agentContext: '',
-    optimizationPrompt: '',
-    optimizationPromptScope: 'current' as OptimizationPromptScope
+    optimizationPrompt: ''
   })
 
   const openCreateDialog = useCallback((): void => {
@@ -88,8 +82,7 @@ const useProjectFormDialog = (
       name: '',
       description: '',
       agentContext: '',
-      optimizationPrompt: '',
-      optimizationPromptScope: 'current'
+      optimizationPrompt: ''
     }
     setDiscardConfirmationOpen(false)
     setConflictProject(undefined)
@@ -98,7 +91,6 @@ const useProjectFormDialog = (
     setDescriptionDraft('')
     setAgentContextDraft('')
     setOptimizationPromptDraft('')
-    setOptimizationPromptScope('current')
     setFormError(undefined)
     setErrorDetail(undefined)
   }, [isSubmitting])
@@ -112,8 +104,7 @@ const useProjectFormDialog = (
         name: project.name,
         description: project.description,
         agentContext: project.agentContext ?? '',
-        optimizationPrompt: project.optimizationPrompt ?? '',
-        optimizationPromptScope: project.optimizationPromptScope ?? 'current'
+        optimizationPrompt: project.optimizationPrompt ?? ''
       }
       setDiscardConfirmationOpen(false)
       setConflictProject(undefined)
@@ -126,7 +117,6 @@ const useProjectFormDialog = (
       setDescriptionDraft(project.description)
       setAgentContextDraft(project.agentContext ?? '')
       setOptimizationPromptDraft(project.optimizationPrompt ?? '')
-      setOptimizationPromptScope(project.optimizationPromptScope ?? 'current')
       setFormError(undefined)
       setErrorDetail(undefined)
     },
@@ -146,8 +136,7 @@ const useProjectFormDialog = (
       nameDraft !== initialDraft.current.name ||
       descriptionDraft !== initialDraft.current.description ||
       agentContextDraft !== initialDraft.current.agentContext ||
-      optimizationPromptDraft !== initialDraft.current.optimizationPrompt ||
-      optimizationPromptScope !== initialDraft.current.optimizationPromptScope
+      optimizationPromptDraft !== initialDraft.current.optimizationPrompt
     ) {
       setDiscardConfirmationOpen(true)
       return
@@ -178,8 +167,7 @@ const useProjectFormDialog = (
           name,
           description,
           agentContext,
-          optimizationPrompt,
-          optimizationPromptScope
+          optimizationPrompt
         })
       : updateProject({
           id: formState.projectId,
@@ -187,7 +175,6 @@ const useProjectFormDialog = (
           description,
           agentContext,
           optimizationPrompt,
-          optimizationPromptScope,
           expectedUpdatedAt: formState.expectedUpdatedAt
         })
 
@@ -267,8 +254,7 @@ const useProjectFormDialog = (
               name: conflictProject.name,
               description: conflictProject.description,
               agentContext: conflictProject.agentContext ?? '',
-              optimizationPrompt: conflictProject.optimizationPrompt ?? '',
-              optimizationPromptScope: conflictProject.optimizationPromptScope ?? 'current'
+              optimizationPrompt: conflictProject.optimizationPrompt ?? ''
             }
             setFormState({
               mode: 'edit',
@@ -284,8 +270,6 @@ const useProjectFormDialog = (
       onDescriptionChange: setDescriptionDraft,
       onAgentContextChange: setAgentContextDraft,
       onOptimizationPromptChange: setOptimizationPromptDraft,
-      optimizationPromptScope,
-      onOptimizationPromptScopeChange: setOptimizationPromptScope,
       discardConfirmationOpen,
       onKeepEditing: () => setDiscardConfirmationOpen(false),
       onDiscardChanges: closeFormDialog,

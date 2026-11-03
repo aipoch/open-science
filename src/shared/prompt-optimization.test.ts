@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   optimizePromptRequestSchema,
   resolveOptimizationPrompt,
+  DEFAULT_OPTIMIZATION_PROMPT,
   type OptimizationPromptProject
 } from './prompt-optimization'
 import { createProjectRequestSchema, updateProjectRequestSchema } from './projects'
@@ -36,7 +37,7 @@ describe('project optimization prompt', () => {
     ).toBe(false)
   })
 
-  it('resolves a current-project prompt before an all-project prompt and then the built-in default', () => {
+  it('uses only the current-project prompt and then the built-in default', () => {
     const allProjects: OptimizationPromptProject[] = [
       {
         id: 'global',
@@ -56,7 +57,9 @@ describe('project optimization prompt', () => {
         { id: 'other', optimizationPrompt: '', optimizationPromptScope: 'current' },
         allProjects
       )
-    ).toBe('Use the global template.')
-    expect(resolveOptimizationPrompt(undefined, [])).toBeDefined()
+    ).toBe(DEFAULT_OPTIMIZATION_PROMPT)
+    expect(DEFAULT_OPTIMIZATION_PROMPT).toBe(
+      "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
+    )
   })
 })

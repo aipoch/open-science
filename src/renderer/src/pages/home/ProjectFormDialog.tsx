@@ -1,5 +1,4 @@
 import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
-import type { OptimizationPromptScope } from '../../../../shared/prompt-optimization'
 import type { Project } from '../../../../shared/projects'
 import { LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
@@ -39,7 +38,6 @@ type ProjectFormDialogProps = {
   descriptionDraft: string
   agentContextDraft: string
   optimizationPromptDraft: string
-  optimizationPromptScope: OptimizationPromptScope
   isSubmitting: boolean
   error: string | undefined
   errorDetail?: string
@@ -50,7 +48,6 @@ type ProjectFormDialogProps = {
   onDescriptionChange: (value: string) => void
   onAgentContextChange: (value: string) => void
   onOptimizationPromptChange: (value: string) => void
-  onOptimizationPromptScopeChange: (value: OptimizationPromptScope) => void
   discardConfirmationOpen: boolean
   onKeepEditing: () => void
   onDiscardChanges: () => void
@@ -69,7 +66,6 @@ const ProjectFormDialog = ({
   descriptionDraft,
   agentContextDraft,
   optimizationPromptDraft,
-  optimizationPromptScope,
   isSubmitting,
   error,
   errorDetail,
@@ -80,7 +76,6 @@ const ProjectFormDialog = ({
   onDescriptionChange,
   onAgentContextChange,
   onOptimizationPromptChange,
-  onOptimizationPromptScopeChange,
   discardConfirmationOpen,
   onKeepEditing,
   onDiscardChanges,
@@ -215,24 +210,9 @@ const ProjectFormDialog = ({
                 </label>
                 <p id="project-optimization-help" className={dialogFormHelpClassName}>
                   {t(
-                    'Used only when optimizing a question in this project. Leave empty to use the built-in scientific template.'
+                    'Used only when optimizing a question in this project. Leave empty to use the built-in default.'
                   )}
                 </p>
-                <label htmlFor="project-optimization-scope" className={dialogFormLabelClassName}>
-                  {t('Optimization prompt scope')}
-                </label>
-                <select
-                  id="project-optimization-scope"
-                  value={optimizationPromptScope}
-                  onChange={(event) =>
-                    onOptimizationPromptScopeChange(event.target.value as OptimizationPromptScope)
-                  }
-                  disabled={isSubmitting}
-                  className={dialogFormInputClassName}
-                >
-                  <option value="current">{t('Current project')}</option>
-                  <option value="all">{t('All projects')}</option>
-                </select>
                 <textarea
                   id="project-optimization-prompt"
                   aria-describedby="project-optimization-help"
