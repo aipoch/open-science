@@ -286,6 +286,17 @@ export async function inspectInstallationProcessesAsync(
   return [...pids]
 }
 
+// macOS `ps -o comm=` prints the full executable path; show the executable name only.
+export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
+  const names = new Map<number, string>()
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+    const name = match?.[2].trim().split('/').pop()
+    if (match && name) names.set(Number(match[1]), name)
+  }
+  return names
+}
+
 /** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
 export function inspectProcessNames(pids: number[]): Map<number, string> {
   const names = new Map<number, string>()
@@ -296,12 +307,8 @@ export function inspectProcessNames(pids: number[]): Map<number, string> {
       timeout: 5_000,
       maxBuffer: 1024 * 1024
     })
-    if (result.status === 0) {
-      for (const line of result.stdout.split('\n')) {
-        const match = /^\s*(\d+)\s+(.+)$/.exec(line)
-        if (match) names.set(Number(match[1]), match[2].trim())
-      }
-    }
+    if (result.status === 0)
+      for (const [pid, name] of parseDarwinProcessNames(result.stdout)) names.set(pid, name)
   } else if (process.platform === 'linux') {
     for (const pid of pids) {
       try {
