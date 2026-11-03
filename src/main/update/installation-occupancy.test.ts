@@ -6,7 +6,8 @@ import {
   inspectOwnedLinuxZygoteProcesses,
   inspectOwnedLinuxAppImageLauncher,
   inspectInstallationProcesses,
-  inspectInstallationProcessesAsync
+  inspectInstallationProcessesAsync,
+  parseDarwinProcessNames
 } from './installation-occupancy'
 
 const mocks = vi.hoisted(() => ({
@@ -261,6 +262,21 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     output('not JSON')
     await expect(inspect('C:\\Apps\\Science')).rejects.toThrow()
+  })
+})
+
+describe('macOS process names', () => {
+  it('keeps the executable name, not the full path', () => {
+    expect(
+      parseDarwinProcessNames(
+        ' 321 /System/Library/Frameworks/StoreKit.framework/Support/storekitagent\n  45 /Applications/Example App.app/Contents/MacOS/Example App\n\n'
+      )
+    ).toEqual(
+      new Map([
+        [321, 'storekitagent'],
+        [45, 'Example App']
+      ])
+    )
   })
 })
 

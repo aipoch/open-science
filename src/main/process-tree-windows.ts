@@ -1,4 +1,4 @@
-import { ChildProcess, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { ChildProcess, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
 import { win32 } from 'node:path'
@@ -29,23 +29,30 @@ export const reapWindowsOwnedJob = async (jobName: string): Promise<boolean> => 
 }
 
 /** Admission only: these processes must still be reaped before installation handoff. */
-export const inspectOwnedWindowsProcessIds = (): number[] => {
+export const inspectOwnedWindowsProcessIds = async (): Promise<number[]> => {
   if (process.platform !== 'win32') return []
   const jobs: string[] = []
+  const held: object[] = []
   for (const [name, reference] of activeJobs) {
-    // deref keeps the exclusive native Job alive for this synchronous query. An expired handle
+    // `held` keeps each exclusive native Job alive until the query settles. An expired handle
     // grants no exemption; names/PIDs from another process or a persisted file are never accepted.
-    if (reference.deref()) jobs.push(name)
-    else activeJobs.delete(name)
+    const handle = reference.deref()
+    if (handle) {
+      held.push(handle)
+      jobs.push(name)
+    } else activeJobs.delete(name)
   }
   if (jobs.length === 0) return []
-  const result = spawnSync(
-    resolveWindowsPowerShellExecutable(),
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `
+  // The query runs off the event loop: the backend must keep serving while PowerShell starts.
+  const result = await new Promise<{ status: number | null; stdout: string; error?: unknown }>(
+    (resolve) => {
+      const child = spawn(
+        resolveWindowsPowerShellExecutable(),
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `
 $ErrorActionPreference = 'Stop'
 Add-Type -TypeDefinition @'
 using System; using System.ComponentModel; using System.Runtime.InteropServices;
@@ -83,23 +90,30 @@ $names = [Console]::In.ReadToEnd() | ConvertFrom-Json
 $pids = @($names | ForEach-Object { [OpenScienceOwnedJobs]::Members($_) })
 ConvertTo-Json -InputObject $pids -Compress
 `
-    ],
-    {
-      input: JSON.stringify(jobs),
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024
+        ],
+        { windowsHide: true, timeout: 5_000, stdio: ['pipe', 'pipe', 'pipe'] }
+      )
+      let stdout = ''
+      let stderr = ''
+      child.stdout.setEncoding('utf8').on('data', (chunk: string) => {
+        if (stdout.length < 1024 * 1024) stdout += chunk
+      })
+      child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+        if (stderr.length < 64 * 1024) stderr += chunk
+      })
+      child.once('error', (error) => resolve({ status: null, stdout, error }))
+      child.once('close', (status) => resolve({ status, stdout, error: stderr || undefined }))
+      child.stdin.on('error', () => undefined)
+      child.stdin.end(JSON.stringify(jobs))
     }
   )
   if (result.status !== 0)
-    throw new Error('Owned Windows process inspection failed.', {
-      cause: result.error ?? result.stderr
-    })
+    throw new Error('Owned Windows process inspection failed.', { cause: result.error })
   const pids: unknown = JSON.parse(result.stdout)
   if (!Array.isArray(pids) || pids.some((pid) => !Number.isSafeInteger(pid) || pid <= 0))
     throw new Error('Owned Windows process inspection returned invalid identities.')
-  return [...new Set(pids as number[])]
+  // Referencing `held` after the await keeps every native Job handle alive for the whole query.
+  return held.length ? [...new Set(pids as number[])] : []
 }
 
 // Keep the normal ACP ChildProcess/stream boundary. Overlapped native pipe descriptors use libuv's
