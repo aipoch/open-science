@@ -351,7 +351,7 @@ In the desktop app, an eligible artifact version with a complete sealed recipe, 
 
 Generic live-environment export, arbitrary external lock-file import, and deterministic whole-session replay remain separate future capabilities. RO-Crate and research-package exports exchange captured records, not uncaptured machine state. Product and reviewer claims must distinguish retained evidence, an observed replay outcome, and scientific validity; matching output does not establish a sound method or conclusion.
 
-See the [Capability Map in `ROADMAP.md`](ROADMAP.md#capability-map) for implemented foundations and their limits, and the [proposed delivery tracks](ROADMAP.md#delivery-phases) for extensions such as backend-independent model routing, stronger reproduction, cloud-GPU submission, and broader capability sharing. These directions do not assign release dates or replace design review.
+See the [Capability Map in `ROADMAP.md`](ROADMAP.md#capability-map) for implemented foundations and their limits, and the [proposed delivery tracks](ROADMAP.md#roadmap-by-phase) for extensions such as backend-independent model routing, stronger reproduction, cloud-GPU submission, and broader capability sharing. These directions do not assign release dates or replace design review.
 
 ## 9. Distribution & Packaging
 
