@@ -51,7 +51,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
 
-> 💡 **[AIPOCH Open-Science v1.0.7 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version bringt Pi als fünftes Agenten-Framework, fügt Referenzen direkt aus DOI- oder arXiv-Links hinzu und ermöglicht es Agenten, verknüpfte PDFs im Lesemodus mit Notizen und Markierungen zu versehen; gescannte PDFs werden außerdem mit optionalem OCR und neun Sprachpaketen lesbar. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.7](../../release-notes/1.0.7/de.md).
+> 💡 **[AIPOCH Open-Science v1.0.7 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version bringt Pi als fünftes Agenten-Framework, fügt Referenzen direkt aus DOI- oder arXiv-Links hinzu und ermöglicht es Agenten, verknüpfte PDFs im Lesemodus mit Notizen und Markierungen zu versehen. Gescannte PDFs werden mit optionaler OCR und neun Sprachpaketen lesbar, und der Marktplatz für Forschungsbeispiele ist jetzt durchsuchbar. Außerdem behebt die Version Probleme bei der Einrichtung der Notebook-Befehlszeile unter Windows, OpenCode-Abstürze bei der Kontextkomprimierung und Downloads über Fake-IP-DNS. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.7](../../release-notes/1.0.7/de.md).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -256,6 +256,22 @@ Die Grafik trennt ein lokales Validation-Ergebnis von 41 offiziellen Test-Refere
 
 Recall@30 misst, ob die Zielpublikation unter den ersten 30 eingereichten Ergebnissen erscheint, nicht die Richtigkeit wissenschaftlicher Antworten. Der ScholarQA-CS2-Wert ist ein zusammengesetztes Maß für die Antwortqualität und nicht der Anteil vollständig richtig beantworteter Fragen.
 
+#### AstaBench LitQA2-FullText — 93.33% Genauigkeit bei Fragen zur wissenschaftlichen Literatur
+
+In einer von AIPOCH durchgeführten Auswertung des LitQA2-FullText-Test-Splits mit 75 Fragen aus AstaBench v0.5.4 beantwortete AIPOCH Open-Science mit `deepseek-flash` und der Denkstufe Max 70 Fragen richtig (93.33% Genauigkeit). Die Aufgabe prüft die Beantwortung von Fragen zur wissenschaftlichen Literatur: Publikationen finden und lesen, Versuchsbedingungen unterscheiden, berichtete Ergebnisse entnehmen und eine Antwort auswählen. Dies ist vom oben genannten Recall@30 für die LitQA2-FullText-Search-Retrieval-Aufgabe zu unterscheiden.
+
+Am 2. November 2026 zeigte die [offizielle LitQA2-FullText-Testtabelle](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding) als höchsten erfassten Wert 90.67% (68/75). AIPOCH Open-Science erzielte in diesem Zahlenvergleich einen um 2.67 Prozentpunkte höheren Wert.
+
+<details>
+
+<summary><strong>AstaBench LitQA2-FullText-Ergebnisvergleich</strong></summary>
+
+![AIPOCH Open-Science erreicht 93.33% bei AstaBench LitQA2-FullText-Fragen zur wissenschaftlichen Literatur im Vergleich mit offiziellen Einträgen vom 28. Oktober](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+Die Grafik verwendet offizielle Vergleichseinträge vom 28. Oktober; der höchste angezeigte Wert wurde am 2. November erneut geprüft.
+
+</details>
+
 ### 🏆 ASI-Bench B1–B4 — Höchste angezeigte Werte in allen vier Vergleichen des Berichts
 
 AIPOCH Open-Science erzielte mit **GPT-6 (gpt-6-astra / xhigh)**, Fachspezialisten und Skills in ASI-Bench B1, B2, B3 und B4 **79.35, 56.11, 59.67 und 59.46 Punkte** — jeweils den höchsten angezeigten Wert der im Bericht erfassten Vergleiche. Die vier Bedingungen prüfen **das Ausführen eines vollständigen Plans, das Organisieren eines Arbeitsablaufs, die selbstständige Methodenwahl und autonome Forschung mit ablenkenden Hintergrundinformationen**.
@@ -274,7 +290,7 @@ AIPOCH Open-Science erreichte mit **gpt-5.6-sol (xhigh)** in einer internen Bewe
 
 Der Vergleich mischt Einträge mit unterschiedlicher Bewerterabdeckung und ist keine offizielle Rangfolge unter einheitlichen Bewertungsbedingungen.
 
-**Bewertungsumfang:** Es handelt sich um selbst berichtete lokale/interne Ergebnisse auf den angegebenen Datensätzen und Teilmengen aus Berichten von August bis Oktober 2026; die Auswertungen wurden für die aktuelle Version nicht wiederholt. Ein lokaler Durchlauf auf einem offiziellen Test-Datensatz bedeutet weder eine offizielle Ranglisteneinreichung noch eine Platzierung. Referenzwerte sind historische Momentaufnahmen aus Berichten und keine Live-Ranglisten; Validation- und Test-Ergebnisse sind nicht direkt vergleichbar. Unterschiede bei Aufgabeninstanzen, Modellkonfigurationen, Bewerterabdeckung und Kostenerfassung schränken systemübergreifende Vergleiche ein. Numerische Gleichstände oder Abstände belegen keine statistisch signifikanten Verbesserungen.
+**Bewertungsumfang:** Es handelt sich um selbst berichtete lokale/interne Ergebnisse auf den angegebenen Datensätzen und Teilmengen aus Berichten von August bis November 2026; die Auswertungen wurden für die aktuelle Version nicht wiederholt. Ein lokaler Durchlauf auf einem offiziellen Test-Datensatz bedeutet weder eine offizielle Ranglisteneinreichung noch eine Platzierung. Referenzwerte sind historische Momentaufnahmen aus Berichten und keine Live-Ranglisten; Validation- und Test-Ergebnisse sind nicht direkt vergleichbar. Unterschiede bei Aufgabeninstanzen, Modellkonfigurationen, Bewerterabdeckung und Kostenerfassung schränken systemübergreifende Vergleiche ein. Numerische Gleichstände oder Abstände belegen keine statistisch signifikanten Verbesserungen.
 
 ## Kernkompetenzen
 
@@ -299,9 +315,15 @@ Fügen Sie Literaturangaben einzeln über eine DOI, einen DOI-Link oder einen Li
 
 Dauerhafte PDF-Anmerkungen und Dokumentnotizen sind verfügbar. Mit konfiguriertem Screening-Modell bewerten intelligente Sammlungen Literatur anhand Ihrer Ein- und Ausschlusskriterien. KI- und manuelle Entscheidungen bleiben getrennt und unterstützen die menschliche Prüfung.
 
+Im Lesemodus können Agenten Notizen und Markierungen in verknüpften PDFs auflisten, auffinden und erstellen. PDF-Anmerkungen sind an die kommentierte Dateiversion gebunden und werden nicht zwischen Computern synchronisiert.
+
+Die optionale OCR erkennt gescannte PDF-Seiten, nachdem die Komponente und die erforderlichen Sprachpakete heruntergeladen wurden. Neun Sprachpakete stehen zur Verfügung: Englisch, vereinfachtes Chinesisch, traditionelles Chinesisch, Deutsch, Spanisch, Französisch, Japanisch, Koreanisch und Russisch. Seitenbezogene Abdeckungsanzeigen zeigen, auf welchen Seiten noch Text fehlt.
+
 Übersetzte PDFs können Fließtext und Bildunterschriften optional in ein einspaltiges, inhaltserstes Layout umbrechen; Bilder, Tabellen, Formeln und Bibliografie bleiben dabei in ihrer ursprünglichen Form, und Zuordnungen zwischen Quell- und Ausgabeseiten erleichtern den Vergleich. Bei neuen Einrichtungen sind Ordnerbeschränkungen für Notebook und Befehlszeile standardmäßig aktiviert; diese Laufzeiten bleiben im Arbeitsbereich, in freigegebenen Ordnern und bei von Werkzeugen benötigten Dateien. Die Einstellung steuert keine agenteneigenen Werkzeuge oder entfernten Computer.
 
 In der Desktop-App lässt sich die Artefaktherkunft auch als RO-Crate 1.1 exportieren. Ein versionsgebundenes Umgebungspaket kann nur bei vollständiger Erfassung und Kompatibilität mit der Zielplattform eine verwaltete Umgebung erzeugen; es ist keine vollständige Rechnersicherung.
+
+Durchsuchen Sie den Sharing-Marktplatz nach Forschungsbeispielen, vom Startbildschirm oder aus dem Gesprächsarbeitsbereich aus. Filtern Sie nach Kategorie, suchen Sie nach Stichworten und laden Sie Pakete aus den Detailansichten herunter. Beim Wechsel zwischen Marktplatz und Projekt bleiben Filter und Scrollposition erhalten.
 
 ## Modellanbieter
 
@@ -373,7 +395,7 @@ Die Web-Oberfläche läuft mit einem gewöhnlichen Node-Backend, ohne Electron o
 
 Quellentwicklung benötigt Node.js 24. Das veröffentlichte npm-Paket und das lokal gebaute eigenständige npm-Tarball benötigen Node.js >=22.13.0. Release-Archive, Homebrew-Formula und Desktop-Befehlsstarter enthalten ihre eigene Laufzeit.
 
-Desktop und Browser teilen denselben Dienst. In v1.0.4 stoppt der Desktop beim Beenden nur ein selbst gestartetes Backend; bei einem CLI-Dienst trennt er lediglich die Verbindung. Im aktuellen `main` (Quellcode-Builds) halten App-Verbindungen und eine ausdrückliche Halteanforderung durch `open-science start` den Dienst am Laufen; das Beenden der letzten App stoppt ihn nur, wenn keine solche Halteanforderung mehr besteht.
+Desktop-App und Browser teilen denselben Dienst. App-Verbindungen und eine ausdrückliche Halteanforderung durch `open-science start` halten ihn am Laufen. Das Beenden der letzten App stoppt den Dienst nur, wenn keine ausdrückliche Halteanforderung mehr besteht.
 
 [CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
@@ -408,7 +430,7 @@ A: **Remote Compute (SSH)** ist dauerhaft aktiviert und muss nicht in den Einste
 
 ### Gibt es eine Befehlszeilenschnittstelle?
 
-A: Ja. Installieren Sie das eigenständige Node-Paket, um einen unabhängigen Backend-Dienst zu starten. Das unter **Einstellungen → Allgemein → Befehlszeile → Befehl installieren** installierte Tool steuert eine bereits laufende Desktop-Instanz; dafür ist keine separate Node.js-Installation nötig. Ausnahme: Der vom Debian-Paket bereitgestellte Launcher startet das mitgelieferte Backend mit der mitgelieferten Node-Laufzeit. Für das folgende eigenständige Beispiel installieren Sie das Standalone-Paket und gewöhnliches Node.js, initialisieren das lokale Profil und starten den Dienst:
+A: Ja. Installieren Sie die eigenständige CLI oder verwenden Sie **Einstellungen → Allgemein → Befehlszeile → Befehl installieren**, um eine bereits laufende Desktop-Instanz zu steuern. Die Installation über npm benötigt Node.js; Homebrew und eigenständige Pakete mit gebündelter Laufzeit enthalten es bereits. Initialisieren Sie das lokale Profil, steuern Sie anschließend den Dienst und übermitteln Sie Forschungsaufgaben, ohne einen Browser zu öffnen:
 
 ```bash
 # Start the service in the background
