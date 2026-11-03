@@ -655,23 +655,97 @@ const literatureImportSelectionSchema = z
     'Import selection contains duplicate indices.'
   )
 
-const literatureRecordImportRequestSchema = z.discriminatedUnion('mode', [
-  z
-    .object({
-      mode: z.literal('preview'),
-      content: z.string().min(1).max(LITERATURE_RECORD_IMPORT_MAX_BYTES),
-      selectedItemIndexes: literatureImportSelectionSchema.optional()
-    })
-    .strict(),
-  z
-    .object({
-      mode: z.literal('commit'),
-      content: z.string().min(1).max(LITERATURE_RECORD_IMPORT_MAX_BYTES),
-      selectedItemIndexes: literatureImportSelectionSchema.optional(),
-      duplicatePolicy: literatureDuplicatePolicySchema.optional(),
-      collectionId: nonEmptyTextSchema.optional()
-    })
-    .strict()
+function recordImportJsonValue(
+  this: Record<string, unknown>,
+  key: string,
+  value: unknown
+): unknown {
+  if (
+    (typeof value === 'number' && !Number.isFinite(value)) ||
+    typeof value === 'function' ||
+    typeof value === 'symbol'
+  )
+    throw new Error('Literature metadata must contain JSON-compatible values.')
+  // JSON invokes toJSON before this callback. Reject coercions and non-JSON containers,
+  // while allowing omitted optional object fields, as the catalog does.
+  const prototype: object | null =
+    value !== null && typeof value === 'object' ? Object.getPrototypeOf(value) : null
+  if (
+    this[key] !== value ||
+    (Array.isArray(this) && value === undefined) ||
+    (value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      prototype !== null &&
+      // Plain objects from another realm have a different Object.prototype reference.
+      Object.getPrototypeOf(prototype) !== null)
+  )
+    throw new Error('Literature metadata must not be altered by JSON serialization.')
+  return value
+}
+
+// Apply one UTF-8 source-size budget to both source kinds. Count records incrementally so an
+// oversized batch never needs a second, combined JSON string in memory.
+const withinRecordImportByteLimit = (source: string | LiteratureItemInput[]): boolean => {
+  const encoder = new TextEncoder()
+  if (typeof source === 'string')
+    return encoder.encode(source).byteLength <= LITERATURE_RECORD_IMPORT_MAX_BYTES
+  let bytes = 2 // JSON array brackets.
+  try {
+    for (const [index, item] of source.entries()) {
+      const serialized = JSON.stringify(item, recordImportJsonValue)
+      bytes += encoder.encode(serialized).byteLength + (index ? 1 : 0)
+      if (bytes > LITERATURE_RECORD_IMPORT_MAX_BYTES) return false
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+const literatureRecordContentSourceSchema = z
+  .object({
+    content: z
+      .string()
+      .min(1)
+      .max(LITERATURE_RECORD_IMPORT_MAX_BYTES)
+      .refine(
+        withinRecordImportByteLimit,
+        'Reference import must contain JSON-compatible data within the byte limit.'
+      )
+  })
+  .strict()
+const literatureRecordItemsSourceSchema = z
+  .object({
+    items: z
+      .array(literatureItemInputSchema)
+      .min(1)
+      .max(LITERATURE_RECORD_IMPORT_MAX_RECORDS)
+      .refine(
+        withinRecordImportByteLimit,
+        'Reference import must contain JSON-compatible data within the byte limit.'
+      )
+  })
+  .strict()
+const literatureRecordImportSourceSchema = z.union([
+  literatureRecordContentSourceSchema,
+  literatureRecordItemsSourceSchema
+])
+const importPreviewOptions = {
+  mode: z.literal('preview'),
+  selectedItemIndexes: literatureImportSelectionSchema.optional()
+}
+const importCommitOptions = {
+  mode: z.literal('commit'),
+  selectedItemIndexes: literatureImportSelectionSchema.optional(),
+  duplicatePolicy: literatureDuplicatePolicySchema.optional(),
+  collectionId: nonEmptyTextSchema.optional()
+}
+const literatureRecordImportRequestSchema = z.union([
+  literatureRecordContentSourceSchema.extend(importPreviewOptions),
+  literatureRecordItemsSourceSchema.extend(importPreviewOptions),
+  literatureRecordContentSourceSchema.extend(importCommitOptions),
+  literatureRecordItemsSourceSchema.extend(importCommitOptions)
 ])
 
 const literatureRecordImportErrorSchema = z
@@ -715,7 +789,7 @@ const literatureRecordImportReceiptSchema = z
 
 const literatureRecordImportResultSchema = z
   .object({
-    format: z.enum(LITERATURE_RECORD_IMPORT_FORMATS),
+    format: z.enum([...LITERATURE_RECORD_IMPORT_FORMATS, 'items']),
     items: z.array(literatureItemInputSchema).max(LITERATURE_RECORD_IMPORT_MAX_RECORDS),
     entries: z
       .array(literatureRecordImportEntrySchema)
@@ -783,6 +857,8 @@ type LiteratureFormatDocumentRequest = z.infer<typeof literatureFormatDocumentRe
 
 type LiteratureFormatDocumentResult = z.infer<typeof literatureFormatDocumentResultSchema>
 
+type LiteratureRecordImportSource = z.infer<typeof literatureRecordImportSourceSchema>
+
 type LiteratureRecordImportRequest = z.infer<typeof literatureRecordImportRequestSchema>
 
 type LiteratureRecordImportError = z.infer<typeof literatureRecordImportErrorSchema>
@@ -842,6 +918,7 @@ export {
   literatureRecordImportErrorSchema,
   literatureRecordImportReceiptSchema,
   literatureRecordImportRequestSchema,
+  literatureRecordImportSourceSchema,
   literatureRecordImportResultSchema,
   literatureSourceInputSchema
 }
@@ -875,6 +952,7 @@ export type {
   LiteratureRecordImportError,
   LiteratureRecordImportReceipt,
   LiteratureRecordImportRequest,
+  LiteratureRecordImportSource,
   LiteratureRecordImportResult,
   LiteratureSourceInput,
   LiteratureSourceRecordView

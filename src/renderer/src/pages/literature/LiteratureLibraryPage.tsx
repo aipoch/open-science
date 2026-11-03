@@ -1253,6 +1253,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     closeItemEditor,
     previewRecordImport,
     previewRecordSelection,
+    previewResolvedImport,
     commitRecordImport,
     trackNewMetadataDirty,
     beginManualImport,
@@ -2606,6 +2607,10 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           <LiteratureLinkImportDialog
             onCloseAutoFocus={restoreLinkImportFocus}
             onClose={() => setIsAddingLink(false)}
+            onBatchResolved={(items) => {
+              setIsAddingLink(false)
+              void previewResolvedImport(items)
+            }}
             onResolved={(item, source) => {
               setIsAddingLink(false)
               beginLinkImport(item, source)

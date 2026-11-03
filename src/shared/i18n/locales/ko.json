@@ -7736,9 +7736,7 @@
     "Simplified Chinese": "중국어 간체",
     "Traditional Chinese": "중국어 번체",
     "For example: {{doi}} or {{url}}": "예: {{doi}} 또는 {{url}}",
-    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "지원하지 않는 식별자 또는 링크입니다. DOI, doi.org 링크, arXiv 초록 페이지나 PDF 링크를 사용하거나 참고 문헌 파일을 가져오세요.",
     "Find reference": "문헌 찾기",
-    "DOI or arXiv link": "DOI 또는 arXiv 링크",
     "When identifiers match: {{policy}}": "식별자가 일치하는 경우: {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "문헌 정보를 가져오지 못했습니다. 식별자를 확인하고 다시 시도하거나 PDF 또는 참고 문헌 파일을 가져오세요.",
     "Find reference details to review before saving. Full-text PDFs can be added later.": "문헌 정보를 검색하고 검토한 후 저장하세요. 전문 PDF는 나중에 추가할 수 있습니다.",
@@ -7749,6 +7747,14 @@
     "Retrieved via {{source}}.": "{{source}}을(를) 통해 가져왔습니다.",
     "Edit reference details": "문헌 정보 편집",
     "Edit details": "세부 정보 편집",
-    "Back to review": "검토로 돌아가기"
+    "Back to review": "검토로 돌아가기",
+    "DOI, arXiv, PMID, PMCID or links": "DOI, arXiv, PMID, PMCID 또는 링크",
+    "Enter at most 100 references, one per line.": "참고문헌을 한 줄에 하나씩 최대 100개 입력하세요.",
+    "Use a DOI, arXiv ID, PMID, PMCID, or a supported article link.": "DOI, arXiv ID, PMID, PMCID 또는 지원되는 논문 링크를 입력하세요.",
+    "Review references": "참고문헌 검토",
+    "References checked: {{checked}}": "확인한 참고문헌: {{checked}}",
+    "Lookup results": "검색 결과",
+    "Pasted references": "붙여넣은 참고문헌",
+    "References could not be prepared for import.": "참고문헌 가져오기를 준비하지 못했습니다."
   }
 }

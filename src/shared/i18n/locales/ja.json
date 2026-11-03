@@ -7738,9 +7738,7 @@
     "Simplified Chinese": "簡体字中国語",
     "Traditional Chinese": "繁体字中国語",
     "For example: {{doi}} or {{url}}": "例：{{doi}} または {{url}}",
-    "This identifier or link is not supported. Try a DOI, a doi.org link, or an arXiv abstract or PDF link, or import a bibliography file.": "この識別子またはリンクには対応していません。DOI、doi.org のリンク、arXiv の概要ページまたは PDF のリンクを試すか、文献ファイルをインポートしてください。",
     "Find reference": "文献を検索",
-    "DOI or arXiv link": "DOI または arXiv のリンク",
     "When identifiers match: {{policy}}": "識別子が一致する場合：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "文献情報を取得できませんでした。識別子を確認して再試行するか、PDF または文献ファイルをインポートしてください。",
     "Find reference details to review before saving. Full-text PDFs can be added later.": "文献情報を検索し、確認してから保存します。全文 PDF は後から追加できます。",
@@ -7751,6 +7749,14 @@
     "Retrieved via {{source}}.": "{{source}} から取得しました。",
     "Edit reference details": "文献情報を編集",
     "Edit details": "詳細を編集",
-    "Back to review": "確認に戻る"
+    "Back to review": "確認に戻る",
+    "DOI, arXiv, PMID, PMCID or links": "DOI、arXiv、PMID、PMCID またはリンク",
+    "Enter at most 100 references, one per line.": "参考文献を1行に1件、最大100件入力してください。",
+    "Use a DOI, arXiv ID, PMID, PMCID, or a supported article link.": "DOI、arXiv ID、PMID、PMCID、または対応する論文リンクを入力してください。",
+    "Review references": "参考文献を確認",
+    "References checked: {{checked}}": "確認済み：{{checked}} 件",
+    "Lookup results": "検索結果",
+    "Pasted references": "貼り付けた参考文献",
+    "References could not be prepared for import.": "参考文献をインポートする準備ができませんでした。"
   }
 }

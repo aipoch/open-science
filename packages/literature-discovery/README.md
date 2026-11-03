@@ -33,6 +33,27 @@ No state/schema changes are required: batch indexes v1/v2/v3 remain readable and
 Run `npm run build` and `npm test` inside this package. The repository's isolation check packs the
 package, installs its declared sibling tarball and validates consumption outside the checkout.
 
+## Identifier lookup
+
+`LiteratureReferenceResolver.lookup()` accepts `doi:`, `pmid:`, `pmcid:PMC…`, and `arxiv:`
+references. PMCID lookup queries Europe PMC and accepts only an exact PMCID match, retaining
+any returned DOI and PubMed ID. PubMed ID lookup uses NCBI EFetch with Europe PMC fallback.
+Crossref metadata must carry the requested DOI; an absent or mismatched DOI cannot supply metadata.
+An independently identified fallback can still satisfy the lookup.
+
+arXiv and PubMed reads share one admission implementation, with independent process-local quotas
+across resolver instances and transports. Monotonic request starts remain at least three seconds
+apart for arXiv ([API usage limits](https://info.arxiv.org/help/api/tou.html#rate-limits)) and
+334 milliseconds apart for PubMed's unauthenticated E-utilities
+([NCBI usage policy](https://www.ncbi.nlm.nih.gov/books/NBK25497/)). Reads wait for the previous
+response body from the same provider to finish. Cancellation skips queued work without reserving
+another slot; provider errors do not block later requests or trigger automatic retries. PubMed
+batch resolution still groups IDs into a single EFetch request. These quotas cannot coordinate
+other application processes or machines sharing the same IP address.
+
+All requests use fixed provider origins, bounded responses and timeouts; caller-supplied article
+URLs are normalized by the application before they reach the resolver.
+
 ## Single-paper citation discovery
 
 `LiteratureRelatedFinder` resolves an existing catalog reference through the Semantic Scholar

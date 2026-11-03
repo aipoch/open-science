@@ -54,6 +54,20 @@ rows inside the migration transaction, with a backup required before application
 source notes, metadata revisions and modification times. Existing notes become searchable without
 resaving them. The derived field is not a search index; matching remains substring-based.
 
+## Resolved-record import
+
+The host's `importRecords` command accepts exactly one source: existing bibliography `content`
+(BibTeX, RIS or NBIB), or native `items` returned by metadata lookup. Both preview and commit
+validate the same source and selected indices. Native records bypass citation serialization so
+item type, identifier preference, extra fields, rights and personal metadata remain intact.
+Both source kinds enforce the existing 32 MiB UTF-8 budget; native records are counted incrementally
+and metadata that cannot be represented without coercion is rejected as invalid input. This
+includes non-finite numbers, functions, symbols, non-JSON containers and missing array entries;
+omitted optional object fields retain their existing semantics. Ordinary JSON objects remain valid
+when they originate in another JavaScript realm; validation does not compare realm-specific
+Object.prototype references. Their result format is `items`; file formats retain their existing values. Preview only inspects
+identities; commit rechecks them in the existing catalog transaction. This adds no persisted schema.
+
 ## Import-only consumers
 
 Use `LibraryImporter` with the exported `LibraryImportStore` when only importing or previewing
