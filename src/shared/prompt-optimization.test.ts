@@ -51,12 +51,13 @@ describe('project optimization prompt', () => {
       }
     ]
 
-    expect(resolveOptimizationPrompt(allProjects[1], allProjects)).toBe('Use the current template.')
+    expect(resolveOptimizationPrompt(allProjects[1])).toBe('Use the current template.')
     expect(
-      resolveOptimizationPrompt(
-        { id: 'other', optimizationPrompt: '', optimizationPromptScope: 'current' },
-        allProjects
-      )
+      resolveOptimizationPrompt({
+        id: 'other',
+        optimizationPrompt: '',
+        optimizationPromptScope: 'current'
+      })
     ).toBe(DEFAULT_OPTIMIZATION_PROMPT)
     expect(DEFAULT_OPTIMIZATION_PROMPT).toBe(
       "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."

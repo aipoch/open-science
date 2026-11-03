@@ -16,8 +16,7 @@ export type OptimizationPromptProject = Readonly<{
 }>
 
 export const resolveOptimizationPrompt = (
-  currentProject: OptimizationPromptProject | undefined,
-  _projects?: readonly OptimizationPromptProject[]
+  currentProject: OptimizationPromptProject | undefined
 ): string => {
   return currentProject?.optimizationPrompt?.trim() || DEFAULT_OPTIMIZATION_PROMPT
 }
