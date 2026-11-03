@@ -22,17 +22,22 @@ on:
         description: Optional signed stable artifact run to upgrade to from a fresh signed prerelease
         type: string
         default: ''
+      updater_source_run:
+        description: Optional existing signed prerelease artifact run for certification-only retries
+        type: string
+        default: ''
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: windows-signing-dry-run-${{ github.ref }}
+  group: windows-signing-dry-run-${{ github.ref }}-${{ inputs.updater_source_run || 'build' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: ${{ inputs.updater_source_run == '' }}
     permissions:
       actions: read
       contents: read
@@ -46,7 +51,7 @@ jobs:
 
   updater-recovery:
     name: Certify signed Windows update after external file lock
-    if: ${{ inputs.provider == 'azure' && inputs.updater_target_run != '' }}
+    if: ${{ !cancelled() && inputs.provider == 'azure' && inputs.updater_target_run != '' && (needs.build.result == 'success' || inputs.updater_source_run != '') }}
     needs: build
     runs-on: windows-latest
     timeout-minutes: 30
@@ -66,6 +71,8 @@ jobs:
         with:
           name: windows-x64
           path: previous
+          run-id: ${{ inputs.updater_source_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Download signed stable target
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:

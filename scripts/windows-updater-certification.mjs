@@ -354,7 +354,8 @@ const runElectronUpdater = async ({
   expectedVersion,
   expectedInstaller,
   onDownloaded,
-  beforeApply
+  beforeApply,
+  evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
@@ -380,6 +381,8 @@ const runElectronUpdater = async ({
   const installerObserver = new AbortController()
   let installerExit
   let browser
+  let page
+  let phase = 'desktop-startup'
   try {
     const port = await Promise.race([
       waitFor('the updater renderer CDP port', async () => {
@@ -393,12 +396,14 @@ const runElectronUpdater = async ({
       })
     ])
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
-    const page = await waitFor('the updater desktop window', () =>
+    page = await waitFor('the updater desktop window', () =>
       browser
         .contexts()
         .flatMap((context) => context.pages())
         .find((page) => page.url().startsWith('file:'))
     )
+    page.setDefaultTimeout(60_000)
+    console.log('Updater desktop window connected.')
     await page.waitForFunction(() => Boolean(window.api?.update))
     await waitFor(
       'the updater database',
@@ -407,7 +412,16 @@ const runElectronUpdater = async ({
     )
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
-    const invoke = (action) => page.evaluate((name) => window.api.update[name](), action)
+    const invoke = async (action) => {
+      phase = action
+      console.log(`Updater command started: ${action}`)
+      const status = await withTimeout(
+        page.evaluate((name) => window.api.update[name](), action),
+        `desktop update ${action}`
+      )
+      console.log(`Updater command completed: ${action} ${JSON.stringify(status)}`)
+      return status
+    }
 
     const checked = await withTimeout(invoke('check'), 'electron-updater check')
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
@@ -456,6 +470,12 @@ const runElectronUpdater = async ({
       )
     }
   } catch (error) {
+    console.error(`Updater failed during ${phase}.`)
+    if (page && evidencePath) {
+      await page
+        .screenshot({ path: `${evidencePath}.failed.png`, timeout: 10_000 })
+        .catch(() => undefined)
+    }
     installerObserver.abort(
       new Error('Updater installer observation cancelled after updater failure.')
     )
@@ -648,6 +668,7 @@ const main = async () => {
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
+      evidencePath: options.output,
       expectedVersion: currentVersion,
       expectedInstaller: join(
         env.LOCALAPPDATA,
