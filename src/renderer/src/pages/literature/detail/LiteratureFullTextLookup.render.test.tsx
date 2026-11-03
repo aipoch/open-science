@@ -91,8 +91,22 @@ describe('LiteratureFullTextLookup', () => {
       const { rerender } = render(<LiteratureFullTextLookup {...props} />)
       await results().findByRole('button', { name: limited ? /^Retry in/ : 'Add attachment' })
       expect(screen.getByRole('alert')).not.toBeNull()
+      let finishSearch: (() => void) | undefined
+      if (!limited)
+        fullText.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finishSearch = () => resolve({ mode: 'search', candidates: [candidate], notices: [] })
+            })
+        )
       fireEvent.click(screen.getByRole('button', { name: 'Search again' }))
       await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
+      if (!limited) {
+        await act(async () => {
+          rerender(<LiteratureFullTextLookup {...props} onAdded={vi.fn()} />)
+        })
+        await act(async () => finishSearch?.())
+      }
       await waitFor(() => {
         expect(screen.queryByRole('alert') !== null).toBe(Boolean(retryAt))
         expect(
