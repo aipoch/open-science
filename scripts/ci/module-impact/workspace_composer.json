@@ -204,6 +204,5 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view",
-  "fullTestReason": "Prompt optimization adds asynchronous draft recovery beyond the trusted main boundary; run the full suite until the expanded boundary is reviewed."
+  "fallbackCapability": "renderer_view"
 }
