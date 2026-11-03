@@ -73,6 +73,38 @@ describe('LiteratureFullTextLookup', () => {
     })
   })
   afterEach(cleanup)
+  it.each([false, true])(
+    'clears an old attachment failure after searching again while retaining cooldown %s',
+    async (limited) => {
+      const retryAt = limited ? Date.now() + 60_000 : undefined
+      const candidate = {
+        id: 'candidate',
+        provider: 'pmc',
+        source: 'PubMed Central',
+        url: 'https://pmc.ncbi.nlm.nih.gov/paper.pdf'
+      }
+      transfer.mockResolvedValue({
+        mode: 'transfer',
+        transfer: { id: 'failed-task', itemId: item.id, status: 'failed', candidate, retryAt }
+      })
+      fullText.mockResolvedValue({ mode: 'search', candidates: [candidate], notices: [] })
+      render(<LiteratureFullTextLookup {...props} />)
+      await results().findByRole('button', { name: limited ? /^Retry in/ : 'Add attachment' })
+      expect(screen.getByRole('alert')).not.toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Search again' }))
+      await waitFor(() => expect(fullText).toHaveBeenCalledTimes(2))
+      await waitFor(() => {
+        expect(screen.queryByRole('alert') !== null).toBe(Boolean(retryAt))
+        expect(
+          (
+            results().getByRole('button', {
+              name: limited ? /^Retry in/ : 'Add attachment'
+            }) as HTMLButtonElement
+          ).disabled
+        ).toBe(Boolean(retryAt))
+      })
+    }
+  )
   it.each(['attached', 'reopened'])(
     'retries item refresh after a successful %s transfer without reporting download failure',
     async (entry) => {

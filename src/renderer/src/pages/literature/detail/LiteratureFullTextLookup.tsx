@@ -156,7 +156,10 @@ export const LiteratureFullTextLookup = ({
         if (task.status === 'failed') restoreFailure(task.candidate, task.retryAt)
       }
       const found = await hostApi.literature.fullText({ mode: 'search', itemId: item.id })
-      if (active && found.mode === 'search') setResult(found)
+      if (active && found.mode === 'search') {
+        setResult(found)
+        if (attempt > 0) setError((current) => (current === 'attach' ? undefined : current))
+      }
     })()
       .catch((failure: unknown) => {
         if (active)
