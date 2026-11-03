@@ -301,8 +301,9 @@ export const readPdfPageText = async (
   )
     return native(true)
 
-  // Untagged paired rows can be a text table, even when every cell is a sentence.
-  // Do not turn such rows into columns merely because there is a visual gutter.
+  // Paired baselines are ambiguous only when the layout engine has no table-cell evidence and
+  // the lanes do not look like multi-line prose. Ordinary aligned prose still needs column order;
+  // proven table cells, short labels and other uncertain content retain native rows.
   const pairedBaselines: number[] = []
   for (const a of blocks)
     for (const b of blocks) {
@@ -310,10 +311,30 @@ export const readPdfPageText = async (
       const tolerance = Math.min(a.rect.font, b.rect.font) * 0.25
       for (const line of a.lines) {
         if (!b.lines.some((other) => Math.abs(line.y - other.y) <= tolerance)) continue
-        if (pairedBaselines.some((y) => Math.abs(y - line.y) > tolerance)) return native(true)
         pairedBaselines.push(line.y)
       }
     }
+  const wordCount = (text: string): number =>
+    text.match(/[\p{L}\p{N}]+(?:['’\u2010-][\p{L}\p{N}]+)*/gu)?.length ?? 0
+  const lanes: (typeof blocks)[] = []
+  for (const block of blocks) {
+    const lane = lanes.find((candidate) =>
+      Math.abs(candidate[0].rect.x - block.rect.x) <= Math.min(candidate[0].rect.font, block.rect.font)
+    )
+    if (lane) lane.push(block)
+    else lanes.push([block])
+  }
+  const proseLanes = lanes.filter((lane) => {
+    const lines = lane.flatMap((block) => block.lines)
+    if (lane.some((block) => block.tableCell) || lines.length < 3) return false
+    const substantialLines = lines.filter((line) => wordCount(line.text) >= 5).length
+    return substantialLines >= Math.max(2, Math.ceil(lines.length * 0.5))
+  })
+  if (
+    pairedBaselines.length > 1 &&
+    (blocks.some((block) => block.tableCell) || proseLanes.length < 2)
+  )
+    return native(true)
   return (
     projectRows(
       nativeItems,

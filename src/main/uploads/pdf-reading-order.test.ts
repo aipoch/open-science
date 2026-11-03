@@ -60,18 +60,32 @@ describe('automatic PDF reading order', () => {
     }
   )
 
-  it.each(['prose', 'table'])(
-    'retains native order and warns for aligned ambiguous %s',
-    async (kind) => {
-      const rows = Array.from({ length: 4 }, (_, i) => [
-        item(`${kind} left ${i}.`, 40, 120 + i * 16),
-        item(`${kind} right ${i}.`, 330, 120 + i * 16)
-      ]).flat()
-      const warning = vi.fn()
-      expect(await read(rows, null, warning)).toBe(rows.map((row) => row.str).join('\n'))
-      expect(warning).toHaveBeenCalledExactlyOnceWith(1)
-    }
-  )
+  it('orders aligned multi-line prose by column', async () => {
+    const rows = Array.from({ length: 4 }, (_, i) => [
+      item(`Left column paragraph sentence ${i} continues with prose.`, 40, 120 + i * 16),
+      item(`Right column paragraph sentence ${i} continues with prose.`, 330, 120 + i * 16)
+    ]).flat()
+    const warning = vi.fn()
+    expect(await read(rows, null, warning)).toBe(
+      [
+        ...rows.filter((row) => row.transform[4] === 40),
+        ...rows.filter((row) => row.transform[4] === 330)
+      ]
+        .map((row) => row.str)
+        .join('\n')
+    )
+    expect(warning).not.toHaveBeenCalled()
+  })
+
+  it('retains native order and warns for short aligned cells', async () => {
+    const rows = Array.from({ length: 4 }, (_, i) => [
+      item(`table left ${i}.`, 40, 120 + i * 16),
+      item(`table right ${i}.`, 330, 120 + i * 16)
+    ]).flat()
+    const warning = vi.fn()
+    expect(await read(rows, null, warning)).toBe(rows.map((row) => row.str).join('\n'))
+    expect(warning).toHaveBeenCalledExactlyOnceWith(1)
+  })
 
   it.each([
     ['before', ' ', false],

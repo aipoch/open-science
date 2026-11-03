@@ -127,6 +127,37 @@ describe('targeted PDF preview rendering', () => {
     }
   )
 
+  it('orders aligned prose columns in a real PDF by column', async () => {
+    const document = await PDFDocument.create()
+    const font = await document.embedFont(StandardFonts.Helvetica)
+    const page = document.addPage([600, 800])
+    for (let row = 0; row < 4; row += 1) {
+      page.drawText(`Left column prose evidence sentence ${row}.`, {
+        x: 40,
+        y: 680 - row * 24,
+        font,
+        size: 12
+      })
+      page.drawText(`Right column prose evidence sentence ${row}.`, {
+        x: 330,
+        y: 680 - row * 24,
+        font,
+        size: 12
+      })
+    }
+    const filePath = join(root, 'aligned-prose-columns.pdf')
+    await writeFile(filePath, await document.save())
+    const result = await extractPdfText(filePath)
+    expect(result.text).toBe(
+      '--- Page 1 ---\n' +
+        [
+          ...[0, 1, 2, 3].map((row) => `Left column prose evidence sentence ${row}.`),
+          ...[0, 1, 2, 3].map((row) => `Right column prose evidence sentence ${row}.`)
+        ].join('\n')
+    )
+    expect(result.warnings).toBeUndefined()
+  })
+
   it('keeps physical page authority when a real PDF contains page-like source text', async () => {
     const doc = await PDFDocument.create(),
       font = await doc.embedFont(StandardFonts.Helvetica)
