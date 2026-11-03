@@ -8077,11 +8077,9 @@
     "View in sharing marketplace": "Voir dans la place de marché de partage",
     "Simplified Chinese": "Chinois simplifié",
     "Traditional Chinese": "Chinois traditionnel",
-    "For example: {{doi}} or {{url}}": "Par exemple : {{doi}} ou {{url}}",
     "Find reference": "Rechercher une référence",
     "When identifiers match: {{policy}}": "Si les identifiants correspondent : {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Impossible de récupérer les informations bibliographiques. Vérifiez l’identifiant et réessayez, ou importez un PDF ou un fichier bibliographique.",
-    "Find reference details to review before saving. Full-text PDFs can be added later.": "Rechercher les informations bibliographiques à vérifier avant l’enregistrement. Les PDF en texte intégral peuvent être ajoutés ultérieurement.",
     "Add from DOI or link": "Ajouter via un DOI ou un lien",
     "DOI and arXiv links": "Liens DOI et arXiv",
     "Review reference details": "Vérifier les informations bibliographiques",
@@ -8097,6 +8095,7 @@
     "References checked: {{checked}}": "Références vérifiées : {{checked}}",
     "Lookup results": "Résultats de recherche",
     "Pasted references": "Références collées",
-    "References could not be prepared for import.": "Les références n’ont pas pu être préparées pour l’importation."
+    "References could not be prepared for import.": "Les références n’ont pas pu être préparées pour l’importation.",
+    "Lookup failed": "Échec de la recherche"
   }
 }

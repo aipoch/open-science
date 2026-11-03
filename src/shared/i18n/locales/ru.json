@@ -8223,11 +8223,9 @@
     "View in sharing marketplace": "Посмотреть в маркетплейсе обмена",
     "Simplified Chinese": "Упрощённый китайский",
     "Traditional Chinese": "Традиционный китайский",
-    "For example: {{doi}} or {{url}}": "Например: {{doi}} или {{url}}",
     "Find reference": "Найти публикацию",
     "When identifiers match: {{policy}}": "При совпадении идентификаторов: {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Не удалось получить сведения о публикации. Проверьте идентификатор и повторите попытку или импортируйте PDF либо файл библиографии.",
-    "Find reference details to review before saving. Full-text PDFs can be added later.": "Найдите сведения о публикации для проверки перед сохранением. PDF с полным текстом можно добавить позже.",
     "Add from DOI or link": "Добавить по DOI или ссылке",
     "DOI and arXiv links": "Ссылки DOI и arXiv",
     "Review reference details": "Проверка сведений о публикации",
@@ -8243,6 +8241,7 @@
     "References checked: {{checked}}": "Проверено источников: {{checked}}",
     "Lookup results": "Результаты поиска",
     "Pasted references": "Вставленные источники",
-    "References could not be prepared for import.": "Не удалось подготовить источники к импорту."
+    "References could not be prepared for import.": "Не удалось подготовить источники к импорту.",
+    "Lookup failed": "Не удалось получить данные"
   }
 }

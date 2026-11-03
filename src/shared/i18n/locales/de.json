@@ -7903,11 +7903,9 @@
     "View in sharing marketplace": "Im Marktplatz zum Teilen ansehen",
     "Simplified Chinese": "Vereinfachtes Chinesisch",
     "Traditional Chinese": "Traditionelles Chinesisch",
-    "For example: {{doi}} or {{url}}": "Zum Beispiel: {{doi}} oder {{url}}",
     "Find reference": "Literatur suchen",
     "When identifiers match: {{policy}}": "Bei übereinstimmenden Kennungen: {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Die Literaturangaben konnten nicht abgerufen werden. Prüfen Sie die Kennung und versuchen Sie es erneut oder importieren Sie eine PDF- oder Bibliografiedatei.",
-    "Find reference details to review before saving. Full-text PDFs can be added later.": "Bibliografische Angaben zum Prüfen vor dem Speichern suchen. Volltext-PDFs können später hinzugefügt werden.",
     "Add from DOI or link": "Über DOI oder Link hinzufügen",
     "DOI and arXiv links": "DOI- und arXiv-Links",
     "Review reference details": "Bibliografische Angaben prüfen",
@@ -7923,6 +7921,7 @@
     "References checked: {{checked}}": "Geprüfte Referenzen: {{checked}}",
     "Lookup results": "Suchergebnisse",
     "Pasted references": "Eingefügte Referenzen",
-    "References could not be prepared for import.": "Die Referenzen konnten nicht für den Import vorbereitet werden."
+    "References could not be prepared for import.": "Die Referenzen konnten nicht für den Import vorbereitet werden.",
+    "Lookup failed": "Abfrage fehlgeschlagen"
   }
 }

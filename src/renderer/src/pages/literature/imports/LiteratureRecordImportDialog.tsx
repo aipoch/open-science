@@ -35,6 +35,7 @@ export const LiteratureRecordImportDialog = ({
   itemDescription,
   itemTypeLabels,
   onClose,
+  onCloseAutoFocus,
   duplicatePolicy,
   onDuplicatePolicyChange,
   onImport,
@@ -46,6 +47,7 @@ export const LiteratureRecordImportDialog = ({
   itemDescription: (item: LiteratureItemInput) => string
   itemTypeLabels: Record<LiteratureItemType, string>
   onClose: () => void
+  onCloseAutoFocus?: (event: Event) => void
   duplicatePolicy: LiteratureDuplicatePolicy
   onDuplicatePolicyChange: (value: LiteratureDuplicatePolicy) => void
   onImport: (selectedItemIndexes?: number[]) => void
@@ -140,6 +142,7 @@ export const LiteratureRecordImportDialog = ({
       description={recordImport.fileName}
       busy={isImportingRecords}
       onClose={onClose}
+      onCloseAutoFocus={onCloseAutoFocus}
       footer={
         <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border-300/80 px-5 py-4">
           {recordImport.preview?.imported ? (

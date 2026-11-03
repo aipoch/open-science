@@ -7737,11 +7737,9 @@
     "View in sharing marketplace": "在分享市场中查看",
     "Simplified Chinese": "简体中文",
     "Traditional Chinese": "繁体中文",
-    "For example: {{doi}} or {{url}}": "例如：{{doi}} 或 {{url}}",
     "Find reference": "查找文献",
     "When identifiers match: {{policy}}": "标识符相同时：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "无法获取文献信息。请检查标识符并重试，或导入 PDF 或参考文献文件。",
-    "Find reference details to review before saving. Full-text PDFs can be added later.": "查找并核对文献信息后保存，全文 PDF 可稍后添加。",
     "Add from DOI or link": "通过 DOI 或链接添加",
     "DOI and arXiv links": "DOI 和 arXiv 链接",
     "Review reference details": "核对文献信息",
@@ -7757,6 +7755,7 @@
     "References checked: {{checked}}": "已查询：{{checked}} 条",
     "Lookup results": "查询结果",
     "Pasted references": "粘贴的参考文献",
-    "References could not be prepared for import.": "无法准备要导入的参考文献。"
+    "References could not be prepared for import.": "无法准备要导入的参考文献。",
+    "Lookup failed": "查询失败"
   }
 }

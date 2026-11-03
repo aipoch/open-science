@@ -2589,6 +2589,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         {recordImport ? (
           <LiteratureRecordImportDialog
             recordImport={recordImport}
+            onCloseAutoFocus={'items' in recordImport.source ? restoreLinkImportFocus : undefined}
             duplicatePolicy={duplicatePolicy}
             onDuplicatePolicyChange={setDuplicatePolicy}
             isImportingRecords={isImportingRecords}

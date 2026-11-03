@@ -7737,11 +7737,9 @@
     "View in sharing marketplace": "共有マーケットプレイスで表示",
     "Simplified Chinese": "簡体字中国語",
     "Traditional Chinese": "繁体字中国語",
-    "For example: {{doi}} or {{url}}": "例：{{doi}} または {{url}}",
     "Find reference": "文献を検索",
     "When identifiers match: {{policy}}": "識別子が一致する場合：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "文献情報を取得できませんでした。識別子を確認して再試行するか、PDF または文献ファイルをインポートしてください。",
-    "Find reference details to review before saving. Full-text PDFs can be added later.": "文献情報を検索し、確認してから保存します。全文 PDF は後から追加できます。",
     "Add from DOI or link": "DOI またはリンクから追加",
     "DOI and arXiv links": "DOI と arXiv のリンク",
     "Review reference details": "文献情報を確認",
@@ -7757,6 +7755,7 @@
     "References checked: {{checked}}": "確認済み：{{checked}} 件",
     "Lookup results": "検索結果",
     "Pasted references": "貼り付けた参考文献",
-    "References could not be prepared for import.": "参考文献をインポートする準備ができませんでした。"
+    "References could not be prepared for import.": "参考文献をインポートする準備ができませんでした。",
+    "Lookup failed": "検索に失敗しました"
   }
 }

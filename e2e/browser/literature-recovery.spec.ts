@@ -67,10 +67,17 @@ for (const foreign of [false, true]) {
     const previews = await readImports()
     expect(previews.map((request) => request.mode)).toEqual(['preview'])
     expect(previews[0].items).toHaveLength(2)
-    await commit.click()
-    await expect
-      .poll(async () => (await readImports()).map((request) => request.mode))
-      .toEqual(['preview', 'commit'])
+    if (foreign) {
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      expect((await readImports()).map((request) => request.mode)).toEqual(['preview'])
+    } else {
+      await commit.click()
+      await expect
+        .poll(async () => (await readImports()).map((request) => request.mode))
+        .toEqual(['preview', 'commit'])
+      await page.getByRole('button', { name: 'Done', exact: true }).click()
+    }
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeFocused()
   })
 }
 

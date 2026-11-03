@@ -28,6 +28,7 @@ export function LiteratureLinkImportDialog({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   const [results, setResults] = useState<{ input: string; item?: LiteratureItemInput }[]>([])
+  const canReview = !busy && results.some((row) => row.item)
   const isArxiv = input
     .split(/\r?\n/u)
     .some((line) => parseLiteratureLink(line)?.startsWith('arxiv:'))
@@ -120,15 +121,26 @@ export function LiteratureLinkImportDialog({
       onClose={close}
       onCloseAutoFocus={onCloseAutoFocus}
       title={t('Add from DOI or link')}
-      description={t(
-        'Find reference details to review before saving. Full-text PDFs can be added later.'
-      )}
       footer={
         <div className={dialogFooterClassName}>
           <Button variant="outline" onClick={close}>
             {t('Cancel')}
           </Button>
-          {!busy && results.some((row) => row.item) ? (
+          <Button
+            variant={canReview ? 'outline' : 'default'}
+            disabled={busy || !input.trim()}
+            aria-busy={busy}
+            onClick={() => void search()}
+          >
+            {busy ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {busy ? t('Searching…') : t('Find reference')}
+          </Button>
+          {canReview ? (
             <Button
               onClick={() => {
                 if (phase.current !== 'idle') return
@@ -139,15 +151,6 @@ export function LiteratureLinkImportDialog({
               {t('Review references')}
             </Button>
           ) : null}
-          <Button disabled={busy || !input.trim()} aria-busy={busy} onClick={() => void search()}>
-            {busy ? (
-              <LoaderCircle
-                className="size-4 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-            ) : null}
-            {busy ? t('Searching…') : t('Find reference')}
-          </Button>
         </div>
       }
     >
@@ -184,15 +187,9 @@ export function LiteratureLinkImportDialog({
             }}
           />
           <p id={`${id}-help`} className="text-sm text-muted-foreground">
-            {t('For example: {{doi}} or {{url}}', {
-              doi: '10.1038/nphys1170',
-              url: 'https://arxiv.org/abs/2401.12345'
-            })}
+            {t('Enter at most 100 references, one per line.')}
           </p>
         </div>
-        <p className="text-sm text-muted-foreground">
-          {t('Enter at most 100 references, one per line.')}
-        </p>
         {busy ? (
           <p role="status">{t('References checked: {{checked}}', { checked: results.length })}</p>
         ) : null}
@@ -205,13 +202,7 @@ export function LiteratureLinkImportDialog({
                 ) : (
                   <>
                     <span>{row.input}</span>
-                    <span className="text-muted-foreground">
-                      {' '}
-                      —{' '}
-                      {t(
-                        'Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.'
-                      )}
-                    </span>
+                    <span className="text-muted-foreground"> — {t('Lookup failed')}</span>
                   </>
                 )}
               </li>

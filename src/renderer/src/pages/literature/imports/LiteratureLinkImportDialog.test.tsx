@@ -182,6 +182,11 @@ it('keeps partial failures, deduplicates identifiers, and forwards successful re
   const review = await screen.findByRole('button', { name: 'Review references' })
   expect(lookupMetadata).toHaveBeenCalledTimes(2)
   expect(screen.getByText('invalid')).not.toBeNull()
+  expect(screen.getAllByText(/Lookup failed/u)).toHaveLength(2)
+  expect(screen.getByRole('button', { name: 'Find reference' }).getAttribute('data-variant')).toBe(
+    'outline'
+  )
+  expect(review.getAttribute('data-variant')).toBe('default')
   expect(screen.getByText('PMID:35486828')).not.toBeNull()
   expect(onResolved).not.toHaveBeenCalled()
   fireEvent.click(review)
