@@ -51,7 +51,7 @@ AIPOCH Open-Science prend en charge la recherche computationnelle et intensive e
 
 Les sessions de recherche terminées peuvent également être exportées sous forme de paquets `.science` portables pour la revue, la transmission et l’archivage, avec les branches de conversation, versions de fichiers, enregistrements Notebook et preuves de vérification sélectionnés.
 
-> 💡 **[AIPOCH Open-Science v1.0.7 publié](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en novembre 2026)_. Cette version fait de Pi le cinquième framework d’agents aux côtés de Claude Code, OpenCode, Codex et CodeBuddy, et permet d’ajouter des références directement depuis des liens DOI ou arXiv avec métadonnées résolues, sans fichier d’import. Les agents de lecture annotent désormais les PDF liés pendant la lecture via les Notes & Annotations existantes, et une OCR optionnelle avec neuf packs de langue rend lisibles les PDF scannés. Consultez les [notes de version v1.0.7](../../release-notes/1.0.7/fr.md) pour tous les détails.
+> 💡 **[AIPOCH Open-Science v1.0.7 publié](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en novembre 2026)_. Cette version fait de Pi le cinquième framework d’agents, permet d’ajouter des références directement depuis un DOI ou un lien arXiv et permet aux agents d’annoter les PDF liés en mode lecture. Une OCR optionnelle avec neuf packs de langue rend les PDF scannés lisibles, et la place de marché des cas de recherche propose désormais une fonction de recherche. Elle corrige aussi la préparation du terminal des Notebooks sous Windows, les plantages d’OpenCode lors de la compaction du contexte et les téléchargements avec DNS Fake-IP. Consultez les [notes de version v1.0.7](../../release-notes/1.0.7/fr.md) pour tous les détails.
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />
@@ -255,6 +255,22 @@ Le graphique sépare un résultat Validation local de 41 références Test offic
 
 Recall@30 mesure si l’article cible apparaît parmi les 30 premiers résultats soumis ; il ne mesure pas l’exactitude des réponses aux questions scientifiques. Le score ScholarQA-CS2 est une mesure composite de la qualité des réponses, et non le pourcentage de questions auxquelles une réponse entièrement correcte a été donnée.
 
+#### AstaBench LitQA2-FullText — 93.33% de précision aux questions sur la littérature scientifique
+
+Dans une évaluation menée par AIPOCH sur les 75 questions de la partition Test de LitQA2-FullText dans AstaBench v0.5.4, AIPOCH Open-Science avec `deepseek-flash` et le niveau de raisonnement Max a répondu correctement à 70 questions (93.33% de précision). La tâche évalue les réponses aux questions de littérature scientifique : trouver et lire des articles, distinguer les conditions expérimentales, extraire les résultats et choisir une réponse. Elle est distincte du Recall@30 de recherche de LitQA2-FullText-Search présenté plus haut.
+
+Le 2 novembre 2026, le [tableau officiel LitQA2-FullText Test](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding) affichait une précision maximale enregistrée de 90.67% (68/75). AIPOCH Open-Science a obtenu 2.67 points de pourcentage de plus dans cette comparaison numérique.
+
+<details>
+
+<summary><strong>Comparaison des résultats AstaBench LitQA2-FullText</strong></summary>
+
+![AIPOCH Open-Science obtient 93.33% aux questions de littérature scientifique d'AstaBench LitQA2-FullText, comparé aux résultats officiels du 28 octobre](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+Le graphique utilise les résultats officiels relevés le 28 octobre ; le meilleur score affiché a été vérifié de nouveau le 2 novembre.
+
+</details>
+
 ### 🏆 ASI-Bench B1–B4 — Meilleurs scores affichés dans les quatre comparaisons du rapport
 
 AIPOCH Open-Science a obtenu **79.35, 56.11, 59.67 et 59.46** sur ASI-Bench B1, B2, B3 et B4 avec **GPT-6 (gpt-6-astra / xhigh)**, des spécialistes de domaine et des compétences : les valeurs affichées les plus élevées dans les comparaisons respectives retenues par les rapports. Les quatre conditions évaluent **l'exécution d'un plan complet, l'organisation d'un processus de travail, le choix autonome des méthodes et la recherche autonome avec des informations distrayantes**.
@@ -273,7 +289,7 @@ AIPOCH Open-Science a obtenu **79.05** avec **gpt-5.6-sol (xhigh)** lors d'une �
 
 La comparaison mélange différentes couvertures de juges et ne constitue pas un classement officiel sous des conditions d'évaluation uniformes.
 
-**Portée de l’évaluation :** Ces résultats locaux/internes ont été déclarés par l’équipe entre août et octobre 2026 pour les jeux de données et partitions indiqués ; les évaluations n’ont pas été répétées pour la version actuelle. Une exécution locale sur un jeu Test officiel n’implique ni soumission ni place dans un classement officiel. Les références sont des instantanés de rapports historiques, et non des classements en temps réel ; les résultats Validation et Test ne sont pas directement comparables. Les différences d’instances de tâches, de configurations de modèles, de couverture des juges et de comptabilisation des coûts limitent les comparaisons entre systèmes. Les égalités ou écarts numériques n’établissent pas d’améliorations statistiquement significatives.
+**Portée de l’évaluation :** Ces résultats locaux/internes ont été déclarés par l’équipe entre août et novembre 2026 pour les jeux de données et partitions indiqués ; les évaluations n’ont pas été répétées pour la version actuelle. Une exécution locale sur un jeu Test officiel n’implique ni soumission ni place dans un classement officiel. Les références sont des instantanés de rapports historiques, et non des classements en temps réel ; les résultats Validation et Test ne sont pas directement comparables. Les différences d’instances de tâches, de configurations de modèles, de couverture des juges et de comptabilisation des coûts limitent les comparaisons entre systèmes. Les égalités ou écarts numériques n’établissent pas d’améliorations statistiquement significatives.
 
 ## Capacités principales
 
@@ -298,9 +314,15 @@ Ajoutez des références une par une à partir d’un DOI, d’un lien DOI ou d�
 
 Les annotations PDF et les notes de document sont persistantes. Avec un modèle de sélection configuré, les collections intelligentes évaluent les références selon vos critères d’inclusion et d’exclusion. Les décisions de l’IA et les décisions manuelles restent distinctes pour aider la revue humaine.
 
+En mode lecture, les agents peuvent lister, localiser et créer des notes et des marques dans les PDF liés. Les annotations PDF sont liées à la version du fichier annoté et ne se synchronisent pas entre ordinateurs.
+
+L’OCR optionnelle reconnaît les pages PDF numérisées une fois le composant et les packs de langue nécessaires téléchargés. Neuf packs de langue sont disponibles : anglais, chinois simplifié, chinois traditionnel, allemand, espagnol, français, japonais, coréen et russe. Des indicateurs de couverture par page montrent quelles pages sont encore dépourvues de texte.
+
 Les PDF traduits peuvent, en option, redistribuer le corps du texte et les légendes dans une mise en page à colonne unique axée sur le contenu, tout en conservant images, tableaux, formules et bibliographie dans leur forme d’origine, avec une correspondance entre pages source et pages de sortie. Dans les nouvelles installations, les restrictions de dossiers de Notebook et du terminal sont activées par défaut et limitent ces environnements à l’espace de travail, aux dossiers approuvés et aux fichiers requis par les outils ; ce réglage ne contrôle pas les outils natifs de l’agent ni les ordinateurs distants.
 
 Dans l’application de bureau, la provenance des artefacts peut aussi être exportée en RO-Crate 1.1. Un paquet d’environnement lié à une version ne peut créer un environnement géré que si la capture est complète et compatible avec la plateforme cible ; ce n’est pas une sauvegarde intégrale de l’ordinateur.
+
+Parcourez les cas de recherche sur la place de marché Sharing depuis l’accueil ou l’espace de conversation, filtrez par catégorie, recherchez par mot-clé et téléchargez les paquets depuis les fiches détaillées des cas. Les filtres et la position de défilement sont conservés lors du passage entre la place de marché et un projet.
 
 ## Fournisseurs de modèles
 
@@ -372,7 +394,7 @@ L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni af
 
 Le développement nécessite Node.js 24. Le paquet npm publié et le tarball autonome construit localement exigent Node.js >=22.13.0. Les archives Release, la formule Homebrew et le lanceur du bureau incluent leur propre runtime.
 
-Le bureau et le navigateur partagent le même service. Dans v1.0.4, quitter le bureau arrête seulement le backend qu’il a démarré ; une connexion à un service lancé par la CLI est simplement détachée. Sur le `main` actuel (compilations depuis les sources), les applications connectées et une demande explicite de maintien en service par `open-science start` gardent le service actif ; quitter la dernière application ne l’arrête que si aucune demande explicite de maintien ne subsiste.
+L’application de bureau et le navigateur partagent le même service. Les applications connectées et une demande explicite de maintien en service par `open-science start` le gardent actif. Quitter la dernière application n’arrête le service que si aucune demande explicite de maintien ne subsiste.
 
 [CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
@@ -413,7 +435,7 @@ R : **Remote Compute (SSH)** est toujours activé et ne doit pas être activé d
 
 ### Y a-t-il une interface en ligne de commande ?
 
-R : Oui. Installez le paquet Node autonome pour démarrer un backend indépendant. La commande installée via **Settings → General → Command line tool → Install command** contrôle une instance de bureau déjà en cours d’exécution ; cet usage ne nécessite pas de Node.js séparé. Exception : le lanceur fourni par le paquet Debian démarre le backend inclus avec son runtime Node inclus. Pour l’exemple autonome suivant, installez le paquet autonome et Node.js, initialisez le profil local puis démarrez le service :
+R : Oui. Installez la CLI autonome ou utilisez **Settings → General → Command line tool → Install command** pour contrôler une instance de bureau déjà en cours d’exécution. L’installation via npm nécessite Node.js ; Homebrew et les paquets autonomes avec environnement d’exécution intégré l’incluent. Initialisez le profil local, puis contrôlez le service et soumettez des tâches de recherche sans ouvrir de navigateur :
 
 ```bash
 # Démarrer le service en arrière-plan

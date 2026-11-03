@@ -51,7 +51,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 
 已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
 
-> 💡 **[AIPOCH Open-Science v1.0.7 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這個版本新增 Pi 作為第五個智慧代理框架，支援從 DOI 或 arXiv 連結直接新增參考文獻，閱讀模式下智慧代理可為連結的 PDF 加入註釋，並為掃描 PDF 提供可選的 OCR 與九種語言套件。詳情請參閱 [v1.0.7 發行說明](../../release-notes/1.0.7/zh-Hant.md)。
+> 💡 **[AIPOCH Open-Science v1.0.7 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這個版本新增 Pi 作為第五個智能體框架，支援從 DOI 或 arXiv 連結直接新增參考文獻，閱讀模式下智能體可為關聯的 PDF 加入註記。掃描 PDF 可透過選用的 OCR 與九種語言套件取得可讀文字，研究案例市集現已支援搜尋。本版也修正了 Windows Notebook 命令列環境初始化、OpenCode 上下文壓縮崩潰，以及 Fake-IP DNS 環境下的下載問題。詳情請參閱 [v1.0.7 發行說明](../../release-notes/1.0.7/zh-Hant.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -255,6 +255,22 @@ AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75題 LitQA2-FullText-Sear
 
 Recall@30 衡量目標論文是否出現在提交結果的前30篇中，不是科學問答正確率。ScholarQA-CS2 得分衡量回答的綜合品質，不是全部答對的問題所占比例。
 
+#### AstaBench LitQA2-FullText：科學文獻問答正確率 93.33%
+
+在 AIPOCH 對 AstaBench v0.5.4 的 LitQA2-FullText Test 劃分（75 題）進行的評測中，AIPOCH Open-Science 使用 `deepseek-flash`、Max 推理強度答對 70 題，正確率為 93.33%。該測試考察科學文獻問答：檢索並閱讀論文、辨別實驗條件、提取報告結果，再從選項中選擇答案。它與上文 LitQA2-FullText-Search 的檢索 Recall@30 屬於不同指標。
+
+截至 2026 年 11 月 2 日，[官方 LitQA2-FullText Test 排行榜](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)顯示的最高紀錄為 90.67%（68/75）。在這一數值對照中，AIPOCH Open-Science 的成績高出 2.67 個百分點。
+
+<details>
+
+<summary><strong>AstaBench LitQA2-FullText 成績對照</strong></summary>
+
+![AIPOCH Open-Science 在 AstaBench LitQA2-FullText 科學文獻問答測試中取得 93.33%，與 10 月 28 日官方紀錄對照](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+圖中採用 10 月 28 日的官方紀錄快照；11 月 2 日再次核對了排行榜顯示的最高成績。
+
+</details>
+
 ### 🏆 ASI-Bench B1–B4：報告所列四項對照均為最高展示分數
 
 AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，結合領域專家與技能，在 ASI-Bench B1、B2、B3、B4 四項測試中分別取得 **79.35、56.11、59.67和59.46分**，均為報告所列對照中的最高展示分數。四種評測條件依次考察**執行完整科研方案、組織研究流程、自主選擇方法，以及在干擾資訊下完成自主研究**，涵蓋從方法實作到自主科研執行的不同任務條件。
@@ -273,7 +289,7 @@ AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在標記為 BiomniBench
 
 該對照混合了不同裁判涵蓋範圍的記錄，不能視為統一裁判條件下的正式排名。
 
-**評測說明：**以上為 AIPOCH Open-Science 於2026年8—10月自行報告的本機或內部評測結果，使用所註明的資料集及劃分，未針對目前發佈版本重新執行。在官方 Test 題集上進行本機測試，不代表已提交官方榜單或取得榜單名次。參考數值來自歷史報告快照，並非即時排名；Validation 與 Test 結果不能直接比較。任務實例、模型設定、裁判涵蓋範圍與成本核算方式的差異，限制了跨系統比較。數值持平或存在差距，不代表具有統計顯著性的提升。
+**評測說明：**以上為 AIPOCH Open-Science 於2026年8—11月自行報告的本機或內部評測結果，使用所註明的資料集及劃分，未針對目前發佈版本重新執行。在官方 Test 題集上進行本機測試，不代表已提交官方榜單或取得榜單名次。參考數值來自歷史報告快照，並非即時排名；Validation 與 Test 結果不能直接比較。任務實例、模型設定、裁判涵蓋範圍與成本核算方式的差異，限制了跨系統比較。數值持平或存在差距，不代表具有統計顯著性的提升。
 
 ## 核心能力
 
@@ -298,9 +314,15 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 
 支援持久化 PDF 註記與文件筆記。設定篩選模型後，智慧合集可依納入／排除標準評估文獻；AI 判斷與人工判斷分開記錄，用於輔助人工審閱。
 
+在閱讀模式下，智能體可列出、定位並建立關聯 PDF 的筆記與標記。PDF 註記綁定至被註記的檔案版本，不會跨電腦同步。
+
+下載選用的 OCR 元件及所需語言套件後，即可辨識掃描 PDF 頁面中的文字。共有九種語言套件：英語、簡體中文、繁體中文、德語、西班牙語、法語、日語、韓語和俄語。逐頁涵蓋狀態會標示哪些頁面仍缺少文字。
+
 翻譯版 PDF 可選擇將正文和圖說重排為單欄、內容優先的版面，同時保留原始圖像、表格、公式和參考文獻，並提供來源檔與輸出檔的頁碼對應，方便比較。新安裝中，Notebook 與 Shell 資料夾限制預設開啟，將這些執行環境限制在工作區、已核准的資料夾和工具所需檔案內；此設定不控制智能體原生工具或遠端電腦。
 
 桌面端也可將產物溯源匯出為 RO-Crate 1.1。與版本綁定的環境包只有在擷取內容完整且相容於目標平台時，才能用於建立受管理環境；這不等於完整電腦備份。
+
+從首頁或對話工作區進入 Sharing 研究案例市集，依類別篩選、依關鍵字搜尋，並從案例詳情下載套件。在市集與專案之間切換時，篩選條件和捲動位置會保留。
 
 ## 模型服務商
 
@@ -372,7 +394,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 原始碼開發需要 Node.js 24。已發布的 npm 套件與本機建置的獨立 tarball 均需要 Node.js >=22.13.0。Release 壓縮檔、Homebrew Formula 與桌面命令啟動器均內含執行環境。
 
-桌面與瀏覽器共用同一服務。在 v1.0.4 中，結束桌面只會停止它自行啟動的後端；若連接的是 CLI 啟動的服務，則只中斷桌面連線。在目前的 `main`（原始碼建置）中，應用程式連線及 `open-science start` 的明確保持執行要求會維持服務運作；結束最後一個應用程式時，只有沒有明確的保持執行要求，服務才會停止。
+桌面與瀏覽器共用同一服務。應用程式連線及 `open-science start` 的明確保持執行要求會維持服務運作；結束最後一個應用程式時，只有沒有明確的保持執行要求，服務才會停止。
 
 [CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
@@ -407,7 +429,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 ### 是否提供命令列介面？
 
-答：有。啟動獨立後端需要安裝獨立 Node 套件。透過 **Settings → General → Command line tool → Install command** 安裝的指令用於控制已執行的桌面執行個體，此用途不需要另外安裝 Node.js。例外是 Debian 套件隨附的啟動器，可用隨附的 Node 執行階段啟動隨附後端。以下獨立啟動範例需要先安裝獨立套件和一般 Node.js，再初始化本機設定並啟動服務：
+答：支援。安裝獨立 CLI，或使用 **設定 → 一般 → 命令列工具 → 安裝命令** 控制已在執行的桌面實例。透過 npm 安裝需要 Node.js；Homebrew 與內附執行階段的獨立發行套件已包含 Node.js。初始化本機設定後，即可在不開啟瀏覽器的情況下控制服務並提交科研任務：
 
 ```bash
 # 在背景啟動服務
