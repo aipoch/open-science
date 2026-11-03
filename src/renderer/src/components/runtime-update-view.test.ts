@@ -31,6 +31,7 @@ describe('runtime update fact projection', () => {
   })
   it.each([
     ['other-runtime', 'S07'],
+    ['foreign-process', 'S36'],
     ['occupancy-unknown', 'S33'],
     ['unsupported-channel', 'S32']
   ] as const)('does not invent an occupying service for %s', (detail, expected) => {

@@ -7728,5 +7728,8 @@
     "Edit reference details": "文献情報を編集",
     "Edit details": "詳細を編集",
     "Back to review": "確認に戻る"
-  }
+  },
+  "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
+  "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
+  "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
 }

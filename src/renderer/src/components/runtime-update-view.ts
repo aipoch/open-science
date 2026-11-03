@@ -26,6 +26,7 @@ export const runtimeUpdateState = (status: UpdateStatus): string => {
   if (reason === 'runtime-not-controlled') return r?.detail === 'operation-pending' ? 'S34' : 'S06'
   if (reason === 'installation-busy') {
     if (r?.detail === 'unsupported-channel') return 'S32'
+    if (r?.detail === 'foreign-process') return 'S36'
     return r?.detail === 'other-runtime' ? 'S07' : 'S33'
   }
   if (r && r.runtime !== 'running') return 'S12'

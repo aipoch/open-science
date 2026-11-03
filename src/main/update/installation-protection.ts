@@ -8,7 +8,8 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   inspectInstallationProcesses,
-  inspectInstallationProcessesAsync
+  inspectInstallationProcessesAsync,
+  inspectProcessNames
 } from './installation-occupancy'
 import { UpdateLifecycleError, type UpdateRecoveryStatus } from '../../shared/update'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
@@ -451,19 +452,13 @@ export function beginInstallationUpdate(
     const processPids = (options.inspectProcesses ?? inspectInstallationProcesses)(
       realpathSync(options.installationRoot)
     )
-    if (
-      processPids.some(
-        (pid) =>
-          pid !== process.pid &&
-          pid !== options.runtime.pid &&
-          !helperPids.has(pid) &&
-          !options.allowedProcessIds?.includes(pid)
-      )
+    const foreignProcesses = processPids.filter(
+      (pid) =>
+        pid !== process.pid &&
+        pid !== options.runtime.pid &&
+        !helperPids.has(pid) &&
+        !options.allowedProcessIds?.includes(pid)
     )
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Another process is using this installation.'
-      )
     const others = registered.filter(
       (runtime) =>
         !ownHelper(runtime) &&
@@ -471,11 +466,25 @@ export function beginInstallationUpdate(
           runtime.generation !== options.runtime.generation ||
           runtime.configRoot !== options.runtime.configRoot)
     )
-    if (others.length)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Another service is using this installation.'
-      )
+    if (others.length || foreignProcesses.length) {
+      const detail = foreignProcesses.length && !others.length ? 'foreign-process' : 'other-runtime'
+      const blockingPids = [...others.map((r) => r.pid), ...foreignProcesses]
+      const processNames = inspectProcessNames(blockingPids)
+      const message =
+        detail === 'foreign-process'
+          ? 'Another process is using installation files.'
+          : 'Another service is using this installation.'
+      throw new UpdateLifecycleError('installation-busy', message, {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRecover: false,
+        canRetryInstall: false,
+        detail,
+        blockingProcesses: blockingPids.map((pid) => ({ pid, name: processNames.get(pid) }))
+      })
+    }
     const record: InstallationUpdateRecord = {
       schema: 1,
       operationId: randomUUID(),
@@ -835,11 +844,26 @@ export async function advanceInstallationUpdateAsync(
       location.installationRoot,
       options.signal
     )
-    if (processIds.some((pid) => pid !== process.pid && !options.allowedProcessIds?.includes(pid)))
+    const foreignProcesses = processIds.filter(
+      (pid) => pid !== process.pid && !options.allowedProcessIds?.includes(pid)
+    )
+    if (foreignProcesses.length) {
+      const processNames = inspectProcessNames(foreignProcesses)
       throw new UpdateLifecycleError(
         'installation-busy',
-        'Another process is using this installation.'
+        'Another process is using this installation.',
+        {
+          phase: 'handoff',
+          runtime: stoppedClean ? 'stopped-clean' : 'stopped-unclean',
+          installation: 'pending',
+          canCancel: true,
+          canRecover: false,
+          canRetryInstall: false,
+          detail: 'foreign-process',
+          blockingProcesses: foreignProcesses.map((pid) => ({ pid, name: processNames.get(pid) }))
+        }
       )
+    }
   }
   options.signal?.throwIfAborted()
   return advanceInstallationUpdate(location, operationId, phase, stoppedClean)
@@ -917,29 +941,35 @@ export async function inspectInstallationAvailability(
           candidate.generation !== options.runtime?.generation ||
           candidate.configRoot !== options.runtime?.configRoot)
     )
-    if (
-      others.length ||
-      processes.some(
-        (pid) =>
-          pid !== process.pid &&
-          pid !== options.runtime?.pid &&
-          !helperPids.has(pid) &&
-          !allowedProcessIds?.includes(pid)
-      )
+    const foreignProcesses = processes.filter(
+      (pid) =>
+        pid !== process.pid &&
+        pid !== options.runtime?.pid &&
+        !helperPids.has(pid) &&
+        !allowedProcessIds?.includes(pid)
     )
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Another process is using this installation.',
-        {
-          phase: 'preparing',
-          runtime: 'running',
-          installation: 'unchanged',
-          canCancel: true,
-          canRecover: false,
-          canRetryInstall: false,
-          detail: 'other-runtime'
-        }
-      )
+    if (others.length || foreignProcesses.length) {
+      const detail = foreignProcesses.length && !others.length ? 'foreign-process' : 'other-runtime'
+      const blockingPids = [...others.map((c) => c.pid), ...foreignProcesses]
+      const processNames = inspectProcessNames(blockingPids)
+      const message =
+        detail === 'foreign-process'
+          ? 'Another process is using installation files.'
+          : 'Another service is using this installation.'
+      throw new UpdateLifecycleError('installation-busy', message, {
+        phase: 'preparing',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: true,
+        canRecover: false,
+        canRetryInstall: false,
+        detail,
+        blockingProcesses: blockingPids.map((pid) => ({
+          pid,
+          name: processNames.get(pid)
+        }))
+      })
+    }
   })
 }
 

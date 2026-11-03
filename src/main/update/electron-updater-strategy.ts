@@ -900,6 +900,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       }
     } catch (error) {
       this.applying = false
+      const recovery = error instanceof UpdateLifecycleError ? error.recovery : undefined
+      operation.fail(error, {
+        result: 'error',
+        reason: error instanceof UpdateLifecycleError ? error.reason : 'install-failed',
+        detail: recovery?.detail,
+        blockingProcesses: recovery?.blockingProcesses
+          ?.map((entry) => (entry.name ? `${entry.pid}:${entry.name}` : String(entry.pid)))
+          .join(',')
+      })
       this.setLifecycleFailure(error)
       return this.status
     }
