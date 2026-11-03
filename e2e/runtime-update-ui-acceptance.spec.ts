@@ -307,7 +307,14 @@ test('captures all runtime update states in isolated Electron (presentation-only
       },
       S32: { reason: 'installation-busy', recovery: rec({ detail: 'unsupported-channel' }) },
       S33: { reason: 'installation-busy', recovery: rec({ detail: 'occupancy-unknown' }) },
-      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) }
+      S34: { reason: 'runtime-not-controlled', recovery: rec({ detail: 'operation-pending' }) },
+      S36: {
+        reason: 'installation-busy',
+        recovery: rec({
+          detail: 'foreign-process',
+          blockingProcesses: [{ pid: 4218, name: 'storekitagent' }]
+        })
+      }
     }
     for (const [id, extra] of Object.entries(states)) {
       const status = { ...base, ...extra }
@@ -326,6 +333,14 @@ test('captures all runtime update states in isolated Electron (presentation-only
           page.locator(`[data-runtime-update-state="${id}"] [role="status"]`)
         ).toBeVisible()
       else await expect(page.locator(`[data-runtime-update-state="${id}"]`).first()).toBeVisible()
+      if (id === 'S36') {
+        await expect(
+          page.getByText('其他程序正在使用 Open-Science 文件', { exact: true })
+        ).toBeVisible()
+        await expect(
+          page.getByText('退出 storekitagent，然后重新检查。', { exact: true })
+        ).toBeVisible()
+      }
       if (await page.getByTestId('runtime-update-dialog').isVisible()) {
         await expect(page.getByRole('dialog')).toHaveCount(1)
         await expect(page.getByRole('alertdialog')).toHaveCount(0)
@@ -628,8 +643,8 @@ test('captures all runtime update states in isolated Electron (presentation-only
     await writeFile(join(output, 'action-routing.json'), JSON.stringify(calls, null, 2))
     // The separate force confirmation S05 was removed; S19 has no current surface. Assert every supported state by identity.
     expect(capturedStates.filter((id) => /^S\d\d$/.test(id)).sort()).toEqual(
-      Array.from({ length: 34 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
-        (id) => id !== 'S19' && id !== 'S05'
+      Array.from({ length: 36 }, (_, index) => `S${String(index + 1).padStart(2, '0')}`).filter(
+        (id) => id !== 'S19' && id !== 'S05' && id !== 'S35'
       )
     )
   } catch (error) {
