@@ -92,16 +92,16 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
     }
   }
   const failureDescriptions: Record<SnapshotFailure, string> = {
-    'not-generated': t('Generate snapshot'),
-    busy: t('Too many snapshots are running. Try again shortly.'),
+    'not-generated': t('Generate overview'),
+    busy: t('Too many overviews are being generated. Try again shortly.'),
     'source-changed': t('This reference has changed. Reopen its details and try again.'),
-    'source-unavailable': t('Add an abstract or readable full-text PDF to generate a snapshot.'),
-    'input-too-large': t('The available source exceeds the snapshot input limit.'),
+    'source-unavailable': t('Add an abstract or readable full-text PDF to generate an overview.'),
+    'input-too-large': t('The available source exceeds the overview input limit.'),
     'generation-failed': result
       ? t(
-          'Could not regenerate the snapshot. The previous result is still shown. Please try again.'
+          'Could not regenerate the overview. The previous result is still shown. Please try again.'
         )
-      : t('Could not generate the snapshot. Please try again.')
+      : t('Could not generate the overview. Please try again.')
   }
   const rows = result
     ? [
@@ -113,12 +113,12 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
       ]
     : []
   return (
-    <section className="py-4" aria-label={t('AI snapshot')} aria-busy={pending}>
+    <section className="py-4" aria-label={t('Study overview')} aria-busy={pending}>
       <div className="rounded-lg border border-primary/25 bg-primary/5 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="flex items-center gap-1.5 font-medium">
             <Sparkles className="size-4 text-primary" aria-hidden="true" />
-            {t('AI snapshot')}
+            {t('Study overview')}
           </h3>
           {result ? (
             <span className="rounded bg-background px-1.5 py-0.5 text-xs text-muted-foreground">
@@ -143,26 +143,24 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
               <RefreshCw className="size-3.5" aria-hidden="true" />
             ) : null}
             {pending
-              ? t('Generating snapshot…')
+              ? t('Generating overview…')
               : failure
                 ? t('Retry')
                 : result
                   ? t('Regenerate')
-                  : t('Generate snapshot')}
+                  : t('Generate overview')}
           </Button>
         </div>
-        {!result && !pending ? (
+        {!result && !pending && !available ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {!source.active
               ? t('This reference is no longer available.')
-              : available
-                ? t('See the research question, methods, findings, and limitations at a glance.')
-                : t('Add an abstract or readable full-text PDF to generate a snapshot.')}
+              : t('Add an abstract or readable full-text PDF to generate an overview.')}
           </p>
         ) : null}
         {pending ? (
           <p role="status" className="mt-2 text-xs text-muted-foreground">
-            {t('Reading the available source and generating a snapshot…')}
+            {t('Reading the available source and generating an overview…')}
           </p>
         ) : null}
         {failure ? (

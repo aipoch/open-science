@@ -61,10 +61,10 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 const clickGenerate = (): void => {
-  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshot' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Generate overview' }))
 }
 
-describe('AI snapshot in reference details', () => {
+describe('Study overview in reference details', () => {
   it('generates only on click and shows structured source-aware results', async () => {
     render(
       <StrictMode>
@@ -117,10 +117,10 @@ describe('AI snapshot in reference details', () => {
   it('disables generation when the source is absent', () => {
     render(<LiteratureStudySnapshot item={{ ...item, item: { ...item.item, abstract: '' } }} />)
     expect(
-      (screen.getByRole('button', { name: 'Generate snapshot' }) as HTMLButtonElement).disabled
+      (screen.getByRole('button', { name: 'Generate overview' }) as HTMLButtonElement).disabled
     ).toBe(true)
     expect(
-      screen.getByText('Add an abstract or readable full-text PDF to generate a snapshot.')
+      screen.getByText('Add an abstract or readable full-text PDF to generate an overview.')
     ).toBeTruthy()
   })
   it('prevents duplicate clicks while generation is pending', async () => {
@@ -133,7 +133,7 @@ describe('AI snapshot in reference details', () => {
     )
     render(<LiteratureStudySnapshot item={item} />)
     clickGenerate()
-    fireEvent.click(screen.getByRole('button', { name: 'Generating snapshot…' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generating overview…' }))
     expect(studySnapshot).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('status').textContent).toContain('Reading the available source')
     await act(async () => finish(result))
@@ -143,7 +143,7 @@ describe('AI snapshot in reference details', () => {
     render(<LiteratureStudySnapshot item={item} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'Could not generate the snapshot. Please try again.'
+      'Could not generate the overview. Please try again.'
     )
     expect(screen.queryByText('Private transport details')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -168,7 +168,7 @@ describe('AI snapshot in reference details', () => {
     render(<LiteratureStudySnapshot item={item} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'Too many snapshots are running. Try again shortly.'
+      'Too many overviews are being generated. Try again shortly.'
     )
   })
   it('preserves a valid earlier result after a transient inference failure', async () => {
@@ -178,7 +178,7 @@ describe('AI snapshot in reference details', () => {
     studySnapshot.mockRejectedValueOnce(new Error('Transport failed'))
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'Could not regenerate the snapshot. The previous result is still shown. Please try again.'
+      'Could not regenerate the overview. The previous result is still shown. Please try again.'
     )
     expect(screen.getByText('Does it work?')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
@@ -203,7 +203,7 @@ describe('AI snapshot in reference details', () => {
     const alert = await screen.findByRole('alert')
     expect(screen.getByText('Does it work?')).toBeTruthy()
     expect(alert.textContent).toContain(
-      'Could not regenerate the snapshot. The previous result is still shown. Please try again.'
+      'Could not regenerate the overview. The previous result is still shown. Please try again.'
     )
   })
   it('reports an input limit without blaming model configuration', async () => {
@@ -219,7 +219,7 @@ describe('AI snapshot in reference details', () => {
     render(<LiteratureStudySnapshot item={oversized} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
-      'The available source exceeds the snapshot input limit.'
+      'The available source exceeds the overview input limit.'
     )
   })
   it('removes an old result if its only readable source becomes unavailable', async () => {
@@ -258,7 +258,7 @@ describe('AI snapshot in reference details', () => {
     const alert = await screen.findByRole('alert')
     expect(screen.queryByText('Does it work?')).toBeNull()
     expect(alert.textContent).toContain(
-      'Add an abstract or readable full-text PDF to generate a snapshot.'
+      'Add an abstract or readable full-text PDF to generate an overview.'
     )
     view.unmount()
   })
@@ -275,7 +275,7 @@ describe('AI snapshot in reference details', () => {
     view.rerender(<LiteratureStudySnapshot item={{ ...item, id: 'other' }} />)
     await act(async () => finish(result))
     expect(screen.queryByText('Does it work?')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Generate snapshot' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Generate overview' })).toBeTruthy()
   })
   it('invalidates results when metadata changes', async () => {
     const view = render(<LiteratureStudySnapshot item={item} />)
@@ -350,7 +350,7 @@ describe('AI snapshot in reference details', () => {
     view.rerender(<LiteratureStudySnapshot item={replacement} />)
     await act(async () => finish({ ...result, sourceKey: literatureSnapshotSource(withPdf).key }))
     expect(screen.queryByText('Does it work?')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Generate snapshot' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Generate overview' })).toBeTruthy()
   })
   it.each([{ deletedAt: 0 }, { deletedAt: 1 }, { mergedIntoItemId: 'survivor' }])(
     'clears results and disables generation when the reference becomes inactive: %j',
@@ -361,7 +361,7 @@ describe('AI snapshot in reference details', () => {
       view.rerender(<LiteratureStudySnapshot item={{ ...item, ...inactive }} />)
       expect(screen.queryByText('Does it work?')).toBeNull()
       expect(
-        (screen.getByRole('button', { name: 'Generate snapshot' }) as HTMLButtonElement).disabled
+        (screen.getByRole('button', { name: 'Generate overview' }) as HTMLButtonElement).disabled
       ).toBe(true)
       expect(screen.getByText('This reference is no longer available.')).toBeTruthy()
     }
@@ -382,7 +382,7 @@ describe('AI snapshot in reference details', () => {
         })
     )
     render(<LiteratureStudySnapshot item={item} />)
-    const button = screen.getByRole('button', { name: 'Generate snapshot' })
+    const button = screen.getByRole('button', { name: 'Generate overview' })
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -423,7 +423,7 @@ describe('AI snapshot in reference details', () => {
       />
     )
     expect(
-      (screen.getByRole('button', { name: 'Generate snapshot' }) as HTMLButtonElement).disabled
+      (screen.getByRole('button', { name: 'Generate overview' }) as HTMLButtonElement).disabled
     ).toBe(true)
   })
   it.each(['full-text', 'passages'] as const)('labels %s evidence accurately', async (coverage) => {
