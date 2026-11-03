@@ -1,5 +1,5 @@
 import type { WindowsUpdateHandoff } from './windows-update-handoff'
-import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
+import { UPDATE_INSTALLATION_REQUIRED, UpdateLifecycleError } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -1657,28 +1657,64 @@ describe('Windows native installer handoff', () => {
     }
   )
 
-  it('cancels the prepared profile handoff when final preparation fails', async () => {
-    const updater = new FakeUpdater()
-    const handoff = vi.fn()
-    const cancel = vi.fn()
-    const executeInstall = vi.fn()
-    const strategy = new ElectronUpdaterStrategy({
-      updater,
-      platform,
-      broadcast: vi.fn(),
-      executeInstall,
-      beforeInstallHandoff: async () => {
-        throw new Error('Preparation failed')
-      },
-      prepareInstallHandoff: async () => ({ operationId: 'test-operation', handoff, cancel })
-    })
-    await markUpdateReady(strategy, updater)
-    await strategy.apply()
-    expect(cancel).toHaveBeenCalledOnce()
-    expect(handoff).not.toHaveBeenCalled()
-    expect(executeInstall).not.toHaveBeenCalled()
-    expect(updater.quitAndInstall).not.toHaveBeenCalled()
-  })
+  it.each([false, true])(
+    'logs and cancels a refused final profile handoff (foreign process: %s)',
+    async (foreignProcess) => {
+      const updater = new FakeUpdater()
+      const handoff = vi.fn()
+      const cancel = vi.fn()
+      const executeInstall = vi.fn()
+      const log = createLogSpy()
+      const failure = foreignProcess
+        ? new UpdateLifecycleError(
+            'installation-busy',
+            'Another process is using this installation.',
+            {
+              phase: 'stopped',
+              runtime: 'stopped-clean',
+              installation: 'unchanged',
+              canCancel: true,
+              canRecover: true,
+              canRetryInstall: false,
+              detail: 'foreign-process',
+              blockingProcesses: [{ pid: 123 }]
+            }
+          )
+        : new Error('Preparation failed')
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        broadcast: vi.fn(),
+        executeInstall,
+        log,
+        beforeInstallHandoff: async () => {
+          throw failure
+        },
+        prepareInstallHandoff: async () => ({ operationId: 'test-operation', handoff, cancel })
+      })
+      await markUpdateReady(strategy, updater)
+      await strategy.apply()
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(handoff).not.toHaveBeenCalled()
+      expect(executeInstall).not.toHaveBeenCalled()
+      expect(updater.quitAndInstall).not.toHaveBeenCalled()
+      expect(diagnosticRecords(log)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            operation: 'update-apply',
+            outcome: 'failed',
+            reason: foreignProcess ? 'installation-busy' : 'install-failed',
+            ...(foreignProcess ? { detail: 'foreign-process', blockingProcesses: '123' } : {})
+          })
+        ])
+      )
+      if (foreignProcess)
+        expect(strategy.getStatus()).toMatchObject({
+          reason: 'installation-busy',
+          recovery: (failure as UpdateLifecycleError).recovery
+        })
+    }
+  )
 
   it('does not prepare a successor profile for non-relaunching updates', async () => {
     const updater = new FakeUpdater()
