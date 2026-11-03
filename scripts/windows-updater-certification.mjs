@@ -784,6 +784,9 @@ const main = async () => {
   if (assetServer) await cleanup(() => assetServer.close())
   console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')
   await cleanup(() => profileGuard.cleanup(primaryError))
+  // A completed update can retain an NSIS helper in the fixture Temp. It must release the
+  // uninstaller mutex before starting the separate cleanup uninstall.
+  await cleanup(() => terminateDirectoryProcesses(root))
   if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))
   // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
   // have finished. Reap only executables inside our owned root before removing their files.
