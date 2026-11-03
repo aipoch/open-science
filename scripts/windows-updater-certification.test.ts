@@ -9,6 +9,7 @@ import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  certifyForeignProcessRecovery,
   invokeWebRpc,
   parseArguments,
   parseSingleRange,
@@ -18,6 +19,57 @@ import {
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('keeps the actual blocker until release and requires a retryable status afterward', async () => {
+    let held = false
+    const invoke = vi.fn(async () =>
+      held
+        ? {
+            state: 'ready',
+            reason: 'installation-busy',
+            recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+          }
+        : { state: 'ready', recovery: { canRetryInstall: true } }
+    )
+    const release = vi.fn(async () => {
+      held = false
+    })
+    const observations = await certifyForeignProcessRecovery({
+      invoke,
+      acquireLock: async () => {
+        held = true
+        return { pid: 123, release }
+      }
+    })
+    expect(observations.map((row) => row.action)).toEqual(['apply', 'recheck', 'recheck'])
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('fails certification when releasing the handle does not clear the block', async () => {
+    const release = vi.fn(async () => undefined)
+    await expect(
+      certifyForeignProcessRecovery({
+        invoke: async () => ({
+          state: 'ready',
+          reason: 'installation-busy',
+          recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+        }),
+        acquireLock: async () => ({ pid: 123, release })
+      })
+    ).rejects.toThrow('Released file holder still blocks retry')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('releases its owned handle even if the application fails to identify the blocker', async () => {
+    const release = vi.fn(async () => undefined)
+    await expect(
+      certifyForeignProcessRecovery({
+        invoke: async () => ({ state: 'applying' }),
+        acquireLock: async () => ({ pid: 123, release })
+      })
+    ).rejects.toThrow('External file holder was not reported')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('redacts packaged app tokens before output reaches CI diagnostics', () => {
     expect(
       redactPackagedAppOutput(

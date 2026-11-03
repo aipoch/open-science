@@ -11,6 +11,7 @@ import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
+import { chromium, expect } from '@playwright/test'
 
 import {
   cleanupSmokeRoot,
@@ -20,7 +21,7 @@ import {
   installerVersion,
   installAndProbe,
   launchAndProbe,
-  authenticatePackagedAppEndpoint,
+  launchUninstallerLockHolder,
   runProcess,
   terminateProcessTree,
   uninstallAndVerify,
@@ -56,7 +57,8 @@ const parseArguments = (argv) => {
   return {
     currentDirectory: resolve(currentDirectory),
     previousDirectory: resolve(previousDirectory),
-    output: resolve(output)
+    output: resolve(output),
+    ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {})
   }
 }
 
@@ -349,15 +351,16 @@ exit $exitCode
 const runElectronUpdater = async ({
   executable,
   env,
-  configRoots,
   expectedVersion,
   expectedInstaller,
-  onDownloaded
+  onDownloaded,
+  beforeApply
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
-  // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
-  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
+  // update commands through renderer IPC over CDP, without attaching the Node debugger. The Node
+  // backend's web RPC intentionally does not own desktop updates.
+  const child = spawn(executable, ['--remote-debugging-port=0'], {
     env,
     windowsHide: true
   })
@@ -376,47 +379,44 @@ const runElectronUpdater = async ({
   const exit = observeChildExit(child)
   const installerObserver = new AbortController()
   let installerExit
+  let browser
   try {
-    const { endpoint, auth } = await Promise.race([
-      waitFor('the updater app web service', async () =>
-        authenticatePackagedAppEndpoint(output(), configRoots)
-      ),
+    const port = await Promise.race([
+      waitFor('the updater renderer CDP port', async () => {
+        const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
+        return (await readFile(portFile, 'utf8')).split('\n')[0] || undefined
+      }),
       exit.then((code) => {
         throw new Error(
           `Updater app exited before becoming healthy (${code}).\n${diagnosticOutput()}`
         )
       })
     ])
-    const bootstrapResponse = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
-    if (!bootstrapResponse.ok) {
-      throw new Error(`Updater app bootstrap returned HTTP ${bootstrapResponse.status}.`)
-    }
-    const bootstrap = await bootstrapResponse.json()
-    if (bootstrap.platform !== 'win32' || !Number.isInteger(bootstrap.rpcProtocolVersion)) {
-      throw new Error(`Unexpected updater app bootstrap: ${JSON.stringify(bootstrap)}`)
-    }
-
-    const checked = await withTimeout(
-      invokeWebRpc({
-        endpoint,
-        auth,
-        protocolVersion: bootstrap.rpcProtocolVersion,
-        channel: 'update:check'
-      }),
-      'electron-updater check'
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+    const page = await waitFor('the updater desktop window', () =>
+      browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .find((page) => page.url().startsWith('file:'))
     )
+    await page.waitForFunction(() => Boolean(window.api?.update))
+    await waitFor(
+      'the updater database',
+      async () =>
+        (await page.evaluate(() => window.api.databaseStartup.getState())).phase === 'ready'
+    )
+    await page.evaluate(() => window.api.settings.markOnboardingComplete())
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    const invoke = (action) => page.evaluate((name) => window.api.update[name](), action)
+
+    const checked = await withTimeout(invoke('check'), 'electron-updater check')
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     await waitFor(
       'electron-updater differential download',
       async () => {
-        const status = await invokeWebRpc({
-          endpoint,
-          auth,
-          protocolVersion: bootstrap.rpcProtocolVersion,
-          channel: 'update:download'
-        })
+        const status = await invoke('download')
         const classification = classifyUpdaterDownloadStatus(status, expectedVersion)
         if (classification === 'ready') return status
         if (classification === 'pending') return undefined
@@ -425,6 +425,7 @@ const runElectronUpdater = async ({
       UPDATE_TIMEOUT_MS
     )
     await onDownloaded()
+    await beforeApply?.({ invoke, page })
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
@@ -440,12 +441,7 @@ const runElectronUpdater = async ({
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
     const closed = waitForShutdownExit(exit, child, diagnosticOutput)
-    const applied = await invokeWebRpc({
-      endpoint,
-      auth,
-      protocolVersion: bootstrap.rpcProtocolVersion,
-      channel: 'update:apply'
-    })
+    const applied = await invoke('apply')
     if (applied.state !== 'applying') {
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
@@ -471,7 +467,43 @@ const runElectronUpdater = async ({
         error.message += `\n${processOutput}`
     }
     throw error
+  } finally {
+    await browser?.close()
   }
+}
+
+const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
+  const lock = await acquireLock()
+  const observations = []
+  const command = async (action) => {
+    const started = Date.now()
+    const status = await withTimeout(invoke(action), `blocked update ${action}`, 30_000)
+    observations.push({ action, elapsedMs: Date.now() - started, status })
+    return status
+  }
+  const assertBlocked = (status) => {
+    if (
+      status.state !== 'ready' ||
+      status.reason !== 'installation-busy' ||
+      status.recovery?.detail !== 'foreign-process' ||
+      !status.recovery.blockingProcesses?.some((process) => process.pid === lock.pid)
+    ) {
+      throw new Error(`External file holder was not reported: ${JSON.stringify(status)}`)
+    }
+  }
+  try {
+    assertBlocked(await command('apply'))
+    assertBlocked(await command('recheck'))
+    await onBlocked?.()
+  } finally {
+    await lock.release()
+  }
+  const cleared = await command('recheck')
+  if (cleared.state !== 'ready' || cleared.reason || !cleared.recovery?.canRetryInstall) {
+    throw new Error(`Released file holder still blocks retry: ${JSON.stringify(cleared)}`)
+  }
+  console.log(`External process recovery: ${JSON.stringify(observations)}`)
+  return observations
 }
 
 const assertDifferentialObservation = (observation) => {
@@ -529,6 +561,7 @@ const main = async () => {
   const installDirectory = join(root, 'app')
   const profileDirectory = join(root, 'profile')
   const env = windowsProfileEnvironment(profileDirectory)
+  env.OPEN_SCIENCE_USER_DATA = join(profileDirectory, 'electron-profile')
   const legacyConfigRoots = [
     win32.join(homedir(), '.open-science'),
     win32.join(profileDirectory, '.open-science')
@@ -537,7 +570,8 @@ const main = async () => {
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
-    mkdir(env.TEMP, { recursive: true })
+    mkdir(env.TEMP, { recursive: true }),
+    mkdir(join(profileDirectory, 'Downloads'), { recursive: true })
   ])
 
   let installed = false
@@ -614,7 +648,6 @@ const main = async () => {
     await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
-      configRoots: [previousConfigRoot],
       expectedVersion: currentVersion,
       expectedInstaller: join(
         env.LOCALAPPDATA,
@@ -622,7 +655,40 @@ const main = async () => {
         'pending',
         basename(currentInstaller)
       ),
-      onDownloaded: persistObservation
+      onDownloaded: persistObservation,
+      ...(options.foreignProcess
+        ? {
+            beforeApply: async ({ invoke, page }) => {
+              observation.foreignProcessRecovery = await certifyForeignProcessRecovery({
+                invoke,
+                acquireLock: async () => {
+                  const { child } = await launchUninstallerLockHolder(
+                    installDirectory,
+                    env,
+                    undefined,
+                    undefined,
+                    undefined,
+                    'Read'
+                  )
+                  return { pid: child.pid, release: () => terminateProcessTree(child) }
+                },
+                onBlocked: async () => {
+                  const dialog = page.getByTestId('runtime-update-dialog')
+                  await expect(dialog).toContainText('Another app is using Open-Science files')
+                  await expect(dialog).toContainText('Quit the other app, then recheck.')
+                  await expect(
+                    dialog.getByRole('button', { name: 'Cancel', exact: true })
+                  ).toBeEnabled()
+                  await expect(
+                    dialog.getByRole('button', { name: 'Retry', exact: true })
+                  ).toBeEnabled()
+                  await page.screenshot({ path: `${options.output}.blocked.png` })
+                }
+              })
+              await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
+            }
+          }
+        : {})
     })
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
@@ -653,6 +719,8 @@ const main = async () => {
       legacyConfigRoots: [previousConfigRoot]
     })
     await profileGuard.verifyCycle('current', currentConfigRoot)
+    observation.installedVersionVerified = currentVersion
+    await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
     console.log('Windows electron-updater differential certification completed successfully.')
   } catch (error) {
     primaryError = error
@@ -694,6 +762,7 @@ export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  certifyForeignProcessRecovery,
   invokeWebRpc,
   redactPackagedAppOutput,
   observeInstaller,
