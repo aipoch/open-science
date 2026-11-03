@@ -201,20 +201,37 @@ export function LiteratureLinkImportDialog({
           <p role="status">{t('References checked: {{checked}}', { checked: results.length })}</p>
         ) : null}
         {results.length ? (
-          <ul className="space-y-2 text-sm" aria-label={t('Lookup results')}>
-            {results.map((row, index) => (
-              <li key={index} className="wrap-anywhere">
-                {row.item ? (
-                  row.item.title
-                ) : (
-                  <>
-                    <span>{row.input}</span>
-                    <span className="text-muted-foreground"> — {t('Lookup failed')}</span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
+          <table className="w-full table-fixed text-left text-sm" aria-label={t('Lookup results')}>
+            <thead className="border-b border-border-300/80 text-xs text-muted-foreground">
+              <tr>
+                <th scope="col" className="w-2/5 px-2 py-2 font-medium">
+                  {t('Input')}
+                </th>
+                <th scope="col" className="px-2 py-2 font-medium">
+                  {t('Result')}
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border-300/60">
+              {results.map((row, index) => (
+                <tr key={index}>
+                  <th
+                    scope="row"
+                    className="wrap-anywhere px-2 py-3 align-top font-normal text-muted-foreground"
+                  >
+                    {row.input}
+                  </th>
+                  <td className="wrap-anywhere px-2 py-3 align-top">
+                    {row.item ? (
+                      row.item.title
+                    ) : (
+                      <span className="text-muted-foreground">{t('Lookup failed')}</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : null}
         {error ? (
           <div id={`${id}-error`}>

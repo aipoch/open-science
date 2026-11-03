@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { LiteratureLinkImportDialog } from './LiteratureLinkImportDialog'
@@ -181,7 +181,18 @@ it('keeps partial failures, deduplicates identifiers, and forwards successful re
   fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
   const review = await screen.findByRole('button', { name: 'Review references' })
   expect(lookupMetadata).toHaveBeenCalledTimes(2)
-  expect(screen.getByText('invalid')).not.toBeNull()
+  const table = screen.getByRole('table', { name: 'Lookup results' })
+  const rows = within(table).getAllByRole('row').slice(1)
+  expect(rows.map((row) => within(row).getByRole('rowheader').textContent)).toEqual([
+    'arxiv:2401.12345',
+    'invalid',
+    'PMID:35486828'
+  ])
+  expect(rows.map((row) => within(row).getByRole('cell').textContent)).toEqual([
+    item.title,
+    'Lookup failed',
+    'Lookup failed'
+  ])
   expect(screen.getAllByText(/Lookup failed/u)).toHaveLength(2)
   expect(screen.getByRole('button', { name: 'Find reference' }).getAttribute('data-variant')).toBe(
     'outline'
