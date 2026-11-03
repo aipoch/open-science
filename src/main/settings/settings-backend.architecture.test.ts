@@ -490,7 +490,7 @@ describe('Settings backend ownership architecture', () => {
   it('locks the SettingsService application interface', () => {
     expect(publicOperationsOf(settingsPaths.service, 'SettingsService')).toEqual(
       `
-        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
+        addCustomServer addManualInterpreter admitReviewerExecutionModel admitSessionDetailsExecutionTarget admitSubagentExecutionModel admitVisionModel allowNotebookNetworkDestination allowNotebookNetworkDomain authenticateCustomServer authenticateDeviceCredential bootstrap buildCustomServerTemplateExport
         buildSkillExport beginXaiOAuthLogin cancelClaudeIsolatedLogin cancelClaudeLogin cancelCodexLogin cancelCustomServerAuthentication cancelDeviceCredentialAuthentication cancelXaiOAuthLogin captureActiveAgentBackendSelection captureActiveExplicitAgentBackendTarget checkEnvironment classification clearGrantedLocalRoots codeBuddySkillCatalog codexSkillCatalog
         codexSkillDescriptorsForIds createDeviceCredential createSkill deleteProvider deleteSkill detectClaude detectCodeBuddy detectCodex
         detectOpencode deviceCredentialConsumerIds deviceCredentialIdForServer disconnectCustomServer disconnectDeviceCredential dismissLegacyDataMovePrompt getActiveInstallId getAgentEnvironmentCreationEnabled getAppIconVariant getClosePreference

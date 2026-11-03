@@ -174,7 +174,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // ask_user_question strings that only narrow accepted inputs; handlers and Auto operation
         // dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '1bf1a40a68e0bf5fe1fbc8eaf5e06891a0caaf7f710a89e801f8b9df1c2ee63a',
+          '569a48cdac3f06533a30cc5f13232b576fed9a3a09333e3b1de3f5d7f7914049',
         // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
         // call, its result and the Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
@@ -186,7 +186,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         ask_user_question: 'eaf58cc178cc28d01fd208393f67dc394f374b4dd80f822158942db8a3c48afb',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
-        request_network_access: '6b5a49d73cc704691da193510764101bc5577b48bb7c0fa8bf99f1b29b500f95'
+        request_network_access: '019beadbad4627d5ad4dc2c1bfbf5cc3f777ecf5382df20291952cadbba3eeaf'
       },
       sharedContracts: {
         activityDeclaration: '1739b6cfadd2912aa53f4d11bf69d908da37d5f822476a998b928e9de7ddffdc',

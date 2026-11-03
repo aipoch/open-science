@@ -95,7 +95,10 @@ const fixture = (() => {
     recordSessionRecordProblem: vi.fn()
   }
   const composed = composeSessionProjection({
-    settingsService: { allowNotebookNetworkDomain: allowDomain },
+    settingsService: {
+      allowNotebookNetworkDomain: allowDomain,
+      allowNotebookNetworkDestination: vi.fn()
+    },
     sessionPersistenceCoordinator: coordinator,
     sessionRepository: { loadSession: async () => structuredClone(session) },
     sessionEnabledComputeHostsOwnerRef: {},
