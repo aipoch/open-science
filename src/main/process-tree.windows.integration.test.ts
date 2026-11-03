@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -8,6 +8,8 @@ import { buildSync } from 'esbuild'
 
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
 import { terminateProcessTree } from './process-tree'
+import { inspectOwnedWindowsProcessIds } from './process-tree-windows'
+import { inspectInstallationAvailability } from './update/installation-protection'
 
 const windows = process.platform === 'win32' ? describe : describe.skip
 let root: string | undefined
@@ -34,6 +36,62 @@ const alive = (pid: number): boolean => {
 }
 
 windows('delegated Windows Job ownership (real processes)', () => {
+  it('admits its own installed agent and orphaned descendant, then requires actual cleanup before handoff', async () => {
+    root = await mkdtemp(join(tmpdir(), 'owned-update-admission-'))
+    const installationRoot = join(root, 'app')
+    await mkdir(installationRoot)
+    const executable = join(installationRoot, 'node.exe')
+    await copyFile(process.execPath, executable)
+    const owner = new DelegatedProcessOwnership(root)
+    const unrelated = spawn(
+      process.execPath,
+      ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+      { stdio: 'pipe', windowsHide: true }
+    )
+    children.push(unrelated)
+    await once(unrelated.stdout, 'data')
+    const child = owner.spawn(
+      scope,
+      executable,
+      [
+        '-e',
+        `
+      const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {detached:true,stdio:'ignore',windowsHide:true});
+      process.stdout.write(String(c.pid));
+      process.stdin.once('data',()=>process.exit());
+    `
+      ],
+      { stdio: 'pipe', env: process.env, windowsHide: true }
+    )
+    children.push(child)
+    const descendant = Number((await once(child.stdout, 'data'))[0])
+    const location = { installationRoot, stateRoot: join(root, 'state') }
+    const allowedProcessIds = async (): Promise<number[]> => inspectOwnedWindowsProcessIds()
+    expect(await allowedProcessIds()).toEqual(expect.arrayContaining([child.pid, descendant]))
+    expect(await allowedProcessIds()).not.toContain(unrelated.pid)
+    await expect(
+      inspectInstallationAvailability({ ...location, allowedProcessIds })
+    ).resolves.toBeUndefined()
+    const exited = once(child, 'exit')
+    child.stdin.write('exit')
+    await exited
+    expect(alive(descendant)).toBe(true)
+    expect(await allowedProcessIds()).toContain(descendant)
+    await expect(
+      inspectInstallationAvailability({ ...location, allowedProcessIds })
+    ).resolves.toBeUndefined()
+    // Handoff deliberately drops the admission exemption. A live owned descendant must still block
+    // file replacement until the real Job owner confirms teardown.
+    await expect(inspectInstallationAvailability(location)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+    await expect.poll(() => alive(descendant)).toBe(false)
+    expect(await allowedProcessIds()).not.toContain(descendant)
+    expect(alive(unrelated.pid!)).toBe(true)
+    await expect(inspectInstallationAvailability(location)).resolves.toBeUndefined()
+  }, 30_000)
+
   it('preserves piped ACP IO and argument boundaries for concurrent providers', async () => {
     root = await mkdtemp(join(tmpdir(), 'delegated-windows-job-'))
     const owner = new DelegatedProcessOwnership(root)

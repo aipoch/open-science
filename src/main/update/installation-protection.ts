@@ -670,7 +670,9 @@ export async function captureInstallationManifestAsync(
   return { version, files }
 }
 export async function beginInstallationUpdateAsync(
-  options: Parameters<typeof beginInstallationUpdate>[0],
+  options: Omit<Parameters<typeof beginInstallationUpdate>[0], 'allowedProcessIds'> & {
+    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
+  },
   signal?: AbortSignal
 ): Promise<InstallationUpdateRecord> {
   const currentManifest = await captureInstallationManifestAsync(
@@ -683,8 +685,14 @@ export async function beginInstallationUpdateAsync(
     ? options.inspectProcesses(options.installationRoot)
     : await inspectInstallationProcessesAsync(options.installationRoot, signal)
   signal?.throwIfAborted()
+  const allowedProcessIds =
+    typeof options.allowedProcessIds === 'function'
+      ? await options.allowedProcessIds()
+      : options.allowedProcessIds
+  signal?.throwIfAborted()
   return beginInstallationUpdate({
     ...options,
+    allowedProcessIds,
     currentManifest,
     inspectProcesses: () => processIds
   })
@@ -873,7 +881,7 @@ export async function advanceInstallationUpdateAsync(
 export async function inspectInstallationAvailability(
   options: InstallationLocation & {
     runtime?: InstallationRuntime
-    allowedProcessIds?: number[] | (() => number[])
+    allowedProcessIds?: number[] | (() => number[] | Promise<number[]>)
     inspectProcesses?: typeof inspectInstallationProcessesAsync
   },
   signal?: AbortSignal
@@ -902,11 +910,12 @@ export async function inspectInstallationAvailability(
     )
   }
   signal?.throwIfAborted()
+  const allowedProcessIds =
+    typeof options.allowedProcessIds === 'function'
+      ? await options.allowedProcessIds()
+      : options.allowedProcessIds
+  signal?.throwIfAborted()
   coordinated(options, (directory) => {
-    const allowedProcessIds =
-      typeof options.allowedProcessIds === 'function'
-        ? options.allowedProcessIds()
-        : options.allowedProcessIds
     const bootstrap = (
       globalThis as typeof globalThis & {
         [key: symbol]:
