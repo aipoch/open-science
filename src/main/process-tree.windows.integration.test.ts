@@ -1,20 +1,30 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import * as childProcesses from 'node:child_process'
 import { once } from 'node:events'
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildSync } from 'esbuild'
 
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
 import { terminateProcessTree } from './process-tree'
-import { inspectOwnedWindowsProcessIds } from './process-tree-windows'
+import {
+  inspectOwnedWindowsProcessIds,
+  inspectRuntimeWindowsProcessIds
+} from './process-tree-windows'
 import { inspectInstallationAvailability } from './update/installation-protection'
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) }
+})
 
 const windows = process.platform === 'win32' ? describe : describe.skip
 let root: string | undefined
 const children: ChildProcessWithoutNullStreams[] = []
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(children.splice(0).map((child) => terminateProcessTree(child)))
   if (root) await rm(root, { recursive: true, force: true })
   root = undefined
@@ -36,6 +46,59 @@ const alive = (pid: number): boolean => {
 }
 
 windows('delegated Windows Job ownership (real processes)', () => {
+  it('admits live Notebook-style child hosts and their workers before requiring cleanup', async () => {
+    root = await mkdtemp(join(tmpdir(), 'notebook-update-admission-'))
+    const installationRoot = join(root, 'app')
+    await mkdir(installationRoot)
+    const executable = join(installationRoot, 'node.exe')
+    await copyFile(process.execPath, executable)
+    // Notebook's kernel ownership host starts its supervisor/worker via ordinary child_process.
+    const child = spawn(
+      executable,
+      [
+        '-e',
+        `
+      const worker = require('node:child_process').spawn(process.execPath,
+        ['-e', 'setInterval(()=>{},1000)'], {stdio:'ignore',windowsHide:true});
+      process.stdout.write(String(worker.pid));setInterval(()=>{},1000);
+    `
+      ],
+      { stdio: 'pipe', windowsHide: true }
+    )
+    children.push(child)
+    const worker = Number((await once(child.stdout, 'data'))[0])
+    const location = { installationRoot, stateRoot: join(root, 'state') }
+    const owned = inspectRuntimeWindowsProcessIds()
+    expect(owned).toEqual(expect.arrayContaining([child.pid, worker]))
+    expect(owned).not.toContain(process.pid)
+    await expect(
+      inspectInstallationAvailability({ ...location, allowedProcessIds: owned })
+    ).resolves.toBeUndefined()
+    await expect(inspectInstallationAvailability(location)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    expect(await terminateProcessTree(child)).toMatchObject({ reaped: true })
+    await expect(inspectInstallationAvailability(location)).resolves.toBeUndefined()
+  }, 30_000)
+
+  it('queries a live owned Job without starting PowerShell', async () => {
+    root = await mkdtemp(join(tmpdir(), 'owned-job-query-'))
+    const owner = new DelegatedProcessOwnership(root)
+    const child = owner.spawn(
+      scope,
+      process.execPath,
+      ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+      { stdio: 'pipe', env: process.env, windowsHide: true }
+    )
+    children.push(child)
+    await once(child.stdout, 'data')
+    const externalQuery = vi.spyOn(childProcesses, 'spawnSync').mockImplementation(() => {
+      throw new Error('PowerShell process startup is unavailable')
+    })
+    expect(inspectOwnedWindowsProcessIds()).toContain(child.pid)
+    expect(externalQuery).not.toHaveBeenCalled()
+  })
+
   it('admits its own installed agent and orphaned descendant, then requires actual cleanup before handoff', async () => {
     root = await mkdtemp(join(tmpdir(), 'owned-update-admission-'))
     const installationRoot = join(root, 'app')
