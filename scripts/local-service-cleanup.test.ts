@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   alive: vi.fn(),
   acquire: vi.fn(),
   release: vi.fn(),
+  recover: vi.fn(),
   receipts: vi.fn()
 }))
 vi.mock('node:fs/promises', async (importOriginal) => ({
@@ -22,6 +23,7 @@ vi.mock('../src/main/runtime-stop-confirmation', () => ({ isRuntimeProcessAlive:
 vi.mock('../src/main/runtime-ownership', () => ({ acquireRuntimeDirectorySync: mocks.acquire }))
 vi.mock('../src/main/delegation/process-ownership', () => ({
   DelegatedProcessOwnership: class {
+    recover = mocks.recover
     receipts = mocks.receipts
   }
 }))
@@ -136,6 +138,7 @@ describe('isolated fixture process cleanup', () => {
     mocks.birth.mockReturnValue('birth-1')
     mocks.alive.mockReturnValue(true)
     mocks.acquire.mockReturnValue({ release: mocks.release })
+    mocks.recover.mockResolvedValue(undefined)
     mocks.receipts.mockReturnValue([])
     vi.spyOn(process, 'kill').mockImplementation(() => {
       mocks.alive.mockReturnValue(false)
@@ -202,6 +205,22 @@ describe('isolated fixture process cleanup', () => {
     })
     await expect(cleanupObservedFixtureService(observed)).rejects.toThrow('directory remains owned')
     expect(process.kill).not.toHaveBeenCalled()
+  })
+
+  it('recovers receipts under the directory lock after the observed service exits', async () => {
+    mocks.birth.mockReturnValue(undefined)
+    const observed = await observeFixtureService(target.configRoot)
+    mocks.alive.mockReturnValue(false)
+    mocks.receipts.mockReturnValue([{ receiptId: 'owned-job' }])
+    mocks.recover.mockImplementation(async () => {
+      expect(mocks.acquire).toHaveBeenCalledExactlyOnceWith(target.configRoot)
+      expect(mocks.release).not.toHaveBeenCalled()
+      mocks.receipts.mockReturnValue([])
+    })
+    await cleanupObservedFixtureService(observed)
+    expect(mocks.recover).toHaveBeenCalledTimes(2)
+    expect(process.kill).not.toHaveBeenCalled()
+    expect(mocks.release).toHaveBeenCalledOnce()
   })
 
   it('retains unresolved agent receipts after an observation-only service exits', async () => {

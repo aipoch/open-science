@@ -95,7 +95,13 @@ await import(${JSON.stringify(pathToFileURL(entry).href)});
     })
   })
   let pending: Promise<string> | undefined
+  let registeredFont: ReturnType<typeof GlobalFonts.registerFromPath> | undefined
   try {
+    registeredFont = GlobalFonts.registerFromPath(
+      join(process.cwd(), 'packages/pdf-translation/resources/NotoSansSC-Regular.otf'),
+      'PdfOcrCleanupTest'
+    )
+    if (!registeredFont) throw new Error('OCR fixture font is unavailable.')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     const page = {
       getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 200 * scale }),
@@ -107,7 +113,7 @@ await import(${JSON.stringify(pathToFileURL(entry).href)});
         canvasContext.fillStyle = 'white'
         canvasContext.fillRect(0, 0, 1800, 600)
         canvasContext.fillStyle = 'black'
-        canvasContext.font = '70px sans-serif'
+        canvasContext.font = '70px PdfOcrCleanupTest'
         canvasContext.fillText('cleanup evidence', 50, 200)
         return { promise: Promise.resolve(), cancel: () => {} }
       }
@@ -127,6 +133,7 @@ await import(${JSON.stringify(pathToFileURL(entry).href)});
   } finally {
     await session.close()
     await pending?.catch(() => {})
+    if (registeredFont) GlobalFonts.remove(registeredFont)
     fault.counter = undefined
     vi.useRealTimers()
     lease.release()
