@@ -17,8 +17,6 @@ const PACKAGE_HASH = '7b7bd311e494ae6813fb8fb036f4bd75cd37c43e011f7670e753d6ffa7
 type PiRuntimeLocation = Readonly<{
   configRoot?: string
   backendDirectory?: string
-  resourcesPath?: string
-  packaged?: boolean
 }>
 
 export const managedPiRoot = (configRoot = resolveConfigRoot()): string =>
@@ -28,12 +26,7 @@ export const piAdapterPath = (options: PiRuntimeLocation = {}): string =>
   join(managedPiRoot(options.configRoot), 'adapter', 'dist', 'bin.js')
 
 export const piBootstrapPath = (options: PiRuntimeLocation = {}): string => {
-  const packaged = options.packaged ?? process.env.OPEN_SCIENCE_HOST_PACKAGED === '1'
-  const resources = options.resourcesPath ?? process.env.OPEN_SCIENCE_RESOURCES_PATH
-  if (packaged) {
-    if (!resources) throw new Error('Pi bootstrap resources path is unavailable.')
-    return join(resources, 'backend', 'out', 'pi-bootstrap')
-  }
+  // Desktop, standalone and development builds keep the bootstrap beside the backend bundle.
   const backend = options.backendDirectory ?? dirname(fileURLToPath(import.meta.url))
   return resolve(backend, '..', 'pi-bootstrap')
 }

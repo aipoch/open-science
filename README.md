@@ -49,7 +49,7 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
 
-> 💡 **[AIPOCH Open-Science v1.0.6 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated October 2026)_. This patch imports references from local Zotero libraries into the literature library, reads PDFs in automatic reading order, makes Windows installation about a third faster while preserving co-located research data, and keeps artifacts publishable through long-running turns. It also fixes OpenCode session reliability, Windows startup with binary cookie stores, and Slurm job outcome recovery. See the [v1.0.6 release notes](release-notes/1.0.6/en.md) for full details.
+> 💡 **[AIPOCH Open-Science v1.0.7 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated November 2026)_. This release adds Pi as a fifth agent framework, lets you add references straight from a DOI or arXiv link, and enables reading agents to annotate linked PDFs in reading mode. Scanned PDFs become readable with optional OCR and nine language packs, and the research-case marketplace is now searchable. It also fixes Windows notebook shell setup, OpenCode compaction crashes, and Fake-IP DNS downloads. See the [v1.0.7 release notes](release-notes/1.0.7/en.md) for full details.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -292,6 +292,8 @@ AIPOCH Open-Science combines project management, multi-model agent execution, Py
 | **Artifacts and provenance**                  | Keep immutable artifact versions with available producer code, inputs, execution history, environment information, and review evidence. Import artifacts from authorized folders; AIPOCH Open-Science copies each imported file into managed artifact storage. In the desktop app, replay eligible versions with a complete recipe, required inputs, and a usable runtime, then compare outputs and export verification records. Missing evidence may prevent verification, and replay checks do not establish scientific validity.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 Import references, tags, collections, and source links from Zotero 10 or later running on the same computer, with the option to copy local PDF attachments. This is a one-way import into Open-Science and does not modify Zotero.
+
+Add references one at a time using a DOI, DOI link, or arXiv abstract or PDF link, then review and edit the retrieved metadata before saving. Full-text PDFs can be added separately.
 
 Persistent PDF annotations and document notes are available. With a screening model configured, smart collections evaluate references against your inclusion/exclusion criteria; AI decisions remain separate from manual decisions and support human review.
 

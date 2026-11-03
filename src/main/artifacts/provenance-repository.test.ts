@@ -4938,61 +4938,67 @@ describe('artifact provenance repository', () => {
     ).toEqual([1, 2])
   })
 
-  it('keeps evidence readable when immutable content bytes are missing', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-missing-content-'))
-    const client = createProjectDbClient(storageRoot)
-    disconnect = () => client.$disconnect()
-    await migrateApplicationDatabase(client)
-    const compatibilityRepository = new ArtifactRepository(storageRoot)
-    const repository = new ArtifactProvenanceRepository({
-      storageRoot,
-      getClient: () => Promise.resolve(client),
-      compatibilityRepository
-    })
-    const request = {
-      projectId: 'project-1',
-      appSessionId: 'session-1',
-      artifactStorageSessionId: 'artifact-session-1',
-      artifactRunId: 'artifact-run-1',
-      writeOperationId: 'write-1',
-      writeRequestChecksum: 'a'.repeat(64),
-      rootFrameId: 'root-frame-1',
-      agentFrameId: 'agent-frame-1',
-      messageBranchId: 'branch-1',
-      runtimeSegmentId: 'runtime-segment-1',
-      promptMessageId: 'prompt-1',
-      filename: 'sin.png'
-    } as const
-    await compatibilityRepository.writePendingFile({
-      projectId: request.projectId,
-      sessionId: request.artifactStorageSessionId,
-      runId: request.artifactRunId,
-      filename: request.filename,
-      source: createPngInlineSource('plot bytes')
-    })
-    const version = await repository.createVersion(request)
-    const versionRow = requireAgentArtifactVersion(
-      await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
-    )
-    await rm(version.path)
-    await rm(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')))
-
-    await expect(
-      repository.getVersionProvenance({
-        projectId: request.projectId,
-        appSessionId: request.appSessionId,
-        artifactId: version.artifactId,
-        versionId: version.versionId
+  it.each(['missing', 'checksum-mismatch'] as const)(
+    'retains the content diagnosis across repeated provenance reads (%s)',
+    async (reason) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-missing-content-'))
+      const client = createProjectDbClient(storageRoot)
+      disconnect = () => client.$disconnect()
+      await migrateApplicationDatabase(client)
+      const compatibilityRepository = new ArtifactRepository(storageRoot)
+      const repository = new ArtifactProvenanceRepository({
+        storageRoot,
+        getClient: () => Promise.resolve(client),
+        compatibilityRepository
       })
-    ).resolves.toMatchObject({
-      descriptor: { versionId: version.versionId },
-      contentStatus: { state: 'unavailable', reason: 'missing' },
-      evidence: { checksum: version.checksum }
-    })
-    await expect(
-      readFile(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')), 'utf8')
-    ).rejects.toMatchObject({ code: 'ENOENT' })
-  })
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'session-1',
+        artifactStorageSessionId: 'artifact-session-1',
+        artifactRunId: 'artifact-run-1',
+        writeOperationId: 'write-1',
+        writeRequestChecksum: 'a'.repeat(64),
+        rootFrameId: 'root-frame-1',
+        agentFrameId: 'agent-frame-1',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'runtime-segment-1',
+        promptMessageId: 'prompt-1',
+        filename: 'sin.png'
+      } as const
+      await compatibilityRepository.writePendingFile({
+        projectId: request.projectId,
+        sessionId: request.artifactStorageSessionId,
+        runId: request.artifactRunId,
+        filename: request.filename,
+        source: createPngInlineSource('plot bytes')
+      })
+      const version = await repository.createVersion(request)
+      const versionRow = requireAgentArtifactVersion(
+        await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+      )
+      expect(versionRow.contentBlobId).toBeTruthy()
+      if (reason === 'missing') await rm(version.path)
+      else await writeFile(version.path, 'damaged')
+      await rm(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')))
+
+      for (let attempt = 0; attempt < 2; attempt++)
+        await expect(
+          repository.getVersionProvenance({
+            projectId: request.projectId,
+            appSessionId: request.appSessionId,
+            artifactId: version.artifactId,
+            versionId: version.versionId
+          })
+        ).resolves.toMatchObject({
+          descriptor: { versionId: version.versionId },
+          contentStatus: { state: 'unavailable', reason },
+          evidence: { checksum: version.checksum }
+        })
+      await expect(
+        readFile(join(storageRoot, ...versionRow.evidenceStorageKey.split('/')), 'utf8')
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+    }
+  )
 
   it.each([false, true])('recovers unindexed finalized Version (startup: %s)', async (startup) => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-artifact-row-recovery-'))
