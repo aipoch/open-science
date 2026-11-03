@@ -8067,9 +8067,9 @@
     "Retrieved via {{source}}.": "Informations obtenues via {{source}}.",
     "Edit reference details": "Modifier les informations bibliographiques",
     "Edit details": "Modifier les détails",
-    "Back to review": "Revenir à la vérification"
-  },
-  "Another app is using Open-Science files": "Une autre application utilise des fichiers Open-Science",
-  "Quit {{name}}, then recheck.": "Quittez {{name}}, puis revérifiez.",
-  "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez."
+    "Back to review": "Revenir à la vérification",
+    "Another app is using Open-Science files": "Une autre application utilise des fichiers Open-Science",
+    "Quit {{name}}, then recheck.": "Quittez {{name}}, puis revérifiez.",
+    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez."
+  }
 }

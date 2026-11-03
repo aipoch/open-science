@@ -8213,9 +8213,9 @@
     "Retrieved via {{source}}.": "Получено через {{source}}.",
     "Edit reference details": "Редактирование сведений о публикации",
     "Edit details": "Изменить сведения",
-    "Back to review": "Вернуться к проверке"
-  },
-  "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
-  "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
-  "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
+    "Back to review": "Вернуться к проверке",
+    "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
+    "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
+  }
 }
