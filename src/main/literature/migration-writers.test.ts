@@ -432,6 +432,83 @@ it.each(['acquire_pdf', 'read_document'] as const)(
   }
 )
 
+it('validates study snapshot arguments and results and forwards caller and lifetime cancellation', async () => {
+  const router = createApplicationCommandRouter()
+  const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'en' }
+  const result = {
+    sourceKey: 'source-key',
+    coverage: 'abstract',
+    model: 'test-model',
+    sections: {
+      question: 'Question',
+      population: null,
+      methods: 'Method',
+      results: 'Result',
+      limitations: null
+    }
+  }
+  const studySnapshot = vi.fn().mockResolvedValue(result)
+  const installation = registerLiteratureApplicationCommands(router.registrar, {
+    studySnapshot
+  } as unknown as Parameters<typeof registerLiteratureApplicationCommands>[1])
+  try {
+    const caller = new AbortController()
+    const call = invocation([request] as const)
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.studySnapshot, {
+        ...call,
+        callerLease: { ...call.callerLease, signal: caller.signal }
+      })
+    ).resolves.toEqual(result)
+    expect(studySnapshot).toHaveBeenCalledWith(request, expect.any(AbortSignal))
+    const signal = studySnapshot.mock.calls[0][1] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    caller.abort()
+    expect(signal.aborted).toBe(true)
+    await expect(
+      router.dispatcher.invoke(
+        literatureApplicationCommands.studySnapshot,
+        invocation([{ ...request, expectedSourceKey: '' }])
+      )
+    ).rejects.toThrow()
+    expect(studySnapshot).toHaveBeenCalledTimes(1)
+    studySnapshot.mockResolvedValue({ ...result, sections: {} })
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.studySnapshot, invocation([request]))
+    ).rejects.toThrow()
+    const lifetimeSignal = studySnapshot.mock.calls[1][1] as AbortSignal
+    installation.uninstall()
+    expect(lifetimeSignal.aborted).toBe(true)
+    await installation.whenIdle()
+  } finally {
+    installation.uninstall()
+    router.dispose()
+  }
+})
+
+it('transports source-bound snapshot issues through the same validated command', async () => {
+  const router = createApplicationCommandRouter()
+  const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'en' }
+  const studySnapshot = vi
+    .fn()
+    .mockResolvedValue({ sourceKey: 'source-key', issue: 'source-changed' })
+  const installation = registerLiteratureApplicationCommands(router.registrar, {
+    studySnapshot
+  } as unknown as Parameters<typeof registerLiteratureApplicationCommands>[1])
+  try {
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.studySnapshot, invocation([request]))
+    ).resolves.toEqual({ sourceKey: 'source-key', issue: 'source-changed' })
+    studySnapshot.mockResolvedValue({ sourceKey: 'source-key', issue: 'invalid-issue' })
+    await expect(
+      router.dispatcher.invoke(literatureApplicationCommands.studySnapshot, invocation([request]))
+    ).rejects.toThrow()
+  } finally {
+    installation.uninstall()
+    router.dispose()
+  }
+})
+
 it('routes stored metadata sources through the validated application boundary', async () => {
   const router = createApplicationCommandRouter()
   const records = [

@@ -1,4 +1,8 @@
 import {
+  literatureSnapshotRequestSchema,
+  literatureSnapshotResultSchema
+} from './literature-snapshot'
+import {
   literaturePublicationCheckRequestSchema,
   literaturePublicationCheckResultSchema,
   literatureRelatedRequestSchema,
@@ -188,6 +192,10 @@ const literatureApplicationCommandContracts = Object.freeze({
       ])
     ),
     validationCodec(literatureItemInputSchema)
+  ),
+  studySnapshot: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureSnapshotRequestSchema])),
+    validationCodec(literatureSnapshotResultSchema)
   ),
   completeMetadata: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureMetadataCompletionRequestSchema])),

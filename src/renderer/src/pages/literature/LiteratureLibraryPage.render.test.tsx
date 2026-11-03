@@ -437,6 +437,10 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
+            sourceKey: request.expectedSourceKey,
+            issue: 'not-generated' as const
+          })),
           related: vi.fn(),
           publicationCheck: vi.fn(
             async (request: { itemId: string; expectedMetadataRevision: number }) => ({
