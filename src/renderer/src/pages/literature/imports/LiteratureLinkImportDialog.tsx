@@ -4,7 +4,13 @@ import { LoaderCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ErrorNotice } from '@/components/error-notice'
-import { dialogFooterClassName } from '@/components/ui/dialog-chrome'
+import {
+  dialogBodyClassName,
+  dialogFooterClassName,
+  dialogFormLabelClassName,
+  dialogFormTextareaClassName
+} from '@/components/ui/dialog-chrome'
+import { cn } from '@/lib/utils'
 import { parseLiteratureLink } from '../../../../../shared/literature-link'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import { useLiteratureHost } from '../renderer-host'
@@ -154,12 +160,13 @@ export function LiteratureLinkImportDialog({
         </div>
       }
     >
-      <div className="min-h-0 space-y-4 overflow-y-auto px-5 py-5">
-        <div className="space-y-2">
-          <label htmlFor={id} className="text-sm font-medium">
+      <div className={cn(dialogBodyClassName, 'min-h-0 space-y-4 overflow-y-auto')}>
+        <div>
+          <label htmlFor={id} className={dialogFormLabelClassName}>
             {t('DOI, arXiv, PMID, PMCID or links')}
           </label>
           <Textarea
+            className={cn(dialogFormTextareaClassName, 'min-h-24 resize-y')}
             rows={6}
             id={id}
             value={input}
@@ -186,7 +193,7 @@ export function LiteratureLinkImportDialog({
               }
             }}
           />
-          <p id={`${id}-help`} className="text-sm text-muted-foreground">
+          <p id={`${id}-help`} className="mt-2 text-xs leading-relaxed text-muted-foreground">
             {t('Enter at most 100 references, one per line.')}
           </p>
         </div>

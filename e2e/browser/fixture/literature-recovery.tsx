@@ -153,8 +153,11 @@ window.api = {
             : 'doi'
       return literatureItemInputSchema.parse({
         itemType: arxiv ? 'preprint' : 'journalArticle',
-        title:
-          'A linked reference with a deliberately long title for reviewing metadata in a narrow window',
+        title: arxiv
+          ? 'A linked reference with a deliberately long title for reviewing metadata in a narrow window'
+          : scheme === 'doi'
+            ? 'Reproducible analysis of open research datasets'
+            : 'Open access methods for biomedical literature review',
         abstract: 'Metadata supplied by the browser fixture, with no external provider requests.',
         issuedYear: 2024,
         containerTitle: 'Journal of Reproducible Scientific Research',
