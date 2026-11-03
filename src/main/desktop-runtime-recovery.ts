@@ -1,9 +1,15 @@
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { DesktopBackendStartupError } from './backend-startup'
+import { credentialDiagnosticSchema } from './credential-identity/diagnostic'
+import { projectDiagnosticError } from './session-diagnostics/detail'
 import { setTimeout as delay } from 'node:timers/promises'
 import type { ChildProcess } from 'node:child_process'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { ServiceLifetimeRecord } from './local-service-lifetime'
 import type { DesktopRuntimeRecoveryState } from '../shared/desktop-runtime-recovery'
+
+const log = createLogger('desktop-runtime-recovery')
 
 export class RuntimeRecoveryStoppedError extends Error {
   constructor(
@@ -76,6 +82,7 @@ export function createDesktopRuntimeRecovery(options: {
   let pendingRestartedGeneration: string | undefined
   let crashedGeneration: string | undefined
   let crashes: number[] = []
+  let lastFailure: Record<string, unknown> | undefined
   const schedule = (): void => {
     if (!options.automatic || state.closing || stopped || state.phase === 'connected') return
     roundDeadline ||= Date.now() + (options.timeoutMs ?? 12_000)
@@ -148,6 +155,7 @@ export function createDesktopRuntimeRecovery(options: {
         void restartAuthorization?.catch(() => undefined)
         stopped = false
         crashes = []
+        lastFailure = undefined
         roundDeadline = Date.now() + (options.timeoutMs ?? 30_000)
       }
       if (!childAlive() && !options.restart) {
@@ -171,6 +179,7 @@ export function createDesktopRuntimeRecovery(options: {
       // not clear the slot before assignment leaves a settled Promise permanently occupying it.
       attempt = Promise.resolve().then(async () => {
         let candidate: DesktopRuntimeClient | undefined
+        let operation = 'review-restart'
         try {
           const authorization = restartAuthorization
             ? await abortable(restartAuthorization, controller.signal)
@@ -190,8 +199,11 @@ export function createDesktopRuntimeRecovery(options: {
             )
           }
           const connection = (async () => {
-            if (restarting && options.restart)
+            if (restarting && options.restart) {
+              operation = 'restart'
               return options.restart(controller.signal, authorization)
+            }
+            operation = 'connect'
             if (!automatic && options.repair) {
               try {
                 return await options.connect(
@@ -200,6 +212,7 @@ export function createDesktopRuntimeRecovery(options: {
               } catch {
                 controller.signal.throwIfAborted()
                 repairing = true
+                operation = 'repair'
                 return options.repair(controller.signal)
               }
             }
@@ -229,7 +242,9 @@ export function createDesktopRuntimeRecovery(options: {
           }
           // A new socket can authenticate while its predecessor still owns cleanup. Do not
           // expose a usable conversation or cache spectator authority before that fence settles.
+          operation = 'wait-for-control'
           await waitForDesktopRuntimeControl(candidate, controller.signal)
+          operation = 'activate'
           await abortable(
             options.activate(candidate, controller.signal, () => {
               controller.signal.throwIfAborted()
@@ -242,6 +257,7 @@ export function createDesktopRuntimeRecovery(options: {
           current = candidate
           candidate = undefined
           roundDeadline = 0
+          lastFailure = undefined
           publish({
             ...state,
             phase: 'connected',
@@ -254,6 +270,47 @@ export function createDesktopRuntimeRecovery(options: {
           pendingRestartedGeneration = undefined
           restartAuthorization = undefined
         } catch (error) {
+          const startup = error instanceof DesktopBackendStartupError ? error : undefined
+          const credential = credentialDiagnosticSchema.safeParse(
+            startup?.credentialFailure?.diagnostic
+          )
+          // A final deadline cancellation must not erase the preceding concrete failure.
+          if (!(
+            controller.signal.aborted &&
+            (error === controller.signal.reason ||
+              (error instanceof Error &&
+                (error.name === 'AbortError' ||
+                  error.message === 'Desktop reconnect canceled.'))) &&
+            lastFailure
+          )) {
+            lastFailure = {
+              failureGeneration: generation,
+              failurePid: processId,
+              operation,
+              error: projectDiagnosticError(error),
+              ...(startup ? { startupStage: startup.stage } : {}),
+              ...(startup?.credentialFailure
+                ? { credentialReason: startup.credentialFailure.reason }
+                : {}),
+              ...(credential.success ? { credentialDiagnostic: credential.data } : {})
+            }
+          }
+          const diagnostics: Record<string, unknown> = {
+            generation,
+            pid: processId,
+            reason: error instanceof RuntimeRecoveryStoppedError ? error.reason : 'attempt-failed',
+            timedOut: Date.now() >= roundDeadline,
+            crashesInWindow: crashes.length,
+            ...lastFailure
+          }
+          // Credential inventory context is transient; keep it in the on-screen diagnostic only.
+          const persistent = { ...diagnostics }
+          const persistentCredential = credentialDiagnosticSchema.safeParse(
+            persistent.credentialDiagnostic
+          )
+          if (persistentCredential.success && persistentCredential.data.code === 'inventory-failed')
+            delete persistent.credentialDiagnostic
+          log.warn('desktop runtime recovery failed', persistent)
           if (error instanceof RuntimeRecoveryStoppedError) stopped = true
           if (candidate) options.discard?.(candidate)
           candidate?.close()
@@ -271,18 +328,7 @@ export function createDesktopRuntimeRecovery(options: {
                 : Date.now() >= roundDeadline
                   ? 'recovery-timeout'
                   : state.reason,
-            diagnostics: JSON.stringify(
-              {
-                generation,
-                pid: processId,
-                reason:
-                  error instanceof RuntimeRecoveryStoppedError ? error.reason : 'attempt-failed',
-                timedOut: Date.now() >= roundDeadline,
-                crashesInWindow: crashes.length
-              },
-              null,
-              2
-            ),
+            diagnostics: JSON.stringify(diagnostics, null, 2),
             phase:
               options.automatic && !stopped && Date.now() < roundDeadline
                 ? 'reconnecting'

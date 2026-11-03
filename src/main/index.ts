@@ -28,7 +28,7 @@ import {
 } from './desktop-startup-recovery'
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../shared/runtime-startup'
 import { projectDiagnosticError } from './session-diagnostics/detail'
-import { DesktopBackendStartupError } from './backend-startup'
+import { DesktopBackendStartupError, type BackendStartupStatus } from './backend-startup'
 import { recoverDesktopBackendStartup } from './backend-startup-recovery'
 import { createDesktopRecoveryEventBuffer } from './desktop-recovery-event-buffer'
 import { createDesktopRuntimeRecovery } from './desktop-runtime-recovery'
@@ -1146,6 +1146,18 @@ async function startDesktop(): Promise<void> {
   }
   let repairAuthorization: Awaited<ReturnType<typeof readServiceLifetime>>
   let repairStartupOptions: RuntimeStartupOptions | undefined
+  const reportRecoveryStartup = (status: BackendStartupStatus & { elapsedMs: number }): void => {
+    // Persist progress even when a recovery deadline cancels the launch before it throws.
+    // Inventory diagnostics belong to the transient recovery surface, not the log sink.
+    bootstrapLog.info('backend recovery startup status', {
+      requestId: status.attemptId,
+      startupStage: status.stage,
+      status: status.kind,
+      errorCategory: status.code,
+      credentialReason: status.reason,
+      elapsedMs: status.elapsedMs
+    })
+  }
   const repairBackend = async (signal: AbortSignal): Promise<void> => {
     let config =
       client?.runtimeInfo().startupOptions ?? preservedStartupOptions ?? repairStartupOptions
@@ -1167,6 +1179,7 @@ async function startDesktop(): Promise<void> {
     else {
       if (config) validatePreservedConfiguration(config)
       launch = await startOrAttachDesktopBackend({
+        onStatus: reportRecoveryStartup,
         configRoot,
         profilePath,
         version: app.getVersion(),
@@ -1250,6 +1263,7 @@ async function startDesktop(): Promise<void> {
         await verifyRestartIntent()
         const config = client!.runtimeInfo().startupOptions
         launch = await startOrAttachDesktopBackend({
+          onStatus: reportRecoveryStartup,
           configRoot,
           profilePath,
           version: app.getVersion(),

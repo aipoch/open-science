@@ -116,6 +116,31 @@ it('exports only selected available items, opts into historical logs and reports
   )
 })
 
+it('selects desktop and backend startup logs by default and allows opting out by group', async () => {
+  const ids = [
+    'log:main.log',
+    'desktop-log:main.log',
+    'desktop-log:main.1.log',
+    'desktop-legacy-log:main.log',
+    'backend-log:desktop-backend-42-1700000000000.log'
+  ]
+  inspectDiagnostics.mockResolvedValue({
+    items: ids.map((id) => ({ id, name: id, kind: 'log', available: true }))
+  })
+  await render()
+  expect(checkbox('Desktop logs').getAttribute('aria-checked')).toBe('true')
+  expect(checkbox('Earlier desktop logs').getAttribute('aria-checked')).toBe('false')
+  expect(checkbox('Backend startup logs').getAttribute('aria-checked')).toBe('true')
+  expect(checkbox('Historical log 2')).toBeNull()
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0].selectedItems).toEqual(
+    ids.filter((id) => !id.startsWith('desktop-legacy-log:'))
+  )
+  await act(async () => fireEvent.click(checkbox('Backend startup logs')))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0].selectedItems).toEqual(ids.slice(0, 3))
+})
+
 it('groups only available notebook sources under one execution selection', async () => {
   inspectDiagnostics.mockResolvedValue({
     items: [
