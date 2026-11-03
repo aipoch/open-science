@@ -262,7 +262,7 @@ npmRebuild: false
 # after optional notarization. --publish never means this configuration does not upload anything.
 publish:
   provider: generic
-  url: https://statics.aipoch.com/open-science/app/stable
+  url: http://127.0.0.1:43827
   channel: latest
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/
