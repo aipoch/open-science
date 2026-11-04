@@ -127,7 +127,7 @@ export function LiteratureLinkImportDialog({
       busy={false}
       onClose={close}
       onCloseAutoFocus={onCloseAutoFocus}
-      title={t('Add from DOI or link')}
+      title={t('Add from identifiers or links')}
       footer={
         <div className={dialogFooterClassName}>
           <Button variant="outline" onClick={close}>
