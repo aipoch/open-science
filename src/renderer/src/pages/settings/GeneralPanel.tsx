@@ -75,7 +75,8 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
-  const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
+  const [selectedLog, setSelectedLog] = useState('main')
+  const [sinkStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [isCheckingLog, setIsCheckingLog] = useState(true)
   const [logStatusError, setLogStatusError] = useState<string>()
   const logStatusRequest = useRef(0)
@@ -140,6 +141,17 @@ const GeneralPanel = (): React.JSX.Element => {
     })
   }, [])
 
+  const startupFiles = sinkStatus?.startupFiles ?? []
+  const selectedStartup = startupFiles.find((file) => file.name === selectedLog)
+  const selectedName = selectedStartup?.name
+  const logStatus = selectedStartup
+    ? {
+        path: selectedStartup.path,
+        existing: true,
+        lastWriteSucceeded: null,
+        lastFailureCategory: null
+      }
+    : sinkStatus
   const logPath = logStatus?.path ?? null
   const logExists = logStatus?.existing === true
 
@@ -163,7 +175,7 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.openFile()
+      const result = await window.api.logs.openFile(selectedName)
 
       if (!result.opened) {
         setMessage({ action: 'open-log', detail: result.error })
@@ -180,7 +192,7 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.revealInFolder()
+      const result = await window.api.logs.revealInFolder(selectedName)
 
       if (!result.revealed) {
         setMessage({ action: 'reveal-log', detail: result.error })
@@ -248,7 +260,26 @@ const GeneralPanel = (): React.JSX.Element => {
         aria-label={t('Diagnostics')}
       >
         <SettingsRow label={t('Log file')} className="pt-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              value={selectedName ?? 'main'}
+              onValueChange={(value) => {
+                setSelectedLog(value)
+                setMessage(undefined)
+              }}
+            >
+              <SelectTrigger className="w-80 max-w-full" aria-label={t('Log file')}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="main">{'main.log'}</SelectItem>
+                {startupFiles.map((file) => (
+                  <SelectItem key={file.name} value={file.name}>
+                    {new Date(file.startedAt).toLocaleString()} · {file.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="outline"

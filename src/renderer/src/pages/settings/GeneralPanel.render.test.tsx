@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { fireEvent, within } from '@testing-library/react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -680,4 +681,38 @@ describe('AppearancePanel scale', () => {
       'Adjust the size of text and controls across the app. Changes apply immediately.'
     )
   })
+})
+
+it('selects a historical startup log for both Open and Reveal and retains it on refresh', async () => {
+  const name = 'desktop-backend-42-1700000000000.log'
+  vi.mocked(window.api.logs.getStatus).mockResolvedValue({
+    configured: true,
+    path: '/logs/main.log',
+    existing: true,
+    lastWriteSucceeded: false,
+    lastFailureCategory: 'append',
+    startupFiles: [{ name, path: `/config/logs/${name}`, startedAt: 1700000000000 }]
+  })
+  await act(async () => root.render(<GeneralPanel />))
+  await flush()
+  const select = within(container).getByRole('combobox', { name: 'Log file' })
+  await act(async () => fireEvent.click(select))
+  await act(async () =>
+    fireEvent.click(within(document.body).getByRole('option', { name: /desktop-backend-42/ }))
+  )
+  expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe(
+    `/config/logs/${name}`
+  )
+  expect(container.textContent).not.toContain(
+    'The app could not write to the log file during its most recent attempt.'
+  )
+  await act(async () => findButton(/^open$/i)!.click())
+  await flush()
+  await act(async () => findButton(/^reveal$/i)!.click())
+  await flush()
+  expect(window.api.logs.openFile).toHaveBeenCalledWith(name)
+  expect(window.api.logs.revealInFolder).toHaveBeenCalledWith(name)
+  expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe(
+    `/config/logs/${name}`
+  )
 })
