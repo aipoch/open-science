@@ -56,44 +56,18 @@ PR and queue business E2E rely on one Playwright retry to absorb single-attempt 
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
 
-### CodeQL analysis scope and incremental cache
+### CodeQL
 
-CodeQL uses GitHub default setup. The reviewed configuration in
-[codeql-config.yml](../.github/codeql/codeql-config.yml) excludes only TypeScript test
-files in the listed development directories. It does not delete files or change test
-execution. Production code, runtime resources, fixtures, language selection and the
-default security query suite remain covered. Excluded tests no longer receive CodeQL
-security analysis; audit production imports and package/build inputs before extending
-these patterns. In particular, do not apply a repository-wide test suffix exclusion:
-`resources/` contains files with test suffixes that may be shipped as resources.
+GitHub default setup uses [codeql-config.yml](../.github/codeql/codeql-config.yml)
+to exclude development tests from security analysis while retaining production code,
+runtime resources and fixtures. Test execution is unchanged. Audit shipping paths before
+extending exclusions; files under `resources/` may ship even with test suffixes.
 
-The configuration file must be activated through the `github-codeql-config-file`
-repository property; committing it alone does not change default setup. Set this
-property **only for this repository**, without an organization-wide default. Use
-`remote=aipoch/open-science@<short-sha>:.github/codeql/codeql-config.yml`
-for initial validation after that reviewed commit is pushed. GitHub limits property
-values to 75 characters; use a unique abbreviated SHA and verify the Contents API
-resolves it to the expected file before saving. Once the file is merged, use
-`remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`. A remote reference
-also lets older branches load the reviewed configuration without a local copy.
-If the property schema does not exist, an organization administrator must create the
-optional text property without a default value before assigning the repository value.
-Read back the property and the next scan's effective configuration to verify activation.
-See [repository properties for code scanning](https://docs.github.com/en/code-security/concepts/code-scanning/repository-properties).
-
-This scope keeps JavaScript's overlay-base database small enough to attempt caching:
-a measured full base reached 7755 MB and was rejected by the 7500 MB upload limit,
-causing subsequent PRs to fall back to full extraction. Increasing the repository's
-cache quota alone does not fix that per-database rejection. Do not assume the scope
-change guarantees a cache hit or a particular speedup.
-
-After activation, verify a default-branch scan saves the JavaScript overlay base,
-then verify a subsequent PR restores it and runs in overlay mode. Compare extraction,
-finalization and query durations separately. An initial cold PR scan cannot prove
-incremental performance. Monitor Actions cache capacity as well: eviction and CodeQL
-version changes can cause new misses. To roll back, restore the previous property value
-(or clear it if previously unset); default setup then resumes its previous scope.
-No application data migration is involved, and existing CodeQL caches are disposable.
+Activate the configuration with the repository-only `github-codeql-config-file` property:
+`remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`.
+Before merge, use a verified unique commit abbreviation instead of `main` (75-character
+property limit). Verify a main scan saves the JavaScript baseline and a later PR restores
+it; clear the property to restore default scope.
 
 ### Static check groups
 
