@@ -265,6 +265,16 @@ function nativeRect(
     : undefined
 }
 
+// Preserve maximal canonical numeric script literals already emitted by the
+// native layout. This detects loss only; it neither infers a script from runs
+// nor changes the original source or the existing scientific-number keeper.
+function canonicalScriptLiterals(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const literal of text.match(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎]+/gu) ?? [])
+    counts.set(literal, (counts.get(literal) ?? 0) + 1)
+  return counts
+}
+
 function normalizeSourceText(text: string): string {
   return text.replace(/\s+/gu, '')
 }
@@ -1295,6 +1305,10 @@ export async function applyCachedPdfTableSources({
     // otherwise valid plan that cannot replace whole original units may fall
     // back by component; invalid provenance still returns before this point.
     const incompleteTables = new Set(boundaryConflicts)
+    const canonicalByTable = new Map<
+      string,
+      { literals: Map<string, number>; replacements: Set<number> }
+    >()
     for (const unit of source.units) {
       const keys = unit.fragments.flatMap((fragment) =>
         fragment.items.map((item) => `${fragment.pageNumber}:${item.index}`)
@@ -1302,8 +1316,32 @@ export async function applyCachedPdfTableSources({
       const claimed = keys.filter((key) => claims.has(key))
       if (!claimed.length) continue
       const tableKeys = new Set(claimed.map((key) => claims.get(key)!.tableKey))
+      if (claimed.length === keys.length && tableKeys.size === 1) {
+        const literals = canonicalScriptLiterals(unit.source)
+        if (literals.size) {
+          const key = [...tableKeys][0]
+          let required = canonicalByTable.get(key)
+          if (!required) {
+            required = { literals: new Map(), replacements: new Set() }
+            canonicalByTable.set(key, required)
+          }
+          for (const [literal, count] of literals)
+            required.literals.set(literal, (required.literals.get(literal) ?? 0) + count)
+          for (const item of claimed) required.replacements.add(claims.get(item)!.replacementIndex)
+        }
+      }
       if (claimed.length !== keys.length || tableKeys.size !== 1)
         for (const key of tableKeys) incompleteTables.add(key)
+    }
+    for (const [key, required] of canonicalByTable) {
+      const represented = new Map<string, number>()
+      for (const index of required.replacements)
+        for (const [literal, count] of canonicalScriptLiterals(replacements[index].source))
+          represented.set(literal, (represented.get(literal) ?? 0) + count)
+      if (
+        [...required.literals].some(([literal, count]) => (represented.get(literal) ?? 0) < count)
+      )
+        incompleteTables.add(key)
     }
     if (incompleteTables.size) {
       let expanded = true

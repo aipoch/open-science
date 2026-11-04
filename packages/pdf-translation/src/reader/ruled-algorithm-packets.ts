@@ -1,3 +1,4 @@
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfLayoutPage, PdfLayoutTextItem, PdfTranslationLayout } from './layout.js'
 
 type Unit = PdfTranslationLayout['units'][number]
@@ -263,4 +264,347 @@ export function nativeRuledAlgorithmOwners(
         result.add(owner.items.join('|'))
   }
   return result
+}
+import type { PDFDocumentProxy, PDFPageProxy, getDocument } from 'pdfjs-dist'
+import {
+  nativeInkPageCurrent,
+  createAuxiliaryNativeAlgorithmCaptionInkReader
+} from './auxiliary-native-ink.js'
+import { nativeAlgorithmCaptionInk, nativeAlgorithmInkRegions } from './native-source-geometry.js'
+import { nativeReferenceFontWitnesses } from './native-reference-evidence.js'
+type AlgorithmContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+type AlgorithmInput = {
+  page: PDFPageProxy
+  content: AlgorithmContent
+  viewport: ReturnType<PDFPageProxy['getViewport']>
+  rawPage: PdfLayoutPage
+  unreliable: Set<number>
+}
+const algorithmCaptions = new WeakMap<
+  PdfLayoutPage,
+  { selected: ReadonlySet<number>; current: () => boolean }
+>()
+const wrappedAlgorithmProse = new WeakMap<
+  PdfLayoutPage,
+  { selected: ReadonlySet<number>; current: () => boolean }
+>()
+
+// A native line beginning Algorithm may continue the preceding ordinary
+// sentence. Close the complete continuation at a separately styled numbered
+// section, leaving every original item and the generic listing scan untouched.
+function wrappedAlgorithmContinuation(
+  input: AlgorithmInput,
+  heading: number
+): Set<number> | undefined {
+  const { content } = input
+  const visible = content.items.flatMap((item, index) =>
+    'str' in item && item.str.trim() ? [{ item, index }] : []
+  )
+  const at = visible.findIndex((entry) => entry.index === heading)
+  const start = visible[at]?.item,
+    previous = visible[at - 1]?.item
+  if (
+    !start ||
+    !previous ||
+    previous.fontName !== start.fontName ||
+    previous.height !== start.height ||
+    !/,\s+(?:and|or)\s*$/u.test(previous.str) ||
+    previous.transform[5] - start.transform[5] <= start.height * 0.5 ||
+    previous.transform[5] - start.transform[5] > start.height * 1.7 ||
+    previous.transform[4] < start.transform[4] ||
+    previous.transform[4] > start.transform[4] + start.height * 4
+  )
+    return
+  const tail = visible.slice(at + 1)
+  const boundary = tail.findIndex(
+    ({ item }) =>
+      /^\d+(?:\.\d+)+(?:\s+\p{L}.*)?$/u.test(item.str) &&
+      item.height > start.height * 1.1 &&
+      item.fontName !== start.fontName
+  )
+  if (boundary < 0) return
+  const body = tail.slice(0, boundary),
+    last = body.at(-1)?.item,
+    next = tail[boundary].item
+  if (
+    !last ||
+    body.length < 3 ||
+    body.length > 256 ||
+    !/[.!?]$/u.test(last.str) ||
+    body.some(({ item }) =>
+      /^(?:Algorithm\s+\d+|Require:|Ensure:|Input:|Output:|\d+[.:]\s|for\b|while\b|if\b|else\b|return\b|end\b)/u.test(
+        item.str
+      )
+    ) ||
+    last.transform[5] - next.transform[5] <= start.height * 1.5 ||
+    last.transform[5] - next.transform[5] > start.height * 4 ||
+    body.some(
+      ({ item }) =>
+        item.transform[5] > start.transform[5] + start.height ||
+        item.transform[5] < next.transform[5] + next.height
+    )
+  )
+    return
+  return new Set(body.map(({ index }) => index))
+}
+
+const algorithmSetSize = Object.getOwnPropertyDescriptor(Set.prototype, 'size')!.get!,
+  algorithmSetHas = Set.prototype.has,
+  algorithmSetValues = Set.prototype.values
+function algorithmWatch(value: unknown): () => boolean {
+  const seen = new Set<object>(),
+    objects: { value: object; keys: (string | symbol)[]; proto: object | null }[] = [],
+    slots: [object, string | symbol, PropertyDescriptor][] = []
+  const visit = (v: unknown): void => {
+    if (!v || typeof v !== 'object' || seen.has(v)) return
+    seen.add(v)
+    if (seen.size > 100000) throw Error('Algorithm native reference budget')
+    const keys = Reflect.ownKeys(v)
+    objects.push({ value: v, keys, proto: Object.getPrototypeOf(v) })
+    for (const k of keys) {
+      const d = Object.getOwnPropertyDescriptor(v, k)
+      if (!d || !('value' in d)) throw Error('Algorithm native accessor')
+      slots.push([v, k, d])
+      visit(d.value)
+    }
+  }
+  visit(value)
+  return () =>
+    objects.every(({ value, keys, proto }) => {
+      const now = Reflect.ownKeys(value)
+      return (
+        Object.getPrototypeOf(value) === proto &&
+        now.length === keys.length &&
+        now.every((k, i) => k === keys[i])
+      )
+    }) &&
+    slots.every(([o, k, d]) => {
+      const n = Object.getOwnPropertyDescriptor(o, k)
+      return (
+        !!n &&
+        ['value', 'get', 'set', 'writable', 'enumerable', 'configurable'].every(
+          (x) => n[x as keyof PropertyDescriptor] === d[x as keyof PropertyDescriptor]
+        )
+      )
+    })
+}
+/** Only this live reader can establish the page-keyed caption exception. No raw
+ * evidence field, JSON snapshot or caller-provided owner ID grants admission. */
+export function createNativeRuledAlgorithmCaptionReader(options: {
+  document: Pick<PDFDocumentProxy, 'getPage' | 'numPages' | 'fingerprints'> &
+    Partial<Pick<PDFDocumentProxy, 'getData' | 'getMetadata'>>
+  sourceIdentity?: Readonly<{ sourceChecksum: string; sourceSizeBytes: number }>
+  nativeDocumentFactory?: typeof getDocument
+  signal: AbortSignal
+}): { observe: (input: AlgorithmInput) => Promise<void> } {
+  const document = options.document,
+    signal = options.signal
+  return {
+    async observe(input: AlgorithmInput): Promise<void> {
+      const { page, content, viewport, rawPage, unreliable } = input
+      const heading = content.items.findIndex(
+        (i) => 'str' in i && /^Algorithm\s+[1-9]\d*\b/u.test(i.str)
+      )
+      if (heading < 0) return
+      const require = content.items.findIndex(
+        (i, n) => n > heading && 'str' in i && i.str === 'Require:'
+      )
+      const wrapped = require < 0 ? wrappedAlgorithmContinuation(input, heading) : undefined
+      if (require < 0 && !wrapped) return
+      if (wrapped && !rawPage.nativeNumberedPacketEvidence?.complete) return
+      const selected =
+        wrapped ??
+        new Set(
+          content.items.flatMap((i, n) =>
+            n >= heading && n < require && 'str' in i && i.str.trim() ? [n] : []
+          )
+        )
+      if (!selected.size || selected.size > 256) return
+      let auxiliary: ReturnType<typeof createAuxiliaryNativeAlgorithmCaptionInkReader> | undefined
+      try {
+        options.signal.throwIfAborted()
+        const watch = algorithmWatch([
+            content,
+            rawPage,
+            viewport,
+            options.sourceIdentity,
+            document.fingerprints
+          ]),
+          viewportValue = [viewport.width, viewport.height, viewport.scale, viewport.rotation],
+          viewportProto = Object.getPrototypeOf(viewport),
+          sourceIdentity = options.sourceIdentity,
+          nativeFactory = options.nativeDocumentFactory,
+          fingerprints = document.fingerprints,
+          pageCount = document.numPages,
+          unreliableProto = Object.getPrototypeOf(unreliable),
+          members = [...algorithmSetValues.call(unreliable)],
+          setMethods = [unreliable.has, unreliable.values],
+          documentGetPage = options.document.getPage,
+          pageApis = [page.getOperatorList, page.getTextContent, page.getViewport],
+          inputRefs = [input.page, input.content, input.viewport, input.rawPage, input.unreliable]
+        const preCurrent = (): boolean => {
+          options.signal.throwIfAborted()
+          return (
+            options.document === document &&
+            options.signal === signal &&
+            options.sourceIdentity === sourceIdentity &&
+            options.nativeDocumentFactory === nativeFactory &&
+            document.fingerprints === fingerprints &&
+            document.numPages === pageCount &&
+            watch() &&
+            Object.getPrototypeOf(viewport) === viewportProto &&
+            [viewport.width, viewport.height, viewport.scale, viewport.rotation].every(
+              (n, i) => n === viewportValue[i]
+            ) &&
+            Object.getPrototypeOf(unreliable) === unreliableProto &&
+            algorithmSetSize.call(unreliable) === members.length &&
+            members.every((n) => algorithmSetHas.call(unreliable, n)) &&
+            unreliable.has === setMethods[0] &&
+            unreliable.values === setMethods[1] &&
+            options.document.getPage === documentGetPage &&
+            page.getOperatorList === pageApis[0] &&
+            page.getTextContent === pageApis[1] &&
+            page.getViewport === pageApis[2] &&
+            [input.page, input.content, input.viewport, input.rawPage, input.unreliable].every(
+              (x, i) => x === inputRefs[i]
+            )
+          )
+        }
+        if (!preCurrent() || [...selected].some((i) => algorithmSetHas.call(unreliable, i))) return
+        const proxy = await documentGetPage.call(options.document, rawPage.page)
+        if (!preCurrent() || proxy !== page) return
+        const ops = await page.getOperatorList()
+        if (!preCurrent()) return
+        if (
+          ops.fnArray.length > 100000 ||
+          ops.fnArray.length !== ops.argsArray.length ||
+          content.items.length > 10000
+        )
+          return
+        let font = '',
+          glyphEntries = 0
+        const fonts: string[] = [],
+          keys = new Set<string>()
+        for (let i = 0; i < ops.fnArray.length; i++) {
+          const a = ops.argsArray[i],
+            op = ops.fnArray[i]
+          if (op === OPS.save || op === OPS.paintFormXObjectBegin) fonts.push(font)
+          else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) font = fonts.pop() ?? ''
+          else if (op === OPS.setFont) font = a?.[0]
+          else if (op === OPS.showText && Array.isArray(a?.[0]))
+            for (const g of a[0]) {
+              if (++glyphEntries > 64000) return
+              if (g && typeof g === 'object' && g.isInFont === true)
+                keys.add(font + '_path_' + g.fontChar)
+            }
+          if (keys.size > 10000) return
+        }
+        const epoch = nativeInkPageCurrent(page, content, viewport, ops, [...keys])
+        if (!epoch || !epoch() || !nativeReferenceFontWitnesses(page, content)) return
+        const current = (): boolean => preCurrent() && epoch()
+        if (
+          content.items.length !== rawPage.items.length ||
+          rawPage.rotation !== 0 ||
+          rawPage.width !== viewport.width ||
+          rawPage.height !== viewport.height
+        )
+          return
+        for (const [i, r] of content.items.entries()) {
+          if (!('str' in r) || !r.str.trim()) continue
+          const b = rawPage.items[i]
+          if (
+            !b ||
+            b.str !== r.str ||
+            b.fontName !== r.fontName ||
+            b.width !== r.width ||
+            b.height !== r.height ||
+            b.hasEOL !== r.hasEOL ||
+            b.transform.some((n, k) => {
+              const [ma, mb, mc, md, mx, my] = viewport.transform,
+                [a, b, c, d, x, y] = r.transform
+              return (
+                n !==
+                [
+                  ma * a + mc * b,
+                  -(mb * a + md * b),
+                  ma * c + mc * d,
+                  -(mb * c + md * d),
+                  ma * x + mc * y + mx,
+                  viewport.height - (mb * x + md * y + my)
+                ][k]
+              )
+            })
+          )
+            return
+        }
+        let ink = wrapped
+          ? await nativeAlgorithmInkRegions(page, content, viewport, rawPage.page, selected)
+          : await nativeAlgorithmCaptionInk(page, content, viewport, rawPage.page, selected, ops)
+        if (!current()) return
+        if (!ink && !wrapped) {
+          auxiliary = createAuxiliaryNativeAlgorithmCaptionInkReader(options)
+          ink = await auxiliary.read({
+            page,
+            content,
+            viewport,
+            pageNumber: rawPage.page,
+            selected,
+            operatorSnapshot: ops
+          })
+          if (!current()) return
+        }
+        await auxiliary?.dispose()
+        auxiliary = undefined
+        if (!current() || !ink || [...selected].some((i) => !ink!.has(i))) return
+        ;(wrapped ? wrappedAlgorithmProse : algorithmCaptions).set(rawPage, { selected, current })
+      } catch {
+        /* Optional native evidence never changes an unproved listing. */
+      } finally {
+        await auxiliary?.dispose()
+      }
+    }
+  }
+}
+/** The final block is already grouped. Only whole caption ownership is read. */
+export function nativeRuledAlgorithmCaptionBlock(
+  page: PdfLayoutPage,
+  items: readonly { index: number; str: string }[]
+): boolean {
+  try {
+    const proof = algorithmCaptions.get(page)
+    return (
+      !!proof &&
+      proof.current() &&
+      items.length > 0 &&
+      new Set(items.map((i) => i.index)).size === items.length &&
+      items.every((i) => proof.selected.has(i.index) && page.items[i.index]?.str === i.str)
+    )
+  } catch {
+    return false
+  }
+}
+
+/** This exception only removes the generic listing reason from a whole block.
+ * Caption authority and independent code/math reasons remain separate. */
+export function nativeWrappedAlgorithmProseBlock(
+  page: PdfLayoutPage,
+  items: readonly { index: number; str: string }[]
+): boolean {
+  try {
+    const proof = wrappedAlgorithmProse.get(page)
+    return (
+      !!proof &&
+      proof.current() &&
+      items.length > 0 &&
+      new Set(items.map((i) => i.index)).size === items.length &&
+      items.every((i) => proof.selected.has(i.index) && page.items[i.index]?.str === i.str) &&
+      /[.!?]$/u.test(items.at(-1)!.str) &&
+      (items
+        .map((i) => i.str)
+        .join(' ')
+        .match(/\p{L}{2,}/gu)?.length ?? 0) >= 8
+    )
+  } catch {
+    return false
+  }
 }
