@@ -5503,6 +5503,20 @@ it('retains an omitted-metadata PNG when a remaining nested table part still ref
   }
 })
 
+it('keeps the registered PNG when an exclusive crop write collides', async () => {
+  const f = await metadataThumbnailWithdrawalFixture()
+  try {
+    await expect(
+      f.api.writeCropPng(f.figure.thumbnail, Buffer.from('conflicting crop'), { flag: 'wx' })
+    ).rejects.toMatchObject({ code: 'EEXIST' })
+    expect(f.fs.readFileSync(f.file)).toEqual(f.bytes)
+    f.api.withdrawFigureMetadataPng(f.figure, new Set([f.figure]), () => true)
+    expect(f.fs.existsSync(f.file)).toBe(false)
+  } finally {
+    f.close()
+  }
+})
+
 it('refuses metadata publication when the originally written PNG bytes are stale', async () => {
   const f = await metadataThumbnailWithdrawalFixture()
   try {

@@ -465,8 +465,8 @@ try {
       directoryIdentity: [directoryStat.dev, directoryStat.ino]
     })
   }
-  async function writeCropPng(relativePath, png) {
-    await writeFile(join(output, relativePath), png)
+  async function writeCropPng(relativePath, png, options) {
+    await writeFile(join(output, relativePath), png, options)
     const id = /^thumbnails\/([A-Za-z0-9_-]+)\.png$/u.exec(relativePath)?.[1]
     if (id) rememberFigureMetadataPng(id, png)
   }
@@ -4692,8 +4692,8 @@ try {
                 })
               if (image) {
                 assert(figure.thumbnail === `thumbnails/${figure.id}.png`)
-                await writeFile(
-                  join(output, figure.thumbnail),
+                await writeCropPng(
+                  figure.thumbnail,
                   image.png,
                   deferredFigureCrops.has(figure.id) ? { flag: 'wx' } : undefined
                 )
@@ -4718,7 +4718,7 @@ try {
                 const deferred = deferredFigureCrops.get(item.id)
                 if (deferred) {
                   const png = await renderPdfCrop(page, deferred.rect, pageGeometry.renderRotation)
-                  await writeFile(join(output, item.thumbnail), png, { flag: 'wx' })
+                  await writeCropPng(item.thumbnail, png, { flag: 'wx' })
                   deferredFigureCrops.delete(item.id)
                 }
                 item.caption = captionValue(recovered)
@@ -4922,7 +4922,7 @@ try {
             assert(entry.current(), 'Deferred figure input changed')
             const destination = join(output, entry.figure.thumbnail),
               bytes = Buffer.from(png)
-            await writeFile(destination, png, { flag: 'wx' })
+            await writeCropPng(entry.figure.thumbnail, png, { flag: 'wx' })
             assert(
               png.equals(bytes) && readFileSync(destination).equals(bytes),
               'Deferred figure PNG changed'
