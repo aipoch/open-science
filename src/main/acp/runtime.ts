@@ -551,6 +551,10 @@ class AcpRuntime {
     return this.connectionResources.connection
   }
 
+  get cleanupConfirmed(): boolean {
+    return this.connectionResources.cleanupConfirmed
+  }
+
   private get reconnectBarrier(): Promise<void> | undefined {
     return this.connectionTransitions.barrier
   }
@@ -1321,7 +1325,13 @@ class AcpRuntime {
     _options: AcpRuntimeActivityOptions,
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
-    return this.generationActivity.withActivity(() => work(this))
+    return this.generationActivity.withActivity(async () => {
+      try {
+        return await work(this)
+      } finally {
+        this.requestIdleRelease()
+      }
+    })
   }
 
   // Coordinator admission precedes Runtime prompt startup. Protect that gap from idle release

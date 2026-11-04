@@ -1,8 +1,85 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import { AcpConnectionResourceOwner } from './connection-resource-owner'
+import type { ClientConnection } from '@agentclientprotocol/sdk'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+
+const terminateProcessTree = vi.hoisted(() => vi.fn(async () => ({ reaped: true })))
+vi.mock('../process-tree', () => ({ terminateProcessTree }))
 
 describe('AcpConnectionTransitionOwner', () => {
+  it('keeps failed retirement retryable without recursively retrying activity during cleanup', async () => {
+    const failure = new Error('disconnect failed')
+    const onRetired = vi.fn()
+    const disconnect = vi.fn(async (): Promise<void> => {
+      owner.activityChanged()
+      throw failure
+    })
+    const owner = new AcpConnectionTransitionOwner({
+      blockers: () => ({ reconnect: false, retirement: false }),
+      connectionGeneration: () => 1,
+      cleanupConfirmed: () => true,
+      disconnect,
+      onRetired,
+      publishIdle: vi.fn(),
+      recoverFailedDeferredDisconnect: vi.fn(),
+      reportFailure: vi.fn()
+    })
+    await owner.requestRetirement()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(onRetired).not.toHaveBeenCalled()
+    disconnect.mockResolvedValue(undefined)
+    owner.activityChanged()
+    await vi.waitFor(() => expect(onRetired).toHaveBeenCalledOnce())
+    expect(disconnect).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([false, true])(
+    'retries retirement until actual resource cleanup is confirmed; joining planned disconnect=%s',
+    async (planned) => {
+      const resources = new AcpConnectionResourceOwner()
+      await resources.connect(async (attempt) => {
+        attempt.attach({
+          process: {} as ChildProcessWithoutNullStreams,
+          connection: { close: vi.fn() } as unknown as ClientConnection,
+          framework: 'claude-code',
+          bridgeLease: undefined
+        })
+        return attempt.publish({ close: false, delete: false, resume: false, steering: false })
+      })
+      const gate = Promise.withResolvers<void>()
+      const disconnect = vi.fn(async () => {
+        await gate.promise
+        await resources.teardown(resources.supersede())
+      })
+      const onRetired = vi.fn()
+      const owner = new AcpConnectionTransitionOwner({
+        blockers: () => ({ reconnect: false, retirement: false }),
+        connectionGeneration: () => resources.epoch,
+        disconnect,
+        cleanupConfirmed: () => resources.cleanupConfirmed,
+        onRetired,
+        publishIdle: vi.fn(),
+        recoverFailedDeferredDisconnect: vi.fn(),
+        reportFailure: vi.fn()
+      })
+      terminateProcessTree.mockResolvedValueOnce({ reaped: false })
+      const reconnect = planned ? owner.requestProviderReconnect() : undefined
+      const first = owner.requestRetirement()
+      const concurrent = owner.requestRetirement()
+      gate.resolve()
+      await Promise.all([reconnect, first, concurrent])
+      expect(onRetired).not.toHaveBeenCalled()
+      expect(disconnect).toHaveBeenCalledOnce()
+      await owner.requestRetirement()
+      expect(disconnect).toHaveBeenCalledTimes(2)
+      expect(onRetired).toHaveBeenCalledOnce()
+      await owner.requestRetirement()
+      expect(onRetired).toHaveBeenCalledOnce()
+    }
+  )
+
   it.each([false, true])(
     'coalesces reconnects with an in-flight idle release; failure=%s',
     async (fail) => {
@@ -17,6 +94,7 @@ describe('AcpConnectionTransitionOwner', () => {
       const owner = new AcpConnectionTransitionOwner({
         blockers: () => ({ reconnect: false, retirement: false }),
         connectionGeneration: () => 1,
+        cleanupConfirmed: () => true,
         disconnect,
         onRetired: vi.fn(),
         publishIdle,
@@ -63,6 +141,7 @@ describe('AcpConnectionTransitionOwner', () => {
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: false, retirement: operationActive }),
       connectionGeneration: () => 1,
+      cleanupConfirmed: () => true,
       disconnect,
       onRetired: vi.fn(),
       publishIdle: vi.fn(),
@@ -94,6 +173,7 @@ describe('AcpConnectionTransitionOwner', () => {
       const owner = new AcpConnectionTransitionOwner({
         blockers: () => ({ reconnect: blocked, retirement: blocked }),
         connectionGeneration: () => 1,
+        cleanupConfirmed: () => true,
         disconnect: async () => {
           await teardown
           if (fail) throw new Error('teardown failed')
@@ -128,6 +208,7 @@ describe('AcpConnectionTransitionOwner', () => {
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: reconnectBlocked, retirement: reconnectBlocked }),
       connectionGeneration: () => 1,
+      cleanupConfirmed: () => true,
       disconnect,
       onRetired: vi.fn(),
       publishIdle,
@@ -158,6 +239,7 @@ describe('AcpConnectionTransitionOwner', () => {
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: blocked, retirement: blocked }),
       connectionGeneration: () => 1,
+      cleanupConfirmed: () => true,
       disconnect,
       onRetired,
       publishIdle,
@@ -192,6 +274,7 @@ describe('AcpConnectionTransitionOwner', () => {
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: blocked, retirement: blocked }),
       connectionGeneration: () => 1,
+      cleanupConfirmed: () => true,
       disconnect,
       onRetired: vi.fn(),
       publishIdle: vi.fn(),
@@ -222,6 +305,7 @@ describe('AcpConnectionTransitionOwner', () => {
     const owner = new AcpConnectionTransitionOwner({
       blockers: () => ({ reconnect: blocked, retirement: blocked }),
       connectionGeneration: () => connectionGeneration,
+      cleanupConfirmed: () => true,
       disconnect: vi.fn(async () => {
         connectionGeneration += 1
         throw disconnectFailure
