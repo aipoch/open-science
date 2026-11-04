@@ -74,10 +74,12 @@ export const withApprovedSpecialistBinding = (
   return {
     ...(adapter.canHandle ? { canHandle: (context) => adapter.canHandle!(context) } : {}),
     ...(adapter.canCapture ? { canCapture: (context) => adapter.canCapture!(context) } : {}),
-    stopOldPrompt: (context) => adapter.stopOldPrompt(context),
+    stopOldPrompt: (context, generation) => adapter.stopOldPrompt(context, generation),
     waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
     cleanupCancelledHandoff: (context) =>
       adapter.cleanupCancelledHandoff?.(context) ?? Promise.resolve(),
+    releaseSupersededHandoff: (context, generation) =>
+      adapter.releaseSupersededHandoff?.(context, generation),
     reconfigure: async (handoff, context, isCurrentAttempt) => {
       await validateApprovedBinding(handoff, context)
       if (isCurrentAttempt && !isCurrentAttempt()) {
