@@ -61,7 +61,14 @@ test('persists project destination consent, retries explicitly, and revokes afte
     const prompt = `Verify network destination approval port ${address.port}.`
     await submitPromptViaUi(page, prompt)
     const card = page.getByTestId('permission-card')
-    await expect(card).toContainText('Sensitive destination', { timeout: 40_000 })
+    await expect(card).toContainText(
+      'This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.',
+      { timeout: 40_000 }
+    )
+    const details = card.getByRole('button', { name: 'Details', exact: true })
+    await expect(details).toHaveAttribute('aria-expanded', 'false')
+    await details.click()
+    await expect(card).toContainText('Sensitive destination')
     await expect(card).toContainText('127.0.0.1')
     await expect(card.getByTestId('allow-primary')).toHaveText('Allow for this project')
     expect(requests).toBe(0)
@@ -106,9 +113,11 @@ test('persists project destination consent, retries explicitly, and revokes afte
     ).toHaveCount(0)
     await settingsPage.getByRole('button', { name: 'Close settings' }).click()
     await submitPromptViaUi(page, prompt)
-    await expect(page.getByTestId('permission-card')).toContainText('Sensitive destination', {
-      timeout: 40_000
-    })
+    const deniedCard = page.getByTestId('permission-card')
+    await expect(deniedCard).toContainText(
+      'This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.',
+      { timeout: 40_000 }
+    )
     expect(requests).toBe(2)
     await page.getByTestId('deny-button').click()
     await expect(page.getByText(/Destination was not approved/)).toBeVisible({ timeout: 30_000 })
