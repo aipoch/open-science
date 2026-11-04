@@ -237,6 +237,44 @@ it('keeps dry-run compilation on the same producer without signing or publishing
   expect(job.steps.find((s) => s.name === 'Record verified artifacts').run).toContain('--dry-run')
 })
 
+it('verifies fresh published bytes on every native target without a producer fallback', async () => {
+  const workflow = load(
+    await readFile('.github/workflows/native-components-download-check.yml', 'utf8')
+  ) as {
+    on: Record<string, unknown>
+    permissions: Record<string, string>
+    jobs: {
+      verify: {
+        strategy: { matrix: { include: Array<{ target: string; runner: string }> } }
+        steps: Array<Step & { uses?: string; with?: Record<string, unknown> }>
+      }
+    }
+  }
+  expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+  const job = workflow.jobs.verify
+  expect(job.strategy.matrix.include.map(({ target }) => target).sort()).toEqual(
+    [...spec.targets].sort()
+  )
+  expect(job.steps.find(({ uses }) => uses?.startsWith('actions/setup-node@'))?.with).toEqual({
+    'node-version': spec.node,
+    'package-manager-cache': false
+  })
+  const install = job.steps.find(({ name }) => name === 'Install verification dependencies only')!
+  const download = job.steps.find(({ name }) => name === 'Verify fresh CDN downloads')!
+  const test = job.steps.find(({ name }) => name === 'Test downloaded native interfaces')!
+  expect(install.run).toContain('--ignore-scripts')
+  expect(download.run).toContain('test ! -d node_modules/.cache/native-components')
+  expect(download.run).toContain('process.env.EXPECTED_TARGET')
+  expect(download.run).toContain('node scripts/native-components.mjs')
+  expect(job.steps.indexOf(install)).toBeLessThan(job.steps.indexOf(download))
+  expect(job.steps.indexOf(download)).toBeLessThan(job.steps.indexOf(test))
+  expect(test.run).toContain('packages/process-tree-native/test/*.cjs')
+  expect(job.steps.map(({ run }) => run ?? '').join('\n')).not.toMatch(
+    /produce-native-components|build:native-source|node-gyp|\bpublish\b/
+  )
+})
+
 it('verifies both packaged copies and rejects a byte changed by a later signing pass', async () => {
   const { directory, catalog } = await fixture()
   catalog['linux-x64'].source = await sourceFingerprint()
