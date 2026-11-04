@@ -1,3 +1,4 @@
+import type { LocalModelSnapshot } from '../../shared/local-models'
 import { PdfAnnotationAgent } from '../pdf-annotations/agent-tools'
 import { netFetchStandard } from '../network-fetch'
 import { realpath } from 'node:fs/promises'
@@ -29,7 +30,7 @@ import {
   OCR_RUNTIME_REVISIONS,
   PDF_TRANSLATION_MODEL_REVISIONS
 } from '../local-models/catalog'
-import { RESEARCH_NARRATION_MODELS } from '../research-video/model-catalog'
+import { RESEARCH_NARRATION_MODELS } from '@aipoch/research-film'
 import { createLocalModelApi } from '../local-models/owner'
 import { createLocalOcrModelOwner } from '../local-models/ocr-owner'
 import type { OcrLanguage } from '../../shared/local-models'
@@ -38,8 +39,8 @@ import { ProviderTextGenerationService } from '../literature/pdf-translation/tex
 import type { SettingsService } from '../settings/service'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { VIDEO_EXPORT_REVISIONS } from '../research-video/ffmpeg-catalog'
-import { createVideoExportTools } from '../research-video/ffmpeg'
+import { VIDEO_EXPORT_REVISIONS } from '@aipoch/research-film'
+import { createVideoExportTools } from '@aipoch/research-film'
 import { createLocalModelOwner } from '../local-models/owner'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { PdfAnnotationService } from '../pdf-annotations/service'
@@ -97,7 +98,7 @@ export async function composeDocumentReading({
   localModelOwner: ReturnType<typeof createLocalModelOwner>
   researchNarrationModels: ReturnType<typeof createLocalModelOwner>
   pdfTranslationOwner: PdfTranslationOwner
-  videoExportTools: ReturnType<typeof createVideoExportTools>
+  videoExportTools: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
   pdfAnnotationAgent: PdfAnnotationAgent

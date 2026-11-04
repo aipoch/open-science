@@ -8,19 +8,14 @@ import {
   type ResearchVideoPresentationRequest,
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
-import type { ResearchVideoStep } from '../../shared/research-video-progress'
+import type { ResearchVideoStep } from '@aipoch/research-film/contracts'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { LocalModelOwner } from '../local-models/owner'
-import type { createResearchVideoGenerator } from './generation'
-import {
-  researchVideoSessionSource,
-  parseResearchVideoScreenplay,
-  researchVideoGenerationBlock
-} from './session-source'
-import {
-  writeResearchVideoAnimations,
-  type ResearchVideoAnimationInput
-} from './animation-authoring'
+import type { createResearchVideoGenerator } from '@aipoch/research-film'
+import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
+import { generateResearchFilm, type ResearchFilmAuthor } from '@aipoch/research-film'
+import { createLogger } from '@aipoch/diagnostics/node'
+const log = createLogger('research-video')
 import { stageResearchVideoSessionImages } from './session-images'
 
 const receiptSchema = z
@@ -47,17 +42,8 @@ export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
   models: LocalModelOwner
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
-  writeScreenplay(
-    source: ReturnType<typeof researchVideoSessionSource>,
-    signal: AbortSignal,
-    correction?: { draft: string; error: string }
-  ): Promise<string>
-  writeAnimation?: (
-    source: ReturnType<typeof researchVideoSessionSource>,
-    input: ResearchVideoAnimationInput,
-    signal: AbortSignal,
-    correction?: { draft: string; error: string }
-  ) => Promise<string>
+  writeScreenplay: ResearchFilmAuthor['writeScreenplay']
+  writeAnimation?: ResearchFilmAuthor['writeAnimation']
   generate: ReturnType<typeof createResearchVideoGenerator>
   engineDirectory: string
 }): ResearchVideoPresentationOwner {
@@ -183,52 +169,20 @@ export function createResearchVideoPresentationOwner(options: {
         flag: 'wx',
         mode: 0o600
       })
-      report({ phase: 'writing' })
-      const output = await options.writeScreenplay(source, signal)
-      signal.throwIfAborted()
-      let spec: ReturnType<typeof parseResearchVideoScreenplay>
-      try {
-        spec = parseResearchVideoScreenplay(output, source.messages.length)
-      } catch (error) {
-        signal.throwIfAborted()
-        // One bounded correction keeps malformed model output out of the generation worker.
-        const corrected = await options.writeScreenplay(source, signal, {
-          draft: output,
-          error: error instanceof Error ? error.message : String(error)
-        })
-        signal.throwIfAborted()
-        spec = parseResearchVideoScreenplay(corrected, source.messages.length)
-      }
-      measure('animations')
-      await writeResearchVideoAnimations(
-        spec,
-        job,
-        options.writeAnimation
-          ? (input, signal, correction) =>
-              options.writeAnimation!(source, input, signal, correction)
-          : undefined,
-        signal
-      )
-      const specPath = join(job, 'video.json')
-      await writeFile(specPath, JSON.stringify(spec), { flag: 'wx', mode: 0o600 })
       const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
       if (!model) throw new Error('Install the research narration model before generating.')
-      measure('loading')
-      const generated = await options.generate(
-        {
-          specPath,
-          modelDirectory: dirname(model.path),
-          engineDirectory: options.engineDirectory,
-          outputDirectory: join(job, 'output'),
-          provenance: {
-            ...source.provenance,
-            kind: 'session-source-snapshot',
-            modelRevision: lease.revision
-          }
-        },
+      const generated = await generateResearchFilm({
+        source,
+        directory: job,
+        author: options,
         signal,
-        report
-      )
+        onAnimations: () => measure('animations'),
+        generate: options.generate,
+        modelDirectory: dirname(model.path),
+        modelRevision: lease.revision,
+        engineDirectory: options.engineDirectory,
+        onProgress: report
+      })
       signal.throwIfAborted()
       // Recheck existence after the long job; deleting a session must not publish an orphan result.
       if (!(await options.loadSession(request.projectId, request.sessionId)))
@@ -236,7 +190,7 @@ export function createResearchVideoPresentationOwner(options: {
       report({ phase: 'publishing' })
       await writeDurableJsonFile(
         join(base, 'latest.json'),
-        JSON.stringify({ id, title: spec.title, duration: generated.duration })
+        JSON.stringify({ id, title: generated.title, duration: generated.duration })
       )
       completed = true
       states.delete(key)
@@ -249,7 +203,7 @@ export function createResearchVideoPresentationOwner(options: {
       })
     } finally {
       measure('finished')
-      console.info('[research-video] generation timing', {
+      log.info('generation timing', {
         outcome: completed ? 'completed' : signal.aborted ? 'cancelled' : 'failed',
         totalMs: Math.round(performance.now() - started),
         stagesMs: Object.fromEntries(

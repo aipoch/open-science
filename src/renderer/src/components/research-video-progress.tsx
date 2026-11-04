@@ -4,7 +4,7 @@ import { ProgressBar } from './ui/progress-bar'
 import type {
   ResearchVideoProgress,
   ResearchVideoProgressRequest
-} from '../../../shared/research-video-progress'
+} from '@aipoch/research-film/contracts'
 
 export function ResearchVideoProgressLine({
   progress

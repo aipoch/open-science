@@ -1,5 +1,5 @@
-import type { ResearchVideoProgress } from '../shared/research-video-progress'
-import type { VideoEncoderPaths } from './research-video/ffmpeg'
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
+import type { VideoEncoderPaths } from '@aipoch/research-film'
 import type { CliLauncherEnv } from './cli-launcher-contract'
 import type { z } from 'zod'
 import type {

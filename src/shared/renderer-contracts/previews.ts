@@ -6,7 +6,7 @@ import type {
   ResearchVideoProgress,
   ResearchVideoProgressRequest,
   ResearchVideoExportResult
-} from '../research-video-progress'
+} from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { PdfAnnotationsChangedEvent } from '../pdf-annotations'

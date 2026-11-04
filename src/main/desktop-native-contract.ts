@@ -1,4 +1,4 @@
-import { researchVideoProgressSchema } from '../shared/research-video-progress'
+import { researchVideoProgressSchema } from '@aipoch/research-film/contracts'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { isAbsolute } from 'node:path'
 import { z } from 'zod'

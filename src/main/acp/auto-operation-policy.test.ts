@@ -166,6 +166,19 @@ describe('Auto operation policy through the public permission entry', () => {
     expect(resolveAutomaticPermission(request(identity, input), context)).toBeUndefined()
   })
 
+  it.each(['research_video_guide', 'generate_research_video'])(
+    'keeps %s subject to the existing permission policy',
+    (tool) => {
+      const configured = {
+        ...context,
+        mcpServerNames: [...(context.mcpServerNames ?? []), 'open-science-artifacts']
+      }
+      const params = request(`open-science-artifacts/${tool}`, { specPath: 'video.json' })
+      expect(resolveAutoOperation(params, configured)).toEqual({ kind: 'legacy' })
+      expect(resolveAutomaticPermission(params, configured)).toBeUndefined()
+    }
+  )
+
   it('does not reinterpret invalid managed operations as conservative thinking', () => {
     for (const identity of [...cases.map(([name]) => name), 'third-party/unknown']) {
       const params = request(identity, { action: 'unknown' })

@@ -7993,6 +7993,8 @@
     "This session is unavailable.": "Diese Sitzung ist nicht verfügbar.",
     "Add conversation content before generating.": "Fügen Sie vor der Erstellung Inhalte zur Konversation hinzu.",
     "Wait for a completed response before generating.": "Warten Sie vor der Erstellung auf eine vollständige Antwort.",
-    "Wait for the current response to finish before generating.": "Warten Sie vor der Erstellung, bis die aktuelle Antwort abgeschlossen ist."
+    "Wait for the current response to finish before generating.": "Warten Sie vor der Erstellung, bis die aktuelle Antwort abgeschlossen ist.",
+    "Research film jobs": "Forschungsfilm-Aufträge",
+    "Research films": "Forschungsfilme"
   }
 }

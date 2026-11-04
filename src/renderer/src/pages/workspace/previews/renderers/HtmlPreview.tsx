@@ -1,4 +1,4 @@
-import type { ResearchVideoProgress } from '../../../../../../shared/research-video-progress'
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 import {
   localModelDownloadProgress,
   type LocalModelSnapshot

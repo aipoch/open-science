@@ -1,3 +1,4 @@
+import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoPresentationRequest,
   ResearchVideoPresentationStatus
@@ -7,8 +8,8 @@ import type {
   ResearchVideoProgress,
   ResearchVideoProgressRequest,
   ResearchVideoExportResult
-} from '../shared/research-video-progress'
-import type { createVideoExportTools } from './research-video/ffmpeg'
+} from '@aipoch/research-film/contracts'
+import type { createVideoExportTools } from '@aipoch/research-film'
 import type { createResearchVideoService } from './research-video/service'
 import { createResearchVideoExportControl } from './research-video/export-control'
 import type { UseCaseCatalog } from './session-package/use-case-catalog'
@@ -240,7 +241,7 @@ type DataContentApplicationCommandDependencies = Readonly<{
   managedFileVersions: ManagedFileVersionCommandOwner
   researchVideo?: ReturnType<typeof createResearchVideoService>
   researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
-  videoExportTools?: ReturnType<typeof createVideoExportTools>
+  videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
   preview: PreviewApplicationCommandOwner
   projectFiles: ProjectFilesHandlers

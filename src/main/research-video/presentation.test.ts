@@ -1,3 +1,4 @@
+import { parseResearchVideoScreenplay } from '@aipoch/research-film'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -5,11 +6,10 @@ import { join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { LocalModelOwner } from '../local-models/owner'
 import { createResearchVideoPresentationOwner } from './presentation'
-import {
-  parseResearchVideoScreenplay,
-  researchVideoSessionSource,
-  researchVideoGenerationBlock
-} from './session-source'
+import { researchVideoSessionSource, researchVideoGenerationBlock } from './session-source'
+
+const { timing } = vi.hoisted(() => ({ timing: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ info: timing }) }))
 
 const roots: string[] = []
 afterEach(async () => {
@@ -108,7 +108,7 @@ async function fixture(): Promise<{
 it('generates a persistent presentation directly from read-only history without changing it', async () => {
   const f = await fixture(),
     owner = createResearchVideoPresentationOwner(f.options)
-  const timing = vi.spyOn(console, 'info').mockImplementation(() => {})
+  timing.mockClear()
   const before = JSON.stringify(session)
   expect(await owner.status(request)).toEqual({})
   expect(f.options.writeScreenplay).not.toHaveBeenCalled()
@@ -129,7 +129,7 @@ it('generates a persistent presentation directly from read-only history without 
   expect(f.options.generate).toHaveBeenCalledTimes(1)
   expect(JSON.stringify(session)).toBe(before)
   await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
-  expect(timing).toHaveBeenCalledWith('[research-video] generation timing', {
+  expect(timing).toHaveBeenCalledWith('generation timing', {
     outcome: 'completed',
     totalMs: expect.any(Number),
     stagesMs: {
@@ -141,7 +141,6 @@ it('generates a persistent presentation directly from read-only history without 
     }
   })
   expect(JSON.stringify(timing.mock.calls)).not.toContain('Rainfall')
-  timing.mockRestore()
   await owner.close()
   const reopened = createResearchVideoPresentationOwner(f.options)
   expect((await reopened.status(request)).result).toEqual(result)

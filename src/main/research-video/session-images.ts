@@ -3,7 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { basename, extname, join, relative, sep } from 'node:path'
 import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import { SAFE_SEGMENT_PATTERN } from '../artifacts/storage-layout'
-import { readVideoSourceFile } from './build-player'
+import { readVideoSourceFile } from '@aipoch/research-film'
 import type { ResearchVideoSessionSource } from './session-source'
 
 /** Snapshot only images owned by messages on this branch, retaining each referenced Version. */

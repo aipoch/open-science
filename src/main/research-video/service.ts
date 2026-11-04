@@ -2,7 +2,7 @@ import type {
   ResearchVideoProgress,
   ResearchVideoStep,
   ResearchVideoProgressRequest
-} from '../../shared/research-video-progress'
+} from '@aipoch/research-film/contracts'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { randomUUID } from 'node:crypto'
 import { mkdir, lstat, readFile, rm } from 'node:fs/promises'
@@ -17,9 +17,12 @@ import type {
   ArtifactWriteSourceScope
 } from '../../shared/artifact-provenance'
 import { resolveAllowedImportFilePath } from '../artifacts/storage-access'
-import { generateResearchVideoSchema } from './tool-contract'
-import { freezeResearchVideoSource } from './freeze-source'
-import type { createResearchVideoGenerator, ResearchVideoGenerationResult } from './generation'
+import { generateResearchVideoSchema } from '@aipoch/research-film'
+import { freezeResearchVideoSource } from '@aipoch/research-film'
+import type {
+  createResearchVideoGenerator,
+  ResearchVideoGenerationResult
+} from '@aipoch/research-film'
 
 type Input = z.infer<z.ZodObject<typeof generateResearchVideoSchema>>
 export type ResearchVideoScope = ArtifactRpcCapabilityBinding & {

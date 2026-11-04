@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { sanitizeExportFilename } from './conversation-export'
-import type { ResearchVideoProgress } from './research-video-progress'
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
 export const researchVideoPresentationRequestSchema = z
   .object({

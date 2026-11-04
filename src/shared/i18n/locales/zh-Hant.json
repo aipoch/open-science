@@ -7827,6 +7827,8 @@
     "This session is unavailable.": "此對話無法使用。",
     "Add conversation content before generating.": "請先新增對話內容。",
     "Wait for a completed response before generating.": "請等待一則完整回覆後再產生。",
-    "Wait for the current response to finish before generating.": "請等待目前回覆完成後再產生。"
+    "Wait for the current response to finish before generating.": "請等待目前回覆完成後再產生。",
+    "Research film jobs": "研究短片任務",
+    "Research films": "研究短片"
   }
 }

@@ -7827,6 +7827,8 @@
     "This session is unavailable.": "このセッションは利用できません。",
     "Add conversation content before generating.": "生成する前に会話の内容を追加してください。",
     "Wait for a completed response before generating.": "完全な応答が得られてから生成してください。",
-    "Wait for the current response to finish before generating.": "現在の応答が完了してから生成してください。"
+    "Wait for the current response to finish before generating.": "現在の応答が完了してから生成してください。",
+    "Research film jobs": "リサーチ動画のジョブ",
+    "Research films": "リサーチ動画"
   }
 }

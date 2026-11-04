@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { generateResearchVideoSchema } from '../research-video/tool-contract'
+import { generateResearchVideoSchema } from '@aipoch/research-film'
 import type { createResearchVideoService, ResearchVideoScope } from '../research-video/service'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'

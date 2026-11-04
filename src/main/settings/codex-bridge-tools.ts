@@ -1,4 +1,4 @@
-import { generateResearchVideoSchema } from '../research-video/tool-contract'
+import { generateResearchVideoSchema } from '@aipoch/research-film'
 import {
   listPdfAnnotationsInput,
   locatePdfAnnotationInput,

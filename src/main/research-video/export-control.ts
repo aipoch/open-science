@@ -3,8 +3,9 @@ import { researchVideoFilename } from '../../shared/research-video-presentation'
 import type {
   ResearchVideoProgress,
   ResearchVideoExportResult
-} from '../../shared/research-video-progress'
-import type { createVideoExportTools } from './ffmpeg'
+} from '@aipoch/research-film/contracts'
+import type { LocalModelSnapshot } from '../../shared/local-models'
+import type { createVideoExportTools } from '@aipoch/research-film'
 import { mkdtemp, writeFile, rm, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +20,7 @@ import { publishUserFile } from '../user-file-publisher'
 const requestSchema = z.object({ resourceId: z.string().min(1).max(200) })
 export function createResearchVideoExportControl(
   previews: Pick<ManagedPreviewOwnerRegistry, 'readRange'>,
-  tools?: ReturnType<typeof createVideoExportTools>
+  tools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
 ): {
   export(
     lease: ApplicationCallerLease,

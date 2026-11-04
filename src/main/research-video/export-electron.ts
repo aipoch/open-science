@@ -1,9 +1,9 @@
-import type { ResearchVideoProgress, ResearchVideoStep } from '../../shared/research-video-progress'
-import type { VideoEncoderPaths } from './ffmpeg'
+import type { ResearchVideoProgress, ResearchVideoStep } from '@aipoch/research-film/contracts'
+import type { VideoEncoderPaths } from '@aipoch/research-film/export'
 import { BrowserWindow, session } from 'electron'
 import { readFile, writeFile, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { exportResearchVideoMp4 } from './export-mp4'
+import { exportResearchVideoMp4 } from '@aipoch/research-film/export'
 
 const activeProgress = new Map<string, ResearchVideoProgress>()
 export const readResearchVideoExportProgress = (request: {

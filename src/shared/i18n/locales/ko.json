@@ -7825,6 +7825,8 @@
     "This session is unavailable.": "이 세션을 사용할 수 없습니다.",
     "Add conversation content before generating.": "생성하기 전에 대화 내용을 추가하세요.",
     "Wait for a completed response before generating.": "완성된 응답을 받은 후 생성하세요.",
-    "Wait for the current response to finish before generating.": "현재 응답이 완료된 후 생성하세요."
+    "Wait for the current response to finish before generating.": "현재 응답이 완료된 후 생성하세요.",
+    "Research film jobs": "연구 영상 작업",
+    "Research films": "연구 영상"
   }
 }

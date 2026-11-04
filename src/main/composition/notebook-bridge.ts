@@ -1,15 +1,9 @@
-import { readFile } from 'node:fs/promises'
 import { createResearchVideoPresentationOwner } from '../research-video/presentation'
-import {
-  RESEARCH_VIDEO_SCREENPLAY_PROMPT,
-  RESEARCH_VIDEO_ANIMATION_PROMPT
-} from '../research-video/session-source'
+import { createResearchFilmAuthor, researchFilmResources } from '@aipoch/research-film'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { createResearchVideoService } from '../research-video/service'
-import { createResearchVideoGenerator } from '../research-video/generation'
-import createResearchVideoWorker from '../research-video/generation-worker?nodeWorker'
+import { createResearchVideoGenerator } from '@aipoch/research-film'
 import type { LocalModelOwner } from '../local-models/owner'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { runtimeMetadata } from '../runtime-metadata'
@@ -224,23 +218,8 @@ export async function composeNotebookBridge({
       : undefined
   }
   bindNotebookApprovals(notebookService, () => runtimeRef.current)
-  const researchVideoEngineDirectory = join(
-    runtimeMetadata().applicationPath.replace(/([/\\])app\.asar([/\\]|$)/, '$1app.asar.unpacked$2'),
-    'resources',
-    'research-video',
-    'stage'
-  )
-  const generateResearchVideo = createResearchVideoGenerator(createResearchVideoWorker, tmpdir())
-  let generatingResearchVideo = false
-  const researchVideoGenerate: typeof generateResearchVideo = async (...args) => {
-    if (generatingResearchVideo) throw new Error('Another research explanation is being generated.')
-    generatingResearchVideo = true
-    try {
-      return await generateResearchVideo(...args)
-    } finally {
-      generatingResearchVideo = false
-    }
-  }
+  const researchVideoEngineDirectory = researchFilmResources().stageDirectory
+  const researchVideoGenerate = createResearchVideoGenerator({ temporaryRoot: tmpdir() })
   const researchVideo = createResearchVideoService({
     models: researchNarrationModels,
     dataRoot: resolveDataRoot,
@@ -299,22 +278,7 @@ export async function composeNotebookBridge({
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
     generate: researchVideoGenerate,
     engineDirectory: researchVideoEngineDirectory,
-    writeScreenplay: (source, signal, correction) =>
-      inferResearchVideo(
-        source,
-        RESEARCH_VIDEO_SCREENPLAY_PROMPT,
-        correction ? { source, correction } : source,
-        signal
-      ),
-    writeAnimation: async (source, input, signal, correction) => {
-      const kit = await readFile(join(researchVideoEngineDirectory, '../authoring/KIT.md'), 'utf8')
-      return inferResearchVideo(
-        source,
-        RESEARCH_VIDEO_ANIMATION_PROMPT + '\n\n' + kit,
-        { source, ...input, correction },
-        signal
-      )
-    }
+    ...createResearchFilmAuthor(inferResearchVideo)
   })
   await modules.add({ researchVideoPresentation }, ({ researchVideoPresentation: owner }) => ({
     name: 'research-video-presentation',

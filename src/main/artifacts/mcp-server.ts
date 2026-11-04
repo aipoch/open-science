@@ -1,4 +1,4 @@
-import { generateResearchVideoSchema, RESEARCH_VIDEO_GUIDE } from '../research-video/tool-contract'
+import { generateResearchVideoSchema, RESEARCH_VIDEO_GUIDE } from '@aipoch/research-film'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
