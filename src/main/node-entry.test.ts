@@ -8,6 +8,7 @@ const f = vi.hoisted(() => ({
   stopIntent: vi.fn(),
   lifetimeAdmission: undefined as (() => void) | undefined,
   startupFailure: false,
+  storageFailure: undefined as Error | undefined,
   healthyCredentials: false,
   inventoryFailure: undefined as Error | undefined,
   credentialAccess: undefined as
@@ -198,10 +199,13 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
 // Exercise the entry's real composition and database readiness gate without opening services.
 vi.mock('./storage-root', () => ({ resolveDataRoot: () => '/isolated-fixture/data' }))
 vi.mock('./storage/initialize-location', () => ({
-  prepareApplicationLocations: async () => ({
-    settingsStore: {},
-    repository: { getSettings: async () => ({ localePreference: 'system' }) }
-  })
+  prepareApplicationLocations: async () => {
+    if (f.storageFailure) throw f.storageFailure
+    return {
+      settingsStore: {},
+      repository: { getSettings: async () => ({ localePreference: 'system' }) }
+    }
+  }
 }))
 vi.mock('./projects/prisma-client', () => ({
   getProjectDbClient: f.verifyDatabase,
@@ -253,6 +257,7 @@ beforeEach(async () => {
   f.healthyCredentials = false
   f.inventoryFailure = undefined
   f.startupFailure = false
+  f.storageFailure = undefined
   f.startDesktop.mockResolvedValue(
     f.desktop as unknown as Awaited<ReturnType<typeof f.startDesktop>>
   )
@@ -288,6 +293,39 @@ it('logs the startup failure before cleanup can terminate the process', async ()
     f.closeNetwork.mock.invocationCallOrder[0]
   )
 })
+
+it.each([1, 75])(
+  'preserves storage failure exit code %i through successful cleanup',
+  async (code) => {
+    f.healthyCredentials = true
+    const { RuntimeOwnershipConflict } = await import('./runtime-ownership')
+    f.storageFailure =
+      code === 75
+        ? new RuntimeOwnershipConflict('isolated storage ownership conflict')
+        : new Error('isolated storage initialization failure')
+    vi.stubEnv('OPEN_SCIENCE_STARTUP_ATTEMPT', 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b')
+    const send = vi.spyOn(process, 'send').mockImplementation(() => true)
+    vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
+    await import('./node-entry')
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+    const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
+    expect(messages).toContainEqual(expect.objectContaining({ kind: 'failed', stage: 'storage' }))
+    expect(f.verifyDatabase).not.toHaveBeenCalled()
+    const failureIndex = f.log.error.mock.calls.findIndex(
+      ([message]) => message === 'startup failed'
+    )
+    expect(failureIndex).toBeGreaterThanOrEqual(0)
+    expect(f.log.error.mock.invocationCallOrder[failureIndex]).toBeLessThan(
+      f.closeNetwork.mock.invocationCallOrder[0]
+    )
+    expect(f.closeOwnership).toHaveBeenCalledOnce()
+    // A real process cannot reach the outer catch after its first exit.
+    expect.soft(process.exit).toHaveBeenNthCalledWith(1, code)
+    expect
+      .soft(f.writeExit)
+      .toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ outcome: 'failed' }))
+  }
+)
 
 it('reports credential recovery during startup as a failure after draining resources', async () => {
   process.exitCode = undefined
@@ -350,7 +388,6 @@ it('sends transient inventory details to the desktop without persisting them', a
 it.each(['directory', 'installation'] as const)(
   'replaces clean evidence when %s ownership release fails',
   async (kind) => {
-    f.startupFailure = true
     process.exitCode = undefined
     const failure = new Error('injected release failure')
     if (kind === 'directory') f.closeOwnership.mockRejectedValueOnce(failure)
@@ -358,10 +395,10 @@ it.each(['directory', 'installation'] as const)(
       f.releaseInstallation.mockImplementationOnce(() => {
         throw failure
       })
-    const send = vi.spyOn(process, 'send').mockImplementation(() => true)
-    vi.spyOn(process.channel!, 'unref').mockImplementation(() => {})
+    const send = await startHealthyRuntime()
     try {
-      await import('./node-entry')
+      await waitForReady(send)
+      f.lifecycle.mock.calls[0][0].quit()
       await vi.waitFor(() => expect(process.exitCode).toBe(1))
       expect(
         f.writeExit.mock.calls.map(
@@ -374,7 +411,6 @@ it.each(['directory', 'installation'] as const)(
       )
       if (kind === 'directory') expect(f.releaseInstallation).not.toHaveBeenCalled()
     } finally {
-      f.startupFailure = false
       send.mockRestore()
     }
   }

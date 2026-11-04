@@ -171,6 +171,7 @@ async function main(): Promise<void> {
   let stopRequested = false
   let profilePath: string | undefined
   let credentialFailure: CredentialIdentityError | undefined
+  let startupExitCode: number | undefined
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
     finishStartup = resolve
@@ -245,7 +246,7 @@ async function main(): Promise<void> {
         await writeRuntimeExit(configRoot, {
           generation,
           pid: process.pid,
-          outcome: failed || credentialFailure ? 'failed' : 'clean'
+          outcome: failed || credentialFailure || startupExitCode ? 'failed' : 'clean'
         })
       } catch {
         failed = true
@@ -271,8 +272,9 @@ async function main(): Promise<void> {
           }
         }
       }
-      process.exitCode = failed || credentialFailure ? 1 : 0
-      if (restartRequested && !desktopWillRestart && !failed) {
+      const exitCode = failed || credentialFailure ? 1 : (startupExitCode ?? 0)
+      process.exitCode = exitCode
+      if (restartRequested && !desktopWillRestart && exitCode === 0) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
@@ -286,7 +288,7 @@ async function main(): Promise<void> {
         child.unref()
       }
       clearTimeout(deadline)
-      process.exit(failed || credentialFailure ? 1 : 0)
+      process.exit(exitCode)
     }))
   }
   const lifetime = await createLocalServiceLifetime({
@@ -800,6 +802,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const cancelled = stopRequested
     if (credentialFailure || !cancelled) {
+      startupExitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1
       startupReporter.failed(credentialFailure ?? error)
       // stop() exits the process; record the failure before it flushes logs and releases resources.
       reportStartupError(credentialFailure ?? error)
