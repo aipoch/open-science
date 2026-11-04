@@ -157,20 +157,34 @@ test(
     const executable = join(root, 'node.exe')
     copyFileSync(process.execPath, executable)
     // 259 is STILL_ACTIVE: the exit code alone cannot prove that the process is still running.
-    const child = spawn(executable, ['-e', 'process.exit(259)'], {
-      stdio: 'ignore',
-      windowsHide: true
-    })
+    const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+    const child = native.spawnWindowsOwnedProcess(
+      jobName,
+      executable,
+      ['-e', 'process.exit(259)'],
+      Object.entries(process.env).map(([key, value]) => `${key}=${value}`),
+      process.cwd(),
+      false
+    )
     try {
-      const [code] = await once(child, 'exit')
+      const deadline = Date.now() + 5000
+      let code
+      while (
+        (code = native.windowsOwnedProcessExitCode(child.handle)) === null &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 20))
       assert.equal(code, 259)
-      // Node keeps this child's process handle open, so the kernel object remains openable.
+      // The native external retains the process handle across every query, including async work.
       assert.equal(native.getWindowsProcessCreationTime(child.pid), null)
       assert.equal(native.getWindowsProcessCommandLine(child.pid), null)
       assert.equal(native.getWindowsParentProcessId(child.pid), null)
       assert.deepEqual(native.listWindowsInstallationOccupants([executable]), [])
       assert.deepEqual(await native.listWindowsInstallationOccupantsAsync([executable]), [])
+      assert.equal(native.windowsOwnedProcessExitCode(child.handle), 259)
     } finally {
+      native.reapWindowsOwnedJob(jobName)
+      for (const fd of child.fds) closeSync(fd)
       await new Promise((resolve) => setTimeout(resolve, 200))
       rmSync(root, { recursive: true, force: true })
     }
