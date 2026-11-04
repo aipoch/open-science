@@ -3,7 +3,8 @@ import { addressesApproved } from '../../shared/network-destination-grants'
 import { isDeepStrictEqual } from 'node:util'
 import {
   reviewPrivateDestination,
-  reviewNetworkDestination
+  reviewNetworkDestination,
+  validPrivateDestination
 } from '@aipoch/notebook-network-sandbox'
 import {
   type PrivateDestinationRequest,
@@ -42,7 +43,7 @@ const syncManagedDestinationRules = (
   )
   const currentRules = settings.trustedPrivateDestinations
   const manualRules = (currentRules ?? []).filter((rule) => rule.managedGrantId === undefined)
-  const managedRules = activeGlobalGrants.map(managedRuleForGrant)
+  const managedRules = activeGlobalGrants.map(managedRuleForGrant).filter(validPrivateDestination)
   const rules = [...manualRules, ...managedRules].sort(
     (left, right) =>
       left.hostname.localeCompare(right.hostname) ||
@@ -67,7 +68,16 @@ class NotebookNetworkSettingsOwner {
 
   constructor(private readonly options: NotebookNetworkSettingsOwnerOptions) {}
 
-  async get(): Promise<NotebookNetworkSettings> {
+  get(): Promise<NotebookNetworkSettings> {
+    const operation = this.writeTail.then(() => this.readAndReconcile())
+    this.writeTail = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
+  }
+
+  private async readAndReconcile(): Promise<NotebookNetworkSettings> {
     const current = normalizeNotebookNetworkSettings(
       (await this.options.repository.getSettings()).notebookNetwork
     )
@@ -239,7 +249,7 @@ class NotebookNetworkSettingsOwner {
     assertCurrent?: () => Promise<void>,
     finalize?: () => Promise<void>
   ): Promise<NotebookNetworkSettings> {
-    const previous = await this.get()
+    const previous = await this.readAndReconcile()
     const next = await update(previous)
     await assertCurrent?.()
     const stored = await this.options.repository.setNotebookNetwork(next)

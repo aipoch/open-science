@@ -429,6 +429,27 @@ describe('exact destination grants', () => {
     ])
   })
 
+  it('keeps public global grants in destination grants without projecting a private rule', async () => {
+    lookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }])
+    const state = createHarness()
+    const grant = {
+      id: 'public-global-grant',
+      hostname: 'public.example',
+      port: 443,
+      approvedAddresses: ['93.184.216.34'],
+      projectId: 'project',
+      sessionId: 'session',
+      recordId: 'record',
+      scope: 'global' as const,
+      createdAt: 1
+    }
+
+    await state.owner.allowDestination(grant)
+
+    expect(state.read().destinationGrants).toEqual([grant])
+    expect(state.read().trustedPrivateDestinations).toBeUndefined()
+  })
+
   it('revokes only the managed rule and preserves a manual rule for the same target', async () => {
     const manual = {
       hostname: 'private.example',
@@ -536,6 +557,49 @@ describe('exact destination grants', () => {
       ]
     })
     expect(state.repository.setNotebookNetwork).toHaveBeenCalled()
+  })
+
+  it('serializes restart repair ahead of a concurrent global revocation', async () => {
+    const global = {
+      id: 'global-grant',
+      hostname: 'private.example',
+      port: 443,
+      approvedAddresses: ['10.32.0.7'],
+      projectId: 'project',
+      sessionId: 'session',
+      recordId: 'record',
+      scope: 'global' as const,
+      createdAt: 1
+    }
+    const state = createHarness({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      destinationGrants: [global]
+    })
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const persist = state.repository.setNotebookNetwork.getMockImplementation()!
+    state.repository.setNotebookNetwork.mockImplementationOnce(async (next) => {
+      const stored = await persist(next)
+      await gate
+      return stored
+    })
+
+    const repaired = state.owner.get()
+    await vi.waitFor(() => expect(state.repository.setNotebookNetwork).toHaveBeenCalledOnce())
+    const revoked = state.owner.set({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      revokeNetworkGrantIds: [global.id]
+    })
+    release()
+    await repaired
+    await revoked
+
+    expect(state.read().destinationGrants).toEqual([
+      expect.objectContaining({ id: global.id, revokedAt: expect.any(Number) })
+    ])
+    expect(state.read().trustedPrivateDestinations).toEqual([])
   })
 
   it('rejects renderer attempts to add a backend-managed rule', async () => {

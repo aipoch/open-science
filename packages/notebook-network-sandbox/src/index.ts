@@ -567,5 +567,6 @@ export type {
 export {
   reviewPrivateDestination,
   reviewNetworkDestination,
-  networkDestinationRisks
+  networkDestinationRisks,
+  validPrivateDestination
 } from '../runtime/src/gateway/address-policy.js'

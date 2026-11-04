@@ -17,10 +17,12 @@ Revoked global grants remain as tombstones.
 ## Trusted backend lifecycle
 
 `NotebookNetworkSettingsOwner` is the only writer that derives or removes managed rules. A global
-approval persists the destination grant and its derived rule together, with identical hostname,
-port, and approved addresses. A project approval persists only the grant. Reconciliation on load
-repairs a missing derived rule from an active global grant and removes rules whose grant has a
-revocation tombstone, so restart cannot restore revoked access.
+approval persists the destination grant and, when the target satisfies the existing trusted-private
+service validator, its derived rule together, with identical hostname, port, and approved
+addresses. Public global approvals remain destination grants because Trusted private services only
+accept private service targets. A project approval persists only the grant. Reconciliation on load
+repairs a missing derived rule from an active eligible global grant and removes rules whose grant
+has a revocation tombstone, so restart cannot restore revoked access.
 
 Revoking a global grant removes only the rule carrying that grant's `managedGrantId`. Removing a
 managed rule revokes the same global grant. Manual rules for the same target are never removed.
