@@ -174,7 +174,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
   const settings = await openSettingsPage(page, 'General')
-  await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
+  await expect(settings.getByRole('region', { name: 'App version' })).toBeVisible()
   const appVersion = settings.getByRole('region', { name: 'App version' })
   await appVersion.getByRole('button').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
