@@ -279,13 +279,29 @@ const GeneralPanel = (): React.JSX.Element => {
               }}
             >
               <SelectTrigger className="min-w-0 flex-1" aria-label={t('Log file')}>
-                <SelectValue />
+                <SelectValue>
+                  {selectedStartup
+                    ? `${new Date(selectedStartup.startedAt).toLocaleString()} · ${selectedStartup.name}`
+                    : 'main.log'}
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="w-[var(--radix-select-trigger-width)] min-w-64 max-w-[calc(100vw-2rem)]">
                 <SelectItem value="main">{'main.log'}</SelectItem>
                 {startupFiles.map((file) => (
-                  <SelectItem key={file.name} value={file.name}>
-                    {new Date(file.startedAt).toLocaleString()} · {file.name}
+                  <SelectItem
+                    key={file.name}
+                    value={file.name}
+                    textValue={`${new Date(file.startedAt).toLocaleString()} ${file.name}`}
+                    className="py-2 [&>span:first-child]:min-w-0"
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[13px] font-medium">
+                        {new Date(file.startedAt).toLocaleString()}
+                      </span>{' '}
+                      <span className="truncate font-mono text-[11px] text-muted-foreground">
+                        {file.name}
+                      </span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -312,7 +328,7 @@ const GeneralPanel = (): React.JSX.Element => {
         </SettingsRow>
 
         <pre
-          className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+          className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
           aria-label={t('Log file path')}
           tabIndex={0}
         >
@@ -416,7 +432,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cli?.installed ? (
           <pre
-            className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+            className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
             aria-label={t('Command line tool path')}
           >
             {cli.target}

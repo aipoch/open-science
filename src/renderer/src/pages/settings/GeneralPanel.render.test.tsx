@@ -700,6 +700,8 @@ it('selects a historical startup log for both Open and Reveal and retains it on 
   await act(async () =>
     fireEvent.click(within(document.body).getByRole('option', { name: /desktop-backend-42/ }))
   )
+  expect(select.textContent).toContain(name)
+  expect(select.textContent).toContain(new Date(1700000000000).toLocaleString())
   expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe(
     `/config/logs/${name}`
   )
