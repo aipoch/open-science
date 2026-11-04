@@ -121,7 +121,8 @@ describe('PR Gate workflow', () => {
           event = 'pull_request',
           dir = trustedDir,
           trustedBase = base,
-          bundles = ['unit']
+          bundles = ['unit'],
+          comparisonBase = base
         ): string[] => {
           const output = join(cwd, 'output')
           writeFileSync(output, '')
@@ -132,7 +133,7 @@ describe('PR Gate workflow', () => {
               ...process.env,
               EVENT_NAME: event,
               EXECUTION_PLAN: JSON.stringify({ bundles }),
-              BASE_SHA: base,
+              BASE_SHA: comparisonBase,
               HEAD_SHA: head,
               TRUSTED_BASE_SHA: trustedBase,
               TRUSTED_CLASSIFIER_DIR: dir,
@@ -193,10 +194,34 @@ describe('PR Gate workflow', () => {
         git('commit', '--quiet', '-m', 'delete package source')
         expect(run(head)).toEqual(both)
         expect(run(git('rev-parse', 'HEAD'), 'merge_group')).toEqual(both)
+        // Main advancing after a docs branch fork must not become package evidence for that PR.
+        git('reset', '--hard', base)
+        write('docs/ROADMAP.md')
+        git('add', 'docs/ROADMAP.md')
+        git('commit', '--quiet', '-m', 'docs only')
+        const docsHead = git('rev-parse', 'HEAD')
+        git('checkout', '-b', 'advanced-main', base)
+        write('.github/workflows/package-smoke.yml')
+        write('packages/compute/src/main-only.ts')
+        git('add', '.github', 'packages')
+        git('commit', '--quiet', '-m', 'advance main')
+        const targetTip = git('rev-parse', 'HEAD')
+        git('merge', '--no-ff', docsHead, '-m', 'synthetic docs merge')
+        // PR preflight passes the fork point as base and the target tip as trusted-base.
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(host)
+        expect(
+          run(git('rev-parse', 'HEAD'), 'merge_group', trustedDir, targetTip, ['docs'], targetTip)
+        ).toEqual(host)
+        // Changes introduced by the merge itself must still select package coverage.
+        write('packages/compute/src/merge-only.ts')
+        git('add', 'packages')
+        git('commit', '--amend', '--no-edit')
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(both)
       } finally {
         rmSync(cwd, { recursive: true, force: true })
       }
-    }
+    },
+    30000
   )
 
   it('requires selective execution for every affected-test step', () => {
