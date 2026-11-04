@@ -1033,13 +1033,6 @@ const ConversationPanel = ({
         blocksSend: true
       },
       {
-        id: 'model',
-        message: agentControls.modelUnavailable
-          ? 'No active model provider is configured. Configure one in settings.'
-          : undefined,
-        blocksSend: true
-      },
-      {
         id: 'reconfigure',
         code: 'specialist-reconfigure-failed',
         message:

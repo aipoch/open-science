@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
@@ -28,7 +28,50 @@ const adapter = (): CompletionGateRuntime => ({
   reportHandoffFailure: vi.fn(async () => undefined)
 })
 
+const createProcess = (): {
+  hold: Mock<() => Mock>
+  restoreSession: Mock<() => Promise<void>>
+} => ({
+  hold: vi.fn(() => vi.fn()),
+  restoreSession: vi.fn(async (): Promise<void> => undefined)
+})
+let process = createProcess()
+beforeEach(() => {
+  process = createProcess()
+})
+
 describe('approved Handoff outcome boundary', () => {
+  it('releases failed handoffs and rejects a retry cancelled during provider restore', async () => {
+    let finishRestore!: () => void
+    process.restoreSession.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRestore = resolve
+        })
+    )
+    const inner = { ...adapter(), canHandle: () => false }
+    const wrapped = withApprovedHandoffOutcome(
+      {
+        captureHandoffProcess: () => process,
+        captureApprovedHandoffFailure: () => undefined
+      },
+      inner
+    )
+    await wrapped.stopOldPrompt(context())
+    await wrapped.reportHandoffFailure(new Error('configuration failed'), handoff, context())
+    expect(process.hold.mock.results[0].value).toHaveBeenCalledOnce()
+    const registry = new CompletionGateRuntimeRegistry()
+    registry.register(wrapped)
+    const retry = registry.continueAsApproved(handoff, context())
+    const rejected = expect(retry).rejects.toThrow('superseded')
+    await registry.cleanupCancelledHandoff(context())
+    finishRestore()
+    await rejected
+    expect(process.hold.mock.results[1].value).toHaveBeenCalledOnce()
+    expect(inner.continueAsApproved).not.toHaveBeenCalled()
+    expect(wrapped.canHandle!(context())).toBe(false)
+  })
+
   it('forwards cancellation cleanup through production wrappers without publishing failure', async () => {
     const cleanupCancelledHandoff = vi.fn(async () => undefined)
     const report = vi.fn(async () => undefined)
@@ -36,7 +79,10 @@ describe('approved Handoff outcome boundary', () => {
     const registry = new CompletionGateRuntimeRegistry()
     registry.register(
       withApprovedHandoffOutcome(
-        { captureApprovedHandoffFailure: () => report },
+        {
+          captureHandoffProcess: () => process,
+          captureApprovedHandoffFailure: () => report
+        },
         withApprovedSpecialistBinding(inner, {
           getSpecialistBinding: () => undefined,
           getSpecialist: () => undefined
@@ -48,6 +94,7 @@ describe('approved Handoff outcome boundary', () => {
     expect(cleanupCancelledHandoff).toHaveBeenCalledWith(context())
     expect(report).not.toHaveBeenCalled()
     expect(inner.reportHandoffFailure).not.toHaveBeenCalled()
+    expect(process.hold.mock.results[0].value).toHaveBeenCalledOnce()
   })
   it('captures admitted ownership before stopping and reports even if adapter cleanup fails', async () => {
     const order: string[] = []
@@ -63,6 +110,7 @@ describe('approved Handoff outcome boundary', () => {
     }
     const wrapped = withApprovedHandoffOutcome(
       {
+        captureHandoffProcess: () => process,
         captureApprovedHandoffFailure: () => {
           order.push('capture')
           return report
@@ -79,6 +127,7 @@ describe('approved Handoff outcome boundary', () => {
       wrapped.reportHandoffFailure(new Error('duplicate'), handoff, context())
     ).rejects.toThrow('cleanup failed')
     expect(report).toHaveBeenCalledOnce()
+    expect(process.hold.mock.results[0].value).toHaveBeenCalledOnce()
   })
 
   it('does not reuse a cancelled or superseded invocation capture for the next handoff', async () => {
@@ -86,7 +135,7 @@ describe('approved Handoff outcome boundary', () => {
     const current = vi.fn(async () => undefined)
     const capture = vi.fn().mockReturnValueOnce(previous).mockReturnValueOnce(current)
     const wrapped = withApprovedHandoffOutcome(
-      { captureApprovedHandoffFailure: capture },
+      { captureHandoffProcess: () => process, captureApprovedHandoffFailure: capture },
       adapter()
     )
     // Cancellation may leave the first lifecycle before it calls either continuation or failure.
@@ -95,12 +144,15 @@ describe('approved Handoff outcome boundary', () => {
     await wrapped.reportHandoffFailure(new Error('late previous failure'), handoff, context())
     expect(previous).not.toHaveBeenCalled()
     expect(current).not.toHaveBeenCalled()
+    expect(process.hold.mock.results[0].value).toHaveBeenCalledOnce()
+    expect(process.hold.mock.results[1].value).not.toHaveBeenCalled()
     await wrapped.reportHandoffFailure(
       new Error('current failure'),
       handoff,
       context('session-1', 2)
     )
     expect(current).toHaveBeenCalledOnce()
+    expect(process.hold.mock.results[1].value).toHaveBeenCalledOnce()
   })
 
   it('clears successful continuation ownership without clearing a newer invocation', async () => {
@@ -114,6 +166,7 @@ describe('approved Handoff outcome boundary', () => {
       })
     const wrapped = withApprovedHandoffOutcome(
       {
+        captureHandoffProcess: () => process,
         captureApprovedHandoffFailure: vi
           .fn()
           .mockReturnValueOnce(previous)
@@ -134,6 +187,7 @@ describe('approved Handoff outcome boundary', () => {
     )
     expect(previous).not.toHaveBeenCalled()
     expect(current).toHaveBeenCalledOnce()
+    expect(process.hold.mock.results[1].value).toHaveBeenCalledOnce()
   })
 
   it('retains a failed continuation capture but never invents an unadmitted failure', async () => {
@@ -144,6 +198,7 @@ describe('approved Handoff outcome boundary', () => {
     }
     const wrapped = withApprovedHandoffOutcome(
       {
+        captureHandoffProcess: () => process,
         captureApprovedHandoffFailure: (id) => (id === 'session-1' ? report : undefined)
       },
       inner
@@ -167,6 +222,7 @@ describe('approved Handoff outcome boundary', () => {
     const reports = Array.from({ length: 101 }, () => vi.fn(async () => undefined))
     const wrapped = withApprovedHandoffOutcome(
       {
+        captureHandoffProcess: () => process,
         captureApprovedHandoffFailure: (id) => reports[Number(id)]
       },
       adapter()

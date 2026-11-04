@@ -371,7 +371,10 @@ it.runIf(process.platform === 'linux')(
       )
       await expect(inspectInstallationAvailability(f.location)).rejects.toMatchObject({
         reason: 'installation-busy',
-        recovery: { detail: 'other-runtime' }
+        recovery: {
+          detail: 'foreign-process',
+          blockingProcesses: [{ pid: child.pid }]
+        }
       })
       expect(child.exitCode).toBeNull()
       expect(inspectInstallationUpdate(f.location)).toBeUndefined()
@@ -429,19 +432,40 @@ it('rejects a concurrent phase change during asynchronous recovery verification'
   await expect(checking).rejects.toThrow('changed during verification')
   expect(inspectInstallationUpdate(f.location)?.phase).toBe('stopping')
 })
-it('checks unregistered processes again at the final installer boundary', async () => {
-  const f = fixture()
-  const targetManifest = await captureInstallationManifestAsync(f.location.installationRoot, '2')
-  const record = beginInstallationUpdate({ ...f.options, targetManifest })
-  advanceInstallationUpdate(f.location, record.operationId, 'stopping')
-  advanceInstallationUpdate(f.location, record.operationId, 'stopped', true)
-  await expect(
-    advanceInstallationUpdateAsync(f.location, record.operationId, 'handoff', undefined, {
-      inspectProcesses: async () => [process.pid + 100000]
+it.each([true, false])(
+  'preserves stopped recovery when foreign processes block handoff (clean: %s)',
+  async (stoppedClean) => {
+    const f = fixture()
+    const targetManifest = await captureInstallationManifestAsync(f.location.installationRoot, '2')
+    const record = beginInstallationUpdate({ ...f.options, targetManifest })
+    advanceInstallationUpdate(f.location, record.operationId, 'stopping')
+    advanceInstallationUpdate(f.location, record.operationId, 'stopped', stoppedClean, true)
+    await expect(
+      advanceInstallationUpdateAsync(f.location, record.operationId, 'handoff', undefined, {
+        inspectProcesses: async () => [process.pid + 100000]
+      })
+    ).rejects.toMatchObject({
+      reason: 'installation-busy',
+      recovery: {
+        operationId: record.operationId,
+        phase: 'stopped',
+        runtime: stoppedClean ? 'stopped-clean' : 'stopped-unclean',
+        installation: 'unchanged',
+        canCancel: true,
+        canRecover: true,
+        canRetryInstall: false,
+        detail: 'foreign-process',
+        blockingProcesses: [{ pid: process.pid + 100000 }]
+      }
     })
-  ).rejects.toThrow('Another process')
-  expect(inspectInstallationUpdate(f.location)?.phase).toBe('stopped')
-})
+    expect(inspectInstallationUpdate(f.location)?.phase).toBe('stopped')
+    await expect(
+      advanceInstallationUpdateAsync(f.location, record.operationId, 'handoff', undefined, {
+        inspectProcesses: async () => []
+      })
+    ).resolves.toMatchObject({ phase: 'handoff', stoppedClean })
+  }
+)
 
 it('admits authenticated current-runtime helpers before the gate but blocks handoff until they exit', async () => {
   const f = fixture(),

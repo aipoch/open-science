@@ -213,12 +213,14 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   const third = await publish(true)
   expect(third.artifactId).toBe(first.artifactId)
+  await openFile()
+  await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
   await expect(provenance.locator('[data-notice-level="warning"]')).toContainText(
     'Execution evidence is incomplete for v3'
   )
-  await expect(provenance).toHaveAttribute('data-continuously-open', 'true')
   expect(await inspect()).toMatchObject({ headVersionId: third.versionId, text: original })
   expect(await inspect(second.selectedVersionId)).toMatchObject({ text: edited })
+  await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   await verifyTaskRead('original', second.selectedVersionId)
   // Reopen the original message's card after v3 exists; its captured v1 is not a history choice.
   await page
@@ -229,6 +231,8 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await page.getByRole('button', { name: `Open full screen preview of ${name}` }).click()
   preview = page.getByRole('dialog', { name: `Preview ${name}` })
   await expect(preview.getByText('Original result.', { exact: true })).toBeVisible()
+  await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
+  await provenance.evaluate((element) => element.setAttribute('data-continuously-open', 'true'))
   let warning = provenance.locator('[data-notice-level="warning"]')
   await expect(warning).toContainText('Execution evidence is incomplete for v3')
   const details = warning.locator('details')

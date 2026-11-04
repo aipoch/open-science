@@ -9,6 +9,34 @@ import {
 import { renderSkillDoc } from './skill-doc'
 
 describe('builtin registry host integration', () => {
+  it('validates the eQTL query contracts and publishes their descriptions', () => {
+    const list = getDescriptor('human-genetics', 'eqtl_list_datasets')!
+    const associations = getDescriptor('human-genetics', 'eqtl_associations')!
+    expect(() =>
+      validateToolArguments(associations, {
+        dataset_id: 'QTD000021',
+        genome_build: 'GRCh38',
+        gene_id: 'ENSG00000130203'
+      })
+    ).toThrow()
+    expect(() =>
+      validateToolArguments(list, { study_label: 'BLUEPRINT', quant_method: 'ge' })
+    ).not.toThrow()
+    expect(() => validateToolArguments(associations, associations.exampleArgs!)).not.toThrow()
+    expect(() =>
+      validateToolArguments(associations, {
+        ...associations.exampleArgs,
+        max_records: 1001
+      })
+    ).toThrow()
+    for (const genome_build of [undefined, 'GRCh37', 'GRCh39']) {
+      expect(() =>
+        validateToolArguments(associations, { ...associations.exampleArgs, genome_build })
+      ).toThrow()
+    }
+    expect(renderSkillDoc('human-genetics')).toContain(associations.description)
+  })
+
   it('routes scientific APIs through native descriptors and keeps analysis outside the connector surface', () => {
     for (const id of ['research-datasets', 'europepmc', 'chea3', 'biodbnet', 'ctd']) {
       expect(ALL_CONNECTOR_IDS).toContain(id)

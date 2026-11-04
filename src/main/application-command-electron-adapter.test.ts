@@ -49,6 +49,7 @@ const validatedChannels = [
   'literature:related',
   'literature:search',
   'literature:sources',
+  'literature:study-snapshot',
   'literature:supplement-attachment',
   'literature:supplement-attachment-progress',
   'literature:supplements',

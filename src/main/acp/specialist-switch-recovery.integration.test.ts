@@ -512,6 +512,7 @@ it('recovers an approved Specialist handoff through real Claude lazy-session rep
             runtime.createClaudeCodeContinuationRequest(input),
           sendAppContinuation: async (request) => {
             expect(persisted.specialistBindingPending).toBeUndefined()
+            expect(liveRuntime.liveSessionProjectId(sessionId)).toBe('contract-project')
             return runtime.sendAppContinuation(request)
           }
         }),
@@ -548,8 +549,9 @@ it('recovers an approved Specialist handoff through real Claude lazy-session rep
     expect(pendingTransitions).toEqual([true, false])
     expect(await lifecycle.canStartUserPrompt(sessionId)).toBe(true)
     await expect(reconfiguration.assertUserPromptReady(sessionId)).resolves.toBeUndefined()
-    expect(processCount).toBe(2)
-    expect(liveRuntime.liveSessionProjectId(sessionId)).toBe('contract-project')
+    // The completed original turn is released before this test starts the handoff.
+    expect(processCount).toBe(3)
+    await vi.waitFor(() => expect(liveRuntime.getSnapshot().sessionIds).toEqual([]))
     const resumes = wireRequests.filter((request) => request.method === 'session/resume')
     expect(resumes).toHaveLength(1)
     expect(resumes[0].params?.sessionId).not.toBe(sessionId)

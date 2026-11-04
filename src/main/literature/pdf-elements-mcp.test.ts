@@ -61,7 +61,7 @@ it('publishes distinct prose, discovery and evidence boundaries through tools/li
   const descriptions = Object.fromEntries(tools.map((tool) => [tool.name, tool.description]))
   expect(descriptions.read_document).toContain('Read prose passages')
   expect(descriptions.read_document).toContain(
-    'Combine prose and element evidence when both are needed'
+    'For figures, tables, algorithms, exact values, or visual relationships, use list_pdf_elements and read_pdf_element'
   )
   expect(descriptions.list_pdf_elements).toContain('not chapters or arbitrary Structure nodes')
   expect(descriptions.list_pdf_elements).toContain('Captions and previews are for selection')
