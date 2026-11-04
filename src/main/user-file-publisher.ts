@@ -119,25 +119,9 @@ const publishUserFile = async (
         return (options.replace ?? rename)(temporaryPath, destinationPath)
       }, options.wait)
     }
-    try {
-      await durability.syncDirectory(directory)
-    } catch (error) {
-      // A macOS Save panel can authorize the file without granting read access to its parent.
-      // Publication is complete; only this denied directory-open barrier is best-effort.
-      if (
-        !options.userSelectedDestination ||
-        process.platform !== 'darwin' ||
-        !(error instanceof Error) ||
-        !('code' in error) ||
-        (error.code !== 'EPERM' && error.code !== 'EACCES') ||
-        !('syscall' in error) ||
-        error.syscall !== 'open' ||
-        !('path' in error) ||
-        error.path !== directory
-      ) {
-        throw error
-      }
-    }
+    await durability.syncDirectory(directory, {
+      allowPermissionDenied: options.userSelectedDestination
+    })
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined)
   }
