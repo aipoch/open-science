@@ -105,7 +105,11 @@ export function parseResearchVideoScreenplay(
   output: string,
   messageCount: number
 ): ResearchVideoScreenplay {
-  const stripped = output.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1')
+  let stripped = output.trim()
+  const firstNewline = stripped.indexOf('\n')
+  const fence = stripped.slice(0, firstNewline).trimEnd()
+  if (firstNewline >= 0 && (fence === '```' || fence === '```json') && stripped.endsWith('\n```'))
+    stripped = stripped.slice(firstNewline + 1, -4)
   if (Buffer.byteLength(stripped) > 128 * 1024)
     throw new Error('Explanation source exceeds 128 KiB')
   const document = JSON.parse(stripped)

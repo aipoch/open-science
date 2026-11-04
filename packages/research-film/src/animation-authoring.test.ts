@@ -42,6 +42,24 @@ const original = {
   ]
 }
 
+it.each(['```json\n', '```\n', '```json \r\n\t\n'])(
+  'parses the original screenplay inside a %j fence',
+  (opening) => {
+    expect(
+      parseResearchVideoScreenplay(opening + JSON.stringify(original) + '\n```', 1)
+    ).toMatchObject(original)
+  }
+)
+
+it('rejects an unterminated fence with long whitespace and preserves the source size limit', () => {
+  expect(() => parseResearchVideoScreenplay('```\n' + '\n\t'.repeat(50_000) + '{}', 1)).toThrow(
+    SyntaxError
+  )
+  expect(() =>
+    parseResearchVideoScreenplay(JSON.stringify({ text: 'a'.repeat(128 * 1024) }), 1)
+  ).toThrow('Explanation source exceeds 128 KiB')
+})
+
 it('preserves original skill fields and bundles generated shared and scene scripts into the player', async () => {
   const root = await directory()
   const spec = parseResearchVideoScreenplay(JSON.stringify(original), 1)
