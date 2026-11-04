@@ -1725,7 +1725,7 @@ class SideChatRuntimeOwner {
       this.setParentInteractionsPaused(active.parentSessionId, false)
       if (notify) this.emitRuntimeClosed(active, 'closed')
     } catch (error) {
-      active.closing = false
+      // Keep the runtime unavailable for prompts and owned by the existing teardown retry path.
       active.running = false
       active.error = error instanceof Error ? error.message : 'Side chat could not be closed.'
       this.touch(active)
@@ -1799,7 +1799,7 @@ class SideChatRuntimeOwner {
     const failures: unknown[] = persistError ? [persistError] : []
     try {
       const result = await active.runtime.shutdownForQuit()
-      if (result?.reaped === false) throw new Error('Side chat process tree was not reaped.')
+      if (result.reaped !== true) throw new Error('Side chat process tree was not reaped.')
     } catch (error) {
       failures.push(error)
     }
@@ -1831,16 +1831,6 @@ class SideChatRuntimeOwner {
   private async destroyActive(active: ActiveSideChat): Promise<void> {
     await this.flushQueuedPersistence(active)
     await active.persistTail.catch(() => undefined)
-    if (
-      !this.invalidatedParents.has(active.parentSessionId) &&
-      !this.invalidatedProjects.has(active.projectId)
-    ) {
-      await this.options.persistence?.clear({
-        projectId: active.projectId,
-        parentSessionId: active.parentSessionId,
-        sideChatId: active.sideSessionId
-      })
-    }
     active.turnAccepted?.reject(new Error('Side chat closed.'))
     this.releaseRelaySenders(active)
     if (active.turn) {
@@ -1851,8 +1841,19 @@ class SideChatRuntimeOwner {
     await active.runtime
       .deleteSession({ sessionId: active.runtimeSessionId })
       .catch(() => undefined)
-    await active.runtime.shutdownForQuit().catch(() => undefined)
+    const result = await active.runtime.shutdownForQuit()
+    if (result.reaped !== true) throw new Error('Side chat process tree was not reaped.')
     this.unregisterBridgeScopes(active)
+    if (
+      !this.invalidatedParents.has(active.parentSessionId) &&
+      !this.invalidatedProjects.has(active.projectId)
+    ) {
+      await this.options.persistence?.clear({
+        projectId: active.projectId,
+        parentSessionId: active.parentSessionId,
+        sideChatId: active.sideSessionId
+      })
+    }
     await rm(active.jobRoot, { recursive: true, force: true }).catch(() => undefined)
   }
 

@@ -69,6 +69,7 @@ describe('approved Handoff outcome boundary', () => {
       const transitions = new AcpConnectionTransitionOwner({
         blockers: () => activity.blockers(),
         connectionGeneration: () => 1,
+        cleanupConfirmed: () => true,
         disconnect,
         onRetired: () => undefined,
         publishIdle: () => undefined,

@@ -27,7 +27,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import type { PersistedSideChat } from '../../shared/session-persistence'
 import { BackendShutdownCoordinator } from '../lifecycle-shutdown'
 import { SIDE_CHAT_MESSAGE_LIMIT, type SideChatModelSelection } from '../../shared/side-chat'
-import type { AcpCreateSessionResponse } from '../../shared/acp'
+import type { AcpCreateSessionResponse, AcpStateSnapshot } from '../../shared/acp'
 import type { AcpRuntimeOptions } from '../acp/runtime'
 import { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
 import type { AgentModelConfig, ResolvedAgentBackend } from '../agent-framework'
@@ -38,7 +38,8 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import {
   SIDE_CHAT_SYSTEM_PROMPT,
   SideChatRuntimeOwner,
-  prepareSideChatBackend
+  prepareSideChatBackend,
+  type SideChatRuntimePort
 } from './runtime-owner'
 
 const createRelayOwner = (targetState: 'idle' | 'completed' = 'idle'): SideChatRelayOwner =>
@@ -191,7 +192,7 @@ describe('Side chat OpenCode instruction isolation', () => {
               options.callbacks?.onProviderPromptAccepted?.('side-chat-test')
               return { stopReason: 'end_turn' }
             },
-            shutdownForQuit: async () => undefined,
+            shutdownForQuit: async () => ({ reaped: true }),
             deleteSession: async () => ({ sessionIds: [] })
           } as never
         }
@@ -405,7 +406,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -545,8 +548,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         return { stopReason: 'end_turn' as const }
       })
       const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-      const shutdownForQuit = vi.fn(async () => {
+      const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => {
         closeOrder.push('runtime')
+        return { reaped: true }
       })
       const owner = new SideChatRuntimeOwner({
         appVersion: '0.11.0',
@@ -716,7 +720,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -823,7 +829,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -856,7 +864,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     const captureTarget = vi.fn(() => pendingTarget)
     const sendPrompt = vi.fn()
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -1174,7 +1184,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1228,7 +1240,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
         deleteSession: vi.fn(async () => ({ sessionIds: [] })),
         respondToPermission: vi.fn(async () => undefined),
-        shutdownForQuit: vi.fn(async () => undefined)
+        shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+          reaped: true
+        }))
       } as never
     })
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -1374,7 +1388,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1440,7 +1456,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1500,7 +1518,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1569,7 +1589,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1636,7 +1658,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1701,7 +1725,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }) as never
     })
     owner.hydrate([
@@ -1829,7 +1855,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect,
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1940,7 +1968,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -1980,7 +2010,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       return { stopReason: 'cancelled' as const }
     })
     const deleteSession = vi.fn(async () => ({ sessionIds: [] }))
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2111,7 +2143,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           }),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -2154,7 +2188,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     }>()
     const resumeSession = vi.fn(() => resumed.promise)
     const sendPrompt = vi.fn()
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2279,6 +2315,94 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     }
   )
 
+  it.each([
+    { mode: 'degraded', retry: 'close' },
+    { mode: 'rejected', retry: 'close' },
+    { mode: 'degraded', retry: 'shutdown' },
+    { mode: 'rejected', retry: 'shutdown' }
+  ] as const)(
+    'retains durable state and physical ownership after $mode direct close for $retry retry',
+    async ({ mode, retry }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-direct-close-retry-'))
+      const persistence = createPersistence()
+      const onEvent = vi.fn()
+      const state: AcpStateSnapshot = {
+        status: 'closed',
+        cwd: temporaryRoot,
+        sessionIds: [],
+        pendingPermissions: [],
+        permissionProfiles: {},
+        permissionGrants: {},
+        contextUsageBySession: {},
+        promptInFlight: false,
+        promptInFlightSessionIds: [],
+        events: []
+      }
+      const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+        reaped: true
+      }))
+      if (mode === 'rejected')
+        shutdownForQuit.mockRejectedValueOnce(new Error('provider process remains alive'))
+      else shutdownForQuit.mockResolvedValueOnce({ reaped: false })
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => target,
+        resolveTarget: async () => backend(claudeCodeFramework),
+        relay: createRelayOwner(),
+        persistence,
+        onEvent,
+        createRuntime: (options) =>
+          ({
+            createSession: async () => ({
+              sessionId: 'provider-close-retry',
+              frameworkId: 'claude-code'
+            }),
+            resumeSession: async () => ({
+              sessionId: 'provider-close-retry',
+              frameworkId: 'claude-code'
+            }),
+            sendPrompt: async (request) => {
+              options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+              return { stopReason: 'end_turn' }
+            },
+            cancelPrompt: async () => state,
+            deleteSession: async () => state,
+            respondToPermission: async () => state,
+            requestProviderReconnect: async () => undefined,
+            shutdownForQuit
+          }) satisfies SideChatRuntimePort
+      })
+      const started = await owner.start({
+        parentSessionId: 'main-close-retry',
+        projectId: 'project',
+        text: 'Initial turn'
+      })
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId)
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      const close = (): Promise<void> => owner.close({ sideSessionId: started.sideSessionId })
+
+      await expect(close()).rejects.toThrow()
+      expect(persistence.clear).not.toHaveBeenCalled()
+      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+      expect(onEvent.mock.calls.some(([event]) => event.event.kind === 'closed')).toBe(false)
+      await expect(
+        owner.send({ sideSessionId: started.sideSessionId, text: 'Too early' })
+      ).rejects.toThrow('not active')
+      await owner.sweepStaleProfiles()
+      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+      await expect(retry === 'close' ? close() : owner.shutdown()).resolves.toBeUndefined()
+      expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+      if (retry === 'shutdown') {
+        expect(persistence.clear).not.toHaveBeenCalled()
+        await close()
+      }
+      expect(persistence.clear).toHaveBeenCalledOnce()
+      await expect(access(profile)).rejects.toThrow()
+      expect(owner.hasForParent('main-close-retry')).toBe(false)
+    }
+  )
+
   it.each(['session', 'parent'] as const)(
     'retries a failed Side chat suspension through the %s close entry',
     async (entry) => {
@@ -2340,7 +2464,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-shutdown-save-fail-'))
     const persistence = createPersistence()
     let runtimeOptions: AcpRuntimeOptions | undefined
-    const shutdownForQuit = vi.fn(async () => undefined)
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
     const owner = new SideChatRuntimeOwner({
       appVersion: '0.11.0',
       configRoot: temporaryRoot,
@@ -2420,7 +2546,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession,
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }) as never
     })
     const started = await owner.start({
@@ -2439,11 +2567,16 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     failClear.resolve()
 
     await Promise.all([closeFailure, invalidationFailure])
-    expect(deleteSession).not.toHaveBeenCalled()
+    expect(deleteSession).toHaveBeenCalledOnce()
     owner.restoreProject('project-1')
-    expect(owner.list().chats).toContainEqual(
-      expect.objectContaining({ sideSessionId: started.sideSessionId })
-    )
+    await expect(
+      owner.start({
+        parentSessionId: 'main-close-retry',
+        projectId: 'project-1',
+        sideSessionId: started.sideSessionId,
+        text: 'Too early'
+      })
+    ).rejects.toThrow('already open')
 
     await owner.close({ sideSessionId: started.sideSessionId })
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'provider-close-retry' })
@@ -2467,7 +2600,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         createRuntime: (options) => {
           runtimeNumber += 1
           const sideSessionId = `side-session-${runtimeNumber}`
-          const shutdownForQuit = vi.fn(async () => undefined)
+          const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
           shutdowns.push(shutdownForQuit)
           return {
             createSession: vi.fn(async () => ({
@@ -2564,7 +2699,9 @@ describe('SideChatRuntimeOwner lifecycle', () => {
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
           requestProviderReconnect,
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -2579,8 +2716,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
   it('does not reuse a Side chat ID until asynchronous teardown finishes', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-close-drain-'))
-    let finishShutdown!: () => void
-    const shutdown = new Promise<void>((resolve) => {
+    let finishShutdown!: (result: { reaped: boolean }) => void
+    const shutdown = new Promise<{ reaped: boolean }>((resolve) => {
       finishShutdown = resolve
     })
     let runtimeOptions: AcpRuntimeOptions | undefined
@@ -2626,7 +2763,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         text: 'Too early'
       })
     ).rejects.toThrow('already open')
-    finishShutdown()
+    finishShutdown({ reaped: true })
     await close
   })
 })
@@ -2701,7 +2838,9 @@ describe('Side chat recovery and preflight regressions', () => {
           requestProviderReconnect: vi.fn(async () => undefined),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         } as never
       }
     })
@@ -3023,7 +3162,9 @@ describe('Side chat conversation model selection', () => {
           cancelPrompt: vi.fn(async () => ({ stopReason: 'cancelled' })),
           deleteSession: vi.fn(async () => ({ sessionIds: [] })),
           respondToPermission: vi.fn(async () => undefined),
-          shutdownForQuit: vi.fn(async () => undefined)
+          shutdownForQuit: vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+            reaped: true
+          }))
         }
         runtimes.push(runtime)
         return runtime as never
