@@ -9,7 +9,9 @@
   "packages/process-tree-native/index.cjs": [
     "src/main/process-tree.ts",
     "src/main/process-tree-native-loading.macos.integration.test.ts",
-    "src/main/update/installation-occupancy.ts"
+    "src/main/update/installation-occupancy.ts",
+    "src/main/process-birth-identity.ts",
+    "src/main/windows-process-query.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs"

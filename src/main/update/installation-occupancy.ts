@@ -1,98 +1,56 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
+import { readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
-import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import {
+  listWindowsInstallationOccupants,
+  listWindowsInstallationOccupantsAsync,
+  listWindowsProcesses,
+  splitWindowsCommandLine,
+  windowsParentProcessId,
+  windowsProcessCommandLine
+} from '../windows-process-query'
 
 const requireNative = createRequire(__filename)
 
 // Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
 // process-name matching, or termination authority is granted by the returned PIDs.
 // https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
-function windowsInstallationQuery(installationRoot: string): string[] {
-  const root = Buffer.from(installationRoot, 'utf8').toString('base64')
-  const script = `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-Add-Type -TypeDefinition @'
-using System; using System.Text; using System.Linq; using System.Collections.Generic; using System.Runtime.InteropServices;
-public static class OpenScienceInstallationResources {
-  [StructLayout(LayoutKind.Sequential)] public struct UniqueProcess { public uint Pid; public System.Runtime.InteropServices.ComTypes.FILETIME Started; }
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct ProcessInfo {
-    public UniqueProcess Process;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=256)] public string AppName;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=64)] public string ServiceName;
-    public uint ApplicationType; public uint Status; public uint SessionId;
-    [MarshalAs(UnmanagedType.Bool)] public bool Restartable;
-  }
-  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern uint RmStartSession(out uint session, uint flags, StringBuilder key);
-  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern uint RmRegisterResources(uint session, uint count, string[] files, uint apps, IntPtr processes, uint services, IntPtr names);
-  [DllImport("rstrtmgr.dll")] static extern uint RmGetList(uint session, out uint needed, ref uint count, [In, Out] ProcessInfo[] processes, out uint reasons);
-  [DllImport("rstrtmgr.dll")] static extern uint RmEndSession(uint session);
-  static void Check(uint result) { if (result != 0) throw new InvalidOperationException("Installation resource query failed: " + result); }
-  public static uint[] Query(string[] files) {
-    if (files.Length == 0) return new uint[0];
-    uint session; Check(RmStartSession(out session, 0, new StringBuilder(33)));
-    try {
-      for (int offset=0; offset<files.Length; offset+=256) {
-        string[] batch = files.Skip(offset).Take(256).ToArray();
-        Check(RmRegisterResources(session, (uint)batch.Length, batch, 0, IntPtr.Zero, 0, IntPtr.Zero));
-      }
-      uint count=0, needed=0, reasons;
-      for (int retry=0; retry<3; retry++) {
-        ProcessInfo[] rows = count == 0 ? null : new ProcessInfo[count];
-        uint result = RmGetList(session, out needed, ref count, rows, out reasons);
-        if (result == 234) { count=needed; continue; }
-        Check(result);
-        return rows == null ? new uint[0] : rows.Take((int)count).Select(row => row.Process.Pid).Distinct().ToArray();
-      }
-      throw new InvalidOperationException("Installation resource occupants kept changing.");
-    } finally { Check(RmEndSession(session)); }
-  }
-}
-'@
-$root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${root}'))
-$item = Get-Item -LiteralPath $root -Force
-$files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | ForEach-Object { $_.FullName }) } else { @($item.FullName) }
-$users = @([OpenScienceInstallationResources]::Query([string[]]$files))
-Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop
-$processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath)
-ConvertTo-Json -InputObject @{resourcePids=$users;processes=$processes} -Depth 4 -Compress
-`
-  return ['-NoProfile', '-NonInteractive', '-Command', script]
+function windowsInstallationFiles(installationRoot: string): string[] {
+  if (!statSync(installationRoot).isDirectory()) return [installationRoot]
+  return readdirSync(installationRoot, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
 }
 
-function parseWindowsInstallationQuery(stdout: string, root: string): number[] {
-  const data: unknown = JSON.parse(stdout)
-  if (
-    !data ||
-    typeof data !== 'object' ||
-    !('resourcePids' in data) ||
-    !Array.isArray(data.resourcePids) ||
-    !('processes' in data) ||
-    !Array.isArray(data.processes)
-  )
-    throw new Error('Incomplete installation resource inspection.')
+function windowsInstallationOccupants(resourcePids: readonly number[], root: string): number[] {
   const pids = new Set<number>()
-  for (const pid of data.resourcePids) {
+  for (const pid of resourcePids) {
     if (!Number.isSafeInteger(pid) || pid <= 0)
       throw new Error('Invalid installation resource PID.')
     pids.add(pid)
   }
   root = root.toLowerCase().replace(/[\\/]+$/, '')
-  for (const row of data.processes) {
-    if (!row || typeof row !== 'object') throw new Error('Invalid installation process row.')
-    const path = typeof row.ExecutablePath === 'string' ? row.ExecutablePath.toLowerCase() : ''
+  for (const row of listWindowsProcesses()) {
+    const path = row.executablePath?.toLowerCase() ?? ''
     if (path === root || path.startsWith(root + '\\') || path.startsWith(root + '/')) {
-      const pid = Number(row.ProcessId)
-      if (!Number.isSafeInteger(pid) || pid <= 0)
+      if (!Number.isSafeInteger(row.pid) || row.pid <= 0)
         throw new Error('Invalid installation executable PID.')
-      pids.add(pid)
+      pids.add(row.pid)
     }
   }
   return [...pids]
+}
+
+function windowsInspectionFailure(cause: unknown): UpdateLifecycleError {
+  return new UpdateLifecycleError(
+    'installation-busy',
+    'Installation process occupancy could not be inspected.',
+    undefined,
+    { cause }
+  )
 }
 
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
@@ -169,30 +127,13 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
     /* The installation may already have moved. */
   }
   if (process.platform === 'win32') {
-    const result = spawnSync(
-      resolveWindowsPowerShellExecutable(),
-      windowsInstallationQuery(installationRoot),
-      {
-        encoding: 'utf8',
-        timeout: 15_000,
-        maxBuffer: 16 * 1024 * 1024,
-        windowsHide: true
-      }
-    )
-    if (result.status !== 0)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.'
-      )
     try {
-      return parseWindowsInstallationQuery(result.stdout, installationRoot)
-    } catch (cause) {
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.',
-        undefined,
-        { cause }
+      return windowsInstallationOccupants(
+        listWindowsInstallationOccupants(windowsInstallationFiles(installationRoot)),
+        installationRoot
       )
+    } catch (cause) {
+      throw windowsInspectionFailure(cause)
     }
   }
   const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], {
@@ -268,23 +209,23 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    // A cold Restart Manager scan of a real 7,314-file installation took 70 seconds on Windows;
-    // the same scan took ~2 seconds once warm. Keep the asynchronous scan cancellable and bounded,
-    // without treating the old 15-second process-list budget as proof of unknown occupancy.
+    signal?.throwIfAborted()
+    // A cold Restart Manager scan of a real 7,314-file installation has taken 37–70 seconds, then
+    // well under a second once warm. It runs on the libuv pool, so it neither blocks the event loop
+    // nor needs a subprocess deadline; cancellation is honored when the scan returns.
     const started = Date.now()
     try {
-      const { stdout } = await runVerificationProcess(
-        resolveWindowsPowerShellExecutable(),
-        windowsInstallationQuery(installationRoot),
-        { signal, timeoutMs: 120_000 }
-      )
-      return parseWindowsInstallationQuery(stdout, installationRoot)
+      const files = windowsInstallationFiles(installationRoot)
+      const resourcePids = await listWindowsInstallationOccupantsAsync(files)
+      signal?.throwIfAborted()
+      return windowsInstallationOccupants(resourcePids, installationRoot)
     } catch (cause) {
+      if (signal?.aborted) throw cause
       createLogger('update').warn('Windows installation occupancy inspection failed', {
         durationMs: Date.now() - started,
         message: cause instanceof Error ? cause.message : 'Unknown inspection error'
       })
-      throw cause
+      throw windowsInspectionFailure(cause)
     }
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
@@ -508,69 +449,27 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     return []
   // Parse with Windows' own argv rules: quoted profile paths and annotation values must not be
   // inferred with substring matching. Only current direct children are even considered.
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
-    'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop',
-    '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
-      process.pid +
-      '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
-    'if ($rows.Count -eq 0) { Write-Output "[]"; exit 0 }',
-    "Add-Type -TypeDefinition @'",
-    'using System; using System.Runtime.InteropServices;',
-    'public static class OpenScienceCrashpadArguments {',
-    '  [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CommandLineToArgvW(string value, out int count);',
-    '  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);',
-    '  public static string[] Parse(string value) {',
-    '    int count; IntPtr pointer = CommandLineToArgvW(value, out count);',
-    '    if (pointer == IntPtr.Zero) throw new InvalidOperationException("Cannot parse process arguments");',
-    '    try { string[] result = new string[count]; for (int i = 0; i < count; i++) result[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, i * IntPtr.Size)); return result; }',
-    '    finally { LocalFree(pointer); }',
-    '  }',
-    '}',
-    "'@",
-    '$result = @($rows | ForEach-Object { @{ProcessId=$_.ProcessId;ParentProcessId=$_.ParentProcessId;ExecutablePath=$_.ExecutablePath;Arguments=[OpenScienceCrashpadArguments]::Parse($_.CommandLine)} })',
-    'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
-  ].join('\n')
-  const result = spawnSync(
-    resolveWindowsPowerShellExecutable(),
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 5_000,
-      maxBuffer: 16 * 1024 * 1024
-    }
-  )
   try {
-    if (result.status !== 0) throw result.error ?? new Error('Process query failed')
-    const rows: unknown = JSON.parse(result.stdout)
-    if (!Array.isArray(rows)) throw new Error('Invalid process query result')
-    return rows.flatMap((row) => {
-      if (
-        !row ||
-        !Number.isSafeInteger(row.ProcessId) ||
-        row.ProcessId <= 0 ||
-        row.ParentProcessId !== process.pid ||
-        typeof row.ExecutablePath !== 'string' ||
-        canonical(row.ExecutablePath) !== executable ||
-        !Array.isArray(row.Arguments) ||
-        !row.Arguments.every((arg: unknown) => typeof arg === 'string')
-      )
-        return []
-      const args: string[] = row.Arguments
+    return listWindowsProcesses().flatMap((row) => {
+      if (row.ppid !== process.pid || row.pid <= 0 || !Number.isSafeInteger(row.pid)) return []
+      if (!row.executablePath || canonical(row.executablePath) !== executable) return []
+      const commandLine = windowsProcessCommandLine(row.pid)
+      if (!commandLine?.includes('--type=crashpad-handler')) return []
+      const args = splitWindowsCommandLine(commandLine)
       const values = (key: string): string[] =>
         args.filter((arg) => arg.startsWith(key + '=')).map((arg) => arg.slice(key.length + 1))
       const types = values('--type')
       const databases = values('--database')
       const instances = values('--annotation=openScienceInstance')
+      // Re-read the parent so a PID reused after the snapshot cannot borrow this exemption.
       return types.length === 1 &&
         types[0] === 'crashpad-handler' &&
         databases.length === 1 &&
         canonical(databases[0]) === database &&
         instances.length === 1 &&
-        instances[0] === options.instanceId
-        ? [row.ProcessId]
+        instances[0] === options.instanceId &&
+        windowsParentProcessId(row.pid) === process.pid
+        ? [row.pid]
         : []
     })
   } catch (cause) {

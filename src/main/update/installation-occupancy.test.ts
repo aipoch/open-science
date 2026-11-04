@@ -18,8 +18,18 @@ const mocks = vi.hoisted(() => ({
   readFile: vi.fn(),
   readdir: vi.fn(),
   arguments: vi.fn(),
-  warn: vi.fn()
+  warn: vi.fn(),
+  stat: vi.fn(),
+  windows: {
+    listWindowsInstallationOccupants: vi.fn(),
+    listWindowsInstallationOccupantsAsync: vi.fn(),
+    listWindowsProcesses: vi.fn(),
+    splitWindowsCommandLine: vi.fn(),
+    windowsParentProcessId: vi.fn(),
+    windowsProcessCommandLine: vi.fn()
+  }
 }))
+vi.mock('../windows-process-query', () => mocks.windows)
 vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => ({ warn: mocks.warn }) }))
 vi.mock('node:module', () => ({
   createRequire: () => () => ({ getDarwinProcessArguments: mocks.arguments })
@@ -28,7 +38,8 @@ vi.mock('node:fs', () => ({
   realpathSync: mocks.realpath,
   readlinkSync: mocks.readlink,
   readFileSync: mocks.readFile,
-  readdirSync: mocks.readdir
+  readdirSync: mocks.readdir,
+  statSync: mocks.stat
 }))
 vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
@@ -49,25 +60,39 @@ afterEach(() => {
   vi.unstubAllEnvs()
 })
 
-it('allows a cold Windows resource scan to finish while preserving cancellation', async () => {
-  vi.useFakeTimers()
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-  const controller = new AbortController()
-  mocks.run.mockImplementation((_command, _args, { timeoutMs, signal }) => {
-    expect(signal).toBe(controller.signal)
-    return new Promise((resolve, reject) => {
-      const deadline = setTimeout(() => reject(new Error('resource scan timed out')), timeoutMs)
-      setTimeout(() => {
-        clearTimeout(deadline)
-        resolve({ stdout: JSON.stringify({ resourcePids: [42], processes: [] }), stderr: '' })
-      }, 70_000)
-    })
+describe('cold Windows resource scans', () => {
+  function cold(): () => void {
+    vi.useFakeTimers()
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    mocks.realpath.mockImplementation((path: string) => path)
+    mocks.stat.mockReturnValue({ isDirectory: () => true })
+    mocks.readdir.mockReturnValue([])
+    mocks.windows.listWindowsProcesses.mockReturnValue([])
+    let finish = (): void => undefined
+    mocks.windows.listWindowsInstallationOccupantsAsync.mockImplementation(
+      () => new Promise((resolve) => (finish = () => resolve([42])))
+    )
+    return () => finish()
+  }
+
+  it('lets a cold scan finish without a subprocess deadline', async () => {
+    const finish = cold()
+    const result = inspectInstallationProcessesAsync('C:\\Apps\\Science')
+    await vi.advanceTimersByTimeAsync(70_000)
+    finish()
+    await expect(result).resolves.toEqual([42])
+    expect(mocks.run).not.toHaveBeenCalled()
   })
-  const result = inspectInstallationProcessesAsync('C:\\Apps\\Science', controller.signal)
-  const assertion = expect(result).resolves.toEqual([42])
-  void assertion.catch(() => undefined)
-  await vi.advanceTimersByTimeAsync(70_000)
-  await assertion
+
+  it('reports cancellation instead of occupants once the scan returns', async () => {
+    const finish = cold()
+    const controller = new AbortController()
+    const result = inspectInstallationProcessesAsync('C:\\Apps\\Science', controller.signal)
+    const assertion = expect(result).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    finish()
+    await assertion
+  })
 })
 
 it('defers native loading until macOS inspection and retains occupancy when the binding fails', () => {
@@ -211,32 +236,35 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('/Applications/Science.app')).toEqual([])
   })
 
-  it('reads Windows resource users and exact executable paths without trusting command text', async () => {
+  function windows(resourcePids: number[]): void {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    const executable = { ProcessId: '42', ExecutablePath: 'C:\\Apps\\Science\\node.exe' }
-    output(
-      JSON.stringify({
-        resourcePids: [43],
-        processes: [
-          executable,
-          { ProcessId: 43, CommandLine: 'node C:\\APPS\\SCIENCE\\backend.cjs' },
-          { ProcessId: 44, ExecutablePath: null, CommandLine: null },
-          { ProcessId: 45, ExecutablePath: 'C:\\Apps\\Science-old\\node.exe' }
-        ]
-      })
-    )
-    expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
-  })
+    mocks.realpath.mockImplementation((path: string) => path)
+    mocks.stat.mockReturnValue({ isDirectory: () => true })
+    mocks.readdir.mockReturnValue([
+      { isFile: () => true, parentPath: 'c:\\apps\\science', name: 'node.exe' },
+      { isFile: () => false, parentPath: 'c:\\apps\\science', name: 'resources' }
+    ])
+    mocks.windows.listWindowsInstallationOccupants.mockReturnValue(resourcePids)
+    mocks.windows.listWindowsInstallationOccupantsAsync.mockResolvedValue(resourcePids)
+    mocks.windows.listWindowsProcesses.mockReturnValue([])
+  }
 
-  it('resolves Windows PowerShell independently of PATH', async () => {
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    vi.stubEnv('SystemRoot', 'C:\\Windows')
-    vi.stubEnv('PATH', 'C:\\fixture')
-    output(JSON.stringify({ resourcePids: [], processes: [] }))
-    expect(await inspect('C:\\Apps\\Science')).toEqual([])
-    expect((mode === 'sync' ? mocks.spawnSync : mocks.run).mock.calls[0][0]).toBe(
-      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    )
+  it('reads Windows resource users and exact executable paths without trusting command text', async () => {
+    windows([43])
+    mocks.windows.listWindowsProcesses.mockReturnValue([
+      { pid: 42, ppid: 1, executablePath: 'C:\\Apps\\Science\\node.exe' },
+      { pid: 43, ppid: 1, executablePath: 'C:\\Program Files\\nodejs\\node.exe' },
+      { pid: 44, ppid: 1, executablePath: null },
+      { pid: 45, ppid: 1, executablePath: 'C:\\Apps\\Science-old\\node.exe' }
+    ])
+    expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
+    const query =
+      mode === 'sync'
+        ? mocks.windows.listWindowsInstallationOccupants
+        : mocks.windows.listWindowsInstallationOccupantsAsync
+    expect(query).toHaveBeenCalledWith([join('c:\\apps\\science', 'node.exe')])
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
+    expect(mocks.run).not.toHaveBeenCalled()
   })
 
   it('finds Linux mapped files without checking ordinary open descriptors', async () => {
@@ -272,16 +300,31 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('/opt/Science')).toEqual([10])
   })
 
-  it('rejects Windows results missing the resource inspection proof', async () => {
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    output(JSON.stringify([{ ProcessId: 42, ExecutablePath: 'C:\\Science\\node.exe' }]))
-    await expect(inspect('C:\\Science')).rejects.toThrow()
+  it('rejects invalid Windows resource identities instead of reporting no occupants', async () => {
+    windows([0])
+    await expect(inspect('C:\\Science')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: expect.objectContaining({ message: 'Invalid installation resource PID.' })
+    })
   })
 
   it.each(['linux', 'win32', 'darwin'] as const)(
     'fails closed when %s inspection fails',
     async (platform) => {
       vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
+      if (platform === 'win32') {
+        windows([])
+        const failure = new Error('Register installation resources failed (5)')
+        mocks.windows.listWindowsInstallationOccupants.mockImplementation(() => {
+          throw failure
+        })
+        mocks.windows.listWindowsInstallationOccupantsAsync.mockRejectedValue(failure)
+        await expect(inspect('C:\\installed\\app')).rejects.toMatchObject({
+          reason: 'installation-busy',
+          cause: failure
+        })
+        return
+      }
       if (platform === 'darwin') output('')
       mocks.spawnSync.mockReturnValueOnce({ status: 1, stdout: '' })
       mocks.run.mockRejectedValueOnce(new Error('inspection failed'))
@@ -291,10 +334,14 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     }
   )
 
-  it('rejects invalid Windows process JSON instead of reporting an empty installation', async () => {
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-    output('not JSON')
-    await expect(inspect('C:\\Apps\\Science')).rejects.toThrow()
+  it('fails closed when the Windows process snapshot fails', async () => {
+    windows([])
+    mocks.windows.listWindowsProcesses.mockImplementation(() => {
+      throw new Error('Snapshot processes failed (5)')
+    })
+    await expect(inspect('C:\\Apps\\Science')).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
   })
 })
 
@@ -450,17 +497,30 @@ describe('Windows crash reporter ownership', () => {
       path === process.execPath ? executable : path
     )
   })
-  const snapshot = (rows: unknown): void => {
-    mocks.spawnSync.mockReturnValue({ status: 0, stdout: JSON.stringify(rows) })
+  const snapshot = (
+    rows: Array<Omit<ReturnType<typeof row>, 'Arguments'> & { Arguments: string[] | null }>
+  ): void => {
+    mocks.windows.listWindowsProcesses.mockReturnValue(
+      rows.map((entry) => ({
+        pid: entry.ProcessId,
+        ppid: entry.ParentProcessId,
+        executablePath: entry.ExecutablePath
+      }))
+    )
+    const commandLines = new Map(rows.map((entry) => [entry.ProcessId, entry.Arguments]))
+    mocks.windows.windowsProcessCommandLine.mockImplementation((pid: number) => {
+      const args = commandLines.get(pid)
+      return args ? JSON.stringify(args) : undefined
+    })
+    mocks.windows.splitWindowsCommandLine.mockImplementation((line: string) => JSON.parse(line))
+    mocks.windows.windowsParentProcessId.mockImplementation(
+      (pid: number) => rows.find((entry) => entry.ProcessId === pid)?.ParentProcessId
+    )
   }
   it('recognizes its own handler using native parsed arguments and actual executable identity', () => {
-    vi.stubEnv('SystemRoot', 'C:\\Windows')
-    vi.stubEnv('PATH', 'C:\\fixture')
     snapshot([row()])
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
-    expect(mocks.spawnSync.mock.calls[0][0]).toBe(
-      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
-    )
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
   })
   it.each([
     ['another parent', { ParentProcessId: process.pid + 1 }],
@@ -502,11 +562,22 @@ describe('Windows crash reporter ownership', () => {
       inspectOwnedCrashpadProcesses({ ...options, installationRoot: root + '-other' })
     ).toEqual([])
   })
-  it('fails closed on a failed native process query or malformed output', () => {
-    mocks.spawnSync.mockReturnValue({ status: null, error: new Error('timeout'), stdout: '' })
+  it('does not exempt a handler whose PID was reused after the snapshot', () => {
+    snapshot([row()])
+    mocks.windows.windowsParentProcessId.mockReturnValue(process.pid + 1)
+    expect(inspectOwnedCrashpadProcesses(options)).toEqual([])
+  })
+  it('fails closed on a failed native process query', () => {
+    mocks.windows.listWindowsProcesses.mockImplementation(() => {
+      throw new Error('Snapshot processes failed (5)')
+    })
     expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
-    mocks.spawnSync.mockReturnValue({ status: 0, stdout: '{bad-json' })
+    snapshot([row()])
+    mocks.windows.windowsProcessCommandLine.mockImplementation(() => {
+      throw new Error('Open process for query failed (5)')
+    })
     expect(() => inspectOwnedCrashpadProcesses(options)).toThrow('ownership could not be inspected')
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
   })
 })
 

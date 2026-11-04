@@ -228,6 +228,8 @@
     "src/main/node-fatal-errors.ts",
     "src/main/node-fatal-errors.test.ts",
     "src/main/process-birth-identity.ts",
+    "src/main/windows-process-query.ts",
+    "src/main/windows-process-query.test.ts",
     "src/main/runtime-entry-identity.ts",
     "src/main/service-command-admission.ts",
     "src/main/verified-service-stop.ts",
@@ -307,6 +309,7 @@
   "consumerModules": ["main_web_service"],
   "testFiles": {
     "owner": [
+      "src/main/windows-process-query.test.ts",
       "src/main/composition/command-dependencies.test.ts",
       "src/main/composition/research-catalog.test.ts",
       "src/main/composition/settings-bootstrap.test.ts",

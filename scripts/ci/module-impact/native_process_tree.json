@@ -7,6 +7,7 @@
     "packages/process-tree-native/src/process_tree_native.cc",
     "packages/process-tree-native/src/windows_owned_process.cc",
     "packages/process-tree-native/test/arguments.cjs",
+    "packages/process-tree-native/test/windows-process-identity.cjs",
     "packages/process-tree-native/test/windows-process-query.cjs"
   ],
   "interfacePaths": ["packages/process-tree-native/index.cjs"],
