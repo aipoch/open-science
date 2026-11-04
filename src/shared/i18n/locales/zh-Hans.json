@@ -6937,6 +6937,7 @@
     "Hostname": "主机名",
     "Manage access": "管理访问",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "管理受保护的 Notebook 和命令行执行所使用的公共域名与受信任私网服务。",
+    "Managed by the trusted backend.": "由受信任后端管理。",
     "Network rules saved.": "网络规则已保存。",
     "No private services trusted.": "尚无受信任的私网服务。",
     "No unsaved changes": "没有未保存的更改",

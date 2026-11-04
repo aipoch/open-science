@@ -38,6 +38,13 @@ export const NetworkDestinationGrants = (): React.JSX.Element | null => {
                       grant.projectId
                   })}
             </p>
+            {grant.scope === 'global' ? (
+              <p className="text-muted-foreground">
+                {t(
+                  'Protected Notebook and Shell code can send data to this service across all projects. Address changes require another review.'
+                )}
+              </p>
+            ) : null}
             <p>
               {t('Resolved addresses: {{addresses}}', {
                 addresses: grant.approvedAddresses.join(', ')

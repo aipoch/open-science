@@ -7411,6 +7411,7 @@
     "Hostname": "Имя узла",
     "Manage access": "Управление доступом",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Управляйте публичными доменами и доверенными частными службами для защищённого выполнения Notebook и командной строки.",
+    "Managed by the trusted backend.": "Управляется доверенным сервером.",
     "Network rules saved.": "Сетевые правила сохранены.",
     "No private services trusted.": "Нет доверенных частных служб.",
     "No unsaved changes": "Нет несохранённых изменений",

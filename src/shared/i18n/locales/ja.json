@@ -6937,6 +6937,7 @@
     "Hostname": "ホスト名",
     "Manage access": "アクセスを管理",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "保護された Notebook とシェルの実行に使用する公開ドメインと信頼するプライベートサービスを管理します。",
+    "Managed by the trusted backend.": "信頼されたバックエンドによって管理されています。",
     "Network rules saved.": "ネットワークルールを保存しました。",
     "No private services trusted.": "信頼するプライベートサービスはありません。",
     "No unsaved changes": "未保存の変更はありません",

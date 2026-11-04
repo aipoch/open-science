@@ -15,6 +15,8 @@ export type TrustedPrivateDestination = Readonly<{
   hostname: string
   port: number
   approvedAddresses: readonly string[]
+  managedGrantId?: string
+  source?: 'global-destination-grant'
 }>
 
 type DestinationPolicyOptions = Readonly<{
@@ -370,18 +372,18 @@ class DestinationPolicy {
           ...reviewed,
           reason: 'sensitive-destination'
         }
-      const trusted = this.#private.find((entry) => entry.hostname === host && entry.port === port)
-      if (
-        trusted &&
-        addresses.every(
-          (address) =>
-            isPrivateServiceAddress(address) &&
-            !isHostAddress(address) &&
-            trusted.approvedAddresses.includes(canonicalAddress(address))
-        )
-      ) {
-        return { kind: 'allow', address: addresses[0]! }
-      }
+      const trusted = this.#private.find(
+        (entry) =>
+          entry.hostname === host &&
+          entry.port === port &&
+          addresses.every(
+            (address) =>
+              isPrivateServiceAddress(address) &&
+              !isHostAddress(address) &&
+              entry.approvedAddresses.includes(canonicalAddress(address))
+          )
+      )
+      if (trusted) return { kind: 'allow', address: addresses[0]! }
       return {
         kind: 'deny',
         reason: trusted

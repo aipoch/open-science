@@ -395,8 +395,10 @@ export const normalizeTrustedPrivateDestinations = (
   const entries = new Map<string, TrustedPrivateDestination>()
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
-    const { hostname, port, approvedAddresses } = item
+    const { hostname, port, approvedAddresses, managedGrantId, source } = item
     const host = typeof hostname === 'string' ? validateCustomAllowedDomain(hostname) : undefined
+    const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
+    const hasManagedSource = source === 'global-destination-grant'
     if (
       !host?.ok ||
       !Number.isInteger(port) ||
@@ -404,16 +406,19 @@ export const normalizeTrustedPrivateDestinations = (
       port > 65535 ||
       !Array.isArray(approvedAddresses) ||
       !approvedAddresses.length ||
-      !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45)
+      !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45) ||
+      hasManagedId !== hasManagedSource ||
+      (managedGrantId !== undefined && !hasManagedId)
     )
       continue
-    const key = `${host.hostname}:${port}`
+    const key = `${host.hostname}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
     if (entries.has(key)) return []
     entries.set(key, {
       hostname: host.hostname,
       port,
-      approvedAddresses: uniqueSorted(approvedAddresses)
+      approvedAddresses: uniqueSorted(approvedAddresses),
+      ...(hasManagedId ? { managedGrantId, source: 'global-destination-grant' as const } : {})
     })
   }
   return [...entries.values()].sort(

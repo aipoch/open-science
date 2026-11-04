@@ -19,6 +19,9 @@ export type TrustedPrivateDestination = Readonly<{
   hostname: string
   port: number
   approvedAddresses: readonly string[]
+  /** Present only for rules derived by the trusted backend from a global grant. */
+  managedGrantId?: string
+  source?: 'global-destination-grant'
 }>
 
 export type PrivateDestinationRequest = Readonly<{ hostname: string; port: number }>

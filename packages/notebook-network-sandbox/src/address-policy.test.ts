@@ -232,6 +232,23 @@ describe('reviewed private service rules', () => {
     ).resolves.toMatchObject({ kind: 'deny' })
     expect(lookup).toHaveBeenCalledTimes(1)
   })
+  it('uses a managed rule when a manual rule shares the same host and port', async () => {
+    lookup.mockResolvedValue([{ address: '10.32.0.7', family: 4 }])
+    await expect(
+      new DestinationPolicy({
+        allowedDomains: [],
+        deniedDomains: [],
+        trustedPrivateDestinations: [
+          { ...rule, approvedAddresses: ['10.32.0.8'] },
+          {
+            ...rule,
+            managedGrantId: 'global-grant',
+            source: 'global-destination-grant'
+          }
+        ]
+      }).inspect(rule.hostname, rule.port)
+    ).resolves.toMatchObject({ kind: 'allow', address: '10.32.0.7' })
+  })
   it('does not honor malformed grants or DNS failure', async () => {
     lookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }])
     await expect(

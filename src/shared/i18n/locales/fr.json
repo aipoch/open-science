@@ -7269,6 +7269,7 @@
     "Hostname": "Nom d’hôte",
     "Manage access": "Gérer l’accès",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Gérez les domaines publics et les services privés de confiance pour l’exécution protégée de Notebook et du Terminal.",
+    "Managed by the trusted backend.": "Géré par le backend de confiance.",
     "Network rules saved.": "Règles réseau enregistrées.",
     "No private services trusted.": "Aucun service privé approuvé.",
     "No unsaved changes": "Aucune modification non enregistrée",

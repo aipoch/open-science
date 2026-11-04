@@ -655,6 +655,37 @@ describe('private service draft review', () => {
     expect(container.textContent).not.toContain(`${rule.hostname}:${rule.port}`)
     expect(container.textContent).toContain('No unsaved changes')
   })
+  it('marks backend-managed services and only permits removing them', async () => {
+    const managed = {
+      hostname: 'lab.internal.example',
+      port: 8443,
+      approvedAddresses: ['10.32.0.7'],
+      managedGrantId: 'grant-global-1',
+      source: 'global-destination-grant' as const
+    }
+    const original = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [managed]
+    }
+    const saved = { ...original, trustedPrivateDestinations: [] }
+    const save = vi.fn().mockResolvedValue(saved)
+    useSettingsStore.setState({ notebookNetwork: original, setNotebookNetwork: save })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    expect(container.textContent).toContain('Managed by the trusted backend.')
+    const review = button('Review service')
+    expect(review.disabled).toBe(true)
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="Remove lab.internal.example:8443"]')!
+        .click()
+    )
+    await act(async () => button('Save changes').click())
+    expect(save).toHaveBeenCalledWith(
+      saved,
+      original.allowedDomains,
+      original.trustedPrivateDestinations
+    )
+  })
   it('enrolls pending text, private reviews and saves in the shared leave guard', async () => {
     const change = vi.fn()
     await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))

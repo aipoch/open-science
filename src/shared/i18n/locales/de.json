@@ -7099,6 +7099,7 @@
     "Hostname": "Hostname",
     "Manage access": "Zugriff verwalten",
     "Manage public domains and trusted private services for protected Notebook and Shell execution.": "Verwalten Sie öffentliche Domains und vertrauenswürdige private Dienste für die geschützte Ausführung von Notebook und Befehlszeile.",
+    "Managed by the trusted backend.": "Wird vom vertrauenswürdigen Backend verwaltet.",
     "Network rules saved.": "Netzwerkregeln gespeichert.",
     "No private services trusted.": "Keine vertrauenswürdigen privaten Dienste.",
     "No unsaved changes": "Keine ungespeicherten Änderungen",

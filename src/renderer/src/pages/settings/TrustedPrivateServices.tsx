@@ -124,7 +124,7 @@ export function TrustedPrivateServices({
         <ul className="mt-3 divide-y divide-border">
           {rules.map((rule) => (
             <li
-              key={`${rule.hostname}:${rule.port}`}
+              key={`${rule.hostname}:${rule.port}:${rule.managedGrantId ?? 'manual'}`}
               className="flex items-start justify-between gap-3 py-3"
             >
               <div className="min-w-0 text-sm">
@@ -136,11 +136,16 @@ export function TrustedPrivateServices({
                     addresses: rule.approvedAddresses.join(', ')
                   })}
                 </p>
+                {rule.managedGrantId ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t('Managed by the trusted backend.')}
+                  </p>
+                ) : null}
               </div>
               <div className="flex shrink-0 gap-1">
                 <Button
                   variant="ghost"
-                  disabled={disabled || editing || !available}
+                  disabled={disabled || editing || !available || rule.managedGrantId !== undefined}
                   onClick={() => {
                     invalidate()
                     setHostname(rule.hostname)
