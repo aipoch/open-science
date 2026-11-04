@@ -82,11 +82,13 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 | ----------------------------------------- | -------------------------------------------------- |
 | macOS 12+: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64         |
 | macOS 12+: Intel                          | El DMG de macOS para Intel/x64                     |
-| Windows x64                               | El instalador de Windows x64 (con firma de código) |
+| Windows 10/11 x64                         | El instalador de Windows x64 (con firma de código) |
 | Linux x64                                 | El paquete AppImage o Debian de Linux x64          |
 | Linux ARM64                               | AppImage o paquete Debian de Linux ARM64           |
 
 Descargue desde la [página oficial de descargas](https://aipoch.com/open-science/download); consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) si es necesario.
+
+Los archivos de la CLI independiente para macOS, Linux y Windows incluyen Node.js y se pueden usar sin Homebrew ni npm.
 
 En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh):
 
@@ -119,6 +121,8 @@ En Windows, reinstalar conserva los datos de investigación. Para una limpieza c
 Siga el asistente: **Entorno → Ubicación de datos → Entorno de ejecución del agente → Proveedor de modelo → Entorno de ejecución de Notebook**.
 
 Complete las comprobaciones obligatorias del entorno y del runtime del agente y pruebe la conexión al modelo. Python/R Notebook es opcional; Notebook y la ubicación de datos pueden ajustarse más adelante en Configuración.
+
+En los ajustes del sistema encontrará las opciones de apariencia y notificaciones. La sección **General** incluye la guía de instalación y actualización manuales.
 
 <table>
 <tr>
@@ -307,6 +311,8 @@ AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimo
 | **Archivos científicos y vistas previas**           | Suba archivos de hasta **10 GiB cada uno**, organice los archivos del proyecto y previsualice datos científicos, PDF, documentos Office, imágenes, código y estructuras moleculares. El límite de subida no garantiza que un modelo lea todo el archivo: contexto, análisis de adjuntos y vistas previas tienen límites propios. Los archivos grandes suelen necesitar lectura o análisis por bloques mediante código.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Artefactos y procedencia**                        | Conserve versiones inmutables de resultados con código generador, entradas, historial de ejecución, entorno y evidencia de revisión disponibles. Importe artefactos desde carpetas autorizadas; AIPOCH Open-Science copia cada archivo importado al almacenamiento gestionado de artefactos. En el escritorio, reproduzca versiones aptas con una receta completa, las entradas necesarias y un entorno utilizable, compare salidas y exporte registros de verificación. La falta de evidencia puede impedir la verificación, y reproducir resultados no demuestra validez científica.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+Al consultar el eQTL Catalogue por coordenadas, Open-Science comprueba que correspondan al ensamblaje de referencia GRCh38.
+
 Importe referencias, etiquetas, colecciones y enlaces a las fuentes desde Zotero 10 o posterior en ejecución en el mismo equipo. Puede elegir copiar los archivos PDF adjuntos locales; la importación es unidireccional y no modifica Zotero.
 
 Añada referencias de una en una mediante un DOI, un enlace DOI o un enlace al resumen o al PDF de arXiv. Revise y edite los metadatos obtenidos antes de guardar. Los PDF de texto completo se pueden añadir por separado.
@@ -314,6 +320,8 @@ Añada referencias de una en una mediante un DOI, un enlace DOI o un enlace al r
 Dispone de anotaciones PDF persistentes y notas de documentos. Con un modelo de cribado configurado, las colecciones inteligentes evalúan referencias según sus criterios de inclusión y exclusión. Las decisiones de IA y las manuales se registran por separado para apoyar la revisión humana.
 
 En el modo de lectura, los agentes pueden enumerar, localizar y crear notas y marcas en los PDF vinculados. Las anotaciones PDF están ligadas a la versión del archivo anotado y no se sincronizan entre equipos.
+
+En la vista de detalle del artículo, el modelo principal configurado resume la pregunta de investigación, la población estudiada, los métodos, los principales hallazgos y las limitaciones. La ficha indica si se basa en el texto completo o en el resumen del artículo.
 
 El OCR opcional reconoce las páginas PDF escaneadas una vez descargados el componente y los paquetes de idioma necesarios. Hay nueve paquetes de idioma disponibles: inglés, chino simplificado, chino tradicional, alemán, español, francés, japonés, coreano y ruso. Los indicadores de cobertura por página muestran qué páginas aún carecen de texto.
 

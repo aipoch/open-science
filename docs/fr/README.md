@@ -81,11 +81,13 @@ Ouvrez la [page officielle de téléchargement](https://aipoch.com/open-science/
 | --------------------------------------------- | ---------------------------------------- |
 | macOS 12+ — Apple Silicon (M1 ou plus récent) | Le DMG macOS pour Apple Silicon / ARM64  |
 | macOS 12+ — Intel                             | Le DMG macOS pour Intel / x64            |
-| Windows x64                                   | L'installateur Windows x64 (signé)       |
+| Windows 10/11 x64                             | L'installateur Windows x64 (signé)       |
 | Linux x64                                     | L'AppImage Linux x64 ou le paquet Debian |
 | Linux ARM64                                   | AppImage ou paquet Debian Linux ARM64    |
 
 Téléchargez depuis la [page officielle de téléchargement](https://aipoch.com/open-science/download) ; consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) si nécessaire.
+
+Les archives de la CLI autonome pour macOS, Linux et Windows incluent Node.js et s’utilisent sans Homebrew ni npm.
 
 Sur macOS, vous pouvez aussi installer l’application avec [Homebrew](https://brew.sh) :
 
@@ -118,6 +120,8 @@ Sous Windows, une réinstallation conserve les données de recherche. Pour tout 
 Suivez l’assistant : **Environnement → Emplacement des données → Environnement d’exécution de l’agent → Fournisseur de modèle → Environnement d’exécution Notebook**.
 
 Terminez les vérifications obligatoires de l’environnement et du runtime de l’agent, puis testez la connexion au modèle. La configuration Python/R Notebook est facultative ; Notebook et l’emplacement des données restent modifiables dans les paramètres.
+
+Les réglages d’apparence et de notifications se trouvent dans les paramètres système. La rubrique **Général** donne accès au guide d’installation et de mise à jour manuelles.
 
 <table>
   <tr>
@@ -306,6 +310,8 @@ AIPOCH Open-Science combine la gestion de projets, l'exécution d'agents multi-m
 | **Fichiers scientifiques et aperçus**         | Téléversez jusqu’à **10 GiB par fichier**, organisez les fichiers du projet et prévisualisez données scientifiques, PDF, documents Office, images, code et structures moléculaires. Cette limite de téléversement ne garantit pas qu’un modèle lise tout le fichier : contexte, analyse des pièces jointes et aperçus ont leurs propres limites. Les gros fichiers nécessitent généralement une lecture ou une analyse par blocs avec du code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Artefacts et provenance**                   | Conservez des versions immuables des résultats avec code producteur, entrées, historique d’exécution, environnement et preuves de revue disponibles. Importez des artefacts depuis des dossiers autorisés ; AIPOCH Open-Science copie chaque fichier importé dans le stockage d’artefacts géré. Sur le bureau, rejouez une version admissible avec une recette complète, les entrées nécessaires et un environnement opérationnel, puis comparez les sorties et exportez les vérifications. Des preuves manquantes peuvent bloquer la vérification, et le rejeu n’établit pas la validité scientifique.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
+Lors d’une recherche par coordonnées dans l’eQTL Catalogue, Open-Science vérifie que les coordonnées correspondent à l’assemblage de référence GRCh38.
+
 Importez des références, des étiquettes, des collections et des liens vers les sources depuis Zotero 10 ou une version ultérieure exécutée sur le même ordinateur. Vous pouvez choisir de copier les pièces jointes PDF locales ; l’importation est unidirectionnelle et ne modifie pas Zotero.
 
 Ajoutez des références une par une à partir d’un DOI, d’un lien DOI ou d’un lien vers le résumé ou le PDF sur arXiv, puis vérifiez et modifiez les métadonnées récupérées avant de les enregistrer. Les PDF en texte intégral peuvent être ajoutés séparément.
@@ -313,6 +319,8 @@ Ajoutez des références une par une à partir d’un DOI, d’un lien DOI ou d�
 Les annotations PDF et les notes de document sont persistantes. Avec un modèle de sélection configuré, les collections intelligentes évaluent les références selon vos critères d’inclusion et d’exclusion. Les décisions de l’IA et les décisions manuelles restent distinctes pour aider la revue humaine.
 
 En mode lecture, les agents peuvent lister, localiser et créer des notes et des marques dans les PDF liés. Les annotations PDF sont liées à la version du fichier annoté et ne se synchronisent pas entre ordinateurs.
+
+Sur la fiche de l’article, le modèle principal configuré synthétise la question de recherche, la population étudiée, les méthodes, les principaux résultats et les limites. La synthèse précise si elle s’appuie sur le texte intégral ou sur le résumé de l’article.
 
 L’OCR optionnelle reconnaît les pages PDF numérisées une fois le composant et les packs de langue nécessaires téléchargés. Neuf packs de langue sont disponibles : anglais, chinois simplifié, chinois traditionnel, allemand, espagnol, français, japonais, coréen et russe. Des indicateurs de couverture par page montrent quelles pages sont encore dépourvues de texte.
 
