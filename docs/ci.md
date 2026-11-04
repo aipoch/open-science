@@ -70,8 +70,10 @@ these patterns. In particular, do not apply a repository-wide test suffix exclus
 The configuration file must be activated through the `github-codeql-config-file`
 repository property; committing it alone does not change default setup. Set this
 property **only for this repository**, without an organization-wide default. Use
-`remote=aipoch/open-science@<reviewed-commit-sha>:.github/codeql/codeql-config.yml`
-for initial validation after that commit is pushed. Once the file is merged, use
+`remote=aipoch/open-science@<short-sha>:.github/codeql/codeql-config.yml`
+for initial validation after that reviewed commit is pushed. GitHub limits property
+values to 75 characters; use a unique abbreviated SHA and verify the Contents API
+resolves it to the expected file before saving. Once the file is merged, use
 `remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`. A remote reference
 also lets older branches load the reviewed configuration without a local copy.
 If the property schema does not exist, an organization administrator must create the
