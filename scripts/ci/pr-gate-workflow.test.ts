@@ -115,7 +115,7 @@ describe('PR Gate workflow', () => {
         write('packages/compute/src/old.ts')
         git('add', '.')
         git('commit', '--quiet', '-m', 'trusted package baseline')
-        const base = git('rev-parse', 'HEAD')
+        let base = git('rev-parse', 'HEAD')
         const run = (
           head: string,
           event = 'pull_request',
@@ -193,10 +193,31 @@ describe('PR Gate workflow', () => {
         git('commit', '--quiet', '-m', 'delete package source')
         expect(run(head)).toEqual(both)
         expect(run(git('rev-parse', 'HEAD'), 'merge_group')).toEqual(both)
+        // Main advancing after a docs branch fork must not become package evidence for that PR.
+        git('reset', '--hard', base)
+        write('docs/ROADMAP.md')
+        git('add', 'docs/ROADMAP.md')
+        git('commit', '--quiet', '-m', 'docs only')
+        const docsHead = git('rev-parse', 'HEAD')
+        git('checkout', '-b', 'advanced-main', base)
+        write('.github/workflows/package-smoke.yml')
+        write('packages/compute/src/main-only.ts')
+        git('add', '.github', 'packages')
+        git('commit', '--quiet', '-m', 'advance main')
+        base = git('rev-parse', 'HEAD')
+        git('merge', '--no-ff', docsHead, '-m', 'synthetic docs merge')
+        for (const event of ['pull_request', 'merge_group'])
+          expect(run(docsHead, event, trustedDir, base, ['docs'])).toEqual(host)
+        // Changes introduced by the merge itself must still select package coverage.
+        write('packages/compute/src/merge-only.ts')
+        git('add', 'packages')
+        git('commit', '--amend', '--no-edit')
+        expect(run(docsHead, 'pull_request', trustedDir, base, ['docs'])).toEqual(both)
       } finally {
         rmSync(cwd, { recursive: true, force: true })
       }
-    }
+    },
+    30000
   )
 
   it('requires selective execution for every affected-test step', () => {
