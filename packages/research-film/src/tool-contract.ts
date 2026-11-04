@@ -23,7 +23,10 @@ export const generateResearchVideoSchema = {
 export const RESEARCH_VIDEO_GUIDE = `Create an English narrated research explanation as a dynamic HTML player and a regeneration ZIP. MP4 is optional, never required for playback. Use only research and files available in the current active conversation branch. Do not invent data, citations, successful reproduction or missing source identities. Imported source material remains read-only. Describe the planned claims and limitations before generating.
 
 Write video.json, session.json and required animation/data files inside the authorized session workspace. A minimal video.json:
-{"version":1,"title":"Research explanation","session":"session.json","files":"files","profile":"user","scenes":[{"id":"question","msg":0,"lines":[{"caption":"What does the evidence tell us?"}],"panels":[{"type":"title","text":"What does the evidence tell us?"}]}]}
+{"version":1,"case":"research-explanation","title":"Research explanation","session":"session.json","files":"files","profile":"user","scenes":[{"id":"question","role":"hook","msg":0,"lines":[{"caption":"What does the evidence tell us?"}],"panels":[{"type":"title","text":"What does the evidence tell us?"},{"type":"animation","script":"anims/hook.js","use":["anims/subject.js"],"size":"band","box":"plain"}]}]}
+Create both referenced scripts before generation. For a minimal runnable drawing, anims/subject.js: function drawSubject(k) { const g=k.ctx; g.fillStyle="#00857b"; g.fillRect(k.W*0.2,k.H*0.35,k.W*0.6,k.H*0.3); }
+anims/hook.js: drawSubject(k);
+Replace this placeholder with a subject-specific illustration that explains the actual evidence.
 
 session.json: {"sessionTitle":"Research title","project":"Research","messages":[{"role":"user","md":"Exact source passage","id":"actual source message ID when available"}]}. Preserve source message IDs, branch ID and referenced Artifact/version IDs in a provenance object; omit unknown IDs rather than fabricate them. This authored snapshot is not a claim of independent source verification.
 
