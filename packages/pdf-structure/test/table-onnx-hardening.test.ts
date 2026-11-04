@@ -2579,3 +2579,258 @@ it('keeps two-record fenced sections on their original model spans', () => {
     refineFencedSectionExample(f, { ...f.context, sourcePage: undefined })
   )
 })
+
+const { proveNativeTerminalFencedSection } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-fenced-section.mjs')).href
+)
+function terminalSectionNativeExample(): ReturnType<typeof JSON.parse> {
+  const width = 320,
+    height = 360,
+    s = 1.5,
+    cuts = [0, 70, 125, 180, 235, 300],
+    bands = [],
+    sections = [],
+    entries = [],
+    add = (str, x, y, fontName = 'F'): number => entries.push({ str, x, y, fontName })
+  for (let c = 0; c < 5; c++) add(c ? 'Metric ' + c : 'Setting', cuts[c] + 8, 22)
+  bands.push([12, 26])
+  for (let b = 0; b < 2; b++) {
+    const y = 42 + b * 90
+    sections.push(bands.length)
+    bands.push([y - 10, y + 3])
+    add(b ? 'Second cohort summary' : 'Initial cohort summary', 8, y, 'H')
+    for (let r = 0; r < 3; r++) {
+      const z = y + 20 + r * 20
+      bands.push([z - 10, z + 3])
+      for (let c = 0; c < 5; c++)
+        add(c ? `${b + 1}.${r}${c}` : 'Record ' + String.fromCharCode(65 + r), cuts[c] + 8, z)
+    }
+  }
+  add('Terminal cohort summary', 8, 222, 'H')
+  const target = entries.length - 1
+  bands.push([232, 246])
+  for (let c = 0; c < 5; c++) add(c ? `${c}.2` : 'Last record', cuts[c] + 8, 242)
+  const items = entries.map(({ str, x, y, fontName }, index) => ({
+      str,
+      width: str.length * 5,
+      height: 10,
+      fontName,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, height - y],
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    content = {
+      items,
+      styles: {
+        F: { ascent: 0, descent: 0, vertical: false },
+        H: { ascent: 0, descent: 0, vertical: false }
+      }
+    },
+    viewport = {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x, y) => [x, height - y]
+    },
+    work = {
+      width: width * s,
+      height: height * s,
+      scale: s,
+      rotation: 0,
+      transform: [s, 0, 0, -s, 0, height * s],
+      convertToViewportPoint: (x, y) => [x * s, (height - y) * s]
+    },
+    operators = { fnArray: [], argsArray: [] }
+  for (const i of items) {
+    operators.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    operators.argsArray.push(
+      [],
+      [i.fontName, 10],
+      [new Float32Array([1, 0, 0, 1, i.transform[4], i.transform[5]])],
+      [
+        [...i.str].map((c) => ({
+          unicode: c,
+          fontChar: c,
+          originalCharCode: c.codePointAt(0),
+          width: 500,
+          isSpace: c === ' ',
+          isInFont: true
+        }))
+      ],
+      []
+    )
+  }
+  operators.fnArray.push(OPS.setLineWidth, OPS.setLineCap)
+  operators.argsArray.push([0.4], [0])
+  const nativeRules = [8, 30, 210, 250].map((y) => [0, y, 300, y]),
+    graphicsBounds = nativeRules.map((r) => {
+      const operationIndex = operators.fnArray.length
+      operators.fnArray.push(OPS.constructPath)
+      operators.argsArray.push([
+        OPS.stroke,
+        [new Float32Array([0, r[0], height - r[1], 1, r[2], height - r[3]])],
+        new Float32Array([r[0], height - r[3], r[2], height - r[1]])
+      ])
+      return {
+        kind: 'path',
+        operationIndex,
+        normalizedRect: r.map((n, i) => n / (i % 2 ? height : width))
+      }
+    }),
+    nativeGlyphContext = {
+      content,
+      viewport,
+      operators,
+      graphicsBounds,
+      pageNumber: 1,
+      sourceSha256: '0'.repeat(64),
+      glyphBounds: ['F', 'H'].map((fontName) => ({
+        fontName,
+        glyphs: [
+          ...new Set(items.filter((i) => i.fontName === fontName).flatMap((i) => [...i.str]))
+        ].map((fontChar) => ({
+          fontChar,
+          bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, 0, 0.5, 0.7]
+        }))
+      }))
+    },
+    sourcePage = {
+      pageNumber: 1,
+      width,
+      height,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds
+    },
+    captions = [
+      { page: 1, lines: ['Table 1. Anonymous measured inventory.'], rect: [0, 0, 450, 10] }
+    ],
+    context = {
+      sourcePage,
+      nativeGlyphContext,
+      viewport: work,
+      operators,
+      sourceContent: content,
+      content,
+      captions,
+      rulePaintBounds: new Map()
+    },
+    tokens = items.map((i) => tableTextToken(i, work, 0)),
+    table = {
+      id: 'anonymous-terminal-section',
+      cropRect: [0, 12, 450, 378],
+      structure: {
+        objects: [
+          ...cuts
+            .slice(0, -1)
+            .map((x, c) => ({ label: 'table column', rect: [x * s, 12, cuts[c + 1] * s, 378] })),
+          ...bands.map((r) => ({ label: 'table row', rect: [0, r[0] * s, 450, r[1] * s] })),
+          { label: 'table column header', rect: [0, 12, 450, 39] },
+          ...sections.map((r) => ({
+            label: 'table projected row header',
+            rect: [0, bands[r][0] * s, 450, bands[r][1] * s]
+          }))
+        ]
+      }
+    }
+  return { table, tokens, captions, context, rules: collectTableRules(operators, work), target }
+}
+
+function anonymousTerminalSectionPlan(): ReturnType<typeof JSON.parse> {
+  const f = terminalSectionNativeExample(),
+    rows = f.table.structure.objects
+      .filter((o) => o.label === 'table row')
+      .map((o) => ({ rect: o.rect.slice(), origin: 'model' })),
+    columnRects = f.table.structure.objects
+      .filter((o) => o.label === 'table column')
+      .map((o) => o.rect.slice()),
+    cells = []
+  for (let row = 0; row < rows.length; row++) {
+    const ts = f.tokens.filter(
+      (i) => i.rect[1] >= rows[row].rect[1] && i.rect[3] <= rows[row].rect[3]
+    )
+    const section = ts.length === 1 && ts[0].sourceItem.index !== f.target
+    for (const item of ts) {
+      const column = section
+        ? 0
+        : columnRects.findIndex((c) => item.rect[0] >= c[0] && item.rect[2] <= c[2])
+      if (column < 0) throw Error('Fixture source crosses explicit data columns')
+      cells.push({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: section ? 5 : 1,
+        rect: [
+          columnRects[column][0],
+          rows[row].rect[1],
+          section ? columnRects.at(-1)[2] : columnRects[column][2],
+          rows[row].rect[3]
+        ],
+        text: item.text,
+        sourceTokens: [item],
+        sourceRects: [item.rect],
+        sourceItems: [item.sourceItem]
+      })
+    }
+  }
+  return {
+    ...f,
+    planInput: {
+      table: f.table,
+      items: f.tokens,
+      rows,
+      columnRects,
+      cells,
+      unassigned: [f.tokens[f.target].text],
+      captions: f.captions,
+      spans: [],
+      rules: f.rules,
+      context: f.context
+    }
+  }
+}
+
+it('proves a whole terminal native section beside one complete already-owned record', () => {
+  const f = anonymousTerminalSectionPlan(),
+    before = JSON.stringify(f),
+    plan = proveNativeTerminalFencedSection(f.planInput)
+  expect(plan?.item).toBe(f.tokens[f.target])
+  expect(plan?.insertAt).toBe(f.planInput.rows.length - 1)
+  expect(plan?.rect).toEqual([0, 318, 450, 333])
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each(['missing page', 'missing fence', 'duplicate claim', 'foreign paint', 'changed Source'])(
+  'preserves a terminal native section without %s',
+  (name) => {
+    const f = anonymousTerminalSectionPlan(),
+      p = f.planInput
+    if (name === 'missing page') delete p.context.sourcePage
+    if (name === 'missing fence') p.rules = p.rules.filter((r: number[]) => r[1] !== 315)
+    if (name === 'duplicate claim') p.cells[0].sourceItems.push(p.cells[0].sourceItems[0])
+    if (name === 'changed Source')
+      p.items.find(
+        (i: ReturnType<typeof JSON.parse>) => i.sourceItem.index === f.target
+      ).sourceItem.text += 'x'
+    if (name === 'foreign paint') {
+      const c = p.context.nativeGlyphContext,
+        o = c.operators,
+        index = o.fnArray.length
+      o.fnArray.push(OPS.constructPath)
+      o.argsArray.push([
+        OPS.fill,
+        [new Float32Array([0, 100, 130, 1, 110, 130, 1, 110, 140, 1, 100, 140, 4])],
+        new Float32Array([100, 130, 110, 140])
+      ])
+      c.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: index,
+        normalizedRect: [100 / 320, 220 / 360, 110 / 320, 230 / 360]
+      })
+    }
+    const before = JSON.stringify(f)
+    expect(proveNativeTerminalFencedSection(p)).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)

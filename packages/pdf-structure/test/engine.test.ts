@@ -143,3 +143,191 @@ const requestAt = (root: string): Parameters<ReturnType<typeof createEngineAt>['
   signal: new AbortController().signal,
   onProgress: () => undefined
 })
+
+it.each([
+  { label: 'empty stderr', stderr: '' },
+  { label: 'bounded stderr tail', stderr: 'discarded-head:' + 'x'.repeat(5000) + ':kept-tail' }
+])('retains actual exit diagnostics with $label', async ({ stderr }) => {
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-exit-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'host.mjs'),
+    'process.stdin.once("data", () => process.stderr.write(' +
+      JSON.stringify(stderr) +
+      ', () => process.exit(37)))'
+  )
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
+  const error = await job.result.catch((error: unknown) => error)
+  await job.stop()
+  expect(error).toBeInstanceOf(Error)
+  const message = (error as Error).message
+  expect(message).toBe(
+    (stderr.slice(-4000).trim() || 'PDF extraction failed.') + ' (exitCode=37, signal=null)'
+  )
+  expect((error as Error).stack).toContain('(exitCode=37, signal=null)')
+  expect(message).not.toContain('discarded-head:')
+  expect(readWorkerResult).not.toHaveBeenCalled()
+})
+
+it('retains an actual nullable exit code and signal from the owned runtime close', async () => {
+  const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null,
+    signalCode: 'SIGTERM'
+  }) as unknown as import('node:child_process').ChildProcessWithoutNullStreams
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-signal-'))
+  roots.push(root)
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const runtime = { spawn: () => child, stop: vi.fn(async () => undefined) }
+  const job = createEngineAt(root, { modelRecipe, runtime }).start(requestAt(root))
+  child.emit('close', null, 'SIGTERM')
+  await expect(job.result).rejects.toThrow('PDF extraction failed. (exitCode=null, signal=SIGTERM)')
+  await job.stop()
+  expect(runtime.stop).not.toHaveBeenCalled()
+  expect(readWorkerResult).not.toHaveBeenCalled()
+  child.stdin.destroy()
+  child.stdout.destroy()
+  child.stderr.destroy()
+})
+
+it('keeps an earlier runtime error instance instead of replacing it with close diagnostics', async () => {
+  const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: 37,
+    signalCode: null
+  }) as unknown as import('node:child_process').ChildProcessWithoutNullStreams
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-earlier-error-'))
+  roots.push(root)
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const runtime = { spawn: () => child, stop: vi.fn(async () => undefined) }
+  const job = createEngineAt(root, { modelRecipe, runtime }).start(requestAt(root))
+  const original = new Error('spawn transport failed')
+  child.emit('error', original)
+  child.emit('close', 37, null)
+  await expect(job.result).rejects.toBe(original)
+  await job.stop()
+  expect(readWorkerResult).not.toHaveBeenCalled()
+  child.stdin.destroy()
+  child.stdout.destroy()
+  child.stderr.destroy()
+})
+
+it.skipIf(process.platform !== 'win32')(
+  'keeps the host Canvas library resident after a native Worker exits',
+  async () => {
+    const { spawn } = await import('node:child_process')
+    const { createRequire } = await import('node:module')
+    const { resolve } = await import('./paths')
+    const require = createRequire(import.meta.url)
+    const canvasEntry = require.resolve('@napi-rs/canvas')
+    const nativeEntry = createRequire(canvasEntry).resolve(
+      '@napi-rs/canvas-win32-' + process.arch + '-msvc'
+    )
+    const workerScript = `
+    const assert = require('node:assert/strict')
+    const { parentPort, workerData } = require('node:worker_threads')
+    const { createCanvas } = require(workerData.canvasEntry)
+    async function encode() {
+      const canvas = createCanvas(64, 64)
+      canvas.getContext('2d').fillRect(0, 0, 64, 64)
+      const png = await canvas.encode('png')
+      assert.equal(canvas.width, 64)
+      assert.equal(canvas.height, 64)
+      assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a')
+      assert.equal(png.readUInt32BE(16), 64)
+      assert.equal(png.readUInt32BE(20), 64)
+      parentPort.postMessage({ width: canvas.width, height: canvas.height, pngBytes: png.length })
+    }
+    void encode().catch(error => { throw error })
+  `
+    const script = `
+    import assert from 'node:assert/strict'
+    import { realpathSync, writeSync } from 'node:fs'
+    import { basename } from 'node:path'
+    import { pathToFileURL } from 'node:url'
+    import { Worker } from 'node:worker_threads'
+    process.stdin.resume()
+    await import(pathToFileURL(${JSON.stringify(resolve('resources/host.mjs'))}).href)
+    const worker = new Worker(${JSON.stringify(workerScript)}, {
+      eval: true, execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 512 },
+      workerData: ${JSON.stringify({ canvasEntry })}
+    })
+    let result
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { void worker.terminate(); reject(Error('Native Worker deadline')) }, 10000)
+      worker.once('message', value => { result = value })
+      worker.once('error', reject)
+      worker.once('exit', code => {
+        clearTimeout(timer)
+        try { assert.equal(code, 0); resolve() } catch (error) { reject(error) }
+      })
+    })
+    assert(result && result.width === 64 && result.height === 64 && result.pngBytes > 0)
+    const modules = process.report.getReport().sharedObjects
+    assert(Array.isArray(modules) && modules.length > 0)
+    const canonical = file => realpathSync.native(file).toLowerCase()
+    assert(modules.filter(file => basename(file).toLowerCase() === basename(process.execPath).toLowerCase()).some(file => canonical(file) === canonical(process.execPath)))
+    const expected = canonical(${JSON.stringify(nativeEntry)})
+    const resident = modules.filter(file => basename(file).toLowerCase() === basename(expected)).some(file => canonical(file) === expected)
+    assert(resident, 'The same physical Canvas library must remain loaded after Worker exit')
+    writeSync(1, JSON.stringify({ workerExitCode: 0, png: true, nativeResident: resident }) + '\\n')
+    process.exit(0)
+  `
+    const observed = await new Promise<{
+      code: number | null
+      signal: NodeJS.Signals | null
+      stdout: string
+      stderr: string
+      error: string | null
+      timedOut: boolean
+      closed: boolean
+    }>((resolve) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+      let stdout = '',
+        stderr = '',
+        error: string | null = null,
+        timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        child.kill('SIGKILL')
+      }, 25000)
+      child.stdout.on('data', (b) => {
+        stdout += b.toString()
+      })
+      child.stderr.on('data', (b) => {
+        stderr += b.toString()
+      })
+      child.once('error', (e) => {
+        error = e.message
+      })
+      // Keep stdin open without sending any SDK request. The host's end handler must not run.
+      child.once('close', (code, signal) => {
+        clearTimeout(timer)
+        resolve({ code, signal, stdout, stderr, error, timedOut, closed: true })
+      })
+    })
+    expect(observed.error).toBeNull()
+    expect(observed.timedOut).toBe(false)
+    expect(observed.closed).toBe(true)
+    expect(observed.signal).toBeNull()
+    expect(observed.code, observed.stderr).toBe(0)
+    expect(JSON.parse(observed.stdout)).toEqual({
+      workerExitCode: 0,
+      png: true,
+      nativeResident: true
+    })
+  },
+  30000
+)

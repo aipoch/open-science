@@ -2,7 +2,7 @@
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
-import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { tableTextToken, nativeFigureLabelBounds } from './literature-pdf-orientation.mjs'
 import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
 import { getPdfCropRasterProtectionFromPng } from './literature-pdf-crop.mjs'
 
@@ -454,43 +454,7 @@ function nativeRasterTop(figure, tokens, page, context) {
 
 // Match the Reader's native label envelope before publishing optional source
 // claims. Font ascent and descent are not necessarily complementary metrics.
-export function nativeFigureLabelBounds(item, style, viewport) {
-  if (
-    item.dir !== 'ltr' ||
-    style?.vertical ||
-    item.transform?.length !== 6 ||
-    ![...item.transform, item.width, item.height].every(Number.isFinite) ||
-    item.width <= 0 ||
-    item.height <= 0
-  )
-    return
-  const [a, b, c, d, x, y] = item.transform,
-    advance = Math.hypot(a, b),
-    height = Math.hypot(c, d)
-  if (
-    advance <= 0 ||
-    height <= 0 ||
-    a * d - b * c <= 0 ||
-    Math.abs(a * c + b * d) > advance * height * 0.0001
-  )
-    return
-  const ascent = style?.ascent || (style?.descent ? 1 + style.descent : 0.8)
-  const points = [0, item.width].flatMap((u) =>
-    [-(1 - ascent) * height, ascent * height].map((v) =>
-      viewport.convertToViewportPoint(
-        x + (a / advance) * u + (c / height) * v,
-        y + (b / advance) * u + (d / height) * v
-      )
-    )
-  )
-  const rect = [
-    Math.min(...points.map((p) => p[0])),
-    Math.min(...points.map((p) => p[1])),
-    Math.max(...points.map((p) => p[0])),
-    Math.max(...points.map((p) => p[1]))
-  ]
-  return rect.every(Number.isFinite) && area(rect) > 0 ? rect : undefined
-}
+export { nativeFigureLabelBounds } from './literature-pdf-orientation.mjs'
 
 // Native advance boxes end at the baseline. Complete the ink of glyphs already
 // wholly owned by this plate, without admitting adjacent text into the crop.

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 const { refineTable } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )
-const { associateTableNotes } = await import(
+const { associateTableNotes, retainUncertifiedSymbolicNoteGrid } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-notes.mjs')).href
 )
 
@@ -1153,4 +1153,111 @@ it('owns an unprefixed comma-separated acronym glossary only beside its table', 
   expect(
     associateTableNotes({ lines: [{ ...line, y: 250 }] }, [{ rect: [10, 20, 300, 100] }])
   ).toEqual([[]])
+})
+
+it('keeps a raised Unicode asterisk note without claiming inline operators or distant prose', () => {
+  const marker = { text: '∗', x: 42, y: 108, width: 3, height: 5, fontSize: 5 }
+  const body = {
+    text: 'Values use the same scale.',
+    x: 46,
+    y: 110,
+    width: 220,
+    height: 8,
+    fontSize: 8
+  }
+  const continuation = {
+    text: 'All groups follow this convention.',
+    x: 42,
+    y: 120,
+    width: 240,
+    height: 8,
+    fontSize: 8
+  }
+  const tables = [{ rect: [40, 40, 360, 100] }]
+  const rules = [[40, 105, 360, 105]]
+  expect(associateTableNotes({ lines: [marker, body, continuation] }, tables, rules)).toEqual([
+    [
+      {
+        text: '∗ Values use the same scale. All groups follow this convention.',
+        rect: [42, 108, 282, 128]
+      }
+    ]
+  ])
+  expect(associateTableNotes({ lines: [{ ...body, text: 'a ∗ b = c' }] }, tables, rules)).toEqual([
+    []
+  ])
+  expect(
+    associateTableNotes(
+      { lines: [marker, body, continuation].map((line) => ({ ...line, y: line.y + 100 })) },
+      tables,
+      rules
+    )
+  ).toEqual([[]])
+})
+
+it('keeps the mapping barrier when a newly owned star note removes the last body warning', () => {
+  const next = { grid: [['Name'], ['Unit'], ['(example)']], cells: [{ text: 'Unit' }], issues: [] }
+  const notes = [{ text: '∗ Unit definitions' }]
+  const result = retainUncertifiedSymbolicNoteGrid(
+    { issues: ['unassigned-source-text'] },
+    next,
+    notes
+  )
+  expect(result.issues).toEqual(['native-table-structure-ambiguous'])
+  expect(result.grid).toBe(next.grid)
+  expect(result.cells).toBe(next.cells)
+  expect(retainUncertifiedSymbolicNoteGrid({ issues: [] }, next, notes)).toBe(next)
+  const unreliable = { ...next, issues: ['conflicting-spanning-cells'] }
+  expect(
+    retainUncertifiedSymbolicNoteGrid({ issues: ['unassigned-source-text'] }, unreliable, notes)
+  ).toBe(unreliable)
+  expect(
+    retainUncertifiedSymbolicNoteGrid({ issues: ['unassigned-source-text'] }, next, [
+      { text: 'a∗b=c' }
+    ])
+  ).toBe(next)
+})
+
+it('keeps Unicode significance continuations within their explicit Notes paragraph', () => {
+  const line = (text: string, y: number): object => ({
+    text,
+    x: 20,
+    y,
+    width: 240,
+    height: 8,
+    fontSize: 8
+  })
+  const table = [{ rect: [10, 20, 300, 100] }]
+  const prefix = 'Notes. Estimates and uncertainty are provided.'
+  const legend = '∗∗ p < 0.05, ∗ p < 0.10.'
+  expect(associateTableNotes({ lines: [line(prefix, 104), line(legend, 114)] }, table)).toEqual([
+    [{ text: prefix + ' ' + legend, rect: [20, 104, 260, 122] }]
+  ])
+  const separate = '∗ Separate definitions remain native.'
+  expect(
+    associateTableNotes({ lines: [line(prefix, 104), line(separate, 114)] }, table)[0].map(
+      (n: { text: string }) => n.text
+    )
+  ).toEqual([prefix, separate])
+})
+it('requires ordinary content for a new Unicode-star footer without changing legacy markers', () => {
+  const line = (text: string): object => ({
+    text,
+    x: 20,
+    y: 104,
+    width: 240,
+    height: 8,
+    fontSize: 8
+  })
+  const table = [{ rect: [10, 20, 300, 100] }]
+  for (const text of ['∗ k,j', '∗ author@example.org.'])
+    expect(associateTableNotes({ lines: [line(text)] }, table)).toEqual([[]])
+  for (const text of [
+    '∗ Run stopped before the planned horizon; values use completed periods.',
+    '* k,j',
+    '† author@example.org.'
+  ])
+    expect(associateTableNotes({ lines: [line(text)] }, table)[0]).toEqual([
+      { text, rect: [20, 104, 260, 112] }
+    ])
 })

@@ -292,6 +292,74 @@ describe('extractPdfTranslationSource', () => {
     )
   })
 
+  const missingControl = (str: string, mapped = false, width = 150) => {
+    const fixture = setup([{ ...text(str), width }])
+    const glyphs = [...str].map((unicode) => ({
+      unicode,
+      originalCharCode: unicode.charCodeAt(0),
+      isInFont: true
+    }))
+    const map = Object.fromEntries(
+      glyphs
+        .filter((glyph) => mapped || glyph.originalCharCode >= 32)
+        .map((glyph) => [glyph.originalCharCode, glyph.unicode])
+    )
+    Object.assign(fixture.page, {
+      commonObjs: { has: () => true, get: () => ({ composite: true, toUnicode: { _map: map } }) },
+      getOperatorList: vi.fn().mockResolvedValue({
+        fnArray: [OPS.setFont, OPS.showText],
+        argsArray: [['body', 10], [glyphs]]
+      })
+    })
+    return fixture
+  }
+
+  it('retains a proven missing-Unicode small owner only as original', async () => {
+    const str = '\u0012 X',
+      fixture = missingControl(str)
+    const before = await extractPdfTranslationSource(setup([text(str)]).context)
+    const actual = await extractPdfTranslationSource(fixture.context)
+    expect(actual.coverage).toEqual({
+      ...before.coverage,
+      warnings: [{ unitId: before.source.units[0].id, reasons: ['unreliable-font-unicode'] }]
+    })
+    expect(before.source.units).toHaveLength(1)
+    expect(before.source.units[0].sourceOnly).toBeUndefined()
+    expect(actual.source.units).toEqual([{ ...before.source.units[0], sourceOnly: true }])
+    expect(applyPdfContentFirstPolicy(actual.source).units).toEqual(actual.source.units)
+  })
+
+  it.each([
+    'An ordinary unchanged \u0001 sentence retains translation eligibility.',
+    '\u0003 oi',
+    '\t X',
+    '\n X',
+    '\r X'
+  ])('keeps ordinary, mixed-word and legal-whitespace admission unchanged (%s)', async (str) => {
+    const fixture = missingControl(str)
+    const before = await extractPdfTranslationSource(setup([text(str)]).context)
+    const actual = await extractPdfTranslationSource(fixture.context)
+    expect(actual.source).toEqual(before.source)
+    expect(actual.coverage.excludedItemCount).toBe(before.coverage.excludedItemCount)
+  })
+
+  it.each(['mapped', 'unavailable', 'zero advance'])(
+    'does not infer missing-Unicode small-owner admission from %s',
+    async (variant) => {
+      const str = '\u0012 X',
+        width = variant === 'zero advance' ? 0 : 150
+      const fixture =
+        variant === 'unavailable'
+          ? setup([text(str)])
+          : missingControl(str, variant === 'mapped', width)
+      const before = await extractPdfTranslationSource(setup([{ ...text(str), width }]).context)
+      const actual = await extractPdfTranslationSource(fixture.context)
+      expect(actual.source).toEqual(before.source)
+      if (variant !== 'zero advance')
+        expect(actual.coverage.warnings).toEqual(before.coverage.warnings)
+    }
+  )
+
   const symbolicFallback = () => {
     const fixture = simpleControl('&')
     const font = Object.assign(fixture.font, {

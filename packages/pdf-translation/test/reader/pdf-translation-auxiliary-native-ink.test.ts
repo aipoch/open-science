@@ -6,7 +6,10 @@ import * as fontkit from 'fontkit'
 import { PDFDocument, PDFDict, PDFName } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { afterAll, beforeAll, expect, it, vi } from 'vitest'
-import { createAuxiliaryNativeInkReader } from '../../src/reader/auxiliary-native-ink.js'
+import {
+  createAuxiliaryNativeInkReader,
+  createAuxiliaryNativeCaptionInkReader
+} from '../../src/reader/auxiliary-native-ink.js'
 import type { AuxiliaryNativeInkReader } from '../../src/reader/auxiliary-native-ink.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
 import { nativeAlgorithmInkRegions } from '../../src/reader/native-source-geometry.js'
@@ -297,6 +300,25 @@ it('rejects a genuine oversized page viewport before a DOM canvas can wrap its w
   } finally {
     await reader.dispose()
     await fixture.task.destroy()
+    vi.unstubAllGlobals()
+  }
+})
+
+it('does not allocate caption proof rendering without a complete native plot scope', async () => {
+  const factory = vi.fn(getDocument),
+    createElement = vi.fn()
+  vi.stubGlobal('document', { createElement })
+  const reader = createAuxiliaryNativeCaptionInkReader({
+    document,
+    nativeDocumentFactory: factory,
+    sourceIdentity: identity
+  })
+  try {
+    expect(await reader.read(request)).toBeUndefined()
+    expect(factory).not.toHaveBeenCalled()
+    expect(createElement).not.toHaveBeenCalled()
+  } finally {
+    await reader.dispose()
     vi.unstubAllGlobals()
   }
 })

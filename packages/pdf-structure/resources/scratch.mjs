@@ -7,7 +7,7 @@ const names = {
   geometry: /^(probe\.json|page-\d+(?:-candidates)?\.png)$/,
   inference: /^(onnx-probe\.json|page-\d+-detected\.png|page-\d+-table-\d+\.(?:png|tsv))$/,
   thumbnails:
-    /^(?:p\d+-(?:figure|algorithm|graphical-table|open-rule-table)-\d+|page-\d+-table-\d+)\.png$/
+    /^(?:p\d+-(?:figure|algorithm|graphical-table|open-rule-table|native-ordinary-three-line)-\d+\.png|page-\d+-table-\d+\.png(?:\.(?:bottom-strip|native-marker)\.pending)?)$/
 }
 
 // Keep optional cell origins only when they fit the existing manifest byte limit.

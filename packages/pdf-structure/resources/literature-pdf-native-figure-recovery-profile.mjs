@@ -10,9 +10,45 @@ const digest = (values) => createHash('sha256').update(JSON.stringify(values)).d
 
 // Retain actual input objects as well as values. No getter is executed while
 // walking native snapshots; an own accessor declines this optional contract.
-function retainReferences(roots, viewport) {
+function retainReferences(roots, viewport, secondaryViewport) {
   const seen = new Set(),
     bindings = []
+  // A pixel-only caller can bind one additional actual native viewport. Keep
+  // its full prototype/callback descriptors; never replace it with plain data.
+  if (secondaryViewport !== undefined) {
+    if (
+      !secondaryViewport ||
+      typeof secondaryViewport !== 'object' ||
+      types.isProxy(secondaryViewport)
+    )
+      return
+    const prototype = Object.getPrototypeOf(secondaryViewport)
+    if (prototype && types.isProxy(prototype)) return
+    if (prototype && prototype !== Object.prototype && prototype !== Array.prototype) {
+      const parent = Object.getPrototypeOf(prototype),
+        descriptors = Object.getOwnPropertyDescriptors(prototype),
+        keys = Reflect.ownKeys(descriptors)
+      bindings.push(
+        () =>
+          Object.getPrototypeOf(prototype) === parent &&
+          Reflect.ownKeys(prototype).length === keys.length &&
+          Reflect.ownKeys(prototype).every((key, i) => key === keys[i]) &&
+          keys.every((key) => {
+            const d = Object.getOwnPropertyDescriptor(prototype, key),
+              old = descriptors[key]
+            return (
+              d &&
+              d.enumerable === old.enumerable &&
+              d.configurable === old.configurable &&
+              Object.hasOwn(d, 'value') === Object.hasOwn(old, 'value') &&
+              (Object.hasOwn(old, 'value')
+                ? Object.is(d.value, old.value) && d.writable === old.writable
+                : d.get === old.get && d.set === old.set)
+            )
+          })
+      )
+    }
+  }
   const visit = (value) => {
     if (!value || typeof value !== 'object' || seen.has(value)) return true
     if (types.isProxy(value)) return false
@@ -61,6 +97,7 @@ function retainReferences(roots, viewport) {
       keys = Reflect.ownKeys(descriptors)
     if (
       value !== viewport &&
+      value !== secondaryViewport &&
       prototype !== Object.prototype &&
       prototype !== null &&
       prototype !== Array.prototype
@@ -87,7 +124,8 @@ function retainReferences(roots, viewport) {
     )
     return keys.every((key) => visit(descriptors[key].value))
   }
-  if (!roots.every(visit)) return
+  if (!roots.every(visit) || (secondaryViewport !== undefined && !seen.has(secondaryViewport)))
+    return
   return () => bindings.every((same) => same())
 }
 
