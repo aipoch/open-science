@@ -47,7 +47,10 @@ const f = vi.hoisted(() => ({
     requestNative: vi.fn<(...args: unknown[]) => Promise<boolean>>(async () => true)
   },
   control: { close: vi.fn(async () => {}) },
+  createDesktopLifecycle:
+    vi.fn<typeof import('./desktop-runtime-lifecycle').createDesktopRuntimeLifecycle>(),
   runtime: {
+    abortQuitPreparation: vi.fn(),
     prepareForQuit: vi.fn(async () => 'completed'),
     dispose: vi.fn(async () => {}),
     abortDesktopUpdate: vi.fn(),
@@ -230,7 +233,7 @@ vi.mock('./remote-access/service', () => ({
   RemoteAccessService: { create: async () => f.remote }
 }))
 vi.mock('./desktop-runtime-lifecycle', () => ({
-  createDesktopRuntimeLifecycle: () => f.desktopLifecycle
+  createDesktopRuntimeLifecycle: f.createDesktopLifecycle
 }))
 vi.mock('./desktop-interaction', () => ({
   configureDesktopFileInteraction: vi.fn(),
@@ -261,6 +264,7 @@ beforeEach(async () => {
   f.startDesktop.mockResolvedValue(
     f.desktop as unknown as Awaited<ReturnType<typeof f.startDesktop>>
   )
+  f.createDesktopLifecycle.mockReturnValue(f.desktopLifecycle)
   f.startControl.mockResolvedValue(f.control as Awaited<ReturnType<typeof f.startControl>>)
   f.createRuntime.mockResolvedValue(
     f.runtime as unknown as Awaited<ReturnType<typeof f.createRuntime>>
@@ -506,6 +510,17 @@ it('keeps startup commands bounded until database verification and hands off to 
   const send = await startHealthyRuntime()
   await vi.waitFor(() => expect(f.verifyDatabase).toHaveBeenCalledOnce())
   const transport = f.startDesktop.mock.calls[0][0]
+  const { broadcastToRenderers } = await import('./renderer-broadcast')
+  const receive = vi.fn()
+  const unsubscribe = transport.events.subscribe(receive)
+  broadcastToRenderers('locale:changed', { preference: 'system', locale: 'en' })
+  expect(receive).toHaveBeenCalledWith({
+    channel: 'locale:changed',
+    payload: { preference: 'system', locale: 'en' }
+  })
+  unsubscribe()
+  broadcastToRenderers('locale:changed', { preference: 'de', locale: 'de' })
+  expect(receive).toHaveBeenCalledOnce()
   const callerContext = createElectronCallerContext(7)
   const callers = new ApplicationCallerLeaseRegistry()
   const invocation = { args: [], callerContext, callerLease: callers.acquire(callerContext).lease }
@@ -570,31 +585,43 @@ it('keeps startup commands bounded until database verification and hands off to 
   callers.dispose()
 })
 
-it('preserves renderer durability decisions and delegates restart to the connected desktop', async () => {
-  const send = await startHealthyRuntime()
-  await waitForReady(send)
-  const options = f.createRuntime.mock.calls[0][0]
-  expect(options.canRequestDesktopCredential?.()).toBe(true)
-  f.desktop.requestNative.mockResolvedValueOnce(false)
-  expect(await options.confirmRendererDurability?.('data-root-handoff')).toBe(false)
-  expect(f.desktop.requestNative).toHaveBeenLastCalledWith({
-    operation: 'renderer-flush',
-    policy: 'data-root-handoff'
-  })
-  options.notifyRendererDurabilityAborted?.()
-  expect(f.desktop.requestNative).toHaveBeenLastCalledWith({ operation: 'renderer-flush-aborted' })
-  f.desktop.isConnected.mockReturnValueOnce(false)
-  expect(await options.confirmRendererDurability?.('data-root-handoff')).toBe(true)
+it.each([true, false])(
+  'preserves durability decisions and restarts with desktop acceptance %s',
+  async (accepted) => {
+    const send = await startHealthyRuntime()
+    await waitForReady(send)
+    const options = f.createRuntime.mock.calls[0][0]
+    expect(options.canRequestDesktopCredential?.()).toBe(true)
+    f.desktop.requestNative.mockResolvedValueOnce(false)
+    expect(await options.confirmRendererDurability?.('data-root-handoff')).toBe(false)
+    expect(f.desktop.requestNative).toHaveBeenLastCalledWith({
+      operation: 'renderer-flush',
+      policy: 'data-root-handoff'
+    })
+    options.notifyRendererDurabilityAborted?.()
+    expect(f.desktop.requestNative).toHaveBeenLastCalledWith({
+      operation: 'renderer-flush-aborted'
+    })
+    f.desktop.isConnected.mockReturnValueOnce(false)
+    expect(await options.confirmRendererDurability?.('data-root-handoff')).toBe(true)
 
-  const lifecycle = f.lifecycle.mock.calls[0][0]
-  lifecycle.relaunch()
-  lifecycle.quit()
-  await vi.waitFor(() => expect(process.exitCode).toBe(0))
-  await vi.dynamicImportSettled()
-  expect(f.desktop.requestNative).toHaveBeenLastCalledWith({ operation: 'runtime-relaunch' })
-  expect(f.runtime.prepareForQuit).toHaveBeenCalledOnce()
-  expect(f.spawn).not.toHaveBeenCalled()
-})
+    f.desktop.requestNative.mockResolvedValueOnce(accepted)
+    const lifecycle = f.lifecycle.mock.calls[0][0]
+    lifecycle.relaunch()
+    lifecycle.quit()
+    await vi.waitFor(() => expect(process.exitCode).toBe(0))
+    await vi.dynamicImportSettled()
+    expect(f.desktop.requestNative).toHaveBeenLastCalledWith({ operation: 'runtime-relaunch' })
+    expect(f.runtime.prepareForQuit).toHaveBeenCalledOnce()
+    if (accepted) expect(f.spawn).not.toHaveBeenCalled()
+    else
+      expect(f.spawn).toHaveBeenCalledExactlyOnceWith(process.execPath, process.argv.slice(1), {
+        detached: true,
+        stdio: 'inherit',
+        env: process.env
+      })
+  }
+)
 
 it('retains ownership and records failed shutdown when a running service cannot drain', async () => {
   const send = await startHealthyRuntime()
@@ -674,4 +701,82 @@ it('closes business admission without starting cleanup when a stop grant may hav
   expect(process.exitCode).toBeUndefined()
   f.lifecycle.mock.calls[0][0].quit()
   await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
+
+it.each([true, false])(
+  'preserves quit preparation outcome unless aborted (aborted=%s)',
+  async (aborted) => {
+    const send = await startHealthyRuntime()
+    await waitForReady(send)
+    const lifecycle = f.startDesktop.mock.calls[0][0].createLifecycle!()
+    await lifecycle.request({ operation: 'inspect' })
+    const preparation = f.createDesktopLifecycle.mock.calls[0][0]
+    const pending = Promise.withResolvers<string>()
+    f.runtime.prepareForQuit.mockReturnValueOnce(pending.promise)
+    const first = preparation.prepareForQuit()
+    if (aborted) {
+      preparation.abortQuitPreparation()
+      expect(f.runtime.abortQuitPreparation).toHaveBeenCalledOnce()
+    }
+    pending.resolve('failed')
+    expect(await first).toBe('failed')
+    f.lifecycle.mock.calls[0][0].quit()
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+    expect(f.runtime.prepareForQuit).toHaveBeenCalledTimes(aborted ? 2 : 1)
+    expect(process.exit).toHaveBeenNthCalledWith(1, aborted ? 0 : 1)
+    expect(f.writeExit).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ outcome: aborted ? 'clean' : 'failed' })
+    )
+  }
+)
+
+it('exits with failure at the shutdown deadline when a disposer never finishes', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const drain = Promise.withResolvers<void>()
+  f.runtime.dispose.mockReturnValueOnce(drain.promise)
+  vi.useFakeTimers()
+  try {
+    f.lifecycle.mock.calls[0][0].quit()
+    await vi.waitFor(() => expect(f.runtime.dispose).toHaveBeenCalledOnce())
+    expect(process.exit).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(process.exit).toHaveBeenNthCalledWith(1, 1)
+    expect(f.log.error).toHaveBeenCalledWith(
+      'local service shutdown deadline exceeded',
+      expect.objectContaining({ budgetMs: 20_000 })
+    )
+    expect(f.closeOwnership).not.toHaveBeenCalled()
+  } finally {
+    // The exit fixture returns, so settle teardown before the next test resets its resources.
+    drain.resolve()
+    await vi.waitFor(() => expect(f.closeOwnership).toHaveBeenCalledOnce())
+    vi.useRealTimers()
+  }
+})
+
+it('reports rejected stop intent without releasing resources and allows a later stop', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  f.stopIntent.mockImplementationOnce(() => {
+    throw new Error('stop intent unavailable')
+  })
+  const interrupt = process
+    .listeners('SIGINT')
+    .find((listener) => !listeners.get('SIGINT')!.has(listener))!
+  interrupt('SIGINT')
+  await vi.waitFor(() =>
+    expect(f.log.error).toHaveBeenCalledWith(
+      'stop intent could not be recorded',
+      expect.any(Object)
+    )
+  )
+  expect(f.runtime.dispose).not.toHaveBeenCalled()
+  expect(f.closeOwnership).not.toHaveBeenCalled()
+  expect(process.exit).not.toHaveBeenCalled()
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+  expect(process.exit).toHaveBeenNthCalledWith(1, 0)
+  expect(f.closeOwnership).toHaveBeenCalledOnce()
 })
