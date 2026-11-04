@@ -298,3 +298,156 @@ it.each([
     ).toEqual(items.map((item) => item.sourceItem.index))
   }
 )
+
+function leadingMissingValueRecord(): {
+  table: {
+    id: string
+    cropRect: number[]
+    structure: { objects: { label: string; rect: number[] }[] }
+  }
+  items: SourceToken[]
+  first: string[]
+} {
+  let index = 0
+  const first = ['40', '0', '–', '–', '–', '5.2', '180', '280', '2.7', '18']
+  const token = (text: string, column: number, baseline: number): SourceToken => ({
+    text,
+    rect: [column * 70 + 10, baseline - 12, column * 70 + 10 + text.length * 5, baseline],
+    baseline,
+    height: 12,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: index++, text }
+  })
+  const items = [
+    ...Array.from({ length: 10 }, (_, column) =>
+      token(column ? `Measure${column}` : 'Width', column, 20)
+    ),
+    ...first.map((text, column) => token(text, column, 45)),
+    ...Array.from({ length: 11 }, (_, row) =>
+      Array.from({ length: 10 }, (_, column) =>
+        token(column === 0 ? `Series${row}` : `${row + column}.2`, column, 65 + row * 20)
+      )
+    ).flat()
+  ]
+  const table = {
+    id: 'anonymous-leading-missing-value-record',
+    cropRect: [0, 0, 700, 280],
+    structure: {
+      objects: [
+        ...Array.from({ length: 10 }, (_, column) => ({
+          label: 'table column',
+          rect: [column * 70, 0, (column + 1) * 70, 280]
+        })),
+        { label: 'table column header', rect: [0, 5, 700, 28] },
+        { label: 'table row', rect: [0, 5, 700, 28] },
+        ...Array.from({ length: 12 }, (_, row) => ({
+          label: 'table row',
+          rect: [0, 30 + row * 20, 700, 60 + row * 20]
+        }))
+      ]
+    }
+  }
+  return { table, items, first }
+}
+
+it('keeps the complete native/model leading record whose missing values precede dense numeric peers', () => {
+  const { table, items, first } = leadingMissingValueRecord()
+  const result = refineTable(table, items)
+  expect(result.repairs).toContain('dense-statistical-rows-recovered')
+  expect(result.grid[1]).toEqual(first)
+  expect(result.grid).toHaveLength(13)
+  expect(result.unassigned).toEqual([])
+  const sources = result.cells.flatMap((cell) => cell.sourceItems ?? [])
+  expect(sources.map((source) => source.index).sort((a, b) => a - b)).toEqual(
+    items.map((item) => item.sourceItem.index)
+  )
+})
+
+it.each([
+  'missing-model',
+  'incomplete-source',
+  'cross-page',
+  'unreliable-metrics',
+  'header-conflict'
+])('does not promote an unsupported leading missing-value record with %s', (kind) => {
+  const { table, items, first } = leadingMissingValueRecord()
+  const leading = items.slice(10, 20)
+  if (kind === 'missing-model')
+    table.structure.objects = table.structure.objects.filter(
+      (object) => object.label !== 'table row' || object.rect[1] !== 30
+    )
+  if (kind === 'incomplete-source') leading[0].sourceItem.text = 'unowned hidden suffix'
+  if (kind === 'cross-page') leading[0].sourceItem.pageNumber = 2
+  if (kind === 'unreliable-metrics') leading[0].height = 0
+  if (kind === 'header-conflict')
+    table.structure.objects.find((object) => object.label === 'table column header')!.rect[3] = 46
+  const result = refineTable(table, items)
+  expect(result.repairs).toContain('dense-statistical-rows-recovered')
+  if (kind === 'missing-model') {
+    // Existing source-supported row recovery remains independent of the new model-backed path.
+    expect(
+      result.grid.filter((row: string[]) => row.every((value, column) => value === first[column]))
+    ).toHaveLength(1)
+    return
+  }
+  expect(
+    result.grid.some((row: string[]) => row.every((value, column) => value === first[column]))
+  ).toBe(false)
+  expect(
+    result.cells
+      .flatMap((cell) => cell.sourceItems ?? [])
+      .filter((source) =>
+        leading.some(
+          (item) =>
+            item.sourceItem.pageNumber === source.pageNumber &&
+            item.sourceItem.index === source.index
+        )
+      )
+  ).toEqual([])
+})
+
+it('retains the complete model header across the leading record em edge without changing crop metadata', () => {
+  const { table, items, first } = leadingMissingValueRecord()
+  const originalCrop = [...table.cropRect]
+  const header = table.structure.objects.find(
+    (object) => object.label === 'table row' && object.rect[1] === 5
+  )!
+  header.rect[3] = 36
+  const result = refineTable(table, items)
+  expect(result.grid[0]).toEqual([
+    'Width',
+    ...Array.from({ length: 9 }, (_, column) => `Measure${column + 1}`)
+  ])
+  expect(result.grid[1]).toEqual(first)
+  expect(result.grid).toHaveLength(13)
+  expect(result.cropRect).toEqual(originalCrop)
+  expect(table.cropRect).toEqual(originalCrop)
+  expect(result.repairs).not.toContain('native-assigned-closed-frame-crop-trimmed')
+  expect(result.unassigned).toEqual([])
+})
+
+it('keeps the original closed-frame crop proof when an unrelated body baseline aborts dense recovery', () => {
+  const { table, items } = leadingMissingValueRecord()
+  items.push({
+    text: 'note',
+    rect: [150, 63, 170, 75],
+    baseline: 75,
+    height: 12,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: 1000, text: 'note' }
+  })
+  const result = refineTable(
+    table,
+    items,
+    [],
+    [],
+    [
+      [5, 5, 685, 5],
+      [5, 30, 685, 30],
+      [5, 275, 685, 275]
+    ]
+  )
+  expect(result.repairs).not.toContain('dense-statistical-rows-recovered')
+  expect(result.repairs).toContain('native-assigned-closed-frame-crop-trimmed')
+  expect(result.cropRect).toEqual([3, 0, 687, 280])
+})

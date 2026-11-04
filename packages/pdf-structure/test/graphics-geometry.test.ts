@@ -1637,20 +1637,28 @@ it('captures each same-render font glyph path once and retains only isolated num
 it.each([
   'ordinary',
   'unencoded-space',
+  'tab',
+  'thin-space',
   'unknown-space-flag',
   'type3',
   'invalid-font',
   'missing-file',
+  'wrong-loaded-name',
   'non-space',
   'unknown-font-flags'
-])('binds renderer-skipped spaces to the exact native show instance: %s', (mode) => {
+])('binds renderer-skipped whitespace to the exact native show instance: %s', (mode) => {
   const f = renderContextInput(),
     ops = f.render._internalRenderTask.operatorList
   const glyph = {
-    fontChar: mode === 'unencoded-space' ? '!' : ' ',
-    unicode: mode === 'non-space' ? '?' : ' ',
+    fontChar: ['unencoded-space', 'tab', 'thin-space'].includes(mode) ? '!' : ' ',
+    unicode:
+      mode === 'non-space' ? '?' : mode === 'tab' ? '\t' : mode === 'thin-space' ? '\u2009' : ' ',
     width: 250,
-    isSpace: mode === 'unencoded-space' ? false : mode === 'unknown-space-flag' ? undefined : true,
+    isSpace: ['unencoded-space', 'tab', 'thin-space'].includes(mode)
+      ? false
+      : mode === 'unknown-space-flag'
+        ? undefined
+        : true,
     isInFont: false
   }
   const at = ops.fnArray.length
@@ -1659,7 +1667,7 @@ it.each([
   const bounds = [0.1, 0, 0.6, 0.8]
   const objects = {
     get: (name: string): unknown => ({
-      loadedName: name,
+      loadedName: mode === 'wrong-loaded-name' ? 'other-font' : name,
       missingFile: mode === 'missing-file',
       isType3Font: mode === 'type3',
       isInvalidPDFjsFont: mode === 'unknown-font-flags' ? undefined : mode === 'invalid-font',
@@ -1675,21 +1683,21 @@ it.each([
     f.checksum,
     objects
   )
-  const expected =
-    mode === 'ordinary' || mode === 'unencoded-space'
-      ? [
-          {
-            operationIndex: at + 1,
-            glyphIndex: 0,
-            fontName: 'first-font',
-            fontChar: glyph.fontChar,
-            width: 250,
-            ...(mode === 'unencoded-space' ? { isSpace: false } : {})
-          }
-        ]
-      : undefined
+  const expected = ['ordinary', 'unencoded-space', 'tab', 'thin-space'].includes(mode)
+    ? [
+        {
+          operationIndex: at + 1,
+          glyphIndex: 0,
+          fontName: 'first-font',
+          fontChar: glyph.fontChar,
+          width: 250,
+          ...(glyph.unicode !== ' ' ? { unicode: glyph.unicode } : {}),
+          ...(glyph.isSpace === false ? { isSpace: false } : {})
+        }
+      ]
+    : undefined
   expect(snapshot.skippedSpaceGlyphs).toEqual(expected)
-  if (mode === 'ordinary' || mode === 'unencoded-space') {
+  if (expected) {
     // A painted instance of the same font character keeps its nonempty outline.
     expect(snapshot.glyphBounds[0].glyphs[0].bounds).toEqual(bounds)
     expect(
@@ -1954,5 +1962,131 @@ it.each([
     expect(snapshot).toBeDefined()
     expect(snapshot.type3GlyphPrograms).toBeUndefined()
     expect(snapshot.content).toEqual(before)
+  }
+)
+
+it.each(['path', 'pattern'])(
+  'drops optional Type3 retention before old %s paint consumes its shared allowance',
+  (mode) => {
+    const f = renderContextInput(),
+      ops = f.render._internalRenderTask.operatorList
+    ops.fnArray = []
+    ops.argsArray = []
+    f.content = { items: [], styles: {} }
+    f.graphics = []
+    const data = new Uint8Array(16 * 1024 * 1024 - 4096),
+      glyph = {
+        operatorListId: 'mark',
+        unicode: '\u0003',
+        fontChar: '',
+        originalCharCode: 1,
+        width: 563,
+        isSpace: false,
+        isInFont: true
+      },
+      font = {
+        loadedName: 'anonymous-type3',
+        isType3Font: true,
+        missingFile: false,
+        isInvalidPDFjsFont: false,
+        vertical: false,
+        fontMatrix: [0.000488, 0, 0, 0.000488, 0, 0],
+        charProcOperatorList: {
+          mark: {
+            fnArray: [OPS.setCharWidthAndBounds, OPS.setGState, OPS.constructPath],
+            argsArray: [
+              [1, 0, 0, 0, 1, 1],
+              [
+                [
+                  ['FL', 1],
+                  ['LC', 0],
+                  ['LJ', 0],
+                  ['LW', 0],
+                  ['ML', 10]
+                ]
+              ],
+              [OPS.fill, [data], [0, 0, 1, 1]]
+            ],
+            length: 3
+          }
+        }
+      }
+    let calls = 0
+    const occurrence = { array: undefined as unknown[] | undefined }
+    const gfx = {
+      current: { font },
+      showType3Text: (_index: number, _glyphs: unknown[]): string => {
+        void [_index, _glyphs]
+        calls++
+        return 'renderer-result'
+      }
+    }
+    f.render._internalRenderTask.gfx = gfx
+    f.render._internalRenderTask.operatorListChanged = (): void => {}
+    recordNativeFigurePaths(f.render)
+    f.render.onContinue(() => {})
+    const originalPush = Array.prototype.push
+    Array.prototype.push = function (...values): number {
+      if (
+        !occurrence.array &&
+        values.some(
+          (v) =>
+            v && typeof v === 'object' && Object.keys(v).join(',') === 'operationIndex,glyphIndex'
+        )
+      )
+        occurrence.array = this
+      return Reflect.apply(originalPush, this, values)
+    }
+    try {
+      expect(gfx.showType3Text(0, [glyph])).toBe('renderer-result')
+    } finally {
+      Array.prototype.push = originalPush
+    }
+    expect(occurrence.array).toBeDefined()
+    const capture = (): ReturnType<typeof JSON.parse> =>
+      captureNativeFigureRenderContext(
+        f.render,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      )
+    expect(capture()?.pixelType3Programs).toHaveLength(1)
+    if (mode === 'path') {
+      ops.fnArray.push(OPS.constructPath)
+      ops.argsArray.push([OPS.fill, [new Uint8Array(8192)], [0, 0, 1, 1]])
+    } else {
+      ops.fnArray.push(OPS.setFillColorN)
+      ops.argsArray.push([
+        'TilingPattern',
+        '#000000',
+        {
+          fnArray: [OPS.constructPath],
+          argsArray: [[OPS.fill, [new Uint8Array(8192)], [0, 0, 1, 1]]]
+        }
+      ])
+    }
+    f.render._internalRenderTask.operatorListChanged()
+    let pushes = 0
+    Array.prototype.push = function (...values): number {
+      if (this === occurrence.array) pushes++
+      return Reflect.apply(originalPush, this, values)
+    }
+    try {
+      expect(gfx.showType3Text(1, [glyph])).toBe('renderer-result')
+    } finally {
+      Array.prototype.push = originalPush
+    }
+    const after = capture()
+    expect(after).toBeDefined()
+    expect(after.pixelType3Programs).toBeUndefined()
+    expect(
+      mode === 'path'
+        ? after.operators.argsArray[0][1][0].byteLength
+        : after.operators.argsArray[0][2].argsArray[0][1][0].byteLength
+    ).toBe(8192)
+    expect(pushes).toBe(0)
+    expect(calls).toBe(2)
   }
 )

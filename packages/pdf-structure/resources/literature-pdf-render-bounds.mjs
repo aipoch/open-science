@@ -1,4 +1,7 @@
-import { verifyNativeDualApiCertificate } from './literature-pdf-native-dual-api-certificate.mjs'
+import {
+  verifyNativeDualApiCertificate,
+  verifyNativeLigatureApiCertificate
+} from './literature-pdf-native-dual-api-certificate.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import { captureNativeIsolatedRasterScope } from './literature-pdf-isolated-raster-scope.mjs'
@@ -6,10 +9,13 @@ import { nativeCompositingByteWindow } from './literature-pdf-native-compositing
 import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { types } from 'node:util'
+import { retainNativeRecoveryInputs } from './literature-pdf-native-figure-recovery-profile.mjs'
 import { collectFilledGlyphEvidence } from './literature-pdf-filled-glyph-evidence.mjs'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
+const nativeGroupPaintMetadata = new WeakMap()
+const nativeGraphicsBudgetBasis = new WeakMap()
 const nativeRenderPaths = new WeakMap()
 const nativeSnapshotRenderTasks = new WeakMap()
 
@@ -41,13 +47,26 @@ export function recordNativeFigurePaths(renderTask) {
   // execution. Retain those exact commands at the existing index before that
   // mutation; neither OPLIST indices nor a reconstructed rectangle can replace
   // the original render-stream path provenance.
-  const state = { paths: new Map(), bytes: 0, buffers: new Set(), overflow: false, scanned: 0 }
+  const state = {
+    paths: new Map(),
+    bytes: 0,
+    buffers: new Set(),
+    overflow: false,
+    scanned: 0,
+    pixelType3: new Map(),
+    pixelType3Bytes: 0,
+    pixelType3Failed: false,
+    pixelType3Hooked: false
+  }
   nativeRenderPaths.set(renderTask, state)
   const scanPendingPaths = () => {
+    observeNativeGroupPaintMetadata(renderTask, operators)
+    observeNativePixelType3(renderTask, state)
     if (operators.fnArray.length > 100000) {
       state.overflow = true
       state.paths.clear()
       state.buffers.clear()
+      discardNativePixelType3(state)
     }
     for (; !state.overflow && state.scanned < operators.fnArray.length; state.scanned++) {
       const index = state.scanned
@@ -55,6 +74,16 @@ export function recordNativeFigurePaths(renderTask) {
         const args = operators.argsArray[index],
           path = args?.[1]?.[0]
         if (ArrayBuffer.isView(path) || Array.isArray(path) || path == null) {
+          const pathBytes =
+            128 +
+            (Array.isArray(path) ? path.length * 8 : 0) +
+            (ArrayBuffer.isView(path) && !state.buffers.has(path.buffer)
+              ? path.buffer.byteLength
+              : 0)
+          // The optional nested family never reserves space ahead of old paint.
+          // Release it before the next top-level record consumes shared space.
+          if (state.pixelType3Bytes > 16 * 1024 * 1024 - state.bytes - pathBytes)
+            discardNativePixelType3(state)
           state.bytes += 128 + (Array.isArray(path) ? path.length * 8 : 0)
           if (ArrayBuffer.isView(path) && !state.buffers.has(path.buffer)) {
             state.buffers.add(path.buffer)
@@ -64,6 +93,7 @@ export function recordNativeFigurePaths(renderTask) {
             state.overflow = true
             state.paths.clear()
             state.buffers.clear()
+            discardNativePixelType3(state)
           } else state.paths.set(index, [args[0], [path], args[2]])
         }
       } else if (
@@ -77,12 +107,15 @@ export function recordNativeFigurePaths(renderTask) {
         try {
           const size = nativeSnapshotSize(args, 16 * 1024 * 1024 - state.bytes)
           if (size === undefined) throw new Error('Unproved native pattern snapshot')
+          if (state.pixelType3Bytes > 16 * 1024 * 1024 - state.bytes - size)
+            discardNativePixelType3(state)
           state.paths.set(index, structuredClone(args))
           state.bytes += size
         } catch {
           state.overflow = true
           state.paths.clear()
           state.buffers.clear()
+          discardNativePixelType3(state)
         }
       }
     }
@@ -108,6 +141,110 @@ export function recordNativeFigurePaths(renderTask) {
   }
 }
 
+function discardNativePixelType3(state) {
+  state.pixelType3Failed = true
+  state.pixelType3.clear()
+  state.pixelType3Bytes = 0
+}
+
+// Observe the original Type3 IR immediately before the pinned renderer consumes
+// it. This separate optional family is crop-only; it never fills glyphBounds.
+function observeNativePixelType3(renderTask, state) {
+  const graphics = renderTask?._internalRenderTask?.gfx
+  if (!graphics || state.pixelType3Hooked) return
+  const show = graphics.showType3Text
+  if (typeof show !== 'function') return
+  state.pixelType3Hooked = true
+  graphics.showType3Text = function (operationIndex, glyphs) {
+    try {
+      if (!state.pixelType3Failed) {
+        const font = this.current.font,
+          name = font.loadedName
+        if (font.isType3Font !== true || typeof name !== 'string' || !Array.isArray(glyphs))
+          throw new Error('Incomplete Type3 execution')
+        let entry = state.pixelType3.get(name)
+        if (!entry) {
+          entry = {
+            fontName: name,
+            fontMatrix: Array.from(font.fontMatrix ?? []),
+            missingFile: font.missingFile,
+            isInvalidPDFjsFont: font.isInvalidPDFjsFont,
+            vertical: font.vertical,
+            glyphs: []
+          }
+          const fontBytes = nativeSnapshotSize(
+            [...state.pixelType3.values(), entry],
+            16 * 1024 * 1024 - state.bytes
+          )
+          if (fontBytes === undefined) throw new Error('Unbounded Type3 font')
+          state.pixelType3.set(name, entry)
+          state.pixelType3Bytes = fontBytes
+        }
+        for (const [glyphIndex, glyph] of glyphs.entries()) {
+          if (typeof glyph === 'number') continue
+          let row = entry.glyphs.find((g) => g.operatorListId === glyph.operatorListId)
+          if (!row) {
+            const original = font.charProcOperatorList?.[glyph.operatorListId]
+            row = {
+              operatorListId: glyph.operatorListId,
+              unicode: glyph.unicode,
+              fontChar: glyph.fontChar,
+              originalCharCode: glyph.originalCharCode,
+              width: glyph.width,
+              isSpace: glyph.isSpace,
+              isInFont: glyph.isInFont,
+              program: original,
+              occurrences: []
+            }
+            // Check the complete accumulated optional family against the
+            // remaining old allowance before allocating another raw clone.
+            const probe = [...state.pixelType3.values()].map((f) =>
+              f === entry ? { ...f, glyphs: [...f.glyphs, row] } : f
+            )
+            const programBytes = nativeSnapshotSize(probe, 16 * 1024 * 1024 - state.bytes)
+            if (programBytes === undefined) throw new Error('Unbounded Type3 program')
+            row = structuredClone(row)
+            entry.glyphs.push(row)
+            state.pixelType3Bytes = programBytes
+          }
+          if (
+            ![
+              'operatorListId',
+              'unicode',
+              'fontChar',
+              'originalCharCode',
+              'width',
+              'isSpace',
+              'isInFont'
+            ].every((key) => row[key] === glyph[key]) ||
+            glyph.accent != null ||
+            glyph.vmetric != null
+          )
+            throw new Error('Inconsistent Type3 occurrence')
+          const occurrence = { operationIndex, glyphIndex },
+            remaining = 16 * 1024 * 1024 - state.bytes - state.pixelType3Bytes,
+            occurrenceBytes = nativeSnapshotSize(occurrence, remaining)
+          // Include the new array slot before allocating an unbounded sequence.
+          if (occurrenceBytes === undefined || occurrenceBytes + 8 > remaining)
+            throw new Error('Type3 occurrence budget exhausted')
+          row.occurrences.push(occurrence)
+          state.pixelType3Bytes += occurrenceBytes + 8
+        }
+        // Share the existing fixed snapshot allowance; discard only this optional
+        // family if later top-level paint consumes its remaining space.
+        if (
+          nativeSnapshotSize([...state.pixelType3.values()], 16 * 1024 * 1024 - state.bytes) ===
+          undefined
+        )
+          throw new Error('Type3 snapshot budget exhausted')
+      }
+    } catch {
+      discardNativePixelType3(state)
+    }
+    return show.call(this, operationIndex, glyphs)
+  }
+}
+
 const finiteArray = (value, length) =>
   Array.isArray(value) && value.length === length && value.every(Number.isFinite)
 const nativeViewportValue = (viewport) => ({
@@ -123,7 +260,12 @@ function nativeSnapshotSize(value, budget) {
     seen = new Set()
   let size = 0
   while (pending.length) {
-    const item = pending.pop()
+    let item = pending.pop()
+    const basis = item && typeof item === 'object' && nativeGraphicsBudgetBasis.get(item)
+    if (basis) {
+      if (!basis.current()) return
+      item = basis.coarse
+    }
     if (typeof item === 'string') size += item.length * 2
     else if (item && typeof item === 'object' && !seen.has(item)) {
       seen.add(item)
@@ -203,6 +345,8 @@ export function captureNativeFigureRenderContext(
     const size = nativeSnapshotSize(value, 16 * 1024 * 1024)
     if (size === undefined) return
     const snapshot = structuredClone(value)
+    const graphicsBudget = nativeGraphicsBudgetBasis.get(graphicsBounds)
+    if (graphicsBudget) nativeGraphicsBudgetBasis.set(snapshot.graphicsBounds, graphicsBudget)
     const glyphBounds = nativeGlyphBounds(operators, commonObjs, 16 * 1024 * 1024 - size)
     if (glyphBounds) snapshot.glyphBounds = glyphBounds
     // Keep the existing all-font proof unchanged. A Type3 or unavailable font
@@ -281,6 +425,14 @@ export function captureNativeFigureRenderContext(
             Math.min(65536, 16 * 1024 * 1024 - retainedBytes)
           )
     if (foreignCompoundGlyphs?.length) snapshot.foreignCompoundGlyphs = foreignCompoundGlyphs
+    const pixelType3Programs = nativePaths?.pixelType3Failed
+      ? undefined
+      : [...(nativePaths?.pixelType3?.values() ?? [])]
+    if (
+      pixelType3Programs?.length &&
+      nativeSnapshotSize({ ...snapshot, pixelType3Programs }, 16 * 1024 * 1024) !== undefined
+    )
+      snapshot.pixelType3Programs = structuredClone(pixelType3Programs)
     const isolatedRasterScope = captureNativeIsolatedRasterScope(snapshot, renderTask, nativePaths)
     if (
       isolatedRasterScope &&
@@ -411,6 +563,7 @@ export function matchNativeFigureRenderContext(
         ? { partialFontGlyphBounds: snapshot.partialFontGlyphBounds }
         : {}),
       ...(snapshot.type3GlyphPrograms ? { type3GlyphPrograms: snapshot.type3GlyphPrograms } : {}),
+      ...(snapshot.pixelType3Programs ? { pixelType3Programs: snapshot.pixelType3Programs } : {}),
       ...(snapshot.skippedSpaceGlyphs ? { skippedSpaceGlyphs: snapshot.skippedSpaceGlyphs } : {}),
       ...(snapshot.opaqueRasterImages ? { opaqueRasterImages: snapshot.opaqueRasterImages } : {}),
       ...(snapshot.compositingImages ? { compositingImages: snapshot.compositingImages } : {}),
@@ -683,7 +836,7 @@ function nativeForeignCompoundGlyphs(operators, objects, budget) {
 
 // CanvasGraphics.showText skips a glyph outside an ordinary loaded font, even
 // when its .notdef outline is nonempty. The invalid-font and Type3 branches
-// bypass that guard. Bind only spaces to their exact show/glyph occurrence;
+// bypass that guard. Bind only whitespace to its exact show/glyph occurrence;
 // another occurrence of the same fontChar can still paint the real outline.
 function nativeSkippedSpaceGlyphs(operators, objects, budget) {
   if (!objects || typeof objects.get !== 'function' || !(budget > 0)) return
@@ -704,7 +857,8 @@ function nativeSkippedSpaceGlyphs(operators, objects, budget) {
         if (typeof active !== 'string' || !Array.isArray(args?.[0])) return
         for (const [glyphIndex, glyph] of args[0].entries()) {
           if (
-            glyph?.unicode !== ' ' ||
+            typeof glyph?.unicode !== 'string' ||
+            !/^\s+$/u.test(glyph.unicode) ||
             (glyph.isSpace !== true && glyph.isSpace !== false) ||
             glyph.isInFont !== false ||
             typeof glyph.fontChar !== 'string' ||
@@ -731,6 +885,7 @@ function nativeSkippedSpaceGlyphs(operators, objects, budget) {
             fontName: active,
             fontChar: glyph.fontChar,
             width: glyph.width,
+            ...(glyph.unicode !== ' ' ? { unicode: glyph.unicode } : {}),
             // CanvasGraphics skips an absent glyph in a loaded ordinary font
             // independently of word-spacing classification. Bind that flag;
             // legacy ordinary-space certificates retain their exact shape.
@@ -984,6 +1139,11 @@ export function attachNativeDualApiEvidence(snapshot, defaultContent, rawContent
         { pageNumber: snapshot.pageNumber, graphicsBounds: snapshot.graphicsBounds },
         snapshot,
         evidence
+      ) &&
+      !verifyNativeLigatureApiCertificate(
+        { pageNumber: snapshot.pageNumber, graphicsBounds: snapshot.graphicsBounds },
+        snapshot,
+        evidence
       )
     )
       return snapshot
@@ -994,4 +1154,348 @@ export function attachNativeDualApiEvidence(snapshot, defaultContent, rawContent
   } catch {
     return snapshot
   }
+}
+
+// Capture is requested by actual operator Unicode, not a guessed source-word
+// substitution. Attaching evidence still applies the existing combined budget.
+export function nativeLigatureDualApiCaptureRequired(snapshot) {
+  return (
+    snapshot?.operators?.fnArray?.some(
+      (op, i) =>
+        op === OPS.showText &&
+        snapshot.operators.argsArray[i]?.[0]?.some(
+          (g) => g && typeof g === 'object' && ['ﬁ', 'ﬂ'].includes(g.unicode)
+        )
+    ) === true
+  )
+}
+
+// Geometry-only observations precede the renderer replacing path commands by
+// opaque Path2D values. The full original raw-path observer above is unchanged.
+function observeNativeGroupPaintMetadata(renderTask, operators) {
+  let state = nativeGroupPaintMetadata.get(renderTask)
+  if (!state) {
+    const viewport = renderTask?._internalRenderTask?.params?.viewport
+    const slots = [],
+      metadata = []
+    const params = renderTask._internalRenderTask.params,
+      transform = Object.getOwnPropertyDescriptor(params, 'transform'),
+      viewportCurrent = retainNativeRecoveryInputs([viewport], viewport),
+      fnPrototype = Object.getPrototypeOf(operators.fnArray),
+      argsPrototype = Object.getPrototypeOf(operators.argsArray)
+    const sameTransform = () => {
+      const d = Object.getOwnPropertyDescriptor(params, 'transform')
+      return transform
+        ? !!d &&
+            Object.hasOwn(d, 'value') &&
+            Object.is(d.value, transform.value) &&
+            d.writable === transform.writable &&
+            d.enumerable === transform.enumerable &&
+            d.configurable === transform.configurable
+        : !d
+    }
+    state = {
+      operators,
+      viewport,
+      slots,
+      metadata,
+      invalid: false,
+      current: () => {
+        if (
+          !viewportCurrent ||
+          !viewportCurrent() ||
+          !sameTransform() ||
+          renderTask._internalRenderTask.params !== params ||
+          Object.getPrototypeOf(operators.fnArray) !== fnPrototype ||
+          Object.getPrototypeOf(operators.argsArray) !== argsPrototype ||
+          Reflect.ownKeys(operators.fnArray).length !== slots.length + 1 ||
+          Reflect.ownKeys(operators.argsArray).length !== slots.length + 1 ||
+          state.invalid ||
+          renderTask._internalRenderTask.operatorList !== operators ||
+          renderTask._internalRenderTask.params?.viewport !== viewport ||
+          operators.fnArray !== state.fnArray ||
+          operators.argsArray !== state.argsArray ||
+          operators.fnArray.length !== slots.length ||
+          operators.argsArray.length !== slots.length
+        )
+          return false
+        for (let i = 0; i < slots.length; i++) {
+          const f = Object.getOwnPropertyDescriptor(operators.fnArray, String(i)),
+            a = Object.getOwnPropertyDescriptor(operators.argsArray, String(i)),
+            s = slots[i]
+          if (
+            !f ||
+            !a ||
+            !Object.hasOwn(f, 'value') ||
+            !Object.hasOwn(a, 'value') ||
+            f.value !== s.op ||
+            a.value !== s.args ||
+            f.enumerable !== s.fd.enumerable ||
+            f.configurable !== s.fd.configurable ||
+            f.writable !== s.fd.writable ||
+            a.enumerable !== s.ad.enumerable ||
+            a.configurable !== s.ad.configurable ||
+            a.writable !== s.ad.writable
+          )
+            return false
+        }
+        return state.checks?.every((check) => check()) ?? true
+      }
+    }
+    state.fnArray = operators.fnArray
+    state.argsArray = operators.argsArray
+    nativeGroupPaintMetadata.set(renderTask, state)
+  }
+  if (
+    state.invalid ||
+    operators.fnArray !== state.fnArray ||
+    operators.argsArray !== state.argsArray ||
+    operators.fnArray.length > 100000 ||
+    operators.fnArray.length !== operators.argsArray.length
+  ) {
+    state.invalid = true
+    return
+  }
+  const scoped = new Set([
+    OPS.save,
+    OPS.restore,
+    OPS.transform,
+    OPS.paintFormXObjectBegin,
+    OPS.paintFormXObjectEnd,
+    OPS.beginGroup,
+    OPS.endGroup,
+    OPS.beginText,
+    OPS.endText
+  ])
+  for (let i = state.slots.length; i < operators.fnArray.length; i++) {
+    const fd = Object.getOwnPropertyDescriptor(operators.fnArray, String(i)),
+      ad = Object.getOwnPropertyDescriptor(operators.argsArray, String(i))
+    if (!fd || !ad || !Object.hasOwn(fd, 'value') || !Object.hasOwn(ad, 'value')) {
+      state.invalid = true
+      return
+    }
+    const op = fd.value,
+      args = ad.value
+    state.slots.push({ op, args, fd, ad })
+    if (scoped.has(op)) {
+      state.metadata.push(args)
+      if (args && typeof args === 'object') {
+        const current = retainNativeRecoveryInputs([args])
+        if (!current) {
+          state.invalid = true
+          return
+        }
+        state.checks ??= []
+        state.checks.push(current)
+      }
+    }
+  }
+}
+
+// Keep the old all-paint geometry allocation in every later snapshot/font
+// budget. This private binding changes accounting only, never visible bounds.
+export function bindNativeGroupPaintBudget(renderTask, coarse, visible) {
+  const observation = nativeGroupPaintMetadata.get(renderTask)
+  if (!observation || !observation.current()) return false
+  const retained = retainNativeRecoveryInputs([coarse])
+  if (!retained) return false
+  nativeGraphicsBudgetBasis.set(visible, {
+    coarse,
+    current: () => observation.current() && retained()
+  })
+  return true
+}
+
+// The tracker keeps conservative operation boxes inside a temporary group
+// canvas. Its complete renderer-enforced BBox also clips those paints when
+// that canvas is composited back onto the page. Keep every original operation;
+// this optional geometry envelope grants no text or Source ownership.
+export function nativeRecordedGroupPaintEnvelopes(renderTask) {
+  const observed = nativeGroupPaintMetadata.get(renderTask),
+    task = renderTask?._internalRenderTask,
+    operators = task?.operatorList,
+    viewport = task?.params?.viewport
+  if (!Array.isArray(operators?.fnArray) || !operators.fnArray.includes(OPS.beginGroup)) return
+  if (
+    !observed ||
+    observed.operators !== operators ||
+    observed.viewport !== viewport ||
+    !observed.current()
+  )
+    return
+  const transformDescriptor = Object.getOwnPropertyDescriptor(task.params, 'transform')
+  if (transformDescriptor && !Object.hasOwn(transformDescriptor, 'value')) return
+  const renderTransform = transformDescriptor?.value
+  try {
+    if (!operators.fnArray.includes(OPS.beginGroup) || renderTransform != null) return
+    const retained = retainNativeRecoveryInputs([observed.metadata, viewport], viewport)
+    const current = () => !!retained && retained() && observed.current()
+    const finite = (a, n) =>
+      (Array.isArray(a) || ArrayBuffer.isView(a)) &&
+      a.length === n &&
+      (!Array.isArray(a) || Reflect.ownKeys(a).length === n + 1) &&
+      Array.from(a).every(Number.isFinite)
+    const rect = (a) => finite(a, 4) && a[0] < a[2] && a[1] < a[3]
+    if (
+      !current ||
+      !Array.isArray(operators.argsArray) ||
+      operators.fnArray.length !== operators.argsArray.length ||
+      operators.fnArray.length > 100000 ||
+      !finite(viewport.transform, 6) ||
+      !Number.isFinite(viewport.width) ||
+      !(viewport.width > 0) ||
+      !Number.isFinite(viewport.height) ||
+      !(viewport.height > 0)
+    )
+      return
+    const project = (r, ctm) => {
+      const m = Util.transform(viewport.transform, ctm)
+      const points = [
+        [r[0], r[1]],
+        [r[2], r[1]],
+        [r[2], r[3]],
+        [r[0], r[3]]
+      ]
+      for (const p of points) Util.applyTransform(p, m)
+      return [
+        Math.min(...points.map((p) => p[0])),
+        Math.min(...points.map((p) => p[1])),
+        Math.max(...points.map((p) => p[0])),
+        Math.max(...points.map((p) => p[1]))
+      ]
+    }
+    const hit = (a, b) => [
+      Math.max(a[0], b[0]),
+      Math.max(a[1], b[1]),
+      Math.min(a[2], b[2]),
+      Math.min(a[3], b[3])
+    ]
+    const knownGroup = (a) =>
+      Array.isArray(a) &&
+      a.length === 1 &&
+      Reflect.ownKeys(a).join(',') === '0,length' &&
+      a[0] &&
+      Reflect.ownKeys(a[0]).every((k) => typeof k === 'string') &&
+      Reflect.ownKeys(a[0]).sort().join(',') === 'bbox,isolated,knockout,matrix,smask' &&
+      a[0].matrix === null &&
+      a[0].smask === null &&
+      a[0].knockout === false &&
+      typeof a[0].isolated === 'boolean' &&
+      Array.isArray(a[0].bbox) &&
+      rect(a[0].bbox)
+    const clips = new Map(),
+      stack = [],
+      known = new Set(Object.values(OPS))
+    let ctm = [1, 0, 0, 1, 0, 0],
+      clip = [0, 0, viewport.width, viewport.height],
+      groups = 0,
+      text = false
+    for (let i = 0; i < operators.fnArray.length; i++) {
+      const op = operators.fnArray[i],
+        a = operators.argsArray[i]
+      if (!known.has(op) || [OPS.beginAnnotation, OPS.endAnnotation].includes(op)) return
+      if (op === OPS.beginText) {
+        if (text) return
+        text = true
+      } else if (op === OPS.endText) {
+        if (!text) return
+        text = false
+      }
+      if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op)) {
+        if (text || stack.length >= 512) return
+        const old = { op, ctm: [...ctm], clip: [...clip], groups, group: undefined }
+        stack.push(old)
+        if (op === OPS.paintFormXObjectBegin) {
+          if (
+            !Array.isArray(a) ||
+            a.length !== 2 ||
+            (a[0] !== null && !finite(a[0], 6)) ||
+            (a[1] !== null && !rect(a[1]))
+          )
+            return
+          if (a[0] !== null) ctm = Util.transform(ctm, a[0])
+          if (a[1] !== null) clip = hit(clip, project(a[1], ctm))
+        } else if (op === OPS.beginGroup) {
+          if (!knownGroup(a)) return
+          old.group = a[0]
+          clip = hit(clip, project(a[0].bbox, ctm))
+          groups++
+        }
+      } else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+        const old = stack.pop(),
+          expected =
+            op === OPS.restore
+              ? OPS.save
+              : op === OPS.paintFormXObjectEnd
+                ? OPS.paintFormXObjectBegin
+                : OPS.beginGroup
+        if (text || !old || old.op !== expected) return
+        if (
+          op === OPS.endGroup &&
+          (!knownGroup(a) || JSON.stringify(a[0]) !== JSON.stringify(old.group))
+        )
+          return
+        ctm = old.ctm
+        clip = old.clip
+        groups = old.groups
+      } else if (op === OPS.transform) {
+        if (!finite(a, 6)) return
+        ctm = Util.transform(ctm, a)
+      }
+      if (!ctm.every(Number.isFinite) || !clip.every(Number.isFinite)) return
+      if (
+        groups &&
+        [
+          OPS.constructPath,
+          OPS.paintImageXObject,
+          OPS.paintImageXObjectRepeat,
+          OPS.paintInlineImageXObject,
+          OPS.paintInlineImageXObjectGroup,
+          OPS.paintImageMaskXObject,
+          OPS.paintImageMaskXObjectGroup,
+          OPS.paintImageMaskXObjectRepeat
+        ].includes(op)
+      )
+        clips.set(
+          i,
+          clip.map((v, n) => v / (n % 2 ? viewport.height : viewport.width))
+        )
+    }
+    if (stack.length || groups || text || !current()) return
+    return { clips, current }
+  } catch {
+    return
+  }
+}
+
+// Apply the same native snapshot byte accounting to optional live pixel inputs.
+// This grants no render, glyph, Source or crop authority.
+export function nativeAdditionalPixelInputsFit(context, ...inputs) {
+  try {
+    const values = nativeRecoveryBudgetValues(context)
+    if (values === undefined || inputs.length !== 2) return false
+    const current = retainNativeRecoveryInputs([values, ...inputs])
+    if (!current) return false
+    const budget = 16 * 1024 * 1024,
+      bytes = [values, ...inputs].map((v) => nativeSnapshotSize(v, budget))
+    return (
+      current() &&
+      !bytes.some((n) => n === undefined) &&
+      bytes[0] * 2 + bytes[1] + bytes[2] + 1024 <= budget
+    )
+  } catch {
+    return false
+  }
+}
+function nativeRecoveryBudgetValues(context) {
+  if (!context || types.isProxy(context)) return
+  const descriptors = Object.getOwnPropertyDescriptors(context)
+  if (Reflect.ownKeys(descriptors).some((k) => !Object.hasOwn(descriptors[k], 'value'))) return
+  const viewport = context.viewport
+  if (!viewport || types.isProxy(viewport)) return
+  const vd = Object.getOwnPropertyDescriptors(viewport)
+  if (Reflect.ownKeys(vd).some((k) => !Object.hasOwn(vd[k], 'value'))) return
+  const value = { ...context, viewport: { ...viewport } }
+  delete value.viewport.convertToViewportPoint
+  return value
 }

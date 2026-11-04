@@ -1,5 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
 
 // Keep these limits aligned with the main-process worker and cache image boundaries.
@@ -182,6 +184,66 @@ export const renderPdfCrop = async (page, rect, rotation = page.rotate, regions)
     } finally {
       canvas.width = 1
       canvas.height = 1
+    }
+  }
+}
+
+// Only unvalidated, source-free legacy figures may leave the page assembly scope.
+// Copy data, never the candidate, page or a proof/render closure, into the queue.
+export const createDeferredPlainFigureCrop = ({
+  candidate,
+  rect,
+  pageNumber,
+  rotation,
+  id,
+  nativeFigureContext,
+  sourceItems,
+  deferredInputsCurrent,
+  legacyPngValidator,
+  baselinePngValidator,
+  groupedCaptionProof,
+  nativePixelCrop,
+  pairedRasterRect,
+  isolatedRasterPixelCrop,
+  sourceBearingFormPlan
+}) => {
+  if (
+    !rect ||
+    deferredInputsCurrent ||
+    nativeFigureContext ||
+    sourceItems?.length ||
+    !candidate ||
+    Object.getPrototypeOf(candidate) !== Object.prototype ||
+    (candidate.reason !== undefined && candidate.reason !== 'native-vector-bar-chart') ||
+    candidate.issue ||
+    candidate.headerRaster ||
+    candidate.formCropRaster ||
+    !Reflect.ownKeys(candidate).every((key) =>
+      ['caption', 'rect', 'graphicsCount', 'excludedProseLines', 'reason'].includes(key)
+    ) ||
+    legacyPngValidator ||
+    baselinePngValidator ||
+    groupedCaptionProof ||
+    nativePixelCrop ||
+    pairedRasterRect ||
+    isolatedRasterPixelCrop ||
+    sourceBearingFormPlan
+  )
+    return
+  return { pageNumber, rectCopy: [...rect], rotation, relativePath: 'thumbnails/' + id + '.png' }
+}
+
+// Page assembly has returned before this runs, so its native operator graph can
+// be collected before rendering creates a separate display-intent graph.
+export const flushDeferredPdfCrops = async (document, requests, output) => {
+  for (const request of requests) {
+    const page = await document.getPage(request.pageNumber)
+    try {
+      const png = await renderPdfCrop(page, request.rectCopy, request.rotation, undefined)
+      if (!png) throw Error('Deferred plain crop did not produce its promised PNG.')
+      await writeFile(join(output, request.relativePath), png)
+    } finally {
+      page.cleanup()
     }
   }
 }
