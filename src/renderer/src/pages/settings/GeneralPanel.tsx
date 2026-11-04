@@ -9,7 +9,13 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
@@ -259,8 +265,12 @@ const GeneralPanel = (): React.JSX.Element => {
         )}
         aria-label={t('Diagnostics')}
       >
-        <SettingsRow label={t('Log file')} className="pt-0">
-          <div className="flex flex-wrap items-center gap-2">
+        <SettingsRow
+          label={t('Log file')}
+          className="pt-0 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4"
+          controlClassName="w-full"
+        >
+          <div className="flex w-full min-w-0 items-center gap-2">
             <Select
               value={selectedName ?? 'main'}
               onValueChange={(value) => {
@@ -268,7 +278,7 @@ const GeneralPanel = (): React.JSX.Element => {
                 setMessage(undefined)
               }}
             >
-              <SelectTrigger className="w-80 max-w-full" aria-label={t('Log file')}>
+              <SelectTrigger className="min-w-0 flex-1" aria-label={t('Log file')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
