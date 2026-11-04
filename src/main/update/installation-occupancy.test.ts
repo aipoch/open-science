@@ -325,21 +325,37 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     mocks.windows.listWindowsProcesses.mockReturnValue([])
   }
 
-  it('reads Windows resource users and exact executable paths without trusting command text', async () => {
+  it.runIf(mode === 'sync')('refuses to scan Windows occupancy on the calling thread', async () => {
     windows([43])
-    mocks.windows.listWindowsProcesses.mockReturnValue([
-      { pid: 42, ppid: 1, executablePath: 'C:\\Apps\\Science\\node.exe' },
-      { pid: 43, ppid: 1, executablePath: 'C:\\Program Files\\nodejs\\node.exe' },
-      { pid: 44, ppid: 1, executablePath: null },
-      { pid: 45, ppid: 1, executablePath: 'C:\\Apps\\Science-old\\node.exe' }
-    ])
-    expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
-    const query = mocks.windows.listWindowsInstallationOccupants
-    expect(query).toHaveBeenCalledWith([join('c:\\apps\\science', 'node.exe')])
-    expect(mocks.spawnSync).not.toHaveBeenCalled()
-    if (mode === 'sync') expect(mocks.run).not.toHaveBeenCalled()
-    else expect(mocks.run).toHaveBeenCalledOnce()
+    await expect(inspect('c:\\apps\\science')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: expect.objectContaining({
+        message: 'Windows installation occupancy requires the bounded asynchronous scanner.'
+      })
+    })
+    expect(mocks.windows.listWindowsInstallationOccupants).not.toHaveBeenCalled()
+    expect(mocks.readdir).not.toHaveBeenCalled()
+    expect(mocks.run).not.toHaveBeenCalled()
   })
+
+  it.skipIf(mode === 'sync')(
+    'reads Windows resource users and exact executable paths without trusting command text',
+    async () => {
+      windows([43])
+      mocks.windows.listWindowsProcesses.mockReturnValue([
+        { pid: 42, ppid: 1, executablePath: 'C:\\Apps\\Science\\node.exe' },
+        { pid: 43, ppid: 1, executablePath: 'C:\\Program Files\\nodejs\\node.exe' },
+        { pid: 44, ppid: 1, executablePath: null },
+        { pid: 45, ppid: 1, executablePath: 'C:\\Apps\\Science-old\\node.exe' }
+      ])
+      expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
+      const query = mocks.windows.listWindowsInstallationOccupants
+      expect(query).toHaveBeenCalledWith([join('c:\\apps\\science', 'node.exe')])
+      expect(mocks.spawnSync).not.toHaveBeenCalled()
+      if (mode === 'sync') expect(mocks.run).not.toHaveBeenCalled()
+      else expect(mocks.run).toHaveBeenCalledOnce()
+    }
+  )
 
   it('finds Linux mapped files without checking ordinary open descriptors', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
@@ -374,19 +390,23 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('/opt/Science')).toEqual([10])
   })
 
-  it('rejects invalid Windows resource identities instead of reporting no occupants', async () => {
-    windows([0])
-    await expect(inspect('C:\\Science')).rejects.toMatchObject({
-      reason: 'installation-busy',
-      cause: expect.objectContaining({ message: 'Invalid installation resource PID.' })
-    })
-  })
+  it.skipIf(mode === 'sync')(
+    'rejects invalid Windows resource identities instead of reporting no occupants',
+    async () => {
+      windows([0])
+      await expect(inspect('C:\\Science')).rejects.toMatchObject({
+        reason: 'installation-busy',
+        cause: expect.objectContaining({ message: 'Invalid installation resource PID.' })
+      })
+    }
+  )
 
   it.each(['linux', 'win32', 'darwin'] as const)(
     'fails closed when %s inspection fails',
     async (platform) => {
       vi.spyOn(process, 'platform', 'get').mockReturnValue(platform)
       if (platform === 'win32') {
+        if (mode === 'sync') return
         windows([])
         const failure = new Error('Register installation resources failed (5)')
         mocks.windows.listWindowsInstallationOccupants.mockImplementation(() => {
@@ -407,7 +427,7 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     }
   )
 
-  it('fails closed when the Windows process snapshot fails', async () => {
+  it.skipIf(mode === 'sync')('fails closed when the Windows process snapshot fails', async () => {
     windows([])
     mocks.windows.listWindowsProcesses.mockImplementation(() => {
       throw new Error('Snapshot processes failed (5)')

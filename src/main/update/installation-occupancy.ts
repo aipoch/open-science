@@ -1,11 +1,10 @@
 import { spawnSync } from 'node:child_process'
-import { readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs'
+import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
-  listWindowsInstallationOccupants,
   listWindowsProcesses,
   splitWindowsCommandLine,
   windowsParentProcessId,
@@ -13,16 +12,6 @@ import {
 } from '../windows-process-query'
 
 const requireNative = createRequire(__filename)
-
-// Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
-// process-name matching, or termination authority is granted by the returned PIDs.
-// https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
-function windowsInstallationFiles(installationRoot: string): string[] {
-  if (!statSync(installationRoot).isDirectory()) return [installationRoot]
-  return readdirSync(installationRoot, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => join(entry.parentPath, entry.name))
-}
 
 function windowsInstallationOccupants(resourcePids: readonly number[], root: string): number[] {
   const pids = new Set<number>()
@@ -125,16 +114,12 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
   } catch {
     /* The installation may already have moved. */
   }
-  if (process.platform === 'win32') {
-    try {
-      return windowsInstallationOccupants(
-        listWindowsInstallationOccupants(windowsInstallationFiles(installationRoot)),
-        installationRoot
-      )
-    } catch (cause) {
-      throw windowsInspectionFailure(cause)
-    }
-  }
+  if (process.platform === 'win32')
+    // A cold Restart Manager scan can take 70 seconds, so it is never run on this thread.
+    // Windows callers use inspectInstallationProcessesAsync, which bounds it in a worker process.
+    throw windowsInspectionFailure(
+      new Error('Windows installation occupancy requires the bounded asynchronous scanner.')
+    )
   const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024
@@ -204,6 +189,9 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
+    // Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
+    // process-name matching, or termination authority is granted by the returned PIDs.
+    // https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
     // A cold Restart Manager scan can take 70 seconds. Keep enumeration and the native call in
     // an owned process: abort/timeout must reap the scan, not just abandon a libuv work item.
     const started = Date.now()
