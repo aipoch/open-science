@@ -71,7 +71,7 @@ describe('AppVersionSection', () => {
     expect(links).toHaveLength(6)
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       'https://aipoch.com/open-science/download',
-      'https://www.aipoch.com/docs/guides/installation/',
+      'https://www.aipoch.com/docs/guides/installation/#manual-update',
       'https://www.aipoch.com/docs/',
       'https://github.com/aipoch/open-science/releases',
       'https://github.com/aipoch/open-science/blob/main/LICENSE',
@@ -87,14 +87,16 @@ describe('AppVersionSection', () => {
     const link = container.querySelector<HTMLAnchorElement>(
       '[data-settings-anchor="general.manual-install"]'
     )
-    expect(link?.href).toBe('https://www.aipoch.com/docs/guides/installation/')
+    expect(link?.href).toBe('https://www.aipoch.com/docs/guides/installation/#manual-update')
     expect(link?.textContent).toContain('Manual install or update')
     expect(link?.textContent).toContain('If an update runs into a problem')
 
     await act(async () => {
       useLocaleStore.getState().setPreference('zh-Hans')
     })
-    expect(link?.href).toBe('https://www.aipoch.com/docs/zh-Hans/guides/installation/')
+    expect(link?.href).toBe(
+      'https://www.aipoch.com/docs/zh-Hans/guides/installation/#manual-update'
+    )
     expect(link?.textContent).toContain('手动安装或更新')
     expect(link?.textContent).toContain('更新遇到问题')
   })
@@ -337,7 +339,7 @@ it.each(['idle', 'checking', 'up-to-date', 'error'] as const)(
       '[data-settings-anchor="general.manual-install"]'
     )
     expect(manualLink?.getAttribute('href')).toBe(
-      'https://www.aipoch.com/docs/guides/installation/'
+      'https://www.aipoch.com/docs/guides/installation/#manual-update'
     )
     expect(manualLink?.textContent).toContain('Manual install or update')
     expect(check).not.toHaveBeenCalled()
