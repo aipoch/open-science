@@ -9182,6 +9182,17 @@ describe('ACP runtime session management', () => {
             })
           )
           expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'Runtime terminal write wait timed out',
+            expect.objectContaining({
+              sessionId: persisted.id,
+              elapsedMs: TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+            })
+          )
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'App continuation recovery failed',
+            expect.objectContaining({ sessionId: persisted.id, phase: 'preflight' })
+          )
           expect(persisted.activities![0].elicitation?.answers).toEqual([
             { fieldId: 'question_0', value: 'Expanded' }
           ])

@@ -2779,6 +2779,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       if (continuation.onUnaccepted) {
+        let recoveryPhase = 'preflight'
         try {
           const code =
             continuationError &&
@@ -2795,8 +2796,18 @@ class AcpRuntime {
           if (!providerDispatched) {
             await this.options.runtimeSessions?.assertAdmissionAvailable(sessionId)
           }
+          recoveryPhase = 'rearm'
           await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
+          try {
+            log.warn('App continuation recovery failed', {
+              sessionId,
+              phase: recoveryPhase,
+              ...diagnosticErrorFields(error)
+            })
+          } catch (loggingError) {
+            void loggingError
+          }
           this.pushEvent({
             kind: 'error',
             level: 'error',

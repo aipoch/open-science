@@ -559,16 +559,19 @@ export class RuntimeSessionOwner {
 
   async waitForTerminalWrites(sessionId: string, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted()
+    const startedAt = Date.now()
+    let waiting = false
+    let timeoutReached = false
     let onAbort!: () => void
     let timer: ReturnType<typeof setTimeout> | undefined
     const aborted = new Promise<never>((_, reject) => {
       onAbort = () => reject(signal.reason)
     })
     const timedOut = new Promise<never>((_, reject) => {
-      timer = setTimeout(
-        () => reject(new Error('Main runtime completion has not committed yet.')),
-        TERMINAL_CONTINUATION_WAIT_BUDGET_MS
-      )
+      timer = setTimeout(() => {
+        timeoutReached = true
+        reject(new Error('Main runtime completion has not committed yet.'))
+      }, TERMINAL_CONTINUATION_WAIT_BUDGET_MS)
     })
     signal.addEventListener('abort', onAbort, { once: true })
     try {
@@ -577,10 +580,35 @@ export class RuntimeSessionOwner {
           turn,
           tail: turn.tail
         }))
+        if (pending.length > 0 && !waiting) {
+          waiting = true
+          try {
+            log.debug('Waiting for runtime terminal writes before continuation', { sessionId })
+          } catch (loggingError) {
+            void loggingError
+          }
+        }
         await Promise.race([Promise.all(pending.map(({ tail }) => tail)), aborted, timedOut])
         signal.throwIfAborted()
         if (pending.every(({ turn, tail }) => turn.tail === tail)) return
       }
+    } catch (error) {
+      try {
+        if (timeoutReached) {
+          log.warn('Runtime terminal write wait timed out', {
+            sessionId,
+            elapsedMs: Date.now() - startedAt
+          })
+        } else if (signal.aborted && waiting) {
+          log.debug('Runtime terminal write wait cancelled', {
+            sessionId,
+            elapsedMs: Date.now() - startedAt
+          })
+        }
+      } catch (loggingError) {
+        void loggingError
+      }
+      throw error
     } finally {
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
