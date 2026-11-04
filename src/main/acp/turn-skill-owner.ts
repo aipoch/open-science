@@ -422,6 +422,7 @@ class AcpTurnSkillOwner {
         })
       )
     } catch {
+      if (input.codebuddy?.signal?.aborted) return []
       return this.selectionFailed('document-error', 'CodeBuddy')
     }
   }
