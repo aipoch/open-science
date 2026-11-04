@@ -250,7 +250,15 @@ it('verifies fresh published bytes on every native target without a producer fal
       }
     }
   }
-  expect(Object.keys(workflow.on)).toEqual(['workflow_dispatch'])
+  expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'workflow_dispatch'])
+  expect(workflow.on.pull_request).toEqual({
+    paths: [
+      'build/native-components-lock.json',
+      '.github/workflows/native-components-download-check.yml',
+      'scripts/native-components.mjs',
+      'scripts/native-components.test.ts'
+    ]
+  })
   expect(workflow.permissions).toEqual({ contents: 'read' })
   const job = workflow.jobs.verify
   expect(job.strategy.matrix.include.map(({ target }) => target).sort()).toEqual(

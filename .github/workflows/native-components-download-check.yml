@@ -4,6 +4,14 @@ name: Verify published native components
 # for missing artifacts: each target must download the bytes selected by the candidate catalog.
 on:
   workflow_dispatch:
+  # New workflows cannot be dispatched until they exist on the default branch.
+  # Verify catalog PRs before merge as well as allowing later manual CDN audits.
+  pull_request:
+    paths:
+      - build/native-components-lock.json
+      - .github/workflows/native-components-download-check.yml
+      - scripts/native-components.mjs
+      - scripts/native-components.test.ts
 
 permissions:
   contents: read
