@@ -59,3 +59,21 @@ export function sampleWindowsResources(
 ): Promise<WindowsResourceSample>
 /** Single process identity read; no process enumeration. Null means unavailable. */
 export function readWindowsResourceBirth(pid: number): string | null
+
+// Windows only. Each returns null for a missing or exited process and throws for any other
+// query failure. The creation time is the decimal FILETIME (100 ns since 1601-01-01 UTC).
+export function getWindowsProcessCreationTime(pid: number): string | null
+export function getWindowsProcessCommandLine(pid: number): string | null
+export function getWindowsParentProcessId(pid: number): number | null
+// Windows only. Read-only Restart Manager query of processes using the given files.
+export function listWindowsInstallationOccupants(files: readonly string[]): number[]
+// Same query on the libuv thread pool; a cold Restart Manager query can take tens of seconds.
+export function listWindowsInstallationOccupantsAsync(files: readonly string[]): Promise<number[]>
+// Windows only. Process snapshot; executablePath is null when the image cannot be read.
+export function listWindowsProcesses(): Array<{
+  pid: number
+  ppid: number
+  executablePath: string | null
+}>
+// Windows only. Splits a command line with CommandLineToArgvW.
+export function splitWindowsCommandLine(commandLine: string): string[]

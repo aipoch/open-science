@@ -12,7 +12,7 @@
         [
           "OS=='win'",
           {
-            "libraries": ["Advapi32.lib", "Psapi.lib"],
+            "libraries": ["Advapi32.lib", "Psapi.lib", "Rstrtmgr.lib", "Shell32.lib"],
             "msvs_settings": {
               "VCCLCompilerTool": {
                 "ExceptionHandling": 1,
