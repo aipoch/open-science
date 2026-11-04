@@ -109,7 +109,7 @@ Options:
   --no-memory            Disable Memory for this Session
   --specialist <id-or-name>  Bind a new Session to a Specialist
   --delegation <policy>  allow or deny new delegated children
-  --framework <id>       claude-code, opencode, codex, or codebuddy
+  --framework <id>       claude-code, opencode, codex, codebuddy, or pi
   --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
@@ -439,7 +439,7 @@ export const parseCliArgs = (argv) => {
   }
   if (
     options.framework !== undefined &&
-    !['claude-code', 'opencode', 'codex', 'codebuddy'].includes(options.framework)
+    !['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'].includes(options.framework)
   ) {
     throw new CliUsageError(`Invalid framework: ${options.framework}`)
   }

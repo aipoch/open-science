@@ -38,6 +38,7 @@ import {
 } from '../../shared/artifact-version-locator'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
 import {
+  AGENT_USER_CHOICE_REQUEST_CONTRACT,
   sanitizeAgentUserChoiceRequest,
   type AgentUserChoiceRequest,
   type AgentUserChoiceResult
@@ -1536,7 +1537,15 @@ class NotebookLocalRpcServer {
       } as Parameters<NotebookLocalRpcCapability['shutdown']>[0] & {
         delegatedWorkAttemptId: string
       })
-      revokePromise = Promise.all([drained, shutdown]).then(() => undefined)
+      revokePromise = Promise.all([drained, shutdown]).then(
+        () => undefined,
+        (error) => {
+          // Admission stays revoked; only the failed lane teardown is retryable. Keeping a
+          // rejected promise here would prevent delegated cleanup recovery from reaping it.
+          revokePromise = undefined
+          throw error
+        }
+      )
       return revokePromise
     }
     return {
@@ -2758,7 +2767,11 @@ class NotebookLocalRpcServer {
 
     if (method === 'requestUserInput') {
       const request = sanitizeAgentUserChoiceRequest(params)
-      if (!request) throw new RpcHttpError(400, 'Invalid user choice request.')
+      if (!request)
+        throw new RpcHttpError(
+          400,
+          `Invalid user choice request: expected ${AGENT_USER_CHOICE_REQUEST_CONTRACT}.`
+        )
       if (params.caller_role === 'delegate') {
         if (!this.delegatedWorkService?.requestUserInput) {
           throw new Error('Delegated user input is not configured.')

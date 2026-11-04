@@ -1,3 +1,4 @@
+import { classifyFailure } from '../../shared/failure/classify'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -120,9 +121,8 @@ const composeAcpRuntimeLifecycleOwners = (
             id: session.publication.nextEventId(),
             kind: 'error',
             level: 'error',
-            providerError: false,
             interruptionCause: cause,
-            errorReportable: false,
+            failure: classifyFailure({ origin: 'session' }),
             sessionId: scope.sessionId,
             promptExecutionId: scope.turnToken,
             ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),

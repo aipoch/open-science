@@ -26,6 +26,7 @@ export type ResolvedSubagentModelSnapshot = Readonly<{
     | 'opencode-anthropic'
     | 'opencode-openai'
     | 'codebuddy-openai'
+    | 'pi'
     | 'codex-responses'
     | 'codex-responses-compatibility'
     | 'codex-bridge'

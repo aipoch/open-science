@@ -121,7 +121,8 @@ describe('PR Gate workflow', () => {
           event = 'pull_request',
           dir = trustedDir,
           trustedBase = base,
-          bundles = ['unit']
+          bundles = ['unit'],
+          comparisonBase = base
         ): string[] => {
           const output = join(cwd, 'output')
           writeFileSync(output, '')
@@ -132,7 +133,7 @@ describe('PR Gate workflow', () => {
               ...process.env,
               EVENT_NAME: event,
               EXECUTION_PLAN: JSON.stringify({ bundles }),
-              BASE_SHA: base,
+              BASE_SHA: comparisonBase,
               HEAD_SHA: head,
               TRUSTED_BASE_SHA: trustedBase,
               TRUSTED_CLASSIFIER_DIR: dir,
@@ -193,10 +194,34 @@ describe('PR Gate workflow', () => {
         git('commit', '--quiet', '-m', 'delete package source')
         expect(run(head)).toEqual(both)
         expect(run(git('rev-parse', 'HEAD'), 'merge_group')).toEqual(both)
+        // Main advancing after a docs branch fork must not become package evidence for that PR.
+        git('reset', '--hard', base)
+        write('docs/ROADMAP.md')
+        git('add', 'docs/ROADMAP.md')
+        git('commit', '--quiet', '-m', 'docs only')
+        const docsHead = git('rev-parse', 'HEAD')
+        git('checkout', '-b', 'advanced-main', base)
+        write('.github/workflows/package-smoke.yml')
+        write('packages/compute/src/main-only.ts')
+        git('add', '.github', 'packages')
+        git('commit', '--quiet', '-m', 'advance main')
+        const targetTip = git('rev-parse', 'HEAD')
+        git('merge', '--no-ff', docsHead, '-m', 'synthetic docs merge')
+        // PR preflight passes the fork point as base and the target tip as trusted-base.
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(host)
+        expect(
+          run(git('rev-parse', 'HEAD'), 'merge_group', trustedDir, targetTip, ['docs'], targetTip)
+        ).toEqual(host)
+        // Changes introduced by the merge itself must still select package coverage.
+        write('packages/compute/src/merge-only.ts')
+        git('add', 'packages')
+        git('commit', '--amend', '--no-edit')
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(both)
       } finally {
         rmSync(cwd, { recursive: true, force: true })
       }
-    }
+    },
+    30000
   )
 
   it('requires selective execution for every affected-test step', () => {
@@ -307,8 +332,22 @@ describe('PR Gate workflow', () => {
     expect(shards.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBe('1')
     const merge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related_merge')
     expect(merge?.run).toContain(
-      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports'
+      '--coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} -- --merge-reports=vitest-reports'
     )
+    // Trusted preflight marks deferred full plans that keep a declared module test floor. The
+    // runner selects the same floor, never the complete suite, and still refuses full plans.
+    const floor = 'fromJSON(needs.preflight.outputs.plan).unitFloor == true'
+    const serialFloor = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
+    for (const step of [selected, merge, serialFloor]) {
+      expect(step?.if).toContain(floor)
+      expect(step?.env?.FULL_FLOOR).toBe(`\${{ ${floor} && '1' || '' }}`)
+      expect(step?.run).toContain('--require-selective ${FULL_FLOOR:+--full-floor}')
+    }
+    const completeShard = shards.steps?.find(({ id }) => id === 'unit_macos_shard')
+    const completeMerge = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_full')
+    for (const step of [completeShard, completeMerge]) {
+      expect(step?.if).toContain('fromJSON(needs.preflight.outputs.plan).unitFloor != true')
+    }
     expect(workflow.jobs.unit.env?.VITEST_DEFER_COVERAGE_THRESHOLDS).toBeUndefined()
     const serial = workflow.jobs.unit.steps?.find(({ id }) => id === 'unit_macos_related')
     expect(serial?.if).toContain("needs.unit_shard.result == 'skipped'")
@@ -1598,7 +1637,7 @@ describe('PR Gate workflow', () => {
     expect(merge).toMatchObject({
       id: 'unit_macos_full',
       'continue-on-error': true,
-      if: "${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}",
+      if: "${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}",
       run: 'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
     })
     expect(unit.steps?.some(({ name }) => name === 'Test Renderer (blocking)')).toBe(false)
@@ -1764,7 +1803,7 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+          'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
         )
       ])
     )
@@ -1786,7 +1825,7 @@ describe('PR Gate workflow', () => {
     expect(selector.run).not.toContain('grep=.*')
     const commands = job.steps!.map(({ run }) => run ?? '').join('\n')
     expect(commands).toContain(
-      'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+      'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
     )
     expect(commands).not.toContain('test:e2e:browser')
     expect(commands).not.toContain('test:e2e:workspace')
@@ -1830,7 +1869,7 @@ describe('PR Gate workflow', () => {
     expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
       if: "${{ steps.setup.outcome == 'success' }}",
       run: expect.stringContaining(
-        'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+        'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
       )
     })
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toBeUndefined()
@@ -1855,7 +1894,7 @@ describe('PR Gate workflow', () => {
             (step) => step.id === id
           )
           expect(step?.env?.RUN_DEDICATED_TESTS).toBe(
-            "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}"
+            "${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}"
           )
           const log = join(directory, id)
           const run = spawnSync('bash', ['-e', '-c', step!.run!], {
@@ -2117,6 +2156,7 @@ describe('PR Gate workflow', () => {
     expect(linuxDependencies?.run).toContain('apt-get install --yes --no-install-recommends')
     expect(linuxDependencies?.run).toContain('apparmor-profiles')
     expect(linuxDependencies?.run).toContain('bwrap-userns-restrict')
+    expect(linuxDependencies?.run).toContain('scripts/ci/bwrap-userns-restrict')
     expect(linuxDependencies?.run).toContain('bwrap --unshare-all')
     expect(linuxDependencies?.run).not.toContain('apparmor_restrict_unprivileged_userns=0')
     expect(

@@ -170,8 +170,15 @@ export const sessionsDeleteSessionContracts = {
     RUNTIME_VALIDATED
   ]),
   'sessions.useCaseCatalog': callable<
-    (mode: 'cached' | 'refreshed') => Promise<import('../use-cases').UseCase[]>
+    (mode: 'cached' | 'refreshed' | 'reload') => Promise<import('../use-cases').UseCase[]>
   >()('sessions', ['sessions:use-case-catalog', LOCAL, undefined, undefined, RUNTIME_VALIDATED]),
+  'sessions.useCaseIntroduction': callable<(slug: string) => Promise<string | null>>()('sessions', [
+    'sessions:use-case-introduction',
+    LOCAL,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'sessions.packageOperation': callable<
     (
       request: import('../session-package').PackageOperationRequest

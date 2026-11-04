@@ -70,6 +70,7 @@ function setup(
       | 'closeOtherInstances'
       | 'forceStopRuntime'
       | 'installationOperation'
+      | 'ownedRuntimeProcessIds'
     >
   > = {}
 ): {
@@ -371,6 +372,21 @@ describe('Desktop installation orchestration', () => {
     expect(restart).not.toHaveBeenCalled()
     expect(state.finish).not.toHaveBeenCalled()
   })
+  it('never grants live runtime exemptions when rechecking a stopped installation', async () => {
+    state.record = { ...base, phase: 'stopped', stoppedClean: true }
+    const owned = vi.fn(async () => [789])
+    const { hooks, invoke } = setup('desktop', undefined, undefined, {
+      ownedRuntimeProcessIds: owned
+    })
+    state.availability.mockImplementation(async (options) => {
+      expect(options.allowedProcessIds).toEqual([process.pid])
+      expect(options).not.toHaveProperty('runtime')
+    })
+    await hooks.recheckInstall!()
+    expect(state.availability).toHaveBeenCalledOnce()
+    expect(owned).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+  })
   it('can recheck a delayed clean exit into a retryable stopped state', async () => {
     state.record = { ...base, phase: 'stopping' }
     const { hooks, stop } = setup()
@@ -439,18 +455,56 @@ describe('supervised install admission release', () => {
 
 describe('legacy install for uncertified channels', () => {
   const legacy = (): true => true
+  it('uses live runtime ownership for admission but never exempts those processes after stop', async () => {
+    const owned = vi.fn(async () => [789])
+    const desktop = (): number[] => [process.pid]
+    const { hooks, stop, onHandoff } = setup('desktop', undefined, legacy, {
+      allowedProcessIds: desktop,
+      ownedRuntimeProcessIds: owned
+    })
+    state.availability.mockImplementation(async (options) => {
+      expect(await options.allowedProcessIds()).toEqual([process.pid, 789])
+    })
+    await hooks.prepareInstall!(status, {})
+    expect(owned).toHaveBeenCalledOnce()
+    await hooks.installGate!({})
+    expect(stop).toHaveBeenCalledOnce()
+    state.availability.mockImplementation(async (options) => {
+      expect(await options.allowedProcessIds()).toEqual([process.pid])
+      throw new UpdateLifecycleError('installation-busy', 'A child still holds installation files.')
+    })
+    await expect(hooks.beforeInstallHandoff!(status)).rejects.toMatchObject({
+      reason: 'installation-busy'
+    })
+    expect(owned).toHaveBeenCalledOnce()
+    expect(onHandoff).not.toHaveBeenCalled()
+  })
+
+  it('does not classify failed ownership inspection as an unrelated application', async () => {
+    const owned = vi.fn(async (): Promise<number[]> => {
+      throw new Error('Job inspection unavailable')
+    })
+    const { hooks, stop } = setup('desktop', undefined, legacy, { ownedRuntimeProcessIds: owned })
+    state.availability.mockImplementation(async (options) => options.allowedProcessIds())
+    await expect(hooks.prepareInstall!(status, {})).rejects.toMatchObject({
+      reason: 'installation-busy',
+      recovery: { detail: 'occupancy-unknown' }
+    })
+    expect(stop).not.toHaveBeenCalled()
+  })
   it('stops and confirms the runtime without a supervised record or artifact verification', async () => {
     const { hooks, invoke, stop, retainLease, verifyArtifact, onHandoff } = setup(
       'desktop',
       undefined,
-      legacy
+      legacy,
+      { installationOperation: () => 'native-op' }
     )
     expect(await hooks.prepareInstall!(status, {})).toBeUndefined()
     expect(state.availability).not.toHaveBeenCalled()
     expect(await hooks.installGate!({})).toMatchObject({ completed: true, reaped: true })
     await hooks.beforeInstallHandoff!(status)
-    expect(invoke).toHaveBeenCalledWith('desktop:update-gate', [
-      { shutdownDeadlineAt: expect.any(Number) }
+    expect(invoke).toHaveBeenCalledWith('desktop:update-installation-gate', [
+      { operationId: 'native-op', shutdownDeadlineAt: expect.any(Number) }
     ])
     expect(stop).toHaveBeenCalledTimes(1)
     expect(retainLease).toHaveBeenCalledTimes(1)
@@ -481,7 +535,9 @@ describe('legacy install for uncertified channels', () => {
   })
 
   it('lets the current owner release its workloads before checking installation occupancy', async () => {
-    const { hooks, invoke, stop } = setup('desktop', undefined, legacy)
+    const { hooks, invoke, stop } = setup('desktop', undefined, legacy, {
+      installationOperation: () => 'native-op'
+    })
     state.availability.mockImplementation(async () => {
       if (!stop.mock.calls.length) throw new Error('other-runtime: current Notebook workload')
     })

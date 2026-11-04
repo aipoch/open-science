@@ -180,9 +180,9 @@ it.each(['null', 'revoked', 'malformed', 'incomplete', 'missing-layout'] as cons
   }
 )
 
-it.each(['truncated', 'digest', 'header', 'symlink', 'expired'] as const)(
+it.for(['truncated', 'digest', 'header', 'symlink', 'expired'] as const)(
   'treats %s cache files as misses and replaces them safely',
-  async (kind) => {
+  async (kind, { skip }) => {
     const f = await setup()
     await f.publish()
     const file = join(f.directory, (await readdir(f.directory))[0])
@@ -201,7 +201,21 @@ it.each(['truncated', 'digest', 'header', 'symlink', 'expired'] as const)(
       const outside = join(f.root, 'outside.pdf')
       await writeFile(outside, 'untouched')
       await rm(file)
-      await symlink(outside, file)
+      try {
+        await symlink(outside, file, 'file')
+      } catch (error) {
+        if (
+          process.platform === 'win32' &&
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'EPERM'
+        ) {
+          skip(
+            'This Windows account cannot create file symlinks; the rejection runs where supported.'
+          )
+        }
+        throw error
+      }
     }
     if (kind === 'expired') {
       const now = Date.now()
@@ -382,7 +396,7 @@ it('refuses cache-directory symlinks and preserves their external destination', 
   await rm(f.directory, { recursive: true })
   const destination = await mkdtemp(join(tmpdir(), 'pdf-cache-outside-'))
   roots.push(destination)
-  await symlink(destination, f.directory)
+  await symlink(destination, f.directory, process.platform === 'win32' ? 'junction' : 'dir')
   const result = await f.cache.generate(f.request, f.caller)
   expect(result?.cacheHit).toBeUndefined()
   await f.cache.confirm(f.report(result!), f.caller)

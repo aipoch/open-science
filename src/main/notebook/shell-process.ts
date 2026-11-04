@@ -68,6 +68,12 @@ const SHELL_NETWORK_TRANSPORT_UNSUPPORTED_PREFIX = 'WSL2_NETWORK_TRANSPORT_UNSUP
 // Runtime-private port: platform invocation, encoding, env projection, and teardown stay in its adapter.
 type NotebookShellProcess = {
   execute(request: NotebookShellProcessRequest): Promise<NotebookShellResult>
+  prepareEnvironment?(
+    request: Pick<
+      NotebookShellProcessRequest,
+      'handoffDir' | 'runtimeRoot' | 'runtimeBinding' | 'signal'
+    >
+  ): Promise<NodeJS.ProcessEnv>
   shutdown?(scope: {
     projectId?: string
     sessionId?: string
@@ -272,6 +278,32 @@ class ShellPreparationError extends Error {
   }
 }
 
+const prepareWindowsShellRuntime = async (
+  platform: NodeJS.Platform,
+  binding: ShellRuntimeBinding,
+  processSandbox?: NotebookProcessSandbox,
+  signal?: AbortSignal
+): Promise<boolean | undefined> => {
+  if (platform !== 'win32' || binding.kind !== 'powershell') return undefined
+  try {
+    const runtime = await processSandbox?.resolveWindowsRuntime?.({
+      runtime: 'bash',
+      binding,
+      signal
+    })
+    return runtime === undefined ? undefined : runtime !== null
+  } catch (error) {
+    throw new ShellPreparationError({
+      stdout: '',
+      stderr: error instanceof Error ? error.message : String(error),
+      exitCode: null,
+      runtimeStatus: 'unavailable',
+      errorCode: 'shell-runtime-unavailable',
+      recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
+    })
+  }
+}
+
 const prepareShellLaunch = async (
   options: NotebookShellProcessRequest & {
     previewAvailable?: () => boolean
@@ -309,26 +341,12 @@ const prepareShellLaunchOptions = async (
     })
   }
   const runtimeBinding = options.runtimeBinding ?? defaultShellRuntimeBinding(hostPlatform)
-  let windowsProtectionRequired: boolean | undefined
-  if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
-    try {
-      const runtime = await options.processSandbox?.resolveWindowsRuntime?.({
-        runtime: 'bash',
-        binding: runtimeBinding,
-        signal: options.signal
-      })
-      if (runtime !== undefined) windowsProtectionRequired = runtime !== null
-    } catch (error) {
-      throw new ShellPreparationError({
-        stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
-        exitCode: null,
-        runtimeStatus: 'unavailable',
-        errorCode: 'shell-runtime-unavailable',
-        recovery: { execution: 'not-started', retryAfter: 'runtime-ready' }
-      })
-    }
-  }
+  const windowsProtectionRequired = await prepareWindowsShellRuntime(
+    hostPlatform,
+    runtimeBinding,
+    options.processSandbox,
+    options.signal
+  )
   if (
     runtimeBinding.kind === 'wsl2-bash' &&
     (!(options.previewAvailable ?? (() => wsl2BashPreviewStatus().available))() ||
@@ -376,8 +394,25 @@ const prepareShellLaunchOptions = async (
   }
 
   const platform = hostPlatform
+  // Probe PATH-controlled executables only inside the workload sandbox. The ordinary backend
+  // Node is also the packaged client Node; Electron's executable is not an npm interpreter.
+  const fallbackNodeDirectory =
+    options.processSandbox &&
+    runtimeBinding.kind === 'native-posix' &&
+    !process.versions.electron &&
+    process.allowedNodeEnvironmentFlags.has('--use-env-proxy')
+      ? dirname(process.execPath)
+      : undefined
+  let launchCommand = options.launchCommand ?? options.command
+  if (fallbackNodeDirectory) {
+    const quotedDirectory = `'${fallbackNodeDirectory.replaceAll("'", "'\\''")}'`
+    launchCommand =
+      `if ! node -e 'process.exit(process.allowedNodeEnvironmentFlags.has("--use-env-proxy") ? 0 : 1)' >/dev/null 2>&1; then\n` +
+      `  export PATH=${quotedDirectory}:"$PATH"\n` +
+      `fi\n${launchCommand}`
+  }
   const invocation = resolveShellProcessInvocation(
-    options.launchCommand ?? options.command,
+    launchCommand,
     runtimeBinding,
     options.runtimeRoot,
     hostPlatform,
@@ -415,6 +450,7 @@ const prepareShellLaunchOptions = async (
           filesystem: {
             readOnlyRoots: [
               options.runtimeRoot,
+              ...(fallbackNodeDirectory ? [fallbackNodeDirectory] : []),
               ...(runtimeBinding.kind === 'powershell' && runtimeBinding.version === '7.6'
                 ? [dirname(resolveWindowsNotebookRuntime().node)]
                 : []),
@@ -1067,6 +1103,29 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
     }
   ) {}
 
+  async prepareEnvironment(
+    request: Pick<
+      NotebookShellProcessRequest,
+      'handoffDir' | 'runtimeRoot' | 'runtimeBinding' | 'signal'
+    >
+  ): Promise<NodeJS.ProcessEnv> {
+    const binding = request.runtimeBinding ?? defaultShellRuntimeBinding(this.platform)
+    request.signal?.throwIfAborted()
+    try {
+      await prepareWindowsShellRuntime(this.platform, binding, this.processSandbox, request.signal)
+    } finally {
+      request.signal?.throwIfAborted()
+    }
+    return buildShellEnv(
+      request.handoffDir,
+      shellRuntimePlatform(binding, this.platform),
+      process.env,
+      request.runtimeRoot,
+      prepareNotebookWorkloadCache(request.runtimeRoot),
+      binding
+    )
+  }
+
   async prepare(request: NotebookShellProcessRequest): Promise<{
     execute(signal?: AbortSignal): Promise<NotebookShellResult>
     dispose(): void
@@ -1222,6 +1281,7 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
 
 export {
   NotebookShellProcessAdapter,
+  ShellPreparationError,
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,

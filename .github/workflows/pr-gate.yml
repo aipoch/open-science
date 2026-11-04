@@ -377,19 +377,24 @@ jobs:
             const { fixtureTestPatterns } = await import(pathToFileURL(
               join(process.env.TRUSTED_CLASSIFIER_DIR, 'classify-pr-changes.mjs')
             ).href)
-            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-            const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
-            const paths = [
-              ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
-              ...git('diff', '--name-only', '--no-renames', '-z', process.env.HEAD_SHA, 'HEAD').split('\0')
-            ].filter(Boolean)
             const plan = packageTestPlanFromRevisions(
               process.env.BASE_SHA, process.env.HEAD_SHA, process.env.TRUSTED_BASE_SHA
             )
-            // Dedicated packages and registered fixture readers also live in the package scope.
-            packages = plan.selected.length > 0 || paths.some(path =>
-              path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
-            )
+            packages = plan.selected.length > 0
+            // Preserve the selector's all-packages fallback before inspecting extra package lanes.
+            if (!packages) {
+              const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+              const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
+              const checkoutBase = git('merge-base', process.env.TRUSTED_BASE_SHA, 'HEAD').trim()
+              const paths = [
+                ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
+                ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD').split('\0')
+              ].filter(Boolean)
+              // Dedicated packages and registered fixture readers also live in the package scope.
+              packages = paths.some(path =>
+                path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
+              )
+            }
             reason = packages ? 'affected package sources, shared inputs or fixture readers' : 'no affected packages: skip package runners'
           }
           const include = [
@@ -618,7 +623,7 @@ jobs:
         if: ${{ matrix.group == 'checks' && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts')) }}
         continue-on-error: true
         env:
-          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}
         run: |
           npm run check:web-api-map
           # Full portable shards already execute these tests. Keep the map check in this lane.
@@ -693,7 +698,7 @@ jobs:
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
         continue-on-error: true
         env:
-          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') || fromJSON(needs.preflight.outputs.plan).unitFloor == true }}
         run: |
           if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
             npx vitest run cli packages/open-science
@@ -848,7 +853,7 @@ jobs:
           trusted-base: ${{ needs.preflight.outputs.trusted_base }}
       - name: Test complete suite shard
         id: unit_macos_shard
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
         continue-on-error: true
         # The static lane owns the i18n catalog guard. Real Linux and macOS sandbox behavior runs
         # in platform jobs with the required native dependencies, so do not duplicate those files.
@@ -864,14 +869,15 @@ jobs:
           --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Test affected Module shard
         id: unit_macos_related_shard
-        if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} --
           --coverage.reporter=text-summary
           --testTimeout=30000
           --shard=${{ matrix.shard }}/${{ matrix.total }}
@@ -933,16 +939,17 @@ jobs:
         run: npm run generate:module-consumers
       - name: Test affected Modules
         id: unit_macos_related
-        if: ${{ needs.unit_shard.result == 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ needs.unit_shard.result == 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           VITEST_PORTABLE_CI: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor}
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
@@ -954,22 +961,23 @@ jobs:
         id: unit_macos_full
         # The shard job covers both full plans and trusted pre-migration selective plans that select
         # the unit bundle without unit_macos. Merge once so thresholds see the complete suite.
-        if: ${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
+        if: ${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).unitFloor != true && (fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
         continue-on-error: true
         # Blob reports retain their source test paths. The merge reconstructs coverage without
         # discovering or executing tests again, so coverage thresholds remain authoritative.
         run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Merge Module reports and coverage
         id: unit_macos_related_merge
-        if: ${{ needs.unit_shard.result != 'skipped' && fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
+        if: ${{ needs.unit_shard.result != 'skipped' && (fromJSON(needs.preflight.outputs.plan).mode == 'selective' || fromJSON(needs.preflight.outputs.plan).unitFloor == true) && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
         continue-on-error: true
         env:
           VITEST_PORTABLE_CI: '1'
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
           TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
+          FULL_FLOOR: ${{ fromJSON(needs.preflight.outputs.plan).unitFloor == true && '1' || '' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective ${FULL_FLOOR:+--full-floor} -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true
@@ -1073,14 +1081,20 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install --yes --no-install-recommends apparmor-profiles apparmor-utils bubblewrap
+          sudo apt-get install --reinstall --yes --no-install-recommends apparmor
 
           apparmor_userns_restriction="$(
             sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
           )"
           if [[ "$apparmor_userns_restriction" == "1" ]]; then
-            profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
-            test -r "$profile_source"
-            sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            if [[ ! -r /etc/apparmor.d/bwrap-userns-restrict ]]; then
+              profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+              if [[ ! -r "$profile_source" ]]; then
+                profile_source="$GITHUB_WORKSPACE/scripts/ci/bwrap-userns-restrict"
+              fi
+              test -r "$profile_source"
+              sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            fi
             sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
           fi
 
@@ -1214,6 +1228,9 @@ jobs:
           src/main/desktop-runtime-recovery.test.ts
           src/main/desktop-runtime-stop-deadline.integration.test.ts
           src/main/update/installation-occupancy.test.ts
+          src/main/update/installation-file-occupancy.integration.test.ts
+          src/main/update/windows-recovery-identity.integration.test.ts
+          src/main/update/windows-signature-verification.test.ts
           src/main/verified-service-stop.test.ts
           packages/open-science/runtime-control.test.ts
           src/main/local-service-stop-intent.integration.test.ts
@@ -1677,9 +1694,10 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Mainline-only on every PR Gate entry point. Complete suites live in regression.
+        # All seven serial journeys already take ~10 minutes on hosted Windows runners.
         run: |
           if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
-          npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"
+          npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true

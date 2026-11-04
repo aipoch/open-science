@@ -304,7 +304,7 @@ export const projectElicitationRevision = (
     activeRun: undefined,
     agentStatus: undefined,
     error: undefined,
-    errorReportable: undefined,
+    failure: undefined,
     interrupted: undefined,
     filesRevision: hasFiles ? (session.filesRevision ?? 0) + 1 : session.filesRevision,
     updatedAt: now

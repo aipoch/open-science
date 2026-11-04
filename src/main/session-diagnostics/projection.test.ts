@@ -322,6 +322,37 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
   ).toEqual({})
 })
 
+it('retains recovery evidence but excludes transient credential inventory diagnostics', () => {
+  const event = {
+    scope: 'desktop-runtime-recovery',
+    msg: 'desktop runtime recovery failed',
+    data: {
+      startupStage: 'credentials',
+      credentialReason: 'windows-profile-key-unavailable',
+      pid: 42,
+      crashesInWindow: 1,
+      timedOut: false,
+      error: { message: 'startup failed', cause: { code: 'EACCES' } },
+      credentialDiagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 }
+    }
+  }
+  expect(projectDiagnosticLog(event)).toMatchObject({ diagnostics: event.data })
+  expect(
+    projectDiagnosticLog({
+      ...event,
+      data: {
+        ...event.data,
+        credentialDiagnostic: {
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-files',
+          reason: 'operation-failed'
+        }
+      }
+    }).diagnostics
+  ).not.toHaveProperty('credentialDiagnostic')
+})
+
 it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {
   expect(
     projectDiagnosticLog({
@@ -381,4 +412,37 @@ it('preserves permission trace classifications and rejects spoofed raw identity 
     }
   })
   expect(JSON.stringify(invalid)).not.toContain('private-')
+})
+
+it('retains classified failure evidence in session and turn diagnostics with redaction and limits', () => {
+  const failure = {
+    category: 'service',
+    reason: 'service/unavailable',
+    diagnostics: {
+      status: 503,
+      code: 'overloaded',
+      provider: 'Example',
+      model: 'example-model',
+      requestId: 'request-example',
+      raw: 'Authorization: Bearer secret-example\n' + 'x'.repeat(5000),
+      secret: 'DO NOT EXPORT'
+    }
+  }
+  const projection = projectDiagnosticSession({
+    failure,
+    messages: [{ id: 'prompt', turnOutcome: { kind: 'failed', settledAt: 1, failure } }]
+  })
+  expect(projection).toMatchObject({
+    session: {
+      failure: {
+        category: 'service',
+        diagnostics: { status: 503, provider: 'Example', requestId: 'request-example' }
+      },
+      messages: [{ turnOutcome: { failure: { category: 'service' } } }]
+    }
+  })
+  const serialized = JSON.stringify(projection)
+  expect(serialized).not.toContain('secret-example')
+  expect(serialized).not.toContain('DO NOT EXPORT')
+  expect(serialized).toContain('[truncated]')
 })

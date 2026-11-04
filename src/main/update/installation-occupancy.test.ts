@@ -6,7 +6,8 @@ import {
   inspectOwnedLinuxZygoteProcesses,
   inspectOwnedLinuxAppImageLauncher,
   inspectInstallationProcesses,
-  inspectInstallationProcessesAsync
+  inspectInstallationProcessesAsync,
+  parseDarwinProcessNames
 } from './installation-occupancy'
 
 const mocks = vi.hoisted(() => ({
@@ -52,8 +53,30 @@ beforeEach(() => {
   })
 })
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+})
+
+it('allows a cold Windows resource scan to finish while preserving cancellation', async () => {
+  vi.useFakeTimers()
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+  const controller = new AbortController()
+  mocks.run.mockImplementation((_command, _args, { timeoutMs, signal }) => {
+    expect(signal).toBe(controller.signal)
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => reject(new Error('resource scan timed out')), timeoutMs)
+      setTimeout(() => {
+        clearTimeout(deadline)
+        resolve({ stdout: JSON.stringify({ resourcePids: [42], processes: [] }), stderr: '' })
+      }, 70_000)
+    })
+  })
+  const result = inspectInstallationProcessesAsync('C:\\Apps\\Science', controller.signal)
+  const assertion = expect(result).resolves.toEqual([42])
+  void assertion.catch(() => undefined)
+  await vi.advanceTimersByTimeAsync(70_000)
+  await assertion
 })
 
 it('defers native loading until macOS inspection and retains occupancy when the binding fails', () => {
@@ -183,9 +206,18 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     output(
       '10 /Applications/Science.app/node\n',
-      'p10\nn/Applications/Science.app/node\np11\nn/Applications/Science.app\np12\nn/Applications/Science.app/Contents/node\np13\nn/Applications/Science.app-old/node\n'
+      'p10\nftxt\nn/Applications/Science.app/node\np11\nftxt\nn/Applications/Science.app\np12\nftxt\nn/Applications/Science.app/Contents/node\np13\nftxt\nn/Applications/Science.app-old/node\n'
     )
     expect(await inspect('/Applications/Science.app')).toEqual([10, 11, 12])
+  })
+
+  it('ignores macOS processes that only hold ordinary descriptors on installation files', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    output(
+      '10 unrelated\n',
+      'p10\nf4\nn/Applications/Science.app/Contents/MacOS/Science\np10\nf18\nn/Applications/Science.app/data.json\n'
+    )
+    expect(await inspect('/Applications/Science.app')).toEqual([])
   })
 
   it('reads Windows resource users and exact executable paths without trusting command text', async () => {
@@ -205,7 +237,18 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
     expect(await inspect('c:\\apps\\science')).toEqual([43, 42])
   })
 
-  it('finds Linux open descriptors and mapped files outside the executable path', async () => {
+  it('resolves Windows PowerShell independently of PATH', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
+    output(JSON.stringify({ resourcePids: [], processes: [] }))
+    expect(await inspect('C:\\Apps\\Science')).toEqual([])
+    expect((mode === 'sync' ? mocks.spawnSync : mocks.run).mock.calls[0][0]).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    )
+  })
+
+  it('finds Linux mapped files without checking ordinary open descriptors', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
     output('10 unrelated\n20 unrelated\n30 unrelated\n')
     mocks.readFile.mockImplementation((path: string) =>
@@ -213,11 +256,7 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
         ? '100-200 r--p 00000000 08:02 42 /opt/Science/library.so (deleted)'
         : ''
     )
-    mocks.readdir.mockImplementation((path: string) => (path === '/proc/10/fd' ? ['7'] : []))
-    mocks.readlink.mockImplementation((path: string) =>
-      path === '/proc/10/fd/7' ? '/opt/Science/data.bin' : '/usr/bin/unrelated'
-    )
-    expect(await inspect('/opt/Science')).toEqual([10, 20])
+    expect(await inspect('/opt/Science')).toEqual([20])
   })
 
   it('records Linux coverage limitations for unreadable unrelated processes without permanently blocking updates', async () => {
@@ -227,13 +266,13 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       throw Object.assign(new Error('Permission denied'), { code: 'EACCES' })
     })
     expect(await inspect('/opt/Science')).toEqual([])
-    expect(mocks.warn).toHaveBeenCalledWith('Linux installation file scan coverage limited', {
+    expect(mocks.warn).toHaveBeenCalledWith('Linux installation mapping scan coverage limited', {
       pid: 10,
       code: 'EACCES'
     })
   })
 
-  it('keeps a Linux installation candidate blocking even when its file descriptors are unreadable', async () => {
+  it('keeps a Linux installation candidate blocking even when its mappings are unreadable', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('linux')
     output('10 /opt/Science/backend.cjs\n')
     mocks.readFile.mockImplementation(() => {
@@ -305,6 +344,21 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       expect(causes).toHaveLength(2)
       expect(causes[1].message).toBe('independent check failed')
     }
+  })
+})
+
+describe('macOS process names', () => {
+  it('keeps the executable name, not the full path', () => {
+    expect(
+      parseDarwinProcessNames(
+        ' 321 /System/Library/Frameworks/StoreKit.framework/Support/storekitagent\n  45 /Applications/Example App.app/Contents/MacOS/Example App\n\n'
+      )
+    ).toEqual(
+      new Map([
+        [321, 'storekitagent'],
+        [45, 'Example App']
+      ])
+    )
   })
 })
 
@@ -449,8 +503,13 @@ describe('Windows crash reporter ownership', () => {
     mocks.spawnSync.mockReturnValue({ status: 0, stdout: JSON.stringify(rows) })
   }
   it('recognizes its own handler using native parsed arguments and actual executable identity', () => {
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
     snapshot([row()])
     expect(inspectOwnedCrashpadProcesses(options)).toEqual([101])
+    expect(mocks.spawnSync.mock.calls[0][0]).toBe(
+      'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    )
   })
   it.each([
     ['another parent', { ParentProcessId: process.pid + 1 }],

@@ -1,3 +1,4 @@
+import { LiteratureStudySnapshot } from './LiteratureStudySnapshot'
 import { useTranslation } from 'react-i18next'
 import { JournalAttributes } from '../JournalAttributes'
 import { LiteratureSources } from '../LiteratureSources'
@@ -48,6 +49,7 @@ export function LiteratureBibliographicDetails({
           <CollapsibleAbstract text={selectedItem.item.abstract} />
         </section>
       ) : null}
+      <LiteratureStudySnapshot item={selectedItem} />
       <JournalAttributes item={selectedItem.item} itemId={selectedItem.id} detail />
       {hasFields || selectedItem.item.identifiers.length > 0 ? (
         <section className="py-4">

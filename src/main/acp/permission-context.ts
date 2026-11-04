@@ -44,6 +44,11 @@ import {
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
+import {
+  PiPermissionCorrelation,
+  type PiBoundCall,
+  type PiPermissionContext
+} from './pi-permission-correlation'
 
 const log = createLogger('acp')
 
@@ -126,6 +131,11 @@ type AcpPermissionContextOptions = {
     permissionPromptsForSession?: (sessionId: string) => 'none' | undefined
     currentInteractionSequence: (sessionId: string) => number | undefined
     mcpServerNamesFor: (sessionId: string) => readonly string[]
+    // Experimental Pi-only context assembled exclusively from Main-owned live session owners.
+    piPermissionContextFor?: (
+      appSessionId: string,
+      expectedProviderSessionId?: string
+    ) => PiPermissionContext | undefined
     shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
     authorizeRuntimeBindingAdmission?: (admission: {
       sessionId: string
@@ -140,6 +150,8 @@ type AcpPermissionContextOptions = {
         runtimeId: string
       }
     ) => Promise<boolean>
+    // Pi correlation context for an active Reviewer session, owned by ReviewerSessionOwner.
+    piReviewerPermissionContextFor?: (providerSessionId: string) => PiPermissionContext | undefined
     reviewerContextFor: (providerSessionId: string) =>
       | {
           frameworkId: AgentFrameworkId
@@ -392,6 +404,8 @@ const countNested = <T>(contexts: Map<string, Map<string, T>>, sessionId: string
 // human authority; only the explicit response origin can release a human-owned decision.
 class AcpPermissionContext {
   private readonly broker: AcpPermissionBroker
+  private readonly piCorrelation = new PiPermissionCorrelation()
+  private readonly piTurnContexts = new Map<string, PiPermissionContext>()
   private readonly unsubscribePermissionGrants?: () => void
   private readonly humanOnlyRequestIds = new Set<string>()
   private readonly permissionPromptMessageIds = new Map<string, Map<string, string>>()
@@ -479,7 +493,54 @@ class AcpPermissionContext {
       mcpServerNames,
       isCancelled
     }
-    const normalizedParams = await this.restoreToolCall(params, restoreContext)
+    let piBound: PiBoundCall | undefined
+    let normalizedParams: RequestPermissionRequest | undefined
+    if (String(framework) === 'pi') {
+      // A Reviewer session binds against its own reviewer-only context. An unbound Reviewer call
+      // carries no trusted identity, so the Reviewer owner rejects and counts it.
+      const piContext = reviewerContext
+        ? routing.piReviewerPermissionContextFor?.(params.sessionId)
+        : routing.piPermissionContextFor?.(appSessionId, params.sessionId)
+      const denied = (): RequestPermissionResponse =>
+        (reviewerContext ? routing.resolveReviewerPermission(params) : undefined) ?? {
+          outcome: { outcome: 'cancelled' }
+        }
+      const onceOptions = params.options.filter(
+        (option) => option.kind === 'allow_once' || option.kind === 'reject_once'
+      )
+      if (
+        !piContext ||
+        !onceOptions.some((option) => option.kind === 'allow_once') ||
+        !onceOptions.some((option) => option.kind === 'reject_once')
+      )
+        return denied()
+      this.piTurnContexts.set(appSessionId, piContext)
+      const result = await this.piCorrelation.waitFor(params, piContext)
+      if (result.status !== 'bound') {
+        log.warn('Pi permission correlation denied', {
+          reason: result.reason,
+          sessionId: appSessionId,
+          toolCallId: params.toolCall.toolCallId
+        })
+        return denied()
+      }
+      piBound = result.call
+      normalizedParams = withTrustedMcpToolIdentity(
+        {
+          ...params,
+          options: onceOptions,
+          toolCall: {
+            ...params.toolCall,
+            title: piBound.providerToolName,
+            rawInput: piBound.rawInput,
+            _meta: { toolName: piBound.providerToolName }
+          }
+        },
+        piBound.identity
+      )
+    } else {
+      normalizedParams = await this.restoreToolCall(params, restoreContext)
+    }
     if (
       !normalizedParams ||
       this.isPermissionRequestCancelled(params.toolCall.toolCallId, restoreContext)
@@ -497,6 +558,7 @@ class AcpPermissionContext {
 
     try {
       if (reviewerContext) {
+        if (piBound && !piBound.isCurrent()) return { outcome: { outcome: 'cancelled' } }
         const response = routing.resolveReviewerPermission(normalizedParams)
         if (response) return response
         throw new Error(`Unknown ACP reviewer session: ${params.sessionId}`)
@@ -578,6 +640,7 @@ class AcpPermissionContext {
         interactionSequence: promptInteraction?.sequence,
         permissionPrompts: promptInteraction?.permissionPrompts
       })
+      if (piBound && !piBound.isCurrent()) return { outcome: { outcome: 'cancelled' } }
       const selectedOptionId =
         response.outcome.outcome === 'selected' ? response.outcome.optionId : undefined
       const selectedOption = selectedOptionId
@@ -634,6 +697,7 @@ class AcpPermissionContext {
       } else if (executionMethod) {
         this.deleteNotebookExecutionInput(appSessionId, routedParams.toolCall.toolCallId)
       }
+      if (piBound && !piBound.isCurrent()) return { outcome: { outcome: 'cancelled' } }
       return response
     } catch (error) {
       this.deleteNotebookExecutionInput(appSessionId, params.toolCall.toolCallId)
@@ -658,6 +722,16 @@ class AcpPermissionContext {
     const reviewerContext = routing.reviewerContextFor(notification.sessionId)
     const snapshot = routing.sessionSnapshot(sessionId)
     const frameworkId = reviewerContext?.frameworkId ?? snapshot?.frameworkId
+    if (String(frameworkId) === 'pi') {
+      const piContext = reviewerContext
+        ? routing.piReviewerPermissionContextFor?.(notification.sessionId)
+        : routing.piPermissionContextFor?.(sessionId, notification.sessionId)
+      if (piContext) {
+        this.piTurnContexts.set(sessionId, piContext)
+        this.piCorrelation.observe(notification, piContext)
+      }
+      return
+    }
     const currentFramework = routing.currentFramework()
     const framework =
       frameworkId === currentFramework.id
@@ -1241,10 +1315,17 @@ class AcpPermissionContext {
       if (request.sessionId === sessionId) this.humanOnlyRequestIds.delete(request.requestId)
     }
     this.broker.clearSession(sessionId)
+    const piContext =
+      this.options.routing.piPermissionContextFor?.(sessionId) ?? this.piTurnContexts.get(sessionId)
+    if (piContext) this.piCorrelation.clearSession(sessionId, piContext.capabilityRevision)
     this.clearCorrelationsForSession(sessionId)
   }
 
   clearCorrelationsForSession(sessionId: string): void {
+    const piContext =
+      this.options.routing.piPermissionContextFor?.(sessionId) ?? this.piTurnContexts.get(sessionId)
+    if (piContext) this.piCorrelation.clearTurn(piContext)
+    this.piTurnContexts.delete(sessionId)
     this.nativeWebToolCalls.delete(sessionId)
     this.seenNativeWebSearchCalls.delete(sessionId)
     this.codexMcpToolIdentities.delete(sessionId)
@@ -1280,6 +1361,7 @@ class AcpPermissionContext {
       ...this.opencodeNativeSkillToolCalls.keys(),
       ...this.closedOpenCodeToolCalls.keys(),
       ...this.opencodeMcpToolInputWaiters.keys(),
+      ...this.piTurnContexts.keys(),
       ...this.restoredNotebookPresentationCandidates.keys(),
       ...this.restoredNotebookPresentationAliases.keys(),
       ...this.permissionPromptMessageIds.keys()

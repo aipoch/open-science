@@ -78,7 +78,7 @@ describe('terminal failure live projection with real Session storage', () => {
         kind: 'error',
         level: 'error',
         publicationOwner: 'main',
-        errorReportable: false,
+        failure: { category: 'service' as const, diagnostics: {} },
         interruptionCause: 'terminal-commit-failed',
         terminalCommitFailure: 'storage',
         terminalCommitError: 'disk unavailable',

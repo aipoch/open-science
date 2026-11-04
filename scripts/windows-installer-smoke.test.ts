@@ -105,9 +105,19 @@ describe('Windows installer smoke plan', () => {
     await expect(findSetupInstaller(root)).rejects.toThrow(/exactly one Windows setup executable/)
   })
 
-  it('force-kills leftover processes whose executable still lives under the install directory', async () => {
-    const run = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+  it.each(['', '.', 'C:\\', '\\\\server\\share\\'])(
+    'rejects broad or relative process cleanup paths: %s',
+    async (directory) => {
+      const run = vi.fn()
+      await expect(terminateDirectoryProcesses(directory, run)).rejects.toThrow(
+        'absolute directory below a volume root'
+      )
+      expect(run).not.toHaveBeenCalled()
+    }
+  )
 
+  it('passes cleanup paths as arguments to the object-bound helper', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
     await terminateDirectoryProcesses('D:\\installed app 程序\\', run)
 
     expect(run).toHaveBeenCalledWith(

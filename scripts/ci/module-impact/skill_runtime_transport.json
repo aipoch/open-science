@@ -680,5 +680,6 @@
   },
   "consumerModules": ["settings_service_facade"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "runtime-mcp-server.ts gains a server fingerprint and ownership check using node:crypto beyond the reviewed skill transport boundary; retain full CI validation until the expanded import contract is reviewed."
 }

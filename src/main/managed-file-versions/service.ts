@@ -685,8 +685,11 @@ class ManagedFileVersionService {
   ): Promise<ResolvedManagedFileVersion> {
     this.assertIdentity(request)
     const client = await this.options.getClient()
-    const logicalFile = await this.loadLogicalFile(client, request)
+    let logicalFile = await this.loadLogicalFile(client, request)
     await this.assertReadable(client, logicalFile)
+    if (!options.unpublished && !request.versionId) {
+      logicalFile = await this.repairSuppressedMarkdownHead(client, logicalFile)
+    }
     const headVersionId = logicalFile.currentVersionId
     if (!options.unpublished) {
       if (!headVersionId) {
@@ -801,7 +804,13 @@ class ManagedFileVersionService {
       }
     }
 
-    if (contentChecksum === basedOn.checksum && bytes.byteLength === Number(basedOn.sizeBytes)) {
+    // Unchanged current content is a no-op; saving a historical version is an explicit restore.
+    // Keep the head comparison above so restoration cannot overwrite a concurrent publication.
+    if (
+      (!request.restore || request.basedOnVersionId === headVersionId) &&
+      contentChecksum === basedOn.checksum &&
+      bytes.byteLength === Number(basedOn.sizeBytes)
+    ) {
       return this.noOpResult(client, logicalFile, request, basedOn)
     }
 
@@ -1060,6 +1069,9 @@ class ManagedFileVersionService {
     assertSafeStorageSegment(request.basedOnVersionId, 'base version id')
     assertSafeStorageSegment(request.expectedHeadVersionId, 'expected head version id')
     assertSafeStorageSegment(request.operationId, 'operation id')
+    if (request.restore !== undefined && typeof request.restore !== 'boolean') {
+      operationError('INVALID_REQUEST', 'Restore must be a boolean.')
+    }
     if (typeof request.content !== 'string') {
       operationError('INVALID_REQUEST', 'Text edit content must be a string.')
     }
@@ -1291,6 +1303,77 @@ class ManagedFileVersionService {
     }
     if (!project || project.archivedAt || deleting) return 'PROJECT_NOT_WRITABLE'
     return undefined
+  }
+
+  // Repair only an accessed Markdown lineage matching the former pre-edit-content suppression.
+  // Explicit history reads and completion replay never enter this compatibility path.
+  private async repairSuppressedMarkdownHead(
+    client: PrismaClient,
+    logicalFile: ManagedLogicalFile
+  ): Promise<ManagedLogicalFile> {
+    if (
+      logicalFile.source !== 'artifact' ||
+      !/\.(?:md|markdown)$/iu.test(logicalFile.displayName) ||
+      !logicalFile.currentVersionId
+    )
+      return logicalFile
+
+    const head = await this.loadVersion(client, logicalFile, logicalFile.currentVersionId)
+    if (!head || head.state !== 'finalized') return logicalFile
+    const [latest] = await this.listVersions(logicalFile, undefined, undefined, 1)
+    if (
+      !latest ||
+      latest.versionNumber <= head.versionNumber ||
+      latest.originKind !== 'agent_generated' ||
+      latest.checksum === head.checksum
+    )
+      return logicalFile
+
+    const lastEdit = await client.artifactVersion.findFirst({
+      where: {
+        artifactId: logicalFile.id,
+        originKind: 'user_edit',
+        state: 'finalized',
+        managedVisibleAt: { not: null },
+        versionNumber: { lte: head.versionNumber }
+      },
+      orderBy: { versionNumber: 'desc' },
+      select: { versionNumber: true }
+    })
+    if (!lastEdit) return logicalFile
+    const repeated = await client.artifactVersion.findFirst({
+      where: {
+        artifactId: logicalFile.id,
+        state: 'finalized',
+        managedVisibleAt: { not: null },
+        versionNumber: { lt: lastEdit.versionNumber },
+        checksum: latest.checksum,
+        sizeBytes: latest.sizeBytes
+      },
+      select: { id: true }
+    })
+    if (!repeated || (await this.writeUnavailableReason(logicalFile))) return logicalFile
+    try {
+      await this.verifyResolvedVersion({ logicalFile, version: latest })
+    } catch (error) {
+      // Keep the valid existing head when the formerly suppressed content is no longer readable.
+      if (error instanceof ManagedFileVersionError) return logicalFile
+      throw error
+    }
+    await client.$transaction(async (tx) => {
+      await this.assertReadable(tx, logicalFile)
+      await this.assertPublicationAllowed(tx, logicalFile)
+      // A concurrent save/publication wins; immutable version rows are never rewritten here.
+      await tx.artifactLineage.updateMany({
+        where: { id: logicalFile.id, currentVersionId: logicalFile.currentVersionId },
+        data: { currentVersionId: latest.id }
+      })
+    })
+    return this.loadLogicalFile(client, {
+      source: logicalFile.source,
+      projectId: logicalFile.projectId,
+      fileId: logicalFile.id
+    })
   }
 
   private async loadLogicalFile(

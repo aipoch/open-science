@@ -1443,11 +1443,9 @@ const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }
 }
 
 const terminateDirectoryProcesses = async (directory, run = runProcess) => {
-  if (!win32.isAbsolute(directory) || win32.parse(directory).root === directory) {
-    throw new Error(
-      'Process cleanup requires an absolute installation directory, not a drive root.'
-    )
-  }
+  const resolvedDirectory = win32.resolve(directory)
+  if (!win32.isAbsolute(directory) || resolvedDirectory === win32.parse(resolvedDirectory).root)
+    throw new Error('Process cleanup requires an absolute directory below a volume root.')
   return run(
     'powershell.exe',
     [

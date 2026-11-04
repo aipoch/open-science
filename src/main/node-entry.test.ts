@@ -278,6 +278,17 @@ afterEach(() => {
   }
 })
 
+it('logs the startup failure before cleanup can terminate the process', async () => {
+  f.startupFailure = true
+  await import('./node-entry')
+  await vi.waitFor(() => expect(f.closeNetwork).toHaveBeenCalled())
+  const failureIndex = f.log.error.mock.calls.findIndex(([message]) => message === 'startup failed')
+  expect(failureIndex).toBeGreaterThanOrEqual(0)
+  expect(f.log.error.mock.invocationCallOrder[failureIndex]).toBeLessThan(
+    f.closeNetwork.mock.invocationCallOrder[0]
+  )
+})
+
 it('reports credential recovery during startup as a failure after draining resources', async () => {
   process.exitCode = undefined
   const attemptId = 'a64f6d2b-5bc3-41fb-b63b-55ffb43af30b'

@@ -1208,6 +1208,9 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
     if (attempt < 2) await advanceRevision()
     await archive.click()
     if (attempt < 2) {
+      const error = page.getByTestId('composer-notice-slot')
+      await expect(error.locator('pre')).toContainText('Session revision conflict:')
+      if (!(await error.locator('pre').isVisible())) await error.locator('summary').click()
       await expect(conflict).toBeVisible()
       await expect(undo).toBeHidden()
     } else {

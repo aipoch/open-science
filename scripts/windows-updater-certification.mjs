@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { cp, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
@@ -11,6 +11,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
 
 import { dump, load } from 'js-yaml'
+import { chromium, expect } from '@playwright/test'
+import {
+  prepareOwnedAgentFixture,
+  startOwnedAgentFixture,
+  assertOwnedAgentReaped,
+  prepareStaleNotebookFixture,
+  startUpdateNotebook,
+  assertUpdateNotebookReaped
+} from './windows-updater-owned-processes.mjs'
 
 import {
   APP_GUID,
@@ -27,14 +36,13 @@ import {
   requestPackagedAppShutdown,
   inspectInstalledProcess,
   readPackagedAppConfigRoot,
-  authenticatePackagedAppEndpoint,
+  launchUninstallerLockHolder,
   runProcess,
-  terminateProcessTree,
   terminateDirectoryProcesses,
+  terminateProcessTree,
   uninstallAndVerify,
   waitFor,
-  waitForShutdownExit,
-  windowsProfileEnvironment
+  waitForShutdownExit
 } from './windows-installer-smoke.mjs'
 
 const UPDATE_TIMEOUT_MS = 180_000
@@ -70,7 +78,9 @@ const parseArguments = (argv) => {
       'no-protocol-runtime',
       'missing-exe-recovery',
       'cancel-cleanup',
-      'writer-shortcut-wait'
+      'writer-shortcut-wait',
+      'renderer-preflight-failure',
+      'renderer-final-flush-failure'
     ].includes(scenario)
   )
     throw new Error(`Unknown updater scenario: ${scenario}`)
@@ -81,7 +91,11 @@ const parseArguments = (argv) => {
     currentDirectory: resolve(currentDirectory),
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
-    scenario
+    scenario,
+    ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
+    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
+    ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
+    ...(argv.includes('--notebook') ? { notebook: true } : {})
   }
 }
 
@@ -205,9 +219,11 @@ const startAssetServer = async ({ assets, currentInstallerRoute }) => {
     metrics,
     url: `http://127.0.0.1:${address.port}`,
     close: () =>
-      new Promise((resolveClose, rejectClose) =>
+      new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()))
-      )
+        // The fixture owns every connection; no download remains after updater certification.
+        server.closeAllConnections()
+      })
   }
 }
 
@@ -236,6 +252,55 @@ const observeChildExit = (child) =>
   })
 
 const redactPackagedAppOutput = (output) => output.replace(/([?&]token=)[^\s&#]+/gi, '$1<redacted>')
+
+const summarizeUpdateStatus = ({ state, current, latest, reason, error, recovery }) => ({
+  state,
+  current,
+  latest,
+  reason,
+  error,
+  recovery
+})
+
+const inspectUpdaterSuccessor = async ({
+  appDataRoots,
+  executable,
+  parentPid,
+  expectedVersion
+}) => {
+  for (const appData of new Set(appDataRoots.filter(Boolean))) {
+    for (const suffix of ['Open-Science/UpdateHandoffs', 'Open-Science-UpdateHandoffs']) {
+      const root = join(appData, suffix)
+      for (const name of await readdir(root).catch(() => [])) {
+        if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(name)) continue
+        const directory = join(root, name)
+        const request = await readFile(join(directory, 'request.json'), 'utf8')
+          .then(JSON.parse)
+          .catch(() => undefined)
+        if (
+          !request ||
+          request.schema !== 1 ||
+          request.operationId !== name ||
+          request.parentPid !== parentPid ||
+          request.targetVersion !== expectedVersion ||
+          typeof request.applicationPath !== 'string' ||
+          win32.normalize(request.applicationPath).toLowerCase() !==
+            win32.normalize(executable).toLowerCase()
+        )
+          continue
+        for (const stage of ['installed', 'ready']) {
+          const receipt = await readFile(join(directory, `${stage}.receipt`), 'utf8').catch(
+            () => ''
+          )
+          if (receipt !== `${name}\r\n${stage}\r\n`)
+            throw new Error(`Update ${name} has no valid ${stage} receipt in ${directory}.`)
+        }
+        return { operationId: name, successorReadyVerified: true }
+      }
+    }
+  }
+  throw new Error('No handoff request matches the source process, executable and target version.')
+}
 
 const samePath = (left, right) =>
   typeof left === 'string' &&
@@ -705,7 +770,10 @@ const verifyCancellationAtCleanup = async ({
 }) => {
   const beforeHash = await sha256File(executable)
   const started = Date.now()
-  const call = (channel) => invokeWebRpc({ ...connection, channel })
+  const call = (channel) =>
+    connection.invokeUpdate(
+      channel === 'update:get-status' ? 'getStatus' : channel.slice('update:'.length)
+    )
   const applying = call('update:apply')
   void applying.catch(() => undefined)
   const barrier = await waitFor(
@@ -930,7 +998,7 @@ $target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)
 [Diagnostics.Process]::GetCurrentProcess().Dispose()
 [Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')
 [Console]::Out.Flush()
-$deadline = [DateTime]::UtcNow.AddMinutes(1)
+$deadline = [DateTime]::UtcNow.AddMinutes(3)
 $candidate = $null
 $handle = [IntPtr]::Zero
 do {
@@ -992,7 +1060,7 @@ exit $exitCode
       allowNonZero: true,
       env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
       signal,
-      timeoutMs: 370_000,
+      timeoutMs: 490_000,
       onStdout: (output) => {
         if (output.split(/\r?\n/).includes('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')) markReady()
         const match = /OPEN_SCIENCE_INSTALLER_IDENTITY=(\d+),(\d+)\r?\n/.exec(output)
@@ -1026,23 +1094,83 @@ const requireObservedInstallerExit = (result) => {
   return { pid: Number(match[1]), code: Number(match[2]) }
 }
 
+const assertRendererSaveFailure = (phase, events) => {
+  if (!events.some((event) => event.kind === 'injected' && event.phase === phase))
+    throw new Error(`Renderer ${phase} failure was not injected.`)
+  const steps = events
+    .filter((event) => event.kind === 'diagnostics')
+    .flatMap((event) => event.steps)
+  if (!steps.some((step) => step.step === `renderer-${phase}` && step.outcome === 'failed'))
+    throw new Error(`Renderer ${phase} failure was not observed by the production update owner.`)
+  if (steps.some((step) => step.step === `renderer-${phase}` && step.outcome === 'completed'))
+    throw new Error(`Renderer ${phase} failure was incorrectly reported as saved.`)
+  return { phase, failed: true, events }
+}
+
+// Inject only a failed acknowledgement through the existing renderer protocol. The real main
+// process must observe that failure and complete its own bounded teardown and installer handoff.
+const installRendererSaveFailure = async (page, phase) => {
+  const prefix = 'OPEN_SCIENCE_SAVE_FAILURE='
+  const events = []
+  page.on('console', (message) => {
+    const text = message.text()
+    if (text.startsWith(prefix)) events.push(JSON.parse(text.slice(prefix.length)))
+  })
+  await page.evaluate(
+    ({ phase, prefix }) => {
+      let requests = 0
+      const emit = (event) => console.info(prefix + JSON.stringify(event))
+      window.api.sessions.onFlushRequest(({ requestId }) => {
+        requests += 1
+        if (requests !== (phase === 'preflight' ? 1 : 2)) return
+        window.api.sessions.sendFlushResponse({ requestId, status: 'failed' })
+        emit({ kind: 'injected', phase })
+      })
+      window.api.update.onStatus((status) => {
+        let steps
+        try {
+          steps = JSON.parse(status.diagnostics ?? 'null')
+        } catch {
+          return
+        }
+        if (Array.isArray(steps)) emit({ kind: 'diagnostics', steps })
+      })
+    },
+    { phase, prefix }
+  )
+  return () => assertRendererSaveFailure(phase, events)
+}
+
 const runElectronUpdater = async ({
   executable,
   env,
-  configRoots,
   expectedVersion,
+  sourceVersion,
   expectedInstaller,
   onDownloaded,
   onBeforeApply = async () => undefined,
   expectInstallerFailure = false,
-  onInstallerObserved
+  onInstallerObserved,
+  rendererSaveFailure,
+  beforeApply,
+  ownedAgentFixture,
+  windowsRecovery,
+  notebook,
+  evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
-  // update commands through the app's authenticated loopback RPC instead, with no debugger attached.
+  // update commands through renderer IPC over CDP, without attaching the Node debugger. The Node
+  // backend's web RPC intentionally does not own desktop updates.
   const startedAt = Date.now()
-  const child = spawn(executable, ['--open-science-headless', '--serve=0'], {
-    env,
+  const appEnv = windowsRecovery
+    ? {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== 'path')),
+        PATH: ''
+      }
+    : env
+  const child = spawn(executable, ['--remote-debugging-port=0'], {
+    env: appEnv,
     windowsHide: true
   })
   let stdout = ''
@@ -1061,47 +1189,71 @@ const runElectronUpdater = async ({
   const installerObserver = new AbortController()
   let installerExit
   let installerInspection
+  let browser
+  let page
+  let staleNotebookFixture
+  let phase = 'desktop-startup'
   try {
-    let { endpoint, auth } = await Promise.race([
-      waitFor('the updater app web service', async () =>
-        authenticatePackagedAppEndpoint(output(), configRoots)
-      ),
+    const port = await Promise.race([
+      waitFor('the updater renderer CDP port', async () => {
+        const portFile = join(env.OPEN_SCIENCE_USER_DATA, 'DevToolsActivePort')
+        return (await readFile(portFile, 'utf8')).split('\n')[0] || undefined
+      }),
       exit.then((code) => {
         throw new Error(
           `Updater app exited before becoming healthy (${code}).\n${diagnosticOutput()}`
         )
       })
     ])
-    const bootstrapResponse = await fetchWithTimeout(`${endpoint}/api/bootstrap?${auth}`)
-    if (!bootstrapResponse.ok) {
-      throw new Error(`Updater app bootstrap returned HTTP ${bootstrapResponse.status}.`)
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`)
+    page = await waitFor('the updater desktop window', () =>
+      browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .find((page) => page.url().startsWith('file:'))
+    )
+    page.setDefaultTimeout(60_000)
+    console.log('Updater desktop window connected.')
+    await page.waitForFunction(() => Boolean(window.api?.update))
+    await waitFor(
+      'the updater database',
+      async () =>
+        (await page.evaluate(() => window.api.databaseStartup.getState())).phase === 'ready'
+    )
+    await page.evaluate(() => window.api.settings.markOnboardingComplete())
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    const ownedEvidence = ownedAgentFixture
+      ? await startOwnedAgentFixture(page, ownedAgentFixture)
+      : undefined
+    const notebookEvidence = notebook ? await startUpdateNotebook(page, evidencePath) : undefined
+    if (windowsRecovery) {
+      const { dataRoot } = await page.evaluate(() => window.api.storage.getStatus())
+      staleNotebookFixture = await prepareStaleNotebookFixture(dataRoot)
+      console.log(
+        'Seeded a stale Notebook host receipt with a live unrelated PID; app PATH is empty.'
+      )
     }
-    const bootstrap = await bootstrapResponse.json()
-    if (bootstrap.platform !== 'win32' || !Number.isInteger(bootstrap.rpcProtocolVersion)) {
-      throw new Error(`Unexpected updater app bootstrap: ${JSON.stringify(bootstrap)}`)
+    const invoke = async (action) => {
+      phase = action
+      console.log(`Updater command started: ${action}`)
+      const status = await withTimeout(
+        page.evaluate((name) => window.api.update[name](), action),
+        `desktop update ${action}`
+      )
+      console.log(
+        `Updater command completed: ${action} ${JSON.stringify(summarizeUpdateStatus(status))}`
+      )
+      return status
     }
 
-    const checked = await withTimeout(
-      invokeWebRpc({
-        endpoint,
-        auth,
-        protocolVersion: bootstrap.rpcProtocolVersion,
-        channel: 'update:check'
-      }),
-      'electron-updater check'
-    )
+    const checked = await withTimeout(invoke('check'), 'electron-updater check')
     if (checked.state !== 'available' || checked.latest !== expectedVersion) {
       throw new Error(`Unexpected updater check result: ${JSON.stringify(checked)}`)
     }
     await waitFor(
       'electron-updater differential download',
       async () => {
-        const status = await invokeWebRpc({
-          endpoint,
-          auth,
-          protocolVersion: bootstrap.rpcProtocolVersion,
-          channel: 'update:download'
-        })
+        const status = await invoke('download')
         const classification = classifyUpdaterDownloadStatus(status, expectedVersion)
         if (classification === 'ready') return status
         if (classification === 'pending') return undefined
@@ -1109,13 +1261,20 @@ const runElectronUpdater = async ({
       },
       UPDATE_TIMEOUT_MS
     )
-    await onDownloaded()
-    const preparation = await onBeforeApply({
-      endpoint,
-      auth,
-      protocolVersion: bootstrap.rpcProtocolVersion
-    })
-    if (preparation?.connection) ({ endpoint, auth } = preparation.connection)
+    if (
+      windowsRecovery &&
+      (!output().includes('LiteralPath:') || /Ignoring signature validation/i.test(output()))
+    )
+      throw new Error(
+        'The installed updater did not complete Authenticode verification with an empty PATH.'
+      )
+    await onDownloaded(ownedEvidence)
+    await beforeApply?.({ invoke, page })
+    const connection = await profileConnection(env.OPEN_SCIENCE_CONFIG_ROOT, sourceVersion)
+    await onBeforeApply({ ...connection, invokeUpdate: invoke })
+    const verifySaveFailure = rendererSaveFailure
+      ? await installRendererSaveFailure(page, rendererSaveFailure)
+      : undefined
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
@@ -1136,19 +1295,26 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const closed = waitForShutdownExit(exit, child, diagnosticOutput)
-    const applied = await invokeWebRpc({
-      endpoint,
-      auth,
-      protocolVersion: bootstrap.rpcProtocolVersion,
-      channel: 'update:apply'
-    })
+    const applied = await invoke('apply')
     if (applied.state !== 'applying') {
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
-    const exitCode = await closed
+    // Preflight can perform a cold resource scan. Its time must not consume the app-exit budget.
+    const exitCode = await waitForShutdownExit(exit, child, diagnosticOutput)
     if (exitCode !== 0)
       throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
+    const ownedProcessRecovery = ownedEvidence
+      ? await assertOwnedAgentReaped(ownedEvidence)
+      : undefined
+    const notebookRecovery = notebookEvidence
+      ? await assertUpdateNotebookReaped(notebookEvidence)
+      : undefined
+    if (notebookRecovery)
+      console.log(`Notebook processes released: ${JSON.stringify(notebookRecovery)}`)
+    if (ownedProcessRecovery)
+      console.log(
+        `Application-owned processes released before installer completion: ${JSON.stringify(ownedProcessRecovery)}`
+      )
     const installerResult = await installerExit
     await installerInspection
     requireObservedInstallerExit(installerResult)
@@ -1160,8 +1326,29 @@ const runElectronUpdater = async ({
     }
     if (expectInstallerFailure && installerResult.code === 0)
       throw new Error('The controlled publication failure did not prevent installation.')
-    return { parentPid: child.pid, startedAt, installerExitCode: installerResult.code }
+    const windowsRecoveryEvidence = staleNotebookFixture
+      ? {
+          applicationPathEmpty: true,
+          downloadSignatureVerified: true,
+          ...(await staleNotebookFixture.assertRecovered())
+        }
+      : undefined
+    return {
+      parentPid: child.pid,
+      startedAt,
+      installerExitCode: installerResult.code,
+      ...(verifySaveFailure ? { rendererSaveFailure: verifySaveFailure() } : {}),
+      ...(notebookRecovery ? { notebookRecovery } : {}),
+      ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}),
+      ...(windowsRecoveryEvidence ? { windowsRecovery: windowsRecoveryEvidence } : {})
+    }
   } catch (error) {
+    console.error(`Updater failed during ${phase}.`)
+    if (page && evidencePath) {
+      await page
+        .screenshot({ path: `${evidencePath}.failed.png`, timeout: 10_000 })
+        .catch(() => undefined)
+    }
     installerObserver.abort(
       new Error('Updater installer observation cancelled after updater failure.')
     )
@@ -1177,7 +1364,49 @@ const runElectronUpdater = async ({
         error.message += `\n${processOutput}`
     }
     throw error
+  } finally {
+    if (evidencePath) await writeFile(`${evidencePath}.application.log`, diagnosticOutput(), 'utf8')
+    await browser?.close()
+    await staleNotebookFixture?.cleanup()
   }
+}
+
+const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
+  const lock = await acquireLock()
+  const observations = []
+  const command = async (action) => {
+    const started = Date.now()
+    const status = await withTimeout(invoke(action), `blocked update ${action}`, 30_000)
+    observations.push({
+      action,
+      elapsedMs: Date.now() - started,
+      status: summarizeUpdateStatus(status)
+    })
+    return status
+  }
+  const assertBlocked = (status) => {
+    if (
+      status.state !== 'ready' ||
+      status.reason !== 'installation-busy' ||
+      status.recovery?.detail !== 'foreign-process' ||
+      !status.recovery.blockingProcesses?.some((process) => process.pid === lock.pid)
+    ) {
+      throw new Error(`External file holder was not reported: ${JSON.stringify(status)}`)
+    }
+  }
+  try {
+    assertBlocked(await command('apply'))
+    assertBlocked(await command('recheck'))
+    await onBlocked?.()
+  } finally {
+    await lock.release()
+  }
+  const cleared = await command('recheck')
+  if (cleared.state !== 'ready' || cleared.reason || !cleared.recovery?.canRetryInstall) {
+    throw new Error(`Released file holder still blocks retry: ${JSON.stringify(cleared)}`)
+  }
+  console.log(`External process recovery: ${JSON.stringify(observations)}`)
+  return observations
 }
 
 const assertDifferentialObservation = (observation) => {
@@ -1236,17 +1465,18 @@ const main = async () => {
   const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), SMOKE_ROOT_PREFIX))
   const installDirectory = join(root, 'app')
   const profileDirectory = join(root, 'profile')
-  const env = windowsProfileEnvironment(profileDirectory)
-  // Use the ordinary supported configuration-root option. Do not inherit a test-only override
-  // that relocates installation coordination state out of the production location.
+  // Keep native folders stable across the installer shell relaunch; isolate the supported profile.
+  const env = { ...process.env }
+  env.OPEN_SCIENCE_USER_DATA = join(profileDirectory, 'electron-profile')
   delete env.OPEN_SCIENCE_E2E_STORAGE_ROOT
-  const legacyConfigRoots = [win32.join(profileDirectory, '.open-science')]
-  env.OPEN_SCIENCE_CONFIG_ROOT = legacyConfigRoots[0]
+  env.OPEN_SCIENCE_CONFIG_ROOT = join(profileDirectory, 'config')
+  const legacyConfigRoots = [env.OPEN_SCIENCE_CONFIG_ROOT]
   const profileGuard = createUpgradeProfileGuard(true, `updater-${randomUUID()}`)
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
-    mkdir(env.TEMP, { recursive: true })
+    mkdir(env.TEMP, { recursive: true }),
+    mkdir(join(profileDirectory, 'Downloads'), { recursive: true })
   ])
 
   let installed = false
@@ -1310,7 +1540,11 @@ const main = async () => {
     const sentinelDirectory = join(root, 'other-installation')
     const sentinelProfile = join(root, 'other-profile')
     await cp(installDirectory, sentinelDirectory, { recursive: true })
-    const sentinelEnv = { ...env, OPEN_SCIENCE_CONFIG_ROOT: sentinelProfile }
+    const sentinelEnv = {
+      ...env,
+      OPEN_SCIENCE_CONFIG_ROOT: sentinelProfile,
+      OPEN_SCIENCE_USER_DATA: join(sentinelProfile, 'electron-profile')
+    }
     sentinel = await launchForProcessLock({
       installDirectory: sentinelDirectory,
       expectedVersion: previousVersion,
@@ -1322,6 +1556,13 @@ const main = async () => {
       sentinel.child.pid
     )
     if (!sentinelIdentity) throw new Error('The other-installation sentinel did not start.')
+    const ownedAgentFixture = options.ownedProcesses
+      ? await prepareOwnedAgentFixture({
+          installDirectory,
+          configRoot: previousConfigRoot,
+          directory: join(root, 'owned-agent')
+        })
+      : undefined
 
     const localFeed = join(root, 'latest.yml')
     await writeFile(
@@ -1366,7 +1607,7 @@ const main = async () => {
     }
 
     const installerBytes = (await stat(currentInstaller)).size
-    const persistObservation = async () => {
+    const persistObservation = async (ownedEvidence) => {
       observation = assertDifferentialObservation({
         schemaVersion: 1,
         mode: 'electron-updater-differential',
@@ -1378,6 +1619,8 @@ const main = async () => {
         previousInstallerCacheVerified: true,
         scenario: options.scenario
       })
+      if (ownedEvidence)
+        observation.ownedProcessRecovery = { ...ownedEvidence, processTreeReaped: false }
       await writeFile(
         options.output,
         `${JSON.stringify({ ...observation, completed: false }, null, 2)}\n`,
@@ -1387,8 +1630,9 @@ const main = async () => {
     const updateOwner = await runElectronUpdater({
       executable: join(installDirectory, 'open-science.exe'),
       env,
-      configRoots: [previousConfigRoot],
+      evidencePath: options.output,
       expectedVersion: currentVersion,
+      sourceVersion: previousVersion,
       expectedInstaller: join(
         env.LOCALAPPDATA,
         updateConfig.updaterCacheDirName,
@@ -1397,6 +1641,12 @@ const main = async () => {
       ),
       onDownloaded: persistObservation,
       expectInstallerFailure: options.scenario === 'missing-exe-recovery',
+      rendererSaveFailure:
+        options.scenario === 'renderer-preflight-failure'
+          ? 'preflight'
+          : options.scenario === 'renderer-final-flush-failure'
+            ? 'final'
+            : undefined,
       onInstallerObserved:
         options.scenario === 'writer-shortcut-wait'
           ? async (writer) => {
@@ -1424,7 +1674,11 @@ const main = async () => {
           secondary = await launchForProcessLock({
             installDirectory,
             expectedVersion: previousVersion,
-            env: { ...env, OPEN_SCIENCE_CONFIG_ROOT: secondaryProfile },
+            env: {
+              ...env,
+              OPEN_SCIENCE_CONFIG_ROOT: secondaryProfile,
+              OPEN_SCIENCE_USER_DATA: join(secondaryProfile, 'electron-profile')
+            },
             legacyConfigRoots: [secondaryProfile]
           })
           secondaryIdentity = await inspectInstalledProcess(
@@ -1481,7 +1735,55 @@ const main = async () => {
           cancellationEvidence = cancelled.evidence
           return { connection: cancelled.connection }
         }
-      }
+      },
+      ownedAgentFixture,
+      windowsRecovery: options.windowsRecovery,
+      notebook: options.notebook,
+      ...(options.foreignProcess
+        ? {
+            beforeApply: async ({ invoke, page }) => {
+              observation.foreignProcessRecovery = await certifyForeignProcessRecovery({
+                invoke,
+                acquireLock: async () => {
+                  const { child } = await launchUninstallerLockHolder(
+                    installDirectory,
+                    env,
+                    undefined,
+                    undefined,
+                    undefined,
+                    'Read'
+                  )
+                  return { pid: child.pid, release: () => terminateProcessTree(child) }
+                },
+                onBlocked: async () => {
+                  const dialog = page.getByTestId('runtime-update-dialog')
+                  await expect(dialog).toContainText('Another app is using Open-Science files')
+                  await expect(dialog).toContainText('Quit the other app, then recheck.')
+                  await expect(
+                    dialog.getByRole('button', { name: 'Cancel', exact: true })
+                  ).toBeEnabled()
+                  await expect(
+                    dialog.getByRole('button', { name: 'Retry', exact: true })
+                  ).toBeEnabled()
+                  await page.screenshot({ path: `${options.output}.blocked.png` })
+                }
+              })
+              if (observation.ownedProcessRecovery) {
+                const { leaderPid, descendantPid } = observation.ownedProcessRecovery
+                for (const pid of [leaderPid, descendantPid]) {
+                  process.kill(pid, 0)
+                  if (
+                    observation.foreignProcessRecovery.some((entry) =>
+                      entry.status.recovery?.blockingProcesses?.some((item) => item.pid === pid)
+                    )
+                  )
+                    throw new Error('An application-owned process was reported as foreign.')
+                }
+              }
+              await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
+            }
+          }
+        : {})
     })
 
     const installedExecutable = join(installDirectory, 'open-science.exe')
@@ -1588,7 +1890,11 @@ const main = async () => {
       secondary = await launchForProcessLock({
         installDirectory,
         expectedVersion: currentVersion,
-        env: { ...env, OPEN_SCIENCE_CONFIG_ROOT: secondaryProfile },
+        env: {
+          ...env,
+          OPEN_SCIENCE_CONFIG_ROOT: secondaryProfile,
+          OPEN_SCIENCE_USER_DATA: join(secondaryProfile, 'electron-profile')
+        },
         legacyConfigRoots: [secondaryProfile]
       })
       secondaryEvidence = {
@@ -1609,6 +1915,16 @@ const main = async () => {
       `${JSON.stringify(
         {
           ...observation,
+          ...(updateOwner.ownedProcessRecovery
+            ? { ownedProcessRecovery: updateOwner.ownedProcessRecovery }
+            : {}),
+          ...(updateOwner.notebookRecovery
+            ? { notebookRecovery: updateOwner.notebookRecovery }
+            : {}),
+          ...(updateOwner.windowsRecovery ? { windowsRecovery: updateOwner.windowsRecovery } : {}),
+          ...(updateOwner.rendererSaveFailure
+            ? { rendererSaveFailure: updateOwner.rendererSaveFailure }
+            : {}),
           completed: true,
           ...(recoveryEvidence
             ? { ordinaryStartupRecovery: { ...recoveryEvidence, ready: automaticReady } }
@@ -1651,6 +1967,7 @@ const main = async () => {
       await operation()
     } catch (error) {
       cleanupErrors.push(error)
+      console.error('Updater cleanup failed:', error)
     }
   }
   if (primaryError) {
@@ -1690,15 +2007,50 @@ const main = async () => {
   }
   if (unregistered) await cleanup(() => terminateProcessTree(unregistered.child))
   await cleanup(() => terminateDirectoryProcesses(root))
+  await cleanup(async () => {
+    const logDirectory = join(env.OPEN_SCIENCE_CONFIG_ROOT, 'logs')
+    for (const name of await readdir(logDirectory).catch(() => [])) {
+      if (name.endsWith('.log'))
+        await copyFile(join(logDirectory, name), `${options.output}.${name}`)
+    }
+  })
+  console.log('Updater cleanup: closing asset server.')
   if (assetServer) await cleanup(() => assetServer.close())
+  console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')
   await cleanup(() => profileGuard.cleanup(primaryError))
-  if (installed) await cleanup(() => uninstallAndVerify(installDirectory, env))
+  // A completed update can retain an NSIS helper in the fixture Temp. It must release the
+  // uninstaller mutex before starting the separate cleanup uninstall.
+  await cleanup(() => terminateDirectoryProcesses(root))
+  if (installed)
+    await cleanup(async () => {
+      // Surface the real uninstall guard's reason without leaving an unattended NSIS message box.
+      await runProcess(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-File',
+          resolve('build/windows-update-handoff-uninstall.ps1'),
+          '-InstallPath',
+          installDirectory
+        ],
+        { env }
+      )
+      await uninstallAndVerify(installDirectory, env)
+    })
+  // NSIS can leave its Un_A helper in this fixture's Temp after the installation and uninstall
+  // have finished. Reap only executables inside our owned root before removing their files.
+  await cleanup(() => terminateDirectoryProcesses(root))
+  console.log('Updater cleanup: removing fixture root.')
   for (const version of [previousVersion, currentVersion]) {
     await cleanup(() => cleanupSmokeRegistrations(root, version, primaryError))
   }
   await cleanup(() => cleanupSmokeRoot(root, primaryError ?? cleanupErrors[0]))
   if (primaryError) throw primaryError
   if (cleanupErrors[0]) throw cleanupErrors[0]
+  console.log('Windows updater certification and cleanup completed.')
 }
 
 const invokedAsScript =
@@ -1711,6 +2063,7 @@ if (invokedAsScript) {
 }
 
 export {
+  assertRendererSaveFailure,
   requireObservedInstallerExit,
   denyFixturePublication,
   startOrdinaryShortcut,
@@ -1722,10 +2075,13 @@ export {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  certifyForeignProcessRecovery,
   invokeWebRpc,
+  inspectUpdaterSuccessor,
   redactPackagedAppOutput,
   observeInstaller,
   parseArguments,
   parseSingleRange,
-  rewriteFeedPaths
+  rewriteFeedPaths,
+  startAssetServer
 }

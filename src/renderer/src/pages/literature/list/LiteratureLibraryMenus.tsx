@@ -8,6 +8,7 @@ import {
   FileText,
   LibraryBig,
   LoaderCircle,
+  Link,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -30,26 +31,45 @@ export function LiteratureAddMenu({
   label,
   onAddReference,
   onImportZotero,
+  onAddLink,
   onImportPdf,
   onImportReferences
 }: Readonly<{
   label?: string
   onAddReference: () => void
   onImportZotero: () => void
+  onAddLink: (trigger: HTMLButtonElement | null) => void
   onImportPdf: () => void
   onImportReferences: () => void
 }>): React.JSX.Element {
   const { t } = useTranslation()
+  const linkTrigger = useRef<HTMLButtonElement>(null)
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="outline" className="shrink-0 transition-none">
+        <Button
+          ref={linkTrigger}
+          type="button"
+          variant="outline"
+          className="shrink-0 transition-none"
+        >
           <Plus data-icon="inline-start" aria-hidden="true" />
           {label ?? t('Add')}
           <ChevronDown data-icon="inline-end" className="opacity-70" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72">
+        <DropdownMenuItem
+          className="gap-2.5"
+          aria-label={t('Add from DOI or link')}
+          onSelect={() => onAddLink(linkTrigger.current)}
+        >
+          <Link className="size-4 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex flex-col">
+            <span>{t('Add from DOI or link')}</span>
+            <span className="text-xs text-muted-foreground">{t('DOI and arXiv links')}</span>
+          </span>
+        </DropdownMenuItem>
         <DropdownMenuItem
           className="gap-2.5"
           aria-label={t('Add reference')}

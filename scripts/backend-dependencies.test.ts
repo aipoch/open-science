@@ -371,6 +371,9 @@ describe('desktop-only dependency contents', () => {
       )
       const platform = { win32: 'win', darwin: 'mac', linux: 'linux' }[process.platform]
       for (const file of [
+        'out/pi-bootstrap/bootstrap.mjs',
+        'out/pi-bootstrap/permission-guard.mjs',
+        'out/pi-bootstrap/package-lock.json',
         'out/web/index.html',
         'LICENSE',
         'packages/open-science/README.md',
@@ -399,6 +402,10 @@ describe('desktop-only dependency contents', () => {
       expect(
         await readFile(join(root, 'out/desktop-backend-build/dependencies.json'), 'utf8')
       ).toContain('i18next')
+      for (const file of ['bootstrap.mjs', 'permission-guard.mjs', 'package-lock.json'])
+        expect(
+          await readFile(join(root, 'out/desktop-backend/out/pi-bootstrap', file), 'utf8')
+        ).toBe('synthetic fixture')
       for (const name of process.platform === 'win32'
         ? ['micromamba.exe', 'micromamba-compat.exe']
         : ['micromamba'])

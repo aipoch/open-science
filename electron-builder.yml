@@ -47,6 +47,7 @@ files:
   - '!node_modules/{@prisma,.prisma,prisma,typescript}{,/**/*}'
   - '!node_modules/{@huggingface,onnxruntime-*,pdfjs-dist,sharp,@img,@napi-rs,fontkit,pdf-lib,@embedpdf,@pdf-lib}{,/**/*}'
   - '!node_modules/@aipoch/{pdf-structure,pdf-translation}{,/**/*}'
+  - '!node_modules/{tesseract.js,tesseract.js-core,@tesseract.js-data}{,/**/*}'
   - '!node_modules/@anthropic-ai{,/**/*}'
   - '!node_modules/@agentclientprotocol/claude-agent-acp{,/**/*}'
   - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'

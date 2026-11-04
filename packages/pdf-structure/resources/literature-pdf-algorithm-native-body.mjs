@@ -2640,6 +2640,243 @@ function nativeClosedScopeLoops(page, context) {
   }
 }
 
+// Keep nativePageTextPacketInventory and all existing algorithm families strict.
+function nativeNumberedPseudocodeFrame(page, originalContext) {
+  const original = originalContext.nativeGlyphContext
+  if (
+    !/^[a-f0-9]{64}$/u.test(original?.sourceSha256 ?? '') ||
+    original.pageNumber !== page.pageNumber
+  )
+    return
+  const current = originalContext.content?.items
+  if (
+    !Array.isArray(current) ||
+    current.some(
+      (r, index) =>
+        r.str?.trim() &&
+        (r.sourceItem?.pageNumber !== page.pageNumber ||
+          r.sourceItem.index !== index ||
+          r.sourceItem.text !== r.str ||
+          ['sourceSegment', 'sourceSegments', 'sourceToken', 'sourceTokens', 'sourceItems'].some(
+            (k) => k in r
+          ))
+    )
+  )
+    return
+  const bound = matchNativeFigureRenderContext(
+    original,
+    page.pageNumber,
+    originalContext.content,
+    originalContext.viewport,
+    page.graphicsBounds,
+    original.sourceSha256
+  )
+  if (
+    !bound ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.lines) ||
+    !Array.isArray(page.graphicsBounds) ||
+    page.graphicsBounds.some((g) => g.kind !== 'path')
+  )
+    return
+  const context = {
+      ...originalContext,
+      ...bound,
+      nativeGlyphContext: {
+        ...bound,
+        pageNumber: page.pageNumber,
+        sourceSha256: original.sourceSha256
+      }
+    },
+    native = context.nativeGlyphContext,
+    raw = context.content.items,
+    v = context.viewport,
+    o = context.operators,
+    lines = groupPageLines(page),
+    titles = lines.filter((l) => /^Algorithm\s+[1-9]\d*\b/u.test(l.text))
+  if (titles.length !== 1 || !/\bPseudocode\b/u.test(titles[0].text) || raw.length > 16384) return
+  const title = titles[0],
+    paint = new Map(),
+    rules = collectTableRules(o, v, paint),
+    horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] > page.width * 0.5),
+    frames = []
+  if (rules.length > 4096) return
+  for (const top of horizontal) {
+    if (Math.abs(top[1] - title.y) >= title.fontSize) continue
+    const same = horizontal
+      .filter((r) => r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+    if (
+      same.length === 3 &&
+      same[1][1] > title.bottom &&
+      same[1][1] - title.bottom < title.fontSize &&
+      same[2][1] - same[1][1] > title.fontSize * 5
+    )
+      frames.push(same)
+  }
+  if (frames.length !== 1) return
+  const [top, divider, bottom] = frames[0],
+    frame = [top[0], top[1], top[2], bottom[1]],
+    captionFrame = [top[0], top[1], top[2], divider[1]],
+    bodyFrame = [top[0], divider[1], top[2], bottom[1]],
+    tokens = raw.filter((r) => r.str?.trim()).map((r) => tableTextToken(r, v, 0)),
+    positive = new Set(tokens.filter((t) => valid(t.rect)).map((t) => t.sourceItem.index))
+  if (!positive.size || positive.size > 4096) return
+  // Zero-advance glyphs remain unclaimed by the public packet. Its complete
+  // foreign ink certificate is checked separately before assigning body ownership.
+  const proof = nativePageTextPacketInventory(page, tokens, native, false, positive)
+  if (!proof) return
+  const selected = proof.records.filter((r) => overlap(r.ink, frame)),
+    caption = selected.filter((r) => inside(captionFrame, r.ink)),
+    body = selected.filter((r) => inside(bodyFrame, r.ink))
+  if (
+    !caption.length ||
+    !body.length ||
+    selected.length !== caption.length + body.length ||
+    selected.some(
+      (r) =>
+        !r.advanceComplete ||
+        !valid(r.ink) ||
+        r.part.some((z) => !valid(z.g.ink) || !visible(z.g.textPaint) || z.g.rendererSkipped) ||
+        r.r.dir !== 'ltr' ||
+        r.r.transform[0] !== r.r.height ||
+        r.r.transform[1] !== 0 ||
+        r.r.transform[2] !== 0 ||
+        r.r.transform[3] !== r.r.height
+    ) ||
+    caption.some((r) => r.r.width <= 0) ||
+    !/^Algorithm\s+[1-9]\d*\b.*\bPseudocode\b/u.test(caption.map((r) => r.r.str).join(' '))
+  )
+    return
+  for (const r of body) {
+    if (r.r.width > 0) {
+      if (!valid(r.rect)) return
+      continue
+    }
+    const g = r.part[0]?.g
+    if (
+      r.r.width !== 0 ||
+      r.part.length !== 1 ||
+      r.rect[0] !== r.rect[2] ||
+      r.rect[1] >= r.rect[3] ||
+      g.advance[0] !== g.advance[2] ||
+      g.advance[1] >= g.advance[3] ||
+      g.text !== r.r.str ||
+      g.fontName !== r.r.fontName
+    )
+      return
+  }
+  const bodyIds = new Set(body.map((r) => r.index)),
+    first = body[0].index,
+    last = body.at(-1).index,
+    ordinals = body.filter((r) => /^[1-9]\d*:$/.test(r.r.str))
+  if (
+    caption.some((r) => r.index >= first) ||
+    proof.records.some((r) => r.index >= first && r.index <= last && !bodyIds.has(r.index)) ||
+    ordinals.length < 4 ||
+    ordinals.length > 128 ||
+    ordinals[0] !== body[0] ||
+    ordinals.some(
+      (r, i) =>
+        Number(r.r.str.slice(0, -1)) !== i + 1 ||
+        r.r.fontName !== ordinals[0].r.fontName ||
+        r.r.height !== ordinals[0].r.height ||
+        Math.abs(r.rect[2] - ordinals[0].rect[2]) > r.r.height * 0.001 ||
+        (i && r.rect[1] <= ordinals[i - 1].rect[3])
+    )
+  )
+    return
+  for (const [i, n] of ordinals.entries()) {
+    const packet = body.filter(
+      (r) => r.index > n.index && (!ordinals[i + 1] || r.index < ordinals[i + 1].index)
+    )
+    if (
+      !packet.length ||
+      packet[0].rect[0] <= n.rect[2] ||
+      Math.abs(packet[0].rect[3] - n.rect[3]) > packet[0].r.height * 0.1 ||
+      packet.some((r) => r.r.width > 0 && r.rect[0] <= n.rect[2])
+    )
+      return
+  }
+  const owners = frames[0].map((rule) =>
+    page.graphicsBounds.filter(
+      (g) =>
+        Number.isSafeInteger(g.operationIndex) &&
+        inside(
+          g.normalizedRect.map((x, i) => x * (i % 2 ? page.height : page.width)),
+          rule
+        )
+    )
+  )
+  if (owners.some((rs) => rs.length !== 1)) return
+  const ids = owners.map((rs) => rs[0].operationIndex),
+    colors = strokeColors(o)
+  if (new Set(ids).size !== 3 || !colors) return
+  for (const [i, id] of ids.entries()) {
+    const a = o.argsArray[id],
+      path = a?.[1]?.[0],
+      state = proof.evidence.paths.get(id),
+      ink = paint.get(frames[0][i].join(','))
+    if (
+      o.fnArray[id] !== OPS.constructPath ||
+      a?.[0] !== OPS.stroke ||
+      a[1]?.length !== 1 ||
+      path?.length !== 6 ||
+      path[0] !== 0 ||
+      path[3] !== 1 ||
+      !state ||
+      state.lineCap !== 0 ||
+      state.solidStroke !== true ||
+      state.strokeAlpha !== 1 ||
+      !valid(ink) ||
+      !valid(state.clip) ||
+      !inside(state.clip, ink) ||
+      !colors.get(id) ||
+      colors.get(id).toLowerCase() === '#ffffff'
+    )
+      return
+    const removed = { fnArray: [...o.fnArray], argsArray: [...o.argsArray] }
+    removed.fnArray[id] = OPS.dependency
+    removed.argsArray[id] = []
+    if (collectTableRules(removed, v).some((r) => eq(r, frames[0][i]))) return
+  }
+  const rect = union([
+      frame,
+      ...selected.map((r) => r.ink),
+      ...frames[0].map((r) => paint.get(r.join(',')))
+    ]),
+    ownedGlyphs = new Set(selected.flatMap((r) => r.part.map((z) => z.g))),
+    foreignGlyphs = proof.glyphs
+      .filter((g) => !ownedGlyphs.has(g) && valid(g.ink))
+      .map((g) => g.ink),
+    foreignProof = {
+      ...proof,
+      records: [],
+      evidence: {
+        ...proof.evidence,
+        paths: new Map([...proof.evidence.paths].filter(([id]) => !ids.includes(id)))
+      }
+    },
+    foreign = nativeRasterForeignPaints(foreignProof, page, [], [], context, [])
+  if (
+    !foreign ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    foreignGlyphs.some((r) => overlap(r, rect)) ||
+    foreign.some((p) => !valid(p.rect) || overlap(p.rect, rect))
+  )
+    return
+  return {
+    rect,
+    caption: { page: page.pageNumber, rect: union(caption.map((r) => r.ink)), lines: [title.text] },
+    nativeBody: { kind: 'algorithm', sourceItems: body.map((r) => ({ ...r.r.sourceItem })) },
+    scopedGlyphProof: {
+      foreignGlyphs,
+      foreignPaint: foreign.map((p) => ({ rect: p.rect, floor: p.floor }))
+    }
+  }
+}
+
 export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
   const proof = candidate?.scopedGlyphProof,
     raster = getPdfCropRasterProtectionFromPng(png, candidate?.rect, page)
@@ -2700,5 +2937,8 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
   const closedScope = nativeClosedScopeLoops(page, context)
   if (closedScope && !result.some((other) => overlap(other.rect, closedScope.rect)))
     result.push(closedScope)
+  const numberedFrame = nativeNumberedPseudocodeFrame(page, context)
+  if (numberedFrame && !result.some((other) => overlap(other.rect, numberedFrame.rect)))
+    result.push(numberedFrame)
   return result
 }

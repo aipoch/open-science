@@ -1,3 +1,9 @@
+import {
+  hasNativeFontRoleSections,
+  hasNativeRepeatedCategoryRecords,
+  hasNativeAlignedTupleRecords,
+  hasNativeContinuousPolynomialCut
+} from './literature-pdf-native-table-font-role.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Conservative review triggers under the approved ambiguity policy. These are
 // not unique reconstruction proofs; callers preserve every original table field.
@@ -340,11 +346,64 @@ const framedHeader = (fonts, inventory, rules, owners) => {
     return null
   return { above, below }
 }
-export function detectNativeTableAmbiguity(proof, table, inventory, rules, runs = []) {
+export function detectNativeTableAmbiguity(
+  proof,
+  table,
+  inventory,
+  rules,
+  runs = [],
+  fontRoleWitness
+) {
   if (!proof?.proved?.length || inventory.some((i) => i.text?.trim() && !rect(i.rect))) return []
   const ps = proof.proved,
     owners = new Map(ps.flatMap((p) => p.fonts.map((i) => [i, p])))
   const result = []
+  if (
+    hasNativeRepeatedCategoryRecords(
+      proof,
+      table,
+      inventory,
+      completeFinalPacket(proof, table, inventory),
+      fontRoleWitness
+    )
+  )
+    result.push({ kind: 'native-repeated-category-records', notErrorProof: true })
+  if (
+    hasNativeContinuousPolynomialCut(
+      proof,
+      table,
+      inventory,
+      completeFinalPacket(proof, table, inventory),
+      fontRoleWitness
+    )
+  )
+    result.push({ kind: 'native-continuous-polynomial-cut', notErrorProof: true })
+  if (
+    hasNativeFontRoleSections(
+      proof,
+      table,
+      inventory,
+      completeFinalPacket(proof, table, inventory),
+      fontRoleWitness
+    )
+  )
+    result.push({ kind: 'merged-native-font-role-sections', notErrorProof: true })
+  if (
+    hasNativeAlignedTupleRecords(
+      proof,
+      table,
+      inventory,
+      completeFinalPacket(proof, table, inventory),
+      fontRoleWitness
+    )
+  )
+    result.push({ kind: 'native-aligned-tuple-records', notErrorProof: true })
+  if (hasMergedNativeOrdinalStub(proof, table, inventory))
+    result.push({ kind: 'merged-native-ordinal-stub', notErrorProof: true })
+  if (hasNativeParentLeafContradiction(proof, table, inventory))
+    result.push({ kind: 'native-parent-leaf-contradiction', notErrorProof: true })
+  if (hasMergedSparseNumericRecords(proof, table, inventory, rules))
+    result.push({ kind: 'merged-native-sparse-numeric-records', notErrorProof: true })
   if (hasCollapsedNumericLanes(proof, table, inventory, rules))
     result.push({ kind: 'collapsed-native-numeric-lanes', notErrorProof: true })
   if (hasNativeEquationBlock(proof, table, inventory, rules))
@@ -1841,4 +1900,272 @@ function hasMisassignedStubTail({ proved }, table, inventory, rules) {
     return true
   }
   return false
+}
+
+// Two complete integer records at a continued native pitch remain independent
+// evidence even when a sparse model tail assigns both records to one row.
+// This withdraws mapping only; it never creates replacement rows or cells.
+function hasMergedSparseNumericRecords(proof, table, inventory, rules) {
+  const all = completeFinalPacket(proof, table, inventory)
+  if (!all || table.grid.length < 4 || table.grid[0].length < 2) return false
+  const last = table.grid.length - 1
+  const rowOwners = [last - 2, last - 1, last].map((row) =>
+    proof.proved.filter((p) => p.cell.row === row).sort((a, b) => a.cell.column - b.cell.column)
+  )
+  const tail = rowOwners[2],
+    columns = tail.map((p) => p.cell.column)
+  if (columns.length < 2 || columns.some((c, n) => c !== n)) return false
+  const integer = (f) => /^\d+$/u.test(f.text.trim()) && Number.isSafeInteger(Number(f.text.trim()))
+  if (
+    rowOwners
+      .slice(0, 2)
+      .some(
+        (ps) =>
+          !ps.length ||
+          ps.some(
+            (p) =>
+              p.cell.rowSpan !== 1 ||
+              p.cell.colSpan !== 1 ||
+              p.fonts.length !== 1 ||
+              !integer(p.fonts[0]) ||
+              Math.abs(p.fonts[0].baseline - ps[0].fonts[0].baseline) >
+                ps[0].fonts[0].height * 0.001
+          )
+      )
+  )
+    return false
+  const records = rowOwners.map((ps) => columns.map((c) => ps.find((p) => p.cell.column === c)))
+  if (records.some((ps) => ps.some((p) => !p || p.cell.rowSpan !== 1 || p.cell.colSpan !== 1)))
+    return false
+  if (
+    records.some((ps, r) =>
+      ps.some((p) => p.fonts.length !== (r === 2 ? 2 : 1) || p.fonts.some((f) => !integer(f)))
+    )
+  )
+    return false
+  const lines = [
+    records[0].map((p) => p.fonts[0]),
+    records[1].map((p) => p.fonts[0]),
+    ...[0, 1].map((n) => tail.map((p) => [...p.fonts].sort((a, b) => a.baseline - b.baseline)[n]))
+  ]
+  const h = lines[0][0].height,
+    pitch = lines[1][0].baseline - lines[0][0].baseline
+  if (
+    pitch <= h ||
+    pitch > h * 2 ||
+    lines.some((line, r) =>
+      line.some(
+        (f, c) =>
+          Math.abs(f.height - h) > h * 0.001 ||
+          Math.abs(f.baseline - line[0].baseline) > h * 0.001 ||
+          Math.abs(f.rect[0] - lines[0][c].rect[0]) > h * 0.001 ||
+          (r > 0 && Math.abs(f.baseline - lines[r - 1][c].baseline - pitch) > h * 0.001)
+      )
+    )
+  )
+    return false
+  if (
+    lines.some(
+      (line, r) => r > 0 && Number(line[0].text.trim()) !== Number(lines[r - 1][0].text.trim()) + 1
+    )
+  )
+    return false
+  const component = lines.flat(),
+    box = union(component)
+  if (
+    inventory.some(
+      (f) =>
+        f.text?.trim() && (!rect(f.rect) || (!component.includes(f) && intersects(f.rect, box)))
+    )
+  )
+    return false
+  const edges = horizontal(rules).filter((r) => r[0] <= box[0] && r[2] >= box[2])
+  return edges.some((r) => r[1] < box[1]) && edges.some((r) => r[1] > box[3])
+}
+
+// Review-only hierarchy evidence: a repeated pair of complete lower headings
+// cannot silently give each native upper heading to only one measured leaf.
+function hasNativeParentLeafContradiction(proof, table, inventory) {
+  const all = completeFinalPacket(proof, table, inventory)
+  if (!all || !rect(table.cropRect) || table.grid.length < 3) return false
+  const head = proof.proved
+    .filter((p) => p.cell.row === 0)
+    .sort((a, b) => a.cell.column - b.cell.column)
+  if (
+    head.length !== table.grid[0].length ||
+    head.some((p) => p.cell.rowSpan !== 1 || p.cell.colSpan !== 1)
+  )
+    return false
+  const headerFonts = head.flatMap((p) => p.fonts),
+    base = Math.max(...headerFonts.map((f) => f.baseline))
+  const leaves = head.map((p) => p.fonts.filter((f) => Math.abs(f.baseline - base) < 1e-6))
+  if (leaves.some((fs) => fs.length !== 1)) return false
+  const lower = leaves.map((fs) => fs[0]),
+    h = lower[0].height
+  if (!aligned(lower)) return false
+  const inside = (f) =>
+    f.rect[0] >= table.cropRect[0] &&
+    f.rect[1] >= table.cropRect[1] &&
+    f.rect[2] <= table.cropRect[2] &&
+    f.rect[3] <= table.cropRect[3]
+  const upperValid = (f) =>
+    f.horizontal &&
+    rect(f.rect) &&
+    inside(f) &&
+    Math.abs(f.height - h) < h * 0.001 &&
+    base - f.baseline > h &&
+    base - f.baseline < h * 2 &&
+    /\p{L}/u.test(f.text)
+  const spans = (u, a, b) =>
+    u.rect[0] < a.rect[2] &&
+    u.rect[2] > b.rect[0] &&
+    a.rect[2] < b.rect[0] &&
+    u.rect[0] + u.rect[2] > a.rect[0] + a.rect[2] &&
+    u.rect[0] + u.rect[2] < b.rect[0] + b.rect[2] &&
+    lower.filter((f) => u.rect[0] < f.rect[2] && u.rect[2] > f.rect[0]).length === 2
+  const peers = (a, b) =>
+    proof.proved
+      .filter(
+        (p) =>
+          p.cell.row > 0 && p.cell.column === a && p.fonts.length === 1 && scalar(p.fonts[0].text)
+      )
+      .filter((p) => {
+        const q = proof.proved.find((q) => q.cell.row === p.cell.row && q.cell.column === b)
+        return (
+          q && q.fonts.length === 1 && scalar(q.fonts[0].text) && aligned([p.fonts[0], q.fonts[0]])
+        )
+      }).length >= 2
+  const upper = headerFonts.filter((f) => f.baseline < base - h * 0.5)
+  if (
+    upper.length === 2 &&
+    upper.every(upperValid) &&
+    aligned(upper) &&
+    complete(headerFonts, inventory)
+  ) {
+    const pairs = upper.map((u) => {
+      const c = head.find((p) => p.fonts.includes(u)).cell.column
+      return c > 0 &&
+        head[c].fonts.length === 2 &&
+        head[c - 1].fonts.length === 1 &&
+        spans(u, lower[c - 1], lower[c]) &&
+        peers(c - 1, c)
+        ? [c - 1, c]
+        : null
+    })
+    if (
+      pairs.every(Boolean) &&
+      pairs[0][1] < pairs[1][0] &&
+      upper[0].text !== upper[1].text &&
+      pairs[0].every((c, n) => lower[c].text === lower[pairs[1][n]].text)
+    )
+      return true
+  }
+  if (upper.length || !complete(headerFonts, inventory)) return false
+  const omitted = inventory.filter(
+    (f) =>
+      !all.includes(f) &&
+      f.text?.trim() &&
+      rect(f.rect) &&
+      upperValid(f) &&
+      table.unassigned?.filter((s) => s === f.text).length === 1
+  )
+  if (
+    omitted.length !== 1 ||
+    !/\(%\)/u.test(omitted[0].text) ||
+    !proveNativeUniqueWholeFonts([...all, omitted[0]], inventory) ||
+    !complete([...headerFonts, omitted[0]], inventory)
+  )
+    return false
+  const stripUnit = (s) => s.replace(/\s*\(%\)$/u, '')
+  for (let c = 0; c + 1 < lower.length; c++) {
+    if (!spans(omitted[0], lower[c], lower[c + 1]) || !peers(c, c + 1)) continue
+    if (
+      lower.some(
+        (a, n) =>
+          n + 1 < lower.length &&
+          n !== c &&
+          /\(%\)$/u.test(a.text) &&
+          /\(%\)$/u.test(lower[n + 1].text) &&
+          stripUnit(a.text) === lower[c].text &&
+          stripUnit(lower[n + 1].text) === lower[c + 1].text
+      )
+    )
+      return true
+  }
+  return false
+}
+
+// Repeated native index and description rails contradict their assignment to
+// one leaf. They justify review, never a guessed replacement column boundary.
+function hasMergedNativeOrdinalStub(proof, table, inventory) {
+  const all = completeFinalPacket(proof, table, inventory)
+  if (!all || !complete(all, inventory) || table.grid.length < 4 || table.grid[0].length < 2)
+    return false
+  const head = proof.proved.find((p) => p.cell.row === 0 && p.cell.column === 0)
+  if (
+    !head ||
+    head.cell.rowSpan !== 1 ||
+    head.cell.colSpan !== 1 ||
+    head.fonts.length !== 2 ||
+    !aligned(head.fonts)
+  )
+    return false
+  const [label, description] = [...head.fonts].sort((a, b) => a.rect[0] - b.rect[0]),
+    h = label.height
+  if (
+    !/^[\p{L}#]+$/u.test(label.text) ||
+    !/\p{L}/u.test(description.text) ||
+    label.rect[2] >= description.rect[0]
+  )
+    return false
+  const rows = proof.proved
+    .filter((p) => p.cell.row > 0 && p.cell.column === 0)
+    .sort((a, b) => a.cell.row - b.cell.row)
+  if (rows.length !== table.grid.length - 1 || rows.length < 3) return false
+  let previous = null,
+    first = null
+  for (const p of rows) {
+    if (p.cell.rowSpan !== 1 || p.cell.colSpan !== 1 || p.fonts.length < 2) return false
+    const stubs = p.fonts.filter((f) => Math.abs(f.rect[0] - label.rect[0]) < h * 0.001)
+    if (stubs.length !== 1) return false
+    const stub = stubs[0],
+      text = stub.text.trim()
+    if (!/^[1-9]\d*[a-z]?$/u.test(text) || !Number.isSafeInteger(Number.parseInt(text, 10)))
+      return false
+    const value = Number.parseInt(text, 10)
+    if (previous !== null && value !== previous && value !== previous + 1) return false
+    if (first === null) first = value
+    previous = value
+    const rest = p.fonts.filter((f) => f !== stub)
+    const starts = rest.filter(
+      (f) =>
+        Math.abs(f.rect[0] - description.rect[0]) < h * 0.001 &&
+        Math.abs(f.baseline - stub.baseline) < h * 0.001
+    )
+    if (starts.length !== 1) return false
+    const start = starts[0]
+    if (
+      Math.abs(stub.height - h) > h * 0.001 ||
+      Math.abs(stub.rect[0] - label.rect[0]) > h * 0.001 ||
+      Math.abs(start.rect[0] - description.rect[0]) > h * 0.001 ||
+      Math.abs(start.baseline - stub.baseline) > h * 0.001 ||
+      Math.abs(start.height - h) > h * 0.001 ||
+      stub.rect[2] >= description.rect[0] ||
+      rest.some((f) => f.rect[0] < description.rect[0] - h * 0.001)
+    )
+      return false
+    if (
+      !proof.proved.some(
+        (q) =>
+          q.cell.row === p.cell.row &&
+          q.cell.column > 0 &&
+          q.fonts.some(
+            (f) =>
+              Math.abs(f.baseline - stub.baseline) < h * 0.001 && Math.abs(f.height - h) < h * 0.001
+          )
+      )
+    )
+      return false
+  }
+  return previous - first >= 2
 }

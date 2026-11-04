@@ -5,8 +5,15 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
-  if (['research-datasets', 'europepmc', 'chea3', 'biodbnet', 'ctd'].includes(connector.id))
-    return t('Scientific data APIs, official file links and access guidance.')
+  if (connector.id === 'europepmc')
+    return t('Independent Europe PMC core literature search and abstracts.')
+  if (connector.id === 'research-datasets')
+    return t('Official research-data access requirements and public file discovery.')
+  if (connector.id === 'chea3')
+    return t('Transcription-factor enrichment rankings and official GMT library links.')
+  if (connector.id === 'biodbnet')
+    return t('Identifier discovery, conversion, recognition, orthology and pathways.')
+  if (connector.id === 'ctd') return t('Official CTD public report entry points and access terms.')
   if (connector.id === 'cancer-models')
     return t(
       'Cancer studies and cell model omics, dependencies and drug responses from cBioPortal and DepMap/CCLE.'

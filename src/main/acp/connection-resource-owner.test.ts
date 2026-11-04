@@ -58,6 +58,113 @@ const attachAndPublish = (
 }
 
 describe('AcpConnectionResourceOwner', () => {
+  it.each(['attached', 'unattached', 'unexpected-close'] as const)(
+    'retains unreaped %s resources for a later teardown retry',
+    async (path) => {
+      const owner = new AcpConnectionResourceOwner()
+      const child = process(path)
+      const storeRelease = vi.fn()
+      const serviceRelease = vi.fn(async () => ({ reaped: true }))
+      const resource = {
+        process: child,
+        connection: { close: vi.fn() } as unknown as ClientConnection,
+        framework: 'opencode' as const,
+        bridgeLease: undefined,
+        openCodeService: { release: serviceRelease },
+        openCodeStore: { release: storeRelease }
+      }
+      terminateProcessTree.mockResolvedValueOnce({ reaped: false })
+      if (path === 'unattached') await owner.cleanupUnattached(resource)
+      else {
+        await owner.connect(async (attempt) => {
+          attempt.attach(resource)
+          return attempt.publish({ close: true, delete: false, resume: true, steering: false })
+        })
+        if (path === 'attached') await owner.teardown(owner.epoch)
+        else owner.cleanupUnexpectedClose(owner.epoch)
+      }
+      expect(await owner.beginAwaitableShutdown(false).finish()).toEqual({ reaped: false })
+      expect(storeRelease).not.toHaveBeenCalled()
+
+      const shutdown = owner.beginAwaitableShutdown(false)
+      await owner.teardown(owner.supersede())
+      expect(await shutdown.finish()).toEqual({ reaped: true })
+      expect(terminateProcessTree).toHaveBeenCalledTimes(2)
+      expect(terminateProcessTree.mock.calls[1]?.[0]).toBe(child)
+      expect(serviceRelease).toHaveBeenCalledOnce()
+      expect(storeRelease).toHaveBeenCalledOnce()
+      expect(resource.connection.close).toHaveBeenCalledTimes(path === 'unexpected-close' ? 0 : 1)
+    }
+  )
+
+  it('joins concurrent debt cleanup without touching a published successor', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const old = process('debt')
+    terminateProcessTree.mockResolvedValueOnce({ reaped: false })
+    await owner.cleanupUnattached({ process: old })
+    const retry = createDeferred()
+    terminateProcessTree.mockImplementationOnce(async () => {
+      await retry.promise
+      return { reaped: true }
+    })
+    const teardownEpoch = owner.supersede()
+    const first = owner.teardown(teardownEpoch)
+    let secondSettled = false
+    const second = owner.teardown(teardownEpoch).then(() => {
+      secondSettled = true
+    })
+    const successor = await owner.connect(async (attempt) => {
+      await owner.teardown(attempt.epoch)
+      return attachAndPublish(attempt, 'successor')
+    })
+    await owner.teardown(teardownEpoch)
+    expect(secondSettled).toBe(false)
+    expect(terminateProcessTree).toHaveBeenCalledTimes(2)
+    retry.resolve()
+    await Promise.all([first, second])
+    successor.assertCurrent()
+    expect(owner.connection).toBe(successor.connection)
+  })
+
+  it('retains a thrown process cleanup and retries without releasing storage early', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const failure = new Error('termination failed')
+    const onFailure = vi.fn()
+    const storeRelease = vi.fn()
+    terminateProcessTree.mockRejectedValueOnce(failure)
+    await owner.cleanupUnattached(
+      { process: process('throwing'), openCodeStore: { release: storeRelease } },
+      onFailure
+    )
+    expect(onFailure).toHaveBeenCalledWith('agent-process', failure)
+    expect(owner.cleanupConfirmed).toBe(false)
+    expect(storeRelease).not.toHaveBeenCalled()
+    await owner.teardown(owner.epoch)
+    expect(owner.cleanupConfirmed).toBe(true)
+    expect(storeRelease).toHaveBeenCalledOnce()
+  })
+
+  it('retries only an unreaped companion and preserves its storage until confirmation', async () => {
+    const owner = new AcpConnectionResourceOwner()
+    const serviceRelease = vi
+      .fn()
+      .mockResolvedValueOnce({ reaped: false })
+      .mockResolvedValue({ reaped: true })
+    const storeRelease = vi.fn()
+    await owner.cleanupUnattached({
+      process: process('companion'),
+      openCodeService: { release: serviceRelease },
+      openCodeStore: { release: storeRelease }
+    })
+    expect(await owner.beginAwaitableShutdown(false).finish()).toEqual({ reaped: false })
+    expect(storeRelease).not.toHaveBeenCalled()
+    await owner.teardown(owner.epoch)
+    expect(owner.cleanupConfirmed).toBe(true)
+    expect(terminateProcessTree).toHaveBeenCalledOnce()
+    expect(serviceRelease).toHaveBeenCalledTimes(2)
+    expect(storeRelease).toHaveBeenCalledOnce()
+  })
+
   it.each([true, false])(
     'waits for companion cleanup and releases storage only when all writers are reaped: %s',
     async (reaped) => {

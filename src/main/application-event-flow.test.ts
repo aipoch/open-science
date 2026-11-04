@@ -91,7 +91,7 @@ describe('application event flow', () => {
         level: 'error',
         sessionId: 'session-1',
         text: 'provider failed',
-        providerError: true
+        failure: { category: 'service' as const, diagnostics: {} }
       }
     ]
     windows.push({

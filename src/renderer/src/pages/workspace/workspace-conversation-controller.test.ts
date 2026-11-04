@@ -2206,6 +2206,41 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.actions.revise).toBe(revise)
   })
 
+  it('retries an attachment-only prompt through the existing revision seam', async () => {
+    const activeSession = session()
+    activeSession.messages[0].content = ''
+    activeSession.messages[0].uploads = [
+      {
+        id: 'upload-a',
+        sessionId: 'session-a',
+        name: 'data.csv',
+        originalName: 'data.csv',
+        path: '/workspace/data.csv',
+        mimeType: 'text/csv',
+        size: 20
+      }
+    ]
+    const input = options({ activeSession })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => {
+      expect(await hook.result.current.actions.revise('message-user-a', { nodes: [] }, [])).toEqual(
+        {
+          ok: true,
+          disposition: 'sent'
+        }
+      )
+    })
+    expect(input.runtime.resendEditedMessage).toHaveBeenCalledWith('session-a', 'message-user-a', {
+      text: '',
+      annotations: [],
+      parts: [],
+      forcedSkillIds: [],
+      referencedArtifacts: []
+    })
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
   it('resends an annotation-only edit through the existing message revision seam', async () => {
     const annotations = [
       {

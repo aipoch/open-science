@@ -101,8 +101,12 @@ internal static class InstallationProcesses {
               if (!string.IsNullOrWhiteSpace(nativeImage) &&
                   nativeImage.IndexOfAny(new char[] { '\\', '/', ':' }) < 0 &&
                   !nativeImage.Any(char.IsControl)) continue;
-              if (!image.ToString().StartsWith("\\Device\\", StringComparison.OrdinalIgnoreCase))
-                throw new IOException("process-image-native-path");
+              if (string.IsNullOrWhiteSpace(nativeImage))
+                throw new IOException("process-image-native-path-empty");
+              if (nativeImage.Any(char.IsControl))
+                throw new IOException("process-image-native-path-control");
+              if (!nativeImage.StartsWith("\\Device\\", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("process-image-native-path-prefix");
               // Native names can still contain 8.3 aliases. Normalize the image before any
               // outside-installation decision; unknown file identity must remain blocking.
               string normalized;

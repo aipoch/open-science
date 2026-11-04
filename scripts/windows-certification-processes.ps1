@@ -7,6 +7,8 @@ param(
   [string]$ReleaseFile
 )
 $ErrorActionPreference = 'Stop'
+# Node decodes stdout as UTF-8, including executable paths returned by the native API.
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;

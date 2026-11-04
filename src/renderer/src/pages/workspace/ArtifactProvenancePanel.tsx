@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useSessionStore } from '@/stores/session-store'
 import { usePackageOperationStore, sessionExportLocked } from '../../stores/package-operation-store'
@@ -24,7 +25,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
-  CircleAlert,
   Download,
   LoaderCircle,
   PackagePlus,
@@ -95,7 +95,7 @@ import { WorkspaceContextCompactionActivityRow } from './WorkspaceContextCompact
 import { WorkspacePlanActivityRecord } from './WorkspacePlanActivityRecord'
 import { WorkspaceElicitationCard } from './WorkspaceElicitationCard'
 import { WorkspaceAssistantTurnCompletion, WorkspaceMessageItem } from './WorkspaceMessageItem'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { createWorkspaceConversationTimeline } from './workspace-conversation-timeline'
 import { useHorizontalScrollFade } from './use-horizontal-scroll-fade'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
@@ -311,8 +311,16 @@ const codeReconstructionUnavailableLabel = (
   t: TFunction
 ): string => {
   switch (reason) {
+    case 'script-not-applicable':
+      return t('This version was produced by a connector without a Notebook script.')
+    case 'artifact-content-unavailable':
+      return t(
+        'Restore the original file or publish a new version. Script generation requires verified artifact content; this does not mean the execution records are invalid.'
+      )
+    case 'record-invalid':
+      return t('The records for this version failed integrity validation.')
     case 'execution-unavailable':
-      return t('A reconstruction needs an immutable Execution Log for this version.')
+      return t('No immutable Execution Log is available for this version.')
     case 'producer-unavailable':
       return t('The producer run could not be identified from the captured evidence.')
     case 'producer-script-missing':
@@ -324,6 +332,102 @@ const codeReconstructionUnavailableLabel = (
         'Supporting code is incomplete. Failed or interrupted cells may have changed kernel state before stopping.'
       )
   }
+}
+
+// Keep plausible usage scenarios separate from the exact evidence failure for this version.
+const ExecutionEvidenceDetails = ({
+  reason
+}: {
+  reason: Extract<ArtifactCodeReconstructionState, { state: 'unavailable' }>['reason'] | 'legacy'
+}): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const scenarios: string[] = []
+  switch (reason) {
+    case 'execution-unavailable':
+      scenarios.push(t('The file content was published directly, without a Notebook execution.'))
+      scenarios.push(
+        t('An existing file was republished without linking the run that originally created it.')
+      )
+      scenarios.push(
+        t(
+          'The file came from an older version or an import that did not include execution evidence.'
+        )
+      )
+      break
+    case 'producer-unavailable':
+      scenarios.push(
+        t('An existing file was republished without linking the run that originally created it.')
+      )
+      break
+    case 'producer-script-missing':
+      scenarios.push(
+        t('A result was published from a run whose script text was empty or unavailable.')
+      )
+      break
+    case 'helper-evidence-incomplete':
+      scenarios.push(
+        t('The producing code imported helper files whose source could not be captured completely.')
+      )
+      break
+    case 'supporting-code-incomplete':
+      scenarios.push(
+        t(
+          'A cell failed or was interrupted after changing Notebook state, or the retained code was truncated.'
+        )
+      )
+      break
+    case 'legacy':
+      scenarios.push(
+        t(
+          'The file came from an older version or an import that did not include execution evidence.'
+        )
+      )
+      break
+    default:
+      return null
+  }
+  return (
+    <details className="group/evidence min-w-0 text-sm">
+      <summary className="flex w-fit max-w-full cursor-pointer list-none items-center gap-1 rounded-sm text-text-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight
+          className="size-3.5 shrink-0 group-open/evidence:rotate-90"
+          aria-hidden="true"
+        />
+        {t('Details and possible scenarios')}
+      </summary>
+      <div className="mt-3 space-y-3">
+        <div>
+          <p className="font-medium">{t('Confirmed finding')}</p>
+          <p>
+            {reason === 'legacy'
+              ? t('Provenance is not available for this legacy version.')
+              : codeReconstructionUnavailableLabel(reason, t)}
+          </p>
+          <p>
+            {t(
+              'Script reconstruction requires execution evidence linked to this exact version. Matching content in another version is not a substitute.'
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="font-medium">{t('Possible scenarios (not confirmed for this version)')}</p>
+          <ul className="list-disc space-y-1 pl-5">
+            {scenarios.map((scenario) => (
+              <li key={scenario}>{scenario}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="font-medium">{t('What to do')}</p>
+          <p>
+            {t(
+              'Run the producing task again to capture complete evidence for a new version. Historical records remain unchanged.'
+            )}
+          </p>
+        </div>
+      </div>
+    </details>
+  )
 }
 
 const packageKey = (value: string): string =>
@@ -1518,28 +1622,39 @@ const ArtifactProvenancePanel = ({
     codeReconstructionState?.state === 'cached' ? codeReconstructionState.value : undefined
 
   const editSummary = isUserEdit ? (
-    <div className="space-y-1.5 text-xs text-text-300">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{t('Edited in Open-Science')}</span>
-        {basedOnVersionId && basedOnVersionNumber !== undefined ? (
-          <button
-            type="button"
-            aria-label={t('Open source version v{{version}}', { version: basedOnVersionNumber })}
-            className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onClick={() => selectVersion(basedOnVersionId)}
-          >
-            {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
-          </button>
-        ) : (
-          <span>{t('Based on an earlier immutable version.')}</span>
-        )}
-      </div>
-      <p>
-        {t(
-          'This edited version has no new agent execution. View the source version for its code, messages and execution evidence.'
-        )}
-      </p>
-    </div>
+    <ErrorNotice
+      level="info"
+      className="w-full min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+      title={t('v{{version}} contains manual edits', {
+        version: selectedVersionDescriptor?.versionNumber
+      })}
+      content={
+        <div className="space-y-1.5 text-xs">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{t('Manually edited in Open-Science')}</span>
+            {basedOnVersionId && basedOnVersionNumber !== undefined ? (
+              <button
+                type="button"
+                aria-label={t('Open source version v{{version}}', {
+                  version: basedOnVersionNumber
+                })}
+                className="rounded text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => selectVersion(basedOnVersionId)}
+              >
+                {t('View source provenance · v{{version}}', { version: basedOnVersionNumber })}
+              </button>
+            ) : (
+              <span>{t('Based on an earlier immutable version.')}</span>
+            )}
+          </div>
+          <p>
+            {t(
+              'This version contains manual edits with no corresponding agent execution record, so script reconstruction is unavailable for this version. View the source version for the code, messages and execution evidence before editing.'
+            )}
+          </p>
+        </div>
+      }
+    />
   ) : undefined
 
   return (
@@ -1650,6 +1765,7 @@ const ArtifactProvenancePanel = ({
       >
         {error ? (
           <ProvenanceLoadNotice
+            versionNumber={selectedVersionDescriptor?.versionNumber}
             key={provenanceKey + ':core'}
             failure={error}
             diagnostics={diagnosticsFor(error, lineageResult?.error ? 'lineage' : 'core')}
@@ -1669,9 +1785,15 @@ const ArtifactProvenancePanel = ({
           <section className="px-4 py-3">{editSummary}</section>
         ) : null}
         {!error && isLegacyVersion ? (
-          <p className="p-5 text-sm text-text-300">
-            {t('Provenance is not available for this legacy version.')}
-          </p>
+          <ErrorNotice
+            level="warning"
+            className="w-full rounded-none"
+            title={t('Execution evidence is incomplete for v{{version}}', {
+              version: selectedVersionDescriptor?.versionNumber
+            })}
+            description={t('Provenance is not available for this legacy version.')}
+            content={<ExecutionEvidenceDetails key={provenanceKey + ':legacy'} reason="legacy" />}
+          />
         ) : null}
         {!error && !lineageUnavailable && !isUserEdit && !isLegacyVersion && !provenance ? (
           <div className="flex h-full items-center justify-center text-text-300">
@@ -1697,6 +1819,7 @@ const ArtifactProvenancePanel = ({
         ) : null}
         {provenance && deferredSectionResult?.state === 'error' ? (
           <ProvenanceLoadNotice
+            versionNumber={selectedVersionDescriptor?.versionNumber}
             key={deferredSectionKey}
             failure={deferredSectionResult}
             diagnostics={diagnosticsFor(deferredSectionResult, activeTab)}
@@ -1709,13 +1832,17 @@ const ArtifactProvenancePanel = ({
           <section>
             {provenance.contentStatus.state === 'unavailable' ? (
               <ProvenanceLoadNotice
+                versionNumber={selectedVersionDescriptor?.versionNumber}
                 key={provenanceKey + ':content'}
+                contentFailure={provenance.contentStatus.reason}
                 failure={{
                   kind: 'integrity-failed',
-                  message: t(
-                    'Artifact content is {{reason}}; captured provenance remains available.',
-                    { reason: provenance.contentStatus.reason }
-                  )
+                  message:
+                    provenance.contentStatus.reason === 'missing'
+                      ? t('The artifact file is missing. Captured provenance remains available.')
+                      : t(
+                          'The artifact content failed validation. Captured provenance remains available.'
+                        )
                 }}
                 diagnostics={diagnosticsFor(
                   { kind: 'integrity-failed', message: provenance.contentStatus.reason },
@@ -1724,7 +1851,11 @@ const ArtifactProvenancePanel = ({
               />
             ) : null}
             <div className={tabActionBarClassName}>
-              {generatedCode ? (
+              {provenance.contentStatus.state === 'unavailable' ? (
+                <Button type="button" variant="outline" size="sm" disabled>
+                  {t('Generate script')}
+                </Button>
+              ) : generatedCode ? (
                 <Button
                   type="button"
                   size="sm"
@@ -1810,27 +1941,8 @@ const ArtifactProvenancePanel = ({
                 >
                   {codeReconstructionResult.message}
                 </p>
-              ) : codeReconstructionState?.state === 'unavailable' ? (
-                <TooltipProvider delayDuration={100}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div
-                        role="status"
-                        tabIndex={0}
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-sm text-status-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-status-warning-dark-foreground"
-                      >
-                        <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />
-                        <p className="min-w-0 truncate text-xs leading-5">
-                          {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
-                        </p>
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" align="start">
-                      {codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              ) : codeReconstructionResult?.status === 'generating' ? (
+              ) : codeReconstructionState?.state ===
+                'unavailable' ? null : codeReconstructionResult?.status === 'generating' ? (
                 <p className="min-w-0 flex-1 truncate text-sm text-text-200">
                   {codeReconstructionState?.state === 'ready' &&
                   codeReconstructionState.origin === 'app-replay'
@@ -1858,6 +1970,58 @@ const ArtifactProvenancePanel = ({
                 inputFiles={producerInputs}
                 label={t('Inputs')}
                 className="border-b border-border-300/50 px-4 py-2"
+              />
+            ) : null}
+            {codeReconstructionState?.state === 'unavailable' &&
+            (codeReconstructionState.reason !== 'artifact-content-unavailable' ||
+              provenance.contentStatus.state === 'available') ? (
+              <ErrorNotice
+                className="w-full min-w-0 rounded-none whitespace-normal [overflow-wrap:anywhere]"
+                role={codeReconstructionState.reason === 'record-invalid' ? 'alert' : 'status'}
+                level={
+                  codeReconstructionState.reason === 'record-invalid'
+                    ? 'error'
+                    : codeReconstructionState.reason === 'script-not-applicable'
+                      ? 'info'
+                      : 'warning'
+                }
+                title={
+                  codeReconstructionState.reason === 'artifact-content-unavailable'
+                    ? t('Artifact content is unavailable for v{{version}}', {
+                        version: selectedVersionDescriptor?.versionNumber
+                      })
+                    : codeReconstructionState.reason === 'record-invalid'
+                      ? t('Record validation failed for v{{version}}', {
+                          version: selectedVersionDescriptor?.versionNumber
+                        })
+                      : codeReconstructionState.reason === 'script-not-applicable'
+                        ? t('Script reconstruction is not applicable to v{{version}}', {
+                            version: selectedVersionDescriptor?.versionNumber
+                          })
+                        : t('Execution evidence is incomplete for v{{version}}', {
+                            version: selectedVersionDescriptor?.versionNumber
+                          })
+                }
+                description={codeReconstructionUnavailableLabel(codeReconstructionState.reason, t)}
+                content={
+                  codeReconstructionState.reason ===
+                  'artifact-content-unavailable' ? undefined : codeReconstructionState.reason !==
+                      'record-invalid' &&
+                    codeReconstructionState.reason !== 'script-not-applicable' ? (
+                    <ExecutionEvidenceDetails
+                      key={provenanceKey + ':' + codeReconstructionState.reason}
+                      reason={codeReconstructionState.reason}
+                    />
+                  ) : (
+                    <p>
+                      {codeReconstructionState.reason === 'record-invalid'
+                        ? t(
+                            'Keep this version and its diagnostics for investigation. Do not use its records to generate a script.'
+                          )
+                        : t('Review the connector execution details for this version.')}
+                    </p>
+                  )
+                }
               />
             ) : null}
             {generatedCode?.sourceTruncated ||

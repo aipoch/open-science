@@ -269,7 +269,10 @@ test('keeps the draft without appending an unsent prompt when retrying a Session
     const conversation = web.getByRole('region', { name: 'Conversation' })
     await composer.fill(draft)
     await send.click()
-    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
+    const error = web.getByTestId('composer-notice-slot')
+    await error.locator('summary').click()
+    await expect(error.locator('pre')).toContainText(conflict)
+    await expect(error.locator('pre')).toBeVisible()
     // Preparation fails before append; Main's rollback leaves the existing history unchanged.
     await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
     await expect(composer).toHaveText(draft)
@@ -277,7 +280,9 @@ test('keeps the draft without appending an unsent prompt when retrying a Session
     // An unresolved conflict also blocks later preparation until the Session is reloaded.
     await send.click()
     await expect(send).toBeEnabled()
-    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
+    await expect(error.locator('pre')).toContainText(conflict)
+    if (!(await error.locator('pre').isVisible())) await error.locator('summary').click()
+    await expect(error.locator('pre')).toBeVisible()
     await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
     await expect(composer).toHaveText(draft)
     expect((await app.readFakeAgentPrompts()).length).toBe(dispatchedBefore)

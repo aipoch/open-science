@@ -352,7 +352,9 @@ describe.skipIf(process.platform !== 'win32')(
       ]) {
         const unknown = labelRun(label, 'check', empty)
         expect(unknown.status).toBe(2)
-        expect(String(unknown.stderr)).toContain('stage=process-image-native-path;')
+        expect(String(unknown.stderr)).toContain(
+          `stage=process-image-native-path-${!label ? 'empty' : label.includes('\n') ? 'control' : 'prefix'};`
+        )
       }
     })
     it('excludes its own temporary inspection process only after the caller has waited for exit', () => {

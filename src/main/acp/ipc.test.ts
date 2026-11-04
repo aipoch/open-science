@@ -96,6 +96,8 @@ const {
       }),
       resetSessionContext,
       requestProviderReconnect,
+      requestIdleRelease: vi.fn(),
+      withPromptAdmission: <T>(work: () => Promise<T>) => work(),
       hasPendingSessionWriterRelease: vi.fn(() => false),
       resumeSession,
       sendAppContinuation: (request: AcpPromptRequest, promptAttemptId?: string) => {

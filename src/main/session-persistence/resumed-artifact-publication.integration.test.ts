@@ -155,7 +155,11 @@ describe('resumed runtime Artifact publication through durable repositories', ()
         sessionId,
         promptMessageId: prompt.id,
         title: 'Prompt failed',
-        providerError: true,
+        failure: {
+          category: 'service' as const,
+          reason: 'service/response-interrupted',
+          diagnostics: {}
+        },
         text: 'API Error: Connection closed mid-response'
       })
       await owner.flush(sessionId, prompt.id)

@@ -22,6 +22,7 @@ export const resolveHistoryReplayTarget = (
 ): HistoryReplayTarget => {
   if (frameworkId === 'opencode') return 'opencode'
   if (frameworkId === 'codebuddy') return 'codebuddy'
+  if (frameworkId === 'pi') return 'pi'
   if (frameworkId !== 'codex') return 'claude-code'
   if (
     provider &&

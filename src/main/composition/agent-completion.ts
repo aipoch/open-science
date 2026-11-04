@@ -239,13 +239,10 @@ export async function composeAgentWorkflows({
   )
   const registerHandoff = (adapter: Parameters<typeof withApprovedHandoffOutcome>[1]): void => {
     completionGateRuntimeRegistry.register(
-      withApprovedHandoffOutcome(
-        runtime,
-        withApprovedSpecialistBinding(adapter, {
-          getSpecialistBinding: (sessionId) => sessionBindingService.getBinding(sessionId),
-          getSpecialist: (specialistId) => specialistService.resolveRunnableById(specialistId)
-        })
-      )
+      withApprovedSpecialistBinding(withApprovedHandoffOutcome(runtime, adapter), {
+        getSpecialistBinding: (sessionId) => sessionBindingService.getBinding(sessionId),
+        getSpecialist: (specialistId) => specialistService.resolveRunnableById(specialistId)
+      })
     )
   }
   {

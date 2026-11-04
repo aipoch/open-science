@@ -300,7 +300,9 @@ jobs:
             no-protocol-runtime,
             missing-exe-recovery,
             cancel-cleanup,
-            writer-shortcut-wait
+            writer-shortcut-wait,
+            renderer-preflight-failure,
+            renderer-final-flush-failure
           ]
     steps:
       - name: Checkout certification tooling
@@ -374,6 +376,7 @@ jobs:
             artifact-builds.json
             windows-updater-*-observation.json
             windows-updater-*-certification.log
+            windows-updater-*-observation.json.*
             test-results/windows-installer-smoke/
           if-no-files-found: error
 

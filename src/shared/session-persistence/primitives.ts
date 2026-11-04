@@ -1,12 +1,8 @@
 import type { AgentFrameworkId } from '../settings'
+import { AGENT_FRAMEWORK_ID_VALUES } from '../agent-framework-id'
 import type { SessionRuntimeContextValue } from '../session-runtime-context'
 
-export const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>([
-  'claude-code',
-  'opencode',
-  'codex',
-  'codebuddy'
-])
+export const AGENT_FRAMEWORK_IDS = new Set<AgentFrameworkId>(AGENT_FRAMEWORK_ID_VALUES)
 
 // Checks for plain JSON objects so persisted payloads can be sanitized safely.
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

@@ -87,7 +87,12 @@ export const RuntimeUpdateDialog = ({
   const legacyOpen = Boolean(legacyToken && legacyToken === status.legacyShellRecovery?.token)
   const confirming = cliOpen || legacyOpen
   const completed = ['S15', 'S27', 'S28'].includes(id)
-  const copy = runtimeUpdateCopy(id, t, status.recovery?.detail === 'occupancy-unknown')
+  const copy = runtimeUpdateCopy(
+    id,
+    t,
+    status.recovery?.detail === 'occupancy-unknown',
+    status.recovery?.blockingProcesses?.find((entry) => entry.name)?.name
+  )
   const canCancel =
     !['S23', 'S24', 'S25'].includes(id) &&
     (status.recovery?.canCancel ?? (needsDownload || checkFailed || checking || !busy))

@@ -28,7 +28,7 @@ type Job = {
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
-  strategy?: { matrix?: { shard?: number[] } }
+  strategy?: { matrix?: { shard?: number[]; scenario?: string[] } }
   'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
@@ -51,6 +51,15 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('runs both renderer save failure phases against immutable Windows packages', () => {
+    const job = workflow('windows-upgrade-smoke.yml').jobs['artifact-upgrade']
+    expect(job.strategy?.matrix?.scenario).toEqual(
+      expect.arrayContaining(['renderer-preflight-failure', 'renderer-final-flush-failure'])
+    )
+    expect(step(job, 'Certify production Windows update and automatic readiness').run).toContain(
+      '--scenario $env:UPDATE_SCENARIO'
+    )
+  })
   it.each([
     { workflowName: 'Windows Upgrade Smoke', version: '1.0.6', allowed: true },
     { workflowName: 'Release', version: '1.0.6', allowed: false },
@@ -312,6 +321,10 @@ describe('release and scheduled workflow topology', () => {
       'packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts',
       'src/main/session-package/archive.test.ts',
       'src/main/session-package/service.test.ts',
+      'src/main/acp/permission-broker-registry.test.ts',
+      'src/main/cli-install/launcher.test.ts',
+      'scripts/ci/pr-gate-workflow.test.ts',
+      'src/renderer/src/pages/workspace/previews/renderers/use-pdf-translation-document.test.tsx',
       'packages/environment/src/package-manager.test.ts',
       'src/main/notebook/package-process-sandbox.test.ts',
       'src/main/notebook/network-sandbox-owner.test.ts',
@@ -335,7 +348,7 @@ describe('release and scheduled workflow topology', () => {
       'packages/notebook-network-sandbox/src/gateway.test.ts',
       'packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts'
     ]) {
-      expect(regressions.run).toContain(file)
+      expect(regressions.run?.split(/\s+/).filter((argument) => argument === file)).toHaveLength(1)
     }
   })
 

@@ -3,7 +3,8 @@ import type { TFunction } from 'i18next'
 export const runtimeUpdateCopy = (
   id: string,
   t: TFunction,
-  unknownOccupancy = false
+  unknownOccupancy = false,
+  blockingName?: string
 ): { title: string; description: string } => {
   switch (id) {
     case 'S25':
@@ -32,6 +33,13 @@ export const runtimeUpdateCopy = (
         description: t(
           'Stop the other service from the app or terminal that started it, then recheck.'
         )
+      }
+    case 'S36':
+      return {
+        title: t('Another app is using Open-Science files'),
+        description: blockingName
+          ? t('Quit {{name}}, then recheck.', { name: blockingName })
+          : t('Quit the other app, then recheck.')
       }
     case 'S08':
       return {

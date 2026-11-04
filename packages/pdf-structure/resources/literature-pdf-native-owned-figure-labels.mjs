@@ -6,7 +6,15 @@ import { collectClosedFigureFrames } from './literature-pdf-graphics.mjs'
 import { isDeepStrictEqual as sameNativeHeader } from 'node:util'
 import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
-import { nativePageTextPacketInventory } from './literature-pdf-figure-native-plot-labels.mjs'
+import {
+  nativePageTextPacketInventory,
+  nativeClosedProgramInkPacket
+} from './literature-pdf-figure-native-plot-labels.mjs'
+import {
+  retainNativeRecoveryInputs,
+  nativeRecoveryOwnValues
+} from './literature-pdf-native-figure-recovery-profile.mjs'
+const nativeVectorFigureLabelCertificates = new WeakMap()
 
 // The same proved margin exclusion must reach face association and completion.
 // Otherwise a later label pass can reattach the printed page number. An explicit
@@ -3342,4 +3350,275 @@ function proveRepeatedFigureHeader(page, tokens, captions, tables, context) {
   )
     return
   return { lines, tokens: owned }
+}
+
+// Only complete ordinary vector-label packets can acquire existing figure text
+// ownership. The separate pixel observer cannot be used as a Source witness.
+export function createNativeVectorFigureLabelCertificate(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  peers,
+  cropRect
+) {
+  try {
+    const ctx = nativeRecoveryOwnValues(context),
+      current =
+        ctx &&
+        retainNativeRecoveryInputs(
+          [page, figure, captions, tables, tokens, context, peers, cropRect],
+          ctx.viewport
+        )
+    if (!current) return
+    const valid = (r) =>
+        Array.isArray(r) &&
+        r.length === 4 &&
+        r.every(Number.isFinite) &&
+        r[0] < r[2] &&
+        r[1] < r[3],
+      inside = (a, b) => b.every((v, i) => (i < 2 ? v >= a[i] - 1e-8 : v <= a[i] + 1e-8)),
+      hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+    if (
+      figure.sourceItems?.length ||
+      !valid(cropRect) ||
+      ![captions, tables, tokens, peers].every(Array.isArray) ||
+      !valid(figure.rect) ||
+      !valid(figure.caption?.rect) ||
+      figure.caption.page !== page.pageNumber ||
+      captions.filter((c) => c === figure.caption).length !== 1 ||
+      captions.some(
+        (c) => c.page === page.pageNumber && (!valid(c.rect) || hit(c.rect, cropRect))
+      ) ||
+      tables.some((t) => !valid(t) || hit(t, cropRect)) ||
+      peers.some((f) => f !== figure && f.rect && (!valid(f.rect) || hit(f.rect, cropRect))) ||
+      !inside([0, 0, page.width, page.height], cropRect) ||
+      context.pageNumber !== page.pageNumber ||
+      !/^[a-f0-9]{64}$/u.test(context.sourceSha256 ?? '')
+    )
+      return
+    const p = nativePageTextPacketInventory(page, tokens, context, true)
+    if (!p || p.evidence.images.length || !p.evidence.paths.size) return
+    const full = (r) => {
+      const style = context.content.styles[r.r.fontName]
+      if (
+        style?.vertical !== false ||
+        !Number.isFinite(style.ascent) ||
+        !Number.isFinite(style.descent) ||
+        style.ascent <= 0 ||
+        style.descent > 0 ||
+        style.ascent <= style.descent
+      )
+        return
+      const font = nativeFigureLabelBounds(r.r, style, p.v)
+      return font && union([r.rect, font, ...r.part.map((z) => z.g.ink)])
+    }
+    const bounds = new Map(p.records.map((r) => [r, full(r)]))
+    // A complete descriptive panel caption remains translatable. Require the
+    // whole native packet, a consecutive paired family referenced by the native
+    // main caption, and a common lower band below every other body glyph.
+    // Bare panel keys and ordinary axis/legend labels do not establish this role.
+    const compact = (text) => text.normalize('NFD').replace(/\s/gu, ''),
+      panelCandidates = p.records
+        .flatMap((r) => {
+          const match = /^\(([a-l])\)\s+(.+)$/u.exec(r.r.str),
+            packetSet = [...new Set(r.part.map((z) => z.g.packet))]
+          if (
+            !match ||
+            (match[2].match(/\p{L}{2,}/gu)?.length ?? 0) < 3 ||
+            packetSet.length !== 1 ||
+            !valid(bounds.get(r)) ||
+            !inside(cropRect, bounds.get(r)) ||
+            compact(packetSet[0].text) !== compact(r.r.str) ||
+            p.records.some(
+              (other) => other !== r && other.part.some((z) => z.g.packet === packetSet[0])
+            )
+          )
+            return []
+          return [{ r, packet: packetSet[0], key: match[1] }]
+        })
+        .sort((a, b) => a.key.localeCompare(b.key)),
+      captionText = p.records
+        .filter((r) => inside(figure.caption.rect, r.rect))
+        .map((r) => r.r.str)
+        .join(' '),
+      panelPackets = new Set(panelCandidates.map((c) => c.packet)),
+      otherBody = p.glyphs.filter(
+        (g) =>
+          !g.rendererSkipped &&
+          valid(g.ink) &&
+          inside(cropRect, g.ink) &&
+          !panelPackets.has(g.packet)
+      ),
+      panelFloor = Math.min(...panelCandidates.map((c) => bounds.get(c.r)[1])),
+      panelHeight = panelCandidates[0]?.r.r.height,
+      closedPanelFamily =
+        panelCandidates.length >= 2 &&
+        panelCandidates.length <= 12 &&
+        panelCandidates.every(
+          (c, i) =>
+            c.key === String.fromCharCode(97 + i) &&
+            c.r.r.fontName === panelCandidates[0].r.r.fontName &&
+            c.r.r.height > 0 &&
+            Math.abs(c.r.r.height - panelHeight) < 1e-6 &&
+            Math.abs(c.r.rect[3] - panelCandidates[0].r.rect[3]) <= panelHeight * 0.25 &&
+            captionText.includes('(' + c.key + ')')
+        ) &&
+        otherBody.length > 0 &&
+        otherBody.every((g) => g.ink[3] < panelFloor),
+      captionPackets = closedPanelFamily ? panelPackets : new Set()
+    const packets = new Set()
+    for (const r of p.records) {
+      if (
+        r.part.some((z) => captionPackets.has(z.g.packet)) ||
+        !valid(bounds.get(r)) ||
+        !inside(cropRect, bounds.get(r)) ||
+        !/\p{L}{2}/u.test(r.r.str)
+      )
+        continue
+      for (const z of r.part) packets.add(z.g.packet)
+    }
+    const owners = p.records.filter((r) => r.part.some((z) => packets.has(z.g.packet)))
+    if (
+      !owners.length ||
+      owners.length > 64 ||
+      owners.some(
+        (r) =>
+          r.r.width <= 0 ||
+          !valid(bounds.get(r)) ||
+          !inside(cropRect, bounds.get(r)) ||
+          !r.part.every((z) => packets.has(z.g.packet))
+      )
+    )
+      return
+    // A packet remains whole, even where PDF.js splits mixed-font fragments.
+    for (const packet of packets)
+      if (
+        p.glyphs.some(
+          (g) =>
+            g.packet === packet && !g.rendererSkipped && valid(g.ink) && !inside(cropRect, g.ink)
+        )
+      )
+        return
+    const claims = owners.map((r) => r.r.sourceItem).sort((a, b) => a.index - b.index)
+    const forms = [],
+      stack = []
+    let matrix = [1, 0, 0, 1, 0, 0]
+    for (let i = 0; i < p.o.fnArray.length; i++) {
+      const op = p.o.fnArray[i],
+        a = p.o.argsArray[i]
+      if (op === OPS.save || op === OPS.paintFormXObjectBegin) {
+        const part = { begin: i, op, parent: stack.at(-1), matrix: [...matrix] }
+        stack.push(part)
+        if (op === OPS.paintFormXObjectBegin) {
+          if (a[0]) matrix = Util.transform(matrix, a[0])
+          if (valid(Array.from(a[1] ?? [])))
+            part.rect = p.box(Array.from(a[1]), Util.transform(p.v.transform, matrix))
+          forms.push(part)
+        }
+      } else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+        const part = stack.pop()
+        if (!part || part.op !== (op === OPS.restore ? OPS.save : OPS.paintFormXObjectBegin)) return
+        part.end = i
+        matrix = part.matrix
+      } else if (op === OPS.transform) matrix = Util.transform(matrix, a)
+    }
+    if (stack.length) return
+    const body = forms
+      .filter(
+        (s) =>
+          valid(s.rect) &&
+          inside(cropRect, s.rect) &&
+          owners.every((r) => r.part.every((z) => z.g.i > s.begin && z.g.i < s.end)) &&
+          [...p.evidence.paths.keys()].filter((i) => i > s.begin && i < s.end).length >= 3 &&
+          p.glyphs
+            .filter((g) => g.i > s.begin && g.i < s.end && !g.rendererSkipped && valid(g.ink))
+            .every((g) => inside(cropRect, g.ink))
+      )
+      .filter(
+        (s) =>
+          !forms.some(
+            (t) =>
+              t !== s &&
+              valid(t.rect) &&
+              inside(cropRect, t.rect) &&
+              t.begin < s.begin &&
+              t.end > s.end
+          )
+      )
+    if (body.length !== 1) return
+    const scoped = nativeClosedProgramInkPacket(page, tokens, context, claims)
+    if (
+      !scoped ||
+      claims.some(
+        (s) =>
+          !scoped.records.some(
+            (r) => r.index === s.index && r.advanceComplete && r.r.sourceItem === s
+          )
+      )
+    )
+      return
+    if (
+      owners.some(
+        (r) =>
+          tokens.filter(
+            (t) =>
+              t.sourceItem?.pageNumber === page.pageNumber &&
+              t.sourceItem.index === r.index &&
+              t.sourceItem.text === r.r.str &&
+              t.text === r.r.str
+          ).length !== 1
+      )
+    )
+      return
+    const details = { sourceItems: claims },
+      outputCurrent = retainNativeRecoveryInputs([details])
+    if (!outputCurrent || !current()) return
+    const handle = Object.freeze({})
+    nativeVectorFigureLabelCertificates.set(handle, {
+      page,
+      figure,
+      captions,
+      tables,
+      tokens,
+      context,
+      peers,
+      cropRect,
+      current,
+      outputCurrent,
+      details
+    })
+    return handle
+  } catch {
+    return
+  }
+}
+export function nativeVectorFigureLabelCertificateData(
+  handle,
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  peers,
+  cropRect
+) {
+  try {
+    const p = nativeVectorFigureLabelCertificates.get(handle)
+    return p &&
+      [page, figure, captions, tables, tokens, context, peers, cropRect].every(
+        (v, i) =>
+          v ===
+          [p.page, p.figure, p.captions, p.tables, p.tokens, p.context, p.peers, p.cropRect][i]
+      ) &&
+      p.current() &&
+      p.outputCurrent()
+      ? p.details
+      : undefined
+  } catch {
+    return
+  }
 }

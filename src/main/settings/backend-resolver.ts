@@ -10,7 +10,7 @@ import {
   buildActiveModelIncompatibleMessage,
   CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
   NO_ACTIVE_PROVIDER_MESSAGE
-} from '../../shared/run-error-classification'
+} from '../../shared/failure/messages'
 import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
@@ -104,7 +104,7 @@ export type AgentBackendRuntimePort = Pick<
   | 'materializeAgentConfigFiles'
   | 'reserveOpenCodeUsagePort'
   | 'resolveCodexProxyEnvironment'
->
+> & { resolvePiExecutable?: () => Promise<string> }
 
 export type AgentBackendProviderPort = Pick<
   ProviderAccountsModule,
@@ -352,6 +352,7 @@ export class AgentBackendResolver {
     const forcedSkillIds = new Set(context.forcedSkillIds ?? [])
     const includeSkillAndConnectorContext = context.includeSkillAndConnectorContext !== false
     const codeBuddySkillRuntimeRoot = join(codeBuddyStorageDir(this.storageRoot), 'skill-runtime')
+    const piSkillRuntimeRoot = join(this.storageRoot, 'pi', 'skill-runtime')
     const codexSkillRuntimeRoot = isCodexSubscriptionProvider(target.provider.type)
       ? codexSubscriptionStorageDir(this.storageRoot)
       : codexStorageDir(this.storageRoot)
@@ -373,14 +374,19 @@ export class AgentBackendResolver {
             )
           : framework.id === 'codebuddy'
             ? await this.runtime.resolveCodeBuddyExecutable(settings.codebuddyPath)
-            : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+            : framework.id === 'pi'
+              ? await this.runtime.resolvePiExecutable?.()
+              : await this.runtime.resolveOpencodeExecutable(settings.opencodePath)
+    if (!executablePath) throw new Error('The selected agent executable is unavailable.')
     const codexNativeVersion =
       framework.id === 'codex'
         ? await this.runtime.probeCodexNativeVersion(settings.codex?.nativePath)
         : undefined
     const opencodeVersion =
       framework.id === 'opencode'
-        ? await this.runtime.probeOpencodeVersion(executablePath)
+        ? await this.runtime.probeOpencodeVersion(executablePath).catch((cause: unknown) => {
+            throw new Error('OpenCode CLI version check failed.', { cause })
+          })
         : undefined
     const opencodeMajorVersion = opencodeVersion?.startsWith('2.') ? 2 : 1
     if (framework.id === 'opencode' && !/^[12]\.\d+\./.test(opencodeVersion ?? '')) {
@@ -466,7 +472,9 @@ export class AgentBackendResolver {
           ? join(codeBuddySkillRuntimeRoot, '.claude')
           : framework.id === 'codex'
             ? codexSkillRuntimeRoot
-            : opencodeConfigDir(this.storageRoot)
+            : framework.id === 'pi'
+              ? piSkillRuntimeRoot
+              : opencodeConfigDir(this.storageRoot)
       skillDiscovery = includeSkillAndConnectorContext
         ? await this.runtime.prepareAgentSkillDiscovery(
             settings,
@@ -494,6 +502,9 @@ export class AgentBackendResolver {
     ]
 
     try {
+      if (framework.id === 'pi' && !transport.piModelBridge) {
+        throw new Error('The Pi model bridge is unavailable.')
+      }
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
@@ -505,6 +516,7 @@ export class AgentBackendResolver {
           ? { nativeVersion: codexNativeVersion ?? opencodeVersion }
           : {}),
         responsesConnection,
+        ...(transport.piModelBridge ? { piModelBridge: transport.piModelBridge } : {}),
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
         providerModelCatalog,
@@ -565,7 +577,9 @@ export class AgentBackendResolver {
           ? { proxyEnvironmentMode: proxyEnv === undefined ? 'inherit' : 'replace' }
           : {}),
         sessionModel,
-        ...(framework.id === 'codex' && isCodexSubscriptionProvider(provider.type) && sessionModel
+        ...((framework.id === 'pi' ||
+          (framework.id === 'codex' && isCodexSubscriptionProvider(provider.type))) &&
+        sessionModel
           ? { sessionModelRequired: true }
           : {}),
         sessionEffort,
@@ -587,7 +601,12 @@ export class AgentBackendResolver {
                           root: codexSkillRuntimeRoot,
                           skillsDirectory: join(codexSkillRuntimeRoot, 'skills')
                         }
-                      : {})
+                      : framework.id === 'pi'
+                        ? {
+                            root: piSkillRuntimeRoot,
+                            skillsDirectory: join(piSkillRuntimeRoot, 'skills')
+                          }
+                        : {})
                 }
               }
             }

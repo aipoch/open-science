@@ -443,11 +443,27 @@ class ShellProcessOwnershipRegistry {
           '-Command',
           // Load the in-box identity provider directly, without discovering host module trees.
           'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
-            `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop).CommandLine`
+            `Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop | ` +
+            'Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress'
         ],
         { encoding: 'utf8', windowsHide: true, timeout: 5000 }
       )
-      if (result.status !== 0 || !result.stdout?.includes(record.receiptId)) {
+      let identity: unknown
+      try {
+        identity = JSON.parse(result.stdout)
+      } catch {
+        // Missing or malformed identity is uncertainty, not proof that the old host exited.
+      }
+      const commandLine =
+        identity &&
+        typeof identity === 'object' &&
+        'ProcessId' in identity &&
+        identity.ProcessId === pid &&
+        'CommandLine' in identity &&
+        typeof identity.CommandLine === 'string'
+          ? identity.CommandLine.trim()
+          : undefined
+      if (result.status !== 0 || !commandLine) {
         if (exists(pid)) {
           const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code
           // Command lines and stderr can contain secrets; retain only query outcome diagnostics.
@@ -457,11 +473,14 @@ class ShellProcessOwnershipRegistry {
             )
           })
         }
-      } else {
+      } else if (commandLine.includes(record.receiptId)) {
         // This historical receipt cannot account for descendants whose parent already exited.
         // A matching argv only proves the host, never complete historical tree containment.
         throw new ShellProcessRecoveryBlockedError(record.runId)
       }
+      // A readable identity without this host's launch marker proves the recorded PID now names
+      // another process. Retire only the stale receipt, as with version-1 start-identity mismatch;
+      // never signal that unrelated process. Empty/inaccessible identities remain blocked above.
     }
     await rm(`${path}.${pid}.tmp`, { force: true })
     await unlink(path)

@@ -10,6 +10,7 @@ import {
   type TargetedPdfTextResult
 } from './attachment-media'
 import { readPdfPageText } from './pdf-reading-order'
+import { createPdfOcrSession } from './pdf-ocr'
 
 let activePdfTextExtractions = 0
 const pendingPdfTextExtractions: Array<() => void> = []
@@ -32,7 +33,13 @@ const withPdfTextExtractionSlot = async <Result>(work: () => Promise<Result>): P
 export const extractPdfText = async (
   filePath: string,
   targetPageOrSource?: number | AttachmentByteSource,
-  options: Readonly<{ maxChars?: number; proseRegions?: readonly PdfProseRegion[] }> = {}
+  options: Readonly<{
+    maxChars?: number
+    proseRegions?: readonly PdfProseRegion[]
+    ocr?: boolean
+    createOcrSession?: () => ReturnType<typeof createPdfOcrSession>
+    includeLayout?: boolean
+  }> = {}
 ): Promise<PdfTextResult> => {
   const source = typeof targetPageOrSource === 'object' ? targetPageOrSource : undefined
   const targetPageNumber = typeof targetPageOrSource === 'number' ? targetPageOrSource : undefined
@@ -57,8 +64,21 @@ export const extractPdfText = async (
     })
     const document = await loadingTask.promise
 
+    const ocr = options.ocr ? (options.createOcrSession ?? createPdfOcrSession)() : undefined
+    const coverage = {
+      textPages: [] as number[],
+      ocrPages: [] as number[],
+      unavailablePages: [] as number[],
+      uncheckedPages: [] as number[],
+      unverifiedPages: [] as number[]
+    }
     try {
       const pageTexts: string[] = []
+      const pageStarts: { page: number; offset: number }[] = []
+      const uncertainPages = new Set<number>()
+      const pageLayouts: NonNullable<PdfTextResult['pageLayouts']>[number][] = []
+      const layoutOmittedPages: number[] = []
+      let layoutChars = 0
       let totalChars = 0
       let truncated = false
       const boundedTargetPage =
@@ -68,21 +88,86 @@ export const extractPdfText = async (
       const firstPage = boundedTargetPage ?? 1
       const lastPage = boundedTargetPage ?? document.numPages
       for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+        const marker = `--- Page ${pageNumber} ---\n`
+        const remaining = maxChars - totalChars - (pageTexts.length ? 2 : 0)
         const page = await document.getPage(pageNumber)
         let pageText: string
         try {
-          pageText = await readPdfPageText(page)
+          const nativeText = await readPdfPageText(
+            page,
+            (number, layout) => {
+              uncertainPages.add(number)
+              if (!options.includeLayout) return
+              const chars = layout ? JSON.stringify(layout).length : 0
+              if (layout && layoutChars + chars <= maxChars) {
+                pageLayouts.push(layout)
+                layoutChars += chars
+              } else layoutOmittedPages.push(number)
+            },
+            options.includeLayout
+          )
+          const operators = ocr ? await page.getOperatorList() : undefined
+          const hasRaster = !!operators?.fnArray.some((op) =>
+            [
+              pdfjs.OPS.paintImageXObject,
+              pdfjs.OPS.paintInlineImageXObject,
+              pdfjs.OPS.paintImageMaskXObject,
+              pdfjs.OPS.paintImageXObjectRepeat,
+              pdfjs.OPS.paintImageMaskXObjectRepeat,
+              pdfjs.OPS.paintInlineImageXObjectGroup,
+              pdfjs.OPS.paintImageMaskXObjectGroup
+            ].includes(op)
+          )
+          // Paths can encode outlined prose as well as plots. Do not infer completeness from text.
+          const hasVector = !!operators?.fnArray.some((op) =>
+            [pdfjs.OPS.constructPath, pdfjs.OPS.shadingFill].includes(op)
+          )
+          const hasPageContent = operators?.fnArray.length !== 0
+          // A lone decimal label does not establish native body text. No density heuristics.
+          const needsOcr =
+            (hasPageContent && !nativeText) || (hasRaster && /^\d+$/.test(nativeText))
+          const canOcr = ocr && needsOcr
+          const bodyPrefixLength =
+            marker.length + (canOcr && nativeText ? `${nativeText}\n\n[OCR]\n`.length : 0)
+          if ((nativeText || canOcr) && remaining <= bodyPrefixLength) {
+            // A prefix alone is not body evidence. Do not recognize text that cannot be returned.
+            truncated = true
+            coverage.uncheckedPages = Array.from(
+              { length: lastPage - pageNumber + 1 },
+              (_, i) => pageNumber + i
+            )
+            break
+          }
+          if (nativeText) coverage.textPages.push(pageNumber)
+          if (hasRaster || hasVector) coverage.unverifiedPages.push(pageNumber)
+          pageText = nativeText
+          if (canOcr) {
+            let recognized = ''
+            try {
+              recognized = await ocr.recognize(page)
+            } catch {
+              // Preserve native labels; absent body text remains visible and retryable.
+            }
+            if (recognized) {
+              coverage.ocrPages.push(pageNumber)
+              pageText = nativeText ? `${nativeText}\n\n[OCR]\n${recognized}` : recognized
+            } else coverage.unavailablePages.push(pageNumber)
+          } else if (!nativeText) coverage.unavailablePages.push(pageNumber)
         } finally {
           page.cleanup()
         }
 
         if (!pageText) continue
-
-        const block = `--- Page ${pageNumber} ---\n${pageText}`
+        pageStarts.push({ page: pageNumber, offset: totalChars + (pageTexts.length ? 2 : 0) })
+        const block = marker + pageText
+        totalChars += block.length + (pageTexts.length ? 2 : 0)
         pageTexts.push(block)
-        totalChars += block.length
-        if (totalChars >= maxChars) {
+        if (totalChars > maxChars) {
           truncated = true
+          coverage.uncheckedPages = Array.from(
+            { length: lastPage - pageNumber },
+            (_, i) => pageNumber + i + 1
+          )
           break
         }
       }
@@ -92,9 +177,30 @@ export const extractPdfText = async (
         text = text.slice(0, maxChars)
         truncated = true
       }
-      return { text: text.trim(), pageCount: document.numPages, truncated }
+      const { unverifiedPages, ...pageCoverage } = coverage
+      text = text.trim()
+      const warnings = [...uncertainPages].map(
+        (number) =>
+          `Page ${number}: text layout remains uncertain; native reading order was retained.`
+      )
+      return {
+        text,
+        pageCount: document.numPages,
+        truncated,
+        ...(pageStarts.length
+          ? { pageStarts: pageStarts.filter(({ offset }) => offset < text.length) }
+          : {}),
+        ...(warnings.length ? { warnings } : {}),
+        ...(pageLayouts.length ? { pageLayouts } : {}),
+        ...(layoutOmittedPages.length ? { layoutOmittedPages } : {}),
+        coverage: { ...pageCoverage, ...(unverifiedPages.length ? { unverifiedPages } : {}) }
+      }
     } finally {
-      await document.destroy()
+      try {
+        await ocr?.close()
+      } finally {
+        await document.destroy()
+      }
     }
   })
 }

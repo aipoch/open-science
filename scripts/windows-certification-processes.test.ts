@@ -88,7 +88,7 @@ it.skipIf(process.platform !== 'win32')(
   'terminates a real isolated installation while the same-named sibling stays alive',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'certification-process-identity-'))
-    const owned = join(root, 'app')
+    const owned = join(root, "app's files 科学")
     const other = join(root, 'app-other')
     const children: ReturnType<typeof spawn>[] = []
     try {

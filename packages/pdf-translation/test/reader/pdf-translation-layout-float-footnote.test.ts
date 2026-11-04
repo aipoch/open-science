@@ -177,3 +177,95 @@ it.each([
     tail = result.units.find((unit) => unit.source.includes('Laboratory.'))!
   expect(tail.items).not.toContain('1:5')
 })
+
+function readingLanePage(kind: 'two-column' | 'three-panel'): PdfLayoutPage {
+  const native = (
+    str: string,
+    x: number,
+    y: number,
+    width: number,
+    size = 10,
+    bold = false,
+    hasEOL = true
+  ): PdfLayoutPage['items'][number] => ({
+    str,
+    width,
+    height: size,
+    dir: 'ltr',
+    fontName: bold ? 'Bold' : 'Body',
+    fontAscent: size === 8 ? (bold ? 0.693 : 0.455) : 0.8,
+    fontDescent: size === 8 ? (bold ? -0.234 : -0.003) : -0.2,
+    fontVertical: false,
+    transform: [size, 0, 0, size, x, 800 - y],
+    hasEOL
+  })
+  const paragraph = (title: string, x: number, y: number, count: number): PdfLayoutPage['items'] =>
+    Array.from({ length: count }, (_, i) =>
+      native(
+        i === 0
+          ? title + ' The source sentence has ordinary words.'
+          : i === count - 1
+            ? 'The final source line closes this paragraph.'
+            : 'These ordinary words continue the same statement.',
+        x,
+        y + i * 12,
+        230
+      )
+    )
+  const items =
+    kind === 'two-column'
+      ? [
+          native('Table 1: Complete native introductory caption.', 50, 50, 490),
+          native('The caption closes before two complete text lanes.', 50, 62, 490),
+          ...paragraph('First left paragraph.', 50, 100, 3),
+          ...paragraph('Later left paragraph.', 50, 210, 5),
+          ...paragraph('First right paragraph.', 310, 100, 4),
+          ...paragraph('Later right paragraph.', 310, 300, 4)
+        ]
+      : ['a', 'b', 'c'].flatMap((label, column) => {
+          const x = 50 + column * 145,
+            y = column === 1 ? 144 : 100,
+            count = [5, 7, 9][column]
+          return [
+            native('(' + label + ')', x, y, 8, 8, false, false),
+            native('Panel ' + label + '.', x + 12, y, 60, 8, true, false),
+            native('An ordinary panel explanation', x + 76, y, 63, 8),
+            ...Array.from({ length: count - 1 }, (_, row) =>
+              native(
+                row === count - 2
+                  ? 'the final native line closes this description.'
+                  : 'ordinary source words continue the same panel',
+                x,
+                y + (row + 1) * 10,
+                139,
+                8
+              )
+            )
+          ]
+        })
+  return { page: 1, width: 600, height: 800, rotation: 0, items }
+}
+
+for (const kind of ['two-column', 'three-panel'] as const) {
+  it.each(['complete', 'missing-font', 'native-order', 'non-horizontal'] as const)(
+    'orders complete native reading lanes without changing source eligibility: ' + kind + ' %s',
+    (fault) => {
+      const page = readingLanePage(kind)
+      if (fault === 'missing-font') delete page.items[2].fontAscent
+      if (fault === 'native-order') page.items.reverse()
+      if (fault === 'non-horizontal') page.items[2].transform[2] = 1
+      const saved = structuredClone(page),
+        result = extract([page])
+      const words =
+        kind === 'two-column'
+          ? ['Later left paragraph.', 'First right paragraph.']
+          : ['Panel a.', 'Panel b.', 'Panel c.']
+      const owners = words.map((word) => result.units.find((unit) => unit.source.includes(word))!)
+      const order = owners.map((unit) => result.units.indexOf(unit))
+      expect(owners.every((unit) => unit && !unit.sourceOnly)).toBe(true)
+      if (kind === 'two-column') expect(order[0] < order[1]).toBe(fault === 'complete')
+      else expect(order[1] < order[2]).toBe(fault === 'complete')
+      expect(page).toEqual(saved)
+    }
+  )
+}

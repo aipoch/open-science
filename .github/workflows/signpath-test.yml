@@ -18,17 +18,26 @@ on:
         options:
           - signpath
           - azure
+      updater_target_run:
+        description: Optional signed stable artifact run to upgrade to from a fresh signed prerelease
+        type: string
+        default: ''
+      updater_source_run:
+        description: Optional existing signed prerelease artifact run for certification-only retries
+        type: string
+        default: ''
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: windows-signing-dry-run-${{ github.ref }}
+  group: windows-signing-dry-run-${{ github.ref }}-${{ inputs.updater_source_run || 'build' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: ${{ inputs.updater_source_run == '' }}
     permissions:
       actions: read
       contents: read
@@ -38,6 +47,66 @@ jobs:
       platform_name: windows-x64
       skip_verify: true
       sign_windows: ${{ inputs.provider == 'azure' }}
+      nightly: ${{ inputs.updater_target_run != '' }}
+
+  updater-recovery:
+    name: Certify signed Windows update and owned process cleanup
+    if: ${{ !cancelled() && inputs.provider == 'azure' && inputs.updater_target_run != '' && (needs.build.result == 'success' || inputs.updater_source_run != '') }}
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout certification harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Install certification dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Download signed prerelease source
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64
+          path: previous
+          run-id: ${{ inputs.updater_source_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Download signed stable target
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64
+          path: current
+          run-id: ${{ inputs.updater_target_run }}
+          github-token: ${{ github.token }}
+      - name: Verify both installer signatures
+        shell: pwsh
+        run: |
+          foreach ($directory in @('previous', 'current')) {
+            $installers = @(Get-ChildItem -LiteralPath $directory -Filter '*-win-x64-setup.exe' -File)
+            if ($installers.Count -ne 1) { throw "Expected one installer in $directory." }
+            $signature = Get-AuthenticodeSignature -LiteralPath $installers[0].FullName
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'AIPOCH PTE\. LTD\.') {
+              throw "Invalid installer signature in $directory."
+            }
+          }
+      - name: Certify blocked update and successful retry
+        shell: pwsh
+        env:
+          OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-updater-recovery
+        run: |
+          node scripts/windows-updater-certification.mjs --current-dir current --previous-dir previous --foreign-process --owned-processes --windows-recovery --notebook --output windows-updater-recovery.json 2>&1 |
+            Tee-Object -FilePath windows-updater-recovery.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload updater recovery evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-updater-recovery
+          path: windows-updater-recovery.*
+          if-no-files-found: warn
+          retention-days: 7
 
   azure-package-smoke:
     name: Smoke signed Windows installer

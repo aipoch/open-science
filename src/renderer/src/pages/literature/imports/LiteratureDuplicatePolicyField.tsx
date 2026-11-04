@@ -15,14 +15,23 @@ import { useTranslation } from 'react-i18next'
 export function LiteratureDuplicatePolicyField({
   value,
   onChange,
-  disabled
+  disabled,
+  summaryOnly = false
 }: {
   value: LiteratureDuplicatePolicy
   onChange: (value: LiteratureDuplicatePolicy) => void
   disabled?: boolean
+  summaryOnly?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const id = useId()
+  const description =
+    value === 'reuse'
+      ? t('Keep existing metadata and add the reference to this destination.')
+      : value === 'separate'
+        ? t('Create independent references. Review them later in Duplicates.')
+        : t('Fill empty fields only. Existing values and conflicting fields are kept.')
+  if (summaryOnly) return <p>{t('When identifiers match: {{policy}}', { policy: description })}</p>
   return (
     <div className="space-y-2">
       <label htmlFor={id} className="text-sm font-medium">
@@ -43,11 +52,7 @@ export function LiteratureDuplicatePolicyField({
         </SelectContent>
       </Select>
       <p id={`${id}-help`} className="text-xs leading-relaxed text-muted-foreground">
-        {value === 'reuse'
-          ? t('Keep existing metadata and add the reference to this destination.')
-          : value === 'separate'
-            ? t('Create independent references. Review them later in Duplicates.')
-            : t('Fill empty fields only. Existing values and conflicting fields are kept.')}
+        {description}
       </p>
     </div>
   )

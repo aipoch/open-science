@@ -18,7 +18,11 @@ PR commits retain policy/CI Integrity, CodeQL (GitHub default setup, not a repos
 workflow), AI review, static checks and selective portable tests on Ubuntu.
 PRs and merge queue run affected host/package tests separately and skip unaffected packages.
 Failed selected checks block merging; full portable suites run in scheduled/manual Source
-Regression instead. See [Package workflows](package-workflows.md) for selection details.
+Regression instead. A full plan still runs, as a blocking floor (`unitFloor`), the declared module
+tests of each changed path that has its own bounded selection. A rename joins only when both sides
+are bounded and selects both owners; deleted, type-changed, unmerged, unowned and global paths add
+no floor.
+See [Package workflows](package-workflows.md) for selection details.
 Desktop changes run the Windows
 mainline E2E journeys on one test runner, selected from the changed modules and their declared
 consumers: projects/sessions, conversation/approval, files/previews, Notebook analysis, and native
@@ -51,6 +55,19 @@ three native platforms for its declared lifecycle owner and harness paths, as de
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
+
+### CodeQL
+
+GitHub default setup uses [codeql-config.yml](../.github/codeql/codeql-config.yml)
+to exclude development tests from security analysis while retaining production code,
+runtime resources and fixtures. Test execution is unchanged. Audit shipping paths before
+extending exclusions; files under `resources/` may ship even with test suffixes.
+
+Activate the configuration with the repository-only `github-codeql-config-file` property:
+`remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`.
+Before merge, use a verified unique commit abbreviation instead of `main` (75-character
+property limit). Verify a main scan saves the JavaScript baseline and a later PR restores
+it; clear the property to restore default scope.
 
 ### Static check groups
 

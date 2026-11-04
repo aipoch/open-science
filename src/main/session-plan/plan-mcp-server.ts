@@ -439,9 +439,35 @@ const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServe
           // A review pause cancels this transport before an approval result can rebind the cache.
           // Pending updates remain rejected by the service; the next approved Plan is server-bound.
           executionArtifactVersionId = undefined
-          const result = await handler.generate(document, extra.signal)
-          executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
-          return result
+          const progressToken = extra._meta?.progressToken
+          let progress = 0
+          const heartbeat =
+            progressToken === undefined
+              ? undefined
+              : setInterval(() => {
+                  void extra
+                    .sendNotification({
+                      method: 'notifications/progress',
+                      params: {
+                        progressToken,
+                        progress: ++progress,
+                        message: 'Waiting for Plan review.'
+                      }
+                    })
+                    .catch(() => undefined)
+                }, 20_000)
+          heartbeat?.unref()
+          const stopHeartbeat = (): void => clearInterval(heartbeat)
+          extra.signal.addEventListener('abort', stopHeartbeat, { once: true })
+          try {
+            extra.signal.throwIfAborted()
+            const result = await handler.generate(document, extra.signal)
+            executionArtifactVersionId = projectionVersionId(result) ?? executionArtifactVersionId
+            return result
+          } finally {
+            stopHeartbeat()
+            extra.signal.removeEventListener('abort', stopHeartbeat)
+          }
         },
         (result) => presentPlanToolOutcome(result, { kind: 'generation-result' })
       )

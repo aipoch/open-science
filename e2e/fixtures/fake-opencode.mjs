@@ -3,6 +3,7 @@
 import * as acp from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
@@ -179,7 +180,6 @@ const suspendSessionWrites = async () => {
     .filter((entry) => entry.isDirectory())
     .map((entry) => join(sessionsRoot, entry.name))
   await Promise.all(directories.map((directory) => chmod(directory, 0o500)))
-  return async () => Promise.all(directories.map((directory) => chmod(directory, 0o700)))
 }
 
 const stringEnvironment = (overrides = []) => {
@@ -212,137 +212,86 @@ const delegatedArtifactHandoff = async (mcpServers) => {
   return { artifactCurrentRunFile: currentRunFile, artifactExecutionId: executionId }
 }
 
-const parseMcpResponse = (body) => {
-  const dataLine = body.split('\n').find((line) => line.startsWith('data:'))
-  const json = dataLine ? dataLine.slice('data:'.length).trim() : body.trim()
-  return json ? JSON.parse(json) : {}
-}
-
-const submitReviewerPass = async (mcpServers, prompt = '') => {
-  const server = mcpServers.find(
-    (candidate) =>
-      candidate.type === 'http' &&
-      (candidate.name === 'open-science-reviewer' ||
-        candidate.name === frameworkServerName('open-science-reviewer'))
-  )
-  if (!server?.url) return false
-  const token =
-    server.headers
-      ?.find((header) => header.name?.toLowerCase() === 'authorization')
-      ?.value?.replace('Bearer ', '') ?? ''
-  const baseHeaders = {
-    accept: 'application/json, text/event-stream',
-    authorization: `Bearer ${token}`,
-    'content-type': 'application/json'
-  }
-  const initialize = await fetch(server.url, {
-    method: 'POST',
-    headers: baseHeaders,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: { name: 'open-science-e2e-reviewer', version: '1.0' }
-      }
-    })
-  })
-  if (!initialize.ok) throw new Error(`Reviewer MCP initialize failed: ${initialize.status}`)
-  const initialized = parseMcpResponse(await initialize.text())
-  const sessionId = initialize.headers.get('mcp-session-id')
-  if (!sessionId || !initialized.result) {
-    throw new Error('Reviewer MCP initialize did not return a session.')
-  }
-  const headers = { ...baseHeaders, 'mcp-session-id': sessionId }
-  await fetch(server.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })
-  })
-  let nextId = 2
-  const callTool = async (name, args) => {
-    const response = await fetch(server.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: nextId++,
-        method: 'tools/call',
-        params: { name, arguments: args }
-      })
-    })
-    if (!response.ok) throw new Error(`${name} failed: ${response.status}`)
-    const payload = parseMcpResponse(await response.text())
-    if (payload.error) throw new Error(`${name} failed: ${payload.error.message ?? 'unknown'}`)
-    if (payload.result?.isError) {
-      throw new Error(payload.result.content?.[0]?.text ?? `${name} returned an error`)
+const submitReviewerPass = async (sessionId, prompt = '') => {
+  const server = sessionRoutes
+    .get(sessionId)
+    ?.mcpServers?.find(
+      (candidate) =>
+        candidate.name === 'open-science-reviewer' ||
+        candidate.name === frameworkServerName('open-science-reviewer')
+    )
+  if (!server) return false
+  return withMcpClient(sessionId, 'open-science-reviewer', async (client) => {
+    const callTool = async (name, args) => {
+      const result = await client.callTool({ name, arguments: args })
+      if (result.isError) throw new Error(result.content?.[0]?.text ?? name + ' returned an error')
+      return result
     }
-    return payload.result
-  }
-  const turn = await callTool('read_turn', {})
-  const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
-  const reproBlock = blocks.find(
-    (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
-  )
-  if (reproBlock) {
+    const turn = await callTool('read_turn', {})
+    const blocks = JSON.parse(turn.content?.[0]?.text ?? '[]')
+    const reproBlock = blocks.find(
+      (block) => block.role === 'agent' && block.content?.startsWith('AUTO_REVIEW_REPRO_')
+    )
+    if (reproBlock) {
+      await callTool('submit_findings', {
+        checks: [
+          {
+            status: 'fail',
+            claim: reproBlock.content,
+            evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
+            locator: {
+              blockRef: { blockIndex: reproBlock.blockIndex },
+              contentHash: reproBlock.contentHash
+            }
+          }
+        ]
+      })
+      return true
+    }
+    const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map(
+      (match) => match[1]
+    )
+    if (trackedIds.length > 0) {
+      const unresolvedBlock = blocks.find(
+        (block) => block.content === 'Recovered execution still needs correction.'
+      )
+      await callTool('submit_findings', {
+        checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
+          sourceFindingId,
+          ...(unresolvedBlock
+            ? {
+                locator: {
+                  blockRef: { blockIndex: unresolvedBlock.blockIndex },
+                  contentHash: unresolvedBlock.contentHash
+                }
+              }
+            : {}),
+          status: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'fail'
+            : 'pass',
+          claim: blocks.some(
+            (block) => block.content === 'Recovered execution still needs correction.'
+          )
+            ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
+            : 'The controlled correction completed.',
+          evidence: 'The corrected answer is present in the frozen turn.'
+        }))
+      })
+      return true
+    }
     await callTool('submit_findings', {
       checks: [
         {
-          status: 'fail',
-          claim: reproBlock.content,
-          evidence: 'Controlled reviewer finding for Stop / Resume reproduction.',
-          locator: {
-            blockRef: { blockIndex: reproBlock.blockIndex },
-            contentHash: reproBlock.contentHash
-          }
+          status: 'pass',
+          claim: 'The completed turn follows the requested production path.',
+          evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
         }
       ]
     })
     return true
-  }
-  const trackedIds = [...prompt.matchAll(/"sourceFindingId":"([^"]+)"/gu)].map((match) => match[1])
-  if (trackedIds.length > 0) {
-    const unresolvedBlock = blocks.find(
-      (block) => block.content === 'Recovered execution still needs correction.'
-    )
-    await callTool('submit_findings', {
-      checks: [...new Set(trackedIds)].map((sourceFindingId) => ({
-        sourceFindingId,
-        ...(unresolvedBlock
-          ? {
-              locator: {
-                blockRef: { blockIndex: unresolvedBlock.blockIndex },
-                contentHash: unresolvedBlock.contentHash
-              }
-            }
-          : {}),
-        status: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'fail'
-          : 'pass',
-        claim: blocks.some(
-          (block) => block.content === 'Recovered execution still needs correction.'
-        )
-          ? 'AUTO_REVIEW_REPRO_REFLAG: remaining issue'
-          : 'The controlled correction completed.',
-        evidence: 'The corrected answer is present in the frozen turn.'
-      }))
-    })
-    return true
-  }
-  await callTool('submit_findings', {
-    checks: [
-      {
-        status: 'pass',
-        claim: 'The completed turn follows the requested production path.',
-        evidence: 'The Reviewer read the frozen turn through its scoped evidence server.'
-      }
-    ]
   })
-  return true
 }
 
 const recordMutationStage = async (stage) => {
@@ -358,17 +307,26 @@ const withMcpClient = async (sessionId, serverName, operation) => {
     (candidate) =>
       candidate.name === serverName || candidate.name === frameworkServerName(serverName)
   )
-  if (!route || !server?.command) {
+  if (!route || (!server?.command && !(server?.type === 'http' && server.url))) {
     const routed = route?.mcpServers?.map((candidate) => candidate.name).join(', ') || 'none'
     throw new Error(`${serverName} was not routed to ${sessionId}; routed servers: ${routed}.`)
   }
 
-  const transport = new StdioClientTransport({
-    command: server.command,
-    args: server.args ?? [],
-    cwd: route.cwd,
-    env: stringEnvironment(server.env)
-  })
+  const transport =
+    server.type === 'http'
+      ? new StreamableHTTPClientTransport(new URL(server.url), {
+          requestInit: {
+            headers: Object.fromEntries(
+              (server.headers ?? []).map(({ name, value }) => [name, value])
+            )
+          }
+        })
+      : new StdioClientTransport({
+          command: server.command,
+          args: server.args ?? [],
+          cwd: route.cwd,
+          env: stringEnvironment(server.env)
+        })
   const client = new Client({ name: 'open-science-e2e-agent', version: VERSION })
   await recordMutationStage('mcp-connect-start')
   await client.connect(transport)
@@ -1330,57 +1288,64 @@ const verifyNotebookPackageCancellation = async (sessionId) =>
     return `Notebook package cancellation verified; stopped PIDs ${started.pid} and ${started.descendantPid}.`
   })
 
-const createProvenanceArtifact = async (sessionId) => {
-  const producerRunId = await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
-    const before = toolResult(
-      'notebook_state',
-      await client.callTool({ name: 'notebook_state', arguments: {} })
-    )
-    const existingRunIds = new Set(
-      before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
-    )
-    const execution = toolResult(
-      'bash_execute',
-      await client.callTool({
-        name: 'bash_execute',
-        arguments: { command: "echo 'artifact-provenance-e2e'" }
+const createProvenanceArtifact = async (sessionId, markdown = false, withoutExecution = false) => {
+  const producerRunId = withoutExecution
+    ? undefined
+    : await withMcpClient(sessionId, 'open-science-notebook', async (client) => {
+        const before = toolResult(
+          'notebook_state',
+          await client.callTool({ name: 'notebook_state', arguments: {} })
+        )
+        const existingRunIds = new Set(
+          before.recentRuns?.map((candidate) => candidate.runId).filter(Boolean) ?? []
+        )
+        const execution = toolResult(
+          'bash_execute',
+          await client.callTool({
+            name: 'bash_execute',
+            arguments: { command: "echo 'artifact-provenance-e2e'" }
+          })
+        )
+        const state = toolResult(
+          'notebook_state',
+          await client.callTool({ name: 'notebook_state', arguments: {} })
+        )
+        const run = state.recentRuns
+          ?.toReversed()
+          .find(
+            (candidate) =>
+              candidate.kernelKind === 'bash' &&
+              candidate.status === 'completed' &&
+              !existingRunIds.has(candidate.runId)
+          )
+        if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
+          throw new Error(
+            `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
+          )
+        }
+        return run.runId
       })
-    )
-    const state = toolResult(
-      'notebook_state',
-      await client.callTool({ name: 'notebook_state', arguments: {} })
-    )
-    const run = state.recentRuns
-      ?.toReversed()
-      .find(
-        (candidate) =>
-          candidate.kernelKind === 'bash' &&
-          candidate.status === 'completed' &&
-          !existingRunIds.has(candidate.runId)
-      )
-    if (!execution.stdout?.includes('artifact-provenance-e2e') || !run?.runId) {
-      throw new Error(
-        `The Notebook did not persist the Bash producer run: ${JSON.stringify({ execution, recentRuns: state.recentRuns })}`
-      )
-    }
-    return run.runId
-  })
   const stored = await withMcpClient(sessionId, 'open-science-artifacts', async (client) =>
     toolResult(
       'write_artifact_file',
       await client.callTool({
         name: 'write_artifact_file',
         arguments: {
-          filename: 'provenance-evidence.txt',
-          mimeType: 'text/plain',
-          content: 'artifact provenance e2e',
+          filename: markdown ? 'publication-policy.md' : 'provenance-evidence.txt',
+          mimeType: markdown ? 'text/markdown' : 'text/plain',
+          content: markdown
+            ? '# Publication report\n\nOriginal result.\n'
+            : 'artifact provenance e2e',
           encoding: 'utf8',
           producerRunId
         }
       })
     )
   )
-  if (!stored.artifact?.version_id || stored.artifact.producer_run_id !== producerRunId) {
+  if (
+    !stored.artifact?.version_id ||
+    (producerRunId && stored.artifact.producer_run_id !== producerRunId)
+  ) {
     throw new Error('The artifact Version did not retain its Notebook producer run.')
   }
   return `Artifact provenance verified for session ${sessionId}, artifact ${stored.artifact.artifact_id}, version ${stored.artifact.version_id}.`
@@ -2641,12 +2606,7 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'
-        } else if (
-          await submitReviewerPass(
-            sessionRoutes.get(context.params.sessionId)?.mcpServers ?? [],
-            prompt
-          )
-        ) {
+        } else if (await submitReviewerPass(context.params.sessionId, prompt)) {
           reply = ''
         } else if (prompt.includes(CONTEXT_COMPACTION_PROMPT)) {
           await context.client.notify(acp.methods.client.session.update, {
@@ -2782,6 +2742,39 @@ if (process.argv.includes('--version')) {
             withMcpClient,
             toolResult
           )
+        } else if (prompt.includes('Prepare Notebook for Windows update.')) {
+          reply = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) => {
+              const call = async (name, args) =>
+                toolResult(
+                  name,
+                  await client.callTool({ name, arguments: args }, undefined, { timeout: 240_000 })
+                )
+              const repl = controlResultValue(
+                await call('repl_execute', {
+                  code: 'globalThis.updateWitness = 42; return { pid: process.pid, value: globalThis.updateWitness };',
+                  timeoutMs: 180_000
+                })
+              )
+              const shell = await call('bash_execute', {
+                command: "Write-Output ('UPDATE_SHELL_PID=' + $PID)",
+                timeoutMs: 180_000
+              })
+              const shellPid = Number(shell.stdout?.match(/UPDATE_SHELL_PID=(\d+)/)?.[1])
+              if (
+                repl.value !== 42 ||
+                !Number.isSafeInteger(repl.pid) ||
+                shell.exitCode !== 0 ||
+                !shellPid
+              )
+                throw new Error(
+                  `Notebook update preparation failed: ${JSON.stringify({ repl, shell })}`
+                )
+              return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
+            }
+          )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {
@@ -2839,11 +2832,36 @@ if (process.argv.includes('--version')) {
               ? 'PNG artifact created.'
               : 'Resumed PNG artifact created.'
           }
+        } else if (prompt.includes('Verify Markdown task reads.')) {
+          const expected = prompt.includes('Expected: restored')
+            ? '# Publication report\n\nManually corrected result.\n'
+            : '# Publication report\n\nOriginal result.\n'
+          const historicalId = prompt.match(/Historical version: ([a-zA-Z0-9_-]+)/)?.[1]
+          if (!historicalId) throw new Error('Missing historical version')
+          const result = await executeControlCode(
+            context.params.sessionId,
+            `{
+            const files = await host.artifacts({ filename: 'publication-policy.md', exact: true });
+            if (files.artifacts.length !== 1) throw new Error('Expected one logical file');
+            const fs = require('node:fs/promises');
+            const latest = await fs.readFile(await host.artifactPath(files.artifacts[0].latestVersionId), 'utf8');
+            const historical = await fs.readFile(await host.artifactPath(${JSON.stringify(historicalId)}), 'utf8');
+            if (latest !== ${JSON.stringify(expected)} || historical !== '# Publication report\\n\\nManually corrected result.\\n') throw new Error('Task read selected incorrect bytes');
+            return { marker: 'markdown-task-read-verified' };
+          }`
+          )
+          if (controlResultValue(result).marker !== 'markdown-task-read-verified')
+            throw new Error(JSON.stringify(result))
+          reply = 'Markdown task read verified.'
         } else if (prompt.includes(ARTIFACT_PROVENANCE_PROMPT)) {
           if (prompt.includes('Observe the Task before publication.')) {
             await new Promise((resolve) => setTimeout(resolve, 8_000))
           }
-          reply = await createProvenanceArtifact(context.params.sessionId)
+          reply = await createProvenanceArtifact(
+            context.params.sessionId,
+            prompt.includes('Markdown publication policy'),
+            prompt.includes('Without execution evidence')
+          )
         } else if (prompt.includes(PREVIEW_CONTEXT_MENU_ARTIFACTS_PROMPT)) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
@@ -3209,30 +3227,14 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes('Parked reliable child question')) {
           reply = 'Main rendered the parked child question after branch restoration.'
         } else if (prompt.includes('Trigger reliable post-fence persistence failure')) {
-          const restoreWrites = await suspendSessionWrites()
-          try {
-            await context.client.notify(acp.methods.client.session.update, {
-              sessionId: context.params.sessionId,
-              update: {
-                sessionUpdate: 'agent_message_chunk',
-                messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-                content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
-              }
-            })
-            await delay(1_000)
-          } finally {
-            await restoreWrites()
-            await writeFile(
-              join(process.env.OPEN_SCIENCE_E2E_HANDOFF_CAPTURE_ROOT, 'post-fence-released'),
-              'released'
-            )
-          }
+          // Playwright owns restoration because persistence failure can terminate this provider.
+          await suspendSessionWrites()
           await context.client.notify(acp.methods.client.session.update, {
             sessionId: context.params.sessionId,
             update: {
               sessionUpdate: 'agent_message_chunk',
               messageId: `e2e-message-${fixtureInstanceId}${nextMessageId++}`,
-              content: { type: 'text', text: 'Persistence sabotage released.' }
+              content: { type: 'text', text: 'Provider acceptance crossed the durable fence.' }
             }
           })
           // Keep the provider call in flight until the test crashes Main. Completing it would
