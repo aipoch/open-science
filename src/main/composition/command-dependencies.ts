@@ -65,6 +65,8 @@ export function composeCommandDependencies({
   managedFiles,
   sessionAuthority,
   documentReading,
+  researchVideo,
+  researchVideoPresentation,
   projectLifecycle,
   notebookRuntime,
   researchCatalog,
@@ -106,6 +108,10 @@ export function composeCommandDependencies({
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
   managedFiles: ReturnType<typeof composeManagedFiles>
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
+  researchVideo?: ReturnType<typeof import('../research-video/service').createResearchVideoService>
+  researchVideoPresentation?: ReturnType<
+    typeof import('../research-video/presentation').createResearchVideoPresentationOwner
+  >
   documentReading: Awaited<ReturnType<typeof composeDocumentReading>>
   projectLifecycle: ReturnType<typeof composeProjectLifecycle>
   notebookRuntime: Awaited<ReturnType<typeof composeNotebookRuntime>>
@@ -340,6 +346,9 @@ export function composeCommandDependencies({
       },
       events: applicationEvents,
       managedPreview: managedFiles.managedPreviewOwners,
+      researchVideo,
+      researchVideoPresentation,
+      videoExportTools: documentReading.videoExportTools,
       preview: {
         load: (request) => sessionPackages.previewStateRepository.get(request.projectId),
         save: (request) =>

@@ -461,6 +461,7 @@ export const createApplicationModules = async (
     mainEntryPath
   })
   const notebookBridge = await composeNotebookBridge({
+    researchNarrationModels: documentReading.researchNarrationModels,
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
     runtimeRef,
@@ -777,6 +778,8 @@ export const createApplicationModules = async (
     managedFiles,
     sessionAuthority,
     documentReading,
+    researchVideo: notebookBridge.researchVideo,
+    researchVideoPresentation: notebookBridge.researchVideoPresentation,
     projectLifecycle,
     notebookRuntime,
     researchCatalog,

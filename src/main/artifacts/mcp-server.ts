@@ -1,3 +1,4 @@
+import { generateResearchVideoSchema, RESEARCH_VIDEO_GUIDE } from '../research-video/tool-contract'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -440,6 +441,112 @@ const createArtifactMcpServer = (
     }
   )
 
+  server.registerTool(
+    'research_video_guide',
+    {
+      description:
+        'Read the source format, evidence rules, and local narration requirements before creating a research explanation.',
+      inputSchema: {}
+    },
+    async () => ({ content: [{ type: 'text', text: RESEARCH_VIDEO_GUIDE }] })
+  )
+  server.registerTool(
+    'generate_research_video',
+    {
+      description:
+        'Generate an English narrated dynamic research player and regeneration source ZIP from video.json, and save both as Artifacts. Install Research narration in Local models first. Read research_video_guide before authoring.',
+      inputSchema: generateResearchVideoSchema
+    },
+    async (input, extra) => {
+      const context = await readCurrentRunContext(environment.currentRunFile)
+      if (
+        !environment.rpcEndpoint ||
+        !context.rpcCapabilityToken ||
+        !context.appSessionId ||
+        !context.rootFrameId ||
+        !context.agentFrameId ||
+        !context.messageBranchId ||
+        !context.runtimeSegmentId ||
+        !context.promptMessageId
+      )
+        throw new Error(
+          'Research video generation requires a complete active run capability. Restart the Agent MCP connection.'
+        )
+      const progressToken = extra._meta?.progressToken
+      const heartbeat =
+        progressToken === undefined
+          ? undefined
+          : setInterval(() => {
+              void extra
+                .sendNotification({
+                  method: 'notifications/progress',
+                  params: {
+                    progressToken,
+                    progress: 0,
+                    message: 'Generating local research narration and player.'
+                  }
+                })
+                .catch(() => {})
+            }, 10_000)
+      heartbeat?.unref()
+      try {
+        const response = await fetchLocalRpc(
+          { endpoint: environment.rpcEndpoint, socketPath: environment.rpcSocketPath },
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${context.rpcCapabilityToken}`,
+              'content-type': 'application/json'
+            },
+            signal: extra.signal,
+            body: JSON.stringify({
+              method: 'researchVideoGenerate',
+              params: {
+                ...input,
+                projectId: resolveProjectId(environment),
+                appSessionId: context.appSessionId,
+                artifactStorageSessionId: context.artifactStorageSessionId ?? environment.sessionId,
+                artifactRunId: context.artifactRunId,
+                rootFrameId: context.rootFrameId,
+                agentFrameId: context.agentFrameId,
+                messageBranchId: context.messageBranchId,
+                runtimeSegmentId: context.runtimeSegmentId,
+                promptMessageId: context.promptMessageId
+              }
+            })
+          },
+          'Research video generation RPC'
+        )
+        const payload = (await response.json()) as ArtifactRpcResponse<{
+          player: ArtifactVersionFile
+          sources: ArtifactVersionFile
+          duration: number
+          preparationMs: number
+        }>
+        if (!response.ok || payload.error || !payload.result)
+          throw new Error(payload.error ?? `Research video generation failed (${response.status})`)
+        const { player, sources, ...timing } = payload.result
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  player: toWriteArtifactToolResult(player),
+                  sources: toWriteArtifactToolResult(sources),
+                  ...timing
+                },
+                null,
+                2
+              )
+            }
+          ]
+        }
+      } finally {
+        clearInterval(heartbeat)
+      }
+    }
+  )
   return server
 }
 

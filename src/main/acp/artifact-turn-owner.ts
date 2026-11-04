@@ -256,7 +256,7 @@ class ArtifactTurnOwner {
             notebookDataDir: turn.notebookArtifactSourceScope?.notebookDataDir,
             notebookSessionRoot: turn.notebookArtifactSourceScope?.notebookSessionRoot
           },
-          allowedMethods: ['artifactSaveVersion']
+          allowedMethods: ['artifactSaveVersion', 'researchVideoGenerate']
         },
         () =>
           turn.phase === 'open' &&

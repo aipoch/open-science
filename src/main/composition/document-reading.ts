@@ -29,6 +29,7 @@ import {
   OCR_RUNTIME_REVISIONS,
   PDF_TRANSLATION_MODEL_REVISIONS
 } from '../local-models/catalog'
+import { RESEARCH_NARRATION_MODELS } from '../research-video/model-catalog'
 import { createLocalModelApi } from '../local-models/owner'
 import { createLocalOcrModelOwner } from '../local-models/ocr-owner'
 import type { OcrLanguage } from '../../shared/local-models'
@@ -37,6 +38,8 @@ import { ProviderTextGenerationService } from '../literature/pdf-translation/tex
 import type { SettingsService } from '../settings/service'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { VIDEO_EXPORT_REVISIONS } from '../research-video/ffmpeg-catalog'
+import { createVideoExportTools } from '../research-video/ffmpeg'
 import { createLocalModelOwner } from '../local-models/owner'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { PdfAnnotationService } from '../pdf-annotations/service'
@@ -92,7 +95,9 @@ export async function composeDocumentReading({
   sessionPdfContextOwner: SessionPdfContextOwner
   literatureContextLog: ReturnType<typeof createLogger>
   localModelOwner: ReturnType<typeof createLocalModelOwner>
+  researchNarrationModels: ReturnType<typeof createLocalModelOwner>
   pdfTranslationOwner: PdfTranslationOwner
+  videoExportTools: ReturnType<typeof createVideoExportTools>
   localModels: ReturnType<typeof createLocalModelApi>
   pdfStructureReader: PdfStructureReader
   pdfAnnotationAgent: PdfAnnotationAgent
@@ -213,7 +218,32 @@ export async function composeDocumentReading({
     capability: undefined,
     dispose: () => owner.close()
   }))
-  const localModels = createLocalModelApi(localModelOwner, localTranslationModels, ocrModels)
+  const researchNarrationModels = createLocalModelOwner({
+    namespace: 'research-narration',
+    revisions: RESEARCH_NARRATION_MODELS
+  })
+  await modules.add({ researchNarrationModels }, ({ researchNarrationModels: owner }) => ({
+    name: 'research-narration-models',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+  const videoExportModels = createLocalModelOwner({
+    namespace: 'video-export',
+    revisions: VIDEO_EXPORT_REVISIONS
+  })
+  await modules.add({ videoExportModels }, ({ videoExportModels: owner }) => ({
+    name: 'video-export-tools',
+    capability: undefined,
+    dispose: () => owner.close()
+  }))
+  const videoExportTools = createVideoExportTools(videoExportModels)
+  const localModels = createLocalModelApi(
+    localModelOwner,
+    localTranslationModels,
+    ocrModels,
+    researchNarrationModels,
+    videoExportModels
+  )
   declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const pdfStructureSources = new PdfStructureSourceAuthority({
     literature: literatureAttachmentAuthority,
@@ -307,6 +337,8 @@ export async function composeDocumentReading({
     sessionPdfContextOwner,
     literatureContextLog,
     localModelOwner,
+    researchNarrationModels,
+    videoExportTools,
     localModels,
     pdfTranslationOwner,
     pdfStructureReader,

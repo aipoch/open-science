@@ -349,6 +349,25 @@ describe('application command composition', () => {
     expect(composition.localWeb.commandNames()).toEqual(expectedLocalWebCommands())
   })
 
+  it('keeps research video export desktop-only while exposing generation progress', async () => {
+    const composition = createApplicationCommandComposition(dependencies())
+    for (const name of [
+      'preview-resources:export-research-video',
+      'preview-resources:cancel-research-video-export',
+      'preview-resources:research-video-progress',
+      'research-video:start',
+      'research-video:status',
+      'research-video:cancel'
+    ]) {
+      expect(composition.desktop.commandNames()).toContain(name)
+      expect(composition.localWeb.commandNames()).not.toContain(name)
+      expect(composition.remoteWeb.commandNames()).not.toContain(name)
+      expect(composition.task.commandNames()).not.toContain(name)
+    }
+    expect(composition.localWeb.commandNames()).toContain('research-video:progress')
+    await composition.dispose()
+  })
+
   it('partitions remote Web dispatch from fail-closed pre-dispatch rejections', async () => {
     const listProjects = vi.fn().mockResolvedValue([project('project-1')])
     const onDiagnostic = vi.fn()

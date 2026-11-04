@@ -1,3 +1,4 @@
+import { generateResearchVideoSchema } from '../research-video/tool-contract'
 import {
   listPdfAnnotationsInput,
   locatePdfAnnotationInput,
@@ -248,6 +249,18 @@ const literatureTools = (
 ]
 
 const ARTIFACT_TOOLS: ResponsesNamespacedTool[] = [
+  tool(
+    ARTIFACT_MCP_SERVER_NAME,
+    'research_video_guide',
+    'Read research player authoring, evidence, and local narration requirements.',
+    z.object({})
+  ),
+  tool(
+    ARTIFACT_MCP_SERVER_NAME,
+    'generate_research_video',
+    'Generate an English narrated dynamic research player and source ZIP as Artifacts. Install Research narration in Local models first; read research_video_guide before authoring.',
+    z.object(generateResearchVideoSchema)
+  ),
   tool(
     ARTIFACT_MCP_SERVER_NAME,
     'write_artifact_file',

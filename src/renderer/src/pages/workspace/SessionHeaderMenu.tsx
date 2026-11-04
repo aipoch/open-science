@@ -1,4 +1,5 @@
-import { Ellipsis, MessageCircleMore } from 'lucide-react'
+import type { ResearchVideoTriggerState } from '@/components/research-video-button'
+import { Ellipsis, MessageCircleMore, Video } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -23,7 +24,8 @@ import { projectPresentedSessionActionability } from './session-wait-reason'
 
 const catalog = {
   ...SESSION_ACTION_CATALOG,
-  'new-side-chat': { labelKey: 'New side chat', icon: MessageCircleMore }
+  'new-side-chat': { labelKey: 'New side chat', icon: MessageCircleMore },
+  'research-explanation': { labelKey: 'Research film', icon: Video }
 }
 const recipe = [
   { kind: 'action', action: 'edit' },
@@ -31,6 +33,7 @@ const recipe = [
   { kind: 'separator' },
   { kind: 'action', action: 'new-side-chat' },
   { kind: 'action', action: 'fork' },
+  { kind: 'action', action: 'research-explanation' },
   { kind: 'separator' },
   {
     kind: 'submenu',
@@ -93,6 +96,8 @@ export const SessionHeaderMenu = ({
   session,
   bindings,
   createSideChat,
+  openResearchExplanation,
+  researchVideoTriggerState,
   credentialPending = false,
   rootPermissionPending,
   disabledReason
@@ -100,6 +105,8 @@ export const SessionHeaderMenu = ({
   session: SessionActionInvocation['session']
   bindings?: Partial<ReturnType<typeof createSessionActionBindings>>
   createSideChat?: () => string | undefined
+  openResearchExplanation?: () => void
+  researchVideoTriggerState?: ResearchVideoTriggerState
   credentialPending?: boolean
   rootPermissionPending?: boolean
   disabledReason?: string
@@ -123,6 +130,15 @@ export const SessionHeaderMenu = ({
         recipe={recipe}
         bindings={{
           ...bindings,
+          ...(openResearchExplanation
+            ? {
+                'research-explanation': {
+                  execute: openResearchExplanation,
+                  disabled: Boolean(researchVideoTriggerState?.disabledReason),
+                  disabledDescription: researchVideoTriggerState?.disabledReason
+                }
+              }
+            : {}),
           'new-side-chat': {
             execute: () => {
               createSideChat?.()
@@ -133,7 +149,11 @@ export const SessionHeaderMenu = ({
         }}
         compact={false}
         renderLabel={(entry, label) =>
-          entry.action === 'archive' ? t('Archive', { context: 'verb' }) : label
+          entry.action === 'research-explanation'
+            ? (researchVideoTriggerState?.label ?? label)
+            : entry.action === 'archive'
+              ? t('Archive', { context: 'verb' })
+              : label
         }
       >
         <span className="contents">

@@ -1001,3 +1001,26 @@ it('isolates flat translation assets and receipts from parser model management',
   await owner.close()
 })
 await configureTestElectronHost(await import('electron'))
+
+it('routes narration through its own verified model owner and blocks removal during generation', async () => {
+  const root = await prepare()
+  await seed(root)
+  const narration = createLocalModelOwner({
+    dataRoot: () => root,
+    namespace: 'research-narration',
+    revisions: [revision('voice-v1')],
+    download: installFile
+  })
+  const tables = createLocalModelOwner({ dataRoot: () => root, revisions: [revision('v1')] })
+  const api = createLocalModelApi(tables, tables, undefined, narration)
+  await api.install('research-narration')
+  await waitForIdle(narration)
+  const use = await narration.acquireUse()
+  expect((await api.getSnapshot('research-narration')).availability).toBe('ready')
+  expect((await api.remove('research-narration')).inUse).toBe(true)
+  use.release()
+  expect((await api.remove('research-narration')).availability).toBe('notInstalled')
+  expect((await api.getSnapshot()).availability).toBe('ready')
+  await narration.close()
+  await tables.close()
+})

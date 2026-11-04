@@ -190,5 +190,46 @@
   "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"],
   "src/main/pdf-annotations/agent-geometry-worker-entry.ts": [
     "src/main/pdf-annotations/agent-geometry.ts"
-  ]
+  ],
+  "src/main/research-video/generation-worker.ts": ["src/main/composition/notebook-bridge.ts"],
+  "resources/research-video/stage/index.html": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/tokens.json": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/ui/os-kit.css": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/ui/os-session.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/ui/os-app.css": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/ui/os-kit.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/css/stage.css": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/js/kit.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/js/anim.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/js/stage.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/js/panels.js": ["src/main/research-video/build-player.ts"],
+  "resources/research-video/stage/brand/logos/open-science-symbol-black.svg": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/logos/open-science-lockup-black.svg": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/logos/aipoch-logo-primary.svg": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/fonts/LICENSE-Inter.txt": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/fonts/Inter-latin.woff2": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/fonts/RobotoMono-latin.woff2": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/fonts/LICENSE-RobotoMono.txt": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/brand/fonts/fonts.css": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/icons/LICENSE-lucide.txt": [
+    "src/main/research-video/build-player.ts"
+  ],
+  "resources/research-video/stage/icons/lucide.js": ["src/main/research-video/build-player.ts"],
+  "src/main/research-video/runtime-assets.json": ["src/main/research-video/runtime.ts"]
 }
