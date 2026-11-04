@@ -1,5 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
+import {
+  recordResourceEvent,
+  unregisterResourceObservation
+} from '../resource-diagnostics/recorder'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
@@ -61,6 +65,7 @@ const safeLogError = (message: string, error: unknown): void => {
 // for the workflows constructed later; no owner can observe a partial Runtime during construction.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
+  const resourceRuntimeId = randomUUID()
   const callbacks = options.callbacks ?? {}
   const snapshotOwner = new AcpRuntimeSnapshotOwner(resolve(options.defaultCwd))
   const connectionResources = new AcpConnectionResourceOwner({
@@ -497,7 +502,14 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     connectionGeneration: () => connectionResources.epoch,
     disconnect: (emitClosedStatus) => effects().connectionClose.disconnect(emitClosedStatus),
     cleanupConfirmed: () => connectionResources.cleanupConfirmed,
-    onRetired: () => callbacks.onRetired?.(),
+    onRetired: () => {
+      recordResourceEvent('runtime-retired', {
+        runtimeId: resourceRuntimeId,
+        epoch: connectionResources.epoch
+      })
+      unregisterResourceObservation(resourceRuntimeId)
+      callbacks.onRetired?.()
+    },
     publishIdle: () => effects().publishIdle(),
     recoverFailedDeferredDisconnect: (_error, disconnectedGeneration) =>
       effects().connectionClose.recoverFailedDeferredDisconnect(disconnectedGeneration),
@@ -551,6 +563,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
   const notebookInputStorageRoot = options.notebook ? options.artifacts?.dataRoot : undefined
 
   return Object.freeze({
+    resourceRuntimeId,
     snapshotOwner,
     connectionAdapter: new AcpAgentConnectionAdapter(),
     connectionResources,

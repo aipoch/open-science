@@ -5,6 +5,10 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 
 const f = vi.hoisted(() => ({
   initLogs: vi.fn(),
+  resourceInit: vi.fn(),
+  resourceStore: vi.fn(),
+  resourceClose: vi.fn(async () => {}),
+  acquireOwnership: vi.fn(),
   stopIntent: vi.fn(),
   lifetimeAdmission: undefined as (() => void) | undefined,
   startupFailure: false,
@@ -115,6 +119,22 @@ vi.mock('./local-service-lifetime', () => ({
   }
 }))
 vi.mock('./runtime-stop-confirmation', () => ({ writeRuntimeExit: f.writeExit }))
+vi.mock('./resource-diagnostics/recorder', () => ({
+  ResourceRecorder: class {
+    constructor(options: unknown) {
+      f.resourceInit(options)
+    }
+    close = f.resourceClose
+  },
+  installResourceRecorder: vi.fn()
+}))
+vi.mock('./resource-diagnostics/store', () => ({
+  ResourceLogStore: class {
+    constructor(options: unknown) {
+      f.resourceStore(options)
+    }
+  }
+}))
 vi.mock('node:child_process', async (original) => ({
   ...(await original<typeof import('node:child_process')>()),
   spawn: f.spawn
@@ -134,7 +154,7 @@ vi.mock('./update/installation-protection', () => ({
 vi.mock('./runtime-ownership', () => ({
   RuntimeOwnershipConflict: class extends Error {},
   RuntimeDirectoryOwnership: class {
-    acquireSync = vi.fn()
+    acquireSync = f.acquireOwnership
     close = f.closeOwnership
   },
   acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
@@ -307,6 +327,19 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.disposeCipher).toHaveBeenCalledOnce()
   expect(process.exitCode).toBe(1)
   expect(f.initLogs).toHaveBeenCalledWith({ logDir: expect.stringMatching(/config[/\\]logs$/) })
+  if (process.platform === 'win32') {
+    expect(f.resourceInit).toHaveBeenCalledOnce()
+    expect(f.resourceInit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.acquireOwnership.mock.invocationCallOrder[0]
+    )
+    expect(f.resourceStore).toHaveBeenCalledWith(
+      expect.objectContaining({ directory: expect.stringMatching(/logs[/\\]resources$/) })
+    )
+    expect(f.resourceClose).toHaveBeenCalledWith(false)
+    expect(f.resourceClose.mock.invocationCallOrder[0]).toBeLessThan(
+      f.closeOwnership.mock.invocationCallOrder[0]
+    )
+  } else expect(f.resourceInit).not.toHaveBeenCalled()
   expect(process.env.OPEN_SCIENCE_STARTUP_ATTEMPT).toBeUndefined()
   const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
   expect(messages).toContainEqual({

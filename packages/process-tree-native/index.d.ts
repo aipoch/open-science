@@ -32,3 +32,30 @@ export function windowsOwnedProcessExitCode(handle: object): number | null
 export function windowsOwnedJobProcessIds(handle: object): number[]
 export function windowsCurrentProcessDescendants(): number[]
 export function reapWindowsOwnedJob(jobName: string): boolean
+
+export type ResourceProcessIdentity = { pid: number; birth: string }
+export type ResourceProcessSample = {
+  pid: number
+  parentPid: number
+  birth?: string
+  privateBytes?: number
+  workingSetBytes?: number
+  handleCount?: number
+  error?: number
+}
+export type WindowsResourceSample = {
+  supported: boolean
+  complete: boolean
+  startedAt: number
+  endedAt: number
+  system?: { committedBytes: number; commitLimitBytes: number; availableBytes: number }
+  systemError?: number
+  processes: ResourceProcessSample[]
+}
+/** Read-only, async. Birth is the lossless decimal FILETIME, never a JS timestamp. */
+export function sampleWindowsResources(
+  includeProcesses: boolean,
+  retained: readonly ResourceProcessIdentity[]
+): Promise<WindowsResourceSample>
+/** Single process identity read; no process enumeration. Null means unavailable. */
+export function readWindowsResourceBirth(pid: number): string | null

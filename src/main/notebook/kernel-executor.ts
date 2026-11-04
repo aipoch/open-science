@@ -1,4 +1,5 @@
 import { createLogger } from '@aipoch/diagnostics/node'
+import { observeResourceProcess, recordResourceEvent } from '../resource-diagnostics/recorder'
 import { resolveExternalRLibrary } from '@aipoch/environment'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -1238,6 +1239,14 @@ class NotebookKernelExecutor implements NotebookExecutor {
     // One owner supplies both executor and sandbox admission with evidence for this exact spawn.
     // Keep successful proof before settling the receipt; failed observations remain retryable.
     const teardownProcess = async (): Promise<ProcessTreeKillResult> => {
+      recordResourceEvent('kernel-teardown-started', {
+        kernelEpochId,
+        sessionId: request.sessionId,
+        projectId: request.projectId,
+        kind,
+        pid: child?.pid,
+        attempt: terminationAttempt + 1
+      })
       if (!processProof) {
         const attempt = ++terminationAttempt
         const proof = (async () => {
@@ -1308,6 +1317,16 @@ class NotebookKernelExecutor implements NotebookExecutor {
                 }
               : {}),
             ...result
+          })
+          recordResourceEvent('kernel-teardown-proof', {
+            kernelEpochId,
+            sessionId: request.sessionId,
+            projectId: request.projectId,
+            kind,
+            pid: child.pid,
+            attempt,
+            osReaped: osResult.reaped,
+            reaped: result.reaped
           })
           return result
         })()
@@ -1439,6 +1458,27 @@ class NotebookKernelExecutor implements NotebookExecutor {
       throw error
     }
     child.once('spawn', () => spawnAdmission?.started())
+    try {
+      // laneKey is the existing owner's serialized identity, not a path or an inferred session.
+      const lane = JSON.parse(this.laneKey ?? '[]') as unknown[]
+      observeResourceProcess(
+        child,
+        {
+          kernelEpochId,
+          sessionId: request.sessionId ?? lane[1],
+          projectId: request.projectId ?? lane[0],
+          kind,
+          role: 'notebook',
+          lane: lane[2],
+          frameId: lane[3],
+          attempt: lane[4],
+          receiptId: ownershipIntent?.record.receiptId
+        },
+        () => terminationAttempt > 0
+      )
+    } catch {
+      /* Missing diagnostic lane metadata cannot affect process admission. */
+    }
     child.once('error', () => spawnAdmission?.notStarted())
     if (this.platform !== 'win32' && this.canTrackPosixProcesses)
       this.registerOwnedProcessGroup(child, processTreeOwnership.token)

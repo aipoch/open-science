@@ -1,5 +1,10 @@
 {
   "ownerPaths": [
+    "src/main/resource-diagnostics/recorder.ts",
+    "src/main/resource-diagnostics/store.ts",
+    "src/main/resource-diagnostics/recorder.test.ts",
+    "src/main/resource-diagnostics/store.test.ts",
+    "src/main/resource-diagnostics/native.integration.test.ts",
     "src/main/diagnostics/ipc-rejection.test.ts",
     "src/main/diagnostics/ipc-rejection.ts",
     "src/main/diagnostics/privacy-canary.test.ts",
@@ -8,6 +13,8 @@
     "src/main/diagnostics/integration-test-helpers.ts"
   ],
   "interfacePaths": [
+    "src/main/resource-diagnostics/recorder.ts",
+    "src/main/resource-diagnostics/store.ts",
     "src/main/diagnostics/ipc-rejection.ts",
     "src/main/diagnostics/startup.ts",
     "src/main/diagnostics/integration-test-helpers.ts"
@@ -15,11 +22,14 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/resource-diagnostics/recorder.test.ts",
+      "src/main/resource-diagnostics/store.test.ts",
       "src/main/diagnostics/ipc-rejection.test.ts",
       "src/main/diagnostics/privacy-canary.test.ts",
       "src/main/diagnostics/startup.test.ts"
     ],
     "contract": [
+      "src/main/resource-diagnostics/native.integration.test.ts",
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts"

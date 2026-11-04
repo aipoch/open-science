@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { observeResourceProcess, type ResourceFacts } from '../resource-diagnostics/recorder'
 import { StringDecoder } from 'node:string_decoder'
 import {
   onProcessTreeReaped,
@@ -21,12 +22,14 @@ export const startOpenCodeService = async (
   backend: ResolvedAgentBackend,
   onUnexpectedExit: () => void,
   spawnProcess?: AgentProcessSpawner,
-  onReaped?: () => void
+  onReaped?: () => void,
+  resourceFields?: ResourceFacts
 ): Promise<
   OpenCodeServiceLease & { api: NonNullable<ResolvedAgentBackend['opencodeUsageApi']> }
 > => {
   const password = randomUUID()
   let spawnAttempted = false
+  let stopping = false
   const start = (
     spawnProcess: AgentProcessSpawner | undefined
   ): ReturnType<AgentProcessSpawner> => {
@@ -47,6 +50,11 @@ export const startOpenCodeService = async (
       'serve'
     )
     if (onReaped) onProcessTreeReaped(child, onReaped)
+    observeResourceProcess(
+      child,
+      { ...resourceFields, framework: 'opencode', role: 'opencode-service' },
+      () => stopping
+    )
     return child
   }
   let child: ReturnType<AgentProcessSpawner>
@@ -62,7 +70,6 @@ export const startOpenCodeService = async (
       })
     throw cause
   }
-  let stopping = false
   let released: Promise<ProcessTreeKillResult> | undefined
   const release = (): Promise<ProcessTreeKillResult> => {
     if (released) return released

@@ -20,6 +20,18 @@ export class AcpGenerationActivityOwner {
 
   constructor(private readonly options: AcpGenerationActivityOwnerOptions) {}
 
+  diagnosticSnapshot(): Record<string, number | boolean> {
+    return {
+      ...this.blockers(),
+      activePrompts: this.options.hasActivePrompts(),
+      activeReviewers: this.options.hasActiveReviewerSessions(),
+      activityLeases: this.activityLeaseCount,
+      operationLeases: this.operationLeaseCount,
+      startups: this.startupTokens.size,
+      additionalActivity: this.additionalActivity?.() === true
+    }
+  }
+
   blockers(): AcpGenerationActivityBlockers {
     const reconnect = this.blocksLiveEffortChange() || this.startupTokens.size > 0
     return Object.freeze({

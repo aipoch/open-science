@@ -1,3 +1,5 @@
+import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
+import { ResourceLogStore } from './resource-diagnostics/store'
 import {
   configureMainAgentProcessOwnership,
   closeMainAgentProcessOwnership
@@ -142,6 +144,18 @@ async function main(): Promise<void> {
   configureRuntimeDirectoryOwnership(ownership)
   // Credential preflight can fail before full application diagnostics are initialized.
   initLogger({ logDir: join(configRoot, 'logs') })
+  const resourceRecorder =
+    process.platform === 'win32'
+      ? new ResourceRecorder({
+          runId: generation,
+          store: new ResourceLogStore({
+            directory: join(configRoot, 'logs', 'resources'),
+            onFailure: () =>
+              createLogger('resource-diagnostics').warn('resource journal unavailable')
+          })
+        })
+      : undefined
+  installResourceRecorder(resourceRecorder)
   try {
     await configureMainAgentProcessOwnership(
       new DelegatedProcessOwnership(configRoot, 'main-agent-process-ownership')
@@ -251,6 +265,8 @@ async function main(): Promise<void> {
         failed = true
       }
       // A failed child-process drain must not release ownership while this process remains alive.
+      await resourceRecorder?.close(!failed && !credentialFailure).catch(() => undefined)
+      installResourceRecorder(undefined)
       if (!failed) {
         try {
           await ownership.close()
