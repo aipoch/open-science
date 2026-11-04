@@ -4080,9 +4080,7 @@
     "Uses an MCP service configured for this conversation.": "Использует сервис MCP, настроенный для данного диалога.",
     "Access network resource?": "Доступ к сетевому ресурсу?",
     "Network access": "Доступ к сети",
-    "Connect to {{domain}}?": "Подключиться к {{domain}}?",
     "Notebook code wants to connect to an external domain.": "Код Notebook запрашивает подключение к внешнему домену.",
-    "Notebook code requested access to {{destination}}.": "Код Notebook запросил доступ к {{destination}}.",
     "Reason: {{reason}}": "Причина: {{reason}}",
     "Sends a request to an external network resource.": "Отправляет запрос на внешний сетевой ресурс.",
     "Read files?": "Чтение файлов?",
@@ -8247,6 +8245,12 @@
     "Approved network destinations": "Утверждённые сетевые адреса",
     "Could not revoke network access. Try again.": "Не удалось отозвать доступ к сети. Повторите попытку.",
     "Project: {{project}}": "Проект: {{project}}",
-    "Source session: {{session}}": "Исходная сессия: {{session}}"
+    "Source session: {{session}}": "Исходная сессия: {{session}}",
+    "Network access required": "Требуется доступ к сети",
+    "Requested domain": "Запрошенный домен",
+    "Resolved IP addresses": "Разрешённые IP-адреса",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "Этот доступ может затрагивать локальные службы, частные сети, облачные учётные данные или Mihomo Fake-IP.",
+    "This address may reach the local computer or a loopback service.": "Этот адрес может обращаться к локальному компьютеру или службе loopback.",
+    "This address may expose cloud metadata or credentials.": "Этот адрес может раскрыть облачные метаданные или учётные данные."
   }
 }

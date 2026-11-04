@@ -475,39 +475,34 @@ const NotebookNetworkApprovalDetail = ({
   const [expanded, setExpanded] = useState(false)
   const approval = getNotebookNetworkApproval(request)
   if (!approval) return null
-  const destination = approval.port ? `${approval.hostname}:${approval.port}` : approval.hostname
 
   return (
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
-      <p>{t('Notebook code requested access to {{destination}}.', { destination })}</p>
-      {approval.addresses ? (
-        <>
-          <p>
-            {t('Resolved addresses: {{addresses}}', { addresses: approval.addresses.join(', ') })}
-          </p>
-          {approval.blockReason === 'addresses-changed' ? (
-            <p>{t('Addresses changed. Review the new addresses before approving again.')}</p>
-          ) : null}
-          {approval.risks?.includes('sensitive') ? (
-            <p>
-              {t(
-                'Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.'
-              )}
-            </p>
-          ) : null}
-          {approval.risks?.includes('fake-ip') ? (
-            <p>
-              {t('Possible Mihomo Fake-IP: this virtual address is not the final server address.')}
-            </p>
-          ) : null}
-          <p>
-            {t(
-              'Approval does not replay the command. The agent must check side effects and retry explicitly.'
-            )}
-          </p>
-        </>
-      ) : null}
-      {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
+        <dt>{t('Requested domain')}</dt>
+        <dd className="break-all font-mono text-foreground">{approval.hostname}</dd>
+        <dt>{t('Port')}</dt>
+        <dd className="font-mono text-foreground">{approval.port ?? 443}</dd>
+        {approval.addresses ? (
+          <>
+            <dt>{t('Resolved IP addresses')}</dt>
+            <dd className="break-all font-mono text-foreground">{approval.addresses.join(', ')}</dd>
+          </>
+        ) : null}
+      </dl>
+      <div className="flex items-start gap-2 rounded-md bg-status-warning-surface/60 p-3 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
+        <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+        <p>
+          {t(
+            'This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.'
+          )}
+        </p>
+      </div>
+      <p>
+        {t(
+          'Approval does not replay the command. The agent must check side effects and retry explicitly.'
+        )}
+      </p>
       {approval.runtime &&
       approval.runtime !== 'bash' &&
       request.options.some((option) => option.kind === 'allow_once') ? (
@@ -530,12 +525,36 @@ const NotebookNetworkApprovalDetail = ({
         {t('Details')}
       </button>
       {expanded ? (
-        <p>
-          {t(
-            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
-            { domain: approval.hostname }
-          )}
-        </p>
+        <div className="space-y-2" role="region">
+          {approval.blockReason === 'addresses-changed' ? (
+            <p>{t('Addresses changed. Review the new addresses before approving again.')}</p>
+          ) : null}
+          {approval.risks?.includes('sensitive') ? (
+            <p>
+              {t(
+                'Sensitive destination: this may expose local services, private networks, or cloud credentials. Approve only if you trust this access.'
+              )}
+            </p>
+          ) : null}
+          {approval.risks?.includes('local') ? (
+            <p>{t('This address may reach the local computer or a loopback service.')}</p>
+          ) : null}
+          {approval.risks?.includes('metadata') ? (
+            <p>{t('This address may expose cloud metadata or credentials.')}</p>
+          ) : null}
+          {approval.risks?.includes('fake-ip') ? (
+            <p>
+              {t('Possible Mihomo Fake-IP: this virtual address is not the final server address.')}
+            </p>
+          ) : null}
+          {approval.reason ? <p>{t('Reason: {{reason}}', { reason: approval.reason })}</p> : null}
+          <p>
+            {t(
+              'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
+              { domain: approval.hostname }
+            )}
+          </p>
+        </div>
       ) : null}
     </div>
   )

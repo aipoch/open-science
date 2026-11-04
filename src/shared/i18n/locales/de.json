@@ -3559,9 +3559,7 @@
     "Uses an MCP service configured for this conversation.": "Verwendet einen für diese Konversation konfigurierten MCP-Dienst.",
     "Access network resource?": "Auf Netzwerkressource zugreifen?",
     "Network access": "Netzwerkzugriff",
-    "Connect to {{domain}}?": "Mit {{domain}} verbinden?",
     "Notebook code wants to connect to an external domain.": "Notebook-Code möchte eine Verbindung zu einer externen Domain herstellen.",
-    "Notebook code requested access to {{destination}}.": "Notebook-Code hat Zugriff auf {{destination}} angefordert.",
     "Reason: {{reason}}": "Grund: {{reason}}",
     "Sends a request to an external network resource.": "Sendet eine Anfrage an eine externe Netzwerkressource.",
     "Read files?": "Dateien lesen?",
@@ -7927,6 +7925,12 @@
     "Approved network destinations": "Freigegebene Netzwerkziele",
     "Could not revoke network access. Try again.": "Der Netzwerkzugriff konnte nicht widerrufen werden. Versuchen Sie es erneut.",
     "Project: {{project}}": "Projekt: {{project}}",
-    "Source session: {{session}}": "Ursprüngliche Sitzung: {{session}}"
+    "Source session: {{session}}": "Ursprüngliche Sitzung: {{session}}",
+    "Network access required": "Netzwerkzugriff erforderlich",
+    "Requested domain": "Angeforderte Domain",
+    "Resolved IP addresses": "Aufgelöste IP-Adressen",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "Dieser Zugriff kann lokale Dienste, private Netzwerke, Cloud-Zugangsdaten oder eine Mihomo Fake-IP betreffen.",
+    "This address may reach the local computer or a loopback service.": "Diese Adresse kann den lokalen Computer oder einen Loopback-Dienst erreichen.",
+    "This address may expose cloud metadata or credentials.": "Diese Adresse kann Cloud-Metadaten oder Zugangsdaten offenlegen."
   }
 }

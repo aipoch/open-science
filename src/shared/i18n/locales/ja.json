@@ -3697,9 +3697,7 @@
     "Uses an MCP service configured for this conversation.": "この会話用に構成された MCP サービスを使用します。",
     "Access network resource?": "ネットワークリソースにアクセスしますか？",
     "Network access": "ネットワークアクセス",
-    "Connect to {{domain}}?": "{{domain}} に接続しますか？",
     "Notebook code wants to connect to an external domain.": "Notebook コードが外部ドメインへの接続を要求しています。",
-    "Notebook code requested access to {{destination}}.": "Notebook コードが {{destination}} へのアクセスを要求しました。",
     "Reason: {{reason}}": "理由：{{reason}}",
     "Sends a request to an external network resource.": "外部ネットワークリソースにリクエストを送信します。",
     "Read files?": "ファイルを読みますか？",
@@ -7761,6 +7759,12 @@
     "Approved network destinations": "承認済みのネットワーク接続先",
     "Could not revoke network access. Try again.": "ネットワークアクセスを取り消せませんでした。再試行してください。",
     "Project: {{project}}": "プロジェクト：{{project}}",
-    "Source session: {{session}}": "要求元のセッション：{{session}}"
+    "Source session: {{session}}": "要求元のセッション：{{session}}",
+    "Network access required": "ネットワークアクセスが必要です",
+    "Requested domain": "要求されたドメイン",
+    "Resolved IP addresses": "解決された IP アドレス",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "このアクセスには、ローカルサービス、プライベートネットワーク、クラウド認証情報、または Mihomo Fake-IP が関係する可能性があります。",
+    "This address may reach the local computer or a loopback service.": "このアドレスはローカルコンピューターまたはループバックサービスに到達する可能性があります。",
+    "This address may expose cloud metadata or credentials.": "このアドレスはクラウドメタデータまたは認証情報を公開する可能性があります。"
   }
 }

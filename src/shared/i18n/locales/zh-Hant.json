@@ -3784,9 +3784,7 @@
     "Uses an MCP service configured for this conversation.": "使用為此對話設定的 MCP 服務。",
     "Access network resource?": "存取網路資源？",
     "Network access": "網路存取",
-    "Connect to {{domain}}?": "連線到 {{domain}}？",
     "Notebook code wants to connect to an external domain.": "Notebook 程式碼想要連線到外部網域。",
-    "Notebook code requested access to {{destination}}.": "Notebook 程式碼要求存取 {{destination}}。",
     "Reason: {{reason}}": "原因：{{reason}}",
     "Sends a request to an external network resource.": "向外部網路資源傳送請求。",
     "Read files?": "讀取檔案？",
@@ -7761,6 +7759,12 @@
     "Approved network destinations": "已核准的網路目標",
     "Could not revoke network access. Try again.": "無法撤銷網路存取權限。請重試。",
     "Project: {{project}}": "專案：{{project}}",
-    "Source session: {{session}}": "來源工作階段：{{session}}"
+    "Source session: {{session}}": "來源工作階段：{{session}}",
+    "Network access required": "需要網路存取",
+    "Requested domain": "要求的網域",
+    "Resolved IP addresses": "解析出的 IP 位址",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "此存取可能涉及本機服務、私有網路、雲端憑證或 Mihomo Fake-IP。",
+    "This address may reach the local computer or a loopback service.": "此位址可能連線到本機或回環服務。",
+    "This address may expose cloud metadata or credentials.": "此位址可能暴露雲端中繼資料或憑證。"
   }
 }

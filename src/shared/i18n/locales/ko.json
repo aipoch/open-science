@@ -3708,9 +3708,7 @@
     "Uses an MCP service configured for this conversation.": "이 대화에 대해 구성된 MCP 서비스를 사용합니다.",
     "Access network resource?": "네트워크 리소스에 액세스하시겠습니까?",
     "Network access": "네트워크 액세스",
-    "Connect to {{domain}}?": "{{domain}}에 연결할까요?",
     "Notebook code wants to connect to an external domain.": "Notebook 코드가 외부 도메인에 연결하려고 합니다.",
-    "Notebook code requested access to {{destination}}.": "Notebook 코드가 {{destination}} 액세스를 요청했습니다.",
     "Reason: {{reason}}": "이유: {{reason}}",
     "Sends a request to an external network resource.": "외부 네트워크 리소스에 요청을 보냅니다.",
     "Read files?": "파일을 읽어보시겠어요?",
@@ -7759,6 +7757,12 @@
     "Approved network destinations": "승인된 네트워크 대상",
     "Could not revoke network access. Try again.": "네트워크 접근 권한을 취소하지 못했습니다. 다시 시도하세요.",
     "Project: {{project}}": "프로젝트: {{project}}",
-    "Source session: {{session}}": "출처 세션: {{session}}"
+    "Source session: {{session}}": "출처 세션: {{session}}",
+    "Network access required": "네트워크 액세스 필요",
+    "Requested domain": "요청한 도메인",
+    "Resolved IP addresses": "확인된 IP 주소",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "이 액세스는 로컬 서비스, 사설 네트워크, 클라우드 자격 증명 또는 Mihomo Fake-IP와 관련될 수 있습니다.",
+    "This address may reach the local computer or a loopback service.": "이 주소는 로컬 컴퓨터 또는 루프백 서비스에 연결될 수 있습니다.",
+    "This address may expose cloud metadata or credentials.": "이 주소는 클라우드 메타데이터 또는 자격 증명을 노출할 수 있습니다."
   }
 }

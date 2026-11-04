@@ -3784,9 +3784,7 @@
     "Uses an MCP service configured for this conversation.": "使用为此对话配置的 MCP 服务。",
     "Access network resource?": "访问网络资源？",
     "Network access": "网络访问",
-    "Connect to {{domain}}?": "连接到 {{domain}}？",
     "Notebook code wants to connect to an external domain.": "Notebook 代码想要连接到外部域名。",
-    "Notebook code requested access to {{destination}}.": "Notebook 代码请求访问 {{destination}}。",
     "Reason: {{reason}}": "原因：{{reason}}",
     "Sends a request to an external network resource.": "向外部网络资源发送请求。",
     "Read files?": "读取文件？",
@@ -7761,6 +7759,12 @@
     "Approved network destinations": "已批准的网络目标",
     "Could not revoke network access. Try again.": "无法撤销网络访问权限。请重试。",
     "Project: {{project}}": "项目：{{project}}",
-    "Source session: {{session}}": "来源会话：{{session}}"
+    "Source session: {{session}}": "来源会话：{{session}}",
+    "Network access required": "需要网络访问",
+    "Requested domain": "请求域名",
+    "Resolved IP addresses": "解析出的 IP 地址",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "此访问可能涉及本机服务、私有网络、云凭据或 Mihomo Fake-IP。",
+    "This address may reach the local computer or a loopback service.": "此地址可能连接到本机或回环服务。",
+    "This address may expose cloud metadata or credentials.": "此地址可能暴露云元数据或凭据。"
   }
 }

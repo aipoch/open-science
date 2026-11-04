@@ -3973,9 +3973,7 @@
     "Uses an MCP service configured for this conversation.": "Utiliza un servicio MCP configurado para esta conversación.",
     "Access network resource?": "¿Acceder al recurso de red?",
     "Network access": "Acceso a la red",
-    "Connect to {{domain}}?": "¿Conectar con {{domain}}?",
     "Notebook code wants to connect to an external domain.": "El código de Notebook quiere conectarse a un dominio externo.",
-    "Notebook code requested access to {{destination}}.": "El código de Notebook solicitó acceso a {{destination}}.",
     "Reason: {{reason}}": "Motivo: {{reason}}",
     "Sends a request to an external network resource.": "Envía una solicitud a un recurso de red externo.",
     "Read files?": "¿Leer archivos?",
@@ -8101,6 +8099,12 @@
     "Approved network destinations": "Destinos de red aprobados",
     "Could not revoke network access. Try again.": "No se pudo revocar el acceso a la red. Inténtelo de nuevo.",
     "Project: {{project}}": "Proyecto: {{project}}",
-    "Source session: {{session}}": "Sesión de origen: {{session}}"
+    "Source session: {{session}}": "Sesión de origen: {{session}}",
+    "Network access required": "Se requiere acceso de red",
+    "Requested domain": "Dominio solicitado",
+    "Resolved IP addresses": "Direcciones IP resueltas",
+    "This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.": "Este acceso puede involucrar servicios locales, redes privadas, credenciales en la nube o una Fake-IP de Mihomo.",
+    "This address may reach the local computer or a loopback service.": "Esta dirección puede llegar al equipo local o a un servicio de loopback.",
+    "This address may expose cloud metadata or credentials.": "Esta dirección puede exponer metadatos o credenciales de la nube."
   }
 }

@@ -407,9 +407,7 @@ const describePermissionRequest = (request: AcpPermissionRequest): PermissionPre
   const networkApproval = getNotebookNetworkApproval(request)
   if (networkApproval) {
     return {
-      actionTitle: `Connect to ${networkApproval.hostname}?`,
-      actionTitleKey: 'Connect to {{domain}}?',
-      actionTitleValues: { domain: networkApproval.hostname },
+      actionTitle: 'Network access required',
       categoryLabel: 'Network access',
       description: request.durable
         ? 'Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.'

@@ -562,14 +562,21 @@ describe('PermissionApprovalControls', () => {
       <PermissionApprovalControls requests={[networkApprovalRequest]} onRespond={() => undefined} />
     )
 
-    expect(html).toContain('Connect to data.example.org?')
+    expect(html).toContain('Network access required')
     expect(html).toContain('Network access')
-    expect(html).toContain('Notebook code requested access to data.example.org:443.')
+    expect(html).toContain('Requested domain')
+    expect(html).toContain('data.example.org')
+    expect(html).toContain('Port')
+    expect(html).toContain('443')
+    expect(html).toContain(
+      'This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.'
+    )
     expect(html).toContain(
       'Allow once applies to the next execution of the same command in this session and runtime. It allows multiple connections to this domain during that execution.'
     )
-    expect(html).toContain('Reason: Download the dataset requested in this conversation.')
     expect(html).toContain('Details')
+    expect(html).toContain('aria-expanded="false"')
+    expect(html).not.toContain('Reason: Download the dataset requested in this conversation.')
     expect(html).toContain('Allow once')
     expect(html).toContain('Deny')
     expect(html).toContain('data-testid="scope-chevron"')
@@ -613,10 +620,46 @@ describe('PermissionApprovalControls', () => {
     )
     expect(html).toContain('Allow for this project')
     expect(html).toContain('198.18.0.1')
-    expect(html).toContain('Sensitive destination')
-    expect(html).toContain('Possible Mihomo Fake-IP')
-    expect(html).toContain('Addresses changed')
+    expect(html).toContain('Resolved IP addresses')
+    expect(html).toContain(
+      'This access may involve local services, private networks, cloud credentials, or a Mihomo Fake-IP.'
+    )
+    expect(html).not.toContain('Sensitive destination')
+    expect(html).not.toContain('Possible Mihomo Fake-IP')
+    expect(html).not.toContain('Addresses changed')
     expect(html).toContain('Approval does not replay the command')
+  })
+
+  it('keeps concrete network risks and the request purpose inside collapsed Details', async () => {
+    const host = await mountControls({
+      ...networkApprovalRequest,
+      rawInput: {
+        notebookNetworkApproval: {
+          hostname: 'local.test',
+          port: 443,
+          runtime: 'bash',
+          addresses: ['198.18.0.1'],
+          risks: ['sensitive', 'local', 'metadata', 'fake-ip'],
+          blockReason: 'addresses-changed',
+          reason: 'Download the dataset requested in this conversation.'
+        }
+      }
+    })
+    const details = host.querySelector<HTMLButtonElement>('button[aria-expanded]')!
+    expect(details.getAttribute('aria-expanded')).toBe('false')
+    expect(host.textContent).not.toContain('Sensitive destination')
+    await act(async () => details.click())
+    expect(details.getAttribute('aria-expanded')).toBe('true')
+    expect(host.textContent).toContain('Sensitive destination')
+    expect(host.textContent).toContain(
+      'This address may reach the local computer or a loopback service.'
+    )
+    expect(host.textContent).toContain('This address may expose cloud metadata or credentials.')
+    expect(host.textContent).toContain('Possible Mihomo Fake-IP')
+    expect(host.textContent).toContain('Addresses changed')
+    expect(host.textContent).toContain(
+      'Reason: Download the dataset requested in this conversation.'
+    )
   })
 
   it.each(['python', 'r', 'repl', 'bash', undefined])(
