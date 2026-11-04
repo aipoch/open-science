@@ -20,13 +20,27 @@ window.api = {
     inspectDiagnostics: async () => {
       if (params.has('preparing')) return new Promise(() => {})
       return {
-        items: Array.from({ length: 18 }, (_, index) => ({
-          id: `session-${index}`,
-          name: `session-${index}.json`,
-          kind: 'session',
-          available: true,
-          sizeBytes: 4096
-        }))
+        items: [
+          ...Array.from({ length: 18 }, (_, index) => ({
+            id: `session-${index}`,
+            name: `session-${index}.json`,
+            kind: 'session',
+            available: true,
+            sizeBytes: 4096
+          })),
+          ...[
+            'desktop-log:main.log',
+            'desktop-log:main.1.log',
+            'desktop-legacy-log:main.log',
+            'backend-log:desktop-backend-12345-1700000000000.log'
+          ].map((id) => ({
+            id,
+            name: id.slice(id.indexOf(':') + 1),
+            kind: 'log',
+            available: true,
+            sizeBytes: 262144
+          }))
+        ]
       }
     },
     exportDiagnostics: async (): Promise<SessionDiagnosticExportResult> => ({
