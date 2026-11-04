@@ -25,7 +25,7 @@ it('blocks conflicting reuse and supplementation, exposes matches, and permits e
   const props = {
     recordImport: {
       fileName: 'references.nbib',
-      content: '',
+      source: { content: '' },
       preview: {
         format: 'nbib' as const,
         items: [item],
@@ -158,7 +158,7 @@ it.each(['existing', 'conflict'] as const)(
     const onImport = vi.fn()
     render(
       <LiteratureRecordImportDialog
-        recordImport={{ fileName: 'batch.nbib', content: 'source', preview }}
+        recordImport={{ fileName: 'batch.nbib', source: { content: 'source' }, preview }}
         isImportingRecords={false}
         destination="Library"
         itemDescription={() => ''}
@@ -180,7 +180,7 @@ it.each(['existing', 'conflict'] as const)(
     expect(submit.disabled).toBe(true)
     expect(screen.getByText('Loading…')).not.toBeNull()
     expect(screen.queryByText('New references')).toBeNull()
-    expect(onPreviewSelection).toHaveBeenCalledWith('source', [1])
+    expect(onPreviewSelection).toHaveBeenCalledWith({ content: 'source' }, [1])
     fireEvent.click(screen.getByRole('button', { name: 'Check all' }))
     fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference 1: Imported paper' }))
     expect(onPreviewSelection).toHaveBeenCalledTimes(2)

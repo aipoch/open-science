@@ -3,7 +3,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { access, readFile, rm, writeFile } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import { createServer, type Server } from 'node:net'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
@@ -13,12 +13,20 @@ import {
 } from './electron-as-node-launch-policy.js'
 import type { DependencyCheck } from './linux-isolation.js'
 import {
+  CommandGateway,
   LOCAL_RPC_BROKER_HOST,
   sharedGatewayPortActive,
   type GatewayCredentials
 } from '../gateway/command-gateway.js'
 
 type WindowsShell = Readonly<{ kind: 'powershell' | 'cmd'; path: string }>
+
+const systemPowerShell = (): string => {
+  const root = process.env.SystemRoot || process.env.WINDIR
+  return root
+    ? win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe'
+}
 
 type WindowsRuntimeVerification = Readonly<{
   argv: readonly string[]
@@ -235,7 +243,7 @@ const connectionProbeSpecification = (port: number): string => {
   ].join('\n')
   return Buffer.from(
     JSON.stringify({
-      executable: 'powershell.exe',
+      executable: systemPowerShell(),
       arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command],
       cwd: process.env.SystemRoot ?? 'C:\\Windows',
       readOnlyRoots: [],
@@ -254,13 +262,18 @@ const verifyWindowsNetworkFence = async (
   gatewayPort: number
 ): Promise<void> => {
   let outside: Server | undefined
-  let gateway: Server | undefined
+  let gateway: CommandGateway | undefined
   try {
     outside = await listen(0)
     const outsideAddress = outside.address()
     if (!outsideAddress || typeof outsideAddress === 'string')
       throw new Error('The outside-port probe listener is unavailable.')
-    if (!sharedGatewayPortActive(gatewayPort)) gateway = await listen(gatewayPort)
+    // Keep the shared listener alive even if the last command finishes during either probe.
+    gateway = await CommandGateway.open({
+      sharedPort: gatewayPort,
+      credentials: { username: randomUUID(), password: randomBytes(32).toString('hex') },
+      decide: async () => ({ allowed: false })
+    })
     const outsideProbe = await runCapture(hostPath, [
       'launch',
       installationId,
@@ -284,7 +297,7 @@ const verifyWindowsNetworkFence = async (
       { cause }
     )
   } finally {
-    await Promise.all([closeServer(outside), closeServer(gateway)])
+    await Promise.all([closeServer(outside), gateway?.close()])
   }
 }
 
@@ -395,7 +408,7 @@ const runElevatedHostCommand = async (
 ): Promise<{ cancelled: boolean }> => {
   const script = windowsElevationScript(hostPath, installationId, ownershipRoot, command, args)
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
-  const result = await runCapture('powershell.exe', [
+  const result = await runCapture(systemPowerShell(), [
     '-NoLogo',
     '-NoProfile',
     '-NonInteractive',
@@ -722,7 +735,7 @@ const windowsLaunch = (
       ? request.shell
       : request.shell
         ? { kind: 'cmd', path: request.shell }
-        : { kind: 'powershell', path: 'powershell.exe' }
+        : { kind: 'powershell', path: systemPowerShell() }
   const childArgs =
     shell.kind === 'powershell'
       ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command]
@@ -805,7 +818,7 @@ const windowsStandardLaunch = (
       ? request.shell
       : request.shell
         ? { kind: 'cmd', path: request.shell }
-        : { kind: 'powershell', path: 'powershell.exe' }
+        : { kind: 'powershell', path: systemPowerShell() }
   // PowerShell does not transparently relay a redirected stdin stream to a long-lived native child:
   // a Notebook loop can observe EOF and exit before the executor writes its first protocol frame.
   // Preserve structured native invocations in standard mode just as protected mode does. Batch

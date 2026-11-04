@@ -19,14 +19,30 @@ describe('supported literature links', () => {
     ['https://arxiv.org/abs/2401.12345v2?context=cs', 'arxiv:2401.12345'],
     ['https://arxiv.org/pdf/2401.12345v3.pdf#page=2', 'arxiv:2401.12345'],
     ['https://www.arxiv.org/pdf/hep-th/9901001v1', 'arxiv:hep-th/9901001'],
-    ['arXiv:2401.12345v2', 'arxiv:2401.12345']
+    ['arXiv:2401.12345v2', 'arxiv:2401.12345'],
+    ['2401.12345v2', 'arxiv:2401.12345'],
+    ['hep-th/9901001', 'arxiv:hep-th/9901001'],
+    ['35486828', 'pmid:35486828'],
+    ['PMID: 35486828', 'pmid:35486828'],
+    ['PMC12345', 'pmcid:PMC12345'],
+    ['PMCID: pmc12345', 'pmcid:PMC12345'],
+    ['https://pubmed.ncbi.nlm.nih.gov/35486828/?x=1', 'pmid:35486828'],
+    ['https://pmc.ncbi.nlm.nih.gov/articles/PMC12345/', 'pmcid:PMC12345'],
+    ['https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12345/', 'pmcid:PMC12345']
   ])('normalizes %s', (input, expected) => {
     expect(parseLiteratureLink(input)).toBe(expected)
-    if (!expected.startsWith('arxiv:'))
+    if (expected.startsWith('10.'))
       expect(normalizeLiteratureIdentifierKey('doi', expected)).toBe(expected)
   })
   it.each([
     '',
+    '0',
+    'PMID: -12',
+    'PMC0',
+    'PMCID:12345',
+    'https://pubmed.ncbi.nlm.nih.gov/?term=12345',
+    'https://pubmed.ncbi.nlm.nih.gov.evil.test/12345/',
+    'https://pmc.ncbi.nlm.nih.gov/articles/PMC12345/pdf/',
     'https://example.com/10.1234/paper',
     'https://arxiv.org.evil.test/abs/2401.12345',
     'https://doi.org@127.0.0.1/10.1234/paper',
@@ -35,6 +51,10 @@ describe('supported literature links', () => {
     'file:///10.1234/paper',
     'https://arxiv.org/search/?query=2401.12345',
     'https://doi.org/%E0%A4%A',
+    'https://doi.org/35486828',
+    'https://doi.org/PMC12345',
+    'https://doi.org/arxiv:2401.12345',
+    'https://doi.org/pmid:%0935486828',
     'https://arxiv.org/abs/2413.12345',
     '10.1234/has space',
     'https://doi.org/10.1234/pa\tper',

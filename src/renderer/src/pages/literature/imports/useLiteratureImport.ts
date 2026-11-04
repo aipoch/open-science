@@ -13,6 +13,7 @@ import type {
   LiteratureCollectionView,
   LiteratureDuplicatePolicy,
   LiteratureItemView,
+  LiteratureRecordImportSource,
   LiteratureRecordImportResult
 } from '@aipoch/literature-library/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
@@ -101,7 +102,7 @@ export function useLiteratureImport({
         error: string | undefined
         duplicatePolicy: LiteratureDuplicatePolicy
         createdItemId: string | undefined
-        linkSource: 'DOI' | 'arXiv' | undefined
+        linkSource: string | undefined
       }
     | undefined
   recordImport:
@@ -113,12 +114,13 @@ export function useLiteratureImport({
   setDuplicatePolicy: React.Dispatch<React.SetStateAction<LiteratureDuplicatePolicy>>
   isImportingRecords: boolean
   createManualItem: (item?: LiteratureItemInput) => Promise<void>
-  beginLinkImport: (item: LiteratureItemInput, source: 'DOI' | 'arXiv') => void
+  beginLinkImport: (item: LiteratureItemInput, source: string) => void
   beginPdfImport: (file: File | PdfAnnotationSource) => void
   closeItemEditor: () => void
   previewRecordImport: (file: File) => Promise<void>
+  previewResolvedImport: (items: LiteratureItemInput[]) => Promise<void>
   previewRecordSelection: (
-    content: string,
+    source: LiteratureRecordImportSource,
     selectedItemIndexes: number[]
   ) => Promise<LiteratureRecordImportResult>
   commitRecordImport: (selectedItemIndexes?: number[]) => Promise<void>
@@ -157,7 +159,7 @@ export function useLiteratureImport({
   const [pendingImportPdf, setPendingImportPdf] = useState<File | PdfAnnotationSource>()
   const [pendingImportMetadataNotice, setPendingImportMetadataNotice] = useState<string>()
   const [pendingImportDraft, setPendingImportDraft] = useState<LiteratureItemInput>()
-  const [linkSource, setLinkSource] = useState<'DOI' | 'arXiv'>()
+  const [linkSource, setLinkSource] = useState<string>()
   const [isReadingImportMetadata, setIsReadingImportMetadata] = useState(false)
   const [recordImport, setRecordImport] = useState<
     RecordImportDraft & { destination: { name: string; projectId?: string; collectionId?: string } }
@@ -279,7 +281,7 @@ export function useLiteratureImport({
     }
   }
 
-  const beginLinkImport = (item: LiteratureItemInput, source: 'DOI' | 'arXiv'): void => {
+  const beginLinkImport = (item: LiteratureItemInput, source: string): void => {
     resetItemEditor()
     setPendingImportMetadataNotice(undefined)
     setPendingImportDraft(item)
@@ -356,12 +358,12 @@ export function useLiteratureImport({
       projectId,
       collectionId
     }
-    setRecordImport({ fileName: file.name, content: '', reading: true, destination })
+    setRecordImport({ fileName: file.name, source: { content: '' }, reading: true, destination })
     if (file.size > LITERATURE_RECORD_IMPORT_MAX_BYTES) {
       setRecordImport({
         destination,
         fileName: file.name,
-        content: '',
+        source: { content: '' },
         error: t('{{fileName}}: file is too large (limit {{limit}}).', {
           fileName: file.name,
           limit: formatUploadSizeLimit(LITERATURE_RECORD_IMPORT_MAX_BYTES)
@@ -372,24 +374,48 @@ export function useLiteratureImport({
     try {
       const content = await file.text()
       if (request !== recordImportRequest.current) return
-      setRecordImport({ fileName: file.name, content, destination })
+      const source = { content }
+      setRecordImport({ fileName: file.name, source, destination })
       const preview = await hostApi.literature.importRecords({ mode: 'preview', content })
       if (request !== recordImportRequest.current) return
-      setRecordImport({ fileName: file.name, content, preview, destination })
+      setRecordImport({ fileName: file.name, source, preview, destination })
     } catch {
       if (request !== recordImportRequest.current) return
       setRecordImport({
         destination,
         fileName: file.name,
-        content: '',
+        source: { content: '' },
         error: t('Reference file could not be read.')
       })
     }
   }
 
+  const previewResolvedImport = async (items: LiteratureItemInput[]): Promise<void> => {
+    const request = ++recordImportRequest.current
+    const source = { items }
+    const destination = {
+      name: selectedProject?.name ?? selectedCollection?.name ?? t('All references'),
+      projectId,
+      collectionId
+    }
+    const draft = { fileName: t('Pasted references'), source, destination }
+    setDuplicatePolicy('reuse')
+    setRecordImport({ ...draft, reading: true })
+    try {
+      const preview = await hostApi.literature.importRecords({ mode: 'preview', ...source })
+      if (request === recordImportRequest.current) setRecordImport({ ...draft, preview })
+    } catch {
+      if (request === recordImportRequest.current)
+        setRecordImport({ ...draft, error: t('References could not be prepared for import.') })
+    }
+  }
+
   const previewRecordSelection = useCallback(
-    (content: string, selectedItemIndexes: number[]): Promise<LiteratureRecordImportResult> =>
-      hostApi.literature.importRecords({ mode: 'preview', content, selectedItemIndexes }),
+    (
+      source: LiteratureRecordImportSource,
+      selectedItemIndexes: number[]
+    ): Promise<LiteratureRecordImportResult> =>
+      hostApi.literature.importRecords({ mode: 'preview', ...source, selectedItemIndexes }),
     [hostApi]
   )
 
@@ -409,7 +435,7 @@ export function useLiteratureImport({
     try {
       const imported = await hostApi.literature.importRecords({
         mode: 'commit',
-        content: recordImport.content,
+        ...recordImport.source,
         ...(selectedItemIndexes ? { selectedItemIndexes } : {}),
         ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy }),
         ...(collectionId ? { collectionId } : {})
@@ -455,7 +481,7 @@ export function useLiteratureImport({
         const preview = await hostApi.literature
           .importRecords({
             mode: 'preview',
-            content: recordImport.content,
+            ...recordImport.source,
             ...(selectedItemIndexes ? { selectedItemIndexes } : {})
           })
           .catch(() => undefined)
@@ -533,6 +559,7 @@ export function useLiteratureImport({
     beginLinkImport,
     closeItemEditor,
     previewRecordImport,
+    previewResolvedImport,
     previewRecordSelection,
     commitRecordImport,
     trackNewMetadataDirty,

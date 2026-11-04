@@ -1778,7 +1778,7 @@ describe('PR Gate workflow', () => {
     expect(windowsRuns).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+          'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
         )
       ])
     )
@@ -1800,7 +1800,7 @@ describe('PR Gate workflow', () => {
     expect(selector.run).not.toContain('grep=.*')
     const commands = job.steps!.map(({ run }) => run ?? '').join('\n')
     expect(commands).toContain(
-      'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+      'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
     )
     expect(commands).not.toContain('test:e2e:browser')
     expect(commands).not.toContain('test:e2e:workspace')
@@ -1844,7 +1844,7 @@ describe('PR Gate workflow', () => {
     expect(job.steps?.find(({ id }) => id === 'e2e_functional_windows')).toMatchObject({
       if: "${{ steps.setup.outcome == 'success' }}",
       run: expect.stringContaining(
-        'npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"'
+        'npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"'
       )
     })
     expect(job.steps?.find(({ id }) => id === 'renderer_layout')).toBeUndefined()

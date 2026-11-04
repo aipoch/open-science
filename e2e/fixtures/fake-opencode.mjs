@@ -2742,6 +2742,39 @@ if (process.argv.includes('--version')) {
             withMcpClient,
             toolResult
           )
+        } else if (prompt.includes('Prepare Notebook for Windows update.')) {
+          reply = await withMcpClient(
+            context.params.sessionId,
+            'open-science-notebook',
+            async (client) => {
+              const call = async (name, args) =>
+                toolResult(
+                  name,
+                  await client.callTool({ name, arguments: args }, undefined, { timeout: 240_000 })
+                )
+              const repl = controlResultValue(
+                await call('repl_execute', {
+                  code: 'globalThis.updateWitness = 42; return { pid: process.pid, value: globalThis.updateWitness };',
+                  timeoutMs: 180_000
+                })
+              )
+              const shell = await call('bash_execute', {
+                command: "Write-Output ('UPDATE_SHELL_PID=' + $PID)",
+                timeoutMs: 180_000
+              })
+              const shellPid = Number(shell.stdout?.match(/UPDATE_SHELL_PID=(\d+)/)?.[1])
+              if (
+                repl.value !== 42 ||
+                !Number.isSafeInteger(repl.pid) ||
+                shell.exitCode !== 0 ||
+                !shellPid
+              )
+                throw new Error(
+                  `Notebook update preparation failed: ${JSON.stringify({ repl, shell })}`
+                )
+              return `Notebook update ready: ${JSON.stringify({ replPid: repl.pid, shellPid })}`
+            }
+          )
         } else if (prompt.includes('Verify Windows REPL lifecycle.')) {
           reply = await verifyWindowsReplLifecycle(context.params.sessionId)
         } else if (prompt.includes(NOTEBOOK_LIFECYCLE_PROMPT)) {

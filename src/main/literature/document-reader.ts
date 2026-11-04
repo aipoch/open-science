@@ -62,7 +62,7 @@ class LiteratureDocumentReader {
       index: literatureIndex(options.storageRoot),
       extractionFingerprint: (context) =>
         createHash('sha256')
-          .update('open-science-pdfjs-automatic-reading-order-ocr-v1')
+          .update('open-science-pdfjs-automatic-reading-order-ocr-v2')
           .update(options.ocrModels ? `:optional-ocr-v1:${context.ocrRevision ?? 'none'}` : '')
           .digest('hex'),
       authorize: async (context) => {
@@ -290,7 +290,7 @@ class LiteratureDocumentReader {
               return bytes
             }
           },
-          { ocr: true, ...ocrOptions, maxChars: MAX_EXTRACTED_CACHE_CHARS }
+          { ocr: true, ...ocrOptions, includeLayout: true, maxChars: MAX_EXTRACTED_CACHE_CHARS }
         )
         await lease.verifyUnchanged()
       } finally {
@@ -302,6 +302,7 @@ class LiteratureDocumentReader {
       extraction = await extractPdfText(input.path, undefined, {
         ocr: true,
         ...ocrOptions,
+        includeLayout: true,
         maxChars: MAX_EXTRACTED_CACHE_CHARS
       })
     }

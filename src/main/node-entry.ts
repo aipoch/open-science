@@ -3,6 +3,7 @@ import {
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
+import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
@@ -529,6 +530,7 @@ async function main(): Promise<void> {
         commandNames: () => [
           'desktop:update-gate',
           'desktop:update-inspect',
+          'desktop:update-owned-processes',
           'desktop:update-abort',
           'desktop:open-session',
           'locale:snapshot',
@@ -548,6 +550,7 @@ async function main(): Promise<void> {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
           if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
+          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z
@@ -796,29 +799,40 @@ async function main(): Promise<void> {
     if (stopRequested) await stop()
   } catch (error) {
     const cancelled = stopRequested
-    if (credentialFailure || !cancelled) startupReporter.failed(credentialFailure ?? error)
+    if (credentialFailure || !cancelled) {
+      startupReporter.failed(credentialFailure ?? error)
+      // stop() exits the process; record the failure before it flushes logs and releases resources.
+      reportStartupError(credentialFailure ?? error)
+    }
     finishStartup()
     await stop()
     if (credentialFailure) throw credentialFailure
     if (!cancelled) throw error
   }
 }
+let startupErrorReported = false
+const reportStartupError = (error: unknown): void => {
+  if (startupErrorReported) return
+  startupErrorReported = true
+  createLogger('node-runtime').error('startup failed', {
+    ...diagnosticErrorFields(error),
+    ...errorLogFields(error),
+    ...(error instanceof CredentialIdentityError
+      ? {
+          recoveryReason: error.reason,
+          identityProbe: error.probe,
+          // Inventory context is transient UI data, not an additional persisted diagnostic.
+          validationDiagnostic:
+            error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
+        }
+      : {})
+  })
+}
+
 void main().catch((error: unknown) => {
   try {
     startupReporter.failed(error)
-    createLogger('node-runtime').error('startup failed', {
-      ...diagnosticErrorFields(error),
-      ...errorLogFields(error),
-      ...(error instanceof CredentialIdentityError
-        ? {
-            recoveryReason: error.reason,
-            identityProbe: error.probe,
-            // Inventory context is transient UI data, not an additional persisted diagnostic.
-            validationDiagnostic:
-              error.diagnostic?.code === 'inventory-failed' ? undefined : error.diagnostic
-          }
-        : {})
-    })
+    reportStartupError(error)
   } finally {
     process.exit(error instanceof RuntimeOwnershipConflict ? 75 : 1)
   }

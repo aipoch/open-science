@@ -644,12 +644,65 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
     expect(container.querySelector(`[data-notice-level="${level}"]`)?.textContent).toContain(title)
+    if (reason !== 'execution-unavailable') {
+      expect(container.querySelector(`[data-notice-level="${level}"] details`)).toBeNull()
+    }
     expect(
       [...container.querySelectorAll('button')].find(
         (button) => button.textContent === 'Generate script'
       )?.disabled
     ).toBe(true)
     expect(generateCodeReconstruction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'execution-unavailable',
+      'The file content was published directly, without a Notebook execution.'
+    ],
+    [
+      'producer-unavailable',
+      'An existing file was republished without linking the run that originally created it.'
+    ],
+    [
+      'producer-script-missing',
+      'A result was published from a run whose script text was empty or unavailable.'
+    ],
+    [
+      'helper-evidence-incomplete',
+      'The producing code imported helper files whose source could not be captured completely.'
+    ],
+    [
+      'supporting-code-incomplete',
+      'A cell failed or was interrupted after changing Notebook state, or the retained code was truncated.'
+    ]
+  ] as const)('shows collapsed, evidence-specific scenarios for %s', async (reason, scenario) => {
+    act(() => root.unmount())
+    getCodeReconstruction.mockResolvedValue({ state: 'unavailable', reason })
+    root = createRoot(container)
+    await act(async () =>
+      root.render(<ArtifactProvenancePanel item={item} projectId="project-1" onClose={vi.fn()} />)
+    )
+    await flush()
+    const notice = container.querySelector('[data-notice-level="warning"]')!
+    const details = notice.querySelector('details')!
+    expect(details).not.toBeNull()
+    expect(details.open).toBe(false)
+    expect(details.querySelector('summary')?.textContent).toContain(
+      'Details and possible scenarios'
+    )
+    expect(details.textContent).toContain('Confirmed finding')
+    expect(details.textContent).toContain('Possible scenarios (not confirmed for this version)')
+    expect(details.textContent).toContain(scenario)
+    expect(details.textContent).toContain('What to do')
+    if (reason !== 'supporting-code-incomplete') {
+      expect(details.textContent).not.toContain('A cell failed or was interrupted')
+    }
+    expect(
+      [...container.querySelectorAll('button')].find(
+        (button) => button.textContent === 'Generate script'
+      )?.disabled
+    ).toBe(true)
   })
 
   it('retains generation after an incomplete model response and offers download only after retry succeeds', async () => {
@@ -1053,7 +1106,7 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
     expect(container.textContent).toContain('Frozen edited reference')
     expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1)
     expect(getVersionProvenance).not.toHaveBeenCalled()
@@ -1126,9 +1179,14 @@ describe('ArtifactProvenancePanel', () => {
     )
     await flush()
 
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
+    expect(container.querySelector('[data-notice-level="info"]')?.textContent).toContain(
+      'v2 contains manual edits'
+    )
     expect(container.textContent).toContain('View source provenance · v1')
-    expect(container.textContent).toContain('This edited version has no new agent execution.')
+    expect(container.textContent).toContain(
+      'This version contains manual edits with no corresponding agent execution record, so script reconstruction is unavailable for this version.'
+    )
     expect(container.querySelector('[role="tablist"]')).toBeNull()
     expect(getVersionProvenance).not.toHaveBeenCalled()
     expect(getCodeReconstruction).not.toHaveBeenCalledWith(
@@ -1214,7 +1272,7 @@ describe('ArtifactProvenancePanel', () => {
     expect(onVersionChange).toHaveBeenCalledWith(
       expect.objectContaining({ selectedVersionId: 'version-1', versionNumber: 1 })
     )
-    expect(container.textContent).toContain('Edited in Open-Science')
+    expect(container.textContent).toContain('Manually edited in Open-Science')
     expect(container.textContent).toContain('View source provenance · v1')
   })
 
