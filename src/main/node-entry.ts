@@ -3,7 +3,7 @@ import {
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
-import { inspectOwnedWindowsProcessIds } from './process-tree-windows'
+import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
@@ -550,7 +550,7 @@ async function main(): Promise<void> {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
           if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
-          if (channel === 'desktop:update-owned-processes') return inspectOwnedWindowsProcessIds()
+          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z

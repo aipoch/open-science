@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { execFileSync } from 'node:child_process'
+import { resolveWindowsPowerShellExecutable } from './windows-powershell'
 const require = createRequire(__filename)
 
 /** Kernel birth identity; PID and command lines are never sufficient identity evidence. */
@@ -23,7 +24,7 @@ export function processBirthIdentity(pid: number): string | undefined {
     }
     if (process.platform === 'win32') {
       const value = execFileSync(
-        'powershell.exe',
+        resolveWindowsPowerShellExecutable(),
         [
           '-NoProfile',
           '-NonInteractive',

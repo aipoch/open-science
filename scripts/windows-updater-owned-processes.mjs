@@ -1,8 +1,83 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { once } from 'node:events'
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { expect } from '@playwright/test'
 import { waitFor } from './windows-installer-smoke.mjs'
+
+// Model a previous Notebook host whose numeric PID was reused by an unrelated live process.
+// This process runs outside the installation and must survive recovery and the real update.
+export const prepareStaleNotebookFixture = async (dataRoot) => {
+  const child = spawn(
+    process.execPath,
+    ['-e', 'process.send("ready"); setInterval(() => {}, 1000)'],
+    {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'inherit', 'ipc']
+    }
+  )
+  let receipt
+  const cleanup = async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit')
+      child.kill()
+      await exited
+    }
+    if (receipt)
+      await unlink(receipt).catch((error) => {
+        if (error.code !== 'ENOENT') throw error
+      })
+  }
+  try {
+    const [ready] = await once(child, 'message', { signal: AbortSignal.timeout(10_000) })
+    if (ready !== 'ready') throw new Error('Unrelated Notebook fixture did not start.')
+    const receiptId = randomUUID()
+    const directory = join(dataRoot, 'shell-process-ownership')
+    await mkdir(directory, { recursive: true })
+    const runId = `update-recovery-${randomUUID()}`
+    receipt = join(directory, `${runId}.active.${child.pid}.${receiptId}.json`)
+    await writeFile(
+      receipt,
+      JSON.stringify({
+        version: 2,
+        platform: 'win32',
+        runId,
+        projectId: 'update-recovery-project',
+        sessionId: 'update-recovery-session',
+        ownerInstanceId: randomUUID(),
+        launchedAt: Date.now() - 60_000,
+        receiptId,
+        pid: child.pid,
+        commandIdentityMarker: receiptId
+      }),
+      { flag: 'wx' }
+    )
+    return {
+      cleanup,
+      assertRecovered: async () => {
+        process.kill(child.pid, 0)
+        const exists = await stat(receipt).then(
+          () => true,
+          (error) => {
+            if (error.code === 'ENOENT') return false
+            throw error
+          }
+        )
+        if (exists) throw new Error('The signed app did not retire the stale Notebook receipt.')
+        return {
+          unrelatedPid: child.pid,
+          unrelatedProcessPreserved: true,
+          staleReceiptRemoved: true
+        }
+      }
+    }
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
+}
 
 export const prepareOwnedAgentFixture = async ({ installDirectory, configRoot, directory }) => {
   await mkdir(directory, { recursive: true })
@@ -84,5 +159,30 @@ export const assertOwnedAgentReaped = async (evidence) => {
       10_000
     )
   }
+  return { ...evidence, processTreeReaped: true }
+}
+
+export const startUpdateNotebook = async (page, evidencePath) => {
+  const protection = await page.evaluate(() => window.api.settings.getNotebookNetworkStatus())
+  console.log(`Notebook protection status: ${protection.kind}`)
+  await page
+    .getByRole('textbox', { name: 'Ask anything' })
+    .fill('Prepare Notebook for Windows update.')
+  await page.getByRole('button', { name: 'Send message', exact: true }).click()
+  const reply = page.getByText('Notebook update ready:', { exact: false })
+  await expect(reply).toContainText(/Notebook update ready: \{"replPid":\d+,"shellPid":\d+\}/, {
+    timeout: 480_000
+  })
+  const evidence = JSON.parse(
+    (await reply.innerText()).match(/Notebook update ready: (\{[^\n]+\})/)[1]
+  )
+  for (const pid of [evidence.replPid, evidence.shellPid]) process.kill(pid, 0)
+  await page.screenshot({ path: `${evidencePath}.notebook.png` })
+  console.log(`Notebook REPL and Shell running: ${JSON.stringify(evidence)}`)
+  return evidence
+}
+
+export const assertUpdateNotebookReaped = async (evidence) => {
+  await assertOwnedAgentReaped({ leaderPid: evidence.replPid, descendantPid: evidence.shellPid })
   return { ...evidence, processTreeReaped: true }
 }

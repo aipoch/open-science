@@ -96,7 +96,7 @@ jobs:
         env:
           OPEN_SCIENCE_E2E_STORAGE_ROOT: ${{ runner.temp }}\open-science-updater-recovery
         run: |
-          node scripts/windows-updater-certification.mjs --current-dir current --previous-dir previous --foreign-process --owned-processes --output windows-updater-recovery.json 2>&1 |
+          node scripts/windows-updater-certification.mjs --current-dir current --previous-dir previous --foreign-process --owned-processes --windows-recovery --notebook --output windows-updater-recovery.json 2>&1 |
             Tee-Object -FilePath windows-updater-recovery.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload updater recovery evidence

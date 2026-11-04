@@ -3,9 +3,9 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createReadStream } from 'node:fs'
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { basename, join, resolve, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
@@ -15,7 +15,10 @@ import { chromium, expect } from '@playwright/test'
 import {
   prepareOwnedAgentFixture,
   startOwnedAgentFixture,
-  assertOwnedAgentReaped
+  assertOwnedAgentReaped,
+  prepareStaleNotebookFixture,
+  startUpdateNotebook,
+  assertUpdateNotebookReaped
 } from './windows-updater-owned-processes.mjs'
 
 import {
@@ -64,7 +67,9 @@ const parseArguments = (argv) => {
     previousDirectory: resolve(previousDirectory),
     output: resolve(output),
     ...(argv.includes('--foreign-process') ? { foreignProcess: true } : {}),
-    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {})
+    ...(argv.includes('--owned-processes') ? { ownedProcesses: true } : {}),
+    ...(argv.includes('--windows-recovery') ? { windowsRecovery: true } : {}),
+    ...(argv.includes('--notebook') ? { notebook: true } : {})
   }
 }
 
@@ -340,7 +345,7 @@ $target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALLER_WATCH_TARGET)
 Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $PID" | Out-Null
 [Console]::Out.WriteLine('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')
 [Console]::Out.Flush()
-$deadline = [DateTime]::UtcNow.AddMinutes(1)
+$deadline = [DateTime]::UtcNow.AddMinutes(3)
 $candidate = $null
 $handle = [IntPtr]::Zero
 do {
@@ -389,7 +394,7 @@ exit $exitCode
       allowNonZero: true,
       env: { ...env, OPEN_SCIENCE_INSTALLER_WATCH_TARGET: installer },
       signal,
-      timeoutMs: 370_000,
+      timeoutMs: 490_000,
       onStdout: (output) => {
         if (output.split(/\r?\n/).includes('OPEN_SCIENCE_INSTALLER_OBSERVER_READY')) markReady()
       }
@@ -413,14 +418,22 @@ const runElectronUpdater = async ({
   onDownloaded,
   beforeApply,
   ownedAgentFixture,
+  windowsRecovery,
+  notebook,
   evidencePath
 }) => {
   // Playwright attaches a Node debugger to Electron. On Windows that debugger can keep the old
   // process alive after quitAndInstall, racing the detached NSIS handoff. Drive the same production
   // update commands through renderer IPC over CDP, without attaching the Node debugger. The Node
   // backend's web RPC intentionally does not own desktop updates.
+  const appEnv = windowsRecovery
+    ? {
+        ...Object.fromEntries(Object.entries(env).filter(([key]) => key.toLowerCase() !== 'path')),
+        PATH: ''
+      }
+    : env
   const child = spawn(executable, ['--remote-debugging-port=0'], {
-    env,
+    env: appEnv,
     windowsHide: true
   })
   let stdout = ''
@@ -440,6 +453,7 @@ const runElectronUpdater = async ({
   let installerExit
   let browser
   let page
+  let staleNotebookFixture
   let phase = 'desktop-startup'
   try {
     const port = await Promise.race([
@@ -473,6 +487,14 @@ const runElectronUpdater = async ({
     const ownedEvidence = ownedAgentFixture
       ? await startOwnedAgentFixture(page, ownedAgentFixture)
       : undefined
+    const notebookEvidence = notebook ? await startUpdateNotebook(page, evidencePath) : undefined
+    if (windowsRecovery) {
+      const { dataRoot } = await page.evaluate(() => window.api.storage.getStatus())
+      staleNotebookFixture = await prepareStaleNotebookFixture(dataRoot)
+      console.log(
+        'Seeded a stale Notebook host receipt with a live unrelated PID; app PATH is empty.'
+      )
+    }
     const invoke = async (action) => {
       phase = action
       console.log(`Updater command started: ${action}`)
@@ -501,6 +523,13 @@ const runElectronUpdater = async ({
       },
       UPDATE_TIMEOUT_MS
     )
+    if (
+      windowsRecovery &&
+      (!output().includes('LiteralPath:') || /Ignoring signature validation/i.test(output()))
+    )
+      throw new Error(
+        'The installed updater did not complete Authenticode verification with an empty PATH.'
+      )
     await onDownloaded(ownedEvidence)
     await beforeApply?.({ invoke, page })
 
@@ -517,17 +546,22 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const closed = waitForShutdownExit(exit, child, diagnosticOutput)
     const applied = await invoke('apply')
     if (applied.state !== 'applying') {
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
-    const exitCode = await closed
+    // Preflight can perform a cold resource scan. Its time must not consume the app-exit budget.
+    const exitCode = await waitForShutdownExit(exit, child, diagnosticOutput)
     if (exitCode !== 0)
       throw new Error(`Updater app exited with ${exitCode}.\n${diagnosticOutput()}`)
     const ownedProcessRecovery = ownedEvidence
       ? await assertOwnedAgentReaped(ownedEvidence)
       : undefined
+    const notebookRecovery = notebookEvidence
+      ? await assertUpdateNotebookReaped(notebookEvidence)
+      : undefined
+    if (notebookRecovery)
+      console.log(`Notebook processes released: ${JSON.stringify(notebookRecovery)}`)
     if (ownedProcessRecovery)
       console.log(
         `Application-owned processes released before installer completion: ${JSON.stringify(ownedProcessRecovery)}`
@@ -551,7 +585,19 @@ const runElectronUpdater = async ({
       UPDATE_TIMEOUT_MS
     )
     console.log(`Updated application presentation and backend ready: ${JSON.stringify(successor)}`)
-    return { ...successor, ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}) }
+    const windowsRecoveryEvidence = staleNotebookFixture
+      ? {
+          applicationPathEmpty: true,
+          downloadSignatureVerified: true,
+          ...(await staleNotebookFixture.assertRecovered())
+        }
+      : undefined
+    return {
+      ...successor,
+      ...(notebookRecovery ? { notebookRecovery } : {}),
+      ...(ownedProcessRecovery ? { ownedProcessRecovery } : {}),
+      ...(windowsRecoveryEvidence ? { windowsRecovery: windowsRecoveryEvidence } : {})
+    }
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
@@ -571,7 +617,9 @@ const runElectronUpdater = async ({
     }
     throw error
   } finally {
+    if (evidencePath) await writeFile(`${evidencePath}.application.log`, diagnosticOutput(), 'utf8')
     await browser?.close()
+    await staleNotebookFixture?.cleanup()
   }
 }
 
@@ -672,10 +720,9 @@ const main = async () => {
   // The disposable runner still isolates application state through the explicit profile below.
   const env = { ...process.env }
   env.OPEN_SCIENCE_USER_DATA = join(profileDirectory, 'electron-profile')
-  const legacyConfigRoots = [
-    win32.join(homedir(), '.open-science'),
-    win32.join(profileDirectory, '.open-science')
-  ]
+  env.OPEN_SCIENCE_E2E_STORAGE_ROOT = join(profileDirectory, 'config')
+  console.log(`Updater isolated root: ${root}`)
+  const legacyConfigRoots = [env.OPEN_SCIENCE_E2E_STORAGE_ROOT]
   const profileGuard = createUpgradeProfileGuard(true, `updater-${randomUUID()}`)
   await Promise.all([
     mkdir(env.APPDATA, { recursive: true }),
@@ -777,6 +824,8 @@ const main = async () => {
       ),
       onDownloaded: persistObservation,
       ownedAgentFixture,
+      windowsRecovery: options.windowsRecovery,
+      notebook: options.notebook,
       ...(options.foreignProcess
         ? {
             beforeApply: async ({ invoke, page }) => {
@@ -840,11 +889,7 @@ const main = async () => {
       },
       UPDATE_TIMEOUT_MS
     )
-    await runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {
-      allowNonZero: true,
-      env,
-      timeoutMs: 10_000
-    })
+    await terminateDirectoryProcesses(installDirectory)
     const currentConfigRoot = await launchAndProbe({
       installDirectory,
       expectedVersion: currentVersion,
@@ -869,13 +914,14 @@ const main = async () => {
       console.error('Updater cleanup failed:', error)
     }
   }
-  await cleanup(() =>
-    runProcess('taskkill.exe', ['/IM', 'open-science.exe', '/T', '/F'], {
-      allowNonZero: true,
-      env,
-      timeoutMs: 10_000
-    })
-  )
+  await cleanup(() => terminateDirectoryProcesses(installDirectory))
+  await cleanup(async () => {
+    const logDirectory = join(env.OPEN_SCIENCE_E2E_STORAGE_ROOT, 'logs')
+    for (const name of await readdir(logDirectory).catch(() => [])) {
+      if (name.endsWith('.log'))
+        await copyFile(join(logDirectory, name), `${options.output}.${name}`)
+    }
+  })
   console.log('Updater cleanup: closing asset server.')
   if (assetServer) await cleanup(() => assetServer.close())
   console.log('Updater cleanup: asset server closed; cleaning profile and uninstalling.')

@@ -4,6 +4,29 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it } from 'vitest'
 import { inspectInstallationProcessesAsync } from './installation-occupancy'
+import { inspectInstallationAvailability } from './installation-protection'
+
+it.runIf(process.platform === 'win32')(
+  'verifies installation availability without PowerShell on PATH',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-minimal-path-'))
+    const installationRoot = join(root, 'Science')
+    const originalPath = process.env.PATH
+    try {
+      await mkdir(installationRoot)
+      await writeFile(join(installationRoot, 'fixture.txt'), 'fixture')
+      process.env.PATH = root
+      await expect(
+        inspectInstallationAvailability({ installationRoot, stateRoot: join(root, 'state') })
+      ).resolves.toBeUndefined()
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
 
 it.runIf(process.platform === 'darwin')(
   'ignores processes that only hold ordinary file descriptors on installation files',

@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 const requireNative = createRequire(__filename)
 
@@ -56,6 +57,7 @@ $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${root}'))
 $item = Get-Item -LiteralPath $root -Force
 $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | ForEach-Object { $_.FullName }) } else { @($item.FullName) }
 $users = @([OpenScienceInstallationResources]::Query([string[]]$files))
+Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop
 $processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath)
 ConvertTo-Json -InputObject @{resourcePids=$users;processes=$processes} -Depth 4 -Compress
 `
@@ -167,12 +169,16 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
     /* The installation may already have moved. */
   }
   if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', windowsInstallationQuery(installationRoot), {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer: 16 * 1024 * 1024,
-      windowsHide: true
-    })
+    const result = spawnSync(
+      resolveWindowsPowerShellExecutable(),
+      windowsInstallationQuery(installationRoot),
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true
+      }
+    )
     if (result.status !== 0)
       throw new UpdateLifecycleError(
         'installation-busy',
@@ -262,8 +268,24 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot))
-    return parseWindowsInstallationQuery(stdout, installationRoot)
+    // A cold Restart Manager scan of a real 7,314-file installation took 70 seconds on Windows;
+    // the same scan took ~2 seconds once warm. Keep the asynchronous scan cancellable and bounded,
+    // without treating the old 15-second process-list budget as proof of unknown occupancy.
+    const started = Date.now()
+    try {
+      const { stdout } = await runVerificationProcess(
+        resolveWindowsPowerShellExecutable(),
+        windowsInstallationQuery(installationRoot),
+        { signal, timeoutMs: 120_000 }
+      )
+      return parseWindowsInstallationQuery(stdout, installationRoot)
+    } catch (cause) {
+      createLogger('update').warn('Windows installation occupancy inspection failed', {
+        durationMs: Date.now() - started,
+        message: cause instanceof Error ? cause.message : 'Unknown inspection error'
+      })
+      throw cause
+    }
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()
@@ -489,6 +511,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
   const script = [
     '$ErrorActionPreference = "Stop"',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+    'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop',
     '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
       process.pid +
       '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
@@ -510,7 +533,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
   ].join('\n')
   const result = spawnSync(
-    'powershell.exe',
+    resolveWindowsPowerShellExecutable(),
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       encoding: 'utf8',

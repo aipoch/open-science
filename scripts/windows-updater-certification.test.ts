@@ -204,7 +204,7 @@ describe('Windows updater certification', () => {
             'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe'
         }),
         signal: controller.signal,
-        timeoutMs: 370_000
+        timeoutMs: 490_000
       })
     )
   })
