@@ -45,13 +45,11 @@
 
 > 本文档是英文 `README.md` 的翻译。如内容存在差异，请以[英文原文](../../README.md)为准。
 
-AIPOCH Open-Science 是面向科学家和研究人员的 AI 研究工作台，由 [AIPOCH](https://aipoch.com/open-science) 开发，采用开源、本地优先、模型无关的设计。它通过科学 AI 智能体、Python 和 R 执行、科学数据连接器以及对 macOS、Windows 和 Linux 的跨平台支持，实现可复现、可检查的研究。在同一个工作区中，新建项目，用自然语言描述研究目标，然后让智能体读取文件、搜索网页、运行代码、查询科学数据源，并生成带有可追溯来源的报告、表格和图表。
+[AIPOCH Open-Science](https://aipoch.com/open-science) 是一款开源 AI 研究工作台。你可以从一个问题、一篇论文或一个数据文件开始。用自己的话说说你想弄清楚什么，再和 AI 智能体一起查看证据、分析数据或绘制图表。
 
-AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材料科学、物理学和环境科学等领域的计算密集型与数据密集型研究。它覆盖从文献综述、假设构建到代码执行、数据分析、仿真、可视化以及生成可追溯研究成果的完整研究流程。
+想了解某个结果是怎么得出的，可以查看已有的输入、代码和执行记录。要与他人分享这项工作，可以选择要包含的对话分支、文件版本、Notebook 记录和验证证据，将它们导出为 `.science` 包。
 
-已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
-
-> 💡 **[AIPOCH Open-Science v1.0.7 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 11 月）_。本次更新新增 Pi 作为第五个智能体框架，支持从 DOI 或 arXiv 链接直接添加参考文献，阅读模式下智能体可为关联的 PDF 添加批注。扫描版 PDF 可借助可选 OCR 和九种语言包获得可读文本，研究案例市场现已支持搜索。本版还修复了 Windows Notebook 命令行环境初始化、OpenCode 上下文压缩崩溃，以及 Fake-IP DNS 环境下的下载问题。详情请查看 [v1.0.7 发行说明](../../release-notes/1.0.7/zh-Hans.md)。
+> 💡 **[AIPOCH Open-Science v1.0.8 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 11 月）_。本次更新将设置重新组织为专注的标签页，支持从 DOI、arXiv 或 PubMed 标识符一次导入最多 100 条参考文献，并为文献库详情视图新增 AI 研究快照。已结束的会话会释放智能体进程，eQTL Catalogue 查询恢复正常，macOS 和 Windows 上的更新也更加顺畅。详情请查看 [v1.0.8 发行说明](../../release-notes/1.0.8/zh-Hans.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
