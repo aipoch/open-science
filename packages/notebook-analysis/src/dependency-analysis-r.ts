@@ -2096,9 +2096,14 @@ const analyzeRSource = (
     'cat',
     'as.numeric',
     'as.double',
+    'as.integer',
+    'as.logical',
     'mean',
     'exp',
     'length',
+    'toupper',
+    'chartr',
+    'substr',
     'formatC',
     'paste',
     'invisible',
@@ -3871,6 +3876,7 @@ const analyzeRSource = (
     if (name === 'IQR') return internal('quantile', 'sort', 'diff')
     if (name === 'mad') return internal('median', 'sort', 'mean')
     if (name === 'fivenum') return internal('sort')
+    if (name === 'boxplot.stats') return internal('sort', 'diff')
     if (name === 'quantile') {
       const args = primitiveArguments(expr, ['x', 'probs', 'na.rm', 'names', 'type', 'digits'])
       const names = args?.get('names')
@@ -4111,7 +4117,10 @@ const analyzeRSource = (
       return primitiveHeadTailDependencies(expr, 'atomic') !== null
     if (name === 'is.double') return primitiveDoublePredicate(expr)
     if (name === 'anyNA') return primitiveAnyMissingness(expr)
-    if (name === 'as.double' || name === 'as.numeric') return primitiveDoubleCoercion(expr)
+    if (name && ['as.double', 'as.numeric', 'as.integer', 'as.logical'].includes(name))
+      return primitiveAtomicCoercion(expr)
+    if (name === 'toupper' || name === 'chartr' || name === 'substr')
+      return primitiveStringTransform(expr)
     if (name === 'which.min' || name === 'which.max') return primitiveExtremeIndex(expr)
     if (name === 'ifelse') return primitiveIfelse(expr)
     if (name === 'unname') return primitiveUnname(expr)
@@ -4303,12 +4312,37 @@ const analyzeRSource = (
     // Its ordinary logical result does not prove the input is itself ordinary.
     return Boolean(input && (!isSymbol(input) || input.name !== ''))
   }
-  const primitiveDoubleCoercion = (expr: RExpr): boolean => {
+  const primitiveStringTransform = (expr: RExpr): boolean => {
     const name = calledName(expr)
     if (
       !isCall(expr) ||
       !name ||
-      !['as.double', 'as.numeric'].includes(name) ||
+      !['toupper', 'chartr', 'substr'].includes(name) ||
+      !intactBaseCall(expr, name) ||
+      ![
+        'is.character',
+        'as.character',
+        '.Internal',
+        ...(name === 'substr' ? ['as.integer'] : [])
+      ].every((dependency) => contractAvailable(dependency, undefined, 'base'))
+    )
+      return false
+    const parameters =
+      name === 'toupper' ? ['x'] : name === 'chartr' ? ['old', 'new', 'x'] : ['x', 'start', 'stop']
+    const args = primitiveArguments(expr, parameters)
+    // These wrappers coerce non-character x before their internal transform.
+    // Only ordinary operands bound dispatch and the result's attributes.
+    // Unknown/classed character inputs may bypass coercion but retain a class.
+    return Boolean(
+      args && parameters.every((parameter) => atomicValueExpression(args.get(parameter)))
+    )
+  }
+  const primitiveAtomicCoercion = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['as.double', 'as.numeric', 'as.integer', 'as.logical'].includes(name) ||
       !intactBaseCall(expr, name)
     )
       return false
@@ -4554,6 +4588,28 @@ const analyzeRSource = (
       )
     )
   }
+  const primitiveGroupIndexMethods = (): string[] => [
+    ...atomicS3Methods('unique'),
+    ...atomicS3Methods('as.character'),
+    'length.factor',
+    'levels.factor',
+    'as.integer.factor'
+  ]
+  const primitiveGroupIndices = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'tapply')) return false
+    const args = primitiveArguments(expr, ['X', 'INDEX', 'FUN'])
+    // Even FUN=NULL factors INDEX before returning group indices. Bound only
+    // ordinary vector inputs with intact coercion methods, not lists, formulas,
+    // unknown/classed groups or reducer promises. This proves no group ordering,
+    // input alignment, dimensions or successful execution.
+    return Boolean(
+      args &&
+      atomicValueExpression(args.get('X')) &&
+      atomicValueExpression(args.get('INDEX')) &&
+      (!args.has('FUN') || isNull(args.get('FUN'))) &&
+      primitiveGroupIndexMethods().every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
   const primitiveRunEncodingMethods = (): string[] => [
     'diff.integer',
     'diff.numeric',
@@ -4776,6 +4832,50 @@ const analyzeRSource = (
         (isCall(labels) &&
           intactBaseCall(labels, 'list') &&
           labels.args.every(atomicValueExpression)))
+    )
+  }
+  const primitiveNativeRasterDrawing = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+    if (
+      calledName(expr) !== 'rasterImage' ||
+      !contractAvailable('rasterImage', qualifiedCall(expr)?.package, 'graphics') ||
+      expr.staticBuiltinShadowed ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+    )
+      return false
+    const args = primitiveArguments(expr, [
+      'image',
+      'xleft',
+      'ybottom',
+      'xright',
+      'ytop',
+      'angle',
+      'interpolate'
+    ])
+    const image = args?.get('image')
+    if (!args || !isCall(image) || !intactBaseCall(image, 'structure')) return false
+    const imageArgs = primitiveArguments(image, ['.Data', 'class'])
+    const imageClass = imageArgs?.get('class')
+    const closedArguments = (value: RExpr): boolean =>
+      !isSymbol(value) && (!isCall(value) || value.args.every(closedArguments))
+    // Only a directly constructed native raster skips as.raster dispatch.
+    // Reuse ordinary matrix/argument proofs; stored objects, extra attributes,
+    // dots and coercible classed coordinates retain the opaque-call boundary.
+    return Boolean(
+      imageArgs &&
+      isCharacter(imageClass) &&
+      imageClass.value === 'nativeRaster' &&
+      primitiveMatrixConstruction(imageArgs.get('.Data')) &&
+      closedArguments(image) &&
+      ['xleft', 'ybottom', 'xright', 'ytop'].every(
+        (name) => atomicValueExpression(args.get(name)) && closedArguments(args.get(name)!)
+      ) &&
+      ['angle', 'interpolate'].every(
+        (name) =>
+          !args.has(name) ||
+          (atomicValueExpression(args.get(name)) && closedArguments(args.get(name)!))
+      )
     )
   }
   const primitiveDeterministicMaxColumn = (expr: RExpr): boolean => {
@@ -5252,13 +5352,14 @@ const analyzeRSource = (
     expr: RExpr,
     name: string,
     parameters: string[],
-    inputName = 'x'
+    inputName = 'x',
+    packageName = 'stats'
   ): Map<string, RExpr> | null => {
     if (
       !isCall(expr) ||
       calledName(expr) !== name ||
       expr.staticBuiltinShadowed ||
-      !contractAvailable(name, qualifiedCall(expr)?.package, 'stats') ||
+      !contractAvailable(name, qualifiedCall(expr)?.package, packageName) ||
       (isCall(expr.callee) &&
         (expr.callee.staticBuiltinShadowed ||
           !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
@@ -5274,6 +5375,14 @@ const analyzeRSource = (
     // omitted flag is stats' native FALSE default, not a global option.
     const inverse = args?.get('inverse')
     return Boolean(args && (!inverse || atomicValueExpression(inverse)))
+  }
+  const primitiveIsotonicRegression = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'isoreg', ['x', 'y'])
+    const response = args?.get('y')
+    // xy.coords coerces ordinary vectors before native isotonic fitting.
+    // Omitted/NULL y uses the index or complex components without class methods.
+    // The result remains a classed list, never an ordinary atomic vector.
+    return Boolean(args && (!response || atomicValueExpression(response)))
   }
   const primitiveFFTLength = (expr: RExpr): boolean => {
     const args = primitiveStatisticsArguments(expr, 'nextn', ['n', 'factors'], 'n')
@@ -5945,6 +6054,25 @@ const analyzeRSource = (
       !removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined)
     )
   }
+  const primitiveBoxplotStatistics = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(
+      expr,
+      'boxplot.stats',
+      ['x', 'coef', 'do.conf', 'do.out'],
+      'x',
+      'grDevices'
+    )
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    const coefficient = args.get('coef')
+    const value = literalNumericOption(coefficient)
+    return (
+      (!coefficient || (value !== undefined && value >= 0)) &&
+      ['do.conf', 'do.out'].every((name) => {
+        const flag = args.get(name)
+        return !flag || (flag.kind === 'atomic' && flag.logical !== undefined)
+      })
+    )
+  }
   const primitiveDifferenceMethods = (): string[] =>
     [
       'double',
@@ -6514,12 +6642,20 @@ const analyzeRSource = (
     }
     if (!isCall(expr)) return null
     if (readOnlyRuntimeQuery(expr)) return []
+    if (
+      calledName(expr) === 'toupper' ||
+      calledName(expr) === 'chartr' ||
+      calledName(expr) === 'substr'
+    )
+      return primitiveStringTransform(expr) ? [] : null
+    if (calledName(expr) === 'range' || calledName(expr) === 'range.default')
+      return atomicValueExpression(expr) ? [] : null
     if (primitiveDifference(expr)) return []
     if (primitiveInterquartileRange(expr)) return []
     if (
       primitiveDoublePredicate(expr) ||
       primitiveAnyMissingness(expr) ||
-      primitiveDoubleCoercion(expr) ||
+      primitiveAtomicCoercion(expr) ||
       primitiveMedianDeviation(expr) ||
       primitiveQuantiles(expr) ||
       primitiveMedian(expr) ||
@@ -6650,6 +6786,7 @@ const analyzeRSource = (
     if (resultName === 'fft') return primitiveFourierTransform(expr) ? [] : null
     if (resultName === 'nextn') return primitiveFFTLength(expr) ? [] : null
     if (resultName === 'convolve') return primitiveConvolution(expr) ? [] : null
+    if (resultName === 'isoreg') return primitiveIsotonicRegression(expr) ? [] : null
     if (resultName === 'data.frame' && !dataFrameDispatchAvailable(resultName)) return null
     if (resultName === 'venn.diagram' && ordinaryVennFilePlot(expr)) return []
     if (ordinaryVennDataCall(expr)) return []
@@ -8531,14 +8668,28 @@ const analyzeRSource = (
       return
     }
     if (
-      (robustStatistic === 'as.double' || robustStatistic === 'as.numeric') &&
+      robustStatistic &&
+      [
+        'as.double',
+        'as.numeric',
+        'as.integer',
+        'as.logical',
+        'toupper',
+        'chartr',
+        'substr'
+      ].includes(robustStatistic) &&
       !expr.staticBuiltinShadowed &&
       (!!qualified || intactBaseCall(expr, robustStatistic))
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      const readOnly = primitiveDoubleCoercion(expr)
+      const readOnly =
+        robustStatistic === 'toupper' ||
+        robustStatistic === 'chartr' ||
+        robustStatistic === 'substr'
+          ? primitiveStringTransform(expr)
+          : primitiveAtomicCoercion(expr)
       if (expr.sourceOffset !== undefined) {
         readOnlyMapCalls?.set(
           expr.sourceOffset,
@@ -8999,9 +9150,34 @@ const analyzeRSource = (
       return
     }
     if (
-      (robustStatistic === 'median' &&
+      robustStatistic === 'is.finite' &&
+      !expr.staticBuiltinShadowed &&
+      contractAvailable(robustStatistic, qualified?.package, 'base')
+    ) {
+      const dependency = qualified ? 'base::is.finite' : 'is.finite'
+      const args = rMatchedIoArguments(expr, ['x'])
+      const readOnly = Boolean(args && args.has('x') && atomicValueExpression(args.get('x')))
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      // Reuse invocation proof: established atomic inputs cannot dispatch methods.
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (
+      ((robustStatistic === 'median' || robustStatistic === 'isoreg') &&
         !expr.staticBuiltinShadowed &&
-        contractAvailable('median', qualified?.package, 'stats')) ||
+        contractAvailable(robustStatistic, qualified?.package, 'stats')) ||
       (robustStatistic === 'rank' &&
         !expr.staticBuiltinShadowed &&
         (!!qualified || intactBaseCall(expr, 'rank')))
@@ -9009,7 +9185,12 @@ const analyzeRSource = (
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
       if (!defined.includes(dependency)) priorUsed.push(dependency)
-      const readOnly = robustStatistic === 'median' ? primitiveMedian(expr) : primitiveRanks(expr)
+      const readOnly =
+        robustStatistic === 'median'
+          ? primitiveMedian(expr)
+          : robustStatistic === 'isoreg'
+            ? primitiveIsotonicRegression(expr)
+            : primitiveRanks(expr)
       if (expr.sourceOffset !== undefined) {
         readOnlyMapCalls?.set(
           expr.sourceOffset,
@@ -9059,9 +9240,15 @@ const analyzeRSource = (
       return
     }
     if (
-      (robustStatistic === 'weighted.mean' || robustStatistic === 'fivenum') &&
+      (robustStatistic === 'weighted.mean' ||
+        robustStatistic === 'fivenum' ||
+        robustStatistic === 'boxplot.stats') &&
       !expr.staticBuiltinShadowed &&
-      contractAvailable(robustStatistic, qualified?.package, 'stats')
+      contractAvailable(
+        robustStatistic,
+        qualified?.package,
+        robustStatistic === 'boxplot.stats' ? 'grDevices' : 'stats'
+      )
     ) {
       const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
       used.push(dependency)
@@ -9069,7 +9256,9 @@ const analyzeRSource = (
       const readOnly =
         robustStatistic === 'weighted.mean'
           ? primitiveWeightedMean(expr)
-          : primitiveFiveNumberSummary(expr)
+          : robustStatistic === 'boxplot.stats'
+            ? primitiveBoxplotStatistics(expr)
+            : primitiveFiveNumberSummary(expr)
       if (expr.sourceOffset !== undefined) {
         readOnlyMapCalls?.set(
           expr.sourceOffset,
@@ -9118,6 +9307,51 @@ const analyzeRSource = (
       if (!readOnly) invalidateSerializedValues()
       return
     }
+    if (calledName(expr) === 'unname' && intactBaseCall(expr, 'unname')) {
+      const dependency = qualified ? `${qualified.package}::unname` : 'unname'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      const readOnly = primitiveUnname(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) safeCallNames.push(dependency)
+      else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
+    if (calledName(expr) === 'range' && intactBaseCall(expr, 'range')) {
+      const dependency = qualified ? `${qualified.package}::range` : 'range'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      // Reuse the existing atomic-value and intact-default proof. Unknown
+      // classes may execute range methods or concatenation before returning.
+      const readOnly = atomicValueExpression(expr)
+      if (expr.sourceOffset !== undefined) {
+        readOnlyMapCalls?.set(
+          expr.sourceOffset,
+          readOnly && readOnlyMapCalls.get(expr.sourceOffset) !== false
+        )
+      }
+      if (readOnly) {
+        safeCallNames.push(dependency, 'range.default')
+        used.push('range.default')
+        priorUsed.push('range.default')
+      } else {
+        invalidateSerializedValues()
+        unknown.push('external-state', 'opaque-call')
+      }
+      expr.args.forEach((argument) => walk(argument))
+      if (!readOnly) invalidateSerializedValues()
+      return
+    }
     if (calledName(expr) === 'diff' && intactBaseCall(expr, 'diff')) {
       const dependency = qualified ? `${qualified.package}::diff` : 'diff'
       used.push(dependency)
@@ -9156,6 +9390,18 @@ const analyzeRSource = (
     ) {
       unknown.push('opaque-call')
       for (const argument of expr.args) walk(argument)
+      return
+    }
+    if (primitiveGroupIndices(expr)) {
+      const dependency = qualified ? 'base::tapply' : 'tapply'
+      const methods = primitiveGroupIndexMethods()
+      used.push(dependency, ...methods)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      priorUsed.push(...methods)
+      safeCallNames.push(dependency, ...methods)
+      if (expr.sourceOffset !== undefined)
+        readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
+      expr.args.forEach((argument) => walk(argument))
       return
     }
     if (primitiveExposureProduct(expr)) {
@@ -9297,8 +9543,57 @@ const analyzeRSource = (
     }
     if (op && !qualified) recordPackageRead(op)
     const fileCallbackPackage = rFileCallbackPackage(expr)
+    const histogramArguments =
+      fileCallbackPackage === 'graphics' &&
+      ['hist', 'hist.default'].includes(calledName(expr) ?? '')
+        ? rHistogramArguments(expr)
+        : undefined
+    // A non-function breaks value alone does not bound hist's S3 dispatch or
+    // the defaults' input/option methods. Guard ordinary operands and caller-
+    // visible implicit methods before discharging this callback boundary.
+    const histogramPlot = histogramArguments?.get('plot')
+    const histogramLabels = histogramArguments?.get('labels')
+    const histogramDrawsLabels = Boolean(
+      histogramLabels &&
+      histogramLabels.kind !== 'null' &&
+      !(histogramPlot?.kind === 'atomic' && histogramPlot.logical === false) &&
+      !(histogramLabels.kind === 'atomic' && histogramLabels.logical === false)
+    )
+    const histogramMethods = histogramArguments
+      ? [
+          ...(calledName(expr) === 'hist' ? atomicS3Methods('hist') : []),
+          ...['diff', 'sort', 'pretty', 'mean', 'median', 'quantile'].flatMap(
+            implicitAtomicS3Methods
+          ),
+          ...(histogramDrawsLabels ? implicitAtomicS3Methods('text') : [])
+        ]
+      : []
+    const nonCallbackHistogramBreaks = Boolean(
+      histogramArguments &&
+      histogramArguments.has('x') &&
+      [...histogramArguments.values()].every(atomicValueExpression) &&
+      atomicValueExpression(histogramArguments.get('breaks') ?? histogramArguments.get('nclass')) &&
+      contractAvailable(calledName(expr)!, qualified?.package, 'graphics') &&
+      !expr.staticBuiltinShadowed &&
+      (!isCall(expr.callee) ||
+        (!expr.callee.staticBuiltinShadowed &&
+          contractAvailable(expr.callee.operator ?? '', undefined, 'base'))) &&
+      histogramMethods.every((method) => contractAvailable(method, undefined, 'graphics'))
+    )
+    if (nonCallbackHistogramBreaks) {
+      // These are invocation dependencies, never an atomic-result proof for
+      // the structured histogram. Rebinding one also invalidates cached proof.
+      used.push(...histogramMethods)
+      priorUsed.push(...histogramMethods)
+      safeCallNames.push(...histogramMethods)
+    }
+    const nonCallbackNativeRaster = primitiveNativeRasterDrawing(expr)
+    if ((nonCallbackHistogramBreaks || nonCallbackNativeRaster) && expr.sourceOffset !== undefined)
+      readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
     if (
       fileCallbackPackage &&
+      !nonCallbackHistogramBreaks &&
+      !nonCallbackNativeRaster &&
       !functionalCallbacks.has(calledName(expr) ?? '') &&
       contractAvailable(calledName(expr)!, qualified?.package, fileCallbackPackage) &&
       !expr.staticBuiltinShadowed
@@ -9309,6 +9604,60 @@ const analyzeRSource = (
       used.push(dependencyName!)
       if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
       unknown.push('external-state', 'opaque-call')
+      if (
+        ['fitted', 'residuals'].includes(calledName(expr) ?? '') ||
+        (!qualified &&
+          [
+            'quarters',
+            'hat',
+            'getInitial',
+            'factanal',
+            'TukeyHSD',
+            'residuals.glm',
+            'heatmap',
+            'model.tables',
+            'relist',
+            'proj',
+            'confint.lm',
+            'ar.burg',
+            'spec.taper',
+            'model.frame',
+            'summary.glm',
+            'summary.lm',
+            'summary.manova',
+            'influence.measures',
+            'summary.aov',
+            'arima.sim',
+            'mauchly.test',
+            'SSD',
+            'se.contrast',
+            'alias',
+            'eff.aovlist',
+            'case.names',
+            'estVar',
+            'replications',
+            'getCall',
+            'model.frame.default',
+            'kruskal.test.default',
+            'quade.test.default',
+            'predict.StructTS',
+            'get_all_vars',
+            'tsSmooth',
+            'friedman.test.default'
+          ].includes(calledName(expr) ?? ''))
+      ) {
+        // Retain the existing receiver relationship without granting method purity.
+        const roots = unique(
+          expr.args.map(rootName).filter((name): name is string => Boolean(name))
+        )
+        if (roots.length)
+          receiverCalls.push({
+            receiver: roots[0]!,
+            member: calledName(expr)!,
+            kind: 'generic',
+            argumentNames: roots
+          })
+      }
       const modelName = calledName(expr)
       const modelParameters =
         modelName === 'nls' || modelName === 'loess' ? rModelArguments(expr, modelName) : undefined
@@ -12964,15 +13313,337 @@ const rMatchedIoArguments = (
   return matched
 }
 
-const rTapplyMayInvokeCallback = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
-  // FUN defaults to NULL (return group indices). Extra arguments and dots do
-  // not establish a closed reducer; R forwards them as lazy promises to FUN.
-  const matched = rMatchedIoArguments(expr, ['X', 'INDEX', 'FUN'])
-  return !matched || (!!matched.get('FUN') && matched.get('FUN')!.kind !== 'null')
-}
+const rHistogramArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>
+): Map<string, RExpr> | undefined =>
+  rMatchedIoArguments(expr, [
+    'x',
+    'breaks',
+    'freq',
+    'probability',
+    'include.lowest',
+    'right',
+    'fuzz',
+    'density',
+    'angle',
+    'col',
+    'border',
+    'main',
+    'xlim',
+    'ylim',
+    'xlab',
+    'ylab',
+    'axes',
+    'plot',
+    'labels',
+    'nclass',
+    'warn.unused'
+  ])
 
 const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | undefined => {
   const name = rCalledName(expr)
+  // Projection extraction dispatches user model methods.
+  // Those methods can replace caller paths and serialized contents first.
+  if (name === 'proj') return 'stats'
+  // Nested reconstruction dispatches methods on the supplied skeleton.
+  // Those methods can replace caller paths and serialized contents first.
+  if (name === 'relist') return 'utils'
+  // ANOVA tables and replication counts invoke model methods or NA callbacks.
+  // Those callbacks can replace caller paths and serialized contents first.
+  if (name === 'model.tables' || name === 'replications') return 'stats'
+  // Heatmaps invoke distance, clustering and reordering callbacks.
+  // Those callbacks can replace caller paths and serialized contents first.
+  if (name === 'heatmap') return 'stats'
+  // Direct GLM residuals execute family functions and model accessors.
+  // Those callbacks can replace caller paths and serialized contents first.
+  if (name === 'residuals.glm') return 'stats'
+  // Simultaneous contrasts dispatch arbitrary fitted-model methods.
+  // Those methods can replace caller paths and serialized contents first.
+  if (name === 'TukeyHSD') return 'stats'
+  // Factor analysis reads covariance containers and converts unknown designs.
+  // User accessors or conversion methods can replace caller paths and files.
+  if (name === 'factanal') return 'stats'
+  // Initial parameter estimation dispatches user model methods and initializers.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'getInitial') return 'stats'
+  // Leverage extraction can invoke user QR or design conversion methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'hat') return 'stats'
+  // Quarter extraction can dispatch user calendar methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'quarters') return 'base'
+  // Fitted values and residual extraction can invoke user model methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'fitted' || name === 'residuals') return 'stats'
+  // Finite-value predicates can dispatch user methods on classed measurements.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'is.finite') return 'base'
+  // Factor conversion can dispatch character methods before constructing levels.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'as.factor') return 'base'
+  // Ordered conversion can dispatch character methods before constructing levels.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'as.ordered') return 'base'
+  // List conversion can dispatch object or vector conversion methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'as.list' || name === 'as.list.default') return 'base'
+  // Bandwidth selectors can dispatch input length and conversion methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (['bw.ucv', 'bw.bcv', 'bw.SJ'].includes(name ?? '')) return 'stats'
+  // Longitudinal reshaping can dispatch input subsetting methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'reshape') return 'stats'
+  // Direct grouped methods still execute reducers and input conversion methods.
+  // Those callbacks can replace caller paths or serialized contents first.
+  if (name === 'by.default' || name === 'by.data.frame') return 'base'
+  // Direct data-frame aggregation still dispatches group methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'rowsum.data.frame') return 'base'
+  // Ordinal and missing-category construction can dispatch input methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'ordered' || name === 'addNA') return 'base'
+  // Joining dispatches merge methods, including input conversion in the frame method.
+  // Those methods can replace caller paths or serialized contents before failure.
+  if (name === 'merge' || name === 'merge.data.frame') return 'base'
+  // Group partitioning and reconstruction can dispatch coercion or subset methods.
+  // Those methods can change caller paths and serialized files before failure.
+  if (['split', 'split.default', 'split.data.frame', 'unsplit'].includes(name ?? '')) return 'base'
+  // Missing-value gates dispatch user validation methods before returning input.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'na.fail') return 'stats'
+  // Symbolic classification dispatches missingness and input methods.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'symnum') return 'stats'
+  // Reshaping can dispatch methods, coercion and selector/formula evaluation.
+  // Those operations can change caller paths and serialized files before failure.
+  if (
+    [
+      'stack',
+      'unstack',
+      'stack.default',
+      'stack.data.frame',
+      'unstack.default',
+      'unstack.data.frame'
+    ].includes(name ?? '')
+  )
+    return 'utils'
+  // Array conversion and axis permutation dispatch user tensor methods.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'as.array' || name === 'aperm') return 'base'
+  // Complex coercion dispatches user methods before returning phasor values.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'as.complex') return 'base'
+  // Table conversion and flattening dispatch methods before returning counts.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'as.table') return 'base'
+  if (name === 'ftable') return 'stats'
+  // Series conversion can dispatch user conversion or input-length methods.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'as.ts' || name === 'ts') return 'stats'
+  // Metadata removal and vector conversion can execute user methods.
+  // Only the existing primitive unname proof bounds those caller/file effects.
+  if (name === 'unname' || name === 'as.vector') return 'base'
+  // Range inspection can dispatch input and concatenation methods.
+  // Only the source analyzer's existing atomic proof bounds their effects.
+  if (name === 'range' || name === 'range.default') return 'base'
+  // Dropping levels can dispatch factor rebuilding and data-frame subsetting.
+  // Those methods can change caller paths and serialized files before failure.
+  if (['droplevels', 'droplevels.factor', 'droplevels.data.frame'].includes(name ?? ''))
+    return 'base'
+  // Interval metadata dispatches user methods before returning scalar boundaries.
+  // Those methods can change caller paths and serialized files before failure.
+  if (['start', 'end', 'deltat'].includes(name ?? '')) return 'stats'
+  // Model-frame extraction can force active bindings or subsetting methods.
+  // Unknown containers can change caller paths and serialized files first.
+  if (name === 'model.weights' || name === 'model.extract') return 'stats'
+  // Matrix binding dispatches user methods before assembling rows or columns.
+  // Structural output does not bound those methods' caller or file effects.
+  if (name === 'cbind' || name === 'rbind') return 'base'
+  // Direct aggregation methods still invoke reducers and input methods.
+  // Fixed groups or frequencies do not bound their caller or file effects.
+  if (['aggregate.ts', 'aggregate.data.frame'].includes(name ?? '')) return 'stats'
+  // Orthogonal effects still dispatch arbitrary fitted-model methods.
+  // Those methods can change caller paths and serialized files before failure.
+  if (name === 'effects') return 'stats'
+  // QR factor extraction accesses decomposition components through user methods.
+  // Completing a factor does not bound those caller or file effects.
+  if (['qr.Q', 'qr.R'].includes(name ?? '')) return 'base'
+  // Step-function conversion and knot extraction dispatch arbitrary methods.
+  // Inspection can change caller paths and serialized files before failure.
+  if (['as.stepfun', 'knots'].includes(name ?? '')) return 'stats'
+  // Coefficient aliases and factor-effect expansion still dispatch model methods.
+  // Those methods can replace caller paths and files before returning or failing.
+  if (['coefficients', 'dummy.coef'].includes(name ?? '')) return 'stats'
+  // Time-grid metadata uses generic methods, even for apparent inspections.
+  // Methods can change caller paths and files before returning or failing.
+  if (['time', 'cycle', 'frequency'].includes(name ?? '')) return 'stats'
+  // Distance and hierarchy conversions dispatch arbitrary object methods.
+  // Conversion can replace caller paths and files before returning or failing.
+  if (['as.dist', 'as.dendrogram', 'as.hclust'].includes(name ?? '')) return 'stats'
+  // Case-deletion coefficient diagnostics dispatch fitted-model methods.
+  // Standardization and influence collection do not bound caller/file effects.
+  if (['dfbeta', 'dfbetas', 'influence', 'influence.measures'].includes(name ?? '')) return 'stats'
+  // Fitted/residual aliases still dispatch the original S3 generics; weights
+  // also dispatches methods that can change caller paths and serialized files.
+  if (['fitted.values', 'resid', 'weights'].includes(name ?? '')) return 'stats'
+  // Inference dispatches fitted-model methods, including coefficient/covariance
+  // access in direct confint methods, before intervals, ANOVA tables or planned
+  // contrast standard errors, alias correlations or stratum efficiencies return.
+  if (
+    [
+      'confint',
+      'confint.default',
+      'confint.lm',
+      'anova',
+      'se.contrast',
+      'alias',
+      'eff.aovlist'
+    ].includes(name ?? '')
+  )
+    return 'stats'
+  // Term selection and penalized scores dispatch arbitrary fitted-model methods.
+  // Their caller/file effects remain possible before either return or failure.
+  if (['extractAIC', 'add1', 'drop1'].includes(name ?? '')) return 'stats'
+  // Diagnostics and regression summaries inspect models through user methods.
+  // Call recovery, case names and residual summaries can change caller paths/files.
+  if (
+    [
+      'deviance',
+      'df.residual',
+      'nobs',
+      'case.names',
+      'getCall',
+      'summary.glm',
+      'summary.lm',
+      'summary.manova',
+      'summary.aov'
+    ].includes(name ?? '')
+  )
+    return 'stats'
+  // Parameter covariance and residual-scale access dispatch fitted-model methods.
+  // Unknown methods can change caller paths and files before return or failure.
+  if (name === 'vcov' || name === 'sigma') return 'stats'
+  // Model scores dispatch likelihood methods, including through AIC/BIC.
+  // Unknown methods can change caller paths and files before return or failure.
+  if (['logLik', 'AIC', 'BIC'].includes(name ?? '')) return 'stats'
+  // Model-frame construction and extraction invoke data methods and NA callbacks.
+  // Direct defaults can also mutate files and caller paths before returning.
+  if (
+    [
+      'model.response',
+      'model.offset',
+      'model.frame',
+      'model.frame.default',
+      'get_all_vars'
+    ].includes(name ?? '')
+  )
+    return 'stats'
+  if (name === 'KalmanSmooth') {
+    const args = rMatchedIoArguments(expr, ['y', 'mod', 'nit'])
+    const nit = args?.get('nit')
+    // Only the initialization argument enters R method conversion; observations
+    // and model fields go directly to native code. Literal/default arguments
+    // cannot dispatch, while unknown methods can mutate files and caller paths.
+    if (!args || (nit && nit.kind !== 'atomic')) return 'stats'
+  }
+  // Reference coding invokes level conversions and factor methods.
+  // Unknown methods can mutate files and caller paths before design creation.
+  if (name === 'contr.SAS' || name === 'relevel') return 'stats'
+  // Offset/origin sorption evaluates operand methods before values/gradients.
+  // Unknown times, rates or amplitudes can mutate files and caller bindings.
+  if (name === 'SSasympOff' || name === 'SSasympOrig') return 'stats'
+  // Thermal relaxation evaluates arithmetic methods on unknown operands.
+  // They can replace files or caller paths before values/gradients or failure.
+  if (name === 'SSasymp') return 'stats'
+  // Residual diagnostics dispatch arbitrary fitted-model methods.
+  // Their caller/file effects remain possible before either return or failure.
+  if (name === 'rstandard' || name === 'rstudent') return 'stats'
+  // Polynomial contrasts evaluate methods on unknown level scores.
+  // Full coding still permits caller/file mutation before QR or failure.
+  if (name === 'contr.poly') return 'stats'
+  // Forecast horizons are coerced through user as.integer methods.
+  // Conversion can mutate files and caller paths before native forecasting.
+  if (name === 'KalmanForecast') return 'stats'
+  // ARMA responses coerce coefficients, including through ACF's MA delegate.
+  // Unknown conversion methods can replace files and caller bindings first.
+  if (name === 'ARMAtoMA' || name === 'ARMAacf') return 'stats'
+  // Deletion diagnostics invoke fitted-model residual methods before returning.
+  // Their caller/file effects are unbounded even when the native fit is saved.
+  if (['cooks.distance', 'covratio', 'dffits'].includes(name ?? '')) return 'stats'
+  // Four-parameter calibration evaluates operand methods before values/gradients.
+  // Unknown baselines, inputs or scales can mutate files and caller bindings.
+  if (name === 'SSfpl') return 'stats'
+  // Gompertz growth evaluates operand methods before values and gradients.
+  // Unknown powers and arithmetic can change files or caller bindings first.
+  if (name === 'SSgompertz') return 'stats'
+  // Biexponential decay evaluates operand methods before values and gradients.
+  // Unknown rates, amplitudes or times can mutate files and caller bindings.
+  if (name === 'SSbiexp') return 'stats'
+  // Weibull uptake evaluates operand methods before values and gradients.
+  // Unknown powers and arithmetic can change files or caller bindings first.
+  if (name === 'SSweibull') return 'stats'
+  // Oral kinetics evaluates dose, rate and time operand methods before returning.
+  // Unknown methods can change files and caller bindings before values/gradients.
+  if (name === 'SSfol') return 'stats'
+  // Enzyme kinetics evaluates operand methods before values and gradients.
+  // Those methods can mutate files and caller bindings even if evaluation fails.
+  if (name === 'SSmicmen') return 'stats'
+  // Logistic growth evaluates input arithmetic before returning values/gradients.
+  // Unknown operand methods can mutate files or caller bindings on that path.
+  if (name === 'SSlogis') return 'stats'
+  // Spectral window statistics subset the kernel before reducing its weights.
+  // User methods can change files and caller bindings before returning or failing.
+  if (name === 'df.kernel' || name === 'bandwidth.kernel') return 'stats'
+  // Supersmoothing dispatches input length and arithmetic before native fitting.
+  // Fixed spans do not bound those methods' file or caller-binding effects.
+  if (name === 'supsmu') return 'stats'
+  // Bin-count rules invoke input length, Math and summary methods before
+  // choosing breaks. Fixed rule names cannot bound their file/binding effects.
+  if (['nclass.Sturges', 'nclass.scott', 'nclass.FD'].includes(name ?? '')) return 'grDevices'
+  // Hull construction converts coordinates through xy.coords. Input methods
+  // and formula evaluation can change files or caller bindings before geometry.
+  if (name === 'chull' || name === 'xy.coords') return 'grDevices'
+  // Tukey screening dispatches missingness and sample methods before returning
+  // whiskers. Disabling outliers or notches does not suppress those effects.
+  if (name === 'boxplot.stats') return 'grDevices'
+  // Perspective projection assembles coordinates through cbind dispatch before
+  // matrix multiplication. Clipping flags do not bound input method effects.
+  if (name === 'trans3d') return 'grDevices'
+  // Contour extraction dispatches diff on both axes before native marching.
+  // Explicit levels do not bound those methods or grid input effects.
+  if (name === 'contourLines') return 'grDevices'
+  // Color conversion can dispatch data-frame coercion or invoke converter
+  // functions. Fixed white points and scales do not certify those effects.
+  if (name === 'convertColor') return 'grDevices'
+  // Three-axis coordinates coerce each axis and may evaluate a formula.
+  // Label and recycling options do not bound those caller/file effects.
+  if (name === 'xyz.coords') return 'grDevices'
+  // Envelope expansion dispatches range on x or diff on an explicit interval.
+  // Fixed padding factors do not bound those methods' caller/file effects.
+  if (name === 'extendrange') return 'grDevices'
+  // Raster conversion dispatches on the input before any pixel validation.
+  // Matrix dimensions and fixed intensity scales do not bound method effects.
+  if (name === 'as.raster') return 'grDevices'
+  // Drawing can invoke raster conversion and coordinate coercion methods.
+  // Native rasters bypass only image conversion, not argument coercion.
+  if (name === 'rasterImage') return 'graphics'
+  // HSV decomposition coerces a matrix or assembles channels through rbind.
+  // Fixed input scales do not certify those user methods' file/binding effects.
+  if (name === 'rgb2hsv') return 'grDevices'
+  // Logarithmic ticks exponentiate user bounds before native tick creation.
+  // Explicit axis parameters do not bound the operands' Ops methods.
+  if (name === 'axisTicks') return 'grDevices'
+  // Panel layouts coerce the plot count through as.integer before branching.
+  // Fixed aspect ratios do not bound conversion methods' file/binding effects.
+  if (name === 'n2mfrow') return 'grDevices'
+  if (name === 'hist' || name === 'hist.default') {
+    const args = rHistogramArguments(expr)
+    // Disabling the plot does not disable a breaks function. With breaks
+    // omitted, nclass can supply that function after a dispatching length check.
+    // Ordinary atomic values use the existing callback proof channel; omitted
+    // breaks/nclass retain the existing default-histogram contract.
+    if (!args || args.has('breaks') || args.has('nclass')) return 'graphics'
+  }
   // Discretization, distinct values and reversal dispatch on x before their defaults.
   // Default binning can also dispatch on breaks.
   if (name === 'cut' || name === 'unique' || name === 'rev') return 'base'
@@ -13036,9 +13707,12 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // Truth gates may dispatch length/is.na on classed logical scalars;
   // short-circuit syntax does not establish the methods' file effects.
   if (name === 'isTRUE' || name === 'isFALSE') return 'base'
-  // Both aliases dispatch as.double methods. Unknown class conversion can
-  // rebind caller paths or replace serialized contents before failure.
-  if (name === 'as.double' || name === 'as.numeric') return 'base'
+  // Primitive coercions may dispatch class-specific conversion methods.
+  // Unknown class conversion can replace caller paths and serialized contents.
+  if (['as.double', 'as.numeric', 'as.integer', 'as.logical'].includes(name ?? '')) return 'base'
+  // Text transforms may coerce non-character inputs through user methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'toupper' || name === 'chartr' || name === 'substr') return 'base'
   // Agreement checks dispatch target methods and can invoke formatFUN even
   // on ordinary numeric inputs. Formatting may mutate files before failure.
   if (name === 'all.equal' || name === 'all.equal.numeric') return 'base'
@@ -13107,11 +13781,21 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   if (name === 'is.unsorted') return 'base'
   if (name === 'sort.list') return 'base'
   if (name === 'diffinv') return 'stats'
+  // Direct integration methods still subset classed matrices or coerce lag.
+  // Initial values and fixed orders do not bound those methods' file effects.
+  if (name === 'diffinv.default' || name === 'diffinv.vector') return 'stats'
   if (name === 'inverse.rle') return 'base'
   if (name === 'sequence' || name === 'sequence.default') return 'base'
   if (name === 'lengths') return 'base'
   if (name === '.subset' || name === '.subset2') return 'base'
   if (name === 'match') return 'base'
+  // Proportion normalization invokes reductions, division and margin helpers.
+  // Explicit margins do not certify input methods' file or binding effects.
+  if (name === 'prop.table' || name === 'proportions') return 'base'
+  // Marginal sums can dispatch Summary methods or array conversions.
+  if (name === 'margin.table' || name === 'marginSums') return 'base'
+  // Added margins invoke supplied reducers before returning or failing.
+  if (name === 'addmargins') return 'stats'
   // Reductions and parallel extrema can dispatch class methods; ordering can
   // dispatch xtfrm. Unknown input does not bound file or binding effects.
   if (
@@ -13128,15 +13812,50 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // Weighted means dispatch on x; five-number summaries dispatch missingness,
   // sorting and subsetting. Unknown methods can change files before failure.
   if (name === 'weighted.mean' || name === 'fivenum') return 'stats'
+  // Direct summary defaults still dispatch operand and subsetting methods.
+  // Explicit weights or missing-value flags do not certify their file effects.
+  if (name === 'weighted.mean.default' || name === 'median.default') return 'stats'
   // These solvers require callbacks; their numerical evaluations can still
   // perform arbitrary I/O or replace caller bindings before returning/failing.
   if (name === 'integrate' || name === 'optim' || name === 'uniroot' || name === 'optimize')
     return 'stats'
-  if (name === 'tapply' && rTapplyMayInvokeCallback(expr)) return 'base'
+  // FUN=NULL still factors INDEX and can invoke class coercion methods.
+  // Ordinary no-reducer calls use the existing per-expression proof channel.
+  if (name === 'tapply') return 'base'
+  // Sampling can dispatch length/subsetting methods before returning or
+  // failing. RNG effects and lazy index forcing remain unproved as well.
+  if (name === 'sample' || name === 'sample.int') return 'base'
+  // Polynomial bases coerce classed numeric coordinates before either raw
+  // powers or orthogonalization. Raw mode does not bound those method effects.
+  if (name === 'poly' || name === 'polym') return 'stats'
+  // Interpolation closures validate/subset classed knots and values before
+  // returning. Constructing a function does not defer all method effects.
+  if (name === 'splinefunH' || name === 'stepfun') return 'stats'
+  // Running medians and Tukey smoothers coerce classed signals before native
+  // filtering. Fixed windows/end rules do not bound conversion method effects.
+  if (name === 'runmed' || name === 'smooth') return 'stats'
+  if (name === 'smoothEnds') {
+    const bandwidth = rMatchedIoArguments(expr, ['y', 'k'])?.get('k')
+    // Endpoint smoothing dispatches input access and replacement methods.
+    // Literal k=1 returns the input before those methods run.
+    if (bandwidth?.kind !== 'atomic' || bandwidth.number !== 1) return 'stats'
+  }
+  // Median polish converts its table before alternating row/column medians.
+  // Iteration and missing-value options do not bound user as.matrix methods.
+  if (name === 'medpolish') return 'stats'
   if (name === 'aggregate') return 'stats'
+  // Cross-tabulation evaluates model terms and na.action before aggregating.
+  // Fixed levels or complete records do not bound those caller/file effects.
+  if (name === 'xtabs') return 'stats'
   // outer can invoke FUN once with expanded vectors; even its product fast
   // path can dispatch input coercion. Neither grants file authority.
   if (name === 'outer') return 'base'
+  // Factorial expansion and interaction coding can dispatch input methods.
+  // Those methods may replace caller paths or serialized contents first.
+  if (name === 'expand.grid' || name === 'interaction') return 'base'
+  // Calendar conversion and durations may dispatch user conversion methods.
+  // Those methods can replace caller paths or serialized contents first.
+  if (name === 'as.Date' || name === 'as.POSIXct' || name === 'difftime') return 'base'
   // sweep invokes FUN on the input and expanded STATS. Unknown inputs and
   // default operators can dispatch user methods, not just an explicit closure.
   if (name === 'sweep') return 'base'
@@ -13154,6 +13873,9 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // dendrapply visits internal nodes as well as leaves; its node callback
   // can change files or caller bindings before returning or failing.
   if (name === 'dendrapply') return 'stats'
+  // Tree reordering invokes aggregation and input methods while visiting nodes.
+  // Fixed weights or default aggregation do not bound their caller/file effects.
+  if (name === 'reorder' || name === 'reorder.dendrogram') return 'stats'
   // kronecker coerces inputs before outer invokes FUN. Default multiplication
   // can still dispatch coercion or S4 methods, so it grants no file authority.
   if (name === 'kronecker') return 'base'
@@ -13187,12 +13909,68 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // loess evaluates formula variables, weights and subset through model.frame.
   // User transformations and methods can change files or caller state first.
   if (name === 'loess') return 'stats'
+  // LOWESS converts coordinates before its native local regression.
+  // Fixed span and disabled robustness do not bound conversion method effects.
+  if (name === 'lowess') return 'stats'
+  // One-way mean tests evaluate formulas, subset and na.action through
+  // model.frame. Equal-variance options do not bound those user effects.
+  if (name === 'oneway.test') return 'stats'
+  // Direct t tests subset samples before computing either mean contrast.
+  // Pairing, null means and confidence levels do not bound method effects.
+  if (name === 't.test.default') return 'stats'
   // Shared regularize.values may invoke ties on duplicate groups, after
   // coordinate coercion. Even ordered/default ties cannot certify input methods.
   if (['approx', 'approxfun', 'spline', 'splinefun'].includes(name ?? '')) return 'stats'
+  // Spline bases convert coordinates and knots before native basis evaluation.
+  // Fixed degree or boundaries do not bound user conversion methods' effects.
+  if (name === 'bs' || name === 'splineDesign') return 'splines'
+  // Natural bases and their prediction method coerce new coordinates.
+  // Saved knots do not certify conversion or model attribute access effects.
+  if (name === 'ns' || name === 'predict.ns') return 'splines'
+  // Prediction dispatches model methods, including ones that mutate caller state.
+  if (name === 'predict') return 'stats'
+  // Direct linear predictions evaluate and convert newdata before projection.
+  // Fixed intervals or standard-error options do not bound user method effects.
+  if (name === 'predict.lm') return 'stats'
+  // Direct GLM predictions invoke family inverse links and derivatives.
+  // Response or uncertainty options do not certify those callbacks' effects.
+  if (name === 'predict.glm') return 'stats'
+  // Direct PCA projections subset named columns and scale new observations.
+  // Saved rotations do not bound input methods or model access effects.
+  if (name === 'predict.prcomp') return 'stats'
+  // Direct AR forecasts convert newdata and may evaluate the saved series call.
+  // Fixed horizons or uncertainty options do not bound those user effects.
+  if (name === 'predict.ar') return 'stats'
+  // ARIMA converts series before fitting; direct forecasts reevaluate saved
+  // regressors in the caller. Fixed coefficients or disabling SE proves no purity.
+  if (name === 'arima' || name === 'predict.Arima') return 'stats'
+  // Direct nonlinear predictions invoke functions stored on the fitted model.
+  // Supplying newdata or requesting saved fits does not bound their effects.
+  if (name === 'predict.nls') return 'stats'
+  // Direct local predictions coerce newdata or dispatch saved fitted values.
+  // Surface and uncertainty options do not bound those user method effects.
+  if (name === 'predict.loess') return 'stats'
+  // Direct exponential forecasts dispatch fitted and residual methods.
+  // Fixed horizons and interval options do not bound their caller effects.
+  if (name === 'predict.HoltWinters') return 'stats'
+  // Structural forecasts and smoothing invoke methods or read saved model fields.
+  // Fixed horizons and intervals do not bound their caller or file effects.
+  if (name === 'predict.StructTS' || name === 'tsSmooth') return 'stats'
+  // Direct polynomial predictions convert newdata through user methods.
+  // An unambiguous omission returns object without entering that conversion.
+  if (name === 'predict.poly') {
+    const args = rMatchedIoArguments(expr, ['object', 'newdata'])
+    if (!args || args.has('newdata')) return 'stats'
+  }
+  // Direct smoothing predictions dispatch object access and coordinate methods.
+  // Saved values, derivative orders and extrapolation do not bound their effects.
+  if (['predict.smooth.spline', 'predict.smooth.spline.fit'].includes(name ?? '')) return 'stats'
   // KDE dispatch and as.vector coercion can invoke user methods before the
   // FFT calculation returns or fails. A numeric bandwidth proves no purity.
   if (name === 'density' || name === 'density.default') return 'stats'
+  // Bandwidth rules dispatch length and sample methods before estimating scale.
+  // Constant-sample fallback does not bound those methods' caller/file effects.
+  if (name === 'bw.nrd0' || name === 'bw.nrd') return 'stats'
   // Multivariate distances can call user as.matrix methods before native
   // distance/linear-algebra code. Centering or inverse-covariance options
   // do not establish read-only coordinate conversion.
@@ -13200,15 +13978,40 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // A GLM family carries executable initialization, link, variance and
   // validation functions. IRLS can run them before returning or failing.
   if (name === 'glm.fit') return 'stats'
+  // Design matrices evaluate model terms and invoke supplied contrast functions.
+  // Direct defaults and fixed formulas do not bound their caller/file effects.
+  if (name === 'model.matrix' || name === 'model.matrix.default') return 'stats'
+  // Contrast constructors coerce level labels even for full indicator coding.
+  // Unknown conversion methods can change files and caller bindings first.
+  if (['contr.helmert', 'contr.sum', 'contr.treatment'].includes(name ?? '')) return 'stats'
+  // Low-level least squares dispatches weight checks and offset arithmetic.
+  // Choosing QR does not bound user operators before or after the native fit.
+  if (name === 'lm.fit' || name === 'lm.wfit') return 'stats'
+  // Leverage methods dispatch model access or read influence components.
+  // Saved fits and explicit influence arguments do not bound those effects.
+  if (name === 'hatvalues' || name === 'hatvalues.lm') return 'stats'
+  // Weighted residuals dispatch both weight and residual methods on the fit.
+  // Keeping zero-weight rows does not bound those methods' caller/file effects.
+  if (name === 'weighted.residuals') return 'stats'
   // Numerical Hessians invoke the objective or supplied gradient repeatedly;
   // perturbing parameters does not bound callback I/O or caller mutations.
   if (name === 'optimHess') return 'stats'
   // PCA dispatch and matrix conversion can invoke user methods before SVD.
   // Centering, scaling or component truncation do not bound their effects.
-  if (name === 'prcomp' || name === 'prcomp.default') return 'stats'
-  // ACF invokes as.ts conversion and na.action before native lag evaluation.
+  if (['prcomp', 'prcomp.default', 'princomp', 'princomp.default'].includes(name ?? ''))
+    return 'stats'
+  // ACF/PACF invoke as.ts conversion and na.action before native lag evaluation.
   // Disabling plotting or demeaning does not bound those user effects.
-  if (name === 'acf') return 'stats'
+  if (name === 'acf' || name === 'pacf' || name === 'pacf.default') return 'stats'
+  // ACF-to-AR conversion dispatches as.double after dropping dimensions.
+  // Fixed lag counts do not bound input methods' caller/file effects.
+  if (name === 'acf2AR') return 'stats'
+  // Cross-series estimates convert both inputs and invoke na.action before ACF.
+  // Fixed lags or disabled plotting do not bound those caller/file effects.
+  if (name === 'ccf') return 'stats'
+  // Portmanteau tests reach user sequence conversion through ACF before
+  // computing lag statistics. Fixed lag/type/fitdf do not bound those effects.
+  if (name === 'Box.test') return 'stats'
   // Clustering coerces coordinates and centers before numerical iteration.
   // Fixed centers or algorithm choices do not certify user conversion methods.
   if (name === 'kmeans') return 'stats'
@@ -13218,9 +14021,12 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // Weighted covariance converts data frames before validating weights.
   // Unknown conversion methods can change files or caller bindings first.
   if (name === 'cov.wt') return 'stats'
-  // Periodograms invoke sequence conversion and na.action before the FFT.
+  // Spectral estimation and tapering can dispatch input conversion methods.
   // Disabling tapering, smoothing or plotting does not bound those effects.
-  if (name === 'spec.pgram' || name === 'spectrum') return 'stats'
+  if (name === 'spec.pgram' || name === 'spectrum' || name === 'spec.taper') return 'stats'
+  // AR spectra read saved model components through user access methods.
+  // Fixed frequency grids and disabled plots do not bound those effects.
+  if (name === 'spec.ar') return 'stats'
   // Weighted least squares coerces design and response before QR fitting.
   // Zero weights or intercept options do not certify user matrix methods.
   if (name === 'lsfit') return 'stats'
@@ -13239,37 +14045,147 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // Hierarchical clustering converts members before its native linkage call.
   // A fixed linkage method does not certify user as.double methods.
   if (name === 'hclust') return 'stats'
+  // Tree extraction coerces cut counts and dispatches tree conversion methods.
+  // Fixed cluster counts or a direct default do not bound those file effects.
+  if (['cutree', 'cophenetic', 'cophenetic.default'].includes(name ?? '')) return 'stats'
   // Second moments may coerce data frames or classed vectors. The source
   // analyzer separately certifies primitive vector calls so those retain proof.
   if (['cov', 'cor', 'var', 'sd'].includes(name ?? '')) return 'stats'
+  // Covariance normalization reads the diagonal through classed subsetting
+  // and scales the matrix through user operators before replacing entries.
+  if (name === 'cov2cor') return 'stats'
   // Scaling converts inputs through as.matrix and may dispatch scale methods.
   // Primitive vector calls retain the source analyzer's per-invocation proof.
   if (name === 'scale' || name === 'scale.default') return 'base'
   // Robust summaries subset, sort or coerce inputs before returning values.
   // Primitive arguments retain the existing guarded method contracts.
   if (name === 'quantile' || name === 'mad' || name === 'IQR') return 'stats'
+  // Direct quantiles sort and subset classed samples before interpolation.
+  // A fixed type or probability grid does not bound those methods' effects.
+  if (name === 'quantile.default') return 'stats'
   // Differencing dispatches S3 methods; cumulative primitives dispatch Math.
   // Their atomic-input proofs separately certify read-only invocations.
   if (['diff', 'cumsum', 'cumprod', 'cummin', 'cummax'].includes(name ?? '')) return 'base'
   // Empirical distributions and Q-Q data sort user inputs; KS also invokes
   // supplied CDFs. Disabling plots or fixing the tail does not bound effects.
   if (name === 'ecdf' || name === 'qqplot' || name === 'ks.test') return 'stats'
+  // Direct KS tests subset samples and may invoke a supplied CDF function.
+  // Asymptotic or simulation flags do not bound either source of effects.
+  if (name === 'ks.test.default') return 'stats'
+  // Normality tests subset classed samples; Q-Q preprocessing dispatches
+  // missingness methods even when plotting is disabled or the default is called.
+  if (name === 'shapiro.test' || name === 'qqnorm' || name === 'qqnorm.default') return 'stats'
+  if (name === 'ppoints') {
+    const count = rMatchedIoArguments(expr, ['n', 'a'])?.get('n')
+    // Plotting positions dispatch length and arithmetic on unknown inputs.
+    // A literal zero count returns an empty result without those methods.
+    if (count?.kind !== 'atomic' || count.number !== 0) return 'stats'
+  }
   // Matrix decompositions dispatch conversion (and chol dispatches first).
   // Disabling vectors or pivoting does not certify unknown input methods.
   if (['svd', 'La.svd', 'eigen', 'chol', 'chol.default'].includes(name ?? '')) return 'base'
-  // Autoregression converts series and invokes na.action before fitting.
-  // A fixed order or estimator does not bound those user effects; ar forwards
-  // them to the selected implementation.
-  if (name === 'ar' || name === 'ar.ols' || name === 'ar.yw') return 'stats'
-  // Contingency tests convert data frames through as.matrix before checking
-  // counts. Exact tails or disabling simulation do not bound user methods.
-  if (name === 'chisq.test' || name === 'fisher.test') return 'stats'
+  // QR dispatch and design/response conversion can invoke user methods before
+  // numerical solving. Rank tolerances and factor inputs do not bound effects.
+  if (['qr', 'qr.default', 'qr.solve', 'qr.coef'].includes(name ?? '')) return 'base'
+  // QR projections inspect response dimensions and decomposition components.
+  // Fixed rank does not bound user methods reached before native projection.
+  if (name === 'qr.fitted' || name === 'qr.resid') return 'base'
+  // Triangular solvers coerce factors and non-matrix right-hand sides before
+  // native substitution. Triangle and transpose flags do not bound methods.
+  if (name === 'forwardsolve' || name === 'backsolve') return 'base'
+  // Determinants dispatch S3 methods, including through the det wrapper.
+  // Logarithmic output does not bound those methods' file or binding effects.
+  if (name === 'det' || name === 'determinant') return 'base'
+  // Linear solves dispatch S3 methods; the default also converts matrices.
+  // Fixed tolerances do not bound conversion or solver methods' file effects.
+  if (name === 'solve' || name === 'solve.default') return 'base'
+  // Default inverse sizes and condition checks dispatch dimension methods.
+  // Numeric matrix routines do not bound those methods' file or binding effects.
+  if (name === 'chol2inv' || name === 'rcond') return 'base'
+  // Conditioning converts inputs even for exact SVD or induced-norm paths.
+  // A fixed norm or supplied inverse does not certify methods or lazy arguments.
+  if (name === 'kappa' || name === 'kappa.default') return 'base'
+  // Autoregression converts series and invokes na.action; simulation also
+  // invokes innovation generators and model methods. Fixed orders or supplied
+  // innovations do not bound the remaining user effects.
+  if (['ar', 'ar.ols', 'ar.yw', 'ar.burg', 'arima.sim'].includes(name ?? '')) return 'stats'
+  // Contingency/proportion tests convert, compare or subset classed counts.
+  // Fixed tails, corrections or simulation options do not bound user methods.
+  if (['chisq.test', 'fisher.test', 'mcnemar.test', 'prop.test'].includes(name ?? ''))
+    return 'stats'
+  // Loglinear fitting extracts classed tables after the numerical iteration.
+  // Fixed margins and convergence controls do not bound those method effects.
+  if (name === 'loglin') return 'stats'
+  // Ordered proportion tests coerce counts, totals and scores before fitting.
+  // Fixed scores do not bound user conversion methods or their file effects.
+  if (name === 'prop.trend.test') return 'stats'
+  // Stratified table validation dispatches anyNA on classed arrays; vector
+  // inputs also dispatch subsetting. Exact inference does not bound those effects.
+  if (name === 'mantelhaen.test') return 'stats'
+  // Power planning evaluates probability arithmetic, including inside root
+  // callbacks. Classed operands and lazy options can change caller/file state.
+  if (name === 'power.prop.test') return 'stats'
+  // T-test power takes abs(delta) and evaluates noncentrality arithmetic.
+  // Tail/strictness choices do not certify operand methods' file effects.
+  if (name === 'power.t.test') return 'stats'
+  // ANOVA power evaluates variance ratios and sample/group arithmetic.
+  // Fixed significance levels do not bound operand methods' file effects.
+  if (name === 'power.anova.test') return 'stats'
+  // Exact count tests round classed observations before parameter checks.
+  // Fixed tails or confidence levels do not certify Math group methods.
+  if (name === 'binom.test' || name === 'poisson.test') return 'stats'
+  // Variance ratio tests subset classed observations before computing moments.
+  // The direct default also dispatches input methods; fixed tails bound no I/O.
+  if (name === 'var.test' || name === 'var.test.default') return 'stats'
+  // Rank-based scale tests subset inputs, including in their direct defaults.
+  // Tie handling and exact/approximate options do not certify input methods.
+  if (['ansari.test', 'ansari.test.default', 'mood.test', 'mood.test.default'].includes(name ?? ''))
+    return 'stats'
   // Rank tests dispatch on their inputs and subset observations before
   // computing ranks. Exact p-values do not certify user subsetting effects.
   if (name === 'wilcox.test' || name === 'cor.test') return 'stats'
+  // Direct correlation tests subset complete observations before inference.
+  // A fixed method or alternative does not bound user subsetting effects.
+  if (name === 'cor.test.default') return 'stats'
+  // Direct rank tests subset classed samples before assigning pooled ranks.
+  // Exactness and continuity flags do not certify those methods' effects.
+  if (name === 'wilcox.test.default') return 'stats'
+  // Pairwise mean tests factor groups and subset samples before reductions
+  // or delegated t tests. Pooling and adjustment options do not bound methods.
+  if (name === 'pairwise.t.test') return 'stats'
+  // Pairwise rank tests subset samples through user methods before inference.
+  // Adjustment and pairing options do not bound their file or binding effects.
+  if (name === 'pairwise.wilcox.test') return 'stats'
+  // Pairwise proportions subset counts and trial totals before testing.
+  // Matrix inputs and continuity corrections do not bound user method effects.
+  if (name === 'pairwise.prop.test') return 'stats'
+  // Variance tests, scatter and covariance extraction dispatch sample/model methods before
+  // covariance/rank calculations. Fixed options do not bound those effects.
+  if (
+    [
+      'bartlett.test',
+      'bartlett.test.default',
+      'fligner.test',
+      'fligner.test.default',
+      'mauchly.test',
+      'SSD',
+      'estVar'
+    ].includes(name ?? '')
+  )
+    return 'stats'
   // Grouped and complete-block rank tests subset observations before ranking.
-  // Fixed groups or blocks cannot certify user subsetting and factor methods.
-  if (name === 'kruskal.test' || name === 'friedman.test' || name === 'quade.test') return 'stats'
+  // Direct defaults also invoke user subsetting and factor methods.
+  if (
+    [
+      'kruskal.test',
+      'kruskal.test.default',
+      'friedman.test',
+      'friedman.test.default',
+      'quade.test',
+      'quade.test.default'
+    ].includes(name ?? '')
+  )
+    return 'stats'
   // Rotation normalizes rows through apply, which can dispatch as.matrix on
   // an unknown loading object. Promax delegates to varimax before regression.
   // Rotation options do not certify conversion effects or result ownership.
@@ -13278,6 +14194,36 @@ const rFileCallbackPackage = (expr: Extract<RExpr, { kind: 'call' }>): string | 
   // reaches that conversion through filter, before seasonal estimation.
   // Fixed filter weights or smoothing parameters do not bound those effects.
   if (name === 'decompose' || name === 'HoltWinters') return 'stats'
+  // STL invokes na.action after as.ts conversion, before validating the series.
+  // Periodic windows and known callbacks do not bound input method effects.
+  if (name === 'stl') return 'stats'
+  if (name === 'ts.intersect' || name === 'ts.union') {
+    const frame = expr.args[expr.names.indexOf('dframe')]
+    const plainResult = !frame || (frame.kind === 'atomic' && frame.logical === false)
+    const series = expr.args.filter((arg, i) => expr.names[i] !== 'dframe' && arg.kind !== 'null')
+    // One non-null series returns unchanged unless data-frame conversion is requested.
+    // Multiple series can invoke as.ts methods before alignment or validation fails.
+    if (
+      !plainResult ||
+      expr.names.filter((arg) => arg === 'dframe').length > 1 ||
+      series.length > 1 ||
+      series.some((arg) => isSymbol(arg) && arg.name === '...')
+    )
+      return 'stats'
+  }
+  // Delay embedding subsets classed series; lag dispatches model methods.
+  // Window size and time offsets do not bound file or caller-binding effects.
+  if (name === 'embed' || name === 'lag') return 'stats'
+  // Window extraction dispatches methods and subsets classed series directly.
+  // Fixed calendar bounds or thinning frequency do not bound their effects.
+  if (name === 'window' || name === 'window.default') return 'stats'
+  // Complete-window selection dispatches missingness and subsetting methods.
+  // The longest-run rule does not bound those methods' caller/file effects.
+  if (name === 'na.contiguous' || name === 'na.contiguous.default') return 'stats'
+  // Result restoration dispatches omission methods and subsets classed values.
+  // Direct default methods return the input without entering that subsetting.
+  if (['napredict', 'naresid', 'napredict.exclude', 'naresid.exclude'].includes(name ?? ''))
+    return 'stats'
   // Unqualified positional filter calls also name dplyr's data-mask operation.
   // Recognize convolution through its namespace or distinctive named formals;
   // do not replace the existing tabular contract merely on the shared name.
@@ -16043,8 +16989,13 @@ const analyzeRFileAccessTree = (
       unresolvedWrites = true
       unsupportedExternalState = true
       revoke()
-      expr.args.forEach((argument) => visit(argument))
-      revoke()
+      // R forces promises on demand, not in source argument order. A write or
+      // binding established in one promise cannot authorize a sibling read.
+      // Preserve straight-line facts inside each promise, then revoke them.
+      for (const argument of expr.args) {
+        visit(argument)
+        revoke()
+      }
       return
     }
     if (
