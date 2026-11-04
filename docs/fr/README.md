@@ -314,7 +314,7 @@ Lors d’une recherche par coordonnées dans l’eQTL Catalogue, Open-Science v�
 
 Importez des références, des étiquettes, des collections et des liens vers les sources depuis Zotero 10 ou une version ultérieure exécutée sur le même ordinateur. Vous pouvez choisir de copier les pièces jointes PDF locales ; l’importation est unidirectionnelle et ne modifie pas Zotero.
 
-Ajoutez des références une par une à partir d’un DOI, d’un lien DOI ou d’un lien vers le résumé ou le PDF sur arXiv, puis vérifiez et modifiez les métadonnées récupérées avant de les enregistrer. Les PDF en texte intégral peuvent être ajoutés séparément.
+Ajoutez une référence à partir d’un DOI, d’un identifiant arXiv, d’un PMID, d’un PMCID ou d’un lien d’article pris en charge, ou collez jusqu’à 100 références, une par ligne. Vérifiez et modifiez une référence individuelle avant de l’enregistrer, ou sélectionnez les références à importer par lot. Les PDF en texte intégral peuvent être ajoutés séparément.
 
 Les annotations PDF et les notes de document sont persistantes. Avec un modèle de sélection configuré, les collections intelligentes évaluent les références selon vos critères d’inclusion et d’exclusion. Les décisions de l’IA et les décisions manuelles restent distinctes pour aider la revue humaine.
 

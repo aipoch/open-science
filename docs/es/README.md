@@ -315,7 +315,7 @@ Al consultar el eQTL Catalogue por coordenadas, Open-Science comprueba que corre
 
 Importe referencias, etiquetas, colecciones y enlaces a las fuentes desde Zotero 10 o posterior en ejecución en el mismo equipo. Puede elegir copiar los archivos PDF adjuntos locales; la importación es unidireccional y no modifica Zotero.
 
-Añada referencias de una en una mediante un DOI, un enlace DOI o un enlace al resumen o al PDF de arXiv. Revise y edite los metadatos obtenidos antes de guardar. Los PDF de texto completo se pueden añadir por separado.
+Añada una referencia mediante un DOI, un identificador de arXiv, un PMID, un PMCID o un enlace de artículo compatible, o pegue hasta 100 referencias, una por línea. Revise y edite una referencia individual antes de guardar, o seleccione las referencias que desea importar por lotes. Los PDF de texto completo se pueden añadir por separado.
 
 Dispone de anotaciones PDF persistentes y notas de documentos. Con un modelo de cribado configurado, las colecciones inteligentes evalúan referencias según sus criterios de inclusión y exclusión. Las decisiones de IA y las manuales se registran por separado para apoyar la revisión humana.
 

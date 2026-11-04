@@ -315,7 +315,7 @@ Bei Koordinatenabfragen im eQTL Catalogue prüft Open-Science, ob die Koordinate
 
 Importieren Sie Literaturangaben, Schlagwörter, Sammlungen und Quellenlinks aus Zotero 10 oder höher, das auf demselben Computer läuft. Lokale PDF-Anhänge können Sie optional kopieren; der Import ist einseitig und ändert Zotero nicht.
 
-Fügen Sie Literaturangaben einzeln über eine DOI, einen DOI-Link oder einen Link zur arXiv-Zusammenfassung oder zum arXiv-PDF hinzu. Prüfen und bearbeiten Sie die abgerufenen Metadaten vor dem Speichern. Volltext-PDFs können separat hinzugefügt werden.
+Fügen Sie eine Literaturangabe über eine DOI, eine arXiv-ID, eine PMID, eine PMCID oder einen unterstützten Artikellink hinzu oder fügen Sie bis zu 100 Literaturangaben mit jeweils einem Eintrag pro Zeile ein. Prüfen und bearbeiten Sie eine einzelne Literaturangabe vor dem Speichern oder wählen Sie die Einträge für einen Stapelimport aus. Volltext-PDFs können separat hinzugefügt werden.
 
 Dauerhafte PDF-Anmerkungen und Dokumentnotizen sind verfügbar. Mit konfiguriertem Screening-Modell bewerten intelligente Sammlungen Literatur anhand Ihrer Ein- und Ausschlusskriterien. KI- und manuelle Entscheidungen bleiben getrennt und unterstützen die menschliche Prüfung.
 
