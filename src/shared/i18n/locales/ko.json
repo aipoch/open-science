@@ -7693,8 +7693,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "스케줄러에 이 작업의 사용 가능한 결과가 없습니다. 원격 프로세스가 계속 실행 중일 수 있습니다. 다음 작업을 결정하기 전에 스케줄러와 원격 파일을 확인하세요.",
     "Optimization prompt": "최적화 프롬프트",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "이 프로젝트의 질문을 최적화할 때만 사용합니다. 비워 두면 기본 제공 기본 템플릿을 사용합니다.",
-    "Use built-in template": "기본 템플릿 사용",
-    "Restore default": "기본값 복원",
     "Optimize question": "질문 최적화",
     "Cancel optimization": "최적화 취소",
     "Optimize again": "다시 최적화",

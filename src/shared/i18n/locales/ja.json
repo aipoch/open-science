@@ -7695,8 +7695,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "スケジューラーにこのジョブの利用可能な結果がありません。リモートプロセスはまだ実行中の可能性があります。次の操作を決める前に、スケジューラーとリモートファイルを確認してください。",
     "Optimization prompt": "最適化プロンプト",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "このプロジェクトの質問を最適化するときだけ使用します。空欄にすると組み込みの既定テンプレートを使用します。",
-    "Use built-in template": "内蔵テンプレートを使用",
-    "Restore default": "既定値に戻す",
     "Optimize question": "質問を最適化",
     "Cancel optimization": "最適化をキャンセル",
     "Optimize again": "再度最適化",

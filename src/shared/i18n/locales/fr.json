@@ -8033,8 +8033,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "L’ordonnanceur ne dispose d’aucun résultat pour cette tâche. Le processus distant est peut-être toujours en cours. Vérifiez l’ordonnanceur et les fichiers distants avant de décider de la suite.",
     "Optimization prompt": "Prompt d’optimisation",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Utilisé uniquement pour optimiser une question dans ce projet. Laissez vide pour utiliser le modèle intégré par défaut.",
-    "Use built-in template": "Utiliser le modèle intégré",
-    "Restore default": "Rétablir la valeur par défaut",
     "Optimize question": "Optimiser la question",
     "Cancel optimization": "Annuler l’optimisation",
     "Optimize again": "Optimiser à nouveau",

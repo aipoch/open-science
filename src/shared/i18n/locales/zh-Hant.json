@@ -7695,8 +7695,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "排程器沒有此任務的可用結果。遠端程序可能仍在執行。請先檢查排程器和遠端檔案，再決定下一步操作。",
     "Optimization prompt": "最佳化提示詞",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "僅在最佳化目前專案中的提問時使用。留空則使用內建預設範本。",
-    "Use built-in template": "使用內建範本",
-    "Restore default": "還原預設",
     "Optimize question": "最佳化提問",
     "Cancel optimization": "取消最佳化",
     "Optimize again": "重新最佳化",

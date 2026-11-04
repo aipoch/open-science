@@ -4,6 +4,7 @@ import * as AlertDialog from '@/components/ui/alert-dialog'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
+import { DEFAULT_OPTIMIZATION_PROMPT } from '../../../../shared/prompt-optimization'
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { expectDialogFormFieldClassName } from '@/test-utils/dialog-form'
 
@@ -162,6 +163,12 @@ describe('home dialogs shared chrome', () => {
     expect(getTextContent(tree)).toContain(
       'Used only when optimizing a question in this project. Leave empty to use the built-in default.'
     )
+    const optimizationPromptField = elements.find(
+      (element) => element.props.id === 'project-optimization-prompt'
+    )
+    expect(optimizationPromptField?.props.placeholder).toBe(DEFAULT_OPTIMIZATION_PROMPT)
+    expect(getTextContent(tree)).not.toContain('Use built-in template')
+    expect(getTextContent(tree)).not.toContain('Restore default')
     const nameField = elements.find((element) => element.props.id === 'project-form-name')
     const descriptionField = elements.find((element) => element.type === 'textarea')
     const agentContextField = elements.find(

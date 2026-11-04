@@ -7860,8 +7860,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "Der Scheduler hat kein verfügbares Ergebnis für diesen Job. Der entfernte Prozess läuft möglicherweise noch. Prüfen Sie den Scheduler und die entfernten Dateien, bevor Sie das weitere Vorgehen festlegen.",
     "Optimization prompt": "Optimierungs-Prompt",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Wird nur beim Optimieren einer Frage in diesem Projekt verwendet. Leer lassen, um die integrierte Standardvorlage zu verwenden.",
-    "Use built-in template": "Integrierte Vorlage verwenden",
-    "Restore default": "Standard wiederherstellen",
     "Optimize question": "Frage optimieren",
     "Cancel optimization": "Optimierung abbrechen",
     "Optimize again": "Erneut optimieren",

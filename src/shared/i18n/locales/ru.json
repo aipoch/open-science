@@ -8178,8 +8178,6 @@
     "The scheduler has no available result for this job. The remote process may still be running. Check the scheduler and remote files before deciding what to do next.": "В планировщике нет доступного результата этого задания. Удалённый процесс может всё ещё выполняться. Проверьте планировщик и удалённые файлы, прежде чем решать, что делать дальше.",
     "Optimization prompt": "Промпт оптимизации",
     "Used only when optimizing a question in this project. Leave empty to use the built-in default.": "Используется только при оптимизации вопроса в этом проекте. Оставьте поле пустым, чтобы использовать встроенный шаблон по умолчанию.",
-    "Use built-in template": "Использовать встроенный шаблон",
-    "Restore default": "Восстановить по умолчанию",
     "Optimize question": "Оптимизировать вопрос",
     "Cancel optimization": "Отменить оптимизацию",
     "Optimize again": "Оптимизировать снова",

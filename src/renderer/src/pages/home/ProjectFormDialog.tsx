@@ -221,28 +221,9 @@ const ProjectFormDialog = ({
                   disabled={isSubmitting}
                   rows={5}
                   maxLength={16000}
+                  placeholder={DEFAULT_OPTIMIZATION_PROMPT}
                   className={dialogFormTextareaClassName}
                 />
-                <div className="mt-2 flex gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={isSubmitting}
-                    onClick={() => onOptimizationPromptChange(DEFAULT_OPTIMIZATION_PROMPT)}
-                  >
-                    {t('Use built-in template')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={isSubmitting || !optimizationPromptDraft}
-                    onClick={() => onOptimizationPromptChange('')}
-                  >
-                    {t('Restore default')}
-                  </Button>
-                </div>
               </div>
             </div>
             {error ? (
