@@ -78,6 +78,8 @@ describe('AppVersionSection', () => {
       'https://github.com/aipoch/open-science/blob/main/SECURITY.md'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
+    expect(container.querySelector('[data-testid="manual-update-links"] a')).toBeNull()
+    expect(container.querySelector('[data-settings-anchor="general.download"]')).not.toBeNull()
   })
 
   it('links manual installation guidance to the localized AIPOCH docs page', async () => {
@@ -165,9 +167,9 @@ describe('AppVersionSection', () => {
       container.querySelectorAll('[data-slot="about-resource-description"]')
     )
 
-    expect(links).toHaveLength(5)
+    expect(links).toHaveLength(6)
     expect(links.every((link) => link.classList.contains('group'))).toBe(true)
-    expect(icons).toHaveLength(5)
+    expect(icons).toHaveLength(6)
     expect(
       icons.every(
         (icon) =>
@@ -175,7 +177,7 @@ describe('AppVersionSection', () => {
           icon.classList.contains('group-focus-visible:text-primary')
       )
     ).toBe(true)
-    expect(titles).toHaveLength(5)
+    expect(titles).toHaveLength(6)
     expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
     expect(
       titles.every(
@@ -190,7 +192,7 @@ describe('AppVersionSection', () => {
           title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
-    expect(descriptions).toHaveLength(5)
+    expect(descriptions).toHaveLength(6)
     expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
       true
     )
@@ -331,10 +333,10 @@ it.each(['idle', 'checking', 'up-to-date', 'error'] as const)(
     const apply = vi.fn(async () => {})
     useUpdateStore.setState({ check, download, apply, status: { state, current: '0.2.0' } })
     act(() => root.render(<AppVersionSection />))
-    const resources = container.querySelector('[data-testid="manual-update-links"]')!
-    expect(resources.querySelector('a')?.getAttribute('href')).toBe(
-      'https://aipoch.com/open-science/download'
-    )
+    const websiteLink = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.download"]'
+    )!
+    expect(websiteLink.getAttribute('href')).toBe('https://aipoch.com/open-science/download')
     const manualLink = container.querySelector<HTMLAnchorElement>(
       '[data-settings-anchor="general.manual-install"]'
     )
