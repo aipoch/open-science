@@ -27,24 +27,22 @@ import {
 import { acquireOpenCodeStore, type OpenCodeStoreLease } from './opencode-store'
 import { createOpenCodeCompactionStream } from './opencode-compaction-stream'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
+import { onProcessTreeReaped } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
   AcpBackendGenerationView
 } from './backend-generation-owner'
-import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
+import type {
+  AcpConnectionResourceAttempt,
+  AcpConnectionResourceOwner
+} from './connection-resource-owner'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
 type ResponsesTransportLease = ResolvedAgentBackend['responsesTransportLease']
 type MessagesBridgeLease = ResolvedAgentBackend['messagesBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
 const log = createLogger('acp-connection')
-type CandidateCleanupStage =
-  | 'connection'
-  | 'agent-process'
-  | 'bridge-lease'
-  | 'anthropic-bridge-lease'
-  | 'provider-transport-lease'
+type CandidateCleanupStage = 'connection' | 'agent-process'
 type AcpProcessEventContext = Readonly<{
   process: ChildProcessWithoutNullStreams
   framework: AgentFramework['id']
@@ -89,7 +87,6 @@ type AcpAgentConnectionHooks = Readonly<{
     framework: AgentFramework['id'],
     epoch: number
   ) => void
-  reportProcessTreeError: (message: string, error?: unknown) => void
 }>
 
 type AcpAgentConnectionCandidateInput = Readonly<{
@@ -98,6 +95,7 @@ type AcpAgentConnectionCandidateInput = Readonly<{
   prepareBackend: (backend: ResolvedAgentBackend) => AcpBackendGenerationAttempt
   isCurrent: () => boolean
   isShuttingDown: () => boolean
+  cleanupUnattached: AcpConnectionResourceOwner['cleanupUnattached']
   spawnAgent?: () => ChildProcessWithoutNullStreams
   spawnProcess?: AgentProcessSpawner
   registerOpenCodeStoreRelease?: (release: () => void) => void
@@ -157,60 +155,22 @@ class AcpAgentConnectionAdapter {
       }
     }
     const cleanup = async (): Promise<void> => {
-      let reaped = !cleanupUnconfirmed
-      if (!reaped) hooks.onProcessTreeReaped(false)
-      try {
-        connection?.close()
-      } catch (error) {
-        reportCleanupFailure('connection', error)
-      }
-      if (process) {
-        hooks.markProcessExitExpected(process, input.epoch)
-        try {
-          const result = await terminateProcessTree(process, undefined, {
-            error: (message, error) => hooks.reportProcessTreeError(message, error)
-          })
-          reaped = reaped && result.reaped
-          hooks.onProcessTreeReaped(result.reaped)
-        } catch (error) {
-          reaped = false
-          hooks.onProcessTreeReaped(false)
-          reportCleanupFailure('agent-process', error)
-        }
-      }
-      if (openCodeService) {
-        try {
-          const result = await openCodeService.release()
-          reaped = reaped && result.reaped
-          hooks.onProcessTreeReaped(result.reaped)
-        } catch (error) {
-          reaped = false
-          hooks.onProcessTreeReaped(false)
-          reportCleanupFailure('agent-process', error)
-        }
-      }
-      if (reaped) openCodeStore?.release()
-      if (bridgeLease) {
-        try {
-          await bridgeLease.release()
-        } catch (error) {
-          reportCleanupFailure('bridge-lease', error)
-        }
-      }
-      if (messagesBridgeLease) {
-        try {
-          await messagesBridgeLease.release()
-        } catch (error) {
-          reportCleanupFailure('anthropic-bridge-lease', error)
-        }
-      }
-      if (providerTransportLease) {
-        try {
-          await providerTransportLease.release()
-        } catch (error) {
-          reportCleanupFailure('provider-transport-lease', error)
-        }
-      }
+      if (cleanupUnconfirmed) hooks.onProcessTreeReaped(false)
+      if (process) hooks.markProcessExitExpected(process, input.epoch)
+      await input.cleanupUnattached(
+        {
+          process,
+          connection,
+          bridgeLease,
+          messagesBridgeLease,
+          providerTransportLease,
+          openCodeService,
+          // A native spawn may throw without returning its child handle. Only the existing
+          // receipt recovery callback can release that unknown writer's storage ownership.
+          openCodeStore: cleanupUnconfirmed ? undefined : openCodeStore
+        },
+        reportCleanupFailure
+      )
     }
 
     try {
@@ -346,7 +306,10 @@ class AcpAgentConnectionAdapter {
       } catch {
         // Logging must not change cleanup or the original failure.
       }
-      if (error instanceof OpenCodeServiceCleanupError) cleanupUnconfirmed = true
+      if (error instanceof OpenCodeServiceCleanupError) {
+        openCodeService = error.service
+        cleanupUnconfirmed = !error.service
+      }
       backendAttempt?.fail()
       await cleanup()
       throw error
