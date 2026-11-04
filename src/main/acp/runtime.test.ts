@@ -69,6 +69,7 @@ import {
   codeBuddyFramework,
   codexFramework,
   createPiFramework,
+  getAgentFramework,
   opencodeFramework,
   type AgentModelChangeTarget,
   type ResolvedAgentBackend
@@ -1242,6 +1243,237 @@ afterEach(async () => {
     await rm(temporaryRoot, { recursive: true, force: true })
     temporaryRoot = undefined
   }
+})
+
+describe('completed coordinator process release', () => {
+  it.each([false, true])(
+    'protects queued admission without blocking provider reconnect=%s',
+    async (reconnect) => {
+      const process = new FakeAgentProcess()
+      const started = createDeferred()
+      const finish = createDeferred()
+      const nextAdmission = createDeferred()
+      const allowNextAdmission = createDeferred()
+      const allowFirstSettlement = createDeferred()
+      let admissions = 0
+      let settlements = 0
+      let turns = 0
+      const agent = startFakeAgent(process, ['session'], {
+        onPrompt: async () => {
+          if (++turns === 1) {
+            started.resolve()
+            await finish.promise
+          }
+        }
+      })
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            spawnAgent: () => asAgentProcess(process)
+          }),
+        {},
+        '/workspace',
+        undefined,
+        undefined,
+        undefined,
+        {},
+        undefined,
+        {
+          pendingPermissions: () => [],
+          subscribe: () => () => undefined,
+          respondToPermission: async () => false,
+          setPermissionProfile: async () => undefined,
+          stopSession: async () => undefined,
+          stopAll: async () => undefined,
+          shutdown: async () => undefined,
+          shutdownForQuit: async () => undefined,
+          shutdownForUpdateGate: async () => undefined,
+          deleteSession: async () => undefined,
+          deleteProject: async () => undefined,
+          rootTurnStarted: async () => {
+            if (++admissions === 2) {
+              nextAdmission.resolve()
+              await allowNextAdmission.promise
+            }
+            return `lease-${admissions}`
+          },
+          rootTurnEnded: async () => {
+            if (++settlements === 1) await allowFirstSettlement.promise
+          }
+        }
+      )
+      try {
+        await coordinator.createSession({ cwd: '/workspace' })
+        const first = coordinator.sendPrompt({ sessionId: 'session', text: 'first' })
+        await started.promise
+        const second = coordinator.sendPrompt({ sessionId: 'session', text: 'second' })
+        const completion = Promise.allSettled([first, second])
+        finish.resolve()
+        await nextAdmission.promise
+        allowFirstSettlement.resolve()
+        await first
+        expect(process.killed).toBe(false)
+        if (reconnect) await coordinator.requestProviderReconnect()
+        allowNextAdmission.resolve()
+        const outcomes = await completion
+        if (reconnect) {
+          expect(outcomes[1].status).toBe('rejected')
+          expect(agent.prompts).toHaveLength(1)
+        } else {
+          expect(outcomes.map(({ status }) => status)).toEqual(['fulfilled', 'fulfilled'])
+          expect(agent.prompts).toHaveLength(2)
+        }
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        allowFirstSettlement.resolve()
+        allowNextAdmission.resolve()
+        finish.resolve()
+        await coordinator.shutdownForQuit()
+      }
+    }
+  )
+
+  it('keeps a shared process until the last sibling prompt finishes', async () => {
+    const process = new FakeAgentProcess()
+    const started = createDeferred()
+    const finish = createDeferred()
+    startFakeAgent(process, ['busy', 'finished'], {
+      onPrompt: async ({ sessionId }) => {
+        if (sessionId === 'busy') {
+          started.resolve()
+          await finish.promise
+        }
+      }
+    })
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) =>
+        new AcpRuntime({
+          appVersion: 'test',
+          defaultCwd: '/workspace',
+          callbacks,
+          spawnAgent: () => asAgentProcess(process)
+        }),
+      {},
+      '/workspace'
+    )
+    try {
+      await coordinator.createSession({ cwd: '/workspace' })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const busy = coordinator.sendPrompt({ sessionId: 'busy', text: 'long task' })
+      await started.promise
+      await coordinator.sendPrompt({ sessionId: 'finished', text: 'short task' })
+      expect(process.killed).toBe(false)
+      finish.resolve()
+      await busy
+      await vi.waitFor(() => expect(process.killed).toBe(true))
+    } finally {
+      finish.resolve()
+      await coordinator.shutdownForQuit()
+    }
+  })
+
+  it.each([
+    ['Claude Code', claudeCodeFramework, 'claude-anthropic'],
+    ['OpenCode', opencodeFramework, 'opencode-openai'],
+    ['Codex Responses', codexFramework, 'codex-responses'],
+    ['Codex Bridge', codexFramework, 'codex-bridge'],
+    ['CodeBuddy', codeBuddyFramework, 'codebuddy-openai'],
+    ['Pi', getAgentFramework('pi'), 'pi']
+  ] as const)(
+    'releases %s after activity settles and resumes the same conversation',
+    async (_name, framework, modelRoute) => {
+      const processes: FakeAgentProcess[] = []
+      const agents: ReturnType<typeof startFakeAgent>[] = []
+      const releases: ReturnType<typeof createBackendLeaseHarness>[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => {
+              const process = new FakeAgentProcess()
+              processes.push(process)
+              agents.push(
+                startFakeAgent(
+                  process,
+                  [`00000000-0000-4000-8000-${String(processes.length).padStart(12, '0')}`],
+                  {
+                    modes: createModes([
+                      'read-only',
+                      'agent',
+                      'agent-full-access',
+                      'default',
+                      'bypassPermissions'
+                    ])
+                  }
+                )
+              )
+              const lease = createBackendLeaseHarness()
+              releases.push(lease)
+              return {
+                framework: { ...framework, spawn: () => asAgentProcess(process) },
+                executablePath: '/bin/agent',
+                env: {},
+                modelRoute,
+                ...(modelRoute === 'codex-bridge'
+                  ? {
+                      responsesTransportLease: lease.lease,
+                      providerContinuityToken: `bridge-${processes.length}`
+                    }
+                  : {})
+              }
+            }
+          }),
+        {},
+        '/workspace'
+      )
+      try {
+        const created = await coordinator.createSession({ cwd: '/workspace' })
+        await coordinator.withActivity(
+          { session: { sessionId: created.sessionId, cwd: '/workspace' } },
+          async (activity) => {
+            await activity.sendPrompt({ sessionId: created.sessionId, text: 'First task' })
+            expect(processes[0].killed).toBe(false)
+          }
+        )
+        await vi.waitFor(() => expect(processes[0].killed).toBe(true))
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(created.sessionId)
+        if (modelRoute === 'codex-bridge') expect(releases[0].release).toHaveBeenCalledOnce()
+        const resumed = await coordinator.resumeSession({
+          sessionId: created.sessionId,
+          providerSessionId: created.providerSessionId,
+          providerContinuityToken: created.providerContinuityToken,
+          cwd: '/workspace',
+          permissionProfile: 'ask'
+        })
+        expect(resumed.sessionId).toBe(created.sessionId)
+        if (modelRoute === 'codex-bridge') {
+          expect(resumed.contextReset).toBe(true)
+          expect(agents[1].newSessions).toHaveLength(1)
+        } else {
+          expect(resumed.contextReset).not.toBe(true)
+          expect(agents[1].resumedSessions[0].sessionId).toBe(created.providerSessionId)
+        }
+        await coordinator.sendPrompt({
+          sessionId: created.sessionId,
+          text: 'Next task',
+          ...(resumed.contextReset
+            ? { contextReset: true, historyPreamble: 'First task persisted transcript' }
+            : {})
+        })
+        await vi.waitFor(() => expect(processes[1].killed).toBe(true))
+        expect(agents[1].prompts).toHaveLength(1)
+        if (resumed.contextReset)
+          expect(JSON.stringify(agents[1].prompts)).toContain('First task persisted transcript')
+      } finally {
+        await coordinator.shutdownForQuit()
+      }
+    }
+  )
 })
 
 describe('ACP runtime migration write-gate', () => {
@@ -9220,6 +9452,7 @@ describe('ACP runtime session management', () => {
       }
       await coordinator.respondToElicitation(response)
       if (scenario === 'prepared' || scenario === 'prepared-rotation') {
+        await vi.waitFor(() => expect(process.killed).toBe(true))
         if (scenario === 'prepared-rotation') expect(generations).toBe(2)
         await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
         expect(fakeAgent.prompts[0].text).toContain('Expanded')
@@ -9254,7 +9487,11 @@ describe('ACP runtime session management', () => {
           persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
         ).toBeUndefined()
         await expect(
-          coordinator.respondToElicitation({ ...response, retryContinuation: true })
+          coordinator.respondToElicitation({
+            ...response,
+            retryContinuation: true,
+            prepareContinuation: true
+          })
         ).rejects.toThrow('cannot be retried safely')
         return
       }
@@ -20898,6 +21135,13 @@ describe('ACP runtime session management', () => {
       expect(result.stage).toBe('continued')
       expect(await lifecycle.canStartUserPrompt(sessionId)).toBe(true)
     }
+    // Completed coordinator turns release their provider; the next user turn follows the same
+    // explicit attachment path used by renderer prompt preparation.
+    await runtime.resumeSession({
+      sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: 'claude-code'
+    })
     await runtime.sendPrompt({ sessionId, text: 'Continue work' })
     await runtime.disconnect()
   })

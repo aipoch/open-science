@@ -324,6 +324,7 @@ const createFakeRuntime = (options: {
     sendAppContinuation,
     steerFollowUp,
     steerSideChatAdvisory,
+    withPromptAdmission: vi.fn(async (work: () => Promise<unknown>) => work()),
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
         work(runtime)
@@ -339,6 +340,7 @@ const createFakeRuntime = (options: {
     disconnect,
     requestRetirement,
     requestProviderReconnect,
+    requestIdleRelease: vi.fn(),
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
