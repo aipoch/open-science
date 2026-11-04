@@ -246,7 +246,13 @@ const createSessionPolicyApi = (): {
     ) => Promise<PersistedChatSession>
   >
   loadOne: Mock<(request: { sessionId: string }) => Promise<PersistedChatSession | undefined>>
+  deleteSession: Mock<typeof window.api.sessions.deleteSession>
 } => ({
+  deleteSession: vi.fn(async ({ sessionId }) => {
+    testDurableSessions.delete(sessionId)
+    useSessionStore.getState().deleteSession(sessionId)
+    return { status: 'deleted' as const, runtimeDetached: true }
+  }),
   loadOne: vi.fn(async ({ sessionId }) => {
     const durable = testDurableSessions.get(sessionId)
     const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
@@ -6783,7 +6789,11 @@ describe('workspace agent message sending', () => {
     expect(sessions.find((session) => session.isPending)?.pendingBindingSessionId).toBeUndefined()
     expect(
       visibleProjectSessions(sessions, 'project-1').some((session) => session.id === 'stopped-seed')
-    ).toBe(true)
+    ).toBe(false)
+    expect(api.deleteSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'stopped-seed'
+    })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 

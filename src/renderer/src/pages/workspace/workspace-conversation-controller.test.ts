@@ -486,6 +486,7 @@ describe('workspace conversation controller', () => {
       const failedSession = session({
         status: 'error',
         isPending: true,
+        pendingRetryable: true,
         agentFrameworkId,
         agentBackendId,
         error: 'Agent startup failed'

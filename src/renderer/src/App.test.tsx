@@ -326,6 +326,7 @@ vi.mock('@/components/PermissionUndoSnackbar', () => ({
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   WorkspaceAgentRuntimeProvider: ({ children }: { children: ReactNode }): ReactNode => children,
   useWorkspaceAgentRuntime: () => ({
+    sessionCleanups: {},
     pendingPermissions: [],
     promptInFlightSessionIds: [],
     sendPreparationInFlightSessionIds: [],
