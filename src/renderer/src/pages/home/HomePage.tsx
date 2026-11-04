@@ -1313,7 +1313,7 @@ const HomePage = ({
                         active: activeSection === 'projects'
                       },
                       {
-                        label: t('Case library'),
+                        label: t('Use Case Gallery'),
                         onClick: scrollToGallery,
                         active: activeSection === 'examples'
                       }

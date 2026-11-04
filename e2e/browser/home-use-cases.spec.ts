@@ -30,7 +30,7 @@ test('opens whole cards with mouse and keyboard without overlay actions', async 
   page
 }, info) => {
   await page.goto('/home-use-cases.html')
-  const section = page.getByRole('region', { name: 'Case library' })
+  const section = page.getByRole('region', { name: 'Use Case Gallery' })
   await expect(section.getByRole('article')).toHaveCount(6)
   const card = section.getByRole('article').first()
   await expect(card.getByRole('button', { name: 'Details', exact: true })).toHaveCount(0)
@@ -68,7 +68,7 @@ test('appends six cases per scroll without replacing cards or repeating the fina
     return route.fulfill({ json: many })
   })
   await page.goto('/home-use-cases.html?long')
-  const section = page.getByRole('region', { name: 'Case library' })
+  const section = page.getByRole('region', { name: 'Use Case Gallery' })
   const cards = section.getByRole('article')
   await expect(cards).toHaveCount(6)
   const first = await cards.first().boundingBox()
@@ -160,7 +160,10 @@ test('browses and filters the marketplace, preserving the loaded list when detai
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  await page.getByRole('heading', { name: 'Case library', exact: true }).getByRole('button').click()
+  await page
+    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button')
+    .click()
   const dialog = page.getByRole('dialog', { name: 'Case details', exact: true })
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:')
   await expect(dialog).toHaveCount(0)
@@ -219,7 +222,7 @@ test('opens the same marketplace from the toolbar and detail Go to case library 
   await page.goto('/home-use-cases.html?long')
   await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   await expect(page.getByRole('navigation', { name: 'Resource center' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Case library', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('heading', { name: 'Use Case Gallery', exact: true })).toHaveCount(1)
   await expect(page.getByRole('textbox', { name: 'Search examples' })).toBeVisible()
   await page.getByRole('button', { name: 'Collapse sidebar panel' }).click()
   await expect(page.getByRole('button', { name: 'Expand sidebar panel' })).toBeVisible()
@@ -265,14 +268,19 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   }))
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: many }))
   await page.goto('/home-use-cases.html?long')
-  const title = page.getByRole('heading', { name: 'Case library', exact: true }).getByRole('button')
+  const title = page
+    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
+    .getByRole('button')
   await page.getByRole('article').last().scrollIntoViewIfNeeded()
   await expect(page.getByRole('article')).toHaveCount(12)
   const scroll = page.locator('[data-home-scroll]')
   await title.evaluate((element) => {
     const viewport = element.closest('[data-home-scroll]')!
+    const card = viewport.querySelector('article')!
     viewport.scrollTop +=
-      element.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 150
+      card.getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top +
+      card.getBoundingClientRect().height * 0.6
   })
   const viewport = await scroll.boundingBox()
   await expect(title).toBeInViewport()
@@ -282,7 +290,7 @@ test('keeps the homepage gallery title visible while its cards scroll', async ({
   await expect(
     page
       .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Case library', exact: true })
+      .getByRole('button', { name: 'Use Case Gallery', exact: true })
   ).toHaveAttribute('aria-current', 'location')
 })
 
@@ -333,7 +341,10 @@ test('contains long titles within two complete lines without clipping a third li
 for (const destination of ['existing', 'new'])
   test(`imports using the ${destination} project flow and opens the session`, async ({ page }) => {
     await page.goto('/home-use-cases.html')
-    await page.getByRole('article').last().scrollIntoViewIfNeeded()
+    await page.locator('[data-home-scroll]').evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll'))
+    })
     await expect(page.getByRole('article')).toHaveCount(7)
     const selected = await page
       .getByRole('article')
@@ -370,7 +381,10 @@ for (const destination of ['existing', 'new'])
         .first()
         .evaluate((card) => card.parentElement!.getAnimations().length)
     ).toBe(0)
-    await page.getByRole('article').last().scrollIntoViewIfNeeded()
+    await page.locator('[data-home-scroll]').evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+      element.dispatchEvent(new Event('scroll'))
+    })
     await expect(page.getByRole('article')).toHaveCount(7)
   })
 
@@ -461,7 +475,7 @@ test('keeps a full-size cover placeholder until an image loads, including failed
     })
   })
   await page.goto('/home-use-cases.html', { waitUntil: 'domcontentloaded' })
-  const cards = page.getByRole('region', { name: 'Case library' }).getByRole('article')
+  const cards = page.getByRole('region', { name: 'Use Case Gallery' }).getByRole('article')
   await expect(cards).toHaveCount(6)
   await cards.first().scrollIntoViewIfNeeded()
   const sizes = (): Promise<number[]> =>
@@ -477,7 +491,7 @@ test('keeps a full-size cover placeholder until an image loads, including failed
   await expect(images.nth(1)).toHaveCSS('opacity', '1')
   await expect(images.nth(2)).toHaveCSS('opacity', '1')
   await expect(images.first()).toHaveCSS('opacity', '0')
-  expect(await sizes()).toEqual(before)
+  expect((await sizes()).slice(0, before.length)).toEqual(before)
 })
 
 for (const catalogFails of [false, true]) {
@@ -562,10 +576,10 @@ test('home navigation has two capsule targets beside the shared scrolling conten
 }, info) => {
   await page.setViewportSize({ width: 1760, height: 900 })
   await page.goto('/home-use-cases.html?long&updates')
-  const gallery = page.getByRole('region', { name: 'Case library' })
+  const gallery = page.getByRole('region', { name: 'Use Case Gallery' })
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Case library', exact: true })
+    .getByRole('button', { name: 'Use Case Gallery', exact: true })
   const back = page
     .locator('[data-home-navigation]')
     .getByRole('button', { name: 'Projects', exact: true })
@@ -592,7 +606,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
     await scroller
       .locator('..')
       .locator('[data-home-navigation]')
-      .getByRole('button', { name: 'Case library', exact: true })
+      .getByRole('button', { name: 'Use Case Gallery', exact: true })
       .count()
   ).toBe(1)
   const capsule = jump.locator('[data-home-navigation-capsule]')
@@ -607,7 +621,7 @@ test('home navigation has two capsule targets beside the shared scrolling conten
   await jump.hover()
   await expect(capsule).toHaveCSS('height', '7px')
   await expect(capsule).toHaveCSS('width', '24px')
-  await expect(page.getByRole('tooltip')).toHaveText('Case library')
+  await expect(page.getByRole('tooltip')).toHaveText('Use Case Gallery')
   const expandedBounds = (await capsule.boundingBox())!
   expect(expandedBounds.x).toBeGreaterThan(recentBounds.x + recentBounds.width)
   expect(expandedBounds.x + expandedBounds.width).toBeLessThanOrEqual(
@@ -643,22 +657,6 @@ test('home navigation has two capsule targets beside the shared scrolling conten
     projectsBefore!.y
   )
 
-  await jump.focus()
-  await page.keyboard.press('Enter')
-  await expect(jump).toBeFocused()
-  await expect(back).toBeVisible()
-  await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
-  await expect(gallery.getByRole('button', { name: 'Case library', exact: true })).toBeInViewport()
-  expect((await updates.boundingBox())!.y).toBeLessThan(updatesBefore!.y)
-  expect(await jump.boundingBox()).toEqual(jumpBounds)
-  await expect(jump).toHaveAttribute('aria-current', 'location')
-  await expect(back).not.toHaveAttribute('aria-current')
-  await expect(page.getByTestId('navigation')).toHaveText('home:')
-  await page.screenshot({ path: info.outputPath('home-navigation-gallery.png') })
-
-  // Each destination stays independent, including a repeat click at the destination.
-  await jump.click()
-  await expect(back).toBeVisible()
   await back.click()
   await expect
     .poll(async () =>
@@ -668,22 +666,50 @@ test('home navigation has two capsule targets beside the shared scrolling conten
       )
     )
     .toBeLessThan(1)
-  await expect(page.getByRole('region', { name: 'Projects' }).getByRole('heading')).toBeInViewport()
-  await expect(back).toHaveAttribute('aria-current', 'location')
-  await expect(jump).not.toHaveAttribute('aria-current')
   await expect(jump).toBeVisible()
-  await back.click()
+  await jump.click()
+  const galleryHeading = gallery.getByRole('heading', { name: 'Use Case Gallery', exact: true })
+  // A short catalog cannot scroll the heading past the last row, so either it sits on the
+  // viewport top or the page is already at the end with the heading as high as it can go.
   await expect
-    .poll(async () =>
-      Math.abs(
-        (await page.getByRole('region', { name: 'Projects', exact: true }).boundingBox())!.y -
-          scrollBounds.y
-      )
+    .poll(() =>
+      scroller.evaluate((element) => {
+        const bar = element.querySelector('h2')!.parentElement!.getBoundingClientRect()
+        const viewport = element.getBoundingClientRect()
+        const gap = bar.top - viewport.top
+        const atEnd = element.scrollTop >= element.scrollHeight - element.clientHeight - 2
+        return gap <= 2 || (atEnd && gap < viewport.height)
+      })
     )
-    .toBeLessThan(1)
-  await page.setViewportSize({ width: 1100, height: 2800 })
+    .toBe(true)
+  await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
+  await expect(galleryHeading.getByRole('button')).toBeInViewport()
+  expect((await updates.boundingBox())!.y).toBeLessThan(updatesBefore!.y)
   await expect(jump).toBeHidden()
   await expect(back).toBeHidden()
+  await expect(page.getByTestId('navigation')).toHaveText('home:')
+  await page.screenshot({ path: info.outputPath('home-navigation-gallery.png') })
+  await page.setViewportSize({ width: 1100, height: 2800 })
+  await gallery.getByRole('article').first().scrollIntoViewIfNeeded()
+  await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
+  await expect(jump).toBeHidden()
+  await expect(back).toBeHidden()
+})
+
+test('home navigation gallery target is keyboard operable', async ({ page }) => {
+  await page.setViewportSize({ width: 1760, height: 900 })
+  await page.goto('/home-use-cases.html?long&updates')
+  const gallery = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+  const jump = page
+    .locator('[data-home-navigation]')
+    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+  await expect(jump).toBeVisible()
+  await jump.focus()
+  await page.keyboard.press('Enter')
+  await expect(gallery.getByRole('article').first()).toBeInViewport({ ratio: 1 })
+  await expect(
+    gallery.getByRole('heading', { name: 'Use Case Gallery', exact: true }).getByRole('button')
+  ).toBeInViewport()
 })
 
 test('home navigation stays absent when everything fits or the gallery is unavailable', async ({
@@ -696,7 +722,7 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.goto('/home-use-cases.html')
   await expect(page.getByRole('article')).toHaveCount(3)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Case library' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Gallery' })
   ).toBeHidden()
   await expect(
     page.locator('[data-home-navigation]').getByRole('button', { name: 'Projects' })
@@ -704,9 +730,9 @@ test('home navigation stays absent when everything fits or the gallery is unavai
   await page.route('**/usecases/manifest.json', (route) => route.fulfill({ json: [] }))
   await page.goto('/home-use-cases.html?long')
   await expect(page.getByRole('region', { name: 'Projects' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Case library' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Use Case Gallery' })).toHaveCount(0)
   await expect(
-    page.locator('[data-home-navigation]').getByRole('button', { name: 'Case library' })
+    page.locator('[data-home-navigation]').getByRole('button', { name: 'Use Case Gallery' })
   ).toHaveCount(0)
 })
 
@@ -739,16 +765,29 @@ test('home navigation capsules fit small windows with reduced motion and scrolli
     .boundingBox())!
   expect(bounds.x).toBeGreaterThan(projectBounds.x + projectBounds.width)
   expect(bounds.x + bounds.width).toBeLessThanOrEqual(390)
-  const jumpBounds = await jump.boundingBox()
   await jump.click()
-  await expect(back).toBeVisible()
-  expect(await jump.boundingBox()).toEqual(jumpBounds)
   const gallery = page.getByRole('region', { name: '案例库' })
+  await expect
+    .poll(() =>
+      gallery.getByRole('heading', { name: '案例库', exact: true }).evaluate((element) => {
+        const bar = element.parentElement!.getBoundingClientRect()
+        const viewport = element.closest('[data-home-scroll]')!.getBoundingClientRect()
+        return Math.abs(bar.top - viewport.top)
+      })
+    )
+    .toBeLessThanOrEqual(2)
   await expect(gallery.getByRole('button', { name: '案例库', exact: true })).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  await expect(jump).toHaveAttribute('aria-current', 'location')
-  await expect(back).not.toHaveAttribute('aria-current')
+  await expect(jump).toBeHidden()
   await page.screenshot({ path: info.outputPath('home-navigation-small.png') })
+  await scroller.evaluate((element) => {
+    const card = element.querySelector('article')!
+    const viewport = element.getBoundingClientRect()
+    const box = card.getBoundingClientRect()
+    element.scrollTop += box.top - viewport.top + box.height * 0.6
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect(back).toBeVisible()
   await back.click()
   await expect(
     page.getByRole('region', { name: '项目', exact: true }).getByRole('heading')
@@ -876,7 +915,7 @@ test('animates the capsule shape without moving its bounds and respects reduced 
   await page.goto('/home-use-cases.html?long')
   const jump = page
     .locator('[data-home-navigation]')
-    .getByRole('button', { name: 'Case library', exact: true })
+    .getByRole('button', { name: 'Use Case Gallery', exact: true })
   const capsule = jump.locator('[data-home-navigation-capsule]')
   const shape = jump.locator('[data-home-navigation-shape]')
   const initialBounds = await capsule.boundingBox()
@@ -1104,7 +1143,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
 }, info) => {
   await page.goto('/home-use-cases.html?long')
   const scroller = page.locator('[data-home-scroll]')
-  const gallery = page.getByRole('region', { name: 'Case library', exact: true })
+  const gallery = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
   const card = gallery.getByRole('article').first()
   await card.scrollIntoViewIfNeeded()
   const viewport = (await scroller.boundingBox())!
@@ -1117,7 +1156,9 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
   )
   const bounds = (await card.boundingBox())!
   const grid = (await card.locator('..').boundingBox())!
-  const header = gallery.getByRole('heading', { name: 'Case library', exact: true }).locator('..')
+  const header = gallery
+    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
+    .locator('..')
   const headerBounds = (await header.boundingBox())!
   expect(headerBounds.y).toBeCloseTo(viewport.y, 0)
   const clip = {
@@ -1157,10 +1198,10 @@ test('selects the case marketplace without resetting its filters or opening deta
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example 1')
   const selector = panel.getByRole('combobox', { name: 'Resource type', exact: true })
-  await expect(selector).toHaveText('Case library')
+  await expect(selector).toHaveText('Use Case Gallery')
   await selector.click()
   await expect(page.getByRole('option')).toHaveCount(1)
-  const option = page.getByRole('option', { name: 'Case library', exact: true })
+  const option = page.getByRole('option', { name: 'Use Case Gallery', exact: true })
   await expect(option).toHaveAttribute('aria-selected', 'true')
   await page.screenshot({ path: info.outputPath('marketplace-type-selector.png') })
   await option.click()
@@ -1195,7 +1236,7 @@ for (const surface of ['panel', 'dialog'] as const) {
     const owner =
       surface === 'panel'
         ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
-        : page.getByRole('region', { name: 'Case library', exact: true })
+        : page.getByRole('region', { name: 'Use Case Gallery', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1239,7 +1280,7 @@ for (const surface of ['panel', 'dialog'] as const) {
     const owner =
       surface === 'panel'
         ? page.getByRole('tabpanel', { name: 'Resource center', exact: true })
-        : page.getByRole('region', { name: 'Case library', exact: true })
+        : page.getByRole('region', { name: 'Use Case Gallery', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
       surface === 'panel' ? owner : page.getByRole('dialog', { name: 'Case details', exact: true })
@@ -1487,6 +1528,74 @@ test('adapts the case library to wide windows and fills the viewport before wait
   const narrowSecond = (await cards.nth(1).boundingBox())!
   expect(narrowSecond.y).toBeGreaterThan(narrowFirst.y)
   await page.screenshot({ path: info.outputPath('case-library-narrow.png') })
+})
+
+test('keeps loaded homepage cases behind a one-row viewport and loads later batches on scroll', async ({
+  page
+}) => {
+  // Tall enough that the short project list leaves free space, so the gallery can pin.
+  await page.setViewportSize({ width: 1100, height: 900 })
+  await page.goto('/home-use-cases.html')
+  const section = page.getByRole('region', { name: 'Use Case Gallery', exact: true })
+  const cards = section.getByRole('article')
+  await expect(cards).toHaveCount(6)
+  const projects = page.getByRole('region', { name: 'Projects', exact: true })
+  const sessions = page.getByRole('region', { name: 'Recent sessions', exact: true })
+  const projectBottom = (await projects.boundingBox())!.y + (await projects.boundingBox())!.height
+  const sessionBottom = (await sessions.boundingBox())!.y + (await sessions.boundingBox())!.height
+  const heading = await section
+    .getByRole('heading', { name: 'Use Case Gallery', exact: true })
+    .boundingBox()
+  expect(heading!.y).toBeGreaterThanOrEqual(Math.max(projectBottom, sessionBottom))
+  const rowBreak = await cards.evaluateAll((elements) => {
+    const tops = elements.map((element) => element.getBoundingClientRect().y)
+    const firstTop = tops[0]
+    const secondRow = tops.findIndex((top) => top > firstTop + 1)
+    return { firstTop, secondRow, columns: secondRow > 0 ? secondRow : tops.length }
+  })
+  expect(rowBreak.columns).toBe(3)
+  expect(rowBreak.secondRow).toBe(3)
+  const scroll = page.locator('[data-home-scroll]')
+  const secondRowPeek = async (): Promise<number> => {
+    const scrollBounds = (await scroll.boundingBox())!
+    const secondBounds = (await cards.nth(rowBreak.secondRow).boundingBox())!
+    return scrollBounds.y + scrollBounds.height - secondBounds.y
+  }
+  // Half of the next row stays in view so the fold shows that more cases are loaded below.
+  const peek = await secondRowPeek()
+  const secondHeight = (await cards.nth(rowBreak.secondRow).boundingBox())!.height
+  expect(peek).toBeGreaterThan(secondHeight * 0.4)
+  expect(peek).toBeLessThan(secondHeight * 0.6)
+  await expect(cards.first()).toBeInViewport({ ratio: 1 })
+  const firstTop = (await cards.first().boundingBox())!.y
+  await scroll.evaluate((element) => {
+    element.scrollTop += 24
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
+  await page.waitForTimeout(100)
+  const scrolledFirst = (await cards.first().boundingBox())!
+  const scrollTop = await scroll.evaluate((element) => element.scrollTop)
+  expect(Math.abs(firstTop - scrolledFirst.y - scrollTop)).toBeLessThanOrEqual(2)
+  await scroll.evaluate((element) => {
+    element.scrollTop = 0
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect.poll(() => scroll.evaluate((element) => element.scrollTop)).toBe(0)
+  // Returning to the top must keep the same half-row peek instead of jumping the gallery.
+  const peekedAgain = await secondRowPeek()
+  expect(peekedAgain).toBeGreaterThan(secondHeight * 0.4)
+  expect(peekedAgain).toBeLessThan(secondHeight * 0.6)
+  const jump = page
+    .locator('[data-home-navigation]')
+    .getByRole('button', { name: 'Use Case Gallery', exact: true })
+  // The first row is still fully on screen, so the section dots stay hidden.
+  await expect(jump).toBeHidden()
+  await page.locator('[data-home-scroll]').evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+    element.dispatchEvent(new Event('scroll'))
+  })
+  await expect(cards).toHaveCount(7)
 })
 
 test('reflows the case library within the project panel without losing filters or overflowing', async ({

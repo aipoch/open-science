@@ -12,6 +12,7 @@ import { usePackageOperationStore } from '@/stores/package-operation-store'
 let container: HTMLDivElement
 let root: Root
 let intersect: (isIntersecting: boolean) => void
+let resize: (width: number) => void
 const items = Array.from({ length: 7 }, (_, index) => ({
   name: `case-${index + 1}`,
   title: `Case ${index + 1}`,
@@ -30,6 +31,20 @@ beforeEach(() => {
           callback(
             [{ isIntersecting } as IntersectionObserverEntry],
             this as unknown as IntersectionObserver
+          )
+      }
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+  )
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        resize = (width) =>
+          callback(
+            [{ contentRect: { width } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver
           )
       }
       observe = vi.fn()
@@ -66,7 +81,7 @@ it('appends six cards at the scroll boundary, preserves existing cards and stops
     title: `Case ${index + 1}`
   }))
   vi.mocked(window.api.sessions.useCaseCatalog).mockResolvedValue(parseUseCases(catalog))
-  await render()
+  await act(async () => root.render(<UseCaseCarousel variant="marketplace" />))
   const ui = within(container)
   expect(ui.getAllByRole('article')).toHaveLength(6)
   expect(ui.queryByRole('button', { name: 'Next examples' })).toBeNull()
@@ -86,6 +101,22 @@ it('appends six cards at the scroll boundary, preserves existing cards and stops
   ).toBe(19)
 })
 
+it('renders the first six home cards immediately while keeping later rows in the page flow', async () => {
+  const catalog = Array.from({ length: 19 }, (_, index) => ({
+    ...items[0],
+    name: `case-${index + 1}`,
+    title: `Case ${index + 1}`
+  }))
+  vi.mocked(window.api.sessions.useCaseCatalog).mockResolvedValue(parseUseCases(catalog))
+  await render()
+  const ui = within(container)
+  expect(ui.getAllByRole('article')).toHaveLength(6)
+  await act(async () => resize(900))
+  expect(ui.getAllByRole('article')).toHaveLength(6)
+  await act(async () => intersect(true))
+  expect(ui.getAllByRole('article')).toHaveLength(12)
+})
+
 it('opens details inside the app and imports through the existing flow', async () => {
   await render()
   const card = within(within(container).getAllByRole('article')[0])
@@ -93,14 +124,76 @@ it('opens details inside the app and imports through the existing flow', async (
   const dialog = within(within(document.body).getByRole('dialog', { name: 'Case details' }))
   expect(dialog.getByText('A reproducible example.')).toBeTruthy()
   expect(window.api.sessions.useCaseIntroduction).toHaveBeenCalledWith('case-1')
-  await act(async () => fireEvent.click(dialog.getByRole('button', { name: 'Import' })))
+  const importButton = dialog.getByRole('button', { name: 'Import' })
+  expect(importButton.parentElement?.className).toContain('justify-end')
+  await act(async () => fireEvent.click(importButton))
   expect(window.api.sessions.importPackage).toHaveBeenCalledWith({}, { useCase: 'case-1' })
+})
+
+it('pins the home gallery before paint and keeps the offset after scrolling away and back', async () => {
+  const scroll = document.createElement('div')
+  scroll.setAttribute('data-home-scroll', '')
+  Object.defineProperty(scroll, 'scrollTop', { configurable: true, value: 0, writable: true })
+  Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 700 })
+  const viewport = {
+    top: 0,
+    bottom: 700,
+    left: 0,
+    right: 1000,
+    width: 1000,
+    height: 700
+  } as DOMRect
+  const originalRect = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this === scroll) return viewport
+    if (this instanceof HTMLElement && this.tagName === 'ARTICLE') {
+      const pin =
+        Number.parseFloat(this.closest('section')?.style.paddingTop || '') || 0
+      const bottom = 500 + pin
+      return {
+        top: bottom - 180,
+        bottom,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 180
+      } as DOMRect
+    }
+    return { ...viewport, top: 0, bottom: 120, height: 120, width: 1000, right: 1000 } as DOMRect
+  }
+  document.body.append(scroll)
+  scroll.append(container)
+  try {
+    await render()
+    const section = container.querySelector('section')
+    expect(section).toBeTruthy()
+    // useLayoutEffect writes padding before the test observes the DOM, so there is no mid-page flash.
+    expect(section!.style.paddingTop).toBe('200px')
+    await act(async () => {
+      resize(900)
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+    })
+    expect(section!.style.paddingTop).toBe('200px')
+    // Returning to the top remeasures after layout and keeps the same one-row pin.
+    Object.defineProperty(scroll, 'scrollHeight', { configurable: true, value: 2000 })
+    await act(async () => {
+      Object.defineProperty(scroll, 'scrollTop', { configurable: true, value: 240, writable: true })
+      scroll.dispatchEvent(new Event('scroll'))
+      Object.defineProperty(scroll, 'scrollTop', { configurable: true, value: 0, writable: true })
+      scroll.dispatchEvent(new Event('scroll'))
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)))
+    })
+    expect(section!.style.paddingTop).toBe('200px')
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = originalRect
+    scroll.remove()
+  }
 })
 
 it('routes the gallery title and detail marketplace action to the marketplace page', async () => {
   await render()
   await act(async () =>
-    fireEvent.click(within(container).getByRole('button', { name: 'Case library' }))
+    fireEvent.click(within(container).getByRole('button', { name: 'Use Case Gallery' }))
   )
   expect(useNavigationStore.getState().view).toBe('marketplace')
   expect(within(document.body).queryByRole('dialog')).toBeNull()
@@ -214,6 +307,7 @@ it('restores the browsed cards immediately after returning, even while catalog r
   await act(async () => intersect(true))
   await act(async () => root.render(null))
   vi.mocked(window.api.sessions.useCaseCatalog).mockImplementation(() => new Promise(() => {}))
+  await act(async () => useUseCaseGalleryStore.getState().loadMore())
   await render()
   expect(ui.getAllByRole('article').map((card) => card.getAttribute('aria-label'))).toEqual([
     'Case 1',
@@ -229,7 +323,7 @@ it('restores the browsed cards immediately after returning, even while catalog r
 it('updates retained cards by identity and only replaces a removed slot when the catalog changes', async () => {
   await render()
   const ui = within(container)
-  await act(async () => intersect(true))
+  await act(async () => useUseCaseGalleryStore.getState().loadMore())
   await act(async () => root.render(null))
   const refreshed = [items[6], items[5], items[3], items[2], items[1], items[0]].map((item) => ({
     ...item,
@@ -339,6 +433,7 @@ it('prefetches only a settled hover and shares that request with the opened deta
   )
   try {
     await render()
+    await act(async () => resize(900))
     const cards = within(container).getAllByRole('article')
     await act(async () => {
       fireEvent.mouseOver(cards[0])
@@ -374,7 +469,7 @@ it('prefetches only a settled hover and shares that request with the opened deta
 it('opens the case from its whole card and offers marketplace navigation beside detail import', async () => {
   await render()
   const ui = within(container)
-  expect(ui.getByRole('button', { name: 'Case library' })).toBeTruthy()
+  expect(ui.getByRole('button', { name: 'Use Case Gallery' })).toBeTruthy()
   expect(ui.queryByRole('button', { name: 'Random examples' })).toBeNull()
   const card = within(ui.getAllByRole('article')[0])
   expect(card.queryByRole('button', { name: 'Details' })).toBeNull()
@@ -518,7 +613,7 @@ it('defaults the workbench market selector to cases while keeping category contr
   await act(async () => root.render(<UseCaseCarousel variant="marketplace" compact />))
   const ui = within(container)
   const selector = ui.getByRole('combobox', { name: 'Resource type' })
-  expect(selector.textContent).toContain('Case library')
+  expect(selector.textContent).toContain('Use Case Gallery')
   expect(ui.getByRole('group', { name: 'Category' })).toBeTruthy()
   expect(ui.getAllByRole('article')).toHaveLength(6)
 })

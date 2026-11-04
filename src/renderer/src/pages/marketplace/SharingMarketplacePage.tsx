@@ -69,14 +69,14 @@ export const SharingMarketplacePage = (): React.JSX.Element => {
         <nav aria-label={t('Resource center')} className="border-t border-border pt-3">
           <div
             aria-current="page"
-            title={t('Case library')}
+            title={t('Use Case Gallery')}
             className={cn(
               'flex min-h-9 items-center justify-center gap-2 rounded-lg bg-bg-200 text-sm font-medium',
               !collapsed && 'sm:justify-start sm:px-3'
             )}
           >
             <GalleryHorizontalEnd className="size-4 shrink-0" aria-hidden="true" />
-            {!collapsed && <span className="hidden sm:inline">{t('Case library')}</span>}
+            {!collapsed && <span className="hidden sm:inline">{t('Use Case Gallery')}</span>}
           </div>
         </nav>
       </aside>

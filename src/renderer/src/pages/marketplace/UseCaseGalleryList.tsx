@@ -212,11 +212,11 @@ export const UseCaseGalleryList = ({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent align="start">
-                    <SelectItem value="use-cases">{t('Case library')}</SelectItem>
+                    <SelectItem value="use-cases">{t('Use Case Gallery')}</SelectItem>
                   </SelectContent>
                 </Select>
               ) : (
-                t('Case library')
+                t('Use Case Gallery')
               )}
             </h2>
             {onOpenMarketplace ? (
@@ -329,7 +329,7 @@ export const UseCaseGalleryList = ({
         data-use-case-browser-scroll
       >
         {/* Keep sparse search results at the same card width as a full row, including narrow panels. */}
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-5">
+        <div className="grid gap-5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))]">
           {renderCards(filtered.slice(0, count))}
         </div>
         {!items.length && catalogStatus === 'loading' ? (
