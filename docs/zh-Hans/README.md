@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **[AIPOCH Open-Science v1.0.6 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 10 月）_。本次更新为文献库新增从本地 Zotero 文库导入参考文献的功能，PDF 阅读顺序改为自动解析，Windows 安装更快且不再删除共存的研究数据，OpenCode 会话更加稳定，长时间运行的任务也能照常发布产物。详情请查看 [v1.0.6 发行说明](../../release-notes/1.0.6/zh-Hans.md)。
+> 💡 **[AIPOCH Open-Science v1.0.7 已发布](https://github.com/aipoch/open-science/releases/latest)** _（最后更新于 2026 年 11 月）_。本次更新新增 Pi 作为第五个智能体框架，支持从 DOI 或 arXiv 链接直接添加参考文献，阅读模式下智能体可为关联的 PDF 添加批注。扫描版 PDF 可借助可选 OCR 和九种语言包获得可读文本，研究案例市场现已支持搜索。本版还修复了 Windows Notebook 命令行环境初始化、OpenCode 上下文压缩崩溃，以及 Fake-IP DNS 环境下的下载问题。详情请查看 [v1.0.7 发行说明](../../release-notes/1.0.7/zh-Hans.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -255,6 +255,22 @@ AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75题 LitQA2-FullText-Sear
 
 Recall@30 衡量目标论文是否出现在提交结果的前30篇中，不是科学问答正确率。ScholarQA-CS2 得分衡量回答的综合质量，不是全部答对的问题所占比例。
 
+#### AstaBench LitQA2-FullText：科学文献问答正确率 93.33%
+
+在 AIPOCH 对 AstaBench v0.5.4 的 LitQA2-FullText Test 划分（75 题）进行的评测中，AIPOCH Open-Science 使用 `deepseek-flash`、Max 推理强度答对 70 题，正确率为 93.33%。该测试考察科学文献问答：检索并阅读论文、辨别实验条件、提取报告结果，再从选项中选择答案。它与上文 LitQA2-FullText-Search 的检索 Recall@30 属于不同指标。
+
+截至 2026 年 11 月 2 日，[官方 LitQA2-FullText Test 榜单](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)显示的最高记录为 90.67%（68/75）。在这一数值对照中，AIPOCH Open-Science 的成绩高出 2.67 个百分点。
+
+<details>
+
+<summary><strong>AstaBench LitQA2-FullText 成绩对照</strong></summary>
+
+![AIPOCH Open-Science 在 AstaBench LitQA2-FullText 科学文献问答测试中取得 93.33%，与 10 月 28 日官方记录对照](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+图中采用 10 月 28 日的官方记录快照；11 月 2 日再次核对了榜单显示的最高成绩。
+
+</details>
+
 ### 🏆 ASI-Bench B1–B4：报告所列四项对照均为最高展示分数
 
 AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专家与技能，在 ASI-Bench B1、B2、B3、B4 四项测试中分别取得 **79.35、56.11、59.67和59.46分**，均为报告所列对照中的最高展示分数。四种评测条件依次考察**执行完整科研方案、组织研究流程、自主选择方法，以及在干扰信息下完成自主研究**，覆盖从方法实现到自主科研执行的不同任务条件。
@@ -273,7 +289,7 @@ AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在标记为 BiomniBench
 
 该对照混合了不同裁判覆盖的记录，不能视为统一裁判条件下的正式排名。
 
-**评测说明：**以上为 AIPOCH Open-Science 于2026年8—10月自行报告的本地或内部评测结果，使用所注明的数据集及划分，未针对当前发布版本重新运行。在官方 Test 题集上进行本地测试，不代表已提交官方榜单或取得榜单名次。参考数值来自历史报告快照，并非实时排名；Validation 与 Test 结果不能直接比较。任务实例、模型配置、裁判覆盖范围和成本核算方式的差异，限制了跨系统比较。数值持平或存在差距，不代表具有统计显著性的提升。
+**评测说明：**以上为 AIPOCH Open-Science 于2026年8—11月自行报告的本地或内部评测结果，使用所注明的数据集及划分，未针对当前发布版本重新运行。在官方 Test 题集上进行本地测试，不代表已提交官方榜单或取得榜单名次。参考数值来自历史报告快照，并非实时排名；Validation 与 Test 结果不能直接比较。任务实例、模型配置、裁判覆盖范围和成本核算方式的差异，限制了跨系统比较。数值持平或存在差距，不代表具有统计显著性的提升。
 
 ## 核心能力
 
@@ -284,7 +300,7 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 | **科学技能**                   | 提供 **24 个内置技能**，并可从 [Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) 安装 **525 个技能**，支持一键安装与更新。可通过对话或已完成的工作创建技能，导入技能包及 GitHub 来源，并保存 GitHub 仓库供后续导入时复用；仅保存仓库不会安装其中的技能。市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                 |
 | **连接器**                     | 通过 **48 个内置连接器** 访问科学资源，也可添加自定义本地或远程 MCP 连接器。部分内置数据源默认关闭，需要按数据源明确启用。支持工具级权限管理，以及连接器配置的导入和导出。                                                                                                                                                                                                                                                                                                                                                                                                       |
 | **专家与委派**                 | 从 [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) 安装 **10 个专家**，或创建和定制个人专家，由主智能体委派任务。专家包支持导入和导出；市场投稿经审核后发布，本地导入不会自动上架。                                                                                                                                                                                                                                                                                                                                                       |
-| **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。支持 Claude Code、OpenCode、Codex 和 CodeBuddy 四种智能体后端，并提供模型连接检查、图片输入和推理强度设置。                                                                                                                                                                                                                                                                                                                                                                                                       |
+| **模型与智能体后端**           | 连接云端模型、兼容的自定义网关，或使用 Claude、Codex 订阅登录。支持 Claude Code、OpenCode、Codex、CodeBuddy 和 Pi 五种智能体后端，并提供模型连接检查、图片输入和推理强度设置。                                                                                                                                                                                                                                                                                                                                                                                                   |
 | **项目、会话与 `.science` 包** | 管理项目，支持会话置顶、消息分支、侧边对话和历史恢复。将会话导出为**可移植的 `.science` 包**，并导入其他项目或计算机，携带对话分支、所选文件版本、Notebook 记录和验证证据。导入结果为只读历史，不执行代码或恢复凭据；侧边对话和书签不随包导出，文件范围取决于导出选择。                                                                                                                                                                                                                                                                                                          |
 | **审阅智能体**                 | 按需开启自动审阅，在独立上下文中核对智能体已完成轮次的回复、执行记录及相关文件证据。生成带依据的通过、警告或失败检查项，发现问题后可触发主智能体修正，并在有限轮次内复审。保留审阅日志与问题处理状态，审阅范围限于该轮可用记录。                                                                                                                                                                                                                                                                                                                                                 |
 | **Python、R、Notebook 与 HPC** | 使用托管环境或自配解释器，在本地运行 Python、R、Notebook 和 Shell 任务，支持后台执行与历史记录。也可通过 SSH 连接远程主机或使用 Slurm 提交作业；远程计算需具备下方 FAQ 所述的主机、软件、资源和权限。                                                                                                                                                                                                                                                                                                                                                                            |
@@ -298,9 +314,15 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 
 支持持久化 PDF 批注与文档笔记。配置筛选模型后，智能合集可按纳入／排除标准评估文献；AI 判断与人工判断分别记录，用于辅助人工审阅。
 
+在阅读模式下，智能体可列出、定位并创建关联 PDF 的笔记与标记。PDF 批注绑定到被批注的文件版本，不会跨计算机同步。
+
+下载可选 OCR 组件及所需语言包后，即可识别扫描版 PDF 页面中的文字。共有九种语言包：英语、简体中文、繁体中文、德语、西班牙语、法语、日语、韩语和俄语。逐页覆盖状态会标明哪些页面仍缺少文本。
+
 翻译版 PDF 可选择将正文和图注重排为单栏、内容优先的版式，同时保留原始图像、表格、公式和参考文献，并提供源文件与输出文件的页码映射，便于对照。新安装中，Notebook 与 Shell 文件夹限制默认开启，将这些运行时限制在工作区、已批准的文件夹和工具所需文件内；此设置不控制智能体原生工具或远程计算机。
 
 桌面端还可将产物溯源导出为 RO-Crate 1.1。与版本绑定的环境包只有在捕获内容完整且兼容目标平台时，才能用于创建托管环境；这不等于完整计算机备份。
+
+从首页或对话工作区进入 Sharing 研究案例市场，按类别筛选、按关键词搜索，并从案例详情下载包。在市场与项目之间切换时，筛选条件和滚动位置会保留。
 
 ## 模型服务商
 
@@ -372,7 +394,7 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 
 源码开发需要 Node.js 24。已发布的 npm 软件包和本地构建的独立 tarball 均需要 Node.js >=22.13.0。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
 
-桌面与浏览器共享同一服务。在 v1.0.4 中，退出桌面只会停止它自行启动的后端；若连接的是 CLI 启动的服务，则只断开桌面连接。在当前 `main`（源码构建）中，应用连接及 `open-science start` 的显式保活请求会维持服务运行；退出最后一个应用时，只有不存在显式保活请求，服务才会停止。
+桌面与浏览器共享同一服务。应用连接及 `open-science start` 的显式保活请求会维持服务运行；退出最后一个应用时，只有不存在显式保活请求，服务才会停止。
 
 [CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
@@ -407,7 +429,7 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 
 ### 是否提供命令行界面？
 
-答：提供。启动独立后端需要安装独立 Node 软件包。通过 **Settings → General → Command line tool → Install command** 安装的命令用于控制已运行的桌面实例，此用途无需单独安装 Node.js。例外是 Debian 软件包自带的启动器，它可用自带的 Node 运行时启动自带后端。以下独立启动示例需要先安装独立软件包和普通 Node.js，再初始化本地配置并启动服务：
+答：支持。安装独立 CLI，或使用 **设置 → 通用 → 命令行工具 → 安装命令** 控制已经运行的桌面实例。通过 npm 安装需要 Node.js；Homebrew 和自带运行时的独立发行包已包含 Node.js。初始化本地配置后，无需打开浏览器即可控制服务并提交科研任务：
 
 ```bash
 # 在后台启动服务

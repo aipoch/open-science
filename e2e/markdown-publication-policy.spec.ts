@@ -50,7 +50,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   }
   const capture = async (label: string): Promise<void> => {
     const path = testInfo.outputPath(label + '.png')
-    await page.screenshot({ path })
+    await page.screenshot({ path, animations: 'disabled' })
     await testInfo.attach(label, { path, contentType: 'image/png' })
   }
   const projectId = await createProject(page, 'Markdown publication policy')
@@ -207,34 +207,67 @@ test('new Markdown publications replace the head while edits, restoration and dr
   const second = await inspect()
   expect(second.selectedVersion?.versionNumber).toBe(2)
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v2'
+    'v2 contains manual edits'
   )
   await expect(provenance).toHaveAttribute('data-continuously-open', 'true')
   await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   const third = await publish(true)
   expect(third.artifactId).toBe(first.artifactId)
+  await openFile()
+  await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
   await expect(provenance.locator('[data-notice-level="warning"]')).toContainText(
     'Execution evidence is incomplete for v3'
   )
-  await expect(provenance).toHaveAttribute('data-continuously-open', 'true')
   expect(await inspect()).toMatchObject({ headVersionId: third.versionId, text: original })
   expect(await inspect(second.selectedVersionId)).toMatchObject({ text: edited })
+  await preview.getByRole('button', { name: `Close preview of ${name}` }).click()
   await verifyTaskRead('original', second.selectedVersionId)
+  // Reopen the original message's card after v3 exists; its captured v1 is not a history choice.
+  await page
+    .locator('[data-message-id]')
+    .getByRole('button', { name: `Preview generated file ${name}`, exact: true })
+    .first()
+    .click()
   await page.getByRole('button', { name: `Open full screen preview of ${name}` }).click()
   preview = page.getByRole('dialog', { name: `Preview ${name}` })
   await expect(preview.getByText('Original result.', { exact: true })).toBeVisible()
+  await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
+  await provenance.evaluate((element) => element.setAttribute('data-continuously-open', 'true'))
   let warning = provenance.locator('[data-notice-level="warning"]')
   await expect(warning).toContainText('Execution evidence is incomplete for v3')
+  const details = warning.locator('details')
+  const summary = details.locator('summary')
+  await expect(details).not.toHaveAttribute('open')
+  await expect(warning.getByText('Confirmed finding', { exact: true })).toBeHidden()
+  await summary.focus()
+  await page.keyboard.press('Enter')
+  await expect(details).toHaveAttribute('open')
+  await expect(warning.getByText('Confirmed finding', { exact: true })).toBeVisible()
+  await expect(warning).toContainText('Possible scenarios (not confirmed for this version)')
+  await expect(warning).toContainText('An existing file was republished without linking the run')
+  await expect(warning.getByText('What to do', { exact: true })).toBeVisible()
   await expect(warning).toContainText('Run the producing task again')
   await expect(provenance.getByRole('button', { name: 'Generate script' })).toBeDisabled()
+  await capture('version-v3-warning-expanded')
+  await page.keyboard.press('Space')
+  await expect(details).not.toHaveAttribute('open')
+  await expect(warning.getByText('Confirmed finding', { exact: true })).toBeHidden()
   await capture('version-v3-warning')
+  await summary.click()
+  await expect(details).toHaveAttribute('open')
   await preview.getByRole('button', { name: 'Previous file version' }).click()
   await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v2'
+    'v2 contains manual edits'
   )
   await expect(provenance.getByRole('button', { name: 'Generate script' })).toHaveCount(0)
   await capture('version-v2-not-applicable')
+  // Reopening v3 must not retain the expanded details from its previous visit.
+  await preview.getByRole('button', { name: 'Next file version' }).click()
+  await expect(warning).toContainText('Execution evidence is incomplete for v3')
+  await expect(warning.locator('details')).not.toHaveAttribute('open')
+  await preview.getByRole('button', { name: 'Previous file version' }).click()
+  await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
   await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
   await expect(editor).toHaveValue(edited)
   await expect(preview.getByRole('button', { name: 'Save changes' })).toHaveText(
@@ -244,7 +277,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await expect(editor).toBeHidden()
   expect(await inspect()).toMatchObject({ text: edited, selectedVersion: { versionNumber: 4 } })
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v4'
+    'v4 contains manual edits'
   )
   await expect(provenance).toHaveAttribute('data-continuously-open', 'true')
   await capture('restored-v4')
@@ -260,7 +293,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
   await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v4'
+    'v4 contains manual edits'
   )
   editor = preview.getByRole('textbox', { name: `Edit ${name} source` })
   await editor.fill(edited + '\nUnsaved draft.\n')
@@ -285,7 +318,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await expect(preview.getByText('This file has a newer version.', { exact: true })).toBeVisible()
   await expect(editor).toHaveValue(edited + '\nUnsaved draft.\n')
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v4'
+    'v4 contains manual edits'
   )
   await provenance.getByRole('button', { name: 'Previous Artifact version' }).click()
   const discard = page.getByTestId('discard-preview-changes-confirmation')
@@ -293,7 +326,7 @@ test('new Markdown publications replace the head while edits, restoration and dr
   await discard.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(editor).toHaveValue(edited + '\nUnsaved draft.\n')
   await expect(provenance.locator('[data-notice-level="info"]')).toContainText(
-    'Script reconstruction is not applicable to v4'
+    'v4 contains manual edits'
   )
   await capture('draft-conflict')
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click()
@@ -308,8 +341,98 @@ test('new Markdown publications replace the head while edits, restoration and dr
   // The workspace moves into its narrow-screen dialog at this breakpoint.
   await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
   await expect(warning).toContainText('Execution evidence is incomplete for v3')
+  // A different version starts collapsed; also inspect expanded text at the narrow breakpoint.
+  await expect(warning.locator('details')).not.toHaveAttribute('open')
+  await warning.locator('summary').click()
+  await expect(warning.getByText('What to do', { exact: true })).toBeVisible()
   expect(await warning.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(
     true
   )
   await capture('version-v3-warning-narrow')
+})
+
+test('legacy Markdown v3 opens from an old message card as current after restart', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  const projectId = await createProject(page, 'Legacy Markdown publication')
+  const publish = async (): Promise<{ artifactId: string; versionId: string }> => {
+    await sendPrompt(
+      page,
+      'Create a provenance artifact. Markdown publication policy Without execution evidence',
+      'Artifact provenance verified for session',
+      90000
+    )
+    await expect(page.getByText(/^Artifact provenance verified for session /).last()).toHaveText(
+      /session [^,]+, artifact [^,]+, version [^.]+\./
+    )
+    const receipt = await page
+      .getByText(/^Artifact provenance verified for session /)
+      .last()
+      .innerText()
+    const match = receipt.match(/session ([^,]+), artifact ([^,]+), version ([^.]+)\./)!
+    return { artifactId: match[2], versionId: match[3] }
+  }
+  const first = await publish()
+  const identity = { source: 'artifact' as const, projectId, fileId: first.artifactId }
+  const second = await page.evaluate(
+    async ({ identity, first, edited }) => {
+      const result = await window.api.managedFileVersions.saveTextEdit({
+        ...identity,
+        basedOnVersionId: first.versionId,
+        expectedHeadVersionId: first.versionId,
+        operationId: 'legacy-edit',
+        content: edited
+      })
+      if (!result.ok || result.value.kind !== 'created') throw new Error('Expected v2')
+      return result.value.version.id
+    },
+    { identity, first, edited }
+  )
+  const third = await publish()
+  const storage = await page.evaluate(() => window.api.storage.getStatus())
+  if (process.env.MARKDOWN_REPRO_ROOT) {
+    expect(
+      realpathSync(storage.dataRoot).startsWith(realpathSync(process.env.MARKDOWN_REPRO_ROOT) + '/')
+    ).toBe(true)
+  }
+  const client = createProjectDbClient(dirname(storage.dataRoot))
+  try {
+    // Only this disposable fixture recreates the old policy: v3 was published but v2 stayed current.
+    await client.artifactLineage.update({
+      where: { id: first.artifactId },
+      data: { currentVersionId: second }
+    })
+    page = await app.restart()
+    await openRecentSession(page, 'Create a provenance artifact.')
+    await page
+      .locator('[data-message-id]')
+      .getByRole('button', {
+        name: `Preview generated file ${name}`,
+        exact: true
+      })
+      .first()
+      .click()
+    await page.getByRole('button', { name: `Open full screen preview of ${name}` }).click()
+    const preview = page.getByRole('dialog', { name: `Preview ${name}` })
+    await expect(preview.getByText('Original result.', { exact: true })).toBeVisible()
+    await preview.getByRole('button', { name: `Open Provenance for ${name}` }).click()
+    await expect(page.getByTestId('artifact-provenance')).toContainText(
+      'Execution evidence is incomplete for v3'
+    )
+    expect(
+      (await client.artifactLineage.findUniqueOrThrow({ where: { id: first.artifactId } }))
+        .currentVersionId
+    ).toBe(third.versionId)
+    await page.screenshot({ path: testInfo.outputPath('legacy-opened-v3.png') })
+    await preview.getByRole('button', { name: 'Previous file version' }).click()
+    await expect(preview.getByText('Manually corrected result.', { exact: true })).toBeVisible()
+    await preview.getByRole('button', { name: `Edit ${name}`, exact: true }).click()
+    await preview.getByRole('button', { name: 'Save changes' }).click()
+    await expect(page.getByTestId('artifact-provenance')).toContainText('v4 contains manual edits')
+    await page.screenshot({ path: testInfo.outputPath('legacy-restored-v4.png') })
+  } finally {
+    await client.$disconnect()
+  }
 })

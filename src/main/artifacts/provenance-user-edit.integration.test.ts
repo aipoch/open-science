@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, expect, it } from 'vitest'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import type {
@@ -391,7 +391,12 @@ it('does not silently promote a previously suppressed version during completion 
     data: { currentVersionId: saved.version.id }
   })
   await publish(suppressed)
-  expect(await service.inspect(identity)).toMatchObject({
+  expect(
+    await fixture.client.artifactLineage.findUniqueOrThrow({
+      where: { id: identity.fileId }
+    })
+  ).toMatchObject({ currentVersionId: saved.version.id })
+  expect(await service.inspect({ ...identity, versionId: saved.version.id })).toMatchObject({
     headVersionId: saved.version.id,
     text: edited
   })
@@ -404,4 +409,152 @@ it('does not silently promote a previously suppressed version during completion 
     headVersionId: fresh.version.versionId,
     text: original
   })
+})
+
+// Reproduce persisted heads left behind by the former same-content publication policy.
+it('repairs a suppressed Markdown head on default open without rewriting immutable versions', async () => {
+  const { first, identity, saved } = await setupEditedReport()
+  const suppressed = await prepare(2)
+  await publish(suppressed)
+  await fixture.client.artifactLineage.update({
+    where: { id: identity.fileId },
+    data: { currentVersionId: saved.version.id }
+  })
+  const before = await fixture.client.artifactVersion.findMany({
+    where: { artifactId: identity.fileId },
+    orderBy: { versionNumber: 'asc' }
+  })
+  // An explicit history read neither changes the selection nor repairs the current pointer.
+  expect(await service.inspect({ ...identity, versionId: first.version.versionId })).toMatchObject({
+    selectedVersionId: first.version.versionId,
+    headVersionId: saved.version.id,
+    text: original
+  })
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: suppressed.version.versionId,
+    selectedVersionId: suppressed.version.versionId,
+    text: original
+  })
+  expect(
+    await fixture.client.artifactVersion.findMany({
+      where: { artifactId: identity.fileId },
+      orderBy: { versionNumber: 'asc' }
+    })
+  ).toEqual(before)
+  expect(await service.inspect({ ...identity, versionId: saved.version.id })).toMatchObject({
+    text: edited
+  })
+  const catalog = await new ProjectFilesQueryOwner(
+    async () => fixture.client,
+    () => true
+  ).listFiles({ projectId: identity.projectId, collection: { kind: 'all' }, limit: 10 })
+  expect(catalog.items[0].sourceVersionId).toBe(suppressed.version.versionId)
+  const restored = await service.saveTextEdit({
+    ...identity,
+    expectedHeadVersionId: suppressed.version.versionId,
+    basedOnVersionId: saved.version.id,
+    operationId: 'legacy-restore',
+    restore: true,
+    content: edited
+  })
+  if (restored.kind !== 'created') throw new Error('Expected restoration')
+  expect(restored.version.versionNumber).toBe(4)
+  await publish(first)
+  await publish(suppressed)
+  service = new ManagedFileVersionService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  expect(await service.inspect(identity)).toMatchObject({
+    headVersionId: restored.version.id,
+    text: edited
+  })
+})
+
+it.each(['pending', 'finalized but inactive', 'corrupt', 'missing', 'unrelated content'] as const)(
+  'does not repair a Markdown head using %s content',
+  async (state) => {
+    const { identity, saved } = await setupEditedReport()
+    const candidate = await prepare(2, state === 'unrelated content' ? updated : original)
+    if (state !== 'pending') await repository.finalizeRun(candidate.proof)
+    if (state === 'corrupt' || state === 'missing' || state === 'unrelated content') {
+      await repository.activateFinalizedRun(candidate.proof)
+      await fixture.client.artifactLineage.update({
+        where: { id: identity.fileId },
+        data: { currentVersionId: saved.version.id }
+      })
+    }
+    if (state === 'corrupt' || state === 'missing') {
+      const row = await fixture.client.artifactVersion.findUniqueOrThrow({
+        where: { id: candidate.version.versionId }
+      })
+      const path = join(fixture.storageRoot, row.contentStorageKey)
+      if (state === 'missing') await rename(path, path + '.held-for-test')
+      else await writeFile(path, 'damaged bytes')
+    }
+    expect(await service.inspect(identity)).toMatchObject({
+      headVersionId: saved.version.id,
+      text: edited
+    })
+    expect(
+      (await fixture.client.artifactLineage.findUniqueOrThrow({ where: { id: identity.fileId } }))
+        .currentVersionId
+    ).toBe(saved.version.id)
+  }
+)
+
+it('repairs the old suppression pattern after an intervening generated publication', async () => {
+  const { identity, saved } = await setupEditedReport()
+  const intervening = await prepare(2, updated)
+  await publish(intervening)
+  const suppressed = await prepare(3)
+  await publish(suppressed)
+  await fixture.client.artifactLineage.update({
+    where: { id: identity.fileId },
+    data: { currentVersionId: intervening.version.versionId }
+  })
+  const lease = await service.openLatest(identity)
+  try {
+    expect(lease.version.id).toBe(suppressed.version.versionId)
+    expect(Buffer.from(await lease.readRange(0, lease.size)).toString('utf8')).toBe(original)
+  } finally {
+    await lease.close()
+  }
+  expect(await service.inspect({ ...identity, versionId: saved.version.id })).toMatchObject({
+    text: edited
+  })
+})
+
+it('keeps a concurrent manual save when legacy head repair loses its compare-and-set', async () => {
+  const { identity, saved } = await setupEditedReport()
+  const suppressed = await prepare(2)
+  await publish(suppressed)
+  await fixture.client.artifactLineage.update({
+    where: { id: identity.fileId },
+    data: { currentVersionId: saved.version.id }
+  })
+  // Commit a real save immediately before the repair's transaction starts.
+  const transaction = fixture.client.$transaction.bind(fixture.client)
+  const spy = vi.spyOn(fixture.client, '$transaction')
+  let concurrentId: string | undefined
+  spy.mockImplementationOnce(async (...args) => {
+    spy.mockRestore()
+    const concurrent = await service.saveTextEdit({
+      ...identity,
+      basedOnVersionId: saved.version.id,
+      expectedHeadVersionId: saved.version.id,
+      operationId: 'concurrent-legacy-save',
+      content: updated
+    })
+    if (concurrent.kind !== 'created') throw new Error('Expected concurrent save')
+    concurrentId = concurrent.version.id
+    return transaction(...args)
+  })
+  try {
+    const result = await service.inspect(identity)
+    expect(concurrentId).toBeDefined()
+    expect(result).toMatchObject({ headVersionId: concurrentId, text: updated })
+  } finally {
+    spy.mockRestore()
+  }
 })

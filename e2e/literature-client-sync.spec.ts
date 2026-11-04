@@ -3,12 +3,27 @@ import {
   literatureItemInputSchema
 } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import type { Locator } from 'playwright'
+import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
 import { openAllReferences } from './fixtures/library'
 
+const configureLiveProxy = async (page: Page): Promise<void> => {
+  const server = process.env.OPEN_SCIENCE_LITERATURE_PROXY
+  if (server)
+    await page.evaluate(
+      (server) =>
+        window.api.settings.setNetworkProxy({
+          mode: 'manual',
+          server,
+          bypassRules: 'localhost,127.0.0.1'
+        }),
+      server
+    )
+}
+
 // Live providers are a separate acceptance check; portable regressions use fixed responses.
 test.describe('live literature providers', () => {
+  test.use({ windowMode: 'normal' })
   test.skip(
     process.env.OPEN_SCIENCE_LITERATURE_LIVE !== '1',
     'Requires live Crossref and arXiv access'
@@ -17,6 +32,7 @@ test.describe('live literature providers', () => {
     app
   }, testInfo) => {
     const first = await app.completeOnboarding()
+    await configureLiveProxy(first)
     await first.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     const second = await app.openAdditionalRenderer()
     const pages = [first, second]
@@ -32,7 +48,7 @@ test.describe('live literature providers', () => {
         await page.getByRole('button', { name: 'Add', exact: true }).click()
         await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
         await page
-          .getByLabel('DOI or arXiv link', { exact: true })
+          .getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
           .fill('https://doi.org/10.1038/nature12373')
         await page.getByRole('button', { name: 'Find reference', exact: true }).click()
         const review = page.getByRole('dialog', { name: 'Review reference details' })
@@ -78,6 +94,7 @@ test.describe('live literature providers', () => {
   }, testInfo) => {
     test.setTimeout(240_000)
     let page = await app.completeOnboarding()
+    await configureLiveProxy(page)
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
     await openAllReferences(page)
     const readIds = (): Promise<string[]> =>
@@ -106,10 +123,10 @@ test.describe('live literature providers', () => {
       const lookup = async (): Promise<Locator> => {
         await add.click()
         await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
-        const input = page.getByLabel('DOI or arXiv link', { exact: true })
+        const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
         await expect(input).toBeFocused()
         await input.fill(url)
-        await input.press('Enter')
+        await input.press('ControlOrMeta+Enter')
         const review = page.getByRole('dialog', { name: 'Review reference details' })
         await expect(review).toBeVisible({ timeout: 60_000 })
         await expect(review).toContainText(`Retrieved via ${source}.`)
@@ -161,6 +178,135 @@ test.describe('live literature providers', () => {
     await testInfo.attach('live-link-persistence.json', {
       contentType: 'application/json',
       body: JSON.stringify({ saved, restoredAfterForcedRestart: true })
+    })
+  })
+
+  test('imports live PubMed records and a mixed batch with selection and restart persistence', async ({
+    app
+  }, testInfo) => {
+    test.setTimeout(300_000)
+    let page = await app.completeOnboarding()
+    await configureLiveProxy(page)
+    await openAllReferences(page)
+    const readIds = (): Promise<string[]> =>
+      page.evaluate(
+        async () =>
+          (await window.api.literature.search({ scope: 'library', allItemIds: true })).itemIds ?? []
+      )
+    const baseline = await readIds()
+    const reviewed: { id: string; title: string }[] = []
+    const openLookup = async (input: string): Promise<void> => {
+      await page.getByRole('button', { name: 'Add', exact: true }).click()
+      await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+      const field = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
+      await field.fill(input)
+      await expect(field).toHaveValue(input)
+      await page.getByRole('button', { name: 'Find reference', exact: true }).click()
+    }
+    for (const [input, source, expectedTitle] of [
+      ['pmid:35486828', 'PMID', /Discrimination of three Angelica/i],
+      ['PMC5753258', 'PMCID', /Europe PMC in 2017/i]
+    ] as const) {
+      const before = await readIds()
+      await openLookup(input)
+      const review = page.getByRole('dialog', { name: 'Review reference details' })
+      await expect(review).toBeVisible({ timeout: 60_000 })
+      await expect(review).toContainText(`Retrieved via ${source}.`)
+      await expect(review).toContainText(input.replace(/^pmid:/u, ''))
+      await expect(review.getByRole('heading', { name: expectedTitle })).toBeVisible()
+      expect(await readIds()).toEqual(before)
+      await page.screenshot({ path: testInfo.outputPath(`live-single-${source}.png`) })
+      await review.getByRole('button', { name: 'Edit details', exact: true }).click()
+      const editor = page.getByRole('dialog', { name: 'Edit reference details' })
+      const title = `Reviewed live ${source} reference`
+      await editor.getByLabel('Title', { exact: true }).fill(title)
+      await editor.getByRole('button', { name: 'Back to review', exact: true }).click()
+      await review.getByRole('button', { name: 'Save', exact: true }).click()
+      await expect(review).toBeHidden()
+      const after = await readIds()
+      expect(after).toHaveLength(before.length + 1)
+      reviewed.push({ id: after.find((id) => !before.includes(id))!, title })
+      await page.keyboard.press('Escape')
+      await expect(page.getByRole('dialog')).toHaveCount(0)
+    }
+    const inputs = [
+      '10.1038/nphys1170',
+      'pmid:35486828',
+      'PMC5753258',
+      'arxiv:1810.04805',
+      'unsupported example',
+      'https://doi.org/10.1038/nphys1170'
+    ].join('\n')
+    const beforeBatch = await readIds()
+    const previewBatch = async (): Promise<Locator> => {
+      await openLookup(inputs)
+      const reviewResults = page.getByRole('button', { name: 'Review references', exact: true })
+      await expect(reviewResults).toBeVisible({ timeout: 120_000 })
+      await expect(page.getByText('unsupported example', { exact: true })).toBeVisible()
+      await expect(
+        page.getByText(/BERT: Pre-training of Deep Bidirectional Transformers/)
+      ).toBeVisible()
+      expect((await readIds()).sort()).toEqual([...beforeBatch].sort())
+      await page.screenshot({ path: testInfo.outputPath('live-batch-lookup.png') })
+      await reviewResults.click()
+      const preview = page.getByRole('dialog', { name: 'Import references', exact: true })
+      await expect(preview.getByRole('checkbox')).toHaveCount(4)
+      const exclude = preview.getByRole('checkbox', { name: /Measured measurement/ })
+      await exclude.uncheck()
+      await expect(preview.getByText('3 of 4 selected', { exact: true })).toBeVisible()
+      await expect(
+        preview.getByRole('button', { name: 'Import references', exact: true })
+      ).toBeEnabled()
+      expect((await readIds()).sort()).toEqual([...beforeBatch].sort())
+      return preview
+    }
+    const cancelled = await previewBatch()
+    await cancelled.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await expect(cancelled).toBeHidden()
+    expect((await readIds()).sort()).toEqual([...beforeBatch].sort())
+    const preview = await previewBatch()
+    await page.screenshot({ path: testInfo.outputPath('live-batch-selection.png') })
+    await preview.getByRole('button', { name: 'Import references', exact: true }).click()
+    await expect(preview.getByRole('button', { name: 'Done', exact: true })).toBeVisible({
+      timeout: 30_000
+    })
+    await page.screenshot({ path: testInfo.outputPath('live-batch-receipt.png') })
+    await preview.getByRole('button', { name: 'Done', exact: true }).click()
+    const after = await readIds()
+    expect(after).toHaveLength(baseline.length + 3)
+    const added = after.filter((id) => !beforeBatch.includes(id))
+    expect(added).toHaveLength(1)
+    const snapshot = await page.evaluate(
+      async (ids) => Promise.all(ids.map((id) => window.api.literature.get(id))),
+      after.filter((id) => !baseline.includes(id))
+    )
+    for (const { id, title } of reviewed)
+      expect(snapshot.find((item) => item?.id === id)?.item.title).toBe(title)
+    const bert = snapshot.find((item) => item?.id === added[0])!
+    expect(bert.item.identifiers).toContainEqual(
+      expect.objectContaining({ scheme: 'arxiv', value: '1810.04805' })
+    )
+    expect(bert.item.title).toMatch(/BERT: Pre-training/)
+    page = await app.restartAfterCrash({ force: true })
+    expect((await readIds()).sort()).toEqual([...after].sort())
+    for (const item of snapshot) {
+      expect(item).toBeDefined()
+      const restored = await page.evaluate((id) => window.api.literature.get(id), item!.id)
+      expect(restored?.item).toEqual(item!.item)
+    }
+    await openAllReferences(page)
+    for (const { title } of reviewed)
+      await expect(page.getByText(title, { exact: true })).toBeVisible()
+    await page.screenshot({ path: testInfo.outputPath('live-after-restart.png') })
+    await testInfo.attach('live-batch-persistence.json', {
+      contentType: 'application/json',
+      body: JSON.stringify({
+        baseline,
+        after,
+        reviewed,
+        snapshot,
+        restoredAfterForcedRestart: true
+      })
     })
   })
 })

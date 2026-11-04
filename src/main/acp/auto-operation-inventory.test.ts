@@ -169,7 +169,7 @@ describe('Auto operation completeness against real tool registrations', () => {
         // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          '01d43ef955ccb78cb4f5a0d1a5899b972221752055a822e18b2004d6cd1e74d9',
+          '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
         // Reviewed: Windows Bioconductor installer guidance, plus non-blank patterns on required
         // ask_user_question strings that only narrow accepted inputs; handlers and Auto operation
         // dispositions are unchanged.

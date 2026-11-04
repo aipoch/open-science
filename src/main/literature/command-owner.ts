@@ -1,3 +1,4 @@
+import type { LiteratureStudySnapshot } from './study-snapshot'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
   LiteratureBatchJobs,
@@ -8,7 +9,10 @@ import type {
   LiteratureMetadataEnricher,
   LiteratureReferenceResolver
 } from '@aipoch/literature-discovery'
-import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import {
+  literatureItemInputSchema,
+  type LiteratureItemView
+} from '@aipoch/literature-library/contracts'
 import type { ArtifactLiteratureManifest } from '../../shared/artifact-literature'
 import type { GetArtifactVersionProvenanceRequest } from '../../shared/artifact-provenance'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
@@ -36,13 +40,14 @@ import {
 } from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
+  literatureStudySnapshot: Pick<LiteratureStudySnapshot, 'run'>
   journalAttributes: Pick<JournalAttributes, 'run'>
   literatureBatchJobs: Pick<LiteratureBatchJobs, 'run'>
   literatureCitationFormatter: Pick<
     LiteratureCitationFormatter,
     'citationStyles' | 'formatReferences' | 'exportReferences' | 'parseReferences'
   >
-  literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'resolve'>
+  literatureReferenceResolver: Pick<LiteratureReferenceResolver, 'lookup'>
   literatureMetadataEnricher: Pick<LiteratureMetadataEnricher<LiteratureItemView>, 'complete'>
   literatureRelatedFinder: Pick<LiteratureRelatedFinder, 'run'>
   literatureSupplementFinder: Pick<LiteratureSupplementFinder, 'run'>
@@ -78,6 +83,7 @@ type LiteratureCommandServices = Readonly<{
 }>
 
 export const createLiteratureCommandOwner = ({
+  literatureStudySnapshot,
   journalAttributes,
   literatureBatchJobs,
   literatureCitationFormatter,
@@ -116,15 +122,15 @@ export const createLiteratureCommandOwner = ({
       throw error
     }
   },
+  studySnapshot: (request, signal) => literatureStudySnapshot.run(request, signal),
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: (request) =>
     withCitationStyleErrors(() => literatureCitationFormatter.citationStyles(request)),
   lookupMetadata: async (doi) => {
-    const [resolved] = await literatureReferenceResolver.resolve([
-      doi.startsWith('pmid:') || doi.startsWith('arxiv:') ? doi : 'doi:' + doi
-    ])
+    const reference = doi.startsWith('10.') ? 'doi:' + doi : doi
+    const resolved = await literatureReferenceResolver.lookup(reference)
     return resolved.item
   },
   completeMetadata: (request) => literatureMetadataEnricher.complete(request),
@@ -230,9 +236,18 @@ export const createLiteratureCommandOwner = ({
   importPdf: (request, signal) => literaturePdfImporter.import(request, signal),
   cancelPdfImport: (request) => literaturePdfImporter.cancelImport(request.operationId),
   importRecords: async (request) => {
-    const { warnings, ...parsed } = await literatureCitationFormatter.parseReferences(
-      request.content
-    )
+    // Resolved metadata is already native data; do not round-trip it through a citation format.
+    const { warnings, ...parsed } =
+      'items' in request
+        ? {
+            format: 'items' as const,
+            items: request.items.map((item) => literatureItemInputSchema.parse(item)),
+            errors: [],
+            warnings: [],
+            truncated: false,
+            scannedEntries: request.items.length
+          }
+        : await literatureCitationFormatter.parseReferences(request.content)
     const indexes = request.selectedItemIndexes
     if (
       indexes &&
