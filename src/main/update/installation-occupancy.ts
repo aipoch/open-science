@@ -6,7 +6,6 @@ import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   listWindowsInstallationOccupants,
-  listWindowsInstallationOccupantsAsync,
   listWindowsProcesses,
   splitWindowsCommandLine,
   windowsParentProcessId,
@@ -200,25 +199,54 @@ export async function inspectInstallationProcessesAsync(
   installationRoot: string,
   signal?: AbortSignal
 ): Promise<number[]> {
-  try {
-    installationRoot = realpathSync(installationRoot) || installationRoot
-  } catch {
-    /* The installation may already have moved. */
-  }
+  signal?.throwIfAborted()
   const { runVerificationProcess } = await import('./verification-process')
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    signal?.throwIfAborted()
-    // A cold Restart Manager scan of a real 7,314-file installation has taken 37–70 seconds, then
-    // well under a second once warm. It runs on the libuv pool, so it neither blocks the event loop
-    // nor needs a subprocess deadline; cancellation is honored when the scan returns.
+    // A cold Restart Manager scan can take 70 seconds. Keep enumeration and the native call in
+    // an owned process: abort/timeout must reap the scan, not just abandon a libuv work item.
     const started = Date.now()
     try {
-      const files = windowsInstallationFiles(installationRoot)
-      const resourcePids = await listWindowsInstallationOccupantsAsync(files)
+      // Load the unpacked Node-API binary directly: plain Node cannot resolve an ASAR archive.
+      const nativePath = requireNative
+        .resolve('@aipoch/process-tree-native/build/Release/process_tree_native.node')
+        .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+      const { stdout } = await runVerificationProcess(
+        process.execPath,
+        [
+          '-e',
+          String.raw`
+          const fs = require('node:fs')
+          const { join } = require('node:path')
+          const native = require(process.argv[1])
+          let root = process.argv[2]
+          try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
+          const files = fs.statSync(root).isDirectory()
+            ? fs.readdirSync(root, { recursive: true, withFileTypes: true })
+                .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name))
+            : [root]
+          // Only this short-lived scanner is exempt; the parent and other occupants remain.
+          const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
+          process.stdout.write(JSON.stringify({ root, pids }))
+        `,
+          nativePath,
+          installationRoot
+        ],
+        { signal, timeoutMs: 120_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+      )
       signal?.throwIfAborted()
-      return windowsInstallationOccupants(resourcePids, installationRoot)
+      const result: unknown = JSON.parse(stdout)
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('root' in result) ||
+        typeof result.root !== 'string' ||
+        !('pids' in result) ||
+        !Array.isArray(result.pids)
+      )
+        throw new Error('Invalid installation resource scan result.')
+      return windowsInstallationOccupants(result.pids, result.root)
     } catch (cause) {
       if (signal?.aborted) throw cause
       createLogger('update').warn('Windows installation occupancy inspection failed', {
@@ -227,6 +255,11 @@ export async function inspectInstallationProcessesAsync(
       })
       throw windowsInspectionFailure(cause)
     }
+  }
+  try {
+    installationRoot = realpathSync(installationRoot) || installationRoot
+  } catch {
+    /* The installation may already have moved. */
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()
