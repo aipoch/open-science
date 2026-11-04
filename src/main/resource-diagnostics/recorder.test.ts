@@ -25,7 +25,11 @@ const sample = (processes: WindowsResourceSample['processes'] = []): WindowsReso
 })
 const setup = async (
   native: ConstructorParameters<typeof ResourceRecorder>[0]['native'],
-  now = () => 1000
+  now = () => 1000,
+  scheduling: Pick<
+    ConstructorParameters<typeof ResourceRecorder>[0],
+    'monotonicNow' | 'yieldToLoop'
+  > = {}
 ): Promise<{
   recorder: ResourceRecorder
   store: ResourceLogStore
@@ -34,7 +38,14 @@ const setup = async (
   const path = await mkdtemp(join(tmpdir(), 'resource-recorder-'))
   paths.push(path)
   const store = new ResourceLogStore({ directory: path })
-  const recorder = new ResourceRecorder({ runId: 'run-1', store, native, now, timers: false })
+  const recorder = new ResourceRecorder({
+    runId: 'run-1',
+    store,
+    native,
+    now,
+    timers: false,
+    ...scheduling
+  })
   recorders.push(recorder)
   installResourceRecorder(recorder)
   const read = async (): Promise<ReturnType<typeof JSON.parse>[]> => {
@@ -63,6 +74,358 @@ afterEach(async () => {
 })
 
 describe('resource correlation recorder', () => {
+  it('yields large snapshots while keeping one query and preserving concurrent identity updates', async () => {
+    const suspended = Promise.withResolvers<void>()
+    const yielded = Promise.withResolvers<void>()
+    const processes = Array.from({ length: 100 }, (_, i) => ({
+      pid: i + 10,
+      parentPid: 1,
+      birth: '100'
+    }))
+    const native = {
+      sampleWindowsResources: vi.fn().mockResolvedValue(sample(processes)),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const yieldToLoop = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        yielded.resolve()
+        return suspended.promise
+      })
+      .mockResolvedValue(undefined)
+    const { recorder, read } = await setup(native, () => 1000, {
+      monotonicNow: () => 0,
+      yieldToLoop
+    })
+    recorder.observeIdentity({ pid: 10, birth: '100', runtimeId: 'before' })
+    const pending = recorder.sample()
+    await Promise.race([yielded.promise, pending])
+    expect(yieldToLoop).toHaveBeenCalled()
+    expect(recorder.sample()).toBe(pending)
+    recorder.observeIdentity({ pid: 10, birth: '100', runtimeId: 'updated' })
+    recorder.observeIdentity({ pid: 900, birth: '900', runtimeId: 'new' })
+    suspended.resolve()
+    await pending
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    const rows = await read()
+    expect(rows.filter((r) => r.event === 'process-sample')).toHaveLength(100)
+    expect(rows.find((r) => r.event === 'segment-checkpoint').data.processes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ pid: 10, runtimeId: 'updated' }),
+        expect.objectContaining({ pid: 900, runtimeId: 'new' })
+      ])
+    )
+  })
+
+  it('stops expensive projections at the round budget, marks incomplete coverage, and backs off', async () => {
+    let clock = 0
+    let wall = 1000
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(sample([{ pid: 10, parentPid: 1, birth: '100' }])),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => wall, {
+      monotonicNow: () => clock,
+      yieldToLoop: async () => {}
+    })
+    const project = vi.fn(() => {
+      clock += 30
+      return { status: 'idle' }
+    })
+    const owner = { resourceDiagnosticSnapshot: project }
+    for (let i = 0; i < 10; i++) recorder.register(owner, `r-${i}`)
+    recorder.observeIdentity({ pid: 10, birth: '100', runtimeId: 'kept' })
+    await recorder.sample()
+    expect(project).toHaveBeenCalledTimes(2)
+    await recorder.sample()
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    for (let i = 0; i < 10; i++) recorder.unregister(`r-${i}`)
+    clock += 30_000
+    wall += 30_000
+    await recorder.sample()
+    const rows = await read()
+    expect(rows.find((r) => r.event === 'sample-end').data).toMatchObject({
+      complete: false,
+      truncated: true,
+      processed: 1,
+      reason: 'processing-budget'
+    })
+    expect(rows.find((r) => r.event === 'sample-backoff').data.backoffMs).toBe(30_000)
+    expect(rows.find((r) => r.event === 'sample-recovered')).toBeDefined()
+    expect(rows.find((r) => r.event === 'process-sample').data.runtimeId).toBe('kept')
+  })
+
+  it('caps repeated slow native backoff, skips without polling, and resumes after recovery', async () => {
+    let clock = 0
+    let slow = true
+    const native = {
+      sampleWindowsResources: vi.fn(async () => {
+        if (slow) clock += 2001
+        return sample()
+      }),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => clock, { monotonicNow: () => clock })
+    for (const delay of [30_000, 60_000, 120_000, 240_000, 300_000, 300_000]) {
+      await recorder.sample()
+      const calls = native.sampleWindowsResources.mock.calls.length
+      clock += delay - 1
+      await recorder.sample()
+      expect(native.sampleWindowsResources).toHaveBeenCalledTimes(calls)
+      clock++
+    }
+    slow = false
+    await recorder.sample()
+    clock += 10_000
+    await recorder.sample()
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(8)
+    const rows = await read()
+    expect(rows.filter((r) => r.event === 'sample-backoff').map((r) => r.data.backoffMs)).toEqual([
+      30_000, 60_000, 120_000, 240_000, 300_000, 300_000
+    ])
+    expect(rows.filter((r) => r.event === 'sample-recovered')).toHaveLength(1)
+  })
+
+  it('does not resume serialization or repopulate identities after closing during a yield', async () => {
+    const suspended = Promise.withResolvers<void>()
+    const yielded = Promise.withResolvers<void>()
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(
+          sample(
+            Array.from({ length: 100 }, (_, i) => ({ pid: i + 10, parentPid: 1, birth: '100' }))
+          )
+        ),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => 1000, {
+      monotonicNow: () => 0,
+      yieldToLoop: () => {
+        yielded.resolve()
+        return suspended.promise
+      }
+    })
+    const pending = recorder.sample()
+    await Promise.race([yielded.promise, pending])
+    await recorder.close(true)
+    const before = await read()
+    suspended.resolve()
+    await pending
+    expect(await read()).toEqual(before)
+    expect(before.some((r) => r.event === 'sample-end')).toBe(false)
+  })
+
+  it('limits ancestor traversal as well as serialization, without treating partial coverage as retirement', async () => {
+    let clock = 0
+    const processes = Array.from({ length: 1000 }, (_, i) => ({
+      pid: i + 10,
+      parentPid: i + 9,
+      birth: '100'
+    })).reverse()
+    const native = {
+      sampleWindowsResources: vi.fn().mockResolvedValue(sample(processes)),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => clock, {
+      monotonicNow: () => (clock += 0.01),
+      yieldToLoop: async () => {}
+    })
+    recorder.observeIdentity({ pid: 9999, birth: '200', runtimeId: 'retained' })
+    await recorder.sample()
+    const rows = await read()
+    const end = rows.find((r) => r.event === 'sample-end').data
+    expect(end).toMatchObject({ complete: false, truncated: true, reason: 'processing-budget' })
+    expect(end.processed).toBeLessThan(1000)
+    expect(end.processingMs).toBeLessThan(51)
+    expect(rows.find((r) => r.event === 'segment-checkpoint').data.processes).toContainEqual(
+      expect.objectContaining({ pid: 9999, runtimeId: 'retained' })
+    )
+  })
+
+  it('bounds wall time across yields and records a gap instead of draining a stale snapshot', async () => {
+    let clock = 0
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(
+          sample(
+            Array.from({ length: 100 }, (_, i) => ({ pid: i + 10, parentPid: 1, birth: '100' }))
+          )
+        ),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => clock, {
+      monotonicNow: () => clock,
+      yieldToLoop: async () => {
+        clock += 2001
+      }
+    })
+    await recorder.sample()
+    const rows = await read()
+    expect(rows.find((r) => r.event === 'sample-end').data).toMatchObject({
+      reason: 'processing-deadline',
+      complete: false,
+      processed: 0,
+      processingMs: 0
+    })
+    expect(rows.find((r) => r.event === 'sample-backoff').data.reason).toBe('processing-deadline')
+  })
+
+  it('rotates partial serialization coverage and recovers the remaining process joins', async () => {
+    let clock = 0
+    const processes = Array.from({ length: 100 }, (_, i) => ({
+      pid: i + 10,
+      parentPid: 1,
+      birth: '100'
+    }))
+    const native = {
+      sampleWindowsResources: vi.fn().mockResolvedValue(sample(processes)),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, store, read } = await setup(native, () => clock, {
+      monotonicNow: () => clock,
+      yieldToLoop: async () => {}
+    })
+    const append = store.append.bind(store)
+    vi.spyOn(store, 'append').mockImplementation((line, ...args) => {
+      if (line.includes('"event":"process-sample"')) clock += 1
+      return append(line, ...args)
+    })
+    await recorder.sample()
+    clock += 30_000
+    await recorder.sample()
+    const rows = await read()
+    const samples = rows.filter((r) => r.event === 'process-sample')
+    expect(new Set(samples.map((r) => r.data.pid)).size).toBe(100)
+    expect(
+      rows
+        .filter((r) => r.event === 'sample-end')
+        .every((r) => !r.data.complete && r.data.processed === 50)
+    ).toBe(true)
+  })
+
+  it('retains the single-flight guard and applies backoff when the native query fails', async () => {
+    let clock = 0
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('native failure'))
+        .mockResolvedValue(sample()),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => clock, { monotonicNow: () => clock })
+    await recorder.sample()
+    await recorder.sample()
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    clock = 30_000
+    await recorder.sample()
+    const rows = await read()
+    expect(rows.find((r) => r.event === 'sample-backoff').data.reason).toBe('failed')
+    expect(rows.find((r) => r.event === 'sample-recovered')).toBeDefined()
+  })
+
+  it('bounds serialized bytes, preserves gap markers and rotates crowded owners alongside processes', async () => {
+    let clock = 0
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(
+          sample(
+            Array.from({ length: 100 }, (_, i) => ({ pid: i + 10, parentPid: 1, birth: '100' }))
+          )
+        ),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, store, read } = await setup(native, () => clock, {
+      monotonicNow: () => clock,
+      yieldToLoop: async () => {}
+    })
+    const owner = {
+      resourceDiagnosticSnapshot: () => ({
+        sessions: Array.from({ length: 200 }, (_, i) => ({
+          sessionId: `s-${i}-${'x'.repeat(100)}`
+        }))
+      })
+    }
+    for (let i = 0; i < 30; i++) recorder.register(owner, `r-${i}`)
+    await recorder.sample()
+    expect(store.status.pendingBytes).toBeLessThan(330 * 1024)
+    const first = await read()
+    expect(first.find((r) => r.event === 'sample-end').data).toMatchObject({
+      complete: false,
+      reason: 'serialization-budget',
+      activityTotal: 30
+    })
+    expect(first.find((r) => r.event === 'sample-backoff').data.reason).toBe('serialization-budget')
+    expect(first.filter((r) => r.event === 'process-sample').length).toBeGreaterThan(0)
+    clock += 30_000
+    await recorder.sample()
+    const rows = await read()
+    const activity = rows
+      .filter((r) => r.event === 'activity-snapshot')
+      .map((r) => r.data.runtimeId)
+    expect(new Set(activity).size).toBe(activity.length)
+    expect(store.status.dropped).toBe(0)
+  })
+
+  it('does not charge event-loop yields to the active processing budget', async () => {
+    let clock = 0
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(
+          sample(
+            Array.from({ length: 100 }, (_, i) => ({ pid: i + 10, parentPid: 1, birth: '100' }))
+          )
+        ),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, read } = await setup(native, () => clock, {
+      monotonicNow: () => clock,
+      yieldToLoop: async () => {
+        clock += 10
+      }
+    })
+    await recorder.sample()
+    expect(clock).toBeGreaterThan(50)
+    const rows = await read()
+    expect(rows.find((r) => r.event === 'sample-end').data).toMatchObject({
+      complete: true,
+      processed: 100,
+      processingMs: 0
+    })
+    expect(rows.some((r) => r.event === 'sample-backoff')).toBe(false)
+  })
+
+  it('stops sampled serialization under queue pressure while leaving room for its gap marker', async () => {
+    const native = {
+      sampleWindowsResources: vi
+        .fn()
+        .mockResolvedValue(sample([{ pid: 10, parentPid: 1, birth: '100' }])),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, store, read } = await setup(native, () => 1000, { monotonicNow: () => 0 })
+    const owner = {
+      resourceDiagnosticSnapshot: () => ({
+        sessions: Array.from({ length: 256 }, () => ({ sessionId: 's'.repeat(150) }))
+      })
+    }
+    for (let i = 0; i < 13; i++) recorder.snapshot('crowded', owner)
+    expect(store.status.pendingBytes).toBeGreaterThan(512 * 1024)
+    await recorder.sample()
+    const rows = await read()
+    expect(rows.find((r) => r.event === 'sample-end').data).toMatchObject({
+      complete: false,
+      processed: 0,
+      reason: 'queue-pressure'
+    })
+    expect(rows.find((r) => r.event === 'sample-backoff').data.reason).toBe('queue-pressure')
+    expect(store.status.dropped).toBe(0)
+  })
+
   it('stops checkpoint construction at the byte budget without reading every crowded runtime', async () => {
     const { recorder, store, read } = await setup({
       sampleWindowsResources: vi.fn(),

@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import { performance } from 'node:perf_hooks'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import type { ChildProcess } from 'node:child_process'
 import type { ResourceProcessIdentity, WindowsResourceSample } from '@aipoch/process-tree-native'
 import { ResourceLogStore } from './store'
@@ -17,7 +18,8 @@ const keys = new Set(
     'kernelEpochId receiptId lane attempt expected code signal reaped osReaped reason truncated total ' +
     'supported complete startedAt endedAt system committedBytes commitLimitBytes availableBytes systemError ' +
     'processes privateBytes workingSetBytes handleCount error sampleId elapsedMs dropped sealsSuppressed rotatedBytes ' +
-    'pendingBytes failed missing snapshots processCoverage writeFailures'
+    'pendingBytes failed missing snapshots processCoverage writeFailures processed processingMs nativeMs backoffMs ' +
+    'activityProcessed activityTotal'
   ).split(' ')
 )
 
@@ -45,12 +47,24 @@ type Options = {
   native?: Pick<NativeSampler, 'sampleWindowsResources' | 'readWindowsResourceBirth'>
   now?: () => number
   timers?: boolean
+  // Deterministic scheduling seams. Production uses monotonic time and a macrotask yield.
+  monotonicNow?: () => number
+  yieldToLoop?: () => Promise<void>
 }
+
+const PROCESSING_BUDGET_MS = 50
+const SLICE_MS = 4
+const SLICE_ITEMS = 32
+const SLOW_SAMPLE_MS = 2000
+// Leave room in the 1 MiB writer queue for lifecycle evidence and the incomplete/backoff markers.
+const SERIALIZATION_BUDGET_BYTES = 256 * 1024
+const QUEUE_HIGH_WATER_BYTES = 512 * 1024
 
 export class ResourceRecorder {
   private readonly runtimes = new Map<string, WeakRef<ResourceObservation>>()
   private readonly native: Options['native']
   private readonly now: () => number
+  private readonly clock: () => number
   private readonly started = performance.now()
   private sequence = 0
   private runtimeSequence = 0
@@ -62,9 +76,15 @@ export class ResourceRecorder {
   private lastFull = -Infinity
   private timer: ReturnType<typeof setInterval> | undefined
   private missing = 0
+  private backoffMs = 0
+  private nextSampleAt = -Infinity
+  private processCursor = 0
+  private runtimeCursor = 0
+  private sampleBytes = 0
 
   constructor(private readonly options: Options) {
     this.now = options.now ?? Date.now
+    this.clock = options.monotonicNow ?? (() => performance.now())
     try {
       this.native = options.native ?? requireNative('@aipoch/process-tree-native')
     } catch {
@@ -94,7 +114,9 @@ export class ResourceRecorder {
           event,
           data: resourceFacts(fields)
         }) + '\n'
-      if (Buffer.byteLength(line) > 64 * 1024) {
+      const bytes = Buffer.byteLength(line)
+      if (sampled) this.sampleBytes += bytes
+      if (bytes > 64 * 1024) {
         this.missing++
         return
       }
@@ -209,17 +231,12 @@ export class ResourceRecorder {
 
   sample(): Promise<void> {
     if (this.pending || this.closed) return this.pending ?? Promise.resolve()
+    if (this.clock() < this.nextSampleAt) return Promise.resolve()
+    this.sampleBytes = 0
     const full = this.now() - this.lastFull >= 30_000
     const sampleId = ++this.sampleSequence
-    const observedAtStart = new Set(this.identities.keys())
-    if (full) {
-      this.lastFull = this.now()
-      for (const [id, ref] of this.runtimes) {
-        const owner = ref.deref()
-        if (owner) this.snapshot(id, owner)
-        else this.runtimes.delete(id)
-      }
-    }
+    const observedAtStart = new Map(this.identities)
+    if (full) this.lastFull = this.now()
     this.event(
       'sample-start',
       { sampleId, missing: this.missing, ...this.options.store.status },
@@ -230,18 +247,40 @@ export class ResourceRecorder {
     timeout.unref()
     // A timeout records a gap but never releases this guard while the OS query remains outstanding.
     this.pending = (async () => {
+      let reason: string | undefined
+      const started = this.clock()
       try {
         const sample = await this.native?.sampleWindowsResources(full, this.retained)
+        const nativeMs = this.clock() - started
         if (this.closed) return
         if (!sample) {
+          reason = 'unavailable'
           this.event('sample-unavailable', { sampleId }, false, true)
           return
         }
-        this.accept(sampleId, full, sample, observedAtStart)
+        reason = await this.accept(sampleId, full, sample, observedAtStart, nativeMs)
+        if (!reason && nativeMs >= SLOW_SAMPLE_MS) reason = 'slow-native'
       } catch {
+        reason = 'failed'
         this.event('sample-failed', { sampleId }, false, true)
       } finally {
         clearTimeout(timeout)
+        if (!this.closed) {
+          if (reason) {
+            this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : 30_000, 300_000)
+            this.nextSampleAt = this.clock() + this.backoffMs
+            this.event(
+              'sample-backoff',
+              { sampleId, reason, backoffMs: this.backoffMs },
+              false,
+              true
+            )
+          } else {
+            if (this.backoffMs) this.event('sample-recovered', { sampleId }, false, true)
+            this.backoffMs = 0
+            this.nextSampleAt = -Infinity
+          }
+        }
       }
     })().finally(() => {
       this.pending = undefined
@@ -249,12 +288,47 @@ export class ResourceRecorder {
     return this.pending
   }
 
-  private accept(
+  // Budget checks occur between bounded work items, including ancestor hops. A synchronous
+  // observer/JSON operation or native callback cannot be preempted; this is not a hard CPU limit.
+  private async process(work: Generator<void>): Promise<{ reason?: string; processingMs: number }> {
+    const started = this.clock()
+    let sliceStarted = started
+    let processingMs = 0
+    let items = 0
+    try {
+      while (!this.closed) {
+        const elapsed = this.clock() - sliceStarted
+        if (this.sampleBytes >= SERIALIZATION_BUDGET_BYTES)
+          return { reason: 'serialization-budget', processingMs: processingMs + elapsed }
+        if (items === 0 && this.options.store.status.pendingBytes >= QUEUE_HIGH_WATER_BYTES)
+          return { reason: 'queue-pressure', processingMs: processingMs + elapsed }
+        if (processingMs + elapsed >= PROCESSING_BUDGET_MS)
+          return { reason: 'processing-budget', processingMs: processingMs + elapsed }
+        if (this.clock() - started >= SLOW_SAMPLE_MS)
+          return { reason: 'processing-deadline', processingMs: processingMs + elapsed }
+        if (items >= SLICE_ITEMS || elapsed >= SLICE_MS) {
+          processingMs += elapsed
+          await (this.options.yieldToLoop ?? yieldToEventLoop)()
+          sliceStarted = this.clock()
+          items = 0
+          continue
+        }
+        if (work.next().done) return { processingMs: processingMs + this.clock() - sliceStarted }
+        items++
+      }
+      return { processingMs }
+    } finally {
+      work.return(undefined)
+    }
+  }
+
+  private async accept(
     sampleId: number,
     full: boolean,
     sample: WindowsResourceSample,
-    observedAtStart: Set<string>
-  ): void {
+    observedAtStart: Map<string, ResourceFacts>,
+    nativeMs: number
+  ): Promise<string | undefined> {
     this.event(
       'system-sample',
       {
@@ -264,58 +338,108 @@ export class ResourceRecorder {
         startedAt: sample.startedAt,
         endedAt: sample.endedAt,
         system: sample.system,
-        systemError: sample.systemError
+        systemError: sample.systemError,
+        nativeMs
       },
       false,
       true
     )
     if (!full) return
-    const identities = new Map<number, ResourceProcessIdentity>(
-      sample.complete ? [] : this.retained.map((p) => [p.pid, p])
-    )
-    const processes = new Map(sample.processes.slice(0, 4096).map((p) => [p.pid, p]))
-    const linked = new Map<string, ResourceFacts>(
-      sample.complete
-        ? [...this.identities].filter(([key]) => !observedAtStart.has(key))
-        : this.identities
-    )
-    for (const item of sample.processes.slice(0, 4096)) {
-      if (item.birth) identities.set(item.pid, { pid: item.pid, birth: item.birth })
-      let ancestor = item
-      let fields: ResourceFacts | undefined
-      const visited = new Set<number>()
-      while (ancestor.birth && !visited.has(ancestor.pid)) {
-        visited.add(ancestor.pid)
-        fields = this.identities.get(`${ancestor.pid}:${ancestor.birth}`)
-        if (fields) break
-        const parent = processes.get(ancestor.parentPid)
-        if (!parent?.birth || BigInt(parent.birth) > BigInt(ancestor.birth)) break
-        ancestor = parent
+    const identities = new Map<number, ResourceProcessIdentity>()
+    const processes = new Map<number, WindowsResourceSample['processes'][number]>()
+    const linked = new Map<string, ResourceFacts>()
+    const count = Math.min(sample.processes.length, 4096)
+    const start = count ? this.processCursor % count : 0
+    const runtimes = [...this.runtimes]
+    const runtimeStart = runtimes.length ? this.runtimeCursor % runtimes.length : 0
+    let processed = 0
+    let activityProcessed = 0
+    const work = function* (this: ResourceRecorder): Generator<void> {
+      for (let i = 0; i < count; i++) {
+        const item = sample.processes[i]
+        processes.set(item.pid, item)
+        if (item.birth) identities.set(item.pid, { pid: item.pid, birth: item.birth })
+        yield
       }
-      if (fields && item.birth)
-        linked.set(`${item.pid}:${item.birth}`, {
-          ...fields,
-          pid: item.pid,
-          birth: item.birth,
-          parentPid: item.parentPid
-        })
-      // Repeating the metadata in every sample preserves the join after the birth segment rotates.
-      this.event('process-sample', { ...fields, sampleId, ...item }, false, true)
+      // Interleave both kinds of evidence and rotate partial rounds, so a crowded activity list
+      // cannot permanently starve process rows (or repeatedly serialize only the same owners).
+      for (let i = 0; i < Math.max(count, runtimes.length); i++) {
+        if (i < runtimes.length) {
+          const [id, ref] = runtimes[(runtimeStart + i) % runtimes.length]
+          const owner = ref.deref()
+          if (this.runtimes.get(id) === ref) {
+            if (owner) this.snapshot(id, owner)
+            else this.runtimes.delete(id)
+          }
+          activityProcessed++
+          yield
+        }
+        if (i >= count) continue
+        const item = sample.processes[(start + i) % count]
+        let ancestor = item
+        let fields: ResourceFacts | undefined
+        const visited = new Set<number>()
+        while (ancestor.birth && !visited.has(ancestor.pid)) {
+          visited.add(ancestor.pid)
+          fields = this.identities.get(`${ancestor.pid}:${ancestor.birth}`)
+          if (fields) break
+          const parent = processes.get(ancestor.parentPid)
+          if (!parent?.birth || BigInt(parent.birth) > BigInt(ancestor.birth)) break
+          ancestor = parent
+          yield
+        }
+        if (fields && item.birth)
+          linked.set(`${item.pid}:${item.birth}`, {
+            ...fields,
+            pid: item.pid,
+            birth: item.birth,
+            parentPid: item.parentPid
+          })
+        // Repeating metadata preserves the join after the birth segment rotates.
+        this.event('process-sample', { ...fields, sampleId, ...item }, false, true)
+        processed++
+        yield
+      }
     }
-    this.identities = new Map([...linked].slice(0, 4096))
-    this.retained = [...identities.values()].slice(0, 4096)
+    const result = await this.process(work.call(this))
+    if (this.closed) return
+    const complete = sample.complete && !result.reason && sample.processes.length <= 4096
+    // Partial coverage cannot retire unvisited identities. Preserve updates arriving during native
+    // work AND JS yields, including updates to an already known PID/birth pair.
+    const preserved = new Map<string, ResourceFacts>()
+    for (const [key, fields] of this.identities)
+      if (!complete || observedAtStart.get(key) !== fields) preserved.set(key, fields)
+    for (const [key, fields] of linked)
+      if (
+        observedAtStart.get(key) === this.identities.get(key) &&
+        (preserved.has(key) || preserved.size < 4096)
+      )
+        preserved.set(key, fields)
+    if (!complete)
+      for (const item of this.retained)
+        if (!identities.has(item.pid) && identities.size < 4096) identities.set(item.pid, item)
+    this.identities = preserved
+    this.retained = [...identities.values()]
+    this.processCursor = complete ? 0 : start + processed
+    this.runtimeCursor = complete ? 0 : runtimeStart + activityProcessed
     this.event(
       'sample-end',
       {
         sampleId,
         total: sample.processes.length,
-        complete: sample.complete,
-        truncated: sample.processes.length > 4096,
+        complete,
+        processed,
+        activityProcessed,
+        activityTotal: runtimes.length,
+        processingMs: result.processingMs,
+        reason: result.reason,
+        truncated: !!result.reason || sample.processes.length > 4096,
         ...this.options.store.status
       },
       false,
       true
     )
+    return result.reason
   }
 
   async close(clean: boolean): Promise<void> {
