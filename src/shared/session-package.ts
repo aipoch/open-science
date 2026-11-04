@@ -73,10 +73,12 @@ export type PackageSelectableFile = PackageExcludedFile & {
 export type PackageFileSelection = {
   excludedStorageKeys: readonly string[]
   includePdfNotes: boolean
+  includeResearchFilms?: boolean
 }
 
 export type PackageSelectionSummary = {
   pdfNotesAvailable?: boolean
+  researchFilms?: { count: number; sizeBytes: number }
   retainedFiles: Array<PackageExcludedFile & { checksum?: string }>
   metadataBytes: number
 }
@@ -229,7 +231,8 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
       action: z.literal('select'),
       operationId: identity,
       excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
-      includePdfNotes: z.boolean().optional()
+      includePdfNotes: z.boolean().optional(),
+      includeResearchFilms: z.boolean().optional()
     })
     .strict()
 ])
@@ -271,8 +274,8 @@ export const sessionPackageManifestSchema = z
     format: z.literal('open-science-session'),
     // content-dedupe lets logical inventory entries share one content-addressed object path.
     requiredFeatures: z
-      .array(z.enum(['literature', 'ro-crate', 'content-dedupe']))
-      .max(3)
+      .array(z.enum(['literature', 'ro-crate', 'content-dedupe', 'research-film']))
+      .max(4)
       .optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),

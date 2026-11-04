@@ -1,3 +1,4 @@
+import type { SessionPackageService } from '../session-package/service'
 import { createResearchVideoPresentationOwner } from '../research-video/presentation'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import { createResearchFilmAuthor, researchFilmResources } from '@aipoch/research-film'
@@ -65,6 +66,7 @@ export async function composeNotebookBridge({
   settingsService,
   researchNarrationModels,
   researchFilmLifecycle,
+  sessionPackageService,
   managedFileVersionService,
   runtimeRef,
   requestSkillCatalogRefresh,
@@ -98,6 +100,7 @@ export async function composeNotebookBridge({
   wslSetup: WslSetupOwner
   researchNarrationModels: LocalModelOwner
   researchFilmLifecycle: ResearchFilmLifecycle
+  sessionPackageService: SessionPackageService
   settingsService: SettingsService
   managedFileVersionService: ManagedFileVersionService
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
@@ -278,6 +281,7 @@ export async function composeNotebookBridge({
   }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
     lifecycle: researchFilmLifecycle,
+    loadImportedFilm: (request) => sessionPackageService.readResearchFilm(request),
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),

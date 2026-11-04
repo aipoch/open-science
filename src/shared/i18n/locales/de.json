@@ -7995,6 +7995,7 @@
     "Wait for a completed response before generating.": "Warten Sie vor der Erstellung auf eine vollständige Antwort.",
     "Wait for the current response to finish before generating.": "Warten Sie vor der Erstellung, bis die aktuelle Antwort abgeschlossen ist.",
     "Research film jobs": "Forschungsfilm-Aufträge",
-    "Research films": "Forschungsfilme"
+    "Research films": "Forschungsfilme",
+    "Include research films": "Forschungsfilme einschließen"
   }
 }

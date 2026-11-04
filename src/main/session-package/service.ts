@@ -1,3 +1,14 @@
+import {
+  captureResearchFilms,
+  appendResearchFilms,
+  validateResearchFilms,
+  type CapturedResearchFilms
+} from './research-films'
+import { researchFilmStorageKeys, type PackageResearchFilms } from './research-films-contract'
+import type {
+  ResearchVideoPresentationRequest,
+  ResearchVideoPresentation
+} from '../../shared/research-video-presentation'
 import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import {
@@ -600,11 +611,58 @@ export class SessionPackageService {
     if (!loaded.session.packageOrigin) assertSettledHistory(loaded.session)
     // Remove local selectors before collecting annotation file dependencies as well.
     const session = withoutPrivateAuthority(loaded.session)
+    const filmOrigin =
+      session.packageOrigin || session.forkOrigin ? await this.readOrigin(request) : undefined
+    const capturedFilms = await captureResearchFilms(
+      this.options.storageRoot,
+      session,
+      mapPackageReferences(
+        filmOrigin?.researchFilms ?? [],
+        filmOrigin?.identities ?? {}
+      ) as PackageResearchFilms,
+      this.signal
+    )
+    const filmSummary = capturedFilms.films.length
+      ? {
+          count: capturedFilms.films.length,
+          sizeBytes: [...capturedFilms.files.values()].reduce(
+            (sum, file) => sum + file.sizeBytes,
+            0
+          )
+        }
+      : undefined
+    const appendFilms = async (
+      directory: string,
+      records: PackageRecords,
+      manifest: SessionPackageManifest,
+      captured = capturedFilms
+    ): Promise<void> => {
+      await appendResearchFilms({
+        root: this.options.storageRoot,
+        directory,
+        records,
+        manifest,
+        captured,
+        signal: this.signal,
+        onProgress: options.onProgress,
+        checkFile: async (path, storageKey, checksum) => {
+          if (!options.consumeSnapshot && !options.allowSensitiveContent)
+            await assertShareableFile(path, this.signal, storageKey, storageKey, {
+              storageKey,
+              root: directory,
+              relativePath: `objects/${checksum}`,
+              checksum
+            })
+        }
+      })
+      if (!options.consumeSnapshot && !options.allowSensitiveContent)
+        await assertShareable(records, this.signal, 'records.json')
+    }
     if (session.packageOrigin) {
       if (this.options.isSessionActive?.(request.projectId, request.sessionId))
         throw new Error('The Session is still active.')
       // Forward the retained source package, never relabel locally derived hashes as original.
-      const origin = await this.readOrigin(request)
+      const origin = filmOrigin!
       const source = join(
         this.options.storageRoot,
         'artifacts',
@@ -639,6 +697,17 @@ export class SessionPackageService {
           ? JSON.stringify({ version: 2, session: forwardedSession })
           : undefined
       const records = parseNativeRecords(await readPackageJson(join(source, 'records.json')))
+      const previousFilmKeys = new Set(researchFilmStorageKeys(records.researchFilms))
+      delete records.researchFilms
+      const inverseIds = Object.fromEntries(
+        Object.entries(origin.identities).map(([oldId, localId]) => [localId, oldId])
+      )
+      const forwardedFilms: CapturedResearchFilms = {
+        films: mapPackageReferences(capturedFilms.films, inverseIds) as PackageResearchFilms,
+        files: new Map(
+          [...capturedFilms.files].map(([key, file]) => [remapStorageKey(key, inverseIds), file])
+        )
+      }
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
         await assertShareable(records, this.signal, 'records.json')
       const alreadyExcluded = validateExcludedFiles(records, manifest.excludedFiles)
@@ -663,16 +732,24 @@ export class SessionPackageService {
           records,
           selectable,
           manifest.inventory.filter(
-            (entry) => !entry.storageKey || !optionalKeys.has(entry.storageKey)
+            (entry) =>
+              (!entry.storageKey || !optionalKeys.has(entry.storageKey)) &&
+              !previousFilmKeys.has(entry.storageKey ?? '')
           )
         ),
         {
+          researchFilms: filmSummary,
           pdfNotesAvailable: !!records.pdfNotes?.length,
           metadataBytes: manifest.inventory
             .filter((entry) => !entry.storageKey)
             .reduce((sum, entry) => sum + entry.sizeBytes, 0),
           retainedFiles: manifest.inventory
-            .filter((entry) => entry.storageKey && !optionalKeys.has(entry.storageKey))
+            .filter(
+              (entry) =>
+                entry.storageKey &&
+                !optionalKeys.has(entry.storageKey) &&
+                !previousFilmKeys.has(entry.storageKey)
+            )
             .map((entry) => ({
               storageKey: entry.storageKey!,
               filename: entry.storageKey!,
@@ -699,10 +776,14 @@ export class SessionPackageService {
       }
       const forwarded: SessionPackageManifest = {
         ...manifest,
+        requiredFeatures: manifest.requiredFeatures?.filter(
+          (feature) => feature !== 'research-film'
+        ),
         inventory: manifest.inventory
           .filter(
             (entry) =>
               entry.path !== PACKAGE_RO_CRATE_METADATA &&
+              !previousFilmKeys.has(entry.storageKey ?? '') &&
               (!entry.storageKey || !excluded.has(entry.storageKey))
           )
           .map((entry) =>
@@ -780,6 +861,8 @@ export class SessionPackageService {
                 })
             )
           }
+          if (selection.includeResearchFilms || options.consumeSnapshot)
+            await appendFilms(staging, records, forwarded, forwardedFilms)
           await writePackageRoCrateMetadata(staging, forwarded, records, this.signal)
           await writeFile(join(staging, 'manifest.json'), JSON.stringify(forwarded))
           options.onProgress?.({ phase: 'validating' })
@@ -838,7 +921,7 @@ export class SessionPackageService {
       ])
     ]
     const records = await captureNativeRecords(client, request, versionIds)
-    const retainedOrigin = session.forkOrigin ? await this.readOrigin(request) : undefined
+    const retainedOrigin = session.forkOrigin ? filmOrigin : undefined
     if (retainedOrigin?.literature)
       records.literature = mapPackageReferences(
         retainedOrigin.literature,
@@ -857,7 +940,8 @@ export class SessionPackageService {
       records,
       bookmarkLiteratureIds
     )
-    const sourceKey = (key: string): string => literatureSources.get(key) ?? key
+    const sourceKey = (key: string): string =>
+      capturedFilms.files.get(key)?.sourceKey ?? literatureSources.get(key) ?? key
     const history = await this.captureHistory(session)
     records.history = history
     records.reproducibility = await capturePackageReproducibility(
@@ -935,6 +1019,7 @@ export class SessionPackageService {
       {
         retainedFiles,
         metadataBytes,
+        researchFilms: filmSummary,
         pdfNotesAvailable: selectable.some((file) => /\.pdf$/i.test(file.filename))
       },
       session.title
@@ -1163,6 +1248,8 @@ export class SessionPackageService {
               : [])
           ]
         }
+        if (selection.includeResearchFilms || options.consumeSnapshot)
+          await appendFilms(directory, records, manifest)
         await writePackageRoCrateMetadata(directory, manifest, records, this.signal)
         await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
         options.onProgress?.({ phase: 'validating' })
@@ -1187,6 +1274,7 @@ export class SessionPackageService {
           request.sessionId
         )
         const currentRecords = await captureNativeRecords(client, request, versionIds)
+        if (records.researchFilms) currentRecords.researchFilms = records.researchFilms
         if (retainedOrigin?.literature)
           currentRecords.literature = mapPackageReferences(
             retainedOrigin.literature,
@@ -1442,6 +1530,7 @@ export class SessionPackageService {
       const sourceSession = await readSession(sourceRoot)
       this.assertIdentity(manifest, sourceSession)
       const records = parseNativeRecords(await readPackageJson(join(sourceRoot, 'records.json')))
+      validateResearchFilms(records, manifest, sourceSession)
       validatePackageLiteratureSession(records, sourceSession)
       const native = await prepareNativeImport(
         sourceRoot,
@@ -1946,6 +2035,44 @@ export class SessionPackageService {
     }
   }
 
+  async readResearchFilm(
+    request: ResearchVideoPresentationRequest
+  ): Promise<ResearchVideoPresentation | undefined> {
+    const loaded = await loadSessionMutationAuthority(
+      new SessionRepository(this.configRoot),
+      request.projectId,
+      request.sessionId
+    )
+    if (loaded.status !== 'found' || (!loaded.session.packageOrigin && !loaded.session.forkOrigin))
+      return undefined
+    const graph = loaded.session.conversationGraph
+    const branchId =
+      request.branchId ??
+      graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
+    const origin = await this.readOrigin({
+      projectId: request.projectId,
+      sessionId: request.sessionId
+    })
+    const films = mapPackageReferences(
+      origin.researchFilms ?? [],
+      origin.identities
+    ) as PackageResearchFilms
+    const film = films.find((film) => film.branchId === branchId)
+    if (!film) return undefined
+    for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
+      await assertPackageSourcePath(this.options.storageRoot, key)
+      if (!(await lstat(join(this.options.storageRoot, key))).isFile())
+        throw new Error('Research presentation is unavailable.')
+    }
+    return {
+      id: film.id,
+      title: film.title,
+      duration: film.duration,
+      playerPath: join(this.options.storageRoot, film.playerStorageKey),
+      sourcePath: join(this.options.storageRoot, film.sourceStorageKey)
+    }
+  }
+
   async readOrigin(request: SessionPackageRequest): Promise<{
     sourceManifest: SessionPackageManifest
     identities: Record<string, string>
@@ -1953,6 +2080,7 @@ export class SessionPackageService {
     history?: PackageHistory
     literature?: import('./literature').PackageLiterature
     pdfNotes?: PackagePdfNotes
+    researchFilms?: PackageResearchFilms
     originSessionIds: string[]
   }> {
     const safe = sessionPackageRequestSchema.parse(request)
@@ -1994,6 +2122,7 @@ export class SessionPackageService {
       history: records.history,
       literature: records.literature,
       pdfNotes: records.pdfNotes,
+      researchFilms: records.researchFilms,
       originSessionIds: records.tables.FileOriginSession.map(
         (row) => receipt.identities[String(row.sessionId)]
       )

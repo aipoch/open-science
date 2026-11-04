@@ -1,8 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { z } from 'zod'
-import { readFileWithinLimit, writeDurableJsonFile } from '@aipoch/durable-files'
+import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   researchVideoPresentationRequestSchema,
   type ResearchVideoPresentationRequest,
@@ -19,17 +18,7 @@ const log = createLogger('research-video')
 import { stageResearchVideoSessionImages } from './session-images'
 import type { ResearchFilmLifecycle } from './lifecycle'
 
-const receiptSchema = z
-  .object({
-    id: z.string().uuid(),
-    title: z.string().min(1).max(160),
-    duration: z.number().positive()
-  })
-  .strict()
-const scopeKey = (request: ResearchVideoPresentationRequest): string =>
-  createHash('sha256')
-    .update(JSON.stringify([request.projectId, request.sessionId, request.branchId ?? null]))
-    .digest('hex')
+import { researchFilmScopeKey as scopeKey, readStoredResearchFilm } from './stored-presentation'
 
 export type ResearchVideoPresentationOwner = {
   status(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
@@ -47,6 +36,9 @@ export function createResearchVideoPresentationOwner(options: {
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
   generate: ReturnType<typeof createResearchVideoGenerator>
   engineDirectory: string
+  loadImportedFilm?: (
+    request: ResearchVideoPresentationRequest
+  ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
   let closed = false
@@ -76,43 +68,18 @@ export function createResearchVideoPresentationOwner(options: {
     const request = researchVideoPresentationRequestSchema.parse(rawRequest),
       key = scopeKey(request)
     const state = structuredClone(states.get(key) ?? {})
-    const block = researchVideoGenerationBlock(
-      await options.loadSession(request.projectId, request.sessionId),
-      request
-    )
+    const session = await options.loadSession(request.projectId, request.sessionId)
+    const block = researchVideoGenerationBlock(session, request)
     if (block === 'unavailable') return { generationBlock: block }
     if (block) state.generationBlock = block
-    const base = await directory(key)
-    if (!base) return state
-    const path = join(base, 'latest.json')
-    const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'ENOENT') return undefined
-      throw error
-    })
-    if (!info) return state
-    if (!info.isFile() || info.isSymbolicLink())
-      throw new Error('Unsafe research presentation receipt.')
-    const receipt = receiptSchema.parse(JSON.parse(await readFileWithinLimit(path, 4096)))
-    const output = join(base, receipt.id, 'output')
-    for (const path of [join(base, receipt.id), output]) {
-      const info = await lstat(path)
-      if (!info.isDirectory() || info.isSymbolicLink())
-        throw new Error('Unsafe research presentation directory.')
-    }
-    for (const name of ['player.html', 'sources.zip']) {
-      const file = await lstat(join(output, name))
-      if (!file.isFile() || file.isSymbolicLink())
-        throw new Error('Research presentation is unavailable.')
-    }
-    return {
-      ...state,
-      result: {
-        ...receipt,
-        playerPath: join(output, 'player.html'),
-        sourcePath: join(output, 'sources.zip')
-      }
-    }
+    const result =
+      (await readStoredResearchFilm(options.dataRoot(), request)) ??
+      (session?.packageOrigin || session?.forkOrigin
+        ? await options.loadImportedFilm?.(request)
+        : undefined)
+    return result ? { ...state, result } : state
   }
+
   const run = async (
     request: ResearchVideoPresentationRequest,
     key: string,

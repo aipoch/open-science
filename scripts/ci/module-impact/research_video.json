@@ -23,7 +23,8 @@
     "src/main/research-video/session-images.test.ts",
     "src/renderer/src/components/research-video-menu.tsx",
     "src/main/research-video/lifecycle.ts",
-    "src/main/research-video/lifecycle.test.ts"
+    "src/main/research-video/lifecycle.test.ts",
+    "src/main/research-video/stored-presentation.ts"
   ],
   "interfacePaths": [
     "src/main/research-video/service.ts",
@@ -32,7 +33,8 @@
     "src/renderer/src/components/local-narration-control.tsx",
     "src/main/research-video/presentation.ts",
     "src/shared/research-video-presentation.ts",
-    "src/main/research-video/lifecycle.ts"
+    "src/main/research-video/lifecycle.ts",
+    "src/main/research-video/stored-presentation.ts"
   ],
   "consumerModules": [
     "desktop_composition",

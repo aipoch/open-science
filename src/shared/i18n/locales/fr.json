@@ -8169,6 +8169,7 @@
     "Wait for a completed response before generating.": "Attendez une réponse complète avant de générer le film.",
     "Wait for the current response to finish before generating.": "Attendez la fin de la réponse en cours avant de générer le film.",
     "Research film jobs": "Tâches de films de recherche",
-    "Research films": "Films de recherche"
+    "Research films": "Films de recherche",
+    "Include research films": "Inclure les films de recherche"
   }
 }

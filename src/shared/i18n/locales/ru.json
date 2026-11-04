@@ -8315,6 +8315,7 @@
     "Wait for a completed response before generating.": "Перед созданием фильма дождитесь полного ответа.",
     "Wait for the current response to finish before generating.": "Перед созданием фильма дождитесь завершения текущего ответа.",
     "Research film jobs": "Задания исследовательских видео",
-    "Research films": "Исследовательские видео"
+    "Research films": "Исследовательские видео",
+    "Include research films": "Включить исследовательские фильмы"
   }
 }
