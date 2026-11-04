@@ -824,7 +824,14 @@ describe('AcpPromptPreparationOwner', () => {
   })
 
   it('carries preloaded CodeBuddy Skill activity without attaching Codex-only metadata', async () => {
-    const fixture = setup()
+    const shellRuntime = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile',
+      distro: 'Ubuntu',
+      user: 'researcher'
+    }
+    const shellRuntimeBindingFor = vi.fn(() => shellRuntime)
+    const fixture = setup(undefined, undefined, undefined, { shellRuntimeBindingFor })
     fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
       input.codebuddy?.observeUsage?.({
         sourceInvocationId: 'selector-call-1',
@@ -872,6 +879,7 @@ describe('AcpPromptPreparationOwner', () => {
         frameworkId: 'codebuddy',
         codebuddy: {
           root: '/app-data/codebuddy/skill-runtime',
+          shellRuntime,
           selectorAvailable: true,
           selectSkills: expect.any(Function),
           signal: expect.any(AbortSignal),
@@ -879,6 +887,7 @@ describe('AcpPromptPreparationOwner', () => {
         }
       })
     )
+    expect(shellRuntimeBindingFor).toHaveBeenCalledWith('session-1')
     expect(handle).toMatchObject({
       status: 'ready',
       skillRuntimeAllowlist: [],

@@ -1,6 +1,8 @@
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
+import { mapWsl2Path } from '@aipoch/notebook-network-sandbox'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type {
@@ -56,6 +58,7 @@ type ProviderPreparationInput = Readonly<{
   }>
   codebuddy?: Readonly<{
     root?: string
+    shellRuntime?: ShellRuntimeBinding
     selectorAvailable: boolean
     selectSkills: NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     signal?: AbortSignal
@@ -75,6 +78,7 @@ type LoadedCodeBuddySkill = Readonly<{
   name: string
   path: string
   resourceRoot: string
+  shellResourceRoot?: string
   document: string
 }>
 const codeBuddySkillRuntimeRoot = (
@@ -345,11 +349,14 @@ class AcpTurnSkillOwner {
                   'Do not use Notebook `host.skills` to load, read, list, or discover routed Skills.',
                   'Use only the `host.mcp` Connector names and methods documented below; do not guess Connector names or methods.',
                   'Resolve every relative reference, script, or asset path in a loaded document against its `resource-root`.',
-                  ...loadedCodeBuddySkills.flatMap(({ name, resourceRoot, document }) => [
-                    `<open_science_loaded_skill name="${name}" resource-root="${resourceRoot}">`,
-                    document,
-                    '</open_science_loaded_skill>'
-                  ])
+                  'When `shell-resource-root` is present, use it instead of `resource-root` for Notebook shell calls, including paths in document examples. Native Read and host Notebook kernels still use `resource-root`.',
+                  ...loadedCodeBuddySkills.flatMap(
+                    ({ name, resourceRoot, shellResourceRoot, document }) => [
+                      `<open_science_loaded_skill name="${name}" resource-root="${resourceRoot}"${shellResourceRoot ? ` shell-resource-root="${shellResourceRoot}"` : ''}>`,
+                      document,
+                      '</open_science_loaded_skill>'
+                    ]
+                  )
                 ]
               : [
                   '- (none)',
@@ -393,10 +400,20 @@ class AcpTurnSkillOwner {
         names.map(async (name) => {
           // Notebook tools do not inherit CodeBuddy's provider environment.
           const resourceRoot = join(root, '.claude', 'skills', name)
+          const shellRuntime = input.codebuddy?.shellRuntime
+          const shellResourceRoot =
+            shellRuntime?.kind === 'wsl2-bash'
+              ? await mapWsl2Path(
+                  { ...shellRuntime, kind: 'wsl2' },
+                  resourceRoot,
+                  input.codebuddy?.signal
+                )
+              : undefined
           return {
             name,
             path: join(resourceRoot, 'SKILL.md'),
             resourceRoot,
+            ...(shellResourceRoot ? { shellResourceRoot } : {}),
             document: (await loadSkillDocumentContent({ root, allowedNames }, name)).replace(
               /\$\{CLAUDE_SKILL_DIR\}/g,
               resourceRoot

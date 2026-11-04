@@ -7,6 +7,7 @@ import { codeBuddyFramework, codexFramework, opencodeFramework } from '../agent-
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
 import { runShellCommand } from '../notebook/shell-process'
+import * as skillRuntime from '../skills/runtime-mcp-server'
 
 const reloadTestScope = {
   kind: 'specialist' as const,
@@ -919,6 +920,71 @@ describe('AcpTurnSkillOwner', () => {
     expect(result.stdout.trim()).toBe('SKILL_RESOURCE_SENTINEL')
     expect(result.exitCode).toBe(0)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'reads CodeBuddy Skill resources in the WSL guest without replacing the native host root',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'codebuddy-wsl-resource-'))
+      onTestFinished(() => rm(root, { recursive: true, force: true }))
+      const skillDir = join(root, '.claude', 'skills', 'paper-review')
+      await mkdir(skillDir, { recursive: true })
+      await writeFile(join(skillDir, 'probe.txt'), 'WSL_RESOURCE_SENTINEL')
+      // Only host UNC document access is simulated; the mapped guest file is read by a real shell.
+      const hostRoot = `\\\\wsl.localhost\\FixtureDistro${root.replaceAll('/', '\\')}`
+      const loadDocument = vi
+        .spyOn(skillRuntime, 'loadSkillDocumentContent')
+        .mockResolvedValue('Read probe.txt from the Skill directory.')
+      onTestFinished(() => loadDocument.mockRestore())
+      const owner = new AcpTurnSkillOwner({
+        skills: { needForceLoad: async () => [], namesForIds: async () => ['paper-review'] },
+        requestSkillsReload: vi.fn()
+      })
+      const handle = await owner.authorize({ selectedSkillIds: ['paper-review'] })
+      const codebuddy = {
+        root: hostRoot,
+        selectorAvailable: false,
+        selectSkills: async () => [],
+        shellRuntime: {
+          kind: 'wsl2-bash' as const,
+          profileId: 'fixture',
+          distro: 'FixtureDistro',
+          user: 'researcher'
+        }
+      }
+      const prepared = await handle.prepareProvider({
+        frameworkId: 'codebuddy',
+        selectionText: 'review papers',
+        promptText: 'review papers',
+        codebuddy
+      })
+      const guidance = prepared.skillScopeGuidance!
+      const hostResourceRoot = guidance.match(/ resource-root="([^"]+)"/)![1]
+      const shellResourceRoot =
+        guidance.match(/ shell-resource-root="([^"]+)"/)?.[1] ?? hostResourceRoot
+      const result = await runShellCommand({
+        command: `cat "${shellResourceRoot}/probe.txt"`,
+        cwd: root,
+        handoffDir: root,
+        runtimeRoot: join(root, 'runtime'),
+        sessionId: 'wsl-resource',
+        projectId: 'wsl-resource',
+        timeoutMs: 5_000
+      })
+      expect(result.stderr).toBe('')
+      expect(result.stdout).toBe('WSL_RESOURCE_SENTINEL')
+      expect(result.exitCode).toBe(0)
+      expect(hostResourceRoot).toBe(join(hostRoot, '.claude', 'skills', 'paper-review'))
+      expect(prepared.skillActivityInputs?.[0].path).toBe(join(hostResourceRoot, 'SKILL.md'))
+      const followUp = await owner.presentFollowUp({
+        frameworkId: 'codebuddy',
+        text: 'also read probe.txt',
+        selectedSkillIds: ['paper-review'],
+        codebuddy
+      })
+      expect(followUp.skillScopeGuidance).toContain(`shell-resource-root="${shellResourceRoot}"`)
+      expect(followUp.skillActivityInputs).toEqual(prepared.skillActivityInputs)
+    }
+  )
 
   it('stops CodeBuddy before dispatch when its projected Skill document cannot be loaded', async () => {
     const pubmed = {
