@@ -445,7 +445,14 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
           .array(packageExcludedFileSchema.extend({ checksum: checksum.optional() }))
           .max(10000),
         metadataBytes: z.number().nonnegative(),
-        pdfNotesAvailable: z.boolean().optional()
+        pdfNotesAvailable: z.boolean().optional(),
+        researchFilms: z
+          .object({
+            count: z.number().int().positive().max(1000),
+            sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_BYTES)
+          })
+          .strict()
+          .optional()
       })
       .strict()
       .optional(),
