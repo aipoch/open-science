@@ -716,6 +716,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
     ['glm-5.3-flash', true],
     ['deepseek/deepseek-flash', true],
     ['deepseek-v4.1-flash', true],
+    ['minimax-m3', true],
     ['hy4-preview', false]
   ] as const)(
     'projects regional Tencent %s across every supported framework',

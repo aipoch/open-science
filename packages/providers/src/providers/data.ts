@@ -740,12 +740,19 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 1_000_000 }
     ],
-    // Only advertise image input confirmed by both regional model matrices. Older V4 Flash,
-    // Kimi K3 and MiniMax M3 have different image declarations between China and International.
+    // Image input follows explicit model declarations; the International matrix omits image
+    // labels for Kimi K3 and MiniMax M3, so omission there is not evidence of text-only models.
     // https://cloud.tencent.com/document/product/1823/130051
     // https://intl.cloud.tencent.com/zh/document/product/1300/78934
     multimodal: {
-      multimodalModels: ['hy4', 'glm-5.3-flash', 'deepseek/deepseek-flash', 'deepseek-v4.1-flash']
+      multimodalModels: [
+        'hy4',
+        'glm-5.3-flash',
+        'kimi-k3',
+        'deepseek/deepseek-flash',
+        'deepseek-v4.1-flash',
+        'minimax-m3'
+      ]
     }
   },
   {
