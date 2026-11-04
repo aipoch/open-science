@@ -4,6 +4,9 @@ import { homeNewProjectButton } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
 
+const DEFAULT_OPTIMIZATION_PROMPT =
+  "Rewrite the user's input into a clear, specific, and actionable prompt while preserving its original intent and important details."
+
 // Keep the UI, command transport, database and restricted runner real. Only the external model
 // executable is replaced by the common deterministic ACP fixture.
 test('optimizes drafts without sending and persists project-specific templates', async ({
@@ -133,7 +136,9 @@ test('optimizes drafts without sending and persists project-specific templates',
   await editor.fill('Explain `print(1)`')
   await optimize.click()
   await expect(
-    page.getByText('Could not optimize your question. Your draft was kept. Please try again.')
+    page.getByText('Could not optimize your question. Your draft was kept. Please try again.', {
+      exact: true
+    })
   ).toBeVisible()
   await expect(editor).toHaveText('Explain `print(1)`')
 
@@ -156,8 +161,12 @@ test('optimizes drafts without sending and persists project-specific templates',
   await expect(dialog.getByLabel('Optimization prompt', { exact: true })).toHaveValue(
     'Prefer structured research tasks.'
   )
-  await dialog.getByRole('button', { name: 'Restore default', exact: true }).click()
+  await dialog.getByLabel('Optimization prompt', { exact: true }).fill('')
   await expect(dialog.getByLabel('Optimization prompt', { exact: true })).toHaveValue('')
+  await expect(dialog.getByLabel('Optimization prompt', { exact: true })).toHaveAttribute(
+    'placeholder',
+    DEFAULT_OPTIMIZATION_PROMPT
+  )
   await dialog.getByRole('button', { name: 'Save', exact: true }).click()
   expect(
     await page.evaluate(

@@ -230,7 +230,7 @@ const useProjectFormDialog = (
       open: formState !== null,
       title: isEdit ? t('Project Settings') : t('New project'),
       description: isEdit
-        ? t("Update this project's name, description, and agent context.")
+        ? t("Update this project's name, description, agent context, and optimization prompt.")
         : t('Group related sessions under a project. You can rename it later.'),
       submitLabel: isSubmitting
         ? isEdit

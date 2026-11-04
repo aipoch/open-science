@@ -645,7 +645,7 @@ describe('HomePage activity overview', () => {
 
     expect(document.body.textContent).toContain('Project Settings')
     expect(document.body.textContent).toContain(
-      "Update this project's name, description, and agent context."
+      "Update this project's name, description, agent context, and optimization prompt."
     )
     expect(document.body.textContent).toContain('Save')
     expect(document.body.textContent).not.toContain('Save changes')

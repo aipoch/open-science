@@ -9742,6 +9742,54 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
 )
 
 describe('prompt optimization admission', () => {
+  it('passes the fixed prompt optimization provider, model, and reasoning effort to IPC', async () => {
+    const optimizePrompt = vi.fn(async () => ({ text: 'Improved' }))
+    window.api.projects = {
+      optimizePrompt,
+      recordOptimizationEvent: vi.fn(async () => {})
+    } as unknown as typeof window.api.projects
+    useSettingsStore.setState({
+      promptOptimizationModel: {
+        mode: 'fixed',
+        providerId: 'prompt-provider',
+        model: 'prompt-model',
+        reasoningEffort: 'xhigh'
+      }
+    })
+    renderPanel({
+      view: {
+        activeSession: {
+          id: 'optimization-model-session',
+          projectId: 'project',
+          title: 'Session',
+          cwd: '/workspace',
+          status: 'idle',
+          messages: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      },
+      composer: { view: { doc: docFromText('Original') } },
+      conversation: { availability: { submit: true } }
+    })
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Optimize question"]')!.click()
+    )
+
+    expect(optimizePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'project',
+        input: 'Original',
+        agentConfiguration: {
+          providerId: 'prompt-provider',
+          model: 'prompt-model',
+          reasoningEffort: 'xhigh'
+        }
+      })
+    )
+  })
+
   it('routes optimization failures through the shared notice slot without a send retry', async () => {
     window.api.projects = {
       optimizePrompt: vi.fn(async () => {

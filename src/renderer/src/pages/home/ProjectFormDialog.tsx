@@ -221,7 +221,7 @@ const ProjectFormDialog = ({
                   disabled={isSubmitting}
                   rows={5}
                   maxLength={16000}
-                  placeholder={DEFAULT_OPTIMIZATION_PROMPT}
+                  placeholder={t(DEFAULT_OPTIMIZATION_PROMPT)}
                   className={dialogFormTextareaClassName}
                 />
               </div>
