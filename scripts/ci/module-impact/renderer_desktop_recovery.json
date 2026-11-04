@@ -1,8 +1,11 @@
 {
-  "ownerPaths": ["src/renderer/src/stores/desktop-runtime-recovery-store.ts"],
+  "ownerPaths": [
+    "src/renderer/src/stores/desktop-runtime-recovery-store.ts",
+    "src/renderer/src/stores/desktop-runtime-recovery-store.test.ts"
+  ],
   "interfacePaths": ["src/renderer/src/stores/desktop-runtime-recovery-store.ts"],
   "testFiles": {
-    "owner": [],
+    "owner": ["src/renderer/src/stores/desktop-runtime-recovery-store.test.ts"],
     "contract": [
       "src/main/host-layer-dependencies.architecture.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts"

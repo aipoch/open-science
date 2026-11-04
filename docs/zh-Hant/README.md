@@ -45,13 +45,11 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，由 [AIPOCH](https://aipoch.com/open-science) 開發，採用開源、本機優先、模型無關的設計。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
+[AIPOCH Open-Science](https://aipoch.com/open-science) 是一款開源 AI 研究工作台。你可以從一個問題、一篇論文或一個資料檔開始。用自己的話說明你想釐清什麼，再和 AI 智能體一起檢視證據、分析資料或繪製圖表。
 
-AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
+想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
 
-已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
-
-> 💡 **[AIPOCH Open-Science v1.0.7 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這個版本新增 Pi 作為第五個智能體框架，支援從 DOI 或 arXiv 連結直接新增參考文獻，閱讀模式下智能體可為關聯的 PDF 加入註記。掃描 PDF 可透過選用的 OCR 與九種語言套件取得可讀文字，研究案例市集現已支援搜尋。本版也修正了 Windows Notebook 命令列環境初始化、OpenCode 上下文壓縮崩潰，以及 Fake-IP DNS 環境下的下載問題。詳情請參閱 [v1.0.7 發行說明](../../release-notes/1.0.7/zh-Hant.md)。
+> 💡 **[AIPOCH Open-Science v1.0.8 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這次更新將設定重新整理為專屬分頁，支援從 DOI、arXiv 或 PubMed 識別碼一次匯入最多 100 筆參考文獻，並為文獻資料庫詳細檢視新增 AI 研究快照。已結束的工作階段會釋放智慧代理行程，eQTL Catalogue 查詢恢復正常，macOS 和 Windows 上的更新也更加順暢。詳情請參閱 [v1.0.8 發行說明](../../release-notes/1.0.8/zh-Hant.md)。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -83,7 +81,7 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 | --------------------------------------- | ----------------------------------------- |
 | macOS 12+ — Apple 晶片（M1 或更新型號） | 適用於 Apple Silicon / ARM64 的 macOS DMG |
 | macOS 12+ — Intel                       | 適用於 Intel / x64 的 macOS DMG           |
-| Windows x64                             | Windows x64 安裝程式（已程式碼簽署）      |
+| Windows 10/11 x64                       | Windows x64 安裝程式（已程式碼簽署）      |
 | Linux x64                               | Linux x64 AppImage 或 Debian 套件         |
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 套件       |
 
@@ -103,6 +101,8 @@ brew install aipoch/tap/open-science
 
 此 Formula 內含 Node，無需啟動桌面應用程式；其版本可能與桌面 Cask 不同。前提條件與升級方式見[獨立執行環境指南](../standalone-runtime.md)。
 
+也可從 [GitHub Release 的 Assets](https://github.com/aipoch/open-science/releases/latest) 下載內含 Node.js 的獨立 CLI 壓縮檔，適用於 macOS 和 Linux（ARM64 或 x64）及 Windows x64。
+
 如需獨立 CLI 與 Web 介面，可使用 **Node.js 22.13.0 或更新版本**安裝已發布的 [npm 套件](https://www.npmjs.com/package/@aipoch/open-science)：
 
 ```bash
@@ -120,6 +120,8 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 依引導順序完成：**環境 → 資料位置 → 智能體執行環境 → 模型服務商 → Notebook 執行環境**。
 
 完成必要的環境與智能體執行環境檢查，並測試模型連線。Python/R Notebook 設定為選用；Notebook 與資料位置皆可稍後在設定中調整。
+
+完成首次設定後，可在系統設定中調整外觀與通知。一般設定提供應用程式資訊、診斷、命令列工具，以及手動安裝與更新指南的連結。
 
 <table>
   <tr>
@@ -308,13 +310,17 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 | **科學檔案與預覽**             | 單一上傳檔案最大 **10 GiB**，支援專案檔案管理及科學資料、PDF、Office 文件、圖片、程式碼和分子結構預覽。這是上傳大小限制，不代表模型可讀取全部內容；模型上下文、附件解析和預覽各有限制。大型檔案通常需要透過程式碼分塊讀取或分析。                                                                                                                                                                                                                                                                                                                                                |
 | **產物與溯源**                 | 保留不可變的產物版本及可用的產生程式碼、輸入、執行歷史、環境資訊與審閱證據。可從已授權資料夾匯入產物；AIPOCH Open-Science 會將每個匯入檔案複製到受管理的產物儲存空間。在桌面端，可使用完整執行配方、必要輸入及可用執行環境重播符合條件的版本，比較輸出並匯出驗證記錄。證據缺失可能阻止驗證，重播檢查不證明科學結論有效。                                                                                                                                                                                                                                                         |
 
+使用座標查詢 eQTL Catalogue 時，請輸入 GRCh38 參考基因組座標。連接器會檢查使用的參考基因組。
+
 可從同一部電腦上執行的 Zotero 10 或更新版本匯入文獻記錄、標籤、合集和來源連結，也可選擇複製本機 PDF 附件。匯入僅為單向，不會修改 Zotero。
 
-透過 DOI、DOI 連結或 arXiv 摘要頁／PDF 連結逐筆新增文獻，核對並編輯取得的中繼資料後儲存；全文 PDF 可另行新增。
+可透過 DOI、arXiv ID、PMID、PMCID 或支援的文章連結新增文獻，也可一次貼上最多 100 筆，每行一筆。單篇文獻可核對並編輯中繼資料後儲存；批次匯入可選取要匯入的文獻。全文 PDF 可另行新增。
 
 支援持久化 PDF 註記與文件筆記。設定篩選模型後，智慧合集可依納入／排除標準評估文獻；AI 判斷與人工判斷分開記錄，用於輔助人工審閱。
 
 在閱讀模式下，智能體可列出、定位並建立關聯 PDF 的筆記與標記。PDF 註記綁定至被註記的檔案版本，不會跨電腦同步。
+
+文獻詳細檢視中的 AI 研究快照會使用已設定的主要模型，歸納研究問題、研究族群、方法、主要發現與限制，並標明依據的是全文或摘要。
 
 下載選用的 OCR 元件及所需語言套件後，即可辨識掃描 PDF 頁面中的文字。共有九種語言套件：英語、簡體中文、繁體中文、德語、西班牙語、法語、日語、韓語和俄語。逐頁涵蓋狀態會標示哪些頁面仍缺少文字。
 

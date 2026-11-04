@@ -172,3 +172,95 @@ it('retains complete stub evidence under explicitly opaque unmasked paint', () =
   ])
   expect(refine(f.table, f.rules, f.context)?.cropRect).toEqual([10, 35, 295, 185])
 })
+
+const { anonymousCaptionLane } = await import(
+  pathToFileURL(resolve('test/fixtures/native-caption-lane.mjs')).href
+)
+const { recoverNativeSegmentedNumericVisualFrame } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-table-boundary-ink.mjs')).href
+)
+it('retains a source-complete rowless numeric body visually without inventing cells', () => {
+  const scene = (): ReturnType<typeof JSON.parse> => {
+    const f = anonymousCaptionLane([
+      ['Table 1: Native totals.', 60, 45],
+      ['ID', 50, 80],
+      ['Count', 110, 80],
+      ['Score', 200, 80],
+      ['1', 50, 110],
+      ['10', 110, 110],
+      ['2.4', 200, 110],
+      ['2', 50, 135],
+      ['12', 110, 135],
+      ['3.2', 200, 135]
+    ])
+    for (const y of [60, 90, 145])
+      for (const [x, right] of [
+        [40, 100],
+        [100.8, 180],
+        [180.8, 300]
+      ])
+        f.add(OPS.constructPath, [
+          OPS.fill,
+          [
+            new Float32Array([
+              0,
+              x,
+              400 - y - 0.4,
+              1,
+              right,
+              400 - y - 0.4,
+              1,
+              right,
+              400 - y + 0.4,
+              1,
+              x,
+              400 - y + 0.4,
+              4
+            ])
+          ],
+          new Float32Array([x, 400 - y - 0.4, right, 400 - y + 0.4])
+        ])
+    return {
+      f,
+      raw: {
+        rowCount: 0,
+        columnCount: 3,
+        grid: [],
+        cropRect: [39.5, 61, 300.5, 146].map((v) => v * 1.5)
+      },
+      caption: {
+        page: 1,
+        lines: ['Table 1: Native totals.'],
+        rect: [60, 35, 170, 45].map((v) => v * 1.5)
+      }
+    }
+  }
+  const run = (s: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse> =>
+    recoverNativeSegmentedNumericVisualFrame(
+      s.raw,
+      s.caption,
+      s.f.args.page,
+      s.f.args.tokens,
+      s.f.args.context
+    )
+  const s = scene(),
+    result = run(s)
+  expect(result.frame).toMatchObject({
+    kind: 'native-segmented-numeric-visual',
+    rowCount: 3,
+    columnCount: 3
+  })
+  expect(result.frame.sourceItems).toHaveLength(9)
+  expect(result.frame).not.toHaveProperty('grid')
+  expect(result.frame).not.toHaveProperty('cells')
+  expect(result.current()).toBe(true)
+  result.frame.cropRect[0]++
+  expect(result.current()).toBe(false)
+  const missing = scene()
+  missing.f.args.context.operators.fnArray.pop()
+  missing.f.args.context.operators.argsArray.pop()
+  expect(run(missing)).toBeUndefined()
+  const changed = scene()
+  changed.f.args.context.content.items[1].sourceItem.text = 'Other'
+  expect(run(changed)).toBeUndefined()
+})

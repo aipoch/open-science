@@ -45,13 +45,11 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-AIPOCH Open-Science ist eine KI-Forschungsumgebung für Wissenschaftler und Forschende, entwickelt von [AIPOCH](https://aipoch.com/open-science) mit einem quelloffenen, lokal betriebenen und modellunabhängigen Ansatz. Sie ermöglicht reproduzierbare und nachvollziehbare Forschung mit wissenschaftlichen KI-Agenten, Python und R, wissenschaftlichen Datenkonnektoren sowie Unterstützung für macOS, Windows und Linux. Erstellen Sie ein Projekt, beschreiben Sie Ihr Forschungsziel in natürlicher Sprache und lassen Sie Agenten Dateien lesen, im Web recherchieren, Code ausführen, wissenschaftliche Datenquellen abfragen und Berichte, Tabellen oder Abbildungen mit nachvollziehbarer Provenienz erstellen – alles in einem Arbeitsbereich.
+[AIPOCH Open-Science](https://aipoch.com/open-science) ist eine quelloffene Arbeitsumgebung für die Forschung mit KI. Beginnen Sie mit einer Frage, einer wissenschaftlichen Veröffentlichung oder einer Datendatei. Beschreiben Sie in eigenen Worten, was Sie herausfinden möchten, und arbeiten Sie mit einem KI-Agenten, um Belege zu sichten, Daten zu analysieren oder ein Diagramm zu erstellen.
 
-AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlreichen Disziplinen, darunter maschinelles Lernen, Statistik, Biowissenschaften, Chemie, Materialwissenschaften, Physik und Umweltwissenschaften. Die Umgebung begleitet den Forschungsprozess von der Literaturrecherche und Hypothesenbildung über Codeausführung, Datenanalyse, Simulation und Visualisierung bis zur Erstellung nachvollziehbarer Forschungsergebnisse.
+Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
-
-> 💡 **[AIPOCH Open-Science v1.0.7 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version bringt Pi als fünftes Agenten-Framework, fügt Referenzen direkt aus DOI- oder arXiv-Links hinzu und ermöglicht es Agenten, verknüpfte PDFs im Lesemodus mit Notizen und Markierungen zu versehen. Gescannte PDFs werden mit optionaler OCR und neun Sprachpaketen lesbar, und der Marktplatz für Forschungsbeispiele ist jetzt durchsuchbar. Außerdem behebt die Version Probleme bei der Einrichtung der Notebook-Befehlszeile unter Windows, OpenCode-Abstürze bei der Kontextkomprimierung und Downloads über Fake-IP-DNS. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.7](../../release-notes/1.0.7/de.md).
+> 💡 **[AIPOCH Open-Science v1.0.8 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version ordnet die Einstellungen in übersichtliche Tabs, importiert bis zu 100 Referenzen gleichzeitig aus DOI-, arXiv- oder PubMed-Kennungen und fügt der Literaturdetailansicht KI-Studienübersichten hinzu. Beendete Sitzungen geben ihre Agenten-Prozesse frei, eQTL-Catalogue-Abfragen funktionieren wieder, und Aktualisierungen unter macOS und Windows verlaufen reibungsloser. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.8](../../release-notes/1.0.8/de.md).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -84,11 +82,13 @@ Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pak
 | ----------------------------------------- | ----------------------------------------------------- |
 | macOS 12+ – Apple Silicon (M1 oder neuer) | Das macOS DMG für Apple Silicon / ARM64               |
 | macOS 12+ – Intel                         | Das macOS DMG für Intel / x64                         |
-| Windows x64                               | Das Windows x64-Installationsprogramm (code-signiert) |
+| Windows 10/11 x64                         | Das Windows x64-Installationsprogramm (code-signiert) |
 | Linux x64                                 | Das Linux x64 AppImage- oder Debian-Paket             |
 | Linux ARM64                               | Linux ARM64 AppImage- oder Debian-Paket               |
 
 Laden Sie das Paket von der [offiziellen Download-Seite](https://aipoch.com/open-science/download) herunter; bei Bedarf finden Sie Hinweise unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
+
+Die eigenständigen CLI-Archive für macOS, Linux und Windows enthalten Node.js und lassen sich ohne Homebrew oder npm verwenden.
 
 Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installieren:
 
@@ -121,6 +121,8 @@ Unter Windows bleiben Forschungsdaten bei einer Neuinstallation erhalten. Für e
 Folgen Sie dem Einrichtungsassistenten: **Umgebung → Datenspeicherort → Agent-Runtime → Modellanbieter → Notebook-Runtime**.
 
 Schließen Sie die erforderlichen Prüfungen für Umgebung und Agent-Runtime ab und testen Sie die Modellverbindung. Python/R Notebook ist optional; Notebook und Datenspeicherort lassen sich später in den Einstellungen ändern.
+
+Darstellung und Benachrichtigungen finden Sie in den Systemeinstellungen. Unter **Allgemein** finden Sie die Anleitung zur manuellen Installation und Aktualisierung.
 
 <table>
 <tr>
@@ -309,13 +311,17 @@ AIPOCH Open-Science verbindet Projektverwaltung, modellübergreifende Agentenaus
 | **Wissenschaftliche Dateien und Vorschauen** | Laden Sie Dateien bis **10 GiB pro Datei** hoch, organisieren Sie Projektdateien und betrachten Sie wissenschaftliche Daten, PDFs, Office-Dokumente, Bilder, Code und Molekülstrukturen. Diese Upload-Grenze garantiert nicht, dass ein Modell alles lesen kann: Kontext, Anhangsanalyse und Vorschauen haben eigene Grenzen. Große Dateien erfordern meist abschnittsweises Lesen oder Analysieren per Code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Artefakte und Provenienz**                 | Speichern Sie unveränderliche Ergebnisversionen mit verfügbarem Erzeugungscode, Eingaben, Ausführungsverlauf, Umgebungsinformationen und Prüfnachweisen. Importieren Sie Artefakte aus autorisierten Ordnern; AIPOCH Open-Science kopiert jede importierte Datei in den verwalteten Artefaktspeicher. Auf dem Desktop können geeignete Versionen mit vollständigem Rezept, benötigten Eingaben und nutzbarer Laufzeit wiederholt, Ausgaben verglichen und Prüfprotokolle exportiert werden. Fehlende Nachweise können die Prüfung verhindern; Wiederholung belegt keine wissenschaftliche Gültigkeit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
+Bei Koordinatenabfragen im eQTL Catalogue prüft Open-Science, ob die Koordinaten zum Referenzgenom GRCh38 gehören.
+
 Importieren Sie Literaturangaben, Schlagwörter, Sammlungen und Quellenlinks aus Zotero 10 oder höher, das auf demselben Computer läuft. Lokale PDF-Anhänge können Sie optional kopieren; der Import ist einseitig und ändert Zotero nicht.
 
-Fügen Sie Literaturangaben einzeln über eine DOI, einen DOI-Link oder einen Link zur arXiv-Zusammenfassung oder zum arXiv-PDF hinzu. Prüfen und bearbeiten Sie die abgerufenen Metadaten vor dem Speichern. Volltext-PDFs können separat hinzugefügt werden.
+Fügen Sie eine Literaturangabe über eine DOI, eine arXiv-ID, eine PMID, eine PMCID oder einen unterstützten Artikellink hinzu oder fügen Sie bis zu 100 Literaturangaben mit jeweils einem Eintrag pro Zeile ein. Prüfen und bearbeiten Sie eine einzelne Literaturangabe vor dem Speichern oder wählen Sie die Einträge für einen Stapelimport aus. Volltext-PDFs können separat hinzugefügt werden.
 
 Dauerhafte PDF-Anmerkungen und Dokumentnotizen sind verfügbar. Mit konfiguriertem Screening-Modell bewerten intelligente Sammlungen Literatur anhand Ihrer Ein- und Ausschlusskriterien. KI- und manuelle Entscheidungen bleiben getrennt und unterstützen die menschliche Prüfung.
 
 Im Lesemodus können Agenten Notizen und Markierungen in verknüpften PDFs auflisten, auffinden und erstellen. PDF-Anmerkungen sind an die kommentierte Dateiversion gebunden und werden nicht zwischen Computern synchronisiert.
+
+In der Detailansicht einer Publikation fasst das konfigurierte Hauptmodell Forschungsfrage, Studienpopulation, Methoden, Hauptergebnisse und Einschränkungen zusammen. Die Übersicht gibt an, ob sie auf dem Volltext oder dem Abstract beruht.
 
 Die optionale OCR erkennt gescannte PDF-Seiten, nachdem die Komponente und die erforderlichen Sprachpakete heruntergeladen wurden. Neun Sprachpakete stehen zur Verfügung: Englisch, vereinfachtes Chinesisch, traditionelles Chinesisch, Deutsch, Spanisch, Französisch, Japanisch, Koreanisch und Russisch. Seitenbezogene Abdeckungsanzeigen zeigen, auf welchen Seiten noch Text fehlt.
 

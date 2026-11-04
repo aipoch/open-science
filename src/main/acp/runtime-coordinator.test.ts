@@ -324,6 +324,7 @@ const createFakeRuntime = (options: {
     sendAppContinuation,
     steerFollowUp,
     steerSideChatAdvisory,
+    withPromptAdmission: vi.fn(async (work: () => Promise<unknown>) => work()),
     withActivity: vi.fn(
       async (_activityOptions: unknown, work: (scopedRuntime: AcpRuntime) => Promise<unknown>) =>
         work(runtime)
@@ -337,8 +338,12 @@ const createFakeRuntime = (options: {
       reviewerBridgeScoped: undefined
     })),
     disconnect,
+    get cleanupConfirmed() {
+      return true
+    },
     requestRetirement,
     requestProviderReconnect,
+    requestIdleRelease: vi.fn(),
     applyReasoningEffortChange,
     applyModelChange,
     captureBackend,
@@ -6427,6 +6432,41 @@ describe('AcpRuntimeCoordinator', () => {
     expect(onSessionUnavailable).toHaveBeenCalledTimes(2)
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-1')
     expect(onSessionUnavailable).toHaveBeenCalledWith('session-2')
+  })
+
+  it('retains an unconfirmed successful disconnect alongside a rejected runtime for retry', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onDisconnected = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: [`session-${created.length + 1}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      onDisconnected
+    )
+    await coordinator.createSession()
+    await coordinator.requestAgentFrameworkSwitch()
+    await coordinator.createSession()
+    created[0].disconnect.mockRejectedValueOnce(new Error('old disconnect failed'))
+    const cleanupConfirmed = vi.spyOn(created[1].runtime, 'cleanupConfirmed', 'get')
+    cleanupConfirmed.mockReturnValue(false)
+
+    await expect(coordinator.disconnect()).rejects.toThrow('old disconnect failed')
+    expect(onDisconnected).not.toHaveBeenCalled()
+
+    cleanupConfirmed.mockReturnValue(true)
+    await coordinator.disconnect()
+    expect(created[0].disconnect).toHaveBeenCalledTimes(2)
+    expect(created[1].disconnect).toHaveBeenCalledTimes(2)
+    expect(onDisconnected).toHaveBeenCalledOnce()
   })
 
   it('preserves sessions still reported by a runtime whose teardown rejects', async () => {

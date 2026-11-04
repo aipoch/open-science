@@ -1,5 +1,6 @@
 import { load } from 'js-yaml'
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, open, rm, writeFile } from 'node:fs/promises'
+import { get } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,15 +10,142 @@ import {
   assertDifferentialObservation,
   buildLocalUpdaterConfig,
   classifyUpdaterDownloadStatus,
+  certifyForeignProcessRecovery,
   invokeWebRpc,
+  inspectUpdaterSuccessor,
   parseArguments,
   parseSingleRange,
   redactPackagedAppOutput,
   rewriteFeedPaths,
-  observeInstaller
+  observeInstaller,
+  startAssetServer
 } from './windows-updater-certification.mjs'
 
 describe('Windows updater certification', () => {
+  it('requires the matching update operation and real successor readiness before cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'updater-ready-'))
+    const operationId = '00000000-0000-4000-8000-000000000001'
+    const directory = join(root, 'Open-Science', 'UpdateHandoffs', operationId)
+    const input = {
+      appDataRoots: [root],
+      executable: 'C:\\app\\open-science.exe',
+      parentPid: 123,
+      expectedVersion: '1.2.3'
+    }
+    try {
+      await mkdir(directory, { recursive: true })
+      await writeFile(
+        join(directory, 'request.json'),
+        JSON.stringify({
+          schema: 1,
+          operationId,
+          applicationPath: input.executable,
+          parentPid: 123,
+          targetVersion: '1.2.3'
+        })
+      )
+      await writeFile(join(directory, 'installed.receipt'), `${operationId}\r\ninstalled\r\n`)
+      await expect(inspectUpdaterSuccessor(input)).rejects.toThrow('no valid ready receipt')
+      await writeFile(join(directory, 'ready.receipt'), `${operationId}\r\nready\r\n`)
+      await expect(inspectUpdaterSuccessor({ ...input, parentPid: 456 })).rejects.toThrow(
+        'No handoff request matches'
+      )
+      expect(await inspectUpdaterSuccessor(input)).toEqual({
+        operationId,
+        successorReadyVerified: true
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('closes pending fixture downloads during cleanup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'updater-server-'))
+    const asset = join(root, 'installer.exe')
+    const file = await open(asset, 'w')
+    await file.truncate(32 * 1024 * 1024)
+    await file.close()
+    const server = await startAssetServer({
+      assets: [{ route: '/installer.exe', path: asset }],
+      currentInstallerRoute: '/installer.exe'
+    })
+    const response = await new Promise<import('node:http').IncomingMessage>((resolve, reject) => {
+      get(`${server.url}/installer.exe`, resolve).on('error', reject)
+    })
+    // Leave the response unread, as an interrupted updater can do. Idle-only shutdown cannot
+    // finish while this owned response is backpressured.
+    response.pause()
+    const closing = server.close()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        closing,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('Fixture server cleanup remained blocked.')),
+            2_000
+          )
+        })
+      ])
+    } finally {
+      clearTimeout(timer)
+      response.destroy()
+      await closing
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    }
+  })
+
+  it('keeps the actual blocker until release and requires a retryable status afterward', async () => {
+    let held = false
+    const invoke = vi.fn(async () =>
+      held
+        ? {
+            state: 'ready',
+            reason: 'installation-busy',
+            recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+          }
+        : { state: 'ready', recovery: { canRetryInstall: true } }
+    )
+    const release = vi.fn(async () => {
+      held = false
+    })
+    const observations = await certifyForeignProcessRecovery({
+      invoke,
+      acquireLock: async () => {
+        held = true
+        return { pid: 123, release }
+      }
+    })
+    expect(observations.map((row) => row.action)).toEqual(['apply', 'recheck', 'recheck'])
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('fails certification when releasing the handle does not clear the block', async () => {
+    const release = vi.fn(async () => undefined)
+    await expect(
+      certifyForeignProcessRecovery({
+        invoke: async () => ({
+          state: 'ready',
+          reason: 'installation-busy',
+          recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+        }),
+        acquireLock: async () => ({ pid: 123, release })
+      })
+    ).rejects.toThrow('Released file holder still blocks retry')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('releases its owned handle even if the application fails to identify the blocker', async () => {
+    const release = vi.fn(async () => undefined)
+    await expect(
+      certifyForeignProcessRecovery({
+        invoke: async () => ({ state: 'applying' }),
+        acquireLock: async () => ({ pid: 123, release })
+      })
+    ).rejects.toThrow('External file holder was not reported')
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('redacts packaged app tokens before output reaches CI diagnostics', () => {
     expect(
       redactPackagedAppOutput(
@@ -76,7 +204,7 @@ describe('Windows updater certification', () => {
             'C:\\updates\\aipoch-open-science-0.11.1-win-x64-setup.exe'
         }),
         signal: controller.signal,
-        timeoutMs: 370_000
+        timeoutMs: 490_000
       })
     )
   })

@@ -175,6 +175,12 @@ it('exports separate Desktop and Runtime logs with transport budgets and redacte
   const desktopDir = join(root, 'profile', 'desktop-logs')
   const runtimeDir = join(root, 'runtime-logs')
   await mkdir(configRoot)
+  const backendName = 'desktop-backend-42-1700000000000.log'
+  await mkdir(join(configRoot, 'logs'))
+  await writeFile(
+    join(configRoot, 'logs', backendName),
+    'Error: startup failed api_key=backend-private-canary\n    at start (/private/startup.js:1:2)\n'
+  )
   await mkdir(join(root, 'profile', 'logs'), { recursive: true })
   await writeFile(
     join(root, 'profile', 'logs', 'main.log'),
@@ -215,9 +221,16 @@ it('exports separate Desktop and Runtime logs with transport budgets and redacte
     {
       projectId: 'project',
       sessionId: 'session',
-      selectedItems: ['log:main.log', 'desktop-log:main.log', 'desktop-legacy-log:main.log']
+      selectedItems: [
+        'log:main.log',
+        'desktop-log:main.log',
+        'desktop-legacy-log:main.log',
+        `backend-log:${backendName}`
+      ]
     }
   )
+  expect(files[`logs/backend/${backendName}`]).toContain('startup failed')
+  expect(files[`logs/backend/${backendName}`]).not.toContain('backend-private-canary')
   expect(files['logs/desktop-legacy/main.log']).toContain('earlier desktop failure')
   const desktop = files['logs/desktop/main.log']
   expect(desktop).toContain('Stop failed')

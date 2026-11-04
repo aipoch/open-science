@@ -102,6 +102,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.related': 'literature:related',
   'literature.search': 'literature:search',
   'literature.sources': 'literature:sources',
+  'literature.studySnapshot': 'literature:study-snapshot',
   'literature.supplementAttachment': 'literature:supplement-attachment',
   'literature.supplementAttachmentProgress': 'literature:supplement-attachment-progress',
   'literature.supplements': 'literature:supplements',

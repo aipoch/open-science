@@ -5,6 +5,7 @@ import {
 } from '../contracts.js'
 import { getPdfTranslationTextContent } from './text-content.js'
 import { nativePartialNavigation } from './native-source-geometry.js'
+import { inheritNativeCaptionEligibility } from './caption-eligibility.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 
 export type PdfRendition = 'original' | 'translated' | 'compare'
@@ -93,61 +94,68 @@ export function isPdfTranslationResultExtension(
 }
 
 export function createPdfTranslationSource(input: PdfTranslationSourceData): PdfTranslationSource {
-  return Object.freeze({
-    [sourceSnapshot]: true as const,
-    resourceRequestKey: input.resourceRequestKey,
-    fingerprint: input.fingerprint,
-    pages: Object.freeze(input.pages.map(({ width, height }) => Object.freeze({ width, height }))),
-    ...(input.originalRegions
-      ? {
-          originalRegions: Object.freeze(
-            input.originalRegions.map((region) =>
-              Object.freeze({
-                pageNumber: region.pageNumber,
-                rect: Object.freeze({ ...region.rect })
-              })
+  return inheritNativeCaptionEligibility(
+    input,
+    Object.freeze({
+      [sourceSnapshot]: true as const,
+      resourceRequestKey: input.resourceRequestKey,
+      fingerprint: input.fingerprint,
+      pages: Object.freeze(
+        input.pages.map(({ width, height }) => Object.freeze({ width, height }))
+      ),
+      ...(input.originalRegions
+        ? {
+            originalRegions: Object.freeze(
+              input.originalRegions.map((region) =>
+                Object.freeze({
+                  pageNumber: region.pageNumber,
+                  rect: Object.freeze({ ...region.rect })
+                })
+              )
             )
-          )
-        }
-      : {}),
-    units: Object.freeze(
-      input.units.map((unit) => {
-        const { id, source, fragments, sourceOnly, figure, preserve } = unit
-        return Object.freeze({
-          id,
-          source,
-          ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
-          ...(figure === true ? { figure: true as const } : {}),
-          ...(preserve ? { preserve } : {}),
-          ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
-          fragments: Object.freeze(
-            fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
-              Object.freeze({
-                pageNumber,
-                rect: Object.freeze({
-                  x: rect.x,
-                  y: rect.y,
-                  width: rect.width,
-                  height: rect.height
-                }),
-                ...(unclippedRect
-                  ? {
-                      unclippedRect: Object.freeze({
-                        x: unclippedRect.x,
-                        y: unclippedRect.y,
-                        width: unclippedRect.width,
-                        height: unclippedRect.height
-                      })
-                    }
-                  : {}),
-                items: Object.freeze(items.map(({ index, text }) => Object.freeze({ index, text })))
-              })
+          }
+        : {}),
+      units: Object.freeze(
+        input.units.map((unit) => {
+          const { id, source, fragments, sourceOnly, figure, preserve } = unit
+          return Object.freeze({
+            id,
+            source,
+            ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
+            ...(figure === true ? { figure: true as const } : {}),
+            ...(preserve ? { preserve } : {}),
+            ...(unit.referenceBoundary === true ? { referenceBoundary: true as const } : {}),
+            fragments: Object.freeze(
+              fragments.map(({ pageNumber, rect, items, unclippedRect }) =>
+                Object.freeze({
+                  pageNumber,
+                  rect: Object.freeze({
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height
+                  }),
+                  ...(unclippedRect
+                    ? {
+                        unclippedRect: Object.freeze({
+                          x: unclippedRect.x,
+                          y: unclippedRect.y,
+                          width: unclippedRect.width,
+                          height: unclippedRect.height
+                        })
+                      }
+                    : {}),
+                  items: Object.freeze(
+                    items.map(({ index, text }) => Object.freeze({ index, text }))
+                  )
+                })
+              )
             )
-          )
+          })
         })
-      })
-    )
-  })
+      )
+    })
+  )
 }
 
 // Compose display data only from the independently owned source. Copy result strings

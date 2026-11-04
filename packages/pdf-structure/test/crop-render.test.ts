@@ -340,3 +340,192 @@ it('keeps only disjoint source regions without moving their coordinates', async 
     await task.destroy()
   }
 })
+
+// Deferred requests must carry data only, after every immediate proof path declines.
+const deferredCropHelpers = await import(
+  pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+)
+const plainCropInput = (): {
+  candidate: { caption: object; rect: number[]; graphicsCount: number }
+  rect: number[]
+  pageNumber: number
+  rotation: number
+  id: string
+} => ({
+  candidate: { caption: {}, rect: [100, 500, 200, 550], graphicsCount: 1 },
+  rect: [100, 500, 200, 550],
+  pageNumber: 1,
+  rotation: 0,
+  id: 'p1-figure-1'
+})
+
+it('copies plain and vector-bar requests into isolated cloneable crop data', () => {
+  for (const reason of [undefined, 'native-vector-bar-chart']) {
+    const input = plainCropInput()
+    if (reason) Object.assign(input.candidate, { reason })
+    const request = deferredCropHelpers.createDeferredPlainFigureCrop(input)
+    expect(request).toEqual({
+      pageNumber: 1,
+      rectCopy: [100, 500, 200, 550],
+      rotation: 0,
+      relativePath: 'thumbnails/p1-figure-1.png'
+    })
+    expect(structuredClone(request)).toEqual(request)
+    input.rect[0] = 0
+    input.candidate.rect[1] = 0
+    expect(request.rectCopy).toEqual([100, 500, 200, 550])
+  }
+})
+
+it('keeps native, source, proof and rendering capabilities on the immediate path', () => {
+  for (const key of [
+    'nativeFigureContext',
+    'deferredInputsCurrent',
+    'legacyPngValidator',
+    'baselinePngValidator',
+    'groupedCaptionProof',
+    'nativePixelCrop',
+    'pairedRasterRect',
+    'isolatedRasterPixelCrop',
+    'sourceBearingFormPlan'
+  ]) {
+    expect(
+      deferredCropHelpers.createDeferredPlainFigureCrop({ ...plainCropInput(), [key]: {} })
+    ).toBeUndefined()
+  }
+  expect(
+    deferredCropHelpers.createDeferredPlainFigureCrop({ ...plainCropInput(), sourceItems: [{}] })
+  ).toBeUndefined()
+})
+
+it('rejects special or unknown candidate properties and non-plain candidates', () => {
+  for (const extra of [
+    { reason: 'native-captioned-form-scope' },
+    { issue: 'warning' },
+    { headerRaster: {} },
+    { formCropRaster: {} },
+    { unknown: undefined },
+    { [Symbol('proof')]: true }
+  ]) {
+    const input = plainCropInput()
+    Object.assign(input.candidate, extra)
+    expect(deferredCropHelpers.createDeferredPlainFigureCrop(input)).toBeUndefined()
+  }
+  expect(
+    deferredCropHelpers.createDeferredPlainFigureCrop({
+      ...plainCropInput(),
+      candidate: Object.create({})
+    })
+  ).toBeUndefined()
+})
+
+it('renders deferred vector crops identically across rotated page offsets', async () => {
+  const { mkdtemp, mkdir, readFile, rm, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const task = getDocument({ data: vectorPdf(), isEvalSupported: false, verbosity: 0 })
+  const output = await mkdtemp(tmpdir() + '/deferred-crop-')
+  await mkdir(output + '/thumbnails')
+  try {
+    const document = await task.promise
+    const page = await document.getPage(1)
+    for (const [rotation, rect] of [
+      [0, [100, 500, 200, 550]],
+      [90, [250, 100, 300, 200]],
+      [180, [600, 250, 700, 300]],
+      [270, [500, 600, 550, 700]]
+    ] as const) {
+      const direct = await renderPdfCrop(page, [...rect], rotation)
+      expect(page.cleanup()).toBe(true)
+      const request = deferredCropHelpers.createDeferredPlainFigureCrop({
+        ...plainCropInput(),
+        rect: [...rect],
+        rotation,
+        id: 'rotated'
+      })
+      await deferredCropHelpers.flushDeferredPdfCrops(
+        document,
+        [request],
+        async (relativePath: string, png: Buffer) => {
+          expect(relativePath).toBe(request.relativePath)
+          await writeFile(output + '/' + relativePath, png)
+        }
+      )
+      const delayed = await readFile(output + '/thumbnails/rotated.png')
+      expect(delayed).toEqual(direct)
+      const { data } = await sharp(delayed)
+        .removeAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true })
+      expect(data.some((value: number) => value < 30)).toBe(true)
+    }
+  } finally {
+    await task.destroy()
+    await rm(output, { recursive: true, force: true })
+  }
+})
+
+it('cleans up and stops subsequent requests after a rendering failure', async () => {
+  let opened = 0,
+    cleaned = 0
+  const page = {
+    rotate: 0,
+    getViewport: () => ({ width: 800, height: 800 }),
+    render: () => {
+      throw Error('render failed')
+    },
+    cleanup: () => {
+      cleaned++
+      return true
+    }
+  }
+  const document = {
+    getPage: async () => {
+      opened++
+      return page
+    }
+  }
+  const request = deferredCropHelpers.createDeferredPlainFigureCrop(plainCropInput())
+  await expect(
+    deferredCropHelpers.flushDeferredPdfCrops(document, [request, request], () => {
+      throw Error('unexpected write')
+    })
+  ).rejects.toThrow('render failed')
+  expect([opened, cleaned]).toEqual([1, 1])
+})
+
+it('cleans up and stops subsequent requests after a writing failure', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const output = await mkdtemp(tmpdir() + '/deferred-write-')
+  let opened = 0,
+    cleaned = 0
+  const page = {
+    rotate: 0,
+    getViewport: () => ({ width: 800, height: 800 }),
+    render: () => ({ promise: Promise.resolve() }),
+    cleanup: () => {
+      cleaned++
+      return true
+    }
+  }
+  const document = {
+    getPage: async () => {
+      opened++
+      return page
+    }
+  }
+  try {
+    await writeFile(output + '/thumbnails', 'occupied')
+    const request = deferredCropHelpers.createDeferredPlainFigureCrop(plainCropInput())
+    await expect(
+      deferredCropHelpers.flushDeferredPdfCrops(
+        document,
+        [request, request],
+        (relativePath: string, png: Buffer) => writeFile(output + '/' + relativePath, png)
+      )
+    ).rejects.toThrow()
+    expect([opened, cleaned]).toEqual([1, 1])
+  } finally {
+    await rm(output, { recursive: true, force: true })
+  }
+})

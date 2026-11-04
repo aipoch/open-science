@@ -4382,6 +4382,14 @@ describe('ConversationPanel composer intake', () => {
     ).toBe(false)
   })
 
+  it('keeps an unavailable model in the picker without a duplicate configuration notice', () => {
+    renderPanel({ agentControls: { modelUnavailable: true } })
+
+    expect(container.querySelector('[data-testid="mock-model-picker"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Model configuration needs attention')
+    expect(container.querySelector('[data-notice-action="open-provider-settings"]')).toBeNull()
+  })
+
   it('threads replay-independent agent controls separately from provider controls', () => {
     renderPanel({
       agentControls: {

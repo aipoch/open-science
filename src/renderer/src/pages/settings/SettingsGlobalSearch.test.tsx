@@ -13,6 +13,8 @@ import type { SettingsPanelId } from './settings-navigation'
 
 const PANELS: ReadonlyArray<{ id: SettingsPanelId; labelKey: string }> = [
   { id: 'general', labelKey: 'General' },
+  { id: 'appearance', labelKey: 'Appearance' },
+  { id: 'notifications', labelKey: 'Notifications' },
   { id: 'model', labelKey: 'Model' },
   { id: 'network', labelKey: 'Network' },
   { id: 'runtimes', labelKey: 'Runtimes' }
@@ -270,7 +272,7 @@ describe('SettingsGlobalSearch', () => {
       expect(input().value).toBe('language')
       expect(input().getAttribute('aria-expanded')).toBe('true')
       pressKey('Enter')
-      expect(onNavigate).toHaveBeenCalledWith('general')
+      expect(onNavigate).toHaveBeenCalledWith('appearance')
     }
   )
 
@@ -352,9 +354,9 @@ describe('SettingsGlobalSearch', () => {
 
   it('jumps to the anchored setting instead of the first block, ringing and focusing it', () => {
     mountPanelRoot(
-      'general',
+      'notifications',
       `<section data-slot="settings-section">Appearance</section>
-       <section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>`
+       <section data-slot="settings-section" data-settings-anchor="notifications.preferences">Notifications</section>`
     )
     const onNavigate = vi.fn()
     renderSearch(onNavigate)
@@ -363,9 +365,9 @@ describe('SettingsGlobalSearch', () => {
     pressKey('Enter')
 
     const target = document.body.querySelector<HTMLElement>(
-      '[data-settings-anchor="general.notifications"]'
+      '[data-settings-anchor="notifications.preferences"]'
     )!
-    expect(onNavigate).toHaveBeenCalledWith('general')
+    expect(onNavigate).toHaveBeenCalledWith('notifications')
     // The ring lands on the anchored section, not the panel's first section.
     expect(target.classList.contains('settings-search-highlight')).toBe(true)
     // Non-focusable targets get a temporary tabindex and receive focus.
@@ -393,7 +395,7 @@ describe('SettingsGlobalSearch', () => {
 
   it('waits for a missing anchor before falling back to the first content block', () => {
     vi.useFakeTimers()
-    mountPanelRoot('general', `<section data-slot="settings-section">Appearance</section>`)
+    mountPanelRoot('notifications', `<section data-slot="settings-section">Notifications</section>`)
     renderSearch()
 
     typeQuery('notifications')
@@ -413,8 +415,8 @@ describe('SettingsGlobalSearch', () => {
   it('fades and removes the ring after the dwell, restoring tabindex but keeping focus', () => {
     vi.useFakeTimers()
     mountPanelRoot(
-      'general',
-      `<section data-slot="settings-section" data-settings-anchor="general.notifications">Notifications</section>`
+      'notifications',
+      `<section data-slot="settings-section" data-settings-anchor="notifications.preferences">Notifications</section>`
     )
     renderSearch()
 
@@ -422,7 +424,7 @@ describe('SettingsGlobalSearch', () => {
     pressKey('Enter')
 
     const target = document.body.querySelector<HTMLElement>(
-      '[data-settings-anchor="general.notifications"]'
+      '[data-settings-anchor="notifications.preferences"]'
     )!
     act(() => {
       vi.advanceTimersByTime(1500)

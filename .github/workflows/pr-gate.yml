@@ -377,19 +377,24 @@ jobs:
             const { fixtureTestPatterns } = await import(pathToFileURL(
               join(process.env.TRUSTED_CLASSIFIER_DIR, 'classify-pr-changes.mjs')
             ).href)
-            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-            const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
-            const paths = [
-              ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
-              ...git('diff', '--name-only', '--no-renames', '-z', process.env.HEAD_SHA, 'HEAD').split('\0')
-            ].filter(Boolean)
             const plan = packageTestPlanFromRevisions(
               process.env.BASE_SHA, process.env.HEAD_SHA, process.env.TRUSTED_BASE_SHA
             )
-            // Dedicated packages and registered fixture readers also live in the package scope.
-            packages = plan.selected.length > 0 || paths.some(path =>
-              path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
-            )
+            packages = plan.selected.length > 0
+            // Preserve the selector's all-packages fallback before inspecting extra package lanes.
+            if (!packages) {
+              const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+              const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
+              const checkoutBase = git('merge-base', process.env.TRUSTED_BASE_SHA, 'HEAD').trim()
+              const paths = [
+                ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
+                ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD').split('\0')
+              ].filter(Boolean)
+              // Dedicated packages and registered fixture readers also live in the package scope.
+              packages = paths.some(path =>
+                path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
+              )
+            }
             reason = packages ? 'affected package sources, shared inputs or fixture readers' : 'no affected packages: skip package runners'
           }
           const include = [
@@ -1222,6 +1227,9 @@ jobs:
           src/main/desktop-runtime-recovery.test.ts
           src/main/desktop-runtime-stop-deadline.integration.test.ts
           src/main/update/installation-occupancy.test.ts
+          src/main/update/installation-file-occupancy.integration.test.ts
+          src/main/update/windows-recovery-identity.integration.test.ts
+          src/main/update/windows-signature-verification.test.ts
           src/main/verified-service-stop.test.ts
           packages/open-science/runtime-control.test.ts
           src/main/local-service-stop-intent.integration.test.ts
@@ -1685,9 +1693,10 @@ jobs:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
         # Mainline-only on every PR Gate entry point. Complete suites live in regression.
+        # All seven serial journeys already take ~10 minutes on hosted Windows runners.
         run: |
           if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
-          npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"
+          npm run test:e2e -- --workers=1 --global-timeout=900000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true

@@ -1,3 +1,7 @@
+import type {
+  LiteratureSnapshotRequest,
+  LiteratureSnapshotResult
+} from '../../shared/literature-snapshot'
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
   type LiteraturePublicationCheckRequest,
@@ -66,6 +70,10 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  studySnapshot(
+    request: LiteratureSnapshotRequest,
+    signal?: AbortSignal
+  ): Promise<LiteratureSnapshotResult>
   getCandidateStates(
     request: LiteratureCandidateStatesRequest
   ): Promise<LiteratureCandidateStatesResult>
@@ -184,6 +192,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [string],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
+  studySnapshot: defineApplicationCommand<
+    'literature:study-snapshot',
+    readonly [LiteratureSnapshotRequest],
+    LiteratureSnapshotResult
+  >('literature:study-snapshot', literatureApplicationCommandContracts.studySnapshot),
   completeMetadata: defineApplicationCommand<
     'literature:complete-metadata',
     readonly [LiteratureMetadataCompletionRequest],
@@ -255,6 +268,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.supplementAttachmentProgress,
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
+  literatureApplicationCommands.studySnapshot,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
@@ -329,6 +343,12 @@ const registerLiteratureApplicationCommands = (
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:study-snapshot': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.studySnapshot(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),
       'literature:citation-styles': ({ args }) => run(() => owner.citationStyles(args[0])),
       'literature:format-references': ({ args }) => run(() => owner.formatReferences(args[0])),

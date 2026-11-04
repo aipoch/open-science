@@ -3,7 +3,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const host = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawn: host.spawn }))
@@ -28,6 +28,22 @@ const reply = (value: unknown, code = 0): void => {
   })
 }
 beforeEach(() => host.spawn.mockReset())
+afterEach(() => vi.unstubAllEnvs())
+
+it('resolves elevation through the Windows system root when PATH is empty', async () => {
+  vi.stubEnv('SystemRoot', 'C:\\Windows')
+  vi.stubEnv('PATH', '')
+  reply({ authorized: false, registered: false })
+  reply(null)
+  reply(null)
+  reply(null)
+  await expect(
+    setWindowsRuntimeAccess('host.exe', 'installation', 'owner-root', 'Rscript.exe', true)
+  ).resolves.toEqual({ cancelled: false })
+  expect(host.spawn.mock.calls[2][0]).toBe(
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+  )
+})
 
 it.each([true, false])(
   'reads R access without starting elevation (authorized: %s)',
@@ -80,7 +96,9 @@ it('finishes an accepted native authorization before returning', async () => {
     setWindowsRuntimeAccess('host.exe', 'installation', 'owner-root', 'Rscript.exe', true)
   ).resolves.toEqual({ cancelled: false })
   expect(
-    host.spawn.mock.calls.map(([program, args]) => (program === 'powershell.exe' ? 'uac' : args[0]))
+    host.spawn.mock.calls.map(([program, args]) =>
+      program.endsWith('powershell.exe') ? 'uac' : args[0]
+    )
   ).toEqual(['runtime-access-status', 'prepare-runtime-access', 'uac', 'finish-setup'])
 })
 
@@ -93,7 +111,9 @@ it('cancels the native setup journal when Windows declines UAC', async () => {
     setWindowsRuntimeAccess('host.exe', 'installation', 'owner-root', 'Rscript.exe', true)
   ).resolves.toEqual({ cancelled: true })
   expect(
-    host.spawn.mock.calls.map(([program, args]) => (program === 'powershell.exe' ? 'uac' : args[0]))
+    host.spawn.mock.calls.map(([program, args]) =>
+      program.endsWith('powershell.exe') ? 'uac' : args[0]
+    )
   ).toEqual(['runtime-access-status', 'prepare-runtime-access', 'uac', 'cancel-setup'])
 })
 
@@ -196,7 +216,9 @@ it('commits verified runtime access with one elevation and the original containe
     )
   ).resolves.toEqual({ cancelled: false })
   expect(
-    host.spawn.mock.calls.map(([program, args]) => (program === 'powershell.exe' ? 'uac' : args[0]))
+    host.spawn.mock.calls.map(([program, args]) =>
+      program.endsWith('powershell.exe') ? 'uac' : args[0]
+    )
   ).toEqual([
     'runtime-access-status',
     'prepare-verified-runtime-access',
@@ -238,7 +260,9 @@ it('returns contained verification failure without starting another elevation', 
       verification
     )
   ).rejects.toThrow('contained jsonlite is unavailable')
-  expect(host.spawn.mock.calls.filter(([program]) => program === 'powershell.exe')).toHaveLength(1)
+  expect(
+    host.spawn.mock.calls.filter(([program]) => program.endsWith('powershell.exe'))
+  ).toHaveLength(1)
   expect(host.spawn.mock.calls.at(-1)?.[1][0]).toBe('cancel-setup')
 })
 
@@ -259,7 +283,9 @@ it('stops the waiting verifier when the user cancels UAC', async () => {
     )
   ).resolves.toEqual({ cancelled: true })
   expect(verifier.kill).toHaveBeenCalledOnce()
-  expect(host.spawn.mock.calls.filter(([program]) => program === 'powershell.exe')).toHaveLength(1)
+  expect(
+    host.spawn.mock.calls.filter(([program]) => program.endsWith('powershell.exe'))
+  ).toHaveLength(1)
 })
 
 it('does not classify an interrupted verifier as cancellation before the probe started', async () => {

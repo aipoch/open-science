@@ -3,6 +3,7 @@ import {
   chmod,
   copyFile,
   mkdtemp,
+  open,
   readFile,
   readdir,
   rename,
@@ -14,6 +15,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { createFileDurability } from '@aipoch/durable-files'
 
 import { publishUserFile } from './user-file-publisher'
 
@@ -92,6 +95,30 @@ describe('publishUserFile', () => {
     expect(events).toEqual(['write', 'sync-file', 'sync-directory'])
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
   })
+
+  it.each([true, false])(
+    'handles denied parent access with user-selected destination %s',
+    async (userSelectedDestination) => {
+      const destination = join(root, 'report.txt')
+      const error = Object.assign(new Error('directory read denied'), { code: 'EACCES' })
+      const durability = createFileDurability({
+        openHandle: async (path, flags) => {
+          if (path === root) {
+            await expect(readFile(destination, 'utf8')).resolves.toBe('complete bytes')
+            throw error
+          }
+          return open(path, flags)
+        }
+      })
+      const result = publishUserFile(destination, (path) => writeFile(path, 'complete bytes'), {
+        userSelectedDestination,
+        durability
+      })
+      if (userSelectedDestination) await expect(result).resolves.toBeUndefined()
+      else await expect(result).rejects.toBe(error)
+      await expect(readdir(root)).resolves.toEqual(['report.txt'])
+    }
+  )
 
   it('does not replace an existing destination during exclusive publication', async () => {
     const destinationPath = join(root, 'report.txt')

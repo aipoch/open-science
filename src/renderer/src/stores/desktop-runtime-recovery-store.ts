@@ -19,19 +19,27 @@ export const assertDesktopRuntimeWrite = (epoch = getDesktopRuntimeEpoch()): voi
 }
 
 let sessionRecovery:
-  { epoch: number; resolve(): void; reject(): void; promise: Promise<void> } | undefined
+  | { epoch: number; resolve(): void; reject(error?: Error): void; promise: Promise<void> }
+  | undefined
 export function waitForDesktopSessionRecovery(epoch: number): Promise<void> {
   if (sessionRecovery?.epoch === epoch) return sessionRecovery.promise
+  if (sessionRecovery && epoch < sessionRecovery.epoch)
+    return Promise.reject(new Error('Session recovery superseded.'))
+  sessionRecovery?.reject(new Error('Session recovery superseded.'))
   let resolve!: () => void
-  let reject!: () => void
+  let reject!: (error?: Error) => void
   const promise = new Promise<void>((yes, no) => {
     resolve = yes
-    reject = () => no(new Error('Session recovery failed.'))
+    reject = (error = new Error('Session recovery failed.')) => no(error)
   })
+  // Completion can precede its consumer, including failure. Keep rejection observable to that
+  // consumer without leaving superseded waiters pending or producing an unhandled rejection.
+  void promise.catch(() => undefined)
   sessionRecovery = { epoch, resolve, reject, promise }
   return promise
 }
 export function completeDesktopSessionRecovery(epoch: number, success: boolean): void {
+  if (sessionRecovery && epoch < sessionRecovery.epoch) return
   void waitForDesktopSessionRecovery(epoch).catch(() => undefined)
   if (success) sessionRecovery!.resolve()
   else sessionRecovery!.reject()

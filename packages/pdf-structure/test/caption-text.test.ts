@@ -19,7 +19,8 @@ const {
   groupPageLines,
   joinPdfSmallCapsLine,
   isNativeRowReference,
-  findCaptionCandidates
+  findCaptionCandidates,
+  recoverNativeMixedFontCaptionTail
 } = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 
 it.each([
@@ -32,6 +33,13 @@ it.each([
   ['Figure 1 showcases used for demonstration.', 'figure']
 ])('distinguishes a finite showcase reference from a title: %s', (text, expected) => {
   expect(captionKind(text)).toBe(expected)
+})
+
+it('keeps determiner-led finite figure subjects as prose while retaining noun titles', () => {
+  expect(captionKind('Figure 2 takes the retained candidate.')).toBeUndefined()
+  expect(captionKind('Figure 5 supplements the earlier comparison.')).toBeUndefined()
+  expect(captionKind('Figure 2. Takes of the same scene.')).toBe('figure')
+  expect(captionKind('Figure 5 Supplements to the comparison.')).toBe('figure')
 })
 
 it.each([
@@ -1987,4 +1995,802 @@ it.each([
   ['Table 1 tests the method.', 'table']
 ])('distinguishes bounded finite figure prose: %s', (text, expected) => {
   expect(captionKind(text)).toBe(expected ?? undefined)
+})
+
+function headingClosedReferenceCaption(): ReturnType<typeof JSON.parse> {
+  const lines = [
+    'Figure 2: Independent measurements use the definitions in',
+    'Figure 1. The independently measured intervals retain all observations',
+    'and all repeated measurements retain their complete native ordering',
+    'across every interval containing observations from the measured records.'
+  ].map((text, i) => ({
+    text,
+    x: 50,
+    y: 300 + 11 * i,
+    width: i === 3 ? 396 : 400,
+    height: 10,
+    fontSize: 10
+  }))
+  return {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      ...lines,
+      { text: 'F Independent evaluation', x: 50, y: 370, width: 180, height: 12, fontSize: 12 }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: [50 / 600, 50 / 800, 200 / 600, 285 / 800] },
+      { kind: 'path', normalizedRect: [210 / 600, 50 / 800, 300 / 600, 285 / 800] },
+      { kind: 'path', normalizedRect: [310 / 600, 50 / 800, 450 / 600, 285 / 800] }
+    ]
+  }
+}
+
+it('closes a full-width caption reference at its independent native section heading', () => {
+  const page = headingClosedReferenceCaption(),
+    before = structuredClone(page)
+  expect(findCaptionCandidates([page])).toEqual([
+    {
+      page: 1,
+      lines: page.lines.slice(0, 4).map((l: CaptionLine) => l.text),
+      rect: [50, 300, 450, 343]
+    }
+  ])
+  expect(page).toEqual(before)
+})
+
+it('does not merge an independently separated reference or an unclosed full-width paragraph', () => {
+  for (const variant of ['missing heading', 'independent plate', 'unclosed tail']) {
+    const page = headingClosedReferenceCaption()
+    if (variant === 'missing heading') page.lines.pop()
+    if (variant === 'independent plate')
+      page.graphicsBounds.push({ kind: 'path', normalizedRect: [0.1, 310 / 800, 0.7, 320 / 800] })
+    if (variant === 'unclosed tail') page.lines[3].text = page.lines[3].text.slice(0, -1)
+    expect(
+      findCaptionCandidates([page]).some((c: { lines: string[] }) => c.lines.length === 4)
+    ).toBe(false)
+  }
+})
+
+const { OPS: captionOps } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+const { tableTextToken: captionToken } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+)
+
+function mixedPunctuationCaption(): ReturnType<typeof JSON.parse> {
+  const page: ReturnType<typeof JSON.parse> = {
+      pageNumber: 1,
+      width: 400,
+      height: 300,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: [],
+      graphicsBounds: []
+    },
+    viewport = {
+      width: 400,
+      height: 300,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 300],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 300 - y]
+    },
+    operators: ReturnType<typeof JSON.parse> = { fnArray: [], argsArray: [] },
+    items: ReturnType<typeof JSON.parse>[] = [],
+    glyphs: ReturnType<typeof JSON.parse>[] = [],
+    add = (op: number, args: unknown): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    text = (str: string, x: number, baseline: number, size = 8): ReturnType<typeof JSON.parse> => {
+      add(captionOps.beginText, null)
+      add(captionOps.setFont, ['F', size])
+      add(captionOps.setTextMatrix, [[1, 0, 0, 1, x, 300 - baseline]])
+      add(captionOps.showText, [
+        [{ unicode: str, fontChar: str, width: 500 * str.length, isInFont: true }]
+      ])
+      add(captionOps.endText, null)
+      const item = {
+        str,
+        dir: 'ltr',
+        width: (str.length * size) / 2,
+        height: size,
+        transform: [size, 0, 0, size, x, 300 - baseline],
+        fontName: 'F',
+        sourceItem: { pageNumber: 1, index: items.length, text: str }
+      }
+      items.push(item)
+      glyphs.push({ fontChar: str, bounds: [0, -0.1, 0.5 * str.length, 0.7] })
+      return item
+    },
+    image = (y: number, height: number): void => {
+      add(captionOps.save, null)
+      add(captionOps.transform, [220, 0, 0, height, 50, 300 - y - height])
+      add(captionOps.paintImageXObject, ['image' + y, 10, 10])
+      page.graphicsBounds.push({
+        kind: 'image',
+        operationIndex: operators.fnArray.length - 1,
+        imageHash: 'c'.repeat(64),
+        normalizedRect: [50 / 400, y / 300, 270 / 400, (y + height) / 300]
+      })
+      add(captionOps.restore, null)
+    }
+  add(captionOps.setFillRGBColor, ['#000000'])
+  image(80, 108)
+  image(224, 42)
+  text('Fig. 1.', 40, 200)
+  text('A', 70, 200)
+  text('–', 74, 200, 10)
+  const body = text('B measured traces with a magnified view of the working', 79, 200),
+    tail = text('distance.', 40, 210),
+    next = text('Fig. 2. An independent image.', 40, 288),
+    caption = {
+      page: 1,
+      lines: ['Fig. 1. A–B measured traces with a magnified view of the working'],
+      rect: [40, 190, 79 + body.width, 200]
+    }
+  page.lines = [
+    {
+      text: caption.lines[0],
+      x: 40,
+      y: 190,
+      width: caption.rect[2] - 40,
+      height: 10,
+      fontSize: 10
+    },
+    { text: tail.str, x: 40, y: 202, width: tail.width, height: 8, fontSize: 8 },
+    { text: next.str, x: 40, y: 280, width: next.width, height: 8, fontSize: 8 }
+  ]
+  const context = {
+    pageNumber: 1,
+    sourceSha256: 'a'.repeat(64),
+    operators,
+    viewport,
+    content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+    glyphBounds: [{ fontName: 'F', glyphs }],
+    graphicsBounds: page.graphicsBounds
+  }
+  return { page, caption, context, tokens: items.map((r) => captionToken(r, viewport, 0)) }
+}
+
+it('recovers a contiguous caption terminal using its native body font and separate following image', () => {
+  const a = mixedPunctuationCaption(),
+    before = JSON.stringify(a)
+  expect(recoverNativeMixedFontCaptionTail(a.caption, a.page, a.tokens, a.context)).toEqual({
+    page: 1,
+    lines: [...a.caption.lines, 'distance.'],
+    rect: [40, 190, 295, 210]
+  })
+  expect(JSON.stringify(a)).toBe(before)
+})
+
+it('keeps a short native row separate without the original stream, font, or following plate boundary', () => {
+  for (const variant of ['source mismatch', 'missing font', 'missing following image']) {
+    const a = mixedPunctuationCaption()
+    if (variant === 'source mismatch') a.context.content.items[4].sourceItem.index = 0
+    if (variant === 'missing font') a.context.glyphBounds = []
+    if (variant === 'missing following image') a.page.graphicsBounds.splice(1, 1)
+    expect(
+      recoverNativeMixedFontCaptionTail(a.caption, a.page, a.tokens, a.context)
+    ).toBeUndefined()
+  }
+})
+
+const { createNativeIndexCaptionExclusion, nativeIndexCaptionExclusionData } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-native-caption-lane.mjs')).href
+)
+
+function nativeIndexCaptionFixture(kind = 'figure', variant = ''): ReturnType<typeof JSON.parse> {
+  const page: ReturnType<typeof JSON.parse> = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: [],
+      lines: []
+    },
+    viewport = {
+      width: 600,
+      height: 800,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, 800],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+    },
+    context: ReturnType<typeof JSON.parse> = {
+      pageNumber: 1,
+      sourceSha256: 'a'.repeat(64),
+      viewport,
+      operators: { fnArray: [], argsArray: [] },
+      content: { items: [], styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+      glyphBounds: [{ fontName: 'F', glyphs: [] }],
+      graphicsBounds: page.graphicsBounds
+    },
+    captions: ReturnType<typeof JSON.parse>[] = [],
+    tokens: ReturnType<typeof JSON.parse>[] = [],
+    add = (op: number, args: unknown): void => {
+      context.operators.fnArray.push(op)
+      context.operators.argsArray.push(args)
+    },
+    text = (str: string, x: number, baseline: number, size = 10): ReturnType<typeof JSON.parse> => {
+      add(captionOps.beginText, null)
+      add(captionOps.setFont, ['F', size])
+      add(captionOps.setTextMatrix, [[1, 0, 0, 1, x, 800 - baseline]])
+      add(captionOps.showText, [
+        [{ unicode: str, fontChar: str, width: 500 * str.length, isInFont: true }]
+      ])
+      add(captionOps.endText, null)
+      const r = {
+        str,
+        dir: 'ltr',
+        width: size * 0.5 * str.length,
+        height: size,
+        transform: [size, 0, 0, size, x, 800 - baseline],
+        fontName: 'F',
+        sourceItem: { pageNumber: 1, index: context.content.items.length, text: str }
+      }
+      context.content.items.push(r)
+      tokens.push(captionToken(r, viewport, 0))
+      if (!context.glyphBounds[0].glyphs.some((g: { fontChar: string }) => g.fontChar === str))
+        context.glyphBounds[0].glyphs.push({
+          fontChar: str,
+          bounds: [0, -0.1, 0.5 * str.length, 0.7]
+        })
+      return r
+    },
+    shape = (x: number, y: number, width: number, height: number): void => {
+      const b = 800 - y - height,
+        op = context.operators.fnArray.length
+      add(captionOps.constructPath, [
+        captionOps.fill,
+        [[0, x, b, 1, x + width, b, 1, x + width, b + height, 1, x, b + height, 4]],
+        [x, b, x + width, b + height]
+      ])
+      page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: op,
+        normalizedRect: [x / 600, y / 800, (x + width) / 600, (y + height) / 800]
+      })
+    }
+  add(captionOps.setFillRGBColor, ['#000000'])
+  text(
+    variant === 'heading'
+      ? 'Supplementary results'
+      : 'Index of ' + (kind === 'figure' ? 'Figures' : 'Tables'),
+    50,
+    76,
+    14
+  )
+  text('Identifier', 60, 100, 8)
+  text('Description', 200, 100, 8)
+  text(variant === 'header' ? 'Observations' : 'Study / Context', 430, 100, 8)
+  shape(50, 90, 500, 0.5)
+  if (variant === 'gap') {
+    shape(50, 104, 195, 0.5)
+    shape(255, 104, 295, 0.5)
+  } else shape(50, 104, 500, 0.5)
+  if (variant !== 'open') shape(50, 210, 500, 0.5)
+  for (let i = 1; i <= 3; i++) {
+    const baseline = 100 + i * 25,
+      label = (kind === 'figure' ? 'Figure' : 'Table') + ' ' + i
+    text(variant === 'identifier' && i === 2 ? 'Section 2' : label, 60, baseline)
+    text('Sample ' + i, 200, baseline)
+    if (variant !== 'empty-context' || i !== 2) text('Group A', 430, baseline)
+    captions.push({
+      page: 1,
+      lines: [label + ' Sample ' + i + ' Group A'],
+      rect: [60, baseline - 10, 465, baseline]
+    })
+  }
+  if (variant === 'vector') shape(300, 145, 20, 20)
+  if (variant === 'image' || variant === 'outside-image') {
+    const top = variant === 'image' ? 140 : 245
+    add(captionOps.save, null)
+    add(captionOps.transform, [20, 0, 0, 20, 300, 800 - top - 20])
+    const operationIndex = context.operators.fnArray.length
+    add(captionOps.paintImageXObject, ['invented-image', 20, 20])
+    add(captionOps.restore, null)
+    page.graphicsBounds.push({
+      kind: 'image',
+      operationIndex,
+      normalizedRect: [0.5, top / 800, 320 / 600, (top + 20) / 800],
+      imageHash: 'b'.repeat(64)
+    })
+  }
+  text((kind === 'figure' ? 'Figure' : 'Table') + ' 9. Independent drawing.', 60, 250)
+  captions.push({
+    page: 1,
+    lines: [(kind === 'figure' ? 'Figure' : 'Table') + ' 9. Independent drawing.'],
+    rect: [60, 240, 220, 250]
+  })
+  return {
+    page,
+    captions,
+    tokens,
+    context,
+    table: {
+      grid: [
+        ['Identifier', 'Description', 'Context'],
+        ['Figure 1', 'Sample 1', 'Group A']
+      ]
+    }
+  }
+}
+
+it.each(['figure', 'table'])(
+  'excludes only proved %s index-row caption metadata while preserving table content',
+  (kind) => {
+    const f = nativeIndexCaptionFixture(kind),
+      before = JSON.stringify(f),
+      h = createNativeIndexCaptionExclusion(f.page, f.captions, f.tokens, f.context),
+      data = nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context)
+    expect(data.excludedCaptions).toEqual(f.captions.slice(0, 3))
+    expect(data.excludedCaptions[0]).toBe(f.captions[0])
+    expect(data.excludedCaptions).not.toContain(f.captions[3])
+    expect(data.logicalRows).toBe(3)
+    for (const field of ['sourceItems', 'records', 'grid', 'cells', 'rect'])
+      expect(data[field]).toBeUndefined()
+    expect(JSON.stringify(f)).toBe(before)
+    const old = f.context.operators.argsArray
+    f.context.operators.argsArray = structuredClone(old)
+    expect(
+      nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context)
+    ).toBeUndefined()
+    f.context.operators.argsArray = old
+    expect(nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context)).toBe(data)
+    data.excludedCaptions = [...data.excludedCaptions]
+    expect(
+      nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context)
+    ).toBeUndefined()
+  }
+)
+it.each(['heading', 'header', 'open', 'gap', 'identifier', 'empty-context', 'image', 'vector'])(
+  'retains unproved index captions when the native %s evidence is incomplete',
+  (variant) => {
+    const f = nativeIndexCaptionFixture('figure', variant)
+    expect(
+      createNativeIndexCaptionExclusion(f.page, f.captions, f.tokens, f.context)
+    ).toBeUndefined()
+  }
+)
+it('retains an independent image/caption outside the closed index body', () => {
+  const f = nativeIndexCaptionFixture('figure', 'outside-image'),
+    h = createNativeIndexCaptionExclusion(f.page, f.captions, f.tokens, f.context)
+  expect(
+    nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context).excludedCaptions
+  ).toEqual(f.captions.slice(0, 3))
+})
+it('requires the caption literal to agree with the exact native identifier row', () => {
+  const f = nativeIndexCaptionFixture()
+  f.captions[0].lines[0] = 'Figure 1 Changed prose'
+  const h = createNativeIndexCaptionExclusion(f.page, f.captions, f.tokens, f.context),
+    data = nativeIndexCaptionExclusionData(h, f.page, f.captions, f.tokens, f.context)
+  expect(data.excludedCaptions).toEqual(f.captions.slice(1, 3))
+})
+it.each(['source', 'font', 'accessor', 'proxy'])(
+  'declines incomplete index-origin %s without executing callbacks',
+  (mode) => {
+    const f = nativeIndexCaptionFixture()
+    let reads = 0
+    if (mode === 'source') f.context.content.items[4].sourceItem.index = 0
+    if (mode === 'font') delete f.context.content.styles.F.descent
+    if (mode === 'accessor')
+      Object.defineProperty(f.context, 'extra', {
+        get() {
+          reads++
+          throw Error('read')
+        }
+      })
+    if (mode === 'proxy')
+      f.context.extra = new Proxy(
+        {},
+        {
+          get() {
+            reads++
+            throw Error('read')
+          },
+          ownKeys() {
+            reads++
+            throw Error('read')
+          }
+        }
+      )
+    expect(
+      createNativeIndexCaptionExclusion(f.page, f.captions, f.tokens, f.context)
+    ).toBeUndefined()
+    expect(reads).toBe(0)
+  }
+)
+
+it('requalifies original index caption objects after coordinate restoration replaces their arrays', () => {
+  const f = nativeIndexCaptionFixture(),
+    args = [f.page, f.captions, f.tokens, f.context],
+    first = createNativeIndexCaptionExclusion(...args)
+  expect(nativeIndexCaptionExclusionData(first, ...args)).toBeDefined()
+  for (const caption of f.captions) caption.rect = [...caption.rect]
+  expect(nativeIndexCaptionExclusionData(first, ...args)).toBeUndefined()
+  const final = createNativeIndexCaptionExclusion(...args),
+    data = nativeIndexCaptionExclusionData(final, ...args)
+  expect(data.excludedCaptions).toEqual(f.captions.slice(0, 3))
+  expect(data.excludedCaptions[0]).toBe(f.captions[0])
+})
+
+// A finite Figure subject stays prose across a local document qualifier.
+it.each([
+  ['Figure 1 encodes the anonymous assumptions.', null],
+  ['Figure 2 of the main paper summarizes the independent measurements.', null],
+  ['Figure 1: Encodes the anonymous assumptions.', 'figure'],
+  ['Figure 1 Encodings of the independent fields.', 'figure'],
+  ['Figure 1 encodes of the independent fields.', 'figure'],
+  ['Figure 2 of the main paper: Summary of independent measurements.', 'figure'],
+  ['Figure 2 of the main paper summary.', 'figure'],
+  ['Figure 2: Of the main paper summarizes retained metadata.', 'figure']
+])('keeps finite figure references distinct from noun titles: %s', (text, expected) => {
+  expect(captionKind(text) ?? null).toBe(expected)
+})
+
+const { recoverNativeSingleSpacedMathCaptionTail } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
+)
+
+function singleSpacedScriptCaption(): ReturnType<typeof JSON.parse> {
+  const a = mixedPunctuationCaption(),
+    { page, context } = a,
+    operators = context.operators,
+    items = context.content.items,
+    glyphs = context.glyphBounds[0].glyphs
+  page.width = page.height = context.viewport.width = context.viewport.height = 400
+  context.viewport.transform = [1, 0, 0, -1, 0, 400]
+  context.viewport.convertToViewportPoint = (x: number, y: number): number[] => [x, 400 - y]
+  page.rotation = page.renderRotation = 0
+  page.lines = []
+  page.graphicsBounds.length = items.length = glyphs.length = 0
+  operators.fnArray.length = operators.argsArray.length = 0
+  const add = (op: number, args: unknown): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    text = (str: string, x: number, baseline: number, size = 10): void => {
+      add(captionOps.beginText, null)
+      add(captionOps.setFont, ['F', size])
+      add(captionOps.setTextMatrix, [[1, 0, 0, 1, x, 400 - baseline]])
+      add(captionOps.showText, [
+        [{ unicode: str, fontChar: str, width: 500 * str.length, isInFont: true }]
+      ])
+      add(captionOps.endText, null)
+      items.push({
+        str,
+        dir: 'ltr',
+        width: (str.length * size) / 2,
+        height: size,
+        transform: [size, 0, 0, size, x, 400 - baseline],
+        fontName: 'F',
+        sourceItem: { pageNumber: 1, index: items.length, text: str }
+      })
+      if (!glyphs.some((g: { fontChar: string }) => g.fontChar === str))
+        glyphs.push({ fontChar: str, bounds: [0, -0.1, 0.5 * str.length, 0.7] })
+    },
+    row = (parts: [string, number][], baseline: number): void => {
+      let x = 200 - parts.reduce((sum, [s, h]) => sum + (s.length * h) / 2, 0) / 2
+      for (const [str, size] of parts) {
+        text(str, x, baseline - (size < 10 ? 4 : 0), size)
+        x += (str.length * size) / 2
+      }
+    }
+  add(captionOps.setFillRGBColor, ['#000000'])
+  for (let i = 0; i < 3; i++) {
+    const x = 60 + 100 * i
+    add(captionOps.save, null)
+    add(captionOps.transform, [80, 0, 0, 180, x, 160])
+    add(captionOps.paintImageXObject, ['picture' + i, 10, 10])
+    page.graphicsBounds.push({
+      kind: 'image',
+      operationIndex: operators.fnArray.length - 1,
+      imageHash: String(i + 1).repeat(64),
+      normalizedRect: [x / 400, 60 / 400, (x + 80) / 400, 240 / 400]
+    })
+    add(captionOps.restore, null)
+  }
+  for (let i = 0; i < 3; i++) text(`(${String.fromCharCode(97 + i)})`, 92.5 + 100 * i, 260)
+  row([['Figure 1: Native panels and measured values across views', 10]], 280)
+  row(
+    [
+      ['and A = 10', 10],
+      ['8', 20 / 3],
+      [' for the retained comparison across panels', 10]
+    ],
+    291
+  )
+  row(
+    [
+      ['where B = 10', 10],
+      ['−2', 20 / 3],
+      [' for the same independent conditions', 10]
+    ],
+    302
+  )
+  row([['A separate scale closes each panel.', 10]], 313)
+  text('Following ordinary prose retains its independent larger font.', 20, 348, 12)
+  page.lines = items.map((r: ReturnType<typeof JSON.parse>) => ({
+    text: r.str,
+    x: r.transform[4],
+    y: 400 - r.transform[5] - r.height,
+    width: r.width,
+    height: r.height,
+    fontSize: r.height
+  }))
+  const first = page.lines[3],
+    caption = {
+      page: 1,
+      lines: [first.text],
+      rect: [first.x, first.y, first.x + first.width, first.y + first.height]
+    },
+    figure = { caption, rect: [60, 60, 340, 265] },
+    scope = { figure, figures: [figure], captions: [caption], tables: [] }
+  return {
+    page,
+    caption,
+    context,
+    tokens: items.map((r: unknown) => captionToken(r, context.viewport, 0)),
+    scope,
+    text
+  }
+}
+
+it('recovers only metadata for a complete single-spaced native script caption', () => {
+  const a = singleSpacedScriptCaption()
+  a.context.runningHeadWitness = { nativePage: new (class NativePage {})() }
+  const before = JSON.stringify(a)
+  const result = recoverNativeSingleSpacedMathCaptionTail(
+    a.caption,
+    a.page,
+    a.tokens,
+    a.context,
+    a.scope
+  )
+  expect(result?.lines).toEqual([
+    a.caption.lines[0],
+    'and A = 10⁸ for the retained comparison across panels',
+    'where B = 10⁻² for the same independent conditions',
+    'A separate scale closes each panel.'
+  ])
+  expect(result?.rect[1]).toBe(a.caption.rect[1])
+  expect(result?.sourceItems).toEqual(
+    a.context.content.items.slice(3, -1).map((r: ReturnType<typeof JSON.parse>) => r.sourceItem)
+  )
+  expect(JSON.stringify(a)).toBe(before)
+})
+
+it('retains the caption boundary when native script, panel, or foreign ownership does not close', () => {
+  for (const variant of [
+    'source',
+    'font',
+    'script',
+    'panel',
+    'following body',
+    'foreign source',
+    'foreign paint',
+    'context accessor',
+    'peer'
+  ]) {
+    const a = singleSpacedScriptCaption()
+    if (variant === 'source') a.context.content.items[5].sourceItem.text = 'changed'
+    if (variant === 'font') a.context.glyphBounds = []
+    if (variant === 'script') a.context.content.items[5].transform[5] -= 8
+    if (variant === 'panel') a.page.graphicsBounds.pop()
+    if (variant === 'following body') a.context.content.items.at(-1).height = 10
+    if (variant === 'foreign source') a.text('Foreign', 100, 303)
+    if (variant === 'foreign paint') {
+      const o = a.context.operators,
+        index = o.fnArray.length
+      o.fnArray.push(captionOps.constructPath)
+      o.argsArray.push([
+        captionOps.fill,
+        [[0, 90, 95, 1, 100, 95, 1, 100, 105, 1, 90, 105, 4]],
+        [90, 95, 100, 105]
+      ])
+      a.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: index,
+        normalizedRect: [90 / 400, 295 / 400, 100 / 400, 305 / 400]
+      })
+    }
+    if (variant === 'context accessor')
+      Object.defineProperty(a.context, 'runningHeadWitness', { get: () => ({}), enumerable: true })
+    if (variant === 'peer') a.scope.tables.push([80, 275, 320, 315])
+    expect(
+      recoverNativeSingleSpacedMathCaptionTail(a.caption, a.page, a.tokens, a.context, a.scope),
+      variant
+    ).toBeUndefined()
+  }
+})
+
+function closedPanelBodyReference(narrative = true): ReturnType<typeof JSON.parse> {
+  const { page, context } = mixedPunctuationCaption(),
+    operators = context.operators,
+    items = context.content.items,
+    glyphs = context.glyphBounds[0].glyphs
+  page.width = page.height = context.viewport.width = context.viewport.height = 400
+  page.renderRotation = 0
+  context.viewport.transform = [1, 0, 0, -1, 0, 400]
+  context.viewport.convertToViewportPoint = (x: number, y: number): number[] => [x, 400 - y]
+  page.lines = []
+  page.graphicsBounds.length = items.length = glyphs.length = 0
+  operators.fnArray.length = operators.argsArray.length = 0
+  const add = (op: number, args: unknown): void => {
+      operators.fnArray.push(op)
+      operators.argsArray.push(args)
+    },
+    text = (str: string, y: number, size = 10): void => {
+      const baseline = y + size
+      add(captionOps.beginText, null)
+      add(captionOps.setFont, ['F', size])
+      add(captionOps.setTextMatrix, [[1, 0, 0, 1, 40, 400 - baseline]])
+      add(captionOps.showText, [
+        [{ unicode: str, fontChar: str, width: 500 * str.length, isInFont: true }]
+      ])
+      add(captionOps.endText, null)
+      const width = size * 0.5 * str.length
+      items.push({
+        str,
+        dir: 'ltr',
+        width,
+        height: size,
+        transform: [size, 0, 0, size, 40, 400 - baseline],
+        fontName: 'F',
+        hasEOL: true,
+        sourceItem: { pageNumber: 1, index: items.length, text: str }
+      })
+      glyphs.push({ fontChar: str, bounds: [0, -0.1, 0.5 * str.length, 0.7] })
+      page.lines.push({ text: str, x: 40, y, width, height: size, fontSize: size })
+    }
+  add(captionOps.setFillRGBColor, ['#000000'])
+  text('Figure 4: Independent overview of the observations.', 50, 8)
+  text('3.1 Observations', 80)
+  text('The independent observations form an ordinary paragraph', 100)
+  text(
+    narrative
+      ? 'whose panel measurements are shown in'
+      : 'A previous independent description finishes here.',
+    112
+  )
+  const lines = [
+    'Fig. 7b. Independent measurements use the same sample',
+    'and retain their original order across repeated observations.',
+    'The comparison remains part of this complete paragraph',
+    'and ends with the independently preserved observations.'
+  ]
+  lines.forEach((line, i) => text(line, 124 + i * 12))
+  text('3.2 Validation', 192)
+  const caption = {
+    page: 1,
+    lines,
+    rect: [40, 124, Math.max(...page.lines.slice(4, 8).map((r: CaptionLine) => r.x + r.width)), 170]
+  }
+  return {
+    page,
+    caption,
+    native: context,
+    context: {
+      pageNumber: 1,
+      content: context.content,
+      viewport: context.viewport,
+      nativeFigureContext: context
+    }
+  }
+}
+
+it('refuses only metadata for a completely sourced panel citation inside a closed body paragraph', () => {
+  const f = closedPanelBodyReference(),
+    before = JSON.stringify(f)
+  expect(isNativeRowReference(f.caption, f.page, f.context)).toBe(true)
+  expect(JSON.stringify(f)).toBe(before)
+  const caption = closedPanelBodyReference(false)
+  expect(isNativeRowReference(caption.caption, caption.page, caption.context)).toBe(false)
+})
+
+it.each([
+  'middle line',
+  'same count fake text',
+  'line count',
+  'source',
+  'font',
+  'graphic',
+  'heading'
+])('retains a panel caption when its closed native body proof has an incomplete %s', (variant) => {
+  const f = closedPanelBodyReference()
+  if (variant === 'middle line')
+    f.caption.lines[1] = 'A different title is not the original source line.'
+  if (variant === 'same count fake text')
+    f.caption.lines = f.caption.lines.map((line: string, i: number) =>
+      i === 1 || i === 2 ? 'Unrelated replacement text cannot inherit native ownership.' : line
+    )
+  if (variant === 'line count') f.caption.lines.splice(1, 1)
+  if (variant === 'source') f.native.content.items[5].sourceItem.index = 0
+  if (variant === 'font') f.native.glyphBounds[0].glyphs.pop()
+  if (variant === 'graphic') {
+    f.native.operators.fnArray.push(captionOps.constructPath)
+    f.native.operators.argsArray.push([
+      captionOps.fill,
+      [[0, 50, 250, 1, 60, 250, 1, 60, 255, 1, 50, 255, 4]],
+      [50, 250, 60, 255]
+    ])
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex: f.native.operators.fnArray.length - 1,
+      normalizedRect: [50 / 400, 145 / 400, 60 / 400, 150 / 400]
+    })
+  }
+  if (variant === 'heading') f.page.lines.at(-1).text = 'Independent ordinary text remains here.'
+  expect(isNativeRowReference(f.caption, f.page, f.context)).toBe(false)
+})
+
+it('binds a distinct document font identity only through a complete bijective style proof', () => {
+  const f = closedPanelBodyReference()
+  f.context.content = structuredClone(f.native.content)
+  f.context.content.styles.Outer = f.context.content.styles.F
+  delete f.context.content.styles.F
+  f.context.content.items.forEach((r: { fontName: string }) => {
+    r.fontName = 'Outer'
+  })
+  const before = JSON.stringify(f)
+  expect(isNativeRowReference(f.caption, f.page, f.context)).toBe(true)
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each(['missing style', 'style differs', 'one to many', 'many to one'])(
+  'refuses an incomplete independent document font proof: %s',
+  (variant) => {
+    const f = closedPanelBodyReference()
+    f.context.content = structuredClone(f.native.content)
+    f.context.content.styles.Outer = structuredClone(f.context.content.styles.F)
+    f.context.content.items.forEach((r: { fontName: string }) => {
+      r.fontName = 'Outer'
+    })
+    if (variant === 'missing style') delete f.context.content.styles.Outer
+    if (variant === 'style differs') f.context.content.styles.Outer.ascent += 0.1
+    if (variant === 'one to many') {
+      f.context.content.styles.Other = structuredClone(f.context.content.styles.Outer)
+      f.context.content.items[1].fontName = 'Other'
+    }
+    if (variant === 'many to one') {
+      f.native.content.styles.Other = structuredClone(f.native.content.styles.F)
+      f.native.content.items[1].fontName = 'Other'
+    }
+    expect(isNativeRowReference(f.caption, f.page, f.context)).toBe(false)
+  }
+)
+
+it.each([
+  ['Figure 4A–D shows independent changes in the measurements.', undefined],
+  ['Figure 4A-D shows independent changes in the measurements.', undefined],
+  ['Supplementary Figure 5B–E also shows a generated comparison.', undefined],
+  ['Fig. 6 (A)-(D) shows independent changes in the measurements.', undefined],
+  ['Figure 4A–D: Independent observations.', 'figure'],
+  ['Fig. 5B-E. Generated panel observations.', 'figure'],
+  ['Figure 4A–D: Shows retained by a punctuation-delimited title.', 'figure'],
+  ['Figure 4A-4D: Repeated complete ordinals remain held.', undefined],
+  ['Figure 4A-7D: Different ordinals remain held.', undefined],
+  ['Figure 4D-4A: Reversed complete ordinals remain held.', undefined],
+  ['Figure 4A-: An incomplete range remains held.', undefined]
+])(
+  'keeps finite joined-panel subjects separate from existing caption titles (%s)',
+  (text, kind) => {
+    expect(captionKind(text)).toBe(kind)
+  }
+)
+
+it.each([
+  ['Figure A.2 locates these changes.', undefined],
+  ['Figure 4 updates the retained map.', undefined],
+  ['Fig. B.3 rates our retained paths.', undefined],
+  ['Figure A.2. Locations of the changes.', 'figure'],
+  ['Figure 4: Updates the retained map.', 'figure'],
+  ['Figure 4 Updates of the retained map.', 'figure'],
+  ['Figure 4: Rates for the retained paths.', 'figure'],
+  ['Figure 4 Rates of retained paths.', 'figure']
+])('keeps finite figure references distinct from noun titles: %s', (text, expected) => {
+  expect(captionKind(text)).toBe(expected)
 })

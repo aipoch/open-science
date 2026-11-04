@@ -48,6 +48,63 @@ const input = (): ReturnType<typeof JSON.parse> => {
     ]
   }
 }
+
+function compactNativeStack(twoRows = false): ReturnType<typeof JSON.parse> {
+  const captions = [
+    { page: 1, lines: ['Table 1. Complete upper records.'], rect: [50, 30, 550, 60] },
+    { page: 1, lines: ['Table 2. Complete lower records.'], rect: [50, 250, 550, 280] }
+  ]
+  const line = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): ReturnType<typeof JSON.parse> => ({
+    text,
+    x,
+    y,
+    width,
+    height: 8,
+    fontSize: 8
+  })
+  const lines = captions.map((caption) =>
+    line(caption.lines[0], caption.rect[0], caption.rect[1], 500)
+  )
+  lines.push(line('Group Value Count', 85, 78, 430))
+  for (let index = 0; index < 3; index++)
+    lines.push(line(`Upper ${index + 1} 2.00 3.00`, 85, 100 + index * 50, 430))
+  lines.push(line('Group Value Count Rate', 135, 300, 330))
+  for (let index = 0; index < (twoRows ? 2 : 3); index++)
+    lines.push(line(`Lower ${index + 1} 2.00 3.00`, 135, 320 + index * 12, 330))
+  return {
+    page: { pageNumber: 1, width: 600, height: 800, lines, graphicsBounds: [] },
+    tables: [{ rect: [80, 78, 520, 208] }, { rect: [130, 300, 470, twoRows ? 340 : 352] }],
+    captions,
+    rules: [
+      [80, 70, 520, 70],
+      [80, 92, 520, 92],
+      [80, 215, 520, 215],
+      [130, 292, 470, 292],
+      [130, 315, 470, 315],
+      [130, twoRows ? 346 : 366, 470, twoRows ? 346 : 366]
+    ]
+  }
+}
+
+it.each([false, true])(
+  'keeps an independently owned upper caption beside a complete compact native table (%s)',
+  (twoRows) => {
+    const f = compactNativeStack(twoRows),
+      before = structuredClone(f)
+    expect(
+      associateTableCaptions(f.page, f.tables, f.captions, f.rules).map(
+        (result: ReturnType<typeof JSON.parse>) => result.caption
+      )
+    ).toEqual(f.captions)
+    expect(f).toEqual(before)
+  }
+)
+
 it('associates both complete ruled tables with unique upper captions despite a nearby prose reference', () => {
   const f = input()
   expect(

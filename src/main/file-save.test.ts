@@ -739,9 +739,11 @@ describe('file save IPC handlers', () => {
       canceled: false,
       filePath: join(downloadsPath, 'proxy.log')
     })
+    const publish = vi.fn(publishDirectly)
     registerFileSaveHandlers({
       resolveManagedFilePath,
-      openManagedFile
+      openManagedFile,
+      publishUserFile: publish
     })
 
     const result = await handlers.get('file:save-managed')!(
@@ -757,6 +759,11 @@ describe('file save IPC handlers', () => {
       path: '/Users/example/logs/proxy.log'
     })
     expect(copyTo).toHaveBeenCalledWith(join(downloadsPath, 'proxy.log'))
+    expect(publish).toHaveBeenCalledWith(
+      join(downloadsPath, 'proxy.log'),
+      expect.any(Function),
+      expect.objectContaining({ userSelectedDestination: true })
+    )
     expect(close).toHaveBeenCalledTimes(1)
     expect(result).toEqual({
       saved: true,

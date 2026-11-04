@@ -169,6 +169,14 @@ const harness = async (
   const session = await runtime.createSession({ cwd: root, specialistId: profile.id })
   const workflows = createAcpHandlerWorkflows(runtime, {} as never)
   const send = async (): Promise<void> => {
+    // Interactive sends restore completed sessions before dispatching the next prompt.
+    if (!runtime.getState().sessionIds.includes(session.sessionId)) {
+      await runtime.resumeSession({
+        sessionId: session.sessionId,
+        cwd: root,
+        specialistId: profile.id
+      })
+    }
     await workflows.sendPrompt({ sessionId: session.sessionId, text: 'Continue the analysis' })
     await vi.waitFor(() => expect(runtime.getState().promptInFlight).toBe(false))
   }
@@ -384,9 +392,14 @@ it.each(
 )
 
 it.each(['delete', 'disable'] as const)(
-  'records the send result after Specialist %s',
+  'rejects a warm send and subsequent cold resume after Specialist %s',
   async (operation) => {
     const h = await harness()
+    await h.runtime.resumeSession({
+      sessionId: h.session.sessionId,
+      cwd: h.cwd,
+      specialistId: h.profile.id
+    })
     if (operation === 'delete') await h.service.delete(h.profile.id)
     else await h.service.setEnabled(h.profile.id, false)
     await expect(h.send()).rejects.toMatchObject({
@@ -397,15 +410,14 @@ it.each(['delete', 'disable'] as const)(
           : 'The bound specialist is disabled.'
     })
     expect(h.prompts).toHaveLength(1)
-    // Match the reported sequence: resume an already attached session, then send again.
-    await h.runtime.resumeSession({ sessionId: h.session.sessionId, cwd: h.cwd })
-    await expect(h.send()).rejects.toMatchObject({
-      name: 'DelegateMessagePreAcceptanceError',
-      message:
-        operation === 'delete'
-          ? 'The bound specialist is unavailable.'
-          : 'The bound specialist is disabled.'
-    })
+    // The failed attempt releases the connection; restoring an unavailable binding fails closed.
+    await expect(
+      h.runtime.resumeSession({
+        sessionId: h.session.sessionId,
+        cwd: h.cwd,
+        specialistId: h.profile.id
+      })
+    ).rejects.toThrow('The bound specialist is unavailable.')
     expect(h.prompts).toHaveLength(1)
   }
 )

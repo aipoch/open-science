@@ -1,4 +1,5 @@
 import type { CollectorRequest, CollectorResult } from '../literature-collector'
+import type { LiteratureSnapshotRequest, LiteratureSnapshotResult } from '../literature-snapshot'
 import type {
   LiteraturePublicationCheckRequest,
   LiteraturePublicationCheckResult,
@@ -85,6 +86,9 @@ export const contracts = {
     'literature',
     ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'literature.studySnapshot': callable<
+    (request: LiteratureSnapshotRequest) => Promise<LiteratureSnapshotResult>
+  >()('literature', ['literature:study-snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.getCandidateStates': callable<
     (request: LiteratureCandidateStatesRequest) => Promise<LiteratureCandidateStatesResult>
   >()('literature', [

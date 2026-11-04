@@ -4,10 +4,11 @@ import { PassThrough } from 'node:stream'
 import { afterEach, expect, it, vi } from 'vitest'
 import { startOpenCodeService } from './opencode-service'
 import type { ResolvedAgentBackend } from '../agent-framework'
+import type { ProcessTreeKillResult } from '../process-tree'
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
-  terminate: vi.fn(async () => ({ reaped: true }))
+  terminate: vi.fn<() => Promise<ProcessTreeKillResult>>(async () => ({ reaped: true }))
 }))
 vi.mock('../agent-framework/opencode', () => ({ spawnOpenCodeProcess: mocks.spawn }))
 vi.mock('../process-tree', () => ({
@@ -76,6 +77,27 @@ it.each(['exit', 'error', 'timeout', 'remote-address'] as const)(
   }
 )
 
+it.each(['degraded', 'rejected'] as const)(
+  'retries a %s release and caches only confirmed cleanup',
+  async (mode) => {
+    const child = createChild()
+    mocks.spawn.mockReturnValue(child)
+    if (mode === 'rejected') mocks.terminate.mockRejectedValueOnce(new Error('still alive'))
+    else mocks.terminate.mockResolvedValueOnce({ reaped: false })
+    const pending = startOpenCodeService(backend, vi.fn())
+    await Promise.resolve()
+    child.stdout.write('{"url":"http://127.0.0.1:42876"}\n')
+    const service = await pending
+    if (mode === 'rejected') await expect(service.release()).rejects.toThrow('still alive')
+    else await expect(service.release()).resolves.toEqual({ reaped: false })
+    expect(child.stdin.writableEnded).toBe(false)
+    await expect(service.release()).resolves.toEqual({ reaped: true })
+    expect(child.stdin.writableEnded).toBe(true)
+    await service.release()
+    expect(mocks.terminate).toHaveBeenCalledTimes(2)
+  }
+)
+
 it('reports an unexpected service exit after readiness', async () => {
   const child = createChild()
   mocks.spawn.mockReturnValue(child)
@@ -116,6 +138,6 @@ it.each([true, false])(
       await release
     }
     expect(await release).toEqual({ reaped })
-    expect(child.stdin.writableEnded).toBe(true)
+    expect(child.stdin.writableEnded).toBe(reaped)
   }
 )

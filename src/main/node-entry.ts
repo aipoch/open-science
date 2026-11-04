@@ -3,6 +3,7 @@ import {
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
+import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
@@ -170,6 +171,7 @@ async function main(): Promise<void> {
   let stopRequested = false
   let profilePath: string | undefined
   let credentialFailure: CredentialIdentityError | undefined
+  let startupExitCode: number | undefined
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
     finishStartup = resolve
@@ -244,7 +246,7 @@ async function main(): Promise<void> {
         await writeRuntimeExit(configRoot, {
           generation,
           pid: process.pid,
-          outcome: failed || credentialFailure ? 'failed' : 'clean'
+          outcome: failed || credentialFailure || startupExitCode ? 'failed' : 'clean'
         })
       } catch {
         failed = true
@@ -270,8 +272,9 @@ async function main(): Promise<void> {
           }
         }
       }
-      process.exitCode = failed || credentialFailure ? 1 : 0
-      if (restartRequested && !desktopWillRestart && !failed) {
+      const exitCode = failed || credentialFailure ? 1 : (startupExitCode ?? 0)
+      process.exitCode = exitCode
+      if (restartRequested && !desktopWillRestart && exitCode === 0) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
@@ -285,7 +288,7 @@ async function main(): Promise<void> {
         child.unref()
       }
       clearTimeout(deadline)
-      process.exit(failed || credentialFailure ? 1 : 0)
+      process.exit(exitCode)
     }))
   }
   const lifetime = await createLocalServiceLifetime({
@@ -529,6 +532,7 @@ async function main(): Promise<void> {
         commandNames: () => [
           'desktop:update-gate',
           'desktop:update-inspect',
+          'desktop:update-owned-processes',
           'desktop:update-abort',
           'desktop:open-session',
           'locale:snapshot',
@@ -548,6 +552,7 @@ async function main(): Promise<void> {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
           if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
+          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z
@@ -797,6 +802,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const cancelled = stopRequested
     if (credentialFailure || !cancelled) {
+      startupExitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1
       startupReporter.failed(credentialFailure ?? error)
       // stop() exits the process; record the failure before it flushes logs and releases resources.
       reportStartupError(credentialFailure ?? error)
