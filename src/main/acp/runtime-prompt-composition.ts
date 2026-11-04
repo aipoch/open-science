@@ -191,6 +191,8 @@ const composeAcpRuntimePromptOwners = (
   }
 
   const promptPreparation = new AcpPromptPreparationOwner({
+    shellRuntimeBindingFor: (sessionId) =>
+      base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,

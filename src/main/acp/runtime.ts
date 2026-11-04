@@ -1540,6 +1540,7 @@ class AcpRuntime {
         ? {
             codebuddy: {
               root: codeBuddySkillRuntimeRoot(this.backendGeneration.current.session.options),
+              shellRuntime: this.sessionCapabilities.shellRuntimeBindingFor(request.sessionId),
               selectorAvailable: this.connectionResources.bridgeSkillsAvailable,
               selectSkills: async (text, catalog, signal, observeUsage) =>
                 (await this.connectionResources.selectBridgeSkills(

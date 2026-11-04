@@ -80,7 +80,7 @@ Open the [official download page](https://aipoch.com/open-science/download) and 
 | --------------------------------------- | ------------------------------------------ |
 | macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64    |
 | macOS 12+ — Intel                       | The macOS DMG for Intel / x64              |
-| Windows x64                             | The Windows x64 installer (code-signed)    |
+| Windows 10/11 x64                       | The Windows x64 installer (code-signed)    |
 | Linux x64                               | The Linux x64 AppImage or Debian package   |
 | Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
@@ -91,6 +91,8 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 ```bash
 brew install --cask open-science
 ```
+
+The [release assets](https://github.com/aipoch/open-science/releases/latest) include standalone CLI archives for macOS, Linux, and Windows. They bundle Node.js, so you can run the CLI without installing Node.js, npm, or Homebrew.
 
 For the standalone CLI on macOS or Linux, use the separate [AIPOCH tap](https://github.com/aipoch/homebrew-tap):
 
@@ -117,6 +119,8 @@ Windows reinstalls preserve research data. For a full cleanup, see the [data res
 Follow the setup wizard: **Environment → Data location → Agent runtime → Model provider → Notebook runtime**.
 
 Complete the required environment and agent-runtime checks and test your model connection. Python/R Notebook setup is optional; Notebook and data-location settings can be changed later.
+
+After setup, open **System** settings to change appearance or notifications. In **General**, you can find diagnostics, command-line tools, and the guide to manual installation and updates.
 
 <table>
   <tr>
@@ -305,13 +309,17 @@ AIPOCH Open-Science combines project management, multi-model agent execution, Py
 | **Scientific files and previews**             | Upload individual files up to **10 GiB**, organize project files, and preview scientific data, PDFs, Office documents, images, code, and molecular structures. This upload limit does not guarantee that a model can read an entire file: model context, attachment parsing, and previews have separate limits. Large files usually need chunked reading or analysis with code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **Artifacts and provenance**                  | Keep immutable artifact versions with available producer code, inputs, execution history, environment information, and review evidence. Import artifacts from authorized folders; AIPOCH Open-Science copies each imported file into managed artifact storage. In the desktop app, replay eligible versions with a complete recipe, required inputs, and a usable runtime, then compare outputs and export verification records. Missing evidence may prevent verification, and replay checks do not establish scientific validity.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
+When querying the eQTL Catalogue by genomic coordinates, use the GRCh38 assembly. The connector checks the assembly before looking up matches.
+
 Import references, tags, collections, and source links from Zotero 10 or later running on the same computer, with the option to copy local PDF attachments. This is a one-way import into Open-Science and does not modify Zotero.
 
-Add references one at a time using a DOI, DOI link, or arXiv abstract or PDF link, then review and edit the retrieved metadata before saving. Full-text PDFs can be added separately.
+Add a reference using a DOI, arXiv ID, PMID, PMCID, or supported article link, or paste up to 100 references with one per line. Review and edit a single reference before saving, or select which references to import in a batch. Full-text PDFs can be added separately.
 
 Persistent PDF annotations and document notes are available. With a screening model configured, smart collections evaluate references against your inclusion/exclusion criteria; AI decisions remain separate from manual decisions and support human review.
 
 In reading mode, agents can list, locate, and create notes and marks on linked PDFs. PDF annotations are tied to the annotated file version and do not sync across computers.
+
+Open a paper's detail view to generate an AI study snapshot with your configured main model. The card identifies its source (full text or abstract) and summarizes the research question, study population, methods, main findings, and limitations.
 
 Optional OCR recognizes scanned PDF pages after the component and required language packs have been downloaded. Nine language packs are available: English, Simplified Chinese, Traditional Chinese, German, Spanish, French, Japanese, Korean, and Russian. Page-level coverage indicators show which pages still lack text.
 
