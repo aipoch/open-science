@@ -307,7 +307,7 @@ AIPOCH Open-Science combines project management, multi-model agent execution, Py
 
 Import references, tags, collections, and source links from Zotero 10 or later running on the same computer, with the option to copy local PDF attachments. This is a one-way import into Open-Science and does not modify Zotero.
 
-Add references one at a time using a DOI, DOI link, or arXiv abstract or PDF link, then review and edit the retrieved metadata before saving. Full-text PDFs can be added separately.
+Add a reference using a DOI, arXiv ID, PMID, PMCID, or supported article link, or paste up to 100 references with one per line. Review and edit a single reference before saving, or select which references to import in a batch. Full-text PDFs can be added separately.
 
 Persistent PDF annotations and document notes are available. With a screening model configured, smart collections evaluate references against your inclusion/exclusion criteria; AI decisions remain separate from manual decisions and support human review.
 
