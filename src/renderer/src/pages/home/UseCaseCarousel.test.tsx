@@ -262,6 +262,23 @@ it('retains a download on its card while appending and cancels by operation iden
   expect(packageOperation).toHaveBeenCalledWith({ action: 'cancel', operationId: 'download' })
 })
 
+it('separates the fixed card download status from the cover with a subtle top edge', async () => {
+  usePackageOperationStore.getState().receive({
+    id: 'download',
+    kind: 'import',
+    state: 'running',
+    progress: { phase: 'copying' },
+    useCaseDownload: { slug: 'case-1', completedBytes: 35, totalBytes: 100 }
+  })
+  await render()
+
+  const progress = within(container).getByRole('progressbar')
+  const status = progress.parentElement?.parentElement
+  expect(status?.getAttribute('data-case-download-status')).toBe('true')
+  expect(status?.className).toContain('border-t')
+  expect(status?.className).toContain('shadow')
+})
+
 it('reopens the owning import after download and keeps waiting separate from active work', async () => {
   const store = usePackageOperationStore.getState()
   store.receive({

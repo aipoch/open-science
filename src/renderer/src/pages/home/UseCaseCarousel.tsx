@@ -375,7 +375,10 @@ export const UseCaseCarousel = ({
     return (
       <>
         {downloading && !inline && (
-          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 bg-background/95 pr-3 text-xs sm:pr-4">
+          <div
+            data-case-download-status="true"
+            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 border-t border-border bg-background/95 pr-3 text-xs shadow-sm sm:pr-4"
+          >
             <div className="relative flex h-[35px] min-w-0 flex-1 items-center overflow-hidden px-3 sm:px-4">
               <div
                 role="progressbar"
