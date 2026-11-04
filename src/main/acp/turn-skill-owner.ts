@@ -77,7 +77,6 @@ type LoadedCodeBuddySkill = Readonly<{
   resourceRoot: string
   document: string
 }>
-const CODEBUDDY_SKILL_RESOURCE_ROOT = '${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills'
 const codeBuddySkillRuntimeRoot = (
   options: Readonly<Record<string, unknown>> | undefined
 ): string | undefined => {
@@ -345,7 +344,7 @@ class AcpTurnSkillOwner {
                   'Follow these documents before any Notebook or Connector call. Do not call `mcp__skills__load_skill`; the documents are already loaded.',
                   'Do not use Notebook `host.skills` to load, read, list, or discover routed Skills.',
                   'Use only the `host.mcp` Connector names and methods documented below; do not guess Connector names or methods.',
-                  'Resolve every relative reference, script, or asset path in a loaded document against its `resource-root`. Keep the environment-backed root expression literal in local tool calls; do not print or resolve `CODEBUDDY_CONFIG_DIR`.',
+                  'Resolve every relative reference, script, or asset path in a loaded document against its `resource-root`.',
                   ...loadedCodeBuddySkills.flatMap(({ name, resourceRoot, document }) => [
                     `<open_science_loaded_skill name="${name}" resource-root="${resourceRoot}">`,
                     document,
@@ -392,10 +391,11 @@ class AcpTurnSkillOwner {
     try {
       return await Promise.all(
         names.map(async (name) => {
-          const resourceRoot = `${CODEBUDDY_SKILL_RESOURCE_ROOT}/${name}`
+          // Notebook tools do not inherit CodeBuddy's provider environment.
+          const resourceRoot = join(root, '.claude', 'skills', name)
           return {
             name,
-            path: join(root, '.claude', 'skills', name, 'SKILL.md'),
+            path: join(resourceRoot, 'SKILL.md'),
             resourceRoot,
             document: (await loadSkillDocumentContent({ root, allowedNames }, name)).replace(
               /\$\{CLAUDE_SKILL_DIR\}/g,

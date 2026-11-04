@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import { codeBuddyFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import { AcpTurnSkillOwner, followUpPromptText } from './turn-skill-owner'
+import { runShellCommand } from '../notebook/shell-process'
 
 const reloadTestScope = {
   kind: 'specialist' as const,
@@ -810,13 +811,12 @@ describe('AcpTurnSkillOwner', () => {
     expect(prepared.skillScopeGuidance).toContain('already loaded by Open-Science')
     expect(prepared.skillScopeGuidance).toContain('PUBMED_ROUTE_SENTINEL')
     expect(prepared.skillScopeGuidance).toContain(
-      'PACKAGE_DIR=${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills/mcp-pubmed'
+      `PACKAGE_DIR=${join(root, '.claude', 'skills', 'mcp-pubmed')}`
     )
     expect(prepared.skillScopeGuidance).toContain(
       'Resolve every relative reference, script, or asset path'
     )
     expect(prepared.skillScopeGuidance).not.toContain('${CLAUDE_SKILL_DIR}')
-    expect(prepared.skillScopeGuidance).not.toContain(root)
     expect(prepared.skillScopeGuidance).not.toContain(
       'Before any Notebook or Connector call, call `mcp__skills__load_skill`'
     )
@@ -880,6 +880,44 @@ describe('AcpTurnSkillOwner', () => {
 
     expect(prepared.skillActivityInputs).toEqual([{ name: 'paper-review', path: projectedPath }])
     expect(prepared.skillScopeGuidance).toContain('PROJECTED_SKILL_SENTINEL')
+  })
+
+  it('can read a routed CodeBuddy Skill resource through the Notebook shell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codebuddy-resource-'))
+    onTestFinished(() => rm(root, { recursive: true, force: true }))
+    const skillDir = join(root, '.claude', 'skills', 'paper-review')
+    await mkdir(join(skillDir, 'references'), { recursive: true })
+    await writeFile(join(skillDir, 'references', 'probe.txt'), 'SKILL_RESOURCE_SENTINEL')
+    await writeFile(
+      join(skillDir, 'SKILL.md'),
+      '---\nname: paper-review\ndescription: Review papers.\n---\nRead references/probe.txt.'
+    )
+    const owner = new AcpTurnSkillOwner({
+      skills: { needForceLoad: async () => [], namesForIds: async () => ['paper-review'] },
+      requestSkillsReload: vi.fn()
+    })
+    const handle = await owner.authorize({ selectedSkillIds: ['paper-review'] })
+    const prepared = await handle.prepareProvider({
+      frameworkId: 'codebuddy',
+      selectionText: 'review papers',
+      promptText: 'review papers',
+      codebuddy: { root, selectorAvailable: false, selectSkills: async () => [] }
+    })
+    const resourceRoot = prepared.skillScopeGuidance!.match(/resource-root="([^"]+)"/)![1]
+    const resource = `${resourceRoot}/references/probe.txt`
+    const result = await runShellCommand({
+      command:
+        process.platform === 'win32' ? `Get-Content -Raw "${resource}"` : `cat "${resource}"`,
+      cwd: root,
+      handoffDir: root,
+      runtimeRoot: join(root, 'runtime'),
+      sessionId: 'codebuddy-resource',
+      projectId: 'codebuddy-resource',
+      timeoutMs: 5_000
+    })
+    expect(result.stderr).toBe('')
+    expect(result.stdout.trim()).toBe('SKILL_RESOURCE_SENTINEL')
+    expect(result.exitCode).toBe(0)
   })
 
   it('stops CodeBuddy before dispatch when its projected Skill document cannot be loaded', async () => {
