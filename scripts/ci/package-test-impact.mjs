@@ -283,9 +283,9 @@ export function packageTestPlanFromRevisions(
     const paths = git('diff', '--name-only', '--no-renames', '-z', mergeBase, head)
       .split('\0')
       .filter(Boolean)
-    // Compare the merge checkout against its base, not the PR head: main's intervening
-    // changes are already baseline, while merge-resolution edits still need coverage.
-    const checkoutBase = git('merge-base', base, 'HEAD').trim()
+    // PR preflight's base is the fork point; trustedBase retains the target branch tip.
+    // Exclude main's intervening changes while retaining merge-resolution edits.
+    const checkoutBase = git('merge-base', trustedBase, 'HEAD').trim()
     paths.push(
       ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD')
         .split('\0')

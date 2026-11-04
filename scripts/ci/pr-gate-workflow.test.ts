@@ -115,13 +115,14 @@ describe('PR Gate workflow', () => {
         write('packages/compute/src/old.ts')
         git('add', '.')
         git('commit', '--quiet', '-m', 'trusted package baseline')
-        let base = git('rev-parse', 'HEAD')
+        const base = git('rev-parse', 'HEAD')
         const run = (
           head: string,
           event = 'pull_request',
           dir = trustedDir,
           trustedBase = base,
-          bundles = ['unit']
+          bundles = ['unit'],
+          comparisonBase = base
         ): string[] => {
           const output = join(cwd, 'output')
           writeFileSync(output, '')
@@ -132,7 +133,7 @@ describe('PR Gate workflow', () => {
               ...process.env,
               EVENT_NAME: event,
               EXECUTION_PLAN: JSON.stringify({ bundles }),
-              BASE_SHA: base,
+              BASE_SHA: comparisonBase,
               HEAD_SHA: head,
               TRUSTED_BASE_SHA: trustedBase,
               TRUSTED_CLASSIFIER_DIR: dir,
@@ -204,15 +205,18 @@ describe('PR Gate workflow', () => {
         write('packages/compute/src/main-only.ts')
         git('add', '.github', 'packages')
         git('commit', '--quiet', '-m', 'advance main')
-        base = git('rev-parse', 'HEAD')
+        const targetTip = git('rev-parse', 'HEAD')
         git('merge', '--no-ff', docsHead, '-m', 'synthetic docs merge')
-        for (const event of ['pull_request', 'merge_group'])
-          expect(run(docsHead, event, trustedDir, base, ['docs'])).toEqual(host)
+        // PR preflight passes the fork point as base and the target tip as trusted-base.
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(host)
+        expect(
+          run(git('rev-parse', 'HEAD'), 'merge_group', trustedDir, targetTip, ['docs'], targetTip)
+        ).toEqual(host)
         // Changes introduced by the merge itself must still select package coverage.
         write('packages/compute/src/merge-only.ts')
         git('add', 'packages')
         git('commit', '--amend', '--no-edit')
-        expect(run(docsHead, 'pull_request', trustedDir, base, ['docs'])).toEqual(both)
+        expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(both)
       } finally {
         rmSync(cwd, { recursive: true, force: true })
       }
