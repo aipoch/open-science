@@ -1048,6 +1048,8 @@ describe('provider registry', () => {
       'glm-5.3',
       'glm-5.3-flash',
       'kimi-k3',
+      'deepseek/deepseek-flash',
+      'deepseek-v4.1-flash',
       'deepseek-v4-flash',
       'deepseek-v4-pro',
       'minimax-m3'
@@ -1066,6 +1068,20 @@ describe('provider registry', () => {
       'responses'
     ])
     expect(isVendorModelMultimodal('tencent', 'hy4')).toBe(true)
+    for (const model of ['glm-5.3-flash', 'deepseek/deepseek-flash', 'deepseek-v4.1-flash']) {
+      expect(getVendorModelContextWindow('tencent', model)).toBe(1_000_000)
+      expect(isVendorModelResponsesSupported('tencent', model)).toBe(true)
+      expect(isVendorModelMultimodal('tencent', model)).toBe(true)
+    }
+    for (const model of [
+      'glm-5.3',
+      'deepseek-v4-flash',
+      'deepseek-v4-pro',
+      'kimi-k3',
+      'minimax-m3'
+    ]) {
+      expect(isVendorModelMultimodal('tencent', model)).toBe(false)
+    }
     expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
     expect(getVendorModelReasoningCapability('tencent', 'hy4-preview')).toEqual({
       supported: false
