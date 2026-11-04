@@ -63,7 +63,11 @@ const createLogsCommandOwner = (): LogsCommandOwner => {
     }
   }
   return {
-    getStatus: async () => ({ ...(await getLogFileStatus()), startupFiles: await startupFiles() }),
+    getStatus: async () => ({
+      ...(await getLogFileStatus()),
+      // Optional startup history must not hide an otherwise usable active log sink.
+      startupFiles: await startupFiles().catch(() => [])
+    }),
     openFile: async (name): Promise<OpenLogFileResult> => {
       const status = await selectedStatus(name)
 

@@ -93,6 +93,23 @@ describe('logs IPC handlers', () => {
     }
   })
 
+  it('keeps main log status and actions available when the startup log directory cannot be read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'settings-logs-unavailable-'))
+    try {
+      await writeFile(join(root, 'logs'), 'not a directory')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = createLogsCommandOwner()
+      await expect(owner.getStatus()).resolves.toEqual({ ...logStatus.value, startupFiles: [] })
+      await expect(owner.openFile()).resolves.toEqual({ opened: true })
+      await expect(owner.revealInFolder()).resolves.toEqual({ revealed: true })
+      expect(openPath).toHaveBeenCalledWith(logStatus.value.path)
+      expect(showItemInFolder).toHaveBeenCalledWith(logStatus.value.path)
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('delegates every channel to one injected command owner', async () => {
     const owner: LogsCommandOwner = {
       getStatus: vi.fn(async () => ({

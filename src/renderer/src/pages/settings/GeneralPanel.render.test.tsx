@@ -453,6 +453,24 @@ describe('GeneralPanel close behavior', () => {
 })
 
 describe('GeneralPanel diagnostics', () => {
+  it('omits the main log filename so JSON argument lists stay empty', async () => {
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+    await act(async () => findButton(/^open$/i)!.click())
+    await flush()
+    await act(async () => findButton(/^reveal$/i)!.click())
+    await flush()
+    // Web RPC serializes positional arguments: [undefined] becomes [null], not [].
+    expect(
+      JSON.parse(
+        JSON.stringify({
+          open: vi.mocked(window.api.logs.openFile).mock.calls,
+          reveal: vi.mocked(window.api.logs.revealInFolder).mock.calls
+        })
+      )
+    ).toEqual({ open: [[]], reveal: [[]] })
+  })
+
   it('keeps the log file path focusable for keyboard scrolling', async () => {
     await act(async () => root.render(<GeneralPanel />))
     await flush()

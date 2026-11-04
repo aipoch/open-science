@@ -181,7 +181,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.openFile(selectedName)
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.openFile()
+          : await window.api.logs.openFile(selectedName)
 
       if (!result.opened) {
         setMessage({ action: 'open-log', detail: result.error })
@@ -198,7 +201,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.revealInFolder(selectedName)
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.revealInFolder()
+          : await window.api.logs.revealInFolder(selectedName)
 
       if (!result.revealed) {
         setMessage({ action: 'reveal-log', detail: result.error })
