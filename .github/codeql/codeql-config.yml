@@ -1,0 +1,13 @@
+name: Open-Science security analysis
+
+# Keep production code, runtime resources, fixtures and the default query suite.
+# Test-only inputs made the JS overlay base exceed the cache upload size limit.
+paths-ignore:
+  - 'src/**/*.test.ts'
+  - 'src/**/*.test.tsx'
+  - 'packages/**/*.test.ts'
+  - 'scripts/**/*.test.ts'
+  - 'test/**/*.test.ts'
+  - 'cli/**/*.test.ts'
+  - 'build/**/*.test.ts'
+  - 'e2e/**/*.spec.ts'
