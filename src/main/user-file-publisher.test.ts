@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { publishUserFile } from './user-file-publisher'
 
+const originalPlatform = process.platform
 let root = ''
 
 beforeEach(async () => {
@@ -24,6 +25,7 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  Object.defineProperty(process, 'platform', { value: originalPlatform })
   if (root) await rm(root, { recursive: true, force: true })
 })
 
@@ -91,6 +93,68 @@ describe('publishUserFile', () => {
 
     expect(events).toEqual(['write', 'sync-file', 'sync-directory'])
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
+  })
+
+  it.each([
+    ['darwin', 'EPERM', 'open', true, true],
+    ['darwin', 'EACCES', 'open', true, true],
+    ['linux', 'EPERM', 'open', true, false],
+    ['win32', 'EACCES', 'open', true, false],
+    ['darwin', 'EIO', 'open', true, false],
+    ['darwin', 'EPERM', 'fsync', true, false],
+    ['darwin', 'EPERM', 'close', true, false],
+    ['darwin', 'EPERM', 'open', false, false]
+  ] as const)(
+    'handles %s directory %s from %s (user selected: %s)',
+    async (platform, code, syscall, userSelectedDestination, succeeds) => {
+      Object.defineProperty(process, 'platform', { value: platform })
+      const destination = join(root, 'report.txt')
+      const error = Object.assign(new Error('directory barrier failed'), {
+        code,
+        syscall,
+        path: root
+      })
+      const syncFile = vi.fn().mockResolvedValue(undefined)
+      const result = publishUserFile(destination, (path) => writeFile(path, 'complete bytes'), {
+        userSelectedDestination,
+        durability: {
+          syncFile,
+          syncDirectory: async () => {
+            await expect(readFile(destination, 'utf8')).resolves.toBe('complete bytes')
+            throw error
+          }
+        }
+      })
+      if (succeeds) await expect(result).resolves.toBeUndefined()
+      else await expect(result).rejects.toBe(error)
+      expect(syncFile).toHaveBeenCalledOnce()
+      await expect(readdir(root)).resolves.toEqual(['report.txt'])
+    }
+  )
+
+  it('preserves the destination when macOS denies the file durability barrier', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const destination = join(root, 'report.txt')
+    await writeFile(destination, 'old bytes')
+    const error = Object.assign(new Error('file open denied'), {
+      code: 'EPERM',
+      syscall: 'open',
+      path: root
+    })
+    const syncDirectory = vi.fn()
+    await expect(
+      publishUserFile(destination, (path) => writeFile(path, 'new bytes'), {
+        userSelectedDestination: true,
+        durability: {
+          syncFile: async () => {
+            throw error
+          },
+          syncDirectory
+        }
+      })
+    ).rejects.toBe(error)
+    expect(syncDirectory).not.toHaveBeenCalled()
+    await expect(readFile(destination, 'utf8')).resolves.toBe('old bytes')
   })
 
   it('does not replace an existing destination during exclusive publication', async () => {
