@@ -1,4 +1,5 @@
 import { createResearchVideoPresentationOwner } from '../research-video/presentation'
+import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
 import { createResearchFilmAuthor, researchFilmResources } from '@aipoch/research-film'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -63,6 +64,7 @@ export async function composeNotebookBridge({
   wslSetup,
   settingsService,
   researchNarrationModels,
+  researchFilmLifecycle,
   managedFileVersionService,
   runtimeRef,
   requestSkillCatalogRefresh,
@@ -95,6 +97,7 @@ export async function composeNotebookBridge({
   wslSetupSessions: WslSetupSessionOwner
   wslSetup: WslSetupOwner
   researchNarrationModels: LocalModelOwner
+  researchFilmLifecycle: ResearchFilmLifecycle
   settingsService: SettingsService
   managedFileVersionService: ManagedFileVersionService
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
@@ -221,6 +224,7 @@ export async function composeNotebookBridge({
   const researchVideoEngineDirectory = researchFilmResources().stageDirectory
   const researchVideoGenerate = createResearchVideoGenerator({ temporaryRoot: tmpdir() })
   const researchVideo = createResearchVideoService({
+    lifecycle: researchFilmLifecycle,
     models: researchNarrationModels,
     dataRoot: resolveDataRoot,
     engineDirectory: researchVideoEngineDirectory,
@@ -273,6 +277,7 @@ export async function composeNotebookBridge({
     return response.text
   }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    lifecycle: researchFilmLifecycle,
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),

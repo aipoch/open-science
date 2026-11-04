@@ -19,6 +19,9 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 
 export type ResearchVideoTriggerState = { label: string; disabledReason?: string }
 
+const narrationReady = (model: LocalModelSnapshot | undefined): boolean =>
+  model?.availability === 'ready' && !model.updateAvailable
+
 export function ResearchVideoButton({
   renderTrigger,
   ...request
@@ -80,7 +83,7 @@ export function ResearchVideoButton({
           const snapshot = await window.api.localModels.getSnapshot('research-narration')
           if (!live.current) return
           setModel(snapshot)
-          if (snapshot.availability === 'ready') {
+          if (narrationReady(snapshot)) {
             startAfterInstall.current = false
             setInstalling(false)
             if (!next.generationBlock)
@@ -129,8 +132,7 @@ export function ResearchVideoButton({
       const snapshot = await window.api.localModels.getSnapshot('research-narration')
       if (!live.current) return
       setModel(snapshot)
-      if (snapshot.availability === 'ready')
-        setStatus(await window.api.researchVideo.start(request))
+      if (narrationReady(snapshot)) setStatus(await window.api.researchVideo.start(request))
     } catch (caught) {
       if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -339,7 +341,7 @@ export function ResearchVideoButton({
                   <ResearchVideoProgressLine progress={status.progress} />
                 )
               )}
-              {model && model.availability !== 'ready' && !installing && !busy && !blocked && (
+              {model && !narrationReady(model) && !installing && !busy && !blocked && (
                 <ErrorNotice
                   inline
                   level="info"

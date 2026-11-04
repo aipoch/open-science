@@ -221,6 +221,7 @@ export async function composeDocumentReading({
   }))
   const researchNarrationModels = createLocalModelOwner({
     namespace: 'research-narration',
+    requireRecommendedRevision: true,
     revisions: RESEARCH_NARRATION_MODELS
   })
   await modules.add({ researchNarrationModels }, ({ researchNarrationModels: owner }) => ({

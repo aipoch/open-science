@@ -384,3 +384,13 @@ it('checks selected branch content and allows completed explanations of unsucces
     )
   ).toBe('unavailable')
 })
+
+it('never returns a saved player once its session is unavailable', async () => {
+  const f = await fixture()
+  const owner = createResearchVideoPresentationOwner(f.options)
+  await owner.start(request)
+  await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  f.options.loadSession = async () => undefined
+  expect(await owner.status(request)).toEqual({ generationBlock: 'unavailable' })
+  await owner.close()
+})

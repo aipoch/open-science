@@ -18,6 +18,7 @@ type Dependencies = {
   dataRoot?: () => string
   acquireWriter?: () => () => void
   revisions?: readonly LocalModelRevision[]
+  requireRecommendedRevision?: boolean
   download?: typeof resilientDownload
 }
 class IncompatibleReceiptError extends Error {}
@@ -231,6 +232,8 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
       }
       if (closed) throw new Error('Local model owner is closed.')
       if (!installed) throw new Error(LOCAL_MODEL_NOT_INSTALLED)
+      if (dependencies.requireRecommendedRevision && installed.revision !== recommended.revision)
+        throw new Error('Install or update Research narration in Settings before generating.')
       use.revision = installed.revision
       return {
         revision: installed.revision,

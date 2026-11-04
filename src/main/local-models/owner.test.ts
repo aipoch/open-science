@@ -1024,3 +1024,25 @@ it('routes narration through its own verified model owner and blocks removal dur
   await narration.close()
   await tables.close()
 })
+
+it('requires the current narration revision without blocking removal or leaking a lease', async () => {
+  const root = await prepare()
+  await seed(root, 'v1')
+  const owner = createLocalModelOwner({
+    dataRoot: () => root,
+    revisions: [revision('v2'), revision('v1')],
+    requireRecommendedRevision: true,
+    download: installFile
+  })
+  expect(await owner.getSnapshot()).toMatchObject({ availability: 'ready', updateAvailable: true })
+  await expect(owner.acquireUse()).rejects.toThrow('Install or update Research narration')
+  expect((await owner.getSnapshot()).inUse).toBe(false)
+  await owner.install()
+  await waitForIdle(owner)
+  const lease = await owner.acquireUse()
+  expect(lease.revision).toBe('v2')
+  lease.release()
+  await owner.remove()
+  expect((await owner.getSnapshot()).availability).toBe('notInstalled')
+  await owner.close()
+})

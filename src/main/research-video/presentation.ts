@@ -17,6 +17,7 @@ import { generateResearchFilm, type ResearchFilmAuthor } from '@aipoch/research-
 import { createLogger } from '@aipoch/diagnostics/node'
 const log = createLogger('research-video')
 import { stageResearchVideoSessionImages } from './session-images'
+import type { ResearchFilmLifecycle } from './lifecycle'
 
 const receiptSchema = z
   .object({
@@ -46,6 +47,7 @@ export function createResearchVideoPresentationOwner(options: {
   writeAnimation?: ResearchFilmAuthor['writeAnimation']
   generate: ReturnType<typeof createResearchVideoGenerator>
   engineDirectory: string
+  lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
   let closed = false
   let active: { key: string; controller: AbortController; done: Promise<void> } | undefined
@@ -78,6 +80,7 @@ export function createResearchVideoPresentationOwner(options: {
       await options.loadSession(request.projectId, request.sessionId),
       request
     )
+    if (block === 'unavailable') return { generationBlock: block }
     if (block) state.generationBlock = block
     const base = await directory(key)
     if (!base) return state
@@ -158,6 +161,10 @@ export function createResearchVideoPresentationOwner(options: {
       job = join(base, id)
       await mkdir(job)
       await mkdir(join(job, 'files'))
+      await writeFile(join(job, 'session.json'), JSON.stringify(source), {
+        flag: 'wx',
+        mode: 0o600
+      })
       source = await stageResearchVideoSessionImages(
         source,
         session,
@@ -165,10 +172,7 @@ export function createResearchVideoPresentationOwner(options: {
         join(job, 'files'),
         signal
       )
-      await writeFile(join(job, 'session.json'), JSON.stringify(source), {
-        flag: 'wx',
-        mode: 0o600
-      })
+      await writeDurableJsonFile(join(job, 'session.json'), JSON.stringify(source))
       const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
       if (!model) throw new Error('Install the research narration model before generating.')
       const generated = await generateResearchFilm({
@@ -227,9 +231,18 @@ export function createResearchVideoPresentationOwner(options: {
         throw new Error('Another research explanation is being generated. Wait for it to finish.')
       }
       const controller = new AbortController()
-      const done = run(request, key, controller.signal).finally(() => {
-        active = undefined
-      })
+      const operation = options.lifecycle
+        ? options.lifecycle.run(request.projectId, request.sessionId, (signal) =>
+            run(request, key, AbortSignal.any([signal, controller.signal]))
+          )
+        : run(request, key, controller.signal)
+      const done = operation
+        .catch((error) => {
+          states.set(key, { error: error instanceof Error ? error.message : String(error) })
+        })
+        .finally(() => {
+          active = undefined
+        })
       active = { key, controller, done }
       return status(request)
     },

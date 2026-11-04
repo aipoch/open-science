@@ -17,6 +17,7 @@ import type {
   ArtifactWriteSourceScope
 } from '../../shared/artifact-provenance'
 import { resolveAllowedImportFilePath } from '../artifacts/storage-access'
+import type { ResearchFilmLifecycle } from './lifecycle'
 import { generateResearchVideoSchema } from '@aipoch/research-film'
 import { freezeResearchVideoSource } from '@aipoch/research-film'
 import type {
@@ -54,6 +55,7 @@ export function createResearchVideoService(options: {
   acquireWriter?: () => () => void
   dataRoot: () => string
   engineDirectory: string
+  lifecycle?: ResearchFilmLifecycle
   generate: ReturnType<typeof createResearchVideoGenerator>
   save: (
     request: SaveArtifactVersionRequest,
@@ -269,7 +271,12 @@ export function createResearchVideoService(options: {
           new Error('Another research video is being generated. Retry after it completes.')
         )
       const controller = new AbortController()
-      const done = run(input, scope, AbortSignal.any([signal, controller.signal])).finally(() => {
+      const operation = options.lifecycle
+        ? options.lifecycle.run(scope.projectId, scope.appSessionId, (deletionSignal) =>
+            run(input, scope, AbortSignal.any([signal, controller.signal, deletionSignal]))
+          )
+        : run(input, scope, AbortSignal.any([signal, controller.signal]))
+      const done = operation.finally(() => {
         active = undefined
       })
       active = { controller, done }

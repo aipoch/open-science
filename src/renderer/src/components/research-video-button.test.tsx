@@ -244,3 +244,22 @@ it('requires confirmation and permits cancellation before starting a replacement
   expect(document.querySelector('[role="alertdialog"]')).toBeNull()
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
 })
+
+it('offers installation for a transferred narration revision and waits for the current revision', async () => {
+  snapshot = { ...snapshot, installedRevision: 'other-platform', updateAvailable: true }
+  await click('Generate research film')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await click('Install and generate')
+  snapshot = { ...snapshot, availability: 'ready' }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  await click('Install and generate')
+  snapshot = {
+    ...snapshot,
+    availability: 'ready',
+    installedRevision: 'voice',
+    updateAvailable: false
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+})
