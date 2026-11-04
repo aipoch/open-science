@@ -2654,7 +2654,6 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setWriteErrorRetryable(true)
     sizeLimitTargets.current.clear()
     setPersistenceBlockedSessionIds([])
-    retryManifestWritePending.current = false
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {
@@ -2728,7 +2727,10 @@ const useSessionPersistence = (): SessionPersistenceState => {
     let unsubscribe: (() => void) | undefined
     let activeSaver: StoreSaver | undefined
     saverRef.current = undefined
+    const manifestWriteFailed = failedWriteTargets.current.has('manifest')
     failedWriteTargets.current.clear()
+    if (manifestWriteFailed || retryManifestWritePending.current)
+      failedWriteTargets.current.add('manifest')
     failedConflictRebaseFields.current.clear()
     sizeLimitTargets.current.clear()
 
@@ -3030,9 +3032,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
 
       retrySelection.current = undefined
       setIsLoading(false)
-      if (retryManifestWritePending.current) return
-      setIsReady(true)
+      // A successful authoritative read releases this transport epoch. A manifest write still
+      // owns its storage gate and explicit retry even though the backend connection recovered.
       if (recovering) completeDesktopSessionRecovery(recovery.epoch, true)
+      if (retryManifestWritePending.current) {
+        presentOutstandingWriteFailures()
+        return
+      }
+      setIsReady(true)
     }
 
     void startPersistence()
