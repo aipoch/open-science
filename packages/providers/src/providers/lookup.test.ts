@@ -1043,6 +1043,7 @@ describe('provider registry', () => {
     expect(resolveVendorModelsUrl('tencent')).toBeUndefined()
 
     expect(getOfficialVendor('tencent')?.models.map(({ id }) => id)).toEqual([
+      'hy4',
       'hy4-preview',
       'glm-5.3',
       'glm-5.3-flash',
@@ -1051,6 +1052,7 @@ describe('provider registry', () => {
       'deepseek-v4-pro',
       'minimax-m3'
     ])
+    expect(getVendorModelContextWindow('tencent', 'hy4')).toBe(1_000_000)
     expect(getVendorModelContextWindow('tencent', 'hy4-preview')).toBe(1_000_000)
     expect(getVendorModelContextWindow('tencent', 'kimi-k3')).toBe(1_048_576)
     expect(isVendorModelResponsesSupported('tencent', 'glm-5.3')).toBe(true)
@@ -1058,6 +1060,12 @@ describe('provider registry', () => {
     expect(isVendorModelResponsesSupported('tencent', 'deepseek-v4-pro')).toBe(true)
     expect(isVendorModelResponsesSupported('tencent', 'minimax-m3')).toBe(true)
     expect(isVendorModelResponsesSupported('tencent', 'hy4-preview')).toBe(true)
+    expect(resolveVendorModelApiEndpoints('tencent', 'hy4')).toEqual([
+      'messages',
+      'chat-completions',
+      'responses'
+    ])
+    expect(isVendorModelMultimodal('tencent', 'hy4')).toBe(true)
     expect(isVendorModelMultimodal('tencent', 'hy4-preview')).toBe(false)
     expect(getVendorModelReasoningCapability('tencent', 'hy4-preview')).toEqual({
       supported: false

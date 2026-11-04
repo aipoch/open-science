@@ -729,6 +729,7 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     models: [
+      { id: 'hy4', contextWindow: 1_000_000 },
       { id: 'hy4-preview', contextWindow: 1_000_000 },
       { id: 'glm-5.3', contextWindow: 1_000_000 },
       { id: 'glm-5.3-flash', contextWindow: 1_000_000 },
@@ -736,9 +737,10 @@ const definitions: readonly OfficialVendor[] = [
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 1_000_000 }
-    ]
-    // The curated language models above are text-only in TokenHub's model matrix, so no
-    // `multimodal` rule.
+    ],
+    // Hy4 adds image understanding; Hy4 preview remains text-only.
+    // https://cloud.tencent.com/document/product/1823/130051
+    multimodal: { multimodalModels: ['hy4'] }
   },
   {
     id: 'tencentcodingplan',
