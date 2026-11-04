@@ -9,12 +9,7 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
