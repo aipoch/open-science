@@ -27,7 +27,7 @@ const drawingCalls = [
   'matpoints(matrix(1:4, 2))',
   'contour(matrix(1:4, 2))',
   'image(matrix(1:4, 2))',
-  'rasterImage(grDevices::as.raster(matrix("red", 2, 2)), 0, 0, 1, 1)',
+  'rasterImage(structure(matrix(0L, 2, 2), class="nativeRaster"), 0, 0, 1, 1)',
   'stripchart(c(1, 2, 3))',
   'symbols(1, 1, circles=1)',
   'plot.new()',
@@ -46,6 +46,22 @@ it.each(drawingCalls)('recognizes drawing calls with and without graphics::: %s'
     })
   }
 })
+
+it.each(['', 'graphics::'])(
+  'retains uncertainty from raster conversion inside %srasterImage',
+  async (prefix) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        `${prefix}rasterImage(grDevices::as.raster(matrix("red", 2, 2)), 0, 0, 1, 1)`
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  }
+)
 
 it.each([
   'adjustcolor("red", alpha.f=0.5)',
