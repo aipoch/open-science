@@ -465,6 +465,11 @@ try {
       directoryIdentity: [directoryStat.dev, directoryStat.ino]
     })
   }
+  async function writeCropPng(relativePath, png) {
+    await writeFile(join(output, relativePath), png)
+    const id = /^thumbnails\/([A-Za-z0-9_-]+)\.png$/u.exec(relativePath)?.[1]
+    if (id) rememberFigureMetadataPng(id, png)
+  }
   function withdrawFigureMetadataPng(figure, omitted, current) {
     assert(current(), 'Native metadata changed before thumbnail withdrawal')
     const relativePath = figure.thumbnail,
@@ -893,8 +898,7 @@ try {
             rememberFigureMetadataPng(id, sealed)
             return relativePath
           }
-          await writeFile(join(output, relativePath), png)
-          rememberFigureMetadataPng(id, png)
+          await writeCropPng(relativePath, png)
           return relativePath
         }
         const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
@@ -5245,7 +5249,7 @@ try {
       console.log(JSON.stringify({ phase: 'assembled', page: pageNumber }))
     }
     for (const pageNumber of requestedPages) await assembleRequestedPage(pageNumber)
-    await flushDeferredPdfCrops(document, plainFigureRasterQueue, output)
+    await flushDeferredPdfCrops(document, plainFigureRasterQueue, writeCropPng)
     figures.splice(0, figures.length, ...deduplicateFigureCaptions(figures, auxiliaryCaptionOwners))
     for (const candidate of captions.filter((c) => captionKind(c.lines[0]) === 'figure')) {
       const currentGeometry = originalPages.get(candidate.page),

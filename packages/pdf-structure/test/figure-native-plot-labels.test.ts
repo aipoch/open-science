@@ -5391,6 +5391,7 @@ async function metadataThumbnailWithdrawalFixture(
   parentAlias = false
 ): Promise<ReturnType<typeof JSON.parse>> {
   const fs = await import('node:fs'),
+    { writeFile } = await import('node:fs/promises'),
     path = await import('node:path'),
     os = await import('node:os'),
     crypto = await import('node:crypto'),
@@ -5399,7 +5400,7 @@ async function metadataThumbnailWithdrawalFixture(
     ts = await import('typescript'),
     text = fs.readFileSync(resolve('resources/literature-pdf-extract.mjs'), 'utf8'),
     ast = ts.createSourceFile('extract.mjs', text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS),
-    names = new Set(['rememberFigureMetadataPng', 'withdrawFigureMetadataPng']),
+    names = new Set(['rememberFigureMetadataPng', 'writeCropPng', 'withdrawFigureMetadataPng']),
     functions: string[] = []
   const visit = (node: import('typescript').Node): void => {
     if (ts.isFunctionDeclaration(node) && names.has(node.name?.text ?? ''))
@@ -5407,7 +5408,7 @@ async function metadataThumbnailWithdrawalFixture(
     ts.forEachChild(node, visit)
   }
   visit(ast)
-  expect(functions).toHaveLength(2)
+  expect(functions).toHaveLength(3)
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-metadata-withdraw-')),
     imageRoot = path.join(root, parentAlias ? 'alias' : '', 'thumbnails'),
     figures: unknown[] = [],
@@ -5415,7 +5416,7 @@ async function metadataThumbnailWithdrawalFixture(
     algorithms: unknown[] = [],
     written = new Map(),
     evaluate = compileFunction(
-      functions.join('\n') + '\nreturn {rememberFigureMetadataPng,withdrawFigureMetadataPng}',
+      functions.join('\n') + '\nreturn {writeCropPng,withdrawFigureMetadataPng}',
       [
         'assert',
         'createHash',
@@ -5425,6 +5426,9 @@ async function metadataThumbnailWithdrawalFixture(
         'unlinkSync',
         'resolve',
         'dirname',
+        'join',
+        'output',
+        'writeFile',
         'imageRoot',
         'writtenFigurePngs',
         'figures',
@@ -5441,6 +5445,9 @@ async function metadataThumbnailWithdrawalFixture(
       fs.unlinkSync,
       path.resolve,
       path.dirname,
+      path.join,
+      path.dirname(imageRoot),
+      writeFile,
       imageRoot,
       written,
       figures,
@@ -5461,8 +5468,7 @@ async function metadataThumbnailWithdrawalFixture(
     file = path.join(imageRoot, 'ordinary-reference.png'),
     bytes = Buffer.from('original rendered bytes')
   figures.push(figure)
-  fs.writeFileSync(file, bytes)
-  api.rememberFigureMetadataPng(figure.id, bytes)
+  await api.writeCropPng(figure.thumbnail, bytes)
   return {
     fs,
     path,

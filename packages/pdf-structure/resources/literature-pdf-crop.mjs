@@ -1,7 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { createCanvas } from '@napi-rs/canvas'
 
 // Keep these limits aligned with the main-process worker and cache image boundaries.
@@ -235,13 +233,13 @@ export const createDeferredPlainFigureCrop = ({
 
 // Page assembly has returned before this runs, so its native operator graph can
 // be collected before rendering creates a separate display-intent graph.
-export const flushDeferredPdfCrops = async (document, requests, output) => {
+export const flushDeferredPdfCrops = async (document, requests, writeCropPng) => {
   for (const request of requests) {
     const page = await document.getPage(request.pageNumber)
     try {
       const png = await renderPdfCrop(page, request.rectCopy, request.rotation, undefined)
       if (!png) throw Error('Deferred plain crop did not produce its promised PNG.')
-      await writeFile(join(output, request.relativePath), png)
+      await writeCropPng(request.relativePath, png)
     } finally {
       page.cleanup()
     }

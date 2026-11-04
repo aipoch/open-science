@@ -420,7 +420,7 @@ it('rejects special or unknown candidate properties and non-plain candidates', (
 })
 
 it('renders deferred vector crops identically across rotated page offsets', async () => {
-  const { mkdtemp, mkdir, readFile, rm } = await import('node:fs/promises')
+  const { mkdtemp, mkdir, readFile, rm, writeFile } = await import('node:fs/promises')
   const { tmpdir } = await import('node:os')
   const task = getDocument({ data: vectorPdf(), isEvalSupported: false, verbosity: 0 })
   const output = await mkdtemp(tmpdir() + '/deferred-crop-')
@@ -442,7 +442,14 @@ it('renders deferred vector crops identically across rotated page offsets', asyn
         rotation,
         id: 'rotated'
       })
-      await deferredCropHelpers.flushDeferredPdfCrops(document, [request], output)
+      await deferredCropHelpers.flushDeferredPdfCrops(
+        document,
+        [request],
+        async (relativePath: string, png: Buffer) => {
+          expect(relativePath).toBe(request.relativePath)
+          await writeFile(output + '/' + relativePath, png)
+        }
+      )
       const delayed = await readFile(output + '/thumbnails/rotated.png')
       expect(delayed).toEqual(direct)
       const { data } = await sharp(delayed)
@@ -479,7 +486,9 @@ it('cleans up and stops subsequent requests after a rendering failure', async ()
   }
   const request = deferredCropHelpers.createDeferredPlainFigureCrop(plainCropInput())
   await expect(
-    deferredCropHelpers.flushDeferredPdfCrops(document, [request, request], 'unused')
+    deferredCropHelpers.flushDeferredPdfCrops(document, [request, request], () => {
+      throw Error('unexpected write')
+    })
   ).rejects.toThrow('render failed')
   expect([opened, cleaned]).toEqual([1, 1])
 })
@@ -509,7 +518,11 @@ it('cleans up and stops subsequent requests after a writing failure', async () =
     await writeFile(output + '/thumbnails', 'occupied')
     const request = deferredCropHelpers.createDeferredPlainFigureCrop(plainCropInput())
     await expect(
-      deferredCropHelpers.flushDeferredPdfCrops(document, [request, request], output)
+      deferredCropHelpers.flushDeferredPdfCrops(
+        document,
+        [request, request],
+        (relativePath: string, png: Buffer) => writeFile(output + '/' + relativePath, png)
+      )
     ).rejects.toThrow()
     expect([opened, cleaned]).toEqual([1, 1])
   } finally {
