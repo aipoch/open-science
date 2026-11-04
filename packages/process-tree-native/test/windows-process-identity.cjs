@@ -148,3 +148,31 @@ test('does not report terminated processes whose handles are still held', window
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test(
+  'treats a process that exited with code 259 as missing while its handle is held',
+  windows,
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'process-tree-native-exit259-'))
+    const executable = join(root, 'node.exe')
+    copyFileSync(process.execPath, executable)
+    // 259 is STILL_ACTIVE: the exit code alone cannot prove that the process is still running.
+    const child = spawn(executable, ['-e', 'process.exit(259)'], {
+      stdio: 'ignore',
+      windowsHide: true
+    })
+    try {
+      const [code] = await once(child, 'exit')
+      assert.equal(code, 259)
+      // Node keeps this child's process handle open, so the kernel object remains openable.
+      assert.equal(native.getWindowsProcessCreationTime(child.pid), null)
+      assert.equal(native.getWindowsProcessCommandLine(child.pid), null)
+      assert.equal(native.getWindowsParentProcessId(child.pid), null)
+      assert.deepEqual(native.listWindowsInstallationOccupants([executable]), [])
+      assert.deepEqual(await native.listWindowsInstallationOccupantsAsync([executable]), [])
+    } finally {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)

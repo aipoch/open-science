@@ -298,8 +298,18 @@ napi_value Reap(napi_env env, napi_callback_info info) {
   }
   napi_value result; napi_get_boolean(env, reaped, &result); return result;
 }
-// Process identity reads open only PROCESS_QUERY_LIMITED_INFORMATION. A missing process returns
-// null; every other failure throws so callers keep treating unknown identity as unproved.
+// The signaled state is the termination proof. An exit code of STILL_ACTIVE (259) is ambiguous:
+// a process can really exit with 259, so the code alone never proves that it is running.
+bool Exited(napi_env env, HANDLE process, bool& exited) {
+  const DWORD state = WaitForSingleObject(process, 0);
+  if (state == WAIT_OBJECT_0) { exited = true; return true; }
+  if (state == WAIT_TIMEOUT) { exited = false; return true; }
+  Fail(env, "Wait for process state");
+  return false;
+}
+// Process identity reads open only PROCESS_QUERY_LIMITED_INFORMATION and SYNCHRONIZE. A missing
+// process returns null; every other failure throws so callers keep treating unknown identity as
+// unproved.
 bool OpenQueried(napi_env env, napi_callback_info info, Handle& handle, bool& missing) {
   napi_value args[1]; double pid = 0;
   missing = false;
@@ -307,7 +317,7 @@ bool OpenQueried(napi_env env, napi_callback_info info, Handle& handle, bool& mi
       !(pid >= 1 && pid <= 4294967295.0) || pid != static_cast<double>(static_cast<int64_t>(pid))) {
     napi_throw_type_error(env, nullptr, "Invalid process identifier"); return false;
   }
-  handle.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+  handle.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, static_cast<DWORD>(pid));
   if (!handle.value) {
     handle.value = INVALID_HANDLE_VALUE;
     if (GetLastError() == ERROR_INVALID_PARAMETER) { missing = true; return false; }
@@ -315,12 +325,9 @@ bool OpenQueried(napi_env env, napi_callback_info info, Handle& handle, bool& mi
     return false;
   }
   // An exited process object stays openable while another handle is held. It no longer has a
-  // live identity, matching the previous Get-Process behavior, so report it as missing. A process
-  // that really exited with STILL_ACTIVE fails its later query, which remains fail-closed.
-  DWORD code = 0;
-  if (!GetExitCodeProcess(handle.value, &code)) { Fail(env, "Get process exit code"); return false; }
-  if (code != STILL_ACTIVE) { missing = true; return false; }
-  return true;
+  // live identity, matching the previous Get-Process behavior, so report it as missing.
+  if (!Exited(env, handle.value, missing)) return false;
+  return !missing;
 }
 napi_value Null(napi_env env) { napi_value result; napi_get_null(env, &result); return result; }
 napi_value CreationTime(napi_env env, napi_callback_info info) {
@@ -431,14 +438,14 @@ void QueryOccupants(OccupancyQuery& query) {
     // object alive. An exited process cannot use files, and a PID is reused only after the
     // original object is freed, so an exited process at this PID proves the occupant is gone.
     // A live (possibly reused) or unreadable process remains an occupant.
+    // Termination is proved only by the signaled process object, never by exit code 259.
     const DWORD pid = rows[i].Process.dwProcessId;
     Handle process;
-    process.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    DWORD code = 0;
+    process.value = OpenProcess(SYNCHRONIZE, FALSE, pid);
     if (!process.value) {
       process.value = INVALID_HANDLE_VALUE;
       if (GetLastError() == ERROR_INVALID_PARAMETER) continue;
-    } else if (GetExitCodeProcess(process.value, &code) && code != STILL_ACTIVE) {
+    } else if (WaitForSingleObject(process.value, 0) == WAIT_OBJECT_0) {
       continue;
     }
     query.pids.push_back(pid);
