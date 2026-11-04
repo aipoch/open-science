@@ -378,8 +378,14 @@ describe('Host application commands', () => {
     )
     await router.dispatcher.invoke(hostApplicationCommands.notifications.sendTest, invocation([]))
     await router.dispatcher.invoke(hostApplicationCommands.logs.getStatus, invocation([]))
-    await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([]))
-    await router.dispatcher.invoke(hostApplicationCommands.logs.revealInFolder, invocation([]))
+    const startupLog = 'desktop-backend-42-1700000000000.log'
+    await router.dispatcher.invoke(hostApplicationCommands.logs.openFile, invocation([startupLog]))
+    await router.dispatcher.invoke(
+      hostApplicationCommands.logs.revealInFolder,
+      invocation([startupLog])
+    )
+    expect(dependencies.logs.openFile).toHaveBeenLastCalledWith(startupLog)
+    expect(dependencies.logs.revealInFolder).toHaveBeenLastCalledWith(startupLog)
     await router.dispatcher.invoke(
       hostApplicationCommands.notifications.getSnapshot,
       invocation([])
