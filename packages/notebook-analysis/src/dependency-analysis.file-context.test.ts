@@ -19447,6 +19447,114 @@ describe.each(['napredict.default', 'naresid.default'])(
   }
 )
 
+describe('R histogram and raster invocation authority review', () => {
+  it.each([
+    'graphics::hist(model,breaks=c(0,1,2),plot=FALSE)',
+    'graphics:::hist(model,breaks=c(0,1,2),plot=FALSE)',
+    'hist(x=model,breaks=3,plot=FALSE)',
+    'graphics::hist.default(model,breaks=c(0,1,2),plot=FALSE)',
+    'graphics::hist.default(structure(c(1,2),class="custom"),breaks=3,plot=FALSE)',
+    'graphics::hist(c(1,2),breaks=c(0,1,2),freq=flag,plot=FALSE)'
+  ])('revokes unknown histogram operands across %s', async (call) => {
+    const source =
+      'path<-"old.txt";base::saveRDS(1,"cache.rds");out<-' +
+      call +
+      ';base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['cache.rds'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'hist.numeric',
+    'hist.integer',
+    'hist.default',
+    'diff.numeric',
+    'sort.numeric',
+    'pretty.numeric',
+    'mean.numeric',
+    'median.numeric',
+    'quantile.numeric'
+  ])('revokes a histogram proof after rebinding %s', async (method) => {
+    const source =
+      method +
+      '<-function(x,...)1;path<-"old.txt";base::saveRDS(1,"cache.rds");' +
+      'out<-graphics::hist(c(1,2),breaks=c(0,1,2,3,4,5,6),plot=FALSE);' +
+      'base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['cache.rds'])
+  })
+  it.each(['hist', 'graphics::hist', 'graphics:::hist', 'graphics::hist.default'])(
+    'retains ordinary histogram operands for %s',
+    async (callee) => {
+      const source =
+        'path<-"old.txt";base::saveRDS(1,"cache.rds");out<-' +
+        callee +
+        '(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+      const { facts } = await analyzeRNotebookSource(source)
+      expect(facts.serializedValueWrites).toContainEqual({
+        path: 'cache.rds',
+        format: 'rds',
+        valueType: 'r-value'
+      })
+      expect(facts.rAtomicValueNames ?? []).not.toContain('out')
+    }
+  )
+  it('does not apply generic hist methods to a direct default call', async () => {
+    const source =
+      'hist.numeric<-function(x,...)1;path<-"old.txt";out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+  })
+  it('revokes the label drawing method without trusting numeric histogram input', async () => {
+    const source =
+      'text.numeric<-function(x,...)1;path<-"old.txt";base::saveRDS(1,"cache.rds");out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),labels=TRUE);base::readLines(path);base::readRDS("cache.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['cache.rds'])
+  })
+  it.each(['plot=FALSE,labels=TRUE', 'plot=TRUE,labels=FALSE'])(
+    'does not invoke text methods for a closed label branch %s',
+    async (options) => {
+      const source =
+        'text.numeric<-function(x,...)1;path<-"old.txt";out<-graphics::hist.default(c(1,2),breaks=c(0,1,2),' +
+        options +
+        ');base::readLines(path)'
+      expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual(['old.txt'])
+    }
+  )
+  it.each(['::', ':::'])(
+    'revokes histogram and native raster proofs when %s is replaced',
+    async (operator) => {
+      for (const call of [
+        `graphics${operator}hist(c(1,2),breaks=c(0,1,2),plot=FALSE)`,
+        `graphics${operator}hist.default(c(1,2),breaks=c(0,1,2),plot=FALSE)`,
+        `graphics${operator}rasterImage(structure(matrix(0L,2,2),class="nativeRaster"),0,0,1,1)`
+      ]) {
+        const source =
+          '`' +
+          operator +
+          '`<-function(...)function(...)1;path<-"old.txt";out<-' +
+          call +
+          ';readLines(path)'
+        expect((await analyzeNotebookSourceFileAccess('r', source)).reads).toEqual([])
+      }
+    }
+  )
+  it.each([false, true])('rebuilds histogram method uncertainty warm=%s', async (warm) => {
+    const context = await fileContext(
+      'r',
+      ['hist.numeric<-function(x,...)1', 'path<-"old.txt"'],
+      [],
+      warm
+    )
+    const source = 'out<-graphics::hist(c(1,2),breaks=c(0,1,2),plot=FALSE);base::readLines(path)'
+    expect((await analyzeNotebookSourceFileAccess('r', source, context)).reads).toEqual([])
+  })
+})
+
 describe.each(['ts.intersect', 'ts.union'])('R time alignment authority %s', (method) => {
   const call = `stats::${method}(series,peer)`
   it.each([call, `${method}(series,peer)`, `stats::${method}(left=series,right=peer)`])(

@@ -197,13 +197,15 @@ box()
 grDevices::dev.off()
 `
 it('captures a scientific multi-panel graphics workflow', async () => {
-  expect(await analyzeNotebookSourceFileAccess('r', scientificPlot)).toEqual({
+  // CSV ownership does not establish the column types used by hist's methods.
+  // Preserve the known input/output files without asserting complete coverage.
+  expect(await analyzeNotebookSourceFileAccess('r', scientificPlot)).toMatchObject({
     reads: ['inputs/cohort.csv'],
     writes: ['summary.png'],
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
-    reasonCodes: []
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
+    reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
   })
 })
 it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_ENV)(

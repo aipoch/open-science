@@ -4838,7 +4838,10 @@ const analyzeRSource = (
     if (
       calledName(expr) !== 'rasterImage' ||
       !contractAvailable('rasterImage', qualifiedCall(expr)?.package, 'graphics') ||
-      expr.staticBuiltinShadowed
+      expr.staticBuiltinShadowed ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
     )
       return false
     const args = primitiveArguments(expr, [
@@ -9545,15 +9548,45 @@ const analyzeRSource = (
       ['hist', 'hist.default'].includes(calledName(expr) ?? '')
         ? rHistogramArguments(expr)
         : undefined
-    // This discharges only the breaks-callback boundary. Keep the existing
-    // graphics/input contracts below; it establishes no histogram result type,
-    // plotting purity or numerical success.
+    // A non-function breaks value alone does not bound hist's S3 dispatch or
+    // the defaults' input/option methods. Guard ordinary operands and caller-
+    // visible implicit methods before discharging this callback boundary.
+    const histogramPlot = histogramArguments?.get('plot')
+    const histogramLabels = histogramArguments?.get('labels')
+    const histogramDrawsLabels = Boolean(
+      histogramLabels &&
+      histogramLabels.kind !== 'null' &&
+      !(histogramPlot?.kind === 'atomic' && histogramPlot.logical === false) &&
+      !(histogramLabels.kind === 'atomic' && histogramLabels.logical === false)
+    )
+    const histogramMethods = histogramArguments
+      ? [
+          ...(calledName(expr) === 'hist' ? atomicS3Methods('hist') : []),
+          ...['diff', 'sort', 'pretty', 'mean', 'median', 'quantile'].flatMap(
+            implicitAtomicS3Methods
+          ),
+          ...(histogramDrawsLabels ? implicitAtomicS3Methods('text') : [])
+        ]
+      : []
     const nonCallbackHistogramBreaks = Boolean(
       histogramArguments &&
+      histogramArguments.has('x') &&
+      [...histogramArguments.values()].every(atomicValueExpression) &&
       atomicValueExpression(histogramArguments.get('breaks') ?? histogramArguments.get('nclass')) &&
       contractAvailable(calledName(expr)!, qualified?.package, 'graphics') &&
-      !expr.staticBuiltinShadowed
+      !expr.staticBuiltinShadowed &&
+      (!isCall(expr.callee) ||
+        (!expr.callee.staticBuiltinShadowed &&
+          contractAvailable(expr.callee.operator ?? '', undefined, 'base'))) &&
+      histogramMethods.every((method) => contractAvailable(method, undefined, 'graphics'))
     )
+    if (nonCallbackHistogramBreaks) {
+      // These are invocation dependencies, never an atomic-result proof for
+      // the structured histogram. Rebinding one also invalidates cached proof.
+      used.push(...histogramMethods)
+      priorUsed.push(...histogramMethods)
+      safeCallNames.push(...histogramMethods)
+    }
     const nonCallbackNativeRaster = primitiveNativeRasterDrawing(expr)
     if ((nonCallbackHistogramBreaks || nonCallbackNativeRaster) && expr.sourceOffset !== undefined)
       readOnlyMapCalls?.set(expr.sourceOffset, readOnlyMapCalls.get(expr.sourceOffset) !== false)
