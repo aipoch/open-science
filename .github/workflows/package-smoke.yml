@@ -35,6 +35,10 @@ on:
         default: false
   workflow_dispatch:
     inputs:
+      require_windows_signing:
+        description: Verify Authenticode signatures and update recovery UI for a signed Windows artifact
+        type: boolean
+        default: false
       artifact_run_id:
         description: Reuse a same-repository build run for a diagnostic smoke; emit no release certification
         type: string
@@ -182,6 +186,22 @@ jobs:
         env:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist
+
+      - name: Verify signed Windows update recovery UI
+        if: ${{ !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        timeout-minutes: 8
+        run: npx playwright test e2e/runtime-update-ui-acceptance.spec.ts --retries=0
+
+      - name: Upload signed Windows update recovery evidence
+        if: ${{ always() && !inputs.install_only && matrix.platform == 'win' && inputs.require_windows_signing }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-update-recovery-ui-evidence
+          retention-days: 7
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
 
       - name: Smoke test Linux packages
         if: ${{ !inputs.install_only && matrix.platform == 'linux' }}

@@ -1,12 +1,15 @@
 #include <node_api.h>
 #include <string>
 #include <vector>
+#include <map>
+#include <memory>
 
 #ifdef _WIN32
 // libuv includes Winsock 2; load it before windows.h can pull in legacy Winsock.
 #include <uv.h>
 #include <windows.h>
 #include <sddl.h>
+#include <tlhelp32.h>
 
 namespace {
 struct Handle {
@@ -189,6 +192,90 @@ napi_value ExitCode(napi_env env, napi_callback_info info) {
   }
   napi_value result; napi_get_null(env, &result); return result;
 }
+bool ProcessParents(std::map<DWORD, DWORD>& parents) {
+  Handle snapshot;
+  snapshot.value = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot.value == INVALID_HANDLE_VALUE) return false;
+  PROCESSENTRY32W entry{}; entry.dwSize = sizeof(entry);
+  if (!Process32FirstW(snapshot.value, &entry)) return false;
+  do { parents[entry.th32ProcessID] = entry.th32ParentProcessID; }
+  while (Process32NextW(snapshot.value, &entry));
+  return GetLastError() == ERROR_NO_MORE_FILES;
+}
+napi_value Descendants(napi_env env, napi_callback_info) {
+  const DWORD root = GetCurrentProcessId();
+  std::map<DWORD, DWORD> parents;
+  if (!ProcessParents(parents)) return Fail(env, "Snapshot runtime descendants");
+  // Open only candidates rooted in this live runtime. Retain handles through the second snapshot
+  // so PID reuse between enumeration and OpenProcess cannot manufacture a parent relationship.
+  std::map<DWORD, std::unique_ptr<Handle>> handles;
+  std::map<DWORD, FILETIME> births;
+  FILETIME created, exited, kernel, user;
+  if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) return Fail(env, "Query runtime identity");
+  births[root] = created;
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto& [pid, parent] : parents) {
+      if (pid == root || births.count(pid) || !births.count(parent)) continue;
+      auto handle = std::make_unique<Handle>();
+      handle->value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, pid);
+      if (!handle->value) {
+        if (GetLastError() == ERROR_INVALID_PARAMETER) continue;
+        return Fail(env, "Open runtime descendant");
+      }
+      if (WaitForSingleObject(handle->value, 0) != WAIT_TIMEOUT) continue;
+      if (!GetProcessTimes(handle->value, &created, &exited, &kernel, &user)) return Fail(env, "Query descendant identity");
+      if (CompareFileTime(&created, &births[parent]) < 0) continue;
+      births[pid] = created;
+      handles[pid] = std::move(handle);
+      changed = true;
+    }
+  }
+  std::map<DWORD, DWORD> current;
+  if (!ProcessParents(current)) return Fail(env, "Verify runtime descendants");
+  std::map<DWORD, bool> verified{{root, true}};
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (const auto& [pid, handle] : handles) {
+      if (verified.count(pid) || !current.count(pid) || current[pid] != parents[pid] ||
+          !verified.count(current[pid]) || WaitForSingleObject(handle->value, 0) != WAIT_TIMEOUT) continue;
+      verified[pid] = true;
+      changed = true;
+    }
+  }
+  napi_value result; napi_create_array(env, &result);
+  uint32_t index = 0;
+  for (const auto& [pid, present] : verified)
+    if (pid != root) napi_set_element(env, result, index++, Number(env, pid));
+  return result;
+}
+napi_value Members(napi_env env, napi_callback_info info) {
+  napi_value args[1]; void* external = nullptr;
+  if (!Arguments(env, info, 1, args) || napi_get_value_external(env, args[0], &external) != napi_ok || !external) {
+    napi_throw_type_error(env, nullptr, "Invalid owned Job handle"); return nullptr;
+  }
+  auto process = static_cast<Process*>(external);
+  for (DWORD capacity = 64; capacity <= 65536; capacity *= 2) {
+    // ULONG_PTR storage keeps the variable-length native structure correctly aligned.
+    std::vector<ULONG_PTR> storage(capacity + sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) / sizeof(ULONG_PTR));
+    auto list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(storage.data());
+    if (!QueryInformationJobObject(process->job.value, JobObjectBasicProcessIdList, list,
+        static_cast<DWORD>(storage.size() * sizeof(ULONG_PTR)), nullptr)) {
+      if (GetLastError() == ERROR_MORE_DATA) continue;
+      return Fail(env, "Query owned Job members");
+    }
+    if (list->NumberOfProcessIdsInList < list->NumberOfAssignedProcesses) continue;
+    if (list->NumberOfProcessIdsInList > capacity) continue;
+    napi_value result;
+    napi_create_array_with_length(env, list->NumberOfProcessIdsInList, &result);
+    for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i)
+      napi_set_element(env, result, i, Number(env, list->ProcessIdList[i]));
+    return result;
+  }
+  napi_throw_error(env, nullptr, "Owned Job process list remained incomplete"); return nullptr;
+}
 napi_value Reap(napi_env env, napi_callback_info info) {
   napi_value args[1]; std::wstring name;
   if (!Arguments(env, info, 1, args) || !Text(env, args[0], name) || !JobName(name)) {
@@ -215,8 +302,10 @@ void RegisterWindowsOwnedProcess(napi_env env, napi_value exports) {
   napi_property_descriptor functions[] = {
     {"spawnWindowsOwnedProcess", nullptr, Spawn, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsOwnedProcessExitCode", nullptr, ExitCode, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"windowsOwnedJobProcessIds", nullptr, Members, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"windowsCurrentProcessDescendants", nullptr, Descendants, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"reapWindowsOwnedJob", nullptr, Reap, nullptr, nullptr, nullptr, napi_default, nullptr}
   };
-  napi_define_properties(env, exports, 3, functions);
+  napi_define_properties(env, exports, 5, functions);
 #endif
 }

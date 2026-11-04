@@ -5,6 +5,10 @@ import {
 } from './desktop-runtime-recovery'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { ServiceLifetimeRecord } from './local-service-lifetime'
+import { DesktopBackendStartupError } from './backend-startup'
+
+const recoveryLog = vi.hoisted(() => ({ warn: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', () => ({ createLogger: () => recoveryLog }))
 
 vi.mock('./runtime-stop-confirmation', () => ({ isRuntimeProcessAlive: vi.fn(() => true) }))
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
@@ -27,6 +31,94 @@ afterEach(() => {
   vi.mocked(isRuntimeProcessAlive).mockReturnValue(true)
 })
 describe('same-backend desktop recovery', () => {
+  it.each(['connect', 'control'])(
+    'keeps the concrete failure when %s reaches the deadline',
+    async (stage) => {
+      vi.useFakeTimers()
+      const original = client()
+      const pending = client()
+      Object.assign(pending, {
+        runtimeInfo: () => ({ generation: 'test-generation', controlReason: 'operation-pending' }),
+        refreshControl: vi.fn(async () => {})
+      })
+      const connect = vi
+        .fn()
+        .mockRejectedValueOnce(
+          Object.assign(new Error('endpoint refused'), { code: 'ECONNREFUSED' })
+        )
+        .mockImplementation(() =>
+          stage === 'connect' ? new Promise(() => {}) : Promise.resolve(pending)
+        )
+      const recovery = createDesktopRuntimeRecovery({
+        client: original,
+        connect,
+        activate: vi.fn(),
+        onState: vi.fn(),
+        automatic: true,
+        timeoutMs: 1_000
+      })
+      recovery.disconnect(original)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(connect).toHaveBeenCalledTimes(2)
+      expect(JSON.parse(recovery.state().diagnostics!)).toMatchObject({
+        timedOut: true,
+        operation: 'connect',
+        error: { message: 'endpoint refused', code: 'ECONNREFUSED' }
+      })
+      recovery.setClosing(true)
+    }
+  )
+  it('retains and logs the redacted bootstrap cause instead of only attempt-failed', async () => {
+    const original = client()
+    const failure = new DesktopBackendStartupError(
+      'Startup failed api_key=private-recovery-key at C:\\private-user\\logs',
+      'credentials',
+      true,
+      'C:\\private-user\\logs',
+      {
+        protocolVersion: 1,
+        attemptId: '84467a64-32a4-40d9-88a7-c509b8bcc923',
+        stage: 'credentials',
+        kind: 'failed',
+        code: 'credential-unavailable',
+        reason: 'ciphertext-inventory-unavailable',
+        diagnostic: {
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-files',
+          reason: 'operation-failed',
+          systemCode: 'EACCES'
+        }
+      }
+    )
+    Object.assign(failure, { cause: Object.assign(new Error('read denied'), { code: 'EACCES' }) })
+    const recovery = createDesktopRuntimeRecovery({
+      client: original,
+      connect: async () => {
+        throw failure
+      },
+      activate: vi.fn(),
+      onState: vi.fn()
+    })
+    recovery.disconnect(original)
+    await recovery.reconnect()
+    const diagnostics = JSON.parse(recovery.state().diagnostics!)
+    expect(diagnostics).toMatchObject({
+      reason: 'attempt-failed',
+      startupStage: 'credentials',
+      credentialReason: 'ciphertext-inventory-unavailable',
+      error: { name: 'DesktopBackendStartupError', cause: { code: 'EACCES' } },
+      credentialDiagnostic: { code: 'inventory-failed', source: 'cookies', systemCode: 'EACCES' }
+    })
+    expect(recovery.state().diagnostics).not.toContain('private-recovery-key')
+    expect(recovery.state().diagnostics).not.toContain('private-user')
+    expect(recoveryLog.warn).toHaveBeenCalledWith(
+      'desktop runtime recovery failed',
+      expect.objectContaining({ startupStage: 'credentials', error: diagnostics.error })
+    )
+    // Inventory details remain transient, matching the credential owner's persistence policy.
+    expect(recoveryLog.warn.mock.lastCall?.[1]).not.toHaveProperty('credentialDiagnostic')
+  })
   it('deduplicates concurrent attempts, waits for reconciliation, ignores old disconnects', async () => {
     const old = client()
     const next = client()

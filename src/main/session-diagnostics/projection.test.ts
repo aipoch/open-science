@@ -322,6 +322,37 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
   ).toEqual({})
 })
 
+it('retains recovery evidence but excludes transient credential inventory diagnostics', () => {
+  const event = {
+    scope: 'desktop-runtime-recovery',
+    msg: 'desktop runtime recovery failed',
+    data: {
+      startupStage: 'credentials',
+      credentialReason: 'windows-profile-key-unavailable',
+      pid: 42,
+      crashesInWindow: 1,
+      timedOut: false,
+      error: { message: 'startup failed', cause: { code: 'EACCES' } },
+      credentialDiagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 }
+    }
+  }
+  expect(projectDiagnosticLog(event)).toMatchObject({ diagnostics: event.data })
+  expect(
+    projectDiagnosticLog({
+      ...event,
+      data: {
+        ...event.data,
+        credentialDiagnostic: {
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-files',
+          reason: 'operation-failed'
+        }
+      }
+    }).diagnostics
+  ).not.toHaveProperty('credentialDiagnostic')
+})
+
 it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {
   expect(
     projectDiagnosticLog({

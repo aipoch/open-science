@@ -147,8 +147,7 @@ it('pins the home gallery before paint and keeps the offset after scrolling away
   HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
     if (this === scroll) return viewport
     if (this instanceof HTMLElement && this.tagName === 'ARTICLE') {
-      const pin =
-        Number.parseFloat(this.closest('section')?.style.paddingTop || '') || 0
+      const pin = Number.parseFloat(this.closest('section')?.style.paddingTop || '') || 0
       const bottom = 500 + pin
       return {
         top: bottom - 180,

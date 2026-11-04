@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { registerOwnedPosixProcessGroup } from '../process-tree'
+import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import type { ChildProcess } from 'node:child_process'
 
@@ -25,6 +25,7 @@ const BOOT_A = '11111111-1111-4111-8111-111111111111'
 const BOOT_B = '22222222-2222-4222-8222-222222222222'
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -51,11 +52,34 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 
 describe('Shell process ownership receipt lifecycle', () => {
   it.each([
-    { name: 'timeout', status: null, signal: 'SIGTERM', code: 'ETIMEDOUT' },
-    { name: 'module import failure', status: 1, signal: null, code: undefined }
+    { name: 'timeout', status: null, signal: 'SIGTERM', code: 'ETIMEDOUT', stdout: '' },
+    { name: 'module import failure', status: 1, signal: null, code: undefined, stdout: '' },
+    { name: 'empty identity', status: 0, signal: null, code: undefined, stdout: '' },
+    { name: 'malformed identity', status: 0, signal: null, code: undefined, stdout: 'not-json' },
+    {
+      name: 'inaccessible command line',
+      status: 0,
+      signal: null,
+      code: undefined,
+      stdout: '{"ProcessId":12345,"CommandLine":null}'
+    },
+    {
+      name: 'blank command line',
+      status: 0,
+      signal: null,
+      code: undefined,
+      stdout: '{"ProcessId":12345,"CommandLine":" "}'
+    },
+    {
+      name: 'mismatched query PID',
+      status: 0,
+      signal: null,
+      code: undefined,
+      stdout: '{"ProcessId":54321,"CommandLine":"node fixture"}'
+    }
   ] as const)(
     'preserves the receipt and redacts identity-query $name',
-    async ({ status, signal, code }) => {
+    async ({ status, signal, code, stdout }) => {
       const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
       roots.push(root)
       const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
@@ -71,8 +95,8 @@ describe('Shell process ownership receipt lifecycle', () => {
       )
       vi.mocked(spawnSync).mockReturnValueOnce({
         pid: 0,
-        output: [null, '', 'private-command-line'],
-        stdout: '',
+        output: [null, stdout, 'private-command-line'],
+        stdout,
         stderr: 'private-command-line',
         status,
         signal,
@@ -94,7 +118,8 @@ describe('Shell process ownership receipt lifecycle', () => {
           '-NonInteractive',
           '-Command',
           'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
-            '(Get-CimInstance Win32_Process -Filter "ProcessId = 12345" -ErrorAction Stop).CommandLine'
+            'Get-CimInstance Win32_Process -Filter "ProcessId = 12345" -ErrorAction Stop | ' +
+            'Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress'
         ],
         { encoding: 'utf8', windowsHide: true, timeout: 5000 }
       )
@@ -147,7 +172,7 @@ describe('Shell process ownership receipt lifecycle', () => {
   })
 
   it.runIf(process.platform === 'win32').each(['owned', 'unrelated'] as const)(
-    'verifies the actual Windows host identity before recovery: %s',
+    'verifies the actual Windows host identity and recovers without system tools in PATH: %s',
     async (identity) => {
       vi.mocked(spawnSync).mockClear()
       const root = await mkdtemp(join(tmpdir(), 'shell-host-identity-'))
@@ -159,7 +184,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         platform: 'win32',
         hosted: true
       }).host!
-      const command = [process.execPath, '-e', 'console.log("ready"); setInterval(() => {}, 1000)']
+      const command = [
+        process.execPath,
+        '-e',
+        'console.log(process.pid); setInterval(() => {}, 1000)'
+      ]
       const child =
         identity === 'owned'
           ? spawn(process.execPath, [host.path, host.pendingPath, host.receiptId, ...command], {
@@ -167,11 +196,15 @@ describe('Shell process ownership receipt lifecycle', () => {
               env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
             })
           : spawn(command[0], command.slice(1), { windowsHide: true })
+      let workloadPid: number | undefined
       try {
-        await new Promise<void>((resolve, reject) => {
+        workloadPid = await new Promise<number>((resolve, reject) => {
           child.once('error', reject)
-          child.stdout.once('data', () => resolve())
+          child.stdout.once('data', (output) => resolve(Number(output.toString().trim())))
         })
+        expect(Number.isSafeInteger(workloadPid)).toBe(true)
+        expect(workloadPid).toBeGreaterThan(0)
+        vi.stubEnv('PATH', root)
         if (identity === 'unrelated')
           await rename(
             host.pendingPath,
@@ -190,12 +223,23 @@ describe('Shell process ownership receipt lifecycle', () => {
             .poll(() => child.exitCode !== null || child.signalCode !== null, { timeout: 4_000 })
             .toBe(true)
           expect(restarted.hasReceipts()).toBe(false)
+          await expect
+            .poll(() => {
+              try {
+                process.kill(workloadPid!, 0)
+                return false
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+                throw error
+              }
+            })
+            .toBe(true)
         } else {
-          await expect(restarted.recover()).rejects.toMatchObject({
-            code: 'SHELL_PROCESS_RECOVERY_BLOCKED'
-          })
+          // A readable command line proves this PID no longer names the recorded host.
+          await restarted.recover()
+          await restarted.recover()
           expect(() => process.kill(child.pid!, 0)).not.toThrow()
-          expect(restarted.hasReceipts()).toBe(true)
+          expect(restarted.hasReceipts()).toBe(false)
         }
       } catch (error) {
         console.error(
@@ -214,7 +258,8 @@ describe('Shell process ownership receipt lifecycle', () => {
         )
         throw error
       } finally {
-        if (child.exitCode === null) child.kill()
+        vi.unstubAllEnvs()
+        await terminateProcessTree(child)
       }
     },
     20_000

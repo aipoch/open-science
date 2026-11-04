@@ -221,6 +221,7 @@ export function composeCommandDependencies({
     permissionGrants: settingsEffects.permissionGrantProjection,
     tags: researchCatalog.tagService,
     literature: createLiteratureCommandOwner({
+      literatureStudySnapshot: researchCatalog.literatureStudySnapshot,
       journalAttributes: researchCatalog.journalAttributes,
       literatureBatchJobs: researchCatalog.literatureBatchJobs,
       literatureCitationFormatter: researchCatalog.literatureCitationFormatter,

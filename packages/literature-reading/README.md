@@ -43,9 +43,16 @@ no missing, unchecked or visually unverified pages, and no text truncation befor
 full-text evidence. Empty extraction produces unavailable evidence. Coverage describes extraction;
 it does not verify equations, tables, reading order or scientific completeness.
 
-The Open-Science host supplies Tesseract.js with bundled English and Simplified Chinese models.
-No separate Tesseract application is required, and recognition does not download models or create
-image/model caches. Automatic OCR is limited to pages with PDF drawing operations but no selectable
+The Open-Science host supplies Tesseract.js with on-demand OCR models: the user installs the
+runtime and each recognition language pack explicitly from the host's local-model controls (for
+example the local model card in Settings), and extraction only uses models that are already
+installed — it never installs on its own. Nine language packs are available — English, Simplified
+Chinese, Traditional Chinese, German, Spanish, French, Japanese, Korean and Russian. English is
+always selected and the pack matching the application locale is selected by default; selected packs
+persist in the host's model storage, so recognition works offline once installed, but installing or
+updating a pack requires network access. Until the runtime and at least one language pack are
+installed, pages without selectable text receive no OCR supplement.
+No separate Tesseract application is required. Automatic OCR is limited to pages with PDF drawing operations but no selectable
 text, or raster pages whose only selectable text is an ASCII decimal label. Readable native prose
 is preserved. An empty operator list skips OCR; this is not visual blank-page detection. Numeric labels are retained before a tagged
 `[OCR]` supplement. The package itself owns neither OCR workers nor image policy.

@@ -437,6 +437,10 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
+            sourceKey: request.expectedSourceKey,
+            issue: 'not-generated' as const
+          })),
           related: vi.fn(),
           publicationCheck: vi.fn(
             async (request: { itemId: string; expectedMetadataRevision: number }) => ({
@@ -11424,6 +11428,67 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('status')).not.toBeNull()
   })
 
+  it.each(['success', 'failure'] as const)(
+    'keeps a cancelled native preview closed after a late %s',
+    async (outcome) => {
+      let resolve!: (value: unknown) => void
+      let reject!: (error: Error) => void
+      importRecords.mockImplementationOnce(
+        () =>
+          new Promise((yes, no) => {
+            resolve = yes
+            reject = no
+          })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await openMenu(screen.getByRole('button', { name: 'Add' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
+        target: { value: '10.1234/paper\nPMID:35486828' }
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Review references' }))
+      await waitFor(() => expect(importRecords).toHaveBeenCalledTimes(1))
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await act(async () => {
+        if (outcome === 'failure') reject(new Error('Late failure'))
+        else
+          resolve({
+            format: 'items',
+            items: [libraryItem.item],
+            entries: [],
+            errors: [],
+            scannedEntries: 1,
+            truncated: false
+          })
+      })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(importRecords.mock.calls.some(([request]) => request.mode === 'commit')).toBe(false)
+    }
+  )
+
+  it('previews pasted identifiers before committing the selected batch', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
+      target: { value: '10.1234/paper\nPMID:35486828' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Review references' }))
+    await waitFor(() =>
+      expect(importRecords).toHaveBeenCalledWith({ mode: 'preview', items: expect.any(Array) })
+    )
+    const items = importRecords.mock.calls[0][0].items
+    expect(items).toHaveLength(2)
+    expect(importRecords.mock.calls.some(([request]) => request.mode === 'commit')).toBe(false)
+    fireEvent.click(await screen.findByRole('button', { name: 'Import references' }))
+    await waitFor(() => expect(importRecords).toHaveBeenCalledWith({ mode: 'commit', items }))
+  })
+
   it.each([
     {
       destination: 'library',
@@ -11483,7 +11548,7 @@ describe('LiteratureLibraryPage', () => {
       }
       await openMenu(screen.getByRole('button', { name: 'Add' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-      fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: reference }
       })
       fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11597,7 +11662,7 @@ describe('LiteratureLibraryPage', () => {
     const lookup = async (): Promise<HTMLElement> => {
       await openMenu(screen.getByRole('button', { name: 'Add' }))
       fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-      fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: '10.1234/linked-paper' }
       })
       fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11673,7 +11738,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openMenu(screen.getByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-    fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11732,7 +11797,7 @@ describe('LiteratureLibraryPage', () => {
     await screen.findByRole('heading', { name: 'Retrieval research' })
     await openMenu(screen.getByRole('button', { name: 'Add' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-    fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))

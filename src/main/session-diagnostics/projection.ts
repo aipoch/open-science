@@ -1,5 +1,6 @@
 import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
 import { AGENT_FRAMEWORK_ID_VALUES, isAgentFrameworkId } from '../../shared/agent-framework-id'
+import { credentialDiagnosticSchema } from '../credential-identity/diagnostic'
 
 /** Diagnostic projections keep only known evidence fields and bounded redacted error text. */
 type ObjectValue = Record<string, unknown>
@@ -314,6 +315,9 @@ const diagnosticStringFields = [
   'launch',
   'control',
   'generation',
+  'failureGeneration',
+  'startupStage',
+  'credentialReason',
   'step',
   'result'
 ] as const
@@ -382,6 +386,11 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'desktop-runtime-recovery') {
+    const credential = credentialDiagnosticSchema.safeParse(data.credentialDiagnostic)
+    if (credential.success && credential.data.code !== 'inventory-failed')
+      diagnostic.credentialDiagnostic = credential.data
+  }
   if (source.scope === 'permission' && source.msg === 'permission decision trace') {
     for (const [key, allowed] of Object.entries(permissionLogStates)) {
       delete diagnostic[key]
@@ -428,7 +437,12 @@ export function projectDiagnosticLog(
   }
   if (data.authorityStatus === 'missing' || data.authorityStatus === 'unreadable')
     diagnostic.authorityStatus = data.authorityStatus
-  for (const key of ['hydrationAvailable', 'startupCleanupEligible', 'metadataComplete'])
+  for (const key of [
+    'hydrationAvailable',
+    'startupCleanupEligible',
+    'metadataComplete',
+    'timedOut'
+  ])
     if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
   for (const key of ['sessionId', 'messageId', 'operationId', 'requestId', 'cachedProjectId'])
     if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
@@ -463,7 +477,10 @@ export function projectDiagnosticLog(
     'bufferedBytes',
     'byteBudget',
     'frameBudget',
-    'runtimePid'
+    'runtimePid',
+    'pid',
+    'failurePid',
+    'crashesInWindow'
   ])
     if (typeof data[key] === 'number' && Number.isFinite(data[key])) diagnostic[key] = data[key]
   if (typeof data.wasUnresponsive === 'boolean') diagnostic.wasUnresponsive = data.wasUnresponsive

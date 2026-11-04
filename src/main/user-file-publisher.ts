@@ -9,6 +9,7 @@ import { publishNoReplace as publishAnchoredNoReplace } from './uploads/atomic-n
 
 type PublishUserFileOptions = {
   exclusive?: boolean
+  userSelectedDestination?: boolean
   signal?: AbortSignal
   validateDestination?: () => Promise<void>
   durability?: FileDurability
@@ -118,7 +119,9 @@ const publishUserFile = async (
         return (options.replace ?? rename)(temporaryPath, destinationPath)
       }, options.wait)
     }
-    await durability.syncDirectory(directory)
+    await durability.syncDirectory(directory, {
+      allowPermissionDenied: options.userSelectedDestination
+    })
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined)
   }

@@ -109,7 +109,10 @@ export const SessionDiagnosticsDialog = ({
             .filter(
               (item) =>
                 item.available &&
-                (item.kind !== 'log' || item.id === 'log:main.log') &&
+                (item.kind !== 'log' ||
+                  item.id === 'log:main.log' ||
+                  item.id.startsWith('desktop-log:') ||
+                  item.id.startsWith('backend-log:')) &&
                 item.kind !== 'sensitive-file'
             )
             .map((item) => item.id)
@@ -197,6 +200,10 @@ export const SessionDiagnosticsDialog = ({
   ): DiagnosticChoice => ({ id: item.id, label, description, items: [item], candidateFiles })
   const notebookItems = items.filter((item) => item.kind === 'notebook')
   const notebookFiles = notebookItems.filter((item) => item.id !== 'notebook:frames-limited')
+  const logGroup = (prefix: string, label: string): DiagnosticChoice[] => {
+    const logs = items.filter((item) => item.kind === 'log' && item.id.startsWith(prefix))
+    return logs.length ? [{ id: prefix, label, items: logs, fileItems: logs }] : []
+  }
   const sections: { title: string; choices: DiagnosticChoice[] }[] = [
     {
       title: t('Session and execution'),
@@ -263,23 +270,30 @@ export const SessionDiagnosticsDialog = ({
     },
     {
       title: t('Application logs'),
-      choices: items
-        .filter((item) => item.kind === 'log')
-        .map((item) =>
-          single(
-            item,
-            item.id === 'log:main.log'
-              ? t('Current log')
-              : item.id === 'log:main.1.log'
-                ? t('Historical log 1')
-                : t('Historical log 2'),
-            item.id === 'log:main.log'
-              ? t('Current application events and errors, including activity outside this session.')
-              : t(
-                  'Historical application events and errors, including activity outside this session. Select manually to investigate earlier issues.'
-                )
-          )
-        )
+      choices: [
+        ...items
+          .filter((item) => item.kind === 'log' && item.id.startsWith('log:'))
+          .map((item) =>
+            single(
+              item,
+              item.id === 'log:main.log'
+                ? t('Current log')
+                : item.id === 'log:main.1.log'
+                  ? t('Historical log 1')
+                  : t('Historical log 2'),
+              item.id === 'log:main.log'
+                ? t(
+                    'Current application events and errors, including activity outside this session.'
+                  )
+                : t(
+                    'Historical application events and errors, including activity outside this session. Select manually to investigate earlier issues.'
+                  )
+            )
+          ),
+        ...logGroup('desktop-log:', t('Desktop logs')),
+        ...logGroup('desktop-legacy-log:', t('Earlier desktop logs')),
+        ...logGroup('backend-log:', t('Backend startup logs'))
+      ]
     },
     {
       title: t('Sensitive content'),

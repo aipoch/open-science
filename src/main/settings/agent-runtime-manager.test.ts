@@ -319,6 +319,19 @@ describe('AgentRuntimeManager', () => {
   let managedCodexPath: string
   let manager: InstanceType<typeof AgentRuntimeManager>
 
+  it('preserves a failed configured OpenCode version probe for diagnostics', async () => {
+    const failure = Object.assign(new Error('version process failed'), { code: 23 })
+    const probeManager = createManager({
+      opencodeDetectDeps: {
+        ...createOpencodeDeps(inventory),
+        getVersion: async () => {
+          throw failure
+        }
+      }
+    })
+    await expect(probeManager.probeOpencodeVersion('/runtime/opencode')).rejects.toBe(failure)
+  })
+
   const makeTreeWritable = async (root: string): Promise<void> => {
     const entries = await readdir(root, { withFileTypes: true }).catch(() => [])
     await chmod(root, 0o755).catch(() => undefined)

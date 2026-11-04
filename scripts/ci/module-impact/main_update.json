@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/update/windows-recovery-identity.integration.test.ts",
+    "src/main/update/windows-signature-verification.test.ts",
     "src/main/update/create-strategy.test.ts",
     "src/main/update/create-strategy.ts",
     "src/main/update/differential-download-cancellation.test.ts",
@@ -77,6 +79,8 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/update/windows-recovery-identity.integration.test.ts",
+      "src/main/update/windows-signature-verification.test.ts",
       "src/main/update/create-strategy.test.ts",
       "src/main/update/differential-download-cancellation.test.ts",
       "src/main/update/downloader.test.ts",

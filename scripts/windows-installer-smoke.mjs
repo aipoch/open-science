@@ -1487,17 +1487,20 @@ const drillOrphanedUninstallerLock = async ({ installer, installDirectory, env }
 }
 
 const terminateDirectoryProcesses = async (directory, run = runProcess) => {
-  const root = `${directory.replace(/[\\/]+$/u, '')}\\`
+  const resolvedDirectory = win32.resolve(directory)
+  if (!win32.isAbsolute(directory) || resolvedDirectory === win32.parse(resolvedDirectory).root)
+    throw new Error('Process cleanup requires an absolute directory below a volume root.')
+  const root = `${resolvedDirectory.replace(/[\\/]+$/u, '')}\\`
+  const encodedRoot = Buffer.from(root, 'utf8').toString('base64')
   await run(
     'powershell.exe',
     [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      "$root = $args[0]; Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'CurrentCultureIgnoreCase') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
-      root
+      `$ErrorActionPreference = 'Stop'; $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}')); Get-CimInstance -ClassName Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`
     ],
-    { allowNonZero: true }
+    {}
   )
 }
 

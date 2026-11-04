@@ -1,4 +1,4 @@
-import { createCanvas } from '@napi-rs/canvas'
+import { createCanvas, GlobalFonts } from '@napi-rs/canvas'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8572,9 +8572,18 @@ it.each(['flat', 'covered-shadow', 'transparent', 'stripe', 'raster-text', 'part
       context.fillRect(45, 0, 5, 60)
     }
     if (kind === 'raster-text') {
-      context.fillStyle = '#ffffff'
-      context.font = '12px sans-serif'
-      context.fillText('Raster content', 15, 38)
+      const fixtureFont = GlobalFonts.registerFromPath(
+        resolve('resources/NotoSansSC-Regular.otf'),
+        'RasterBackdropTest'
+      )
+      if (!fixtureFont) throw new Error('Raster backdrop fixture font is unavailable.')
+      try {
+        context.fillStyle = '#ffffff'
+        context.font = '12px RasterBackdropTest'
+        context.fillText('Raster content', 15, 38)
+      } finally {
+        GlobalFonts.remove(fixtureFont)
+      }
     }
     const image = await pdf.embedPng(canvas.toBuffer('image/png'))
     page.drawImage(image, { x: kind === 'partial' ? 130 : 90, y: 480, width: 200, height: 60 })

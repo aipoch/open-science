@@ -1,3 +1,6 @@
+import { LiteratureStudySnapshot, LiteratureSnapshotStore } from '../literature/study-snapshot'
+import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
+import { runtimeMetadata } from '../runtime-metadata'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
@@ -78,6 +81,7 @@ export async function composeResearchCatalog({
   tagService: TagService
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
+  literatureStudySnapshot: LiteratureStudySnapshot
   journalAttributes: JournalAttributes
   literatureCitationFormatter: LiteratureCitationFormatter
   literatureCitationDocument: LiteratureCitationDocument
@@ -157,6 +161,43 @@ export async function composeResearchCatalog({
     smartCollections,
     journalAttributes
   )
+  const snapshotRunner = await modules.add(
+    new RestrictedInferenceRunner({
+      appVersion: runtimeMetadata().version,
+      configRoot,
+      profileNamespace: 'study-snapshot',
+      resolveTarget: (target, context) =>
+        settingsService.resolveExplicitAgentBackend(target, context),
+      allowNativeCodexSubscription: true
+    }),
+    (runner) => ({
+      name: 'literature-study-snapshot-inference',
+      capability: runner,
+      dispose: () => runner.shutdown()
+    })
+  )
+  void snapshotRunner
+    .sweepStaleProfiles()
+    .catch((error) =>
+      literatureContextLog.warn('Study snapshot profile cleanup failed', errorLogFields(error))
+    )
+  const literatureStudySnapshot = new LiteratureStudySnapshot({
+    store: new LiteratureSnapshotStore(() =>
+      join(resolveDataRoot(), 'literature', 'study-snapshots')
+    ),
+    catalog: literatureCatalog,
+    reader: literatureDocumentReader,
+    infer: async ({ prompt, systemPrompt, signal }) =>
+      snapshotRunner.run({
+        prompt,
+        systemPrompt,
+        signal,
+        target: await settingsService.captureActiveExplicitAgentBackendTarget(),
+        agentName: 'open-science-study-snapshot',
+        description: 'Summarize a single paper without tools.',
+        outputLimitBytes: 24_000
+      })
+  })
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
   )
@@ -273,6 +314,7 @@ export async function composeResearchCatalog({
     memoryService,
     journalAttributes,
     literatureCatalog,
+    literatureStudySnapshot,
     literatureCitationFormatter,
     literatureCitationDocument,
     literatureReferenceResolver,

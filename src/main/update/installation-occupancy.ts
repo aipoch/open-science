@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, readlinkSync, readdirSync, realpathSync } from 'node:fs'
+import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
+import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
 
 const requireNative = createRequire(__filename)
 
@@ -56,6 +57,7 @@ $root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${root}'))
 $item = Get-Item -LiteralPath $root -Force
 $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | ForEach-Object { $_.FullName }) } else { @($item.FullName) }
 $users = @([OpenScienceInstallationResources]::Query([string[]]$files))
+Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop
 $processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath)
 ConvertTo-Json -InputObject @{resourcePids=$users;processes=$processes} -Depth 4 -Compress
 `
@@ -118,7 +120,7 @@ function isLinuxInstallationExecutable(pid: number, installationRoot: string): b
   }
 }
 
-function isLinuxInstallationFileUser(pid: number, root: string): boolean {
+function isLinuxInstallationMappingUser(pid: number, root: string): boolean {
   const belongs = (path: string): boolean => {
     path = path.replace(/ \(deleted\)$/, '')
     return path === root || path.startsWith(root + '/')
@@ -138,24 +140,20 @@ function isLinuxInstallationFileUser(pid: number, root: string): boolean {
     const path = /^\S+\s+\S+\s+\S+\s+\S+\s+\d+\s+(.+)$/.exec(line)?.[1]
     if (path && belongs(path.replace(/\\012/g, '\n'))) return true
   }
-  for (const fd of inspect(() => readdirSync(`/proc/${pid}/fd`)) ?? []) {
-    const path = inspect(() => readlinkSync(`/proc/${pid}/fd/${fd}`))
-    if (path && belongs(path)) return true
-  }
   // This helper runs only after argv/exe yielded no installation candidate. An unrelated user's
   // protected process cannot make every ordinary Linux update permanently unavailable. Record
-  // the coverage limitation rather than claim whole-machine absence of file users. A registered
+  // the coverage limitation rather than claim whole-machine absence of mapping users. A registered
   // or path-matched installation candidate remains an occupant in the caller regardless of this
   // optional supplement. Complete cross-user evidence is still a platform acceptance gap.
   if (unknown && ['EACCES', 'EPERM'].includes((unknown as NodeJS.ErrnoException).code ?? '')) {
-    createLogger('update').warn('Linux installation file scan coverage limited', {
+    createLogger('update').warn('Linux installation mapping scan coverage limited', {
       pid,
       code: (unknown as NodeJS.ErrnoException).code
     })
   } else if (unknown)
     throw new UpdateLifecycleError(
       'installation-busy',
-      `Installation file use could not be verified for process ${pid}. Retry the occupancy check or cancel this update.`,
+      `Installation mapping use could not be verified for process ${pid}. Retry the occupancy check or cancel this update.`,
       undefined,
       { cause: unknown }
     )
@@ -171,12 +169,16 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
     /* The installation may already have moved. */
   }
   if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', windowsInstallationQuery(installationRoot), {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer: 16 * 1024 * 1024,
-      windowsHide: true
-    })
+    const result = spawnSync(
+      resolveWindowsPowerShellExecutable(),
+      windowsInstallationQuery(installationRoot),
+      {
+        encoding: 'utf8',
+        timeout: 15_000,
+        maxBuffer: 16 * 1024 * 1024,
+        windowsHide: true
+      }
+    )
     if (result.status !== 0)
       throw new UpdateLifecycleError(
         'installation-busy',
@@ -210,14 +212,14 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
       (match[2].includes(installationRoot) ||
         (process.platform === 'linux' &&
           (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationFileUser(Number(match[1]), installationRoot))))
+            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
     )
       pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
-    // Inspect ordinary open files as well as executable mappings, including processes whose
-    // command line does not mention the installation (for example a loaded helper file).
-    const mappings = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-Fpn'], {
+    // Inspect executable and mapped files (dylib, asar mmap), not ordinary open descriptors.
+    // Only `txt` mappings can block a rename replacement or survive it.
+    const mappings = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'], {
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024
     })
@@ -226,17 +228,31 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
         'installation-busy',
         'Mapped installation files could not be inspected.'
       )
-    let pid = 0
-    for (const line of mappings.stdout.split('\n')) {
-      if (line.startsWith('p')) pid = Number(line.slice(1))
-      if (
-        line.startsWith('n') &&
-        (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
-      )
-        pids.add(pid)
-    }
+    for (const pid of parseDarwinLsofMappings(mappings.stdout, installationRoot)) pids.add(pid)
   }
   return [...pids]
+}
+
+function parseDarwinLsofMappings(lsofOutput: string, installationRoot: string): number[] {
+  const pids: number[] = []
+  let pid = 0
+  let isTextMapping = false
+  for (const line of lsofOutput.split('\n')) {
+    if (line.startsWith('p')) {
+      pid = Number(line.slice(1))
+      isTextMapping = false
+    } else if (line.startsWith('f')) {
+      isTextMapping = line === 'ftxt'
+    } else if (
+      line.startsWith('n') &&
+      isTextMapping &&
+      (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
+    ) {
+      pids.push(pid)
+      isTextMapping = false
+    }
+  }
+  return pids
 }
 
 export async function inspectInstallationProcessesAsync(
@@ -252,8 +268,24 @@ export async function inspectInstallationProcessesAsync(
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot))
-    return parseWindowsInstallationQuery(stdout, installationRoot)
+    // A cold Restart Manager scan of a real 7,314-file installation took 70 seconds on Windows;
+    // the same scan took ~2 seconds once warm. Keep the asynchronous scan cancellable and bounded,
+    // without treating the old 15-second process-list budget as proof of unknown occupancy.
+    const started = Date.now()
+    try {
+      const { stdout } = await runVerificationProcess(
+        resolveWindowsPowerShellExecutable(),
+        windowsInstallationQuery(installationRoot),
+        { signal, timeoutMs: 120_000 }
+      )
+      return parseWindowsInstallationQuery(stdout, installationRoot)
+    } catch (cause) {
+      createLogger('update').warn('Windows installation occupancy inspection failed', {
+        durationMs: Date.now() - started,
+        message: cause instanceof Error ? cause.message : 'Unknown inspection error'
+      })
+      throw cause
+    }
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()
@@ -265,23 +297,51 @@ export async function inspectInstallationProcessesAsync(
       (match[2].includes(installationRoot) ||
         (process.platform === 'linux' &&
           (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationFileUser(Number(match[1]), installationRoot))))
+            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
     )
       pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
-    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpn'])
-    let pid = 0
-    for (const line of maps.stdout.split('\n')) {
-      if (line.startsWith('p')) pid = Number(line.slice(1))
-      if (
-        line.startsWith('n') &&
-        (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
-      )
-        pids.add(pid)
-    }
+    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'])
+    for (const pid of parseDarwinLsofMappings(maps.stdout, installationRoot)) pids.add(pid)
   }
   return [...pids]
+}
+
+// macOS `ps -o comm=` prints the full executable path; show the executable name only.
+export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
+  const names = new Map<number, string>()
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+    const name = match?.[2].trim().split('/').pop()
+    if (match && name) names.set(Number(match[1]), name)
+  }
+  return names
+}
+
+/** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
+export function inspectProcessNames(pids: number[]): Map<number, string> {
+  const names = new Map<number, string>()
+  if (pids.length === 0) return names
+  if (process.platform === 'darwin') {
+    const result = spawnSync('/bin/ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024
+    })
+    if (result.status === 0)
+      for (const [pid, name] of parseDarwinProcessNames(result.stdout)) names.set(pid, name)
+  } else if (process.platform === 'linux') {
+    for (const pid of pids) {
+      try {
+        const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
+        if (comm) names.set(pid, comm)
+      } catch {
+        // Process exited or inaccessible; diagnostic only, no occupancy impact.
+      }
+    }
+  }
+  return names
 }
 
 /** AppImage extract-and-run keeps its runtime parent alive until Electron exits.
@@ -451,6 +511,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
   const script = [
     '$ErrorActionPreference = "Stop"',
     '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
+    'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop',
     '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
       process.pid +
       '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
@@ -472,7 +533,7 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
   ].join('\n')
   const result = spawnSync(
-    'powershell.exe',
+    resolveWindowsPowerShellExecutable(),
     ['-NoProfile', '-NonInteractive', '-Command', script],
     {
       encoding: 'utf8',

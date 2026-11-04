@@ -22,8 +22,10 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
 export class AcpConnectionTransitionOwner {
   private providerIntent = false
   private skillsIntent = false
+  private idleReleaseIntent = false
   private retirementIntent = false
   private retirementStarted = false
+  private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
   private barrierGeneration = 0
@@ -39,6 +41,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestProviderReconnect(): Promise<void> {
+    if (this.plannedDisconnect) return this.plannedDisconnect
     if (this.options.blockers().reconnect) {
       this.providerIntent = true
       this.armBarrier()
@@ -51,6 +54,11 @@ export class AcpConnectionTransitionOwner {
 
   requestSkillsReload(): void {
     this.skillsIntent = true
+    this.activityChanged()
+  }
+
+  requestIdleRelease(): void {
+    this.idleReleaseIntent = true
     this.activityChanged()
   }
 
@@ -68,11 +76,15 @@ export class AcpConnectionTransitionOwner {
       return
     }
 
+    if (this.plannedDisconnect) return
     if (this.options.blockers().reconnect) return
-    if (!this.providerIntent && !this.skillsIntent) return
+    if (!this.providerIntent && !this.skillsIntent) {
+      if (!this.idleReleaseIntent || this.options.blockers().retirement) return
+    }
 
     this.providerIntent = false
     this.skillsIntent = false
+    this.idleReleaseIntent = false
     void this.disconnectDeferred()
   }
 
@@ -110,7 +122,18 @@ export class AcpConnectionTransitionOwner {
     }
   }
 
-  private async disconnectPlanned(): Promise<void> {
+  private disconnectPlanned(): Promise<void> {
+    if (this.plannedDisconnect) return this.plannedDisconnect
+    const completion = Promise.withResolvers<void>()
+    // Publish ownership before disconnect's synchronous cleanup can notify activity changes.
+    this.plannedDisconnect = completion.promise.finally(() => {
+      this.plannedDisconnect = undefined
+    })
+    void this.performPlannedDisconnect().then(completion.resolve, completion.reject)
+    return this.plannedDisconnect
+  }
+
+  private async performPlannedDisconnect(): Promise<void> {
     const disconnect = this.options.disconnect(false)
     const teardownGeneration = this.options.connectionGeneration()
     await disconnect
@@ -123,9 +146,10 @@ export class AcpConnectionTransitionOwner {
     this.retirementIntent = false
     this.providerIntent = false
     this.skillsIntent = false
+    this.idleReleaseIntent = false
 
     try {
-      await this.options.disconnect(false)
+      await (this.plannedDisconnect ?? this.options.disconnect(false))
     } catch (error) {
       this.reportFailure('retired runtime disconnect failed', error)
     } finally {
@@ -156,6 +180,7 @@ export class AcpConnectionTransitionOwner {
     this.providerIntent = false
     this.skillsIntent = false
     const resolve = this.resolveBarrier
+    this.idleReleaseIntent = false
     this.barrierPromise = undefined
     this.resolveBarrier = undefined
     resolve?.()

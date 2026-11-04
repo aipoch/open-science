@@ -403,6 +403,8 @@ describe('first prompt preparation boundaries', () => {
     const coordinator = new AcpRuntimeCoordinator(
       () =>
         ({
+          withPromptAdmission: async (work: () => Promise<unknown>) => work(),
+          requestIdleRelease: () => undefined,
           getState: () => state,
           getSnapshot: () => state,
           cancelPrompt: async () => state,

@@ -1245,6 +1245,17 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     }
   )
 
+  it('distinguishes an OpenCode version probe failure from an unsupported version', async () => {
+    const harness = makeHarness({ settings: makeSettings({ agentFrameworkId: 'opencode' }) })
+    const cause = Object.assign(new Error('process could not start'), { code: 'ENOMEM' })
+    harness.runtime.probeOpencodeVersion.mockRejectedValue(cause)
+    await expect(harness.resolver.resolveActiveBackend()).rejects.toMatchObject({
+      message: 'OpenCode CLI version check failed.',
+      cause
+    })
+    expect(harness.runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
+  })
+
   it('pre-registers immutable OpenCode provider routes without exposing upstream credentials', async () => {
     const providerA = {
       ...makeStoredProvider('provider-a', 'model-a'),
