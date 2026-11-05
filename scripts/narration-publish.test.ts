@@ -9,7 +9,10 @@ import {
   publishNarrationAssets,
   checkNarrationCdn
 } from './publish-narration-assets.mjs'
-import { researchNarrationCdnUrl } from '../src/main/local-models/download-sources'
+import {
+  researchNarrationCdnUrl,
+  localModelDownloadSources
+} from '../src/main/local-models/download-sources'
 
 const bytes = Buffer.from('narration fixture')
 const asset = {
@@ -41,8 +44,18 @@ it('deduplicates the platform catalogs and uses the same URLs as the client', as
   expect(new Set(catalog.assets.map((entry) => entry.url)).size).toBe(catalog.assets.length)
   expect(catalog.assets.filter((entry) => entry.file === 'model_quantized.onnx')).toHaveLength(1)
   for (const entry of catalog.assets) expect(entry.url).toBe(researchNarrationCdnUrl(entry))
-  expect(catalog.assets.some((entry) => entry.file.endsWith('.dll'))).toBe(true)
-  expect(catalog.assets.some((entry) => entry.file.endsWith('.dylib'))).toBe(true)
+  const { RESEARCH_NARRATION_MODELS } =
+    await import('../packages/research-film/dist/model-catalog.js')
+  const published = new Set(catalog.assets.map((entry) => entry.url))
+  for (const revision of RESEARCH_NARRATION_MODELS) {
+    for (const entry of revision.assets) {
+      const [primary] = localModelDownloadSources(entry, 'research-narration')
+      if (entry.url.startsWith('https://unpkg.com/onnxruntime-node@1.21.0/')) {
+        expect(primary).toContain('https://registry.npmmirror.com/onnxruntime-node/1.21.0/files/')
+        expect(published.has(researchNarrationCdnUrl(entry))).toBe(false)
+      } else expect(published.has(primary)).toBe(true)
+    }
+  }
 })
 
 it('creates missing objects with conditional writes and pinned checksums', async () => {

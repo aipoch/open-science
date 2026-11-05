@@ -5,7 +5,10 @@ import { mkdir, writeFile, stat } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { researchNarrationCdnUrl } from '../src/main/local-models/download-sources.ts'
+import {
+  researchNarrationCdnUrl,
+  researchNarrationMirrorUrl
+} from '../src/main/local-models/download-sources.ts'
 
 export async function readNarrationCatalog() {
   const { RESEARCH_NARRATION_MODELS } =
@@ -13,6 +16,7 @@ export async function readNarrationCatalog() {
   const objects = new Map()
   for (const revision of RESEARCH_NARRATION_MODELS) {
     for (const asset of revision.assets) {
+      if (researchNarrationMirrorUrl(asset)) continue
       const url = researchNarrationCdnUrl(asset)
       const previous = objects.get(url)
       if (previous && previous.size !== asset.size)

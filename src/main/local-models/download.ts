@@ -88,7 +88,7 @@ export const downloadLocalModelAsset = async (
   const download = dependencies.download ?? resilientDownload
   const sources = (dependencies.sources ?? localModelDownloadSources)(asset, options.namespace)
   options.signal?.throwIfAborted()
-  // Narration uses a strict CDN-first order; do not wait for upstream probes.
+  // Narration tries its domestic source first; do not wait for upstream probes.
   const candidates =
     options.namespace === 'research-narration'
       ? sources.map((url) => ({ url, latency: 0 }))

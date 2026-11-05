@@ -586,3 +586,30 @@ it('abandons a stalled narration CDN after 30 seconds and downloads from upstrea
   ])
   expect(await readFile(path)).toEqual(body)
 })
+
+it.each(['success', 'missing', 'corrupt'])(
+  'uses npmmirror for ONNX runtime and upstream fallback without internal CDN: %s',
+  async (outcome) => {
+    const fixture = { ...asset, url: 'https://unpkg.com/onnxruntime-node@1.21.0/dist/index.js' }
+    const mirror = 'https://registry.npmmirror.com/onnxruntime-node/1.21.0/files/dist/index.js'
+    expect(localModelDownloadSources(fixture, 'research-narration')).toEqual([mirror, fixture.url])
+    const fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      if (url === fixture.url || outcome === 'success') return response()
+      return outcome === 'missing'
+        ? new Response(null, { status: 404 })
+        : response(Buffer.alloc(body.length))
+    })
+    const path = await target()
+    await downloadLocalModelAsset(fixture, path, { namespace: 'research-narration' }, { fetchImpl })
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual(
+      outcome === 'success' ? [mirror] : [mirror, fixture.url]
+    )
+    expect(await readFile(path)).toEqual(body)
+    expect(
+      localModelDownloadSources(
+        { ...fixture, url: fixture.url.replace('1.21.0', '1.22.0') },
+        'research-narration'
+      )[0]
+    ).toBe(researchNarrationCdnUrl(fixture))
+  }
+)

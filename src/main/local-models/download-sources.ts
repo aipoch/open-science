@@ -42,10 +42,18 @@ export const researchNarrationCdnUrl = (
   return `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`
 }
 
+// This exact package revision is verified on npmmirror; other revisions retain the internal CDN.
+export const researchNarrationMirrorUrl = (asset: { url: string }): string | undefined => {
+  const upstream = 'https://unpkg.com/onnxruntime-node@1.21.0/'
+  return asset.url.startsWith(upstream)
+    ? `https://registry.npmmirror.com/onnxruntime-node/1.21.0/files/${asset.url.slice(upstream.length)}`
+    : undefined
+}
+
 export const localModelDownloadSources = (
   asset: LocalModelRevision['assets'][number],
   namespace?: string
 ): readonly string[] =>
   namespace === 'research-narration'
-    ? [researchNarrationCdnUrl(asset), asset.url]
+    ? [researchNarrationMirrorUrl(asset) ?? researchNarrationCdnUrl(asset), asset.url]
     : [asset.url, ...(alternatives[asset.url] ?? [])]
