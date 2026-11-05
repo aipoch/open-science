@@ -11444,7 +11444,7 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       await openMenu(screen.getByRole('button', { name: 'Add' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
       fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: '10.1234/paper\nPMID:35486828' }
       })
@@ -11474,7 +11474,15 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openMenu(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+    const addLink = screen.getByRole('menuitem', { name: 'Add from identifiers or links' })
+    expect(
+      within(addLink).getByText('Add from identifiers or links', { exact: true })
+    ).not.toBeNull()
+    expect(
+      within(addLink).getByText('DOI, arXiv, PMID, PMCID or links', { exact: true })
+    ).not.toBeNull()
+    fireEvent.click(addLink)
+    expect(screen.getByRole('dialog', { name: 'Add from identifiers or links' })).not.toBeNull()
     fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/paper\nPMID:35486828' }
     })
@@ -11548,7 +11556,7 @@ describe('LiteratureLibraryPage', () => {
         await screen.findByRole('heading', { name: 'Retrieval research' })
       }
       await openMenu(screen.getByRole('button', { name: 'Add' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
       fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: reference }
       })
@@ -11662,7 +11670,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const lookup = async (): Promise<HTMLElement> => {
       await openMenu(screen.getByRole('button', { name: 'Add' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
       fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: '10.1234/linked-paper' }
       })
@@ -11738,7 +11746,7 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openMenu(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
     fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })
@@ -11797,7 +11805,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Retrieval research/ }))
     await screen.findByRole('heading', { name: 'Retrieval research' })
     await openMenu(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
     fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })

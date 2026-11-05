@@ -46,7 +46,9 @@ test.describe('live literature providers', () => {
     const reviews = await Promise.all(
       pages.map(async (page): Promise<Locator> => {
         await page.getByRole('button', { name: 'Add', exact: true }).click()
-        await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+        await page
+          .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+          .click()
         await page
           .getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
           .fill('https://doi.org/10.1038/nature12373')
@@ -122,7 +124,9 @@ test.describe('live literature providers', () => {
       const add = page.getByRole('button', { name: 'Add', exact: true })
       const lookup = async (): Promise<Locator> => {
         await add.click()
-        await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+        await page
+          .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+          .click()
         const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
         await expect(input).toBeFocused()
         await input.fill(url)
@@ -197,7 +201,9 @@ test.describe('live literature providers', () => {
     const reviewed: { id: string; title: string }[] = []
     const openLookup = async (input: string): Promise<void> => {
       await page.getByRole('button', { name: 'Add', exact: true }).click()
-      await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+      await page
+        .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+        .click()
       const field = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
       await field.fill(input)
       await expect(field).toHaveValue(input)

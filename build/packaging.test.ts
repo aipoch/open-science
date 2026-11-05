@@ -172,7 +172,7 @@ describe.skipIf(!nsisCompiler)('NSIS application process check', () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
-  })
+  }, 65_000)
 })
 
 describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(

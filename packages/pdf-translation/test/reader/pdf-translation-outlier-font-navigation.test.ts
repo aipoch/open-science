@@ -3,13 +3,16 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import * as fontkit from 'fontkit'
 import { PDFDocument, degrees } from 'pdf-lib'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFPageProxy } from 'pdfjs-dist'
 import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
 import { getPdfTranslationTextContent } from '../../src/reader/text-content.js'
-import { readOutlierFontNavigation } from '../../src/reader/outlier-font-navigation.js'
+import {
+  readNativeType3Navigation,
+  readOutlierFontNavigation
+} from '../../src/reader/outlier-font-navigation.js'
 
 type Fixture = {
   font: Record<string, unknown>
@@ -272,4 +275,212 @@ it('retains a complete embedded outlier-metric label as an independent original-
   } finally {
     await task.destroy()
   }
+})
+
+function type3Fixture(): {
+  page: PDFPageProxy
+  content: Fixture['content']
+  viewport: Fixture['viewport']
+  font: Record<string, unknown>
+  program: { fnArray: number[]; argsArray: unknown[][] }
+  operators: { fnArray: number[]; argsArray: unknown[][] }
+} {
+  const c = Math.cos(Math.PI / 6),
+    s = Math.sin(Math.PI / 6)
+  const matrix = [10 * c, 10 * s, -10 * s, 10 * c, 200, 400]
+  const program = {
+    fnArray: [OPS.setCharWidthAndBounds, OPS.constructPath],
+    argsArray: [
+      [600, 0, 0, -200, 600, 800],
+      [OPS.fill, [new Float32Array([0, 0, -200, 1, 600, -200, 1, 600, 800, 1, 0, 800, 4])]]
+    ]
+  }
+  const font = {
+    isType3Font: true,
+    missingFile: false,
+    isInvalidPDFjsFont: false,
+    remeasure: false,
+    loadedName: 'native',
+    fontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+    ascent: 0.8,
+    descent: -0.2,
+    charProcOperatorList: { eight: program }
+  }
+  const glyph = { unicode: '8', width: 600, isInFont: true, operatorListId: 'eight' }
+  const operators = {
+    fnArray: [
+      OPS.beginText,
+      OPS.setFont,
+      OPS.setFillRGBColor,
+      OPS.setTextMatrix,
+      OPS.showText,
+      OPS.endText
+    ],
+    argsArray: [[], ['native', 10], ['#000000'], [c, s, -s, c, 200, 400], [[glyph, glyph]], []]
+  }
+  const content = {
+    items: [
+      {
+        str: '88',
+        dir: 'ltr',
+        width: 12,
+        height: 10,
+        transform: matrix,
+        fontName: 'native',
+        hasEOL: false
+      }
+    ],
+    styles: { native: { fontFamily: 'native', ascent: 0.8, descent: -0.2 } },
+    lang: null
+  } as unknown as Fixture['content']
+  return {
+    content,
+    font,
+    program,
+    operators,
+    viewport: {
+      width: 600,
+      height: 800,
+      rotation: 0,
+      scale: 1,
+      transform: [1, 0, 0, -1, 0, 800]
+    } as Fixture['viewport'],
+    page: {
+      commonObjs: { has: () => true, get: () => font },
+      getOperatorList: async () => operators
+    } as unknown as PDFPageProxy
+  }
+}
+const nativeType3 = (
+  f: ReturnType<typeof type3Fixture>,
+  signal = new AbortController().signal,
+  current = (): boolean => true
+): ReturnType<typeof readNativeType3Navigation> =>
+  readNativeType3Navigation(f.page, f.content, f.viewport, { signal, current })
+
+it('certifies original-only Type3 navigation from horizontal native programs without inventing a vertical flag', async () => {
+  const f = type3Fixture(),
+    before = structuredClone(f.content),
+    proof = await nativeType3(f)
+  expect(proof?.regions.size).toBe(1)
+  expect(proof?.current()).toBe(true)
+  expect(f.content).toEqual(before)
+  expect('vertical' in f.font).toBe(false)
+  expect('vertical' in f.content.styles.native).toBe(false)
+})
+it.each([
+  'vertical',
+  'vertical-program',
+  'wrong-width',
+  'wrong-literal',
+  'invisible',
+  'white',
+  'partial-glyph'
+] as const)('declines insufficient horizontal Type3 proof: %s', async (fault) => {
+  const f = type3Fixture()
+  if (fault === 'vertical') Object.assign(f.font, { vertical: true })
+  if (fault === 'vertical-program') f.program.argsArray[0][1] = 1
+  if (fault === 'wrong-width') f.program.argsArray[0][0] = 601
+  if (fault === 'wrong-literal') (f.content.items[0] as TextItem).str = '89'
+  if (fault === 'invisible') {
+    f.operators.fnArray.splice(4, 0, OPS.setTextRenderingMode)
+    f.operators.argsArray.splice(4, 0, [3])
+  }
+  if (fault === 'white') f.operators.argsArray[2][0] = '#ffffff'
+  if (fault === 'partial-glyph') {
+    for (const g of f.operators.argsArray[4][0] as Record<string, unknown>[]) g.unicode = '88'
+    ;(f.content.items[0] as TextItem).str = '8'
+  }
+  expect(await nativeType3(f)).toBeUndefined()
+})
+it.each([
+  'source-item',
+  'source-transform',
+  'style',
+  'operator',
+  'font',
+  'program',
+  'rectangle'
+] as const)('rejects late equal replacement or changed native state: %s', async (fault) => {
+  const f = type3Fixture(),
+    proof = await nativeType3(f)
+  expect(proof?.current()).toBe(true)
+  if (fault === 'source-item') f.content.items[0] = { ...f.content.items[0] }
+  if (fault === 'source-transform')
+    (f.content.items[0] as TextItem).transform = [...(f.content.items[0] as TextItem).transform]
+  if (fault === 'style') f.content.styles.native = { ...f.content.styles.native }
+  if (fault === 'operator') f.operators.argsArray[4] = [...f.operators.argsArray[4]]
+  if (fault === 'font')
+    Object.defineProperty(f.page.commonObjs, 'get', { value: () => ({ ...f.font }) })
+  if (fault === 'program') (f.program.argsArray[1][1] as Float32Array[])[0][2] = -201
+  if (fault === 'rectangle') Object.assign(proof!.regions.get(0)!, { x: 0 })
+  expect(proof?.current()).toBe(false)
+})
+it('accepts a stable native packed font matrix getter but seals its descriptor', async () => {
+  const f = type3Fixture()
+  delete (f.font as Partial<typeof f.font>).fontMatrix
+  const prototype = {
+    get fontMatrix(): number[] {
+      return [0.001, 0, 0, 0.001, 0, 0]
+    }
+  }
+  Object.setPrototypeOf(f.font, prototype)
+  const proof = await nativeType3(f)
+  expect(proof?.current()).toBe(true)
+  Object.defineProperty(f.font, 'fontMatrix', { value: [0.001, 0, 0, 0.001, 0, 0] })
+  expect(proof?.current()).toBe(false)
+})
+it('checks source epoch and abort after awaiting actual operators', async () => {
+  const f = type3Fixture()
+  let release: (value: typeof f.operators) => void = () => undefined
+  f.page.getOperatorList = () =>
+    new Promise((resolve) => {
+      release = resolve
+    }) as ReturnType<PDFPageProxy['getOperatorList']>
+  const result = nativeType3(f)
+  f.content.items[0] = { ...f.content.items[0] }
+  release(f.operators)
+  expect(await result).toBeUndefined()
+  const controller = new AbortController(),
+    g = type3Fixture()
+  g.page.getOperatorList = (async () => {
+    controller.abort()
+    return g.operators
+  }) as PDFPageProxy['getOperatorList']
+  await expect(nativeType3(g, controller.signal)).rejects.toThrow()
+  expect(await nativeType3(type3Fixture(), undefined, () => false)).toBeUndefined()
+})
+
+it.each(['complete', 'wrong-width', 'vertical-program', 'unproved-move', 'nonfinite'] as const)(
+  'requires the exact native TJ advance for original-only Type3 navigation: %s',
+  async (fault) => {
+    const f = type3Fixture(),
+      glyph = (f.operators.argsArray[4][0] as unknown[])[0]
+    f.operators.argsArray[4][0] = [glyph, -100, glyph]
+    ;(f.content.items[0] as TextItem).width = 13
+    if (fault === 'wrong-width') (f.content.items[0] as TextItem).width = 12
+    if (fault === 'vertical-program') f.program.argsArray[0][1] = 1
+    if (fault === 'nonfinite') f.operators.argsArray[4][0] = [glyph, NaN, glyph]
+    if (fault === 'unproved-move') {
+      f.operators.fnArray.splice(4, 1, OPS.showText, OPS.moveText, OPS.showText)
+      f.operators.argsArray.splice(4, 1, [[glyph]], [7, 0], [[glyph]])
+    }
+    const original = structuredClone(f.content),
+      proof = await nativeType3(f)
+    expect(proof?.regions.size).toBe(fault === 'complete' ? 1 : undefined)
+    expect(f.content).toEqual(original)
+    expect('vertical' in f.font).toBe(false)
+    expect('vertical' in f.content.styles.native).toBe(false)
+  }
+)
+
+it('revokes a Type3 navigation certificate after its actual TJ operand changes', async () => {
+  const f = type3Fixture(),
+    glyph = (f.operators.argsArray[4][0] as unknown[])[0]
+  f.operators.argsArray[4][0] = [glyph, -100, glyph]
+  ;(f.content.items[0] as TextItem).width = 13
+  const proof = await nativeType3(f)
+  expect(proof?.current()).toBe(true)
+  ;(f.operators.argsArray[4][0] as unknown[])[1] = -101
+  expect(proof?.current()).toBe(false)
 })

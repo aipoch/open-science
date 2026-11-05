@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
   refineNativeTableBoundaryInk,
+  refineNativeFollowingGridCrop,
   recoverNativeClippedHeaderCrop
 } from './literature-pdf-native-table-boundary-ink.mjs'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -786,6 +787,8 @@ export function proveNativeTableReadingOrder(table, wholeProof, items, rules, co
 export function completeNativeTableVisualCrop(table, wholeProof, items, rules, context) {
   const header = recoverNativeClippedHeaderCrop(table, context)
   if (header) return { ...table, cropRect: header }
+  const following = refineNativeFollowingGridCrop(table, rules, context)
+  if (following) return following
   const valid = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   if (

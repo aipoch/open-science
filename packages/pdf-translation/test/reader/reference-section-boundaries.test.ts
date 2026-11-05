@@ -654,3 +654,294 @@ test.each([
   expect(tail).toBeDefined()
   expect(tail?.sourceOnly).toBe(true)
 })
+
+// Native section roles close an unpunctuated appendix without releasing math.
+function plainAppendixPage(fault = ''): PdfLayoutPage {
+  const make = (
+    str: string,
+    y: number,
+    size = 10,
+    fontName = 'Body',
+    x = 60
+  ): PdfLayoutTextItem => ({
+    ...item(str, y, size, fontName, x),
+    fontAscent: 0.8,
+    fontDescent: -0.2,
+    fontVertical: false
+  })
+  const items = [
+    make('1 Methods', 100, 12, 'Section'),
+    make(
+      'The complete method describes the independent experiment and explains every measured outcome.',
+      130
+    ),
+    make('A second ordinary sentence documents the inputs and the reproducible analysis.', 150),
+    make('2 Results', 200, 12, 'Section'),
+    make(
+      'The complete results describe the independent observations and their measured uncertainty.',
+      230
+    ),
+    make('Another ordinary sentence documents all observations and the reproducible result.', 250),
+    make('References', 300, 12, 'Section'),
+    make('[1] A. Author. A complete publication. Journal, 2020.', 330, 8),
+    make('[2] B. Writer. Another complete publication. Journal, 2021.', 350, 8),
+    make('Appendix A Independent methods', 400, 12, 'Section'),
+    make(
+      'The independent appendix explains the complete procedure and its reproducible implementation.',
+      430
+    ),
+    make('x = y + 1', 470)
+  ]
+  if (fault === 'wrong-role') items[9].fontName = 'Body'
+  if (fault === 'wrong-size') items[9].height = items[9].transform[0] = items[9].transform[3] = 14
+  if (fault === 'wrong-margin') items[9].transform[4] += 10
+  if (fault === 'missing-witness') items[3].str = 'Results without a section number'
+  if (fault === 'ordinary-title') items[9].str = 'A study of appendix methods'
+  const fonts = Object.fromEntries(
+    ['Body', 'Section'].map((name) => [
+      name,
+      { ascent: 0.8, descent: -0.2, vertical: false as const, nativeMetrics: true as const }
+    ])
+  )
+  if (fault === 'missing-font') delete (fonts as Partial<typeof fonts>).Section
+  return {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items,
+    nativeSectionFontEvidence: { complete: true, fonts }
+  }
+}
+test('ends a same-page bibliography at a complete unpunctuated native appendix role', () => {
+  const page = plainAppendixPage(),
+    result = groupPdfTranslationPages({ pages: [page], pageCount: 1 }),
+    title = result.units.find((u) => u.source === 'Appendix A Independent methods')!,
+    body = result.units.find((u) => u.source.startsWith('The independent appendix'))!
+  expect(title.referenceBoundary).toBe(true)
+  expect(body.sourceOnly).not.toBe(true)
+  expect(body.preserve).not.toBe('reference')
+  expect(result.units.find((u) => u.source.startsWith('[1]'))?.preserve).toBe('reference')
+  expect(result.units.find((u) => u.source === 'x = y + 1')?.sourceOnly).toBe(true)
+})
+test.each([
+  'wrong-role',
+  'wrong-size',
+  'wrong-margin',
+  'missing-witness',
+  'ordinary-title',
+  'missing-font'
+])('requires the full native appendix role: %s', (fault) => {
+  const page = plainAppendixPage(fault),
+    result = groupPdfTranslationPages({ pages: [page], pageCount: 1 }),
+    body = result.units.find((u) => u.source.startsWith('The independent appendix'))!
+  expect(body.sourceOnly).toBe(true)
+  expect(body.preserve).toBe('reference')
+})
+function closedAlgorithmPage(fault = ''): PdfLayoutPage {
+  const make = (str: string, y: number, width: number): PdfLayoutTextItem => ({
+      ...item(str, 800 - y, 10, 'Body'),
+      width,
+      fontAscent: 0.8,
+      fontDescent: -0.2,
+      fontVertical: false
+    }),
+    items = [
+      make('Algorithm 1 Update values', 690, 180),
+      make('Input: an initial value', 670, 160),
+      make('1: if ready then', 650, 140),
+      make('2: return value', 630, 140),
+      make('3: end if', 620, 100),
+      make('The separate argument is ordinary prose and remains translatable.', 600, 380),
+      make('X', 590, 10),
+      make('k < N', 580, 40)
+    ],
+    rules = [700, 680, 610].map((baseline, n) => ({
+      left: 60,
+      right: 460,
+      baseline,
+      halfHeight: 0.2,
+      operators: [n]
+    }))
+  if (fault === 'unfinished-prose')
+    items[5].str = 'An incomplete explanatory phrase without a confirmed ending'
+  if (fault === 'wrong-rail') rules[2].right++
+  const page: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items,
+    nativeNumberedPacketEvidence: {
+      complete: true,
+      rules,
+      fonts: { Body: { ascent: 0.8, descent: -0.2, vertical: false, nativeMetrics: true } }
+    }
+  }
+  if (fault === 'missing-font' && page.nativeNumberedPacketEvidence?.complete)
+    delete page.nativeNumberedPacketEvidence.fonts.Body
+  if (fault === 'missing-proof')
+    page.nativeNumberedPacketEvidence = { complete: false, reason: 'missing native rule' }
+  return page
+}
+test('stops an algorithm at its complete native closing rule before ordinary prose', () => {
+  const page = closedAlgorithmPage(),
+    result = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+  expect(
+    result.units.find((u) => u.source.startsWith('The separate argument'))?.sourceOnly
+  ).not.toBe(true)
+  expect(result.units.find((u) => u.source.startsWith('2: return'))?.preserve).toBe('code')
+  expect(result.units.find((u) => u.source === 'X')?.sourceOnly).toBe(true)
+  expect(result.units.find((u) => u.source === 'k < N')?.sourceOnly).toBe(true)
+})
+test.each(['wrong-rail', 'missing-proof', 'missing-font'])(
+  'does not invent a native algorithm closing boundary: %s',
+  (fault) => {
+    const page = closedAlgorithmPage(fault),
+      result = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+    expect(result.units.find((u) => u.source.startsWith('The separate argument'))?.sourceOnly).toBe(
+      true
+    )
+  }
+)
+
+test('does not restore an unfinished external phrase merely because it is below a closing rule', () => {
+  const page = closedAlgorithmPage('unfinished-prose'),
+    result = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+  expect(
+    result.units.find((u) => u.source.startsWith('An incomplete explanatory phrase'))?.sourceOnly
+  ).toBe(true)
+})
+
+function nativeFolioCollision(fault = ''): PdfLayoutPage[] {
+  return Array.from({ length: 8 }, (_, n) => {
+    const number = n + 1,
+      body = item(
+        'The complete ordinary argument has several independently native words.',
+        200,
+        10,
+        'Body'
+      ),
+      folio = item(String(number), 610, 10, 'Body', number % 2 ? 287.5 : 307.5)
+    folio.width = 5
+    folio.fontVertical = false
+    body.fontVertical = false
+    if (number === 6) {
+      body.str = 'Figure 1. The complete measured caption keeps the genuine value 1.28.'
+      body.width = 360
+      body.transform[5] = 190
+    }
+    if (fault === 'not-last' && number === 6)
+      return { page: number, width: 600, height: 800, rotation: 0, items: [folio, body] }
+    if (fault === 'font' && number === 6) folio.fontAscent = 0.7
+    if (fault === 'false-number' && number === 6) folio.str = '7'
+    if (fault === 'rail') folio.transform[5] += number
+    if (fault === 'no-gutter' && number !== 6) body.transform[5] = 190
+    return {
+      page: number,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      items: [body, folio],
+      nativeFolioFontEvidence:
+        fault === 'missing-native'
+          ? { complete: false }
+          : {
+              complete: true,
+              fonts: {
+                Body: { ascent: 0.78, descent: -0.22, vertical: false, nativeMetrics: true }
+              }
+            }
+    } as PdfLayoutPage
+  })
+}
+test('isolates only a complete native pagination rail from a colliding caption', () => {
+  const pages = nativeFolioCollision(),
+    before = structuredClone(pages),
+    result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+    folio = result.units.find((u) => u.items.includes('6:1'))!,
+    caption = result.units.find((u) => u.items.includes('6:0'))!
+  expect(folio.source).toBe('6')
+  expect(folio.sourceOnly).toBe(true)
+  expect(folio.preserve).toBe('literal')
+  expect(caption.source).toContain('1.28.')
+  expect(caption.items).not.toContain('6:1')
+  expect(pages).toEqual(before)
+  expect(result.units.flatMap((u) => u.items).filter((k) => k === '6:1')).toHaveLength(1)
+})
+test.each(['font', 'false-number', 'rail', 'no-gutter', 'missing-native'])(
+  'does not infer a colliding folio from incomplete %s evidence',
+  (fault) => {
+    const pages = nativeFolioCollision(fault),
+      result = groupPdfTranslationPages({ pages, pageCount: pages.length }),
+      owner = result.units.find((u) => u.items.includes('6:1'))!
+    const baseline = groupPdfTranslationPages({
+      pages: pages.map((p) => ({ ...p, nativeFolioFontEvidence: undefined })),
+      pageCount: pages.length
+    })
+    expect(owner).toEqual(baseline.units.find((u) => u.items.includes('6:1')))
+  }
+)
+
+function centeredReferencesTail(fault = ''): PdfLayoutPage {
+  const title = item('References', 60, 12, 'Native', 270)
+  title.width = 60
+  const items = [
+    title,
+    item('[1] A. Author. Complete independent book citation.', 100, 10, 'Native'),
+    item('100pp.', 118, 10, 'Native', 80),
+    item('[2] B. Writer. Another complete publication record.', 150, 10, 'Native')
+  ]
+  for (const i of items) {
+    i.fontAscent = 0.8
+    i.fontDescent = -0.2
+    i.fontVertical = false
+  }
+  const page: PdfLayoutPage = {
+    page: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    items,
+    nativeReferenceEvidence: {
+      complete: true,
+      rules: [],
+      fonts: { Native: { ascent: 0.8, descent: -0.2, vertical: false, nativeMetrics: true } }
+    }
+  }
+  if (fault === 'right-column') title.transform[4] = 330
+  if (fault === 'above-heading') items[2].transform[5] = 770
+  if (fault === 'missing-evidence')
+    page.nativeReferenceEvidence = { complete: false, reason: 'missing native font' }
+  if (fault === 'missing-font' && page.nativeReferenceEvidence?.complete)
+    delete page.nativeReferenceEvidence.fonts.Native
+  if (fault === 'zero-metrics') title.fontAscent = 0
+  if (fault === 'vertical-font') title.fontVertical = true
+  if (fault === 'inconsistent-metrics' && page.nativeReferenceEvidence?.complete)
+    page.nativeReferenceEvidence.fonts.Native.ascent = 0.7
+  if (fault === 'shifted-center') title.transform[4] += 1
+  return page
+}
+
+test.each([
+  '',
+  'right-column',
+  'above-heading',
+  'missing-evidence',
+  'missing-font',
+  'zero-metrics',
+  'vertical-font',
+  'inconsistent-metrics',
+  'shifted-center'
+])('keeps a short native bibliography tail under its centered References heading: %s', (fault) => {
+  const page = centeredReferencesTail(fault),
+    before = structuredClone(page),
+    result = groupPdfTranslationPages({ pages: [page], pageCount: 1 })
+  const tail = result.units.find((u) => u.items.includes('1:2'))!
+  expect(tail.sourceOnly === true && tail.preserve === 'reference').toBe(!fault)
+  if (!fault)
+    expect(result.units.filter((u) => /^\[[12]\]/u.test(u.source)).every((u) => u.sourceOnly)).toBe(
+      true
+    )
+  expect(page).toEqual(before)
+})

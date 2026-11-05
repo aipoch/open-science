@@ -76,8 +76,7 @@ const hooks = (): AcpAgentConnectionHooks => ({
   onProcessError: vi.fn(),
   onProcessExit: vi.fn(),
   onConnectionClosed: vi.fn(),
-  reportCleanupFailure: vi.fn(),
-  reportProcessTreeError: vi.fn()
+  reportCleanupFailure: vi.fn()
 })
 
 const openConnection = async (
@@ -98,6 +97,7 @@ const openConnection = async (
         prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
         isCurrent: () => attempt.epoch === owner.epoch,
         isShuttingDown: () => owner.isShuttingDown,
+        cleanupUnattached: (resource, onFailure) => owner.cleanupUnattached(resource, onFailure),
         spawnAgent: () => asAgentProcess(process)
       },
       connectionHooks
@@ -119,6 +119,7 @@ const openCandidate = async (
 ): Promise<AcpAgentConnectionCandidate> => {
   const backendOwner = new AcpBackendGenerationOwner(claudeCodeFramework)
   const identity = { epoch: 1, assertCurrent: vi.fn() }
+  const resources = new AcpConnectionResourceOwner()
   return new AcpAgentConnectionAdapter().open(
     {
       epoch: identity.epoch,
@@ -126,6 +127,7 @@ const openCandidate = async (
       prepareBackend: (resolved) => backendOwner.prepare(identity, resolved),
       isCurrent: () => true,
       isShuttingDown: () => false,
+      cleanupUnattached: (resource, onFailure) => resources.cleanupUnattached(resource, onFailure),
       spawnAgent: () => asAgentProcess(process)
     },
     connectionHooks
@@ -133,6 +135,71 @@ const openCandidate = async (
 }
 
 describe('AcpAgentConnectionAdapter', () => {
+  it.each([false, true])(
+    'retains an unready OpenCode service for a later owner teardown; rejected=%s',
+    async (rejected) => {
+      const root = await mkdtemp(join(tmpdir(), 'opencode-unready-cleanup-'))
+      const child = new FakeAgentProcess()
+      const owner = new AcpConnectionResourceOwner()
+      const backendOwner = new AcpBackendGenerationOwner(opencodeFramework)
+      let releaseStore: (() => void) | undefined
+      const actualService =
+        await vi.importActual<typeof import('./opencode-service')>('./opencode-service')
+      startService.mockImplementationOnce(actualService.startOpenCodeService)
+      const failCleanup = async (): Promise<{ reaped: boolean }> => {
+        if (rejected) throw new Error('Termination temporarily unavailable')
+        return { reaped: false }
+      }
+      terminateProcessTree.mockImplementationOnce(failCleanup).mockImplementationOnce(failCleanup)
+      try {
+        await expect(
+          owner.connect(async (attempt) => {
+            const candidate = await new AcpAgentConnectionAdapter().open(
+              {
+                epoch: attempt.epoch,
+                resolveBackend: async () => ({
+                  framework: opencodeFramework,
+                  executablePath: '/opencode',
+                  env: { XDG_DATA_HOME: root },
+                  opencodeMajorVersion: 2
+                }),
+                prepareBackend: (backend) => backendOwner.prepare(attempt, backend),
+                isCurrent: () => owner.epoch === attempt.epoch,
+                isShuttingDown: () => owner.isShuttingDown,
+                cleanupUnattached: (resource, onFailure) =>
+                  owner.cleanupUnattached(resource, onFailure),
+                registerOpenCodeStoreRelease: (release) => {
+                  releaseStore = release
+                },
+                spawnProcess: () => {
+                  queueMicrotask(() =>
+                    child.stdout.write('{"url":"https://external.example:443"}\n')
+                  )
+                  return asAgentProcess(child)
+                }
+              },
+              hooks()
+            )
+            candidate.transferTo(attempt)
+            return attempt.publish({ close: false, delete: false, resume: true, steering: false })
+          })
+        ).rejects.toThrow(/could not be stopped after startup failed|cleanup failed/)
+        expect(child.stdin.writableEnded).toBe(false)
+        expect(owner.cleanupConfirmed).toBe(false)
+        expect(() => acquireRuntimeDirectorySync(join(root, 'opencode'))).toThrow('already using')
+        await owner.teardown(owner.supersede())
+        expect(terminateProcessTree).toHaveBeenCalledTimes(3)
+        expect(child.stdin.writableEnded).toBe(true)
+        expect(owner.cleanupConfirmed).toBe(true)
+        const lock = acquireRuntimeDirectorySync(join(root, 'opencode'))
+        lock.release()
+      } finally {
+        releaseStore?.()
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('classifies OpenCode 1.x replay before SDK observers receive summary chunks', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-compaction-'))
     const process = new FakeAgentProcess()
@@ -214,6 +281,7 @@ describe('AcpAgentConnectionAdapter', () => {
 
   it('releases a late store lease without spawning when its Attempt is closing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-closing-'))
+    const resources = new AcpConnectionResourceOwner()
     const spawn = vi.fn()
     const prepareBackend = vi.fn()
     try {
@@ -230,6 +298,8 @@ describe('AcpAgentConnectionAdapter', () => {
             prepareBackend,
             isCurrent: () => true,
             isShuttingDown: () => false,
+            cleanupUnattached: (resource, onFailure) =>
+              resources.cleanupUnattached(resource, onFailure),
             registerOpenCodeStoreRelease: () => {
               throw new Error('Delegated Attempt cleanup has started.')
             }
@@ -251,6 +321,7 @@ describe('AcpAgentConnectionAdapter', () => {
     'does not publish when the companion exits during %s',
     async (phase) => {
       const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-exit-'))
+      const resources = new AcpConnectionResourceOwner()
       let exitService!: () => void
       const release = vi.fn(async () => ({ reaped: true }))
       startService.mockImplementationOnce(async (_backend, onExit) => {
@@ -283,7 +354,9 @@ describe('AcpAgentConnectionAdapter', () => {
               return backendOwner.prepare({ epoch: 1, assertCurrent: vi.fn() }, backend)
             },
             isCurrent: () => true,
-            isShuttingDown: () => false
+            isShuttingDown: () => false,
+            cleanupUnattached: (resource, onFailure) =>
+              resources.cleanupUnattached(resource, onFailure)
           },
           connectionHooks
         )
@@ -310,6 +383,7 @@ describe('AcpAgentConnectionAdapter', () => {
     'reaps a late companion before releasing storage after %s during startup',
     async (interruption) => {
       const root = await mkdtemp(join(tmpdir(), 'opencode-adapter-pending-'))
+      const resources = new AcpConnectionResourceOwner()
       const starting = Promise.withResolvers<void>()
       const ready = Promise.withResolvers<void>()
       const releasing = Promise.withResolvers<void>()
@@ -342,6 +416,8 @@ describe('AcpAgentConnectionAdapter', () => {
           prepareBackend,
           isCurrent: () => !(interrupted && interruption === 'supersession'),
           isShuttingDown: () => interrupted && interruption === 'shutdown',
+          cleanupUnattached: (resource, onFailure) =>
+            resources.cleanupUnattached(resource, onFailure),
           spawnAgent
         },
         connectionHooks

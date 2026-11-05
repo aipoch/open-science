@@ -16,7 +16,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionStore } from '@/stores/session-store'
-import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
+import {
+  SideChatProvider,
+  useSideChatController,
+  useSideChatTransfers
+} from './use-side-chat-controller'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -83,6 +87,136 @@ afterEach(() => {
 })
 
 describe('Side chat renderer controller', () => {
+  it('ignores an initial snapshot read before the user closed a streamed chat', async () => {
+    const initial =
+      Promise.withResolvers<import('../../../../shared/side-chat').SideChatSnapshotList>()
+    let listener: ((event: never) => void) | undefined
+    window.api = {
+      sideChat: {
+        list: vi.fn(() => initial.promise),
+        close: vi.fn(async () => undefined),
+        onEvent: vi.fn((callback) => {
+          listener = callback as never
+          return () => undefined
+        }),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' }, 'side-1')
+      return null
+    }
+    await act(async () =>
+      root.render(createElement(SideChatProvider, null, createElement(Harness)))
+    )
+    act(() =>
+      listener?.({
+        revision: 1,
+        parentSessionId: 'main-1',
+        projectId: 'project-1',
+        sideSessionId: 'side-1',
+        event: { kind: 'message', role: 'assistant', text: 'Live answer' }
+      } as never)
+    )
+    expect(chat.view).toBeDefined()
+    act(() => chat.close())
+    await act(async () => {
+      initial.resolve({
+        revision: 1,
+        chats: [
+          {
+            revision: 1,
+            parentSessionId: 'main-1',
+            projectId: 'project-1',
+            sideSessionId: 'side-1',
+            entries: [],
+            running: false
+          }
+        ]
+      })
+      await initial.promise
+    })
+    expect(chat.view).toBeUndefined()
+    act(() => root.unmount())
+  })
+
+  it('keeps a user-closed tab closed after cleanup fails, late events, and target refresh', async () => {
+    const { usePreviewWorkbenchStore, createInitialPreviewWorkbenchState, sideChatTabId } =
+      await import('@/stores/preview-workbench-store')
+    usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    usePreviewWorkbenchStore.getState().activateProject('project-1')
+    const cleanup = Promise.withResolvers<void>()
+    let listener: ((event: never) => void) | undefined
+    const snapshot = {
+      revision: 1,
+      chats: [
+        {
+          revision: 1,
+          parentSessionId: 'main-1',
+          projectId: 'project-1',
+          sideSessionId: 'side-1',
+          entries: [],
+          running: false
+        }
+      ]
+    }
+    window.api = {
+      sideChat: {
+        list: vi.fn(async () => snapshot),
+        close: vi.fn(() => cleanup.promise),
+        onEvent: vi.fn((callback) => {
+          listener = callback as never
+          return () => undefined
+        }),
+        onRelayDelivered: vi.fn(() => () => undefined)
+      }
+    } as unknown as Window['api']
+    const root = createRoot(document.createElement('div'))
+    let chat!: ReturnType<typeof useSideChatController>
+    let transfers!: ReturnType<typeof useSideChatTransfers>
+    const Harness = (): null => {
+      chat = useSideChatController({ sessionId: 'main-1', projectId: 'project-1' }, 'side-1')
+      transfers = useSideChatTransfers()
+      return null
+    }
+    try {
+      await act(async () =>
+        root.render(createElement(SideChatProvider, null, createElement(Harness)))
+      )
+      expect(chat.view).toBeDefined()
+      act(() => chat.close())
+      expect(chat.view).toBeUndefined()
+      expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).not.toContain(
+        sideChatTabId('side-1')
+      )
+      await act(async () => {
+        cleanup.reject(new Error('Side chat process tree was not reaped.'))
+        await cleanup.promise.catch(() => undefined)
+      })
+      expect(chat.view).toBeUndefined()
+      await act(async () => {
+        listener?.({
+          revision: 2,
+          parentSessionId: 'main-1',
+          projectId: 'project-1',
+          sideSessionId: 'side-1',
+          event: { kind: 'error', text: 'Internal cleanup diagnostics' }
+        } as never)
+        // Annotation destinations refresh from the runtime's last snapshot.
+        await transfers.refresh()
+      })
+      expect(chat.view).toBeUndefined()
+      expect(usePreviewWorkbenchStore.getState().items.map((item) => item.id)).not.toContain(
+        sideChatTabId('side-1')
+      )
+    } finally {
+      act(() => root.unmount())
+      usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+    }
+  })
+
   it('keeps application children mounted when the first Side chat opens and the last closes', () => {
     const container = document.createElement('div')
     const root = createRoot(container)
@@ -353,7 +487,7 @@ describe('Side chat renderer controller', () => {
     act(() => root.unmount())
   })
 
-  it('restores the panel when durable cleanup fails so close can be retried', async () => {
+  it('keeps the panel closed when durable cleanup fails', async () => {
     const close = vi
       .fn<() => Promise<void>>()
       .mockRejectedValueOnce(new Error('Session file is busy'))
@@ -388,17 +522,7 @@ describe('Side chat renderer controller', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    expect(result.current.view).toMatchObject({
-      sideSessionId: 'side-close-retry',
-      error: expect.stringContaining('Session file is busy')
-    })
-
-    await act(async () => {
-      result.current.close()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(close).toHaveBeenCalledTimes(2)
+    expect(close).toHaveBeenCalledOnce()
     expect(result.current.view).toBeUndefined()
     act(() => root.unmount())
   })
@@ -717,7 +841,6 @@ it('localizes the restoration message in a non-English interface', async () => {
 it.each([
   'restore-failed',
   'closing',
-  'close-failed',
   'connection-closed',
   'interrupted-snapshot',
   'cancelled-snapshot',
@@ -760,7 +883,6 @@ it.each([
           return snapshot
         }),
         close: vi.fn(async () => {
-          if (scenario === 'close-failed') throw new Error('diagnostic-detail')
           await closed.promise
         }),
         onEvent: vi.fn((callback) => {
@@ -780,8 +902,7 @@ it.each([
       await act(async () =>
         root.render(createElement(SideChatProvider, null, createElement(Harness)))
       )
-      if (scenario === 'closing' || scenario === 'close-failed')
-        await act(async () => controller.close())
+      if (scenario === 'closing') await act(async () => controller.close())
       if (scenario === 'connection-closed')
         act(() =>
           listener?.({
@@ -793,8 +914,7 @@ it.each([
           } as never)
         )
       const notice = controller.unavailableReason ?? controller.view?.error
-      if (scenario === 'restore-failed' || scenario === 'close-failed')
-        expect(notice).toContain('diagnostic-detail')
+      if (scenario === 'restore-failed') expect(notice).toContain('diagnostic-detail')
       expect(notice).toMatch(/[\u3400-\u9fff]/)
     } finally {
       await act(async () => {

@@ -56,6 +56,19 @@ PR and queue business E2E rely on one Playwright retry to absorb single-attempt 
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
 
+### CodeQL
+
+GitHub default setup uses [codeql-config.yml](../.github/codeql/codeql-config.yml)
+to exclude development tests from security analysis while retaining production code,
+runtime resources and fixtures. Test execution is unchanged. Audit shipping paths before
+extending exclusions; files under `resources/` may ship even with test suffixes.
+
+Activate the configuration with the repository-only `github-codeql-config-file` property:
+`remote=aipoch/open-science@main:.github/codeql/codeql-config.yml`.
+Before merge, use a verified unique commit abbreviation instead of `main` (75-character
+property limit). Verify a main scan saves the JavaScript baseline and a later PR restores
+it; clear the property to restore default scope.
+
 ### Static check groups
 
 The static bundle runs two parallel groups: **lint** executes the complete ESLint check,

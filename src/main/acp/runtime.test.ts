@@ -1246,6 +1246,168 @@ afterEach(async () => {
 })
 
 describe('completed coordinator process release', () => {
+  it.each(['disconnect', 'quit', 'update'] as const)(
+    'retains unconfirmed disconnect cleanup for a later %s retry',
+    async (retry) => {
+      const process = new FakeAgentProcess()
+      startFakeAgent(process, ['session'])
+      const onDisconnected = vi.fn()
+      const onSessionUnavailable = vi.fn()
+      let runtime!: AcpRuntime
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          runtime = new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            spawnAgent: () => asAgentProcess(process)
+          })
+          return runtime
+        },
+        {},
+        '/workspace',
+        undefined,
+        onDisconnected,
+        onSessionUnavailable
+      )
+      try {
+        await coordinator.createSession({ cwd: '/workspace' })
+        vi.mocked(terminateProcessTree).mockResolvedValueOnce({ reaped: false })
+        await expect(coordinator.disconnect()).resolves.toBeDefined()
+        expect(process.killed).toBe(false)
+        expect(onDisconnected).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().sessionIds).toEqual([])
+        expect(onSessionUnavailable).toHaveBeenCalledWith('session')
+
+        if (retry === 'disconnect') await coordinator.disconnect()
+        else if (retry === 'quit')
+          await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+        else await expect(coordinator.shutdownForUpdateGate()).resolves.toEqual({ reaped: true })
+        expect(process.killed).toBe(true)
+        expect(onDisconnected).toHaveBeenCalledOnce()
+      } finally {
+        await coordinator.shutdownForQuit()
+        await runtime.shutdownForQuit()
+      }
+    }
+  )
+
+  describe('shared Reviewer activity', () => {
+    const request = {
+      cwd: '/workspace',
+      mcpServers: [
+        {
+          type: 'http' as const,
+          name: 'open-science-reviewer',
+          url: 'http://127.0.0.1:1/mcp',
+          headers: []
+        }
+      ]
+    }
+    const createReviewerRuntime = (
+      options: Parameters<typeof startFakeAgent>[2] = {}
+    ): {
+      process: FakeAgentProcess
+      agent: ReturnType<typeof startFakeAgent>
+      coordinator: AcpRuntimeCoordinator
+    } => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['main', 'reviewer-1', 'reviewer-2'], options)
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: 'test',
+            defaultCwd: '/workspace',
+            callbacks,
+            spawnAgent: () => asAgentProcess(process)
+          }),
+        {},
+        '/workspace'
+      )
+      return { process, agent, coordinator }
+    }
+    // Standalone Reviews prompt the ephemeral SDK session directly, without coordinator prompt hooks.
+    const review = (coordinator: AcpRuntimeCoordinator): Promise<PromptResponse> =>
+      coordinator.withActivity({}, async (activity) => {
+        const { session } = await activity.buildReviewerSession(request)
+        try {
+          return await session.prompt([{ type: 'text', text: 'review' }])
+        } finally {
+          activity.disposeReviewerSession(session)
+        }
+      })
+
+    it.each(['success', 'prompt failure', 'session startup failure'] as const)(
+      'releases its cold provider after %s',
+      async (outcome) => {
+        const { process, coordinator } = createReviewerRuntime({
+          ...(outcome === 'session startup failure'
+            ? { newSessionError: new Error('Reviewer startup failed') }
+            : {}),
+          onPrompt: () => {
+            if (outcome === 'prompt failure') throw new Error('Reviewer prompt failed')
+          }
+        })
+        try {
+          if (outcome === 'success') await expect(review(coordinator)).resolves.toBeDefined()
+          else await expect(review(coordinator)).rejects.toThrow()
+          await vi.waitFor(() => {
+            expect(process.killed).toBe(true)
+            expect(coordinator.getSnapshot().status).toBe('idle')
+          })
+        } finally {
+          await coordinator.shutdownForQuit()
+        }
+      }
+    )
+
+    it('preserves an active main sibling until its prompt settles', async () => {
+      const started = createDeferred()
+      const finish = createDeferred()
+      const { process, coordinator } = createReviewerRuntime({
+        onPrompt: async ({ sessionId }) => {
+          if (sessionId === 'main') {
+            started.resolve()
+            await finish.promise
+          }
+        }
+      })
+      let main: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({ cwd: '/workspace' })
+        main = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'main task' })
+        await started.promise
+        await review(coordinator)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        expect(process.killed).toBe(false)
+        finish.resolve()
+        await main
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        finish.resolve()
+        await main
+        await coordinator.shutdownForQuit()
+      }
+    })
+
+    it('preserves the provider between nested Review steps until the outer activity settles', async () => {
+      const { process, agent, coordinator } = createReviewerRuntime()
+      try {
+        await coordinator.withActivity({}, async () => {
+          await review(coordinator)
+          await new Promise((resolve) => setTimeout(resolve, 0))
+          expect(process.killed).toBe(false)
+          await review(coordinator)
+          expect(process.killed).toBe(false)
+        })
+        expect(agent.prompts).toHaveLength(2)
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        await coordinator.shutdownForQuit()
+      }
+    })
+  })
+
   it.each([false, true])(
     'protects queued admission without blocking provider reconnect=%s',
     async (reconnect) => {

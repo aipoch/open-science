@@ -147,8 +147,8 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
   { id: 'usage.list', panel: 'usage', labelKey: 'Usage', keywords: 'tokens cost analytics' },
   { id: 'archived.list', panel: 'archived', labelKey: 'Archived', keywords: 'project restore' },
   {
-    id: 'general.appearance',
-    panel: 'general',
+    id: 'appearance.preferences',
+    panel: 'appearance',
     labelKey: 'Appearance',
     keywords: 'theme dark light',
     searchLabels: ['Theme', 'Dark', 'Light', 'System']
@@ -167,8 +167,8 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     keywords: 'help docs documentation guide manual tutorial support troubleshooting faq',
     searchLabels: ['Read setup guides and troubleshooting.']
   },
-  { id: 'general.language', panel: 'general', labelKey: 'Language', keywords: 'locale' },
-  { id: 'general.notifications', panel: 'general', labelKey: 'Notifications' },
+  { id: 'appearance.language', panel: 'appearance', labelKey: 'Language', keywords: 'locale' },
+  { id: 'notifications.preferences', panel: 'notifications', labelKey: 'Notifications' },
   { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
   {
     id: 'general.cli',

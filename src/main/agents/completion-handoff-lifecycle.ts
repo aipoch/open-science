@@ -397,9 +397,13 @@ export class CompletionHandoffLifecycle {
 
     if (handoff.stage === 'awaiting-approval' || handoff.stage === 'switching') {
       const switching = await this.saveStage(handoff, 'switching')
+      if (switching.generation !== handoff.generation) {
+        this.releaseSupersededHandoff(handoff, switching)
+        return switching
+      }
       if (switching.cancelled || switching.stage === 'failed') return switching
       try {
-        await this.runtime.stopOldPrompt(switching.context)
+        await this.runtime.stopOldPrompt(switching.context, switching.generation)
         await this.runtime.waitForOwnershipRelease(switching.context)
       } catch (error) {
         return this.fail(switching, 'switching', error)
@@ -410,8 +414,10 @@ export class CompletionHandoffLifecycle {
         current.stage === 'failed' ||
         current.generation !== switching.generation ||
         current.sequence !== switching.sequence
-      )
+      ) {
+        this.releaseSupersededHandoff(switching, current)
         return current
+      }
       return this.runReconfigure(current)
     }
 
@@ -493,8 +499,14 @@ export class CompletionHandoffLifecycle {
     this.reconfigurationAttempts.set(key, attempt)
     const isCurrentAttempt = (): boolean => this.reconfigurationAttempts.get(key) === attempt
     const reconfiguring = await this.saveStage(handoff, 'reconfiguring')
-    if (reconfiguring.cancelled || reconfiguring.stage === 'failed' || !isCurrentAttempt()) {
+    if (
+      reconfiguring.cancelled ||
+      reconfiguring.stage === 'failed' ||
+      reconfiguring.generation !== handoff.generation ||
+      !isCurrentAttempt()
+    ) {
       if (isCurrentAttempt()) this.reconfigurationAttempts.delete(key)
+      this.releaseSupersededHandoff(handoff, reconfiguring)
       return reconfiguring
     }
     try {
@@ -518,9 +530,15 @@ export class CompletionHandoffLifecycle {
       current.stage === 'failed' ||
       current.generation !== reconfiguring.generation ||
       current.sequence !== reconfiguring.sequence
-    )
+    ) {
+      this.releaseSupersededHandoff(reconfiguring, current)
       return current
+    }
     const continuing = await this.saveStage(current, 'continuation-start')
+    if (continuing.generation !== current.generation) {
+      this.releaseSupersededHandoff(current, continuing)
+      return continuing
+    }
     return this.runContinuation(continuing)
   }
 
@@ -528,6 +546,10 @@ export class CompletionHandoffLifecycle {
     handoff: DurableCompletionHandoff
   ): Promise<DurableCompletionHandoff> {
     const continuing = await this.saveStage(handoff, 'continuation-start')
+    if (continuing.generation !== handoff.generation) {
+      this.releaseSupersededHandoff(handoff, continuing)
+      return continuing
+    }
     if (continuing.cancelled || continuing.stage === 'failed') return continuing
     try {
       const disposition = asCapturedDisposition(continuing)
@@ -594,7 +616,10 @@ export class CompletionHandoffLifecycle {
       await this.runtime.cleanupCancelledHandoff?.(failed.context)
       return failed
     }
-    if (!claimedFailure) return failed
+    if (!claimedFailure) {
+      this.releaseSupersededHandoff(handoff, failed)
+      return failed
+    }
     this.emit(failed)
     try {
       await this.runtime.reportHandoffFailure(error, asCapturedDisposition(failed), failed.context)
@@ -603,6 +628,16 @@ export class CompletionHandoffLifecycle {
       // re-open the old prompt's completion route.
     }
     return failed
+  }
+
+  private releaseSupersededHandoff(
+    previous: DurableCompletionHandoff,
+    current: DurableCompletionHandoff
+  ): void {
+    // A same-generation retry may already hold the process again. Only generation replacement
+    // invalidates this capture; cancellation and claimed failures retain their existing cleanup.
+    if (current.generation !== previous.generation)
+      this.runtime.releaseSupersededHandoff?.(previous.context, previous.generation)
   }
 
   private async require(context: TrustedToolCompletionContext): Promise<DurableCompletionHandoff> {

@@ -161,7 +161,10 @@ type Setup = {
   migrate(): void
   update(): void
 }
-const setup = (modelOwner?: ReturnType<typeof createLocalModelOwner>): Setup => {
+const setup = (
+  modelOwner?: ReturnType<typeof createLocalModelOwner>,
+  ocrModels?: Parameters<typeof createPdfStructureOwner>[0]['ocrModels']
+): Setup => {
   let writers = 0
   let uses = 0
   let migrationPending = false
@@ -207,6 +210,7 @@ const setup = (modelOwner?: ReturnType<typeof createLocalModelOwner>): Setup => 
   const owner = createPdfStructureOwner({
     sources: authority,
     models: modelOwner ?? { acquireUse },
+    ocrModels,
     engine,
     dataRoot: () => root,
     acquireWriter: modelOwner ? acquireDataRootWriter : acquireWriter
@@ -235,6 +239,64 @@ const started = async (test: Setup, count = 1): Promise<Run> => {
 }
 
 describe('shared PDF parsing lifecycle', () => {
+  it('holds the optional OCR lease through cleanup and reuses its cache identity', async () => {
+    const release = vi.fn()
+    const ocrModels: NonNullable<Parameters<typeof createPdfStructureOwner>[0]['ocrModels']> = {
+      getSnapshot: vi.fn(async () => ({
+        availability: 'ready' as const,
+        recommendedRevision: 'v1',
+        downloadBytes: 0,
+        installedBytes: 0,
+        transferredBytes: 0,
+        hasFiles: true,
+        inUse: false,
+        updateAvailable: false
+      })),
+      acquireUse: vi.fn(async () => ({
+        revision: 'ocr-v1',
+        languages: ['eng'] as const,
+        assets: [
+          { file: 'ocr-engine.mjs', path: join(root, 'ocr-engine.mjs'), sha256: 'engine', size: 1 },
+          {
+            file: 'eng.traineddata.gz',
+            path: join(root, 'eng.traineddata.gz'),
+            sha256: 'eng',
+            size: 1
+          }
+        ],
+        release
+      }))
+    }
+    const test = setup(undefined, ocrModels)
+    const task = test.owner.acquire(reading, [1])
+    const run = await started(test)
+    expect(run.request.ocr?.languages).toEqual(['eng'])
+    expect(run.request.identity.engineFingerprint).not.toBe(fingerprint)
+    expect(release).not.toHaveBeenCalled()
+    run.stop.mockRejectedValueOnce(new Error('unconfirmed stop'))
+    run.output.resolve(resultFor(run.request.identity))
+    await expect(task.result).rejects.toThrow('unconfirmed stop')
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    const next = test.owner.acquire(reading, [1])
+    const nextRun = await started(test, 2)
+    nextRun.output.resolve(resultFor(nextRun.request.identity))
+    const parsed = await next.result
+    expect(await test.owner.readCached(reading, [1])).toEqual(parsed)
+    expect(test.engine.start).toHaveBeenCalledTimes(2)
+    expect(release).toHaveBeenCalledTimes(3)
+    vi.mocked(ocrModels.getSnapshot).mockResolvedValueOnce({
+      availability: 'notInstalled',
+      recommendedRevision: 'v1',
+      downloadBytes: 0,
+      installedBytes: 0,
+      transferredBytes: 0,
+      hasFiles: false,
+      inUse: false,
+      updateAvailable: false
+    })
+    expect(await test.owner.readCached(reading, [1])).toBeUndefined()
+  })
+
   it('reads persisted results without starting inference on either cache hit or miss', async () => {
     const test = setup()
     expect(await test.owner.readCached(reading, [1])).toBeUndefined()

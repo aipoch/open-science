@@ -640,6 +640,7 @@ export const createFileSaveCommands = (
         },
         {
           ...publishOptions,
+          userSelectedDestination: true,
           signal: AbortSignal.any([
             invocation.callerLease.signal,
             ...(operation ? [operation.controller.signal] : []),

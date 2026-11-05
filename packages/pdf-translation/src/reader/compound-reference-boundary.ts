@@ -531,3 +531,350 @@ export function nativeCompoundAppendixBoundaries(units: Unit[], pages: PdfLayout
   }
   return result
 }
+
+/** Restore only repeated, fully native Notes/caption owners; reference mode stays active. */
+export function nativePairedFigureNoteOwners(
+  units: Unit[],
+  pages: PdfLayoutPage[]
+): ReadonlySet<string> {
+  const accepted = new Set<string>(),
+    raw = new Map(pages.map((p) => [p.page, p])),
+    counts = new Map<string, number>()
+  for (const u of units) for (const key of u.items) counts.set(key, (counts.get(key) ?? 0) + 1)
+  const complete = (u: Unit): PdfLayoutTextItem[] | undefined => {
+    if (
+      u.sourceOnly ||
+      u.preserve ||
+      u.fragments.length !== 1 ||
+      u.risks.some((r) => !['possible-continuation', 'ambiguous-line-hyphen'].includes(r)) ||
+      u.items.length !== u.originalStrings.length
+    )
+      return
+    const p = raw.get(u.fragments[0].page),
+      evidence = p?.nativeSectionFontEvidence
+    if (!p || p.rotation !== 0 || !evidence?.complete) return
+    const indexes = u.items.map((k) =>
+        k.startsWith(p.page + ':') ? Number(k.split(':')[1]) : NaN
+      ),
+      owned = new Set(indexes)
+    if (
+      !indexes.length ||
+      indexes.some((i, n) => !Number.isSafeInteger(i) || i < 0 || (n > 0 && i <= indexes[n - 1])) ||
+      owned.size !== indexes.length
+    )
+      return
+    const items = indexes.map((i) => p.items[i])
+    if (
+      items.some((i, n) => {
+        const f = evidence.fonts[i?.fontName ?? '']
+        if (
+          !i ||
+          !valid(i) ||
+          !f?.nativeMetrics ||
+          f.ascent !== i.fontAscent ||
+          f.descent !== i.fontDescent ||
+          counts.get(u.items[n]) !== 1 ||
+          i.str !== u.originalStrings[n]
+        )
+          return true
+        const b = box(i, p)
+        return b.x < 0 || b.y < 0 || b.right > p.width || b.bottom > p.height
+      }) ||
+      p.items
+        .slice(indexes[0], indexes.at(-1)! + 1)
+        .some((i, n) => i.str.trim() && !owned.has(indexes[0] + n))
+    )
+      return
+    return items
+  }
+  const packets = units.flatMap((note, at) => {
+    const caption = units[at + 1],
+      match = caption && /^(?:Fig\.|Figure) ([A-Z]?)([1-9]\d*): \p{Lu}/u.exec(caption.source)
+    if (
+      !match ||
+      !/^Notes:\s*\p{Lu}/u.test(note.source) ||
+      words(note.source) < 24 ||
+      !/[.!?]$/u.test(note.source) ||
+      words(caption.source) < 6
+    )
+      return []
+    const n = complete(note),
+      c = complete(caption),
+      p = raw.get(note.fragments[0].page)
+    if (
+      !n ||
+      !c ||
+      !p ||
+      caption.fragments[0].page !== p.page ||
+      n[0].str !== 'Notes:' ||
+      n[0].hasEOL !== false
+    )
+      return []
+    const body = n.find((i) => i.fontName !== n[0].fontName),
+      captionBody = c.find((i) => i.fontName !== c[0].fontName)
+    if (
+      !body ||
+      !captionBody ||
+      c[0].fontName === body.fontName ||
+      n[0].fontName === c[0].fontName ||
+      Math.abs(body.height - n[0].height) > n[0].height * 0.01
+    )
+      return []
+    const label = c.slice(0, c.indexOf(captionBody))
+    if (
+      !new RegExp('^(?:Fig\\.|Figure)\\s*' + match[1] + match[2] + '$', 'u').test(
+        label.map((i) => i.str).join('')
+      ) ||
+      c.some(
+        (i) =>
+          ![c[0].fontName, captionBody.fontName].includes(i.fontName) ||
+          Math.abs(i.height - c[0].height) > c[0].height * 0.01
+      )
+    )
+      return []
+    const nr = note.fragments[0].rect,
+      cr = caption.fragments[0].rect,
+      gap = cr.y - nr.bottom
+    if (
+      nr.right - nr.x < p.width * 0.5 ||
+      cr.right - cr.x < p.width * 0.5 ||
+      gap < n[0].height * 0.3 ||
+      gap > c[0].height * 3 ||
+      (Math.abs(nr.x - cr.x) > c[0].height * 0.3 &&
+        Math.abs(nr.x + nr.right - cr.x - cr.right) > c[0].height * 0.6)
+    )
+      return []
+    const owned = new Set(note.items.concat(caption.items)),
+      domain = union([...n, ...c].map((i) => box(i, p)))
+    if (
+      p.items.some((i, index) => {
+        if (!i.str.trim() || owned.has(p.page + ':' + index)) return false
+        const evidence = p.nativeSectionFontEvidence,
+          f = evidence?.complete ? evidence.fonts[i.fontName ?? ''] : undefined
+        return (
+          !valid(i) ||
+          !f ||
+          !f.nativeMetrics ||
+          f.ascent !== i.fontAscent ||
+          f.descent !== i.fontDescent ||
+          counts.get(p.page + ':' + index) !== 1 ||
+          overlap(box(i, p), domain)
+        )
+      })
+    )
+      return []
+    return [
+      {
+        note,
+        caption,
+        page: p.page,
+        letter: match[1],
+        ordinal: Number(match[2]),
+        signature: [
+          n[0].fontName,
+          n[0].height,
+          body.fontName,
+          body.height,
+          c[0].fontName,
+          c[0].height,
+          captionBody.fontName,
+          captionBody.height
+        ].join('|')
+      }
+    ]
+  })
+  for (const packet of packets.filter((p) => !!p.letter)) {
+    const reference = units
+      .filter(
+        (u) =>
+          /^(?:References|Bibliography):?$/u.test(u.source.trim()) &&
+          u.fragments.length === 1 &&
+          u.fragments[0].page < packet.page
+      )
+      .at(-1)
+    if (!reference) continue
+    const witnesses = packets.filter(
+      (p) => !p.letter && p.page < reference.fragments[0].page && p.signature === packet.signature
+    )
+    const peer = packets.some(
+      (p) =>
+        p !== packet &&
+        p.letter === packet.letter &&
+        p.signature === packet.signature &&
+        Math.abs(p.ordinal - packet.ordinal) === 1 &&
+        Math.sign(p.ordinal - packet.ordinal) === Math.sign(p.page - packet.page) &&
+        Math.abs(p.page - packet.page) <= 3
+    )
+    if (new Set(witnesses.map((p) => p.ordinal)).size < 2 || !peer) continue
+    accepted.add(packet.note.items.join('|'))
+    accepted.add(packet.caption.items.join('|'))
+  }
+  return accepted
+}
+
+/** An ordinary Note may leave bibliography mode locally only when its entire
+ * original page proves a closed ruled table and a consecutive appendix peer.
+ * This assigns no role to the table cells, mathematical caption or folio. */
+export function nativeRuledTableNoteOwners(
+  units: Unit[],
+  pages: PdfLayoutPage[]
+): ReadonlySet<string> {
+  const result = new Set<string>(),
+    owners = new Map<string, Unit>(),
+    duplicates = new Set<string>()
+  for (const unit of units)
+    for (const key of unit.items) {
+      if (owners.has(key)) duplicates.add(key)
+      owners.set(key, unit)
+    }
+  const packets = pages.flatMap((p) => {
+    const evidence = p.nativeTableNoteEvidence
+    if (p.rotation !== 0 || !evidence?.complete) return []
+    const entries = p.items.flatMap((item, index) =>
+      item.str.trim() ? [{ item, key: `${p.page}:${index}` }] : []
+    )
+    if (
+      entries.some((e) => {
+        const font = evidence.fonts[e.item.fontName ?? ''],
+          owner = owners.get(e.key)
+        return (
+          !valid(e.item) ||
+          !font?.nativeMetrics ||
+          font.ascent !== e.item.fontAscent ||
+          font.descent !== e.item.fontDescent ||
+          duplicates.has(e.key) ||
+          !owner ||
+          owner.items.length !== owner.originalStrings.length ||
+          owner.originalStrings[owner.items.indexOf(e.key)] !== e.item.str ||
+          box(e.item, p).x < 0 ||
+          box(e.item, p).right > p.width ||
+          box(e.item, p).y < 0 ||
+          box(e.item, p).bottom > p.height
+        )
+      })
+    )
+      return []
+    const caption = entries[0],
+      match = /^Table ([A-Z])\.([1-9]\d*):/u.exec(caption?.item.str ?? ''),
+      wide = evidence.rules.filter((r) => r.right - r.left > p.width * 0.65),
+      bottom = wide[0],
+      top = wide.at(-1)
+    if (
+      !match ||
+      wide.length < 3 ||
+      !top ||
+      !bottom ||
+      top.baseline - bottom.baseline < p.height * 0.3 ||
+      wide.some((r) => r.left !== top.left || r.right !== top.right)
+    )
+      return []
+    const above = entries.filter((e) => e.item.transform[5] > top.baseline),
+      body = entries.filter(
+        (e) => e.item.transform[5] >= bottom.baseline && e.item.transform[5] <= top.baseline
+      ),
+      below = entries.filter((e) => e.item.transform[5] < bottom.baseline)
+    if (
+      !above.length ||
+      !body.length ||
+      below.length !== 3 ||
+      above.some((e) => box(e.item, p).bottom >= p.height - top.baseline - top.halfHeight) ||
+      body.some(
+        (e) =>
+          box(e.item, p).y < p.height - top.baseline + top.halfHeight ||
+          box(e.item, p).bottom > p.height - bottom.baseline - bottom.halfHeight ||
+          e.item.transform[4] < top.left - e.item.height * 0.001 ||
+          e.item.transform[4] + e.item.width > top.right + e.item.height * 0.001
+      ) ||
+      !/^\d+$/u.test(below[2].item.str) ||
+      below[2].item.transform[5] > p.height * 0.1 ||
+      Math.abs(below[2].item.transform[4] + below[2].item.width / 2 - p.width / 2) >
+        below[2].item.height * 4
+    )
+      return []
+    const numericRows = rows(body.filter((e) => /^\d+(?:[.,]\d+)*$/u.test(e.item.str)))
+    if (
+      numericRows.filter(
+        (row) =>
+          row.length >= 5 &&
+          Math.max(...row.map((e) => e.item.transform[4] + e.item.width)) -
+            Math.min(...row.map((e) => e.item.transform[4])) >
+            (top.right - top.left) * 0.6
+      ).length < 6
+    )
+      return []
+    const [marker, prose] = below,
+      owner = owners.get(marker.key)!,
+      noteBox = union([box(marker.item, p), box(prose.item, p)])
+    if (
+      marker.item.str !== 'Note' ||
+      marker.item.hasEOL !== false ||
+      !/^: [A-Z][A-Za-z0-9 ,.;:()'-]+\.$/u.test(prose.item.str) ||
+      words(prose.item.str) < 8 ||
+      /(?:\d\s*[=<>+*/]|\[[0-9]+\]|\([12][0-9]{3}\))/u.test(prose.item.str) ||
+      marker.item.fontName === prose.item.fontName ||
+      marker.item.height !== prose.item.height ||
+      marker.item.transform[5] !== prose.item.transform[5] ||
+      marker.item.transform[4] + marker.item.width > prose.item.transform[4] ||
+      noteBox.y <= p.height - bottom.baseline + bottom.halfHeight ||
+      noteBox.y - (p.height - bottom.baseline + bottom.halfHeight) > marker.item.height * 3 ||
+      noteBox.bottom >= box(below[2].item, p).y ||
+      owner.sourceOnly ||
+      owner.preserve ||
+      owner.risks.length ||
+      owner.fragments.length !== 1 ||
+      owner.fragments[0].page !== p.page ||
+      owner.items.join('|') !== [marker.key, prose.key].join('|') ||
+      owners.get(prose.key) !== owner ||
+      !units.some(
+        (u) =>
+          /^(?:References|Bibliography):?$/u.test(u.source.trim()) &&
+          u.fragments.length === 1 &&
+          u.fragments[0].page < p.page
+      )
+    )
+      return []
+    const indexes = entries.map((e) => Number(e.key.split(':')[1])),
+      capIndexes = above.map((e) => Number(e.key.split(':')[1])),
+      bodyIndexes = body.map((e) => Number(e.key.split(':')[1])),
+      noteIndex = Number(marker.key.split(':')[1])
+    if (
+      Math.max(...capIndexes) >= Math.min(...bodyIndexes) ||
+      Math.max(...bodyIndexes) >= noteIndex ||
+      indexes.at(-1) !== Number(below[2].key.split(':')[1])
+    )
+      return []
+    return [
+      {
+        owner,
+        page: p.page,
+        letter: match[1],
+        ordinal: Number(match[2]),
+        signature: [
+          top.left,
+          top.right,
+          top.baseline,
+          bottom.baseline,
+          marker.item.fontName,
+          marker.item.height,
+          prose.item.fontName,
+          prose.item.height,
+          caption.item.fontName,
+          caption.item.height
+        ].join('|')
+      }
+    ]
+  })
+  for (const packet of packets)
+    if (
+      packets.some(
+        (peer) =>
+          peer !== packet &&
+          peer.letter === packet.letter &&
+          peer.signature === packet.signature &&
+          Math.abs(peer.ordinal - packet.ordinal) === 1 &&
+          peer.page - packet.page === peer.ordinal - packet.ordinal
+      )
+    )
+      result.add(packet.owner.items.join('|'))
+  return result
+}

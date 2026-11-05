@@ -27,7 +27,7 @@ const drawingCalls = [
   'matpoints(matrix(1:4, 2))',
   'contour(matrix(1:4, 2))',
   'image(matrix(1:4, 2))',
-  'rasterImage(grDevices::as.raster(matrix("red", 2, 2)), 0, 0, 1, 1)',
+  'rasterImage(structure(matrix(0L, 2, 2), class="nativeRaster"), 0, 0, 1, 1)',
   'stripchart(c(1, 2, 3))',
   'symbols(1, 1, circles=1)',
   'plot.new()',
@@ -46,6 +46,22 @@ it.each(drawingCalls)('recognizes drawing calls with and without graphics::: %s'
     })
   }
 })
+
+it.each(['', 'graphics::'])(
+  'retains uncertainty from raster conversion inside %srasterImage',
+  async (prefix) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        `${prefix}rasterImage(grDevices::as.raster(matrix("red", 2, 2)), 0, 0, 1, 1)`
+      )
+    ).toMatchObject({
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  }
+)
 
 it.each([
   'adjustcolor("red", alpha.f=0.5)',
@@ -181,13 +197,15 @@ box()
 grDevices::dev.off()
 `
 it('captures a scientific multi-panel graphics workflow', async () => {
-  expect(await analyzeNotebookSourceFileAccess('r', scientificPlot)).toEqual({
+  // CSV ownership does not establish the column types used by hist's methods.
+  // Preserve the known input/output files without asserting complete coverage.
+  expect(await analyzeNotebookSourceFileAccess('r', scientificPlot)).toMatchObject({
     reads: ['inputs/cohort.csv'],
     writes: ['summary.png'],
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
-    reasonCodes: []
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
+    reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
   })
 })
 it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_ENV)(

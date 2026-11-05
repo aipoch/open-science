@@ -496,6 +496,7 @@ class AcpRuntimeCoordinator {
     this.supersedeInitializationRequests()
     this.cancelRootAdmissions()
     const runtimes = Array.from(this.runtimes)
+    const admissions = runtimes.map((runtime) => this.runtimeAdmissions.get(runtime))
     const [delegatedResult, ...results] = await Promise.allSettled([
       this.delegatedWork?.stopAll() ?? Promise.resolve(),
       ...runtimes.map((runtime) => runtime.disconnect(emitClosedStatus))
@@ -503,21 +504,23 @@ class AcpRuntimeCoordinator {
     const failure =
       results.find((result): result is PromiseRejectedResult => result.status === 'rejected') ??
       (delegatedResult.status === 'rejected' ? delegatedResult : undefined)
+    // A fulfilled disconnect may still own an unreaped process. Retain it for retry, reconciling
+    // detached sessions without discarding cleanup ownership or admissions acquired during teardown.
+    results.forEach((result, index) => {
+      const runtime = runtimes[index]
+      if (this.runtimeAdmissions.get(runtime) !== admissions[index]) return
+      if (result.status === 'fulfilled' && runtime.cleanupConfirmed)
+        this.releaseRuntimeOwnership(runtime)
+      else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
+    })
     if (failure) {
-      // A multi-runtime teardown can partially succeed. Release only the runtimes that are definitely
-      // gone; failed runtimes retain their session and permission-routing ownership for retry.
-      // A rejection can still happen after a runtime cleared some/all sessions, so reconcile those
-      // actual disappearances too without releasing the failed runtime itself.
-      results.forEach((result, index) => {
-        const runtime = runtimes[index]
-        if (result.status === 'fulfilled') this.releaseRuntimeOwnership(runtime)
-        else this.releaseMissingRuntimeSessions(runtime, runtime.getSnapshot())
-      })
       this.emitState()
       throw failure.reason
     }
-    this.clearRuntimeOwnership()
-    this.onDisconnected?.()
+    if (this.runtimes.size === 0) {
+      this.clearRuntimeOwnership()
+      this.onDisconnected?.()
+    } else this.emitState()
     return this.getState()
   }
 

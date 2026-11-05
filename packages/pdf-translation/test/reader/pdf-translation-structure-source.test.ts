@@ -1,15 +1,24 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- inferred native fixture types */
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import * as fontkit from 'fontkit'
+import { createCanvas } from '@napi-rs/canvas'
+import { describe, expect, it, vi } from 'vitest'
+import { PDFDocument, PDFDict, PDFName, StandardFonts } from 'pdf-lib'
+import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { TextItem } from 'pdfjs-dist/types/src/display/api.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
 import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
+import {
+  applyCachedPdfFigureSources,
+  preservePdfFigureSources
+} from '../../src/reader/figure-source.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
+import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
+import { pdfReflowContentKinds } from '../../src/reader/reflow-content.js'
 import {
   nativeLabelRegion,
   nativePartialNavigation
@@ -439,4 +448,953 @@ describe('verified structure source bridge', () => {
       }
     })
   })
+})
+
+async function isolatedPlotCaption(referenceContext = false, networkCaption = false) {
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(fontkit)
+  const fonts = path.join(
+    path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+    'standard_fonts'
+  )
+  const regular = await pdf.embedFont(
+    await readFile(path.join(fonts, 'LiberationSans-Regular.ttf'))
+  )
+  const bold = await pdf.embedFont(await readFile(path.join(fonts, 'LiberationSans-Bold.ttf')))
+  const positioned = (font: typeof regular, text: string) =>
+    '[' +
+    text
+      .split(' ')
+      .map((word) => font.encodeText(word).toString())
+      .join(' ' + -font.widthOfTextAtSize(' ', 10) * 100 + ' ') +
+    '] TJ'
+  const page = pdf.addPage([400, 500])
+  page.drawText('Figure 1:', { font: bold })
+  page.drawText('Measurements follow the ordinary comparison protocol.', { font: regular })
+  const fontDictionary = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict)
+  const fontKey = (font: typeof regular) =>
+    fontDictionary
+      .entries()
+      .find(([, ref]) => ref.toString() === font.ref.toString())![0]
+      .toString()
+  const image = (width: number, height: number) =>
+    pdf.context.register(
+      pdf.context.flateStream(new Uint8Array(width * height * 3).fill(120), {
+        Type: 'XObject',
+        Subtype: 'Image',
+        Width: width,
+        Height: height,
+        ColorSpace: 'DeviceRGB',
+        BitsPerComponent: 8
+      })
+    )
+  const heat = image(2, 2),
+    bar = image(1, 2)
+  const plot = pdf.context.register(
+    pdf.context.flateStream('q 180 0 0 120 20 40 cm /Heat Do Q q 8 0 0 120 210 40 cm /Bar Do Q', {
+      Type: 'XObject',
+      Subtype: 'Form',
+      BBox: [0, 0, 300, 180],
+      Resources: { XObject: { Heat: heat, Bar: bar } }
+    })
+  )
+  const other = pdf.context.register(
+    pdf.context.flateStream(
+      `${networkCaption ? '0 0 300 100 re W* n ' : ''}q /Fade gs 0.8 0.2 0.3 rg 0 0 300 100 re f Q ${networkCaption ? '0 0 0 RG 1 w 30 25 50 50 re S 210 25 50 50 re S 80 50 m 210 50 l S ' : ''}BT /Regular 10 Tf 20 40 Td ${positioned(regular, 'Other diagram label')} ET`,
+      {
+        Type: 'XObject',
+        Subtype: 'Form',
+        BBox: [0, 0, 300, 100],
+        Resources: { Font: { Regular: regular.ref }, ExtGState: { Fade: { ca: 0.3, CA: 0.3 } } }
+      }
+    )
+  )
+  page.node.Resources()!.set(PDFName.of('XObject'), pdf.context.obj({ Plot: plot, Other: other }))
+  const prefix = 'Figure 1:',
+    body = 'Measurements follow the ordinary comparison protocol.',
+    secondPrefix = 'Figure 2:',
+    secondBody = 'An independent network diagram shows the comparison procedure.'
+  page.node.set(
+    PDFName.of('Contents'),
+    pdf.context.register(
+      pdf.context.flateStream(
+        `${referenceContext ? `BT ${fontKey(regular)} 10 Tf 40 480 Td ${positioned(regular, 'References')} ET ` : ''}q 1 0 0 1 40 280 cm /Plot Do Q BT ${fontKey(bold)} 10 Tf 50 250 Td ${positioned(bold, prefix)} ET BT ${fontKey(regular)} 10 Tf ${50 + bold.widthOfTextAtSize(prefix, 10) + 3} 250 Td ${positioned(regular, body)} ET q 1 0 0 1 40 60 cm /Other Do Q ${networkCaption ? `BT ${fontKey(bold)} 10 Tf 40 40 Td ${positioned(bold, secondPrefix)} ET BT ${fontKey(regular)} 10 Tf ${40 + bold.widthOfTextAtSize(secondPrefix, 10) + 3} 40 Td ${positioned(regular, secondBody)} ET ` : ''}BT ${fontKey(regular)} 10 Tf 40 ${networkCaption ? 15 : 30} Td ${positioned(regular, 'Other prose remains unchanged.')} ET 0.5 w 40 ${networkCaption ? 4 : 10} m 340 ${networkCaption ? 4 : 10} l S`
+      )
+    )
+  )
+  const bytes = await pdf.save(),
+    sourceIdentity = {
+      sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+      sourceSizeBytes: bytes.length
+    },
+    loading = getDocument({
+      data: bytes.slice(),
+      fontExtraProperties: true,
+      isEvalSupported: false
+    }),
+    document = await loading.promise,
+    native = await document.getPage(1),
+    content = await native.getTextContent(),
+    viewport = native.getViewport({ scale: 1 })
+  const operators = await native.getOperatorList()
+  await Promise.all(
+    operators.fnArray.flatMap((op, index) =>
+      op === OPS.paintImageXObject
+        ? [
+            new Promise<void>((resolve) => {
+              native.objs.get(operators.argsArray[index][0], () => resolve())
+            })
+          ]
+        : []
+    )
+  )
+  const items = content.items.flatMap((item, index) =>
+    'str' in item && item.str.trim() ? [{ item, index }] : []
+  )
+  const captionItems = items.filter(({ item }) => [prefix, body].includes(item.str))
+  expect(captionItems).toHaveLength(2)
+  const left = captionItems[0].item.transform[4],
+    right = captionItems[1].item.transform[4] + captionItems[1].item.width,
+    top = 500 - captionItems[0].item.transform[5] - captionItems[0].item.height
+  const captionRect = { x: left / 400, y: top / 500, width: (right - left) / 400, height: 10 / 500 }
+  const caption = {
+    id: 'caption',
+    source: `${prefix} ${body}`,
+    sourceOnly: true as const,
+    preserve: 'reference' as const,
+    fragments: [
+      {
+        pageNumber: 1,
+        rect: captionRect,
+        items: captionItems.map(({ item, index }) => ({ index, text: item.str }))
+      }
+    ]
+  }
+  const secondItems = networkCaption
+    ? items.filter(({ item }) => [secondPrefix, secondBody].includes(item.str))
+    : []
+  const secondRect = networkCaption
+    ? {
+        x: secondItems[0].item.transform[4] / 400,
+        y: (500 - secondItems[0].item.transform[5] - secondItems[0].item.height) / 500,
+        width:
+          (secondItems[1].item.transform[4] +
+            secondItems[1].item.width -
+            secondItems[0].item.transform[4]) /
+          400,
+        height: 10 / 500
+      }
+    : undefined
+  const secondCaption = secondRect
+    ? {
+        id: 'network-caption',
+        source: `${secondPrefix} ${secondBody}`,
+        sourceOnly: true as const,
+        preserve: 'reference' as const,
+        fragments: [
+          {
+            pageNumber: 1,
+            rect: secondRect,
+            items: secondItems.map(({ item, index }) => ({ index, text: item.str }))
+          }
+        ]
+      }
+    : undefined
+  const source = createPdfTranslationSource({
+    resourceRequestKey: 'anonymous-isolated-plot',
+    fingerprint: document.fingerprints[0],
+    pages: [{ width: 400, height: 500 }],
+    units: [
+      caption,
+      ...(secondCaption ? [secondCaption] : []),
+      ...items
+        .filter(({ index }) => !captionItems.concat(secondItems).some((c) => c.index === index))
+        .map(({ item, index }) => ({
+          id: `native-${index}`,
+          source: item.str,
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: nativeLabelRegion(item, content.styles[item.fontName], viewport, 1)!,
+              items: [{ index, text: item.str }]
+            }
+          ]
+        }))
+    ].toSorted((a, b) => Number(b.source === 'References') - Number(a.source === 'References'))
+  })
+  const extraction: PdfTranslationExtraction = {
+    source,
+    coverage: {
+      pageCount: 1,
+      textItemCount: items.length,
+      includedItemCount: items.length,
+      excludedItemCount: 0,
+      pagesWithoutText: [],
+      exclusions: [],
+      warnings: []
+    }
+  }
+  const cached: PdfStructureResult = {
+    schemaVersion: 1,
+    extractionId: 'isolated-plot',
+    engineFingerprint: 'b'.repeat(64),
+    ...sourceIdentity,
+    pageCount: 1,
+    requestedPages: [1],
+    processedPages: [1],
+    pages: [{ page: 1, width: 400, height: 500, rotation: 0 }],
+    elements: [
+      {
+        id: 'plot',
+        kind: 'figure',
+        issues: [],
+        regions: [{ page: 1, x: 0.095, y: 0.075, width: 0.76, height: 0.37 }],
+        caption: { text: caption.source, regions: [{ page: 1, ...captionRect }] }
+      },
+      {
+        id: 'other',
+        kind: 'figure',
+        issues: [],
+        regions: [{ page: 1, x: 0.095, y: 0.675, width: 0.76, height: 0.21 }],
+        ...(secondCaption
+          ? { caption: { text: secondCaption.source, regions: [{ page: 1, ...secondRect! }] } }
+          : {})
+      }
+    ],
+    thumbnails: [],
+    navigation: [],
+    issues: []
+  }
+  return {
+    loading,
+    native,
+    cached,
+    extraction,
+    args: {
+      extraction,
+      document,
+      sourceId: source.resourceRequestKey!,
+      sourceIdentity,
+      nativeDocumentFactory: getDocument,
+      signal: new AbortController().signal,
+      readCached: async () => cached
+    }
+  }
+}
+
+it('restores only a complete isolated plot caption from reference carryover', async () => {
+  const f = await isolatedPlotCaption()
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    const caption = { ...f.extraction.source.units[0] }
+    delete caption.sourceOnly
+    delete caption.preserve
+    expect(result.source.units).toEqual([caption, ...f.extraction.source.units.slice(1)])
+    expect(result.coverage).toEqual(f.extraction.coverage)
+    expect(f.extraction.source.units[0]).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('recovers the ordinary caption below a complete independently bounded vector Form', async () => {
+  const f = await isolatedPlotCaption(true, true)
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    const expected = f.extraction.source.units.map((unit) => {
+      if (!['caption', 'network-caption'].includes(unit.id)) return unit
+      const next = { ...unit }
+      delete next.sourceOnly
+      delete next.preserve
+      return next
+    })
+    expect(result.source.units).toEqual(expected)
+    expect(result.coverage).toEqual(f.extraction.coverage)
+    const prepared = applyPdfContentFirstPolicy(result.source)
+    expect(prepared.units.find((unit) => unit.id === 'network-caption')).toEqual(
+      expected.find((unit) => unit.id === 'network-caption')
+    )
+    expect(
+      prepared.units.find((unit) => unit.source === 'Other prose remains unchanged.')
+    ).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it.each([
+  'gstate-line-cap',
+  'gstate-line-join',
+  'gstate-dash',
+  'one-ulp',
+  'minmax-mismatch',
+  'nonrectangular-clip',
+  'transparent-vector',
+  'no-filled-rectangle',
+  'no-straight-stroke'
+])(
+  'requires a complete native vector paint certificate for the second caption: %s',
+  async (change) => {
+    const f = await isolatedPlotCaption(true, true)
+    try {
+      const ops = await f.native.getOperatorList(),
+        begin = ops.fnArray.flatMap((op, i) => (op === OPS.paintFormXObjectBegin ? [i] : []))[1],
+        end = ops.fnArray.findIndex((op, i) => i > begin && op === OPS.paintFormXObjectEnd),
+        fill = ops.fnArray.findIndex(
+          (op, i) =>
+            i > begin && i < end && op === OPS.constructPath && ops.argsArray[i][0] === OPS.fill
+        )
+      if (change.startsWith('gstate-')) {
+        const key = change === 'gstate-line-cap' ? 'LC' : change === 'gstate-line-join' ? 'LJ' : 'D'
+        ops.fnArray.splice(begin + 1, 0, OPS.setGState)
+        ops.argsArray.splice(begin + 1, 0, [[[key, key === 'D' ? [[NaN], 0] : 99]]])
+      }
+      if (change === 'one-ulp' || change === 'minmax-mismatch') {
+        const bounds = ops.argsArray[fill][2]
+        bounds[2] += change === 'one-ulp' ? 2 ** (Math.floor(Math.log2(bounds[2])) - 23) : 1
+      }
+      if (change === 'nonrectangular-clip') {
+        const clip = ops.fnArray.findIndex(
+          (op, i) =>
+            i > begin && i < end && op === OPS.constructPath && ops.argsArray[i][0] === OPS.endPath
+        )
+        ops.argsArray[clip][1][0][10] += 1
+      }
+      if (change === 'transparent-vector') {
+        for (let i = begin; i < end; i++)
+          if (ops.fnArray[i] === OPS.setGState)
+            for (const entry of ops.argsArray[i][0])
+              if (entry[0] === 'ca' || entry[0] === 'CA') entry[1] = 0
+        ops.fnArray.splice(begin + 1, 0, OPS.setGState)
+        ops.argsArray.splice(begin + 1, 0, [
+          [
+            ['ca', 0],
+            ['CA', 0]
+          ]
+        ])
+      }
+      if (change === 'no-filled-rectangle')
+        for (let i = begin; i < end; i++)
+          if (ops.fnArray[i] === OPS.setFillRGBColor) ops.argsArray[i][0] = '#ffffff'
+      if (change === 'no-straight-stroke') {
+        const line = ops.fnArray.findIndex(
+            (op, i) =>
+              i > begin &&
+              i < end &&
+              op === OPS.constructPath &&
+              ops.argsArray[i][0] === OPS.stroke &&
+              ops.argsArray[i][1][0].length === 6
+          ),
+          path = ops.argsArray[line][1][0],
+          bounds = ops.argsArray[line][2]
+        path[4] = path[1]
+        path[5] = path[2]
+        bounds.set([path[1], path[2], path[1], path[2]])
+      }
+      const result = await applyCachedPdfFigureSources(f.args),
+        unit = result.source.units.find((unit) => unit.id === 'network-caption')!
+      if (change === 'one-ulp') expect(unit.sourceOnly).toBeUndefined()
+      else expect(unit).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+      expect(result.coverage).toEqual(f.extraction.coverage)
+    } finally {
+      await f.loading.destroy()
+    }
+  }
+)
+
+it('keeps the second caption conservative when one auxiliary render cannot rebind its original operators', async () => {
+  const f = await isolatedPlotCaption(true, true),
+    has = f.native.commonObjs.has.bind(f.native.commonObjs)
+  let renders = 0,
+    destroyed = 0
+  vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) })
+  try {
+    f.native.commonObjs.has = (key) => !key.includes('_path_') && has(key)
+    const factory = vi.fn((params: Parameters<typeof getDocument>[0]) => {
+      const owned = getDocument(params),
+        destroy = owned.destroy.bind(owned)
+      void owned.promise
+        .then((document) => {
+          const getPage = document.getPage.bind(document),
+            seen = new WeakSet()
+          document.getPage = async (number) => {
+            const page = await getPage(number)
+            if (!seen.has(page)) {
+              seen.add(page)
+              const render = page.render.bind(page)
+              page.render = (...args) => {
+                renders++
+                return render(...args)
+              }
+            }
+            return page
+          }
+        })
+        .catch(() => undefined)
+      owned.destroy = async () => {
+        await destroy()
+        destroyed++
+      }
+      return owned
+    })
+    const result = await applyCachedPdfFigureSources({ ...f.args, nativeDocumentFactory: factory })
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(renders).toBe(1)
+    expect(destroyed).toBe(1)
+    expect(result.source.units.find((unit) => unit.id === 'caption')?.sourceOnly).toBeUndefined()
+    expect(result.source.units.find((unit) => unit.id === 'network-caption')).toMatchObject({
+      sourceOnly: true,
+      preserve: 'reference'
+    })
+    expect(result.coverage).toEqual(f.extraction.coverage)
+  } finally {
+    vi.unstubAllGlobals()
+    await f.loading.destroy()
+  }
+})
+
+it('keeps native-proved caption admission through repeated content policy and local source reconstruction', async () => {
+  const f = await isolatedPlotCaption(true)
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    const caption = result.source.units.find((unit) => unit.id === 'caption')!
+    expect(caption.sourceOnly).toBeUndefined()
+    const prepared = applyPdfContentFirstPolicy(result.source)
+    expect(prepared.units.find((unit) => unit.id === caption.id)).toEqual(caption)
+    expect(pdfReflowContentKinds(prepared).get(caption.id)).toBe('text')
+    expect(applyPdfContentFirstPolicy(createPdfTranslationSource(prepared))).toEqual(prepared)
+    for (const input of [result, { ...result, source: prepared }]) {
+      const projected = await applyCachedPdfStructureSources({
+        ...f.args,
+        extraction: input,
+        preserveUnitIdentity: true
+      })
+      const figures = await preservePdfFigureSources({
+        document: f.args.document,
+        extraction: projected.extraction,
+        operators: OPS,
+        signal: f.args.signal
+      })
+      const displayed = applyPdfContentFirstPolicy(figures.source)
+      expect(displayed.units.find((unit) => unit.id === caption.id)).toEqual(caption)
+      expect(pdfReflowContentKinds(displayed).get(caption.id)).toBe('text')
+    }
+    const exterior = prepared.units.find(
+      (unit) => unit.source === 'Other prose remains unchanged.'
+    )!
+    expect(exterior).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it.each([
+  'json',
+  'caption-ref',
+  'other-unit-ref',
+  'order',
+  'native-index',
+  'literal',
+  'resource',
+  'fingerprint',
+  'pages-ref'
+])(
+  'does not transfer native caption admission through an unproved Source change: %s',
+  async (change) => {
+    const f = await isolatedPlotCaption(true)
+    try {
+      const result = await applyCachedPdfFigureSources(f.args),
+        source = result.source
+      let input: Parameters<typeof createPdfTranslationSource>[0] = { ...source }
+      if (change === 'json') input = JSON.parse(JSON.stringify(source))
+      if (change === 'caption-ref' || change === 'other-unit-ref')
+        input = {
+          ...source,
+          units: source.units.map((unit) =>
+            (change === 'caption-ref' ? unit.id === 'caption' : unit.source === 'References')
+              ? { ...unit }
+              : unit
+          )
+        }
+      if (change === 'order')
+        input = { ...source, units: [source.units[0], ...source.units.slice(1).toReversed()] }
+      if (change === 'native-index')
+        input = {
+          ...source,
+          units: source.units.map((unit) =>
+            unit.id !== 'caption'
+              ? unit
+              : {
+                  ...unit,
+                  fragments: unit.fragments.map((fragment) => ({
+                    ...fragment,
+                    items: fragment.items.map((item) => ({ ...item, index: item.index + 1 }))
+                  }))
+                }
+          )
+        }
+      if (change === 'literal')
+        input = {
+          ...source,
+          units: source.units.map((unit) =>
+            unit.id === 'caption'
+              ? { ...unit, source: unit.source.replace('Measurements', 'References') }
+              : unit
+          )
+        }
+      if (change === 'resource') input = { ...source, resourceRequestKey: 'another-source' }
+      if (change === 'fingerprint') input = { ...source, fingerprint: 'another-fingerprint' }
+      if (change === 'pages-ref')
+        input = { ...source, pages: source.pages.map((page) => ({ ...page })) }
+      const restored = createPdfTranslationSource(input),
+        caption = restored.units.find((unit) => unit.id === 'caption')!
+      expect(pdfReflowContentKinds(restored).get(caption.id)).toBe('reference')
+      expect(
+        applyPdfContentFirstPolicy(restored).units.find((unit) => unit.id === caption.id)
+      ).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+    } finally {
+      await f.loading.destroy()
+    }
+  }
+)
+
+it.each([
+  'competing-caption',
+  'second-source-claim',
+  'foreign-region',
+  'hidden-caption',
+  'transparent-raster'
+])('keeps a reference caption when isolated native ownership fails: %s', async (failure) => {
+  const f = await isolatedPlotCaption()
+  try {
+    const target = f.cached.elements[0]
+    if (failure === 'competing-caption')
+      f.cached.elements.push({ ...structuredClone(target), id: 'competing' })
+    if (failure === 'second-source-claim')
+      f.cached.elements[1].sourceItems = f.extraction.source.units[0].fragments[0].items.map(
+        (i) => ({ pageNumber: 1, ...i })
+      )
+    if (failure === 'foreign-region')
+      f.cached.elements[1].regions = structuredClone(target.caption!.regions)
+    const operators = await f.native.getOperatorList()
+    if (failure === 'hidden-caption') {
+      const at = operators.fnArray.indexOf(OPS.beginText)
+      operators.fnArray.splice(at, 0, OPS.setTextRenderingMode)
+      operators.argsArray.splice(at, 0, [3])
+    }
+    if (failure === 'transparent-raster') {
+      const at = operators.fnArray.indexOf(OPS.paintImageXObject)
+      const image = f.native.objs.get(operators.argsArray[at][0])
+      image.kind = 3
+      image.data = new Uint8ClampedArray(image.width * image.height * 4)
+    }
+    const factory = vi.fn(getDocument)
+    const result = await applyCachedPdfFigureSources({ ...f.args, nativeDocumentFactory: factory })
+    expect(result.source).toEqual(f.extraction.source)
+    expect(result.coverage).toEqual(f.extraction.coverage)
+    expect(factory).not.toHaveBeenCalled()
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('refuses an equal-valued branded Source replacement through a mutable extraction alias', async () => {
+  const f = await isolatedPlotCaption()
+  try {
+    const subject = { ...f.extraction },
+      getOperators = f.native.getOperatorList.bind(f.native)
+    let replaced = false
+    f.native.getOperatorList = async (...args) => {
+      const operators = await getOperators(...args)
+      if (!replaced) {
+        replaced = true
+        subject.source = createPdfTranslationSource({ ...subject.source })
+      }
+      return operators
+    }
+    const result = await applyCachedPdfFigureSources({ ...f.args, extraction: subject })
+    expect(replaced).toBe(true)
+    expect(result.source).toEqual(f.extraction.source)
+    expect(result.source.units[0]).toMatchObject({ sourceOnly: true, preserve: 'reference' })
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('refuses duplicated Source unit identities before restoring any reference caption', async () => {
+  const f = await isolatedPlotCaption()
+  try {
+    const units = [...f.extraction.source.units]
+    units[1] = { ...units[1], id: units[0].id, sourceOnly: true, preserve: 'reference' }
+    const extraction = {
+      ...f.extraction,
+      source: createPdfTranslationSource({ ...f.extraction.source, units })
+    }
+    const result = await applyCachedPdfFigureSources({ ...f.args, extraction })
+    expect(result.source).toEqual(extraction.source)
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it.each([
+  'image-byte',
+  'form-bbox',
+  'operator-ref',
+  'font-byte',
+  'font-data-ref',
+  'font-bbox-ref',
+  'glyph-path-ref',
+  'glyph-path-byte',
+  'source-root-ref'
+])('rechecks %s synchronously after the final image digest await', async (change) => {
+  const f = await isolatedPlotCaption()
+  const digest = globalThis.crypto.subtle.digest.bind(globalThis.crypto.subtle),
+    subject = { ...f.extraction }
+  let hashes = 0,
+    mutations = 0
+  try {
+    const operators = await f.native.getOperatorList()
+    const imageOperations = operators.fnArray.flatMap((op, i) =>
+      op === OPS.paintImageXObject ? [i] : []
+    )
+    const first = f.native.objs.get(operators.argsArray[imageOperations[0]][0])
+    const second = f.native.objs.get(operators.argsArray[imageOperations[1]][0])
+    const content = await f.native.getTextContent()
+    const prefix = content.items.find(
+      (item) => 'str' in item && item.str === 'Figure 1:'
+    ) as TextItem
+    vi.spyOn(globalThis.crypto.subtle, 'digest').mockImplementation(async (algorithm, bytes) => {
+      const result = await digest(algorithm, bytes)
+      if (bytes.byteLength === second.data.byteLength && ++hashes === 4) {
+        if (change === 'image-byte') first.data[0] ^= 1
+        if (change === 'form-bbox')
+          operators.argsArray[operators.fnArray.indexOf(OPS.paintFormXObjectBegin)][1][2] -= 1
+        if (change === 'operator-ref') operators.argsArray = [...operators.argsArray]
+        if (change === 'font-byte') f.native.commonObjs.get(prefix.fontName).data[0] ^= 1
+        if (change === 'font-data-ref') {
+          const font = f.native.commonObjs.get(prefix.fontName),
+            data = font.data
+          Object.defineProperty(font, 'data', {
+            value: new Uint8Array(data.buffer, data.byteOffset, data.length),
+            configurable: true
+          })
+        }
+        if (change === 'font-bbox-ref') {
+          const font = f.native.commonObjs.get(prefix.fontName)
+          Object.defineProperty(font, 'bbox', { value: [...font.bbox], configurable: true })
+        }
+        if (change === 'glyph-path-ref' || change === 'glyph-path-byte') {
+          const glyph = operators.argsArray
+            .flatMap((args) => (Array.isArray(args?.[0]) ? args[0] : []))
+            .find((g) => g?.unicode === 'F')
+          const owner = f.native.commonObjs.get(prefix.fontName + '_path_' + glyph.fontChar)
+          if (change === 'glyph-path-ref')
+            Object.defineProperty(owner, 'path', {
+              value: owner.path.slice(),
+              configurable: true
+            })
+          else owner.path[1] += 1
+        }
+        if (change === 'source-root-ref')
+          subject.source = createPdfTranslationSource({ ...subject.source })
+        mutations++
+      }
+      return result
+    })
+    const result = await applyCachedPdfFigureSources({ ...f.args, extraction: subject })
+    expect(mutations).toBe(1)
+    expect(hashes).toBe(4)
+    expect(result.source).toEqual(f.extraction.source)
+  } finally {
+    vi.restoreAllMocks()
+    await f.loading.destroy()
+  }
+})
+
+it.each([false, true])(
+  'commits only after owned caption cleanup, replaced Source: %s',
+  async (replace) => {
+    const f = await isolatedPlotCaption()
+    const subject = { ...f.extraction },
+      actualHas = f.native.commonObjs.has.bind(f.native.commonObjs)
+    let destroyed = 0
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) })
+    try {
+      f.native.commonObjs.has = (key) => !key.includes('_path_') && actualHas(key)
+      const factory = vi.fn((params: Parameters<typeof getDocument>[0]) => {
+        const owned = getDocument(params),
+          destroy = owned.destroy.bind(owned)
+        owned.destroy = async () => {
+          await destroy()
+          destroyed++
+          if (replace) subject.source = createPdfTranslationSource({ ...subject.source })
+        }
+        return owned
+      })
+      const result = await applyCachedPdfFigureSources({
+        ...f.args,
+        extraction: subject,
+        nativeDocumentFactory: factory
+      })
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(destroyed).toBe(1)
+      if (replace) expect(result.source).toEqual(f.extraction.source)
+      else {
+        const caption = { ...f.extraction.source.units[0] }
+        delete caption.sourceOnly
+        delete caption.preserve
+        expect(result.source.units).toEqual([caption, ...f.extraction.source.units.slice(1)])
+      }
+    } finally {
+      vi.unstubAllGlobals()
+      await f.loading.destroy()
+    }
+  }
+)
+import { extractPdfTranslationSource } from '../../src/reader/extraction.js'
+import {
+  createNativeRuledAlgorithmCaptionReader,
+  nativeRuledAlgorithmCaptionBlock
+} from '../../src/reader/ruled-algorithm-packets.js'
+
+async function anonymousRuledCaption(fault = '') {
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(fontkit)
+  const font = await pdf.embedFont(
+    await readFile(
+      path.join(
+        path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+        'standard_fonts/LiberationSans-Regular.ttf'
+      )
+    ),
+    { subset: false }
+  )
+  const page = pdf.addPage([600, 800])
+  page.drawText('Register the embedded font.', { x: 50, y: 750, size: 10, font })
+  const fontKey = page.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString()
+  const show = (s: string, x: number, y: number, size = 10) =>
+    `BT ${fontKey} ${size} Tf ${x} ${y} Td ${font.encodeText(s).toString()} Tj ET`
+  const foreign = pdf.context.register(
+    pdf.context.flateStream(`q 0 0 0 rg 4 4 80 12 re f ${show('Independent plot.', 4, 24, 8)} Q`, {
+      Type: 'XObject',
+      Subtype: 'Form',
+      BBox: [0, 0, 120, 40],
+      Resources: page.node.Resources()
+    })
+  )
+  page.node.Resources()!.set(PDFName.of('XObject'), pdf.context.obj({ Foreign: foreign }))
+  const rule = (y: number, white = false) =>
+    `q ${white ? '1 1 1' : '0 0 0'} RG 0.5 w 50 ${y} m 280 ${y} l S Q`
+  const body = [
+    show('Require:', 50, 440, 9.2),
+    show('a complete native packet', 92, 440, 9),
+    show('Ensure:', 50, 428, 9.2),
+    show('an independently checked result', 92, 428, 9),
+    ...Array.from({ length: 8 }, (_, i) => [
+      show(`${i + 1}:`, 56, 410 - i * 15, 8),
+      show(i === 0 ? 'for' : i === 7 ? 'return' : 'if', 78, 410 - i * 15, 9.2),
+      show(
+        i === 0
+          ? 'each candidate do'
+          : i === 7
+            ? 'the result'
+            : 'a measurement is valid then retain it',
+        i === 7 ? 112 : 98,
+        410 - i * 15,
+        9
+      )
+    ]).flat()
+  ]
+  page.node.set(
+    PDFName.of('Contents'),
+    pdf.context.register(
+      pdf.context.flateStream(
+        [
+          `q 1 0 0 1 50 ${fault === 'foreign-overlap' ? 450 : 650} cm /Foreign Do Q`,
+          rule(500),
+          show('Algorithm 1 Pick a stable candidate.', 50, 486),
+          show('Use complete measurements for each candidate,', 50, 474),
+          show('then report the independently checked result.', 50, 462),
+          ...(fault === 'missing-divider' ? [] : [rule(450, fault === 'white-divider')]),
+          ...body,
+          rule(270),
+          show('Ordinary text after the closed algorithm remains independent.', 50, 240)
+        ].join('\n')
+      )
+    )
+  )
+  const bytes = await pdf.save(),
+    task = getDocument({
+      data: bytes.slice(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      isEvalSupported: false
+    })
+  return { task, bytes, document: await task.promise }
+}
+
+it('translates only a complete native algorithm caption continuation without regrouping its source', async () => {
+  const f = await anonymousRuledCaption()
+  try {
+    const extraction = await extractPdfTranslationSource({
+        document: f.document,
+        resourceRequestKey: 'anonymous-algorithm',
+        signal: new AbortController().signal
+      }),
+      caption = extraction.source.units.find((u) =>
+        u.source.startsWith('Use complete measurements')
+      )!
+    expect(caption).toBeDefined()
+    expect(caption.sourceOnly).toBeUndefined()
+    expect(caption.preserve).toBeUndefined()
+    expect(
+      extraction.source.units.some(
+        (u) => u.preserve === 'code' && u.source.includes('return the result')
+      )
+    ).toBe(true)
+    expect(pdfReflowContentKinds(extraction.source).get(caption.id)).toBe('text')
+  } finally {
+    await f.task.destroy()
+  }
+})
+it.each(['missing-divider', 'white-divider', 'foreign-overlap'])(
+  'retains the original listing when native caption proof has %s',
+  async (fault) => {
+    const f = await anonymousRuledCaption(fault)
+    try {
+      const extraction = await extractPdfTranslationSource({
+          document: f.document,
+          resourceRequestKey: 'anonymous-algorithm',
+          signal: new AbortController().signal
+        }),
+        caption = extraction.source.units.find((u) =>
+          u.source.startsWith('Use complete measurements')
+        )!
+      expect(caption).toBeDefined()
+      expect(caption).toMatchObject({ sourceOnly: true, preserve: 'code' })
+    } finally {
+      await f.task.destroy()
+    }
+  }
+)
+it.each([
+  'equal-content-replacement',
+  'raw-array-length',
+  'unreliable-member',
+  'viewport-change',
+  'raw-prototype',
+  'raw-nonenumerable',
+  'operator-budget',
+  'unknown-operator'
+])('rejects stale native caption evidence across the operators await: %s', async (fault) => {
+  const f = await anonymousRuledCaption()
+  try {
+    const page = await f.document.getPage(1),
+      content = await page.getTextContent(),
+      viewport = page.getViewport({ scale: 1 }),
+      rawPage = {
+        page: 1,
+        width: viewport.width,
+        height: viewport.height,
+        rotation: 0,
+        items: content.items.map((i) =>
+          'str' in i
+            ? {
+                ...i,
+                fontAscent: content.styles[i.fontName].ascent,
+                fontDescent: content.styles[i.fontName].descent,
+                fontVertical: false
+              }
+            : { str: '', width: 0, height: 0, transform: [0, 0, 0, 0, 0, 0] }
+        )
+      },
+      unreliable = new Set<number>(),
+      index = content.items.findIndex(
+        (i) => 'str' in i && i.str.startsWith('Use complete measurements')
+      ),
+      input = { page, content, viewport, rawPage, unreliable } as Parameters<
+        ReturnType<typeof createNativeRuledAlgorithmCaptionReader>['observe']
+      >[0]
+    const getOperators = page.getOperatorList.bind(page)
+    page.getOperatorList = async () => {
+      const value = await getOperators()
+      if (fault === 'operator-budget')
+        return {
+          ...value,
+          fnArray: new Array(100001).fill(OPS.dependency),
+          argsArray: new Array(100001).fill([])
+        }
+      if (fault === 'unknown-operator')
+        return {
+          ...value,
+          fnArray: [...value.fnArray, OPS.beginGroup],
+          argsArray: [...value.argsArray, []]
+        }
+      if (fault === 'equal-content-replacement') content.items[index] = { ...content.items[index] }
+      if (fault === 'raw-array-length') rawPage.items.length++
+      if (fault === 'unreliable-member') unreliable.add(index)
+      if (fault === 'viewport-change') viewport.width++
+      if (fault === 'raw-prototype')
+        Object.setPrototypeOf(rawPage.items, Object.create(Array.prototype))
+      if (fault === 'raw-nonenumerable')
+        Object.defineProperty(rawPage, 'unobserved', { value: true })
+      return value
+    }
+    await createNativeRuledAlgorithmCaptionReader({
+      document: f.document,
+      signal: new AbortController().signal
+    }).observe(input)
+    expect(
+      nativeRuledAlgorithmCaptionBlock(input.rawPage, [
+        { index, str: (content.items[index] as TextItem).str }
+      ])
+    ).toBe(false)
+  } finally {
+    await f.task.destroy()
+  }
+})
+it('keeps a native caption proof live through cleanup and never grants it to a cloned raw page', async () => {
+  const f = await anonymousRuledCaption()
+  try {
+    const page = await f.document.getPage(1),
+      content = await page.getTextContent(),
+      viewport = page.getViewport({ scale: 1 }),
+      rawPage = {
+        page: 1,
+        width: viewport.width,
+        height: viewport.height,
+        rotation: 0,
+        items: content.items.map((i) =>
+          'str' in i
+            ? {
+                ...i,
+                fontAscent: content.styles[i.fontName].ascent,
+                fontDescent: content.styles[i.fontName].descent,
+                fontVertical: false
+              }
+            : { str: '', width: 0, height: 0, transform: [0, 0, 0, 0, 0, 0] }
+        )
+      },
+      unreliable = new Set<number>(),
+      input = { page, content, viewport, rawPage, unreliable } as Parameters<
+        ReturnType<typeof createNativeRuledAlgorithmCaptionReader>['observe']
+      >[0],
+      index = content.items.findIndex(
+        (i) => 'str' in i && i.str.startsWith('Use complete measurements')
+      ),
+      block = [{ index, str: (content.items[index] as TextItem).str }]
+    await createNativeRuledAlgorithmCaptionReader({
+      document: f.document,
+      signal: new AbortController().signal
+    }).observe(input)
+    expect(nativeRuledAlgorithmCaptionBlock(input.rawPage, block)).toBe(true)
+    page.cleanup()
+    expect(nativeRuledAlgorithmCaptionBlock(input.rawPage, block)).toBe(true)
+    expect(nativeRuledAlgorithmCaptionBlock(structuredClone(input.rawPage), block)).toBe(false)
+    unreliable.add(index)
+    expect(nativeRuledAlgorithmCaptionBlock(input.rawPage, block)).toBe(false)
+  } finally {
+    await f.task.destroy()
+  }
 })

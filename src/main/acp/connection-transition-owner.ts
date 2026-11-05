@@ -7,6 +7,7 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
   blockers: () => AcpConnectionTransitionBlockers
   connectionGeneration: () => number
   disconnect: (emitClosedStatus: boolean) => Promise<unknown>
+  cleanupConfirmed: () => boolean
   onRetired: () => void
   publishIdle: () => void
   recoverFailedDeferredDisconnect: (
@@ -24,7 +25,8 @@ export class AcpConnectionTransitionOwner {
   private skillsIntent = false
   private idleReleaseIntent = false
   private retirementIntent = false
-  private retirementStarted = false
+  private retirementCompleted = false
+  private retirementInFlight: Promise<void> | undefined
   private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
@@ -63,7 +65,8 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestRetirement(): Promise<void> {
-    if (this.retirementStarted) return
+    if (this.retirementCompleted) return
+    if (this.retirementInFlight) return this.retirementInFlight
     this.retirementIntent = true
     if (this.options.blockers().retirement) return
     await this.startRetirement()
@@ -140,25 +143,42 @@ export class AcpConnectionTransitionOwner {
     if (teardownGeneration === this.options.connectionGeneration()) this.options.publishIdle()
   }
 
-  private async startRetirement(): Promise<void> {
-    if (this.retirementStarted) return
-    this.retirementStarted = true
-    this.retirementIntent = false
+  private startRetirement(): Promise<void> {
+    if (this.retirementInFlight) return this.retirementInFlight
+    if (this.retirementCompleted) return Promise.resolve()
+    const completion = Promise.withResolvers<void>()
+    this.retirementInFlight = completion.promise
+    const clear = (): void => {
+      this.retirementInFlight = undefined
+    }
+    void completion.promise.then(clear, clear)
+    void this.performRetirement().then(completion.resolve, completion.reject)
+    return completion.promise
+  }
+
+  private async performRetirement(): Promise<void> {
     this.providerIntent = false
     this.skillsIntent = false
     this.idleReleaseIntent = false
 
     try {
       await (this.plannedDisconnect ?? this.options.disconnect(false))
+      // Ordinary disconnect also resolves when a process cannot be reaped. Retirement must keep
+      // ownership in that case, including when it joined an already planned disconnect.
+      if (!this.options.cleanupConfirmed()) throw new Error('ACP runtime cleanup is not confirmed.')
+      this.retirementCompleted = true
+      this.retirementIntent = false
     } catch (error) {
       this.reportFailure('retired runtime disconnect failed', error)
+      // Retry only on a later request or activity notification, never recursively from settlement.
     } finally {
       this.completeReconnect()
-      try {
-        this.options.onRetired()
-      } catch (error) {
-        this.reportFailure('retired runtime callback failed', error)
-      }
+    }
+    if (!this.retirementCompleted) return
+    try {
+      this.options.onRetired()
+    } catch (error) {
+      this.reportFailure('retired runtime callback failed', error)
     }
   }
 

@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { area } from './literature-pdf-page-geometry.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
 
 export const isUprightText = (item, rotation) => {
@@ -211,4 +212,42 @@ export const restoreCaptionCoordinates = (caption, pages) => {
   }
   caption.rect = restore(caption).rect
   if (caption.regions) caption.regions = caption.regions.map(restore)
+}
+
+export function nativeFigureLabelBounds(item, style, viewport) {
+  if (
+    item.dir !== 'ltr' ||
+    style?.vertical ||
+    item.transform?.length !== 6 ||
+    ![...item.transform, item.width, item.height].every(Number.isFinite) ||
+    item.width <= 0 ||
+    item.height <= 0
+  )
+    return
+  const [a, b, c, d, x, y] = item.transform,
+    advance = Math.hypot(a, b),
+    height = Math.hypot(c, d)
+  if (
+    advance <= 0 ||
+    height <= 0 ||
+    a * d - b * c <= 0 ||
+    Math.abs(a * c + b * d) > advance * height * 0.0001
+  )
+    return
+  const ascent = style?.ascent || (style?.descent ? 1 + style.descent : 0.8)
+  const points = [0, item.width].flatMap((u) =>
+    [-(1 - ascent) * height, ascent * height].map((v) =>
+      viewport.convertToViewportPoint(
+        x + (a / advance) * u + (c / height) * v,
+        y + (b / advance) * u + (d / height) * v
+      )
+    )
+  )
+  const rect = [
+    Math.min(...points.map((p) => p[0])),
+    Math.min(...points.map((p) => p[1])),
+    Math.max(...points.map((p) => p[0])),
+    Math.max(...points.map((p) => p[1]))
+  ]
+  return rect.every(Number.isFinite) && area(rect) > 0 ? rect : undefined
 }

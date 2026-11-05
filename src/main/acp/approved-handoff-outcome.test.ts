@@ -6,7 +6,13 @@ import type {
 } from '../agents/completion-gate'
 import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
 import { withApprovedSpecialistBinding } from '../agents/production-completion-handoff'
-import { CompletionGateRuntimeRegistry } from '../agents/completion-gate'
+import { CompletionGateCoordinator, CompletionGateRuntimeRegistry } from '../agents/completion-gate'
+import {
+  CompletionHandoffLifecycle,
+  InMemoryCompletionHandoffRepository
+} from '../agents/completion-handoff-lifecycle'
+import { AcpGenerationActivityOwner } from './generation-activity-owner'
+import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 
 const context = (sessionId = 'session-1', generation = 1): TrustedToolCompletionContext => ({
   sessionId,
@@ -41,6 +47,130 @@ beforeEach(() => {
 })
 
 describe('approved Handoff outcome boundary', () => {
+  it.each([
+    'ownership-release',
+    'reconfigure',
+    'failure',
+    'non-durable',
+    'reconfigure-transition',
+    'continuation-transition'
+  ] as const)(
+    'releases the provider idle hold when a handoff is superseded during %s',
+    async (stage) => {
+      const entered = Promise.withResolvers<void>()
+      const resume = Promise.withResolvers<void>()
+      const leases: Array<() => void> = []
+      const disconnect = vi.fn(async () => undefined)
+      const activity = new AcpGenerationActivityOwner({
+        activityChanged: () => transitions.activityChanged(),
+        hasActivePrompts: () => false,
+        hasActiveReviewerSessions: () => false
+      })
+      const transitions = new AcpConnectionTransitionOwner({
+        blockers: () => activity.blockers(),
+        connectionGeneration: () => 1,
+        cleanupConfirmed: () => true,
+        disconnect,
+        onRetired: () => undefined,
+        publishIdle: () => undefined,
+        recoverFailedDeferredDisconnect: () => undefined,
+        reportFailure: () => undefined
+      })
+      const pause = async (): Promise<void> => {
+        entered.resolve()
+        await resume.promise
+        if (stage === 'failure') throw new Error('ownership release failed')
+      }
+      const inner = {
+        ...adapter(),
+        stopOldPrompt: async () => transitions.requestIdleRelease(),
+        waitForOwnershipRelease:
+          stage === 'reconfigure' || stage.endsWith('-transition') ? async () => undefined : pause,
+        reconfigure: stage === 'reconfigure' ? pause : vi.fn(async () => undefined)
+      }
+      const wrapped = withApprovedSpecialistBinding(
+        withApprovedHandoffOutcome(
+          {
+            captureApprovedHandoffFailure: () => undefined,
+            captureHandoffProcess: () => ({
+              hold: () => {
+                const held = Promise.withResolvers<void>()
+                void activity.withOperation(() => held.promise)
+                const release = (): void => {
+                  transitions.requestIdleRelease()
+                  held.resolve()
+                }
+                leases.push(release)
+                return release
+              },
+              restoreSession: async () => undefined
+            })
+          },
+          inner
+        ),
+        {
+          getSpecialistBinding: () => 'approved',
+          getSpecialist: () => ({ name: 'Specialist', revision: 1, enabled: true })
+        }
+      )
+      const invocation = context()
+      const repository = new InMemoryCompletionHandoffRepository()
+      const lifecycle = new CompletionHandoffLifecycle(
+        repository,
+        wrapped,
+        Date.now,
+        undefined,
+        async () => ({ specialistId: 'approved', revision: 1 })
+      )
+      try {
+        let running: Promise<unknown>
+        let supersede: () => Promise<unknown>
+        if (stage === 'non-durable') {
+          const gate = new CompletionGateCoordinator(wrapped)
+          await gate.arm(invocation, 'Specialist')
+          running = gate.complete(gate.claimCompletion(invocation, handoff.envelope), invocation)
+          supersede = async () => gate.arm(context('session-1', 2), 'Specialist')
+        } else {
+          await lifecycle.approve({ context: invocation, targetName: 'Specialist', generation: 1 })
+          await lifecycle.capture(invocation, handoff.envelope)
+          if (stage.endsWith('-transition')) {
+            const update = repository.update.bind(repository)
+            let transitions = 0
+            vi.spyOn(repository, 'update').mockImplementation(async (context, mutate) => {
+              if (++transitions === (stage === 'reconfigure-transition' ? 2 : 3)) await pause()
+              return update(context, mutate)
+            })
+          }
+          running = lifecycle.run(invocation)
+          supersede = async () => {
+            await lifecycle.approve({
+              context: invocation,
+              targetName: 'Specialist',
+              generation: 2
+            })
+            await lifecycle.capture(invocation, handoff.envelope)
+          }
+        }
+        await entered.promise
+        expect(activity.blockers().retirement).toBe(true)
+        expect(disconnect).not.toHaveBeenCalled()
+        await supersede()
+        resume.resolve()
+        await running
+        expect(activity.blockers().retirement).toBe(false)
+        await transitions.barrier
+        expect(disconnect).toHaveBeenCalledOnce()
+        expect(inner.continueAsApproved).not.toHaveBeenCalled()
+        expect(inner.reportHandoffFailure).not.toHaveBeenCalled()
+        if (stage !== 'non-durable')
+          expect((await repository.get(invocation))?.stage).toBe('switching')
+      } finally {
+        resume.resolve()
+        for (const release of leases) release()
+      }
+    }
+  )
+
   it('releases failed handoffs and rejects a retry cancelled during provider restore', async () => {
     let finishRestore!: () => void
     process.restoreSession.mockImplementation(
@@ -155,7 +285,7 @@ describe('approved Handoff outcome boundary', () => {
     expect(process.hold.mock.results[1].value).toHaveBeenCalledOnce()
   })
 
-  it('clears successful continuation ownership without clearing a newer invocation', async () => {
+  it('does not let a superseded generation clear the same context’s new capture', async () => {
     const previous = vi.fn(async () => undefined)
     const current = vi.fn(async () => undefined)
     const inner = adapter()
@@ -174,16 +304,18 @@ describe('approved Handoff outcome boundary', () => {
       },
       inner
     )
-    await wrapped.stopOldPrompt(context())
+    await wrapped.stopOldPrompt(context(), 1)
     const continuing = wrapped.continueAsApproved(handoff, context())
-    await wrapped.stopOldPrompt(context('session-1', 2))
+    await wrapped.stopOldPrompt(context(), 2)
+    wrapped.releaseSupersededHandoff!(context(), 1)
     release()
     await continuing
     await wrapped.reportHandoffFailure(new Error('late previous failure'), handoff, context())
+    expect(process.hold.mock.results[1].value).not.toHaveBeenCalled()
     await wrapped.reportHandoffFailure(
       new Error('current failure'),
-      handoff,
-      context('session-1', 2)
+      { ...handoff, generation: 2 },
+      context()
     )
     expect(previous).not.toHaveBeenCalled()
     expect(current).toHaveBeenCalledOnce()

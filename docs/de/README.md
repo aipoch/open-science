@@ -17,9 +17,7 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science Preprint auf arXiv: 2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#benchmark-ergebnisse">
-    <img alt="AIPOCH Open-Science — höchste Werte in den berichteten Benchmark-Vergleichen" src="../../docs/images/readme/benchmark-comparisons.svg">
-  </a>
+  <a href="#benchmark-ergebnisse">Benchmark-Ergebnisse</a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="Plattformen macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
@@ -45,13 +43,11 @@
 
 > Dieses Dokument ist eine Übersetzung der englischen `README.md`. Bei Abweichungen ist die [englische Version](../../README.md) maßgeblich.
 
-AIPOCH Open-Science ist eine KI-Forschungsumgebung für Wissenschaftler und Forschende, entwickelt von [AIPOCH](https://aipoch.com/open-science) mit einem quelloffenen, lokal betriebenen und modellunabhängigen Ansatz. Sie ermöglicht reproduzierbare und nachvollziehbare Forschung mit wissenschaftlichen KI-Agenten, Python und R, wissenschaftlichen Datenkonnektoren sowie Unterstützung für macOS, Windows und Linux. Erstellen Sie ein Projekt, beschreiben Sie Ihr Forschungsziel in natürlicher Sprache und lassen Sie Agenten Dateien lesen, im Web recherchieren, Code ausführen, wissenschaftliche Datenquellen abfragen und Berichte, Tabellen oder Abbildungen mit nachvollziehbarer Provenienz erstellen – alles in einem Arbeitsbereich.
+[AIPOCH Open-Science](https://aipoch.com/open-science) ist eine quelloffene Arbeitsumgebung für die Forschung mit KI. Beginnen Sie mit einer Frage, einer wissenschaftlichen Veröffentlichung oder einer Datendatei. Beschreiben Sie in eigenen Worten, was Sie herausfinden möchten, und arbeiten Sie mit einem KI-Agenten, um Belege zu sichten, Daten zu analysieren oder ein Diagramm zu erstellen.
 
-AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlreichen Disziplinen, darunter maschinelles Lernen, Statistik, Biowissenschaften, Chemie, Materialwissenschaften, Physik und Umweltwissenschaften. Die Umgebung begleitet den Forschungsprozess von der Literaturrecherche und Hypothesenbildung über Codeausführung, Datenanalyse, Simulation und Visualisierung bis zur Erstellung nachvollziehbarer Forschungsergebnisse.
+Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
-
-> 💡 **[AIPOCH Open-Science v1.0.7 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version bringt Pi als fünftes Agenten-Framework, fügt Referenzen direkt aus DOI- oder arXiv-Links hinzu und ermöglicht es Agenten, verknüpfte PDFs im Lesemodus mit Notizen und Markierungen zu versehen. Gescannte PDFs werden mit optionaler OCR und neun Sprachpaketen lesbar, und der Marktplatz für Forschungsbeispiele ist jetzt durchsuchbar. Außerdem behebt die Version Probleme bei der Einrichtung der Notebook-Befehlszeile unter Windows, OpenCode-Abstürze bei der Kontextkomprimierung und Downloads über Fake-IP-DNS. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.7](../../release-notes/1.0.7/de.md).
+> 💡 **[AIPOCH Open-Science v1.0.8 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version ordnet die Einstellungen in übersichtliche Tabs, importiert bis zu 100 Referenzen gleichzeitig aus DOI-, arXiv- oder PubMed-Kennungen und fügt der Literaturdetailansicht KI-Studienübersichten hinzu. Beendete Sitzungen geben ihre Agenten-Prozesse frei, eQTL-Catalogue-Abfragen funktionieren wieder, und Aktualisierungen unter macOS und Windows verlaufen reibungsloser. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.8](../../release-notes/1.0.8/de.md).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -84,11 +80,13 @@ Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pak
 | ----------------------------------------- | ----------------------------------------------------- |
 | macOS 12+ – Apple Silicon (M1 oder neuer) | Das macOS DMG für Apple Silicon / ARM64               |
 | macOS 12+ – Intel                         | Das macOS DMG für Intel / x64                         |
-| Windows x64                               | Das Windows x64-Installationsprogramm (code-signiert) |
+| Windows 10/11 x64                         | Das Windows x64-Installationsprogramm (code-signiert) |
 | Linux x64                                 | Das Linux x64 AppImage- oder Debian-Paket             |
 | Linux ARM64                               | Linux ARM64 AppImage- oder Debian-Paket               |
 
-Laden Sie das Paket von der [offiziellen Download-Seite](https://aipoch.com/open-science/download) herunter; bei Bedarf finden Sie Hinweise unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
+Hinweise zu Prüfungen vor der Installation finden Sie unter [Download überprüfen](../../SECURITY.md#verifying-your-download).
+
+Die eigenständigen CLI-Archive für macOS, Linux und Windows enthalten Node.js und lassen sich ohne Homebrew oder npm verwenden.
 
 Unter macOS können Sie die App auch mit [Homebrew](https://brew.sh) installieren:
 
@@ -121,6 +119,8 @@ Unter Windows bleiben Forschungsdaten bei einer Neuinstallation erhalten. Für e
 Folgen Sie dem Einrichtungsassistenten: **Umgebung → Datenspeicherort → Agent-Runtime → Modellanbieter → Notebook-Runtime**.
 
 Schließen Sie die erforderlichen Prüfungen für Umgebung und Agent-Runtime ab und testen Sie die Modellverbindung. Python/R Notebook ist optional; Notebook und Datenspeicherort lassen sich später in den Einstellungen ändern.
+
+Darstellung und Benachrichtigungen finden Sie in den Systemeinstellungen. Unter **Allgemein** finden Sie die Anleitung zur manuellen Installation und Aktualisierung.
 
 <table>
 <tr>
@@ -191,7 +191,7 @@ Export und Import sind in der Desktop-App, in lokalen Web-Sitzungen und über di
 2. Übertragen Sie die `.science`-Datei an eine mitwirkende Person oder auf einen anderen Rechner.
 3. Importieren Sie die Datei in ein Projekt. Rechts zeigt **Research replay** den aufgezeichneten Ablauf; links können Sie Fragen stellen und auf feste Schritte verweisen.
 
-Importierte Aufzeichnungen bleiben schreibgeschützt; die Wiedergabe führt weder Code noch Modellaufrufe aus und stellt keine Anmeldeinformationen wieder her. Die erste Frage erstellt eine zugehörige beschreibbare Diskussion. Mit **Create a copy to continue research** erstellen Sie eine Arbeitskopie. Eine erneute Ausführung benötigt weiterhin ein vollständiges Rezept, notwendige Eingaben und eine verfügbare Laufzeit.
+Importierte Aufzeichnungen bleiben schreibgeschützt; die Wiedergabe führt weder Code noch Modellaufrufe aus und stellt keine Anmeldeinformationen wieder her. Die erste Frage erstellt eine zugehörige beschreibbare Diskussion. Mit **Fork to continue** erstellen Sie eine Arbeitskopie. Eine erneute Ausführung benötigt weiterhin ein vollständiges Rezept, notwendige Eingaben und eine verfügbare Laufzeit.
 
 Side Chats, private Lesezeichen und Anmeldeinformationen sind ausgeschlossen; enthaltene Dateien hängen von der Exportauswahl ab. Empfangene Prüfprotokolle beschreiben die Prüfungen des Absenders, keinen erneuten Lauf auf diesem Computer. Siehe die [Anleitung für `.science`-Pakete](https://aipoch.com/docs/guides/research-packages/).
 
@@ -224,73 +224,79 @@ Wenn Sie AIPOCH Open-Science in Ihrer Forschung verwenden, können Sie den Prepr
 
 ## Benchmark-Ergebnisse
 
-AstaBench, ASI-Bench und BiomniBench-DA sind eigenständige Benchmark-Familien mit unterschiedlichen Aufgaben, Datensätzen und Bewertungsmethoden; ihre Ergebnisse werden getrennt ausgewiesen und sind nicht direkt vergleichbar.
+AIPOCH hat AIPOCH Open-Science bei Aufgaben vom Auffinden einer Publikation über Fragen zu ihrem Inhalt bis zur Ausführung eines Forschungsplans bewertet. Die folgenden Ergebnisse stammen aus eigenen Testläufen von AIPOCH. Jeder Wert bezieht sich auf eine bestimmte Aufgabe und Bewertungskonfiguration.
 
-### 🏆 AstaBench — Gleichauf beim höchsten angezeigten LitQA2-Test-Wert: 90.67% Recall@30
+| Aufgabe                                 | Ergebnis von AIPOCH Open-Science                                                                                                                                                                          |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zielpublikation finden                  | Bei **68 von 75 Testfragen** erschien die Zielpublikation unter den ersten 30 Ergebnissen von LitQA2-FullText-Search (**90.67% Recall@30**, gpt-6-astra).                                                 |
+| Fragen anhand der Literatur beantworten | In einem separaten LitQA2-FullText-Lauf beantwortete Open-Science **70 von 75 Testfragen richtig** (**93.33% Genauigkeit**, deepseek-flash mit Max-Reasoning).                                            |
+| Eine Antwort mit Quellen zusammenführen | Auf 100 Validierungsfragen von ScholarQA-CS2 erreichte Open-Science mit deepseek-v4-flash einen **zusammengesetzten Qualitätswert von 0.9289/1**. Die offiziellen Testreferenzen verwenden andere Fragen. |
+| Forschungsabläufe ausführen             | In lokalen ASI-Bench-Läufen mit demselben Modell erzielte Open-Science auf B4 **59.46**, Codex **55.45**. Auf B2 waren die Werte nahezu gleich (**56.11** und **56.09**).                                 |
+| Biomedizinische Daten analysieren       | Auf BiomniBench-DA Public 50 bewerteten zwei Bewertungsmodelle die Ergebnisse mit **81.04** und **77.06**. Ihr gleich gewichteter Mittelwert betrug **79.05**.                                            |
 
-AIPOCH Open-Science erreichte mit **gpt-6-astra** in einer lokalen Auswertung auf dem offiziellen Test-Datensatz mit 75 Fragen von LitQA2-FullText-Search **90.67% Recall@30 (68/75)**. Unter den 27 Ergebnissen der Berichtsmomentaufnahme vom 26. Oktober liegt dieser lokale Test-Wert **gleichauf mit dem höchsten angezeigten Recall@30**, den Asta Paper Finder und Asta v0 ebenfalls mit 90.67% erreichten. Es war eine lokale Auswertung auf dem offiziellen Test-Datensatz, keine offizielle Ranglisteneinreichung oder Platzierung.
-
-**ScholarQA-CS2:** AIPOCH Open-Science erreichte mit **deepseek-v4-flash** einen **Gesamtwert von 0.9289/1** über **100 Validation-Fragen**. Der höchste im Bericht aufgeführte offizielle Test-Referenzwert von **0.9192** stammt aus einem anderen Fragensatz; die beiden Ergebnisse bilden daher keine direkte Rangfolge.
-
-![AIPOCH Open-Science im AstaBench-Überblick: 90.67% Recall@30 auf dem LitQA2-Test-Datensatz und ein Gesamtwert von 0.9289 auf ScholarQA-CS2 Validation; lokale Ergebnisse und offizielle Referenzen werden getrennt dargestellt](../images/readme/astabench-literature-research-overview.jpg)
+### AstaBench — Literaturaufgaben
 
 <details>
-<summary><strong>Ergebnisvergleich für LitQA2-FullText-Search</strong></summary>
+<summary><strong>Literatursuche — Zielpublikation bei 68 von 75 Fragen gefunden</strong></summary>
 
-![AIPOCH Open-Science erreicht 90.67% Recall@30 auf dem LitQA2-Test-Datensatz mit 75 Fragen, gleichauf mit dem höchsten angezeigten Wert der Berichtsmomentaufnahme; dies war keine offizielle Ranglisteneinreichung](../images/readme/astabench-litqa2-test.jpg)
+AIPOCH führte den offiziellen LitQA2-FullText-Search-Testsplit mit 75 Fragen lokal aus. Der Recall@30 entsprach dem höchsten Wert im Vergleichsstand vom 26. Oktober 2026. Dieser lokale Lauf war weder eine Einreichung für die offizielle Rangliste noch eine dortige Platzierung.
 
-Der lokale Durchlauf fand am 23. Oktober 2026 statt. Die Grafik enthält ein lokales Test-Ergebnis von AIPOCH Open-Science und 26 offizielle Referenzeinträge. Gleiche Werte erhalten gleich lange Balken; die Zeilenreihenfolge löst Gleichstände nicht auf. Die lokalen Kosten von AIPOCH wurden nicht einheitlich erfasst, daher lässt die Grafik keinen Vergleich der Kosteneffizienz zu.
+![LitQA2-Suchvergleich von AIPOCH Open-Science: lokaler Recall@30 von 90.67% auf dem offiziellen Testsplit](../images/readme/astabench-litqa2-test.jpg)
 
-Eine frühere lokale Auswertung mit **DeepSeek v4-flash (max)** ergab **100% Recall@30 (10/10)** auf dem separaten Validation-Teilsatz mit zehn Fragen; für dieses Ergebnis wurden drei lokale Wiederholungen berichtet. Test und Validation verwenden unterschiedliche Fragen und werden getrennt ausgewiesen.
+Recall@30 zählt einen Treffer, wenn die Zielpublikation unter den ersten 30 Ergebnissen erscheint; die Antwortgenauigkeit wird damit nicht gemessen. Die Kostenberechnung wurde zwischen den Läufen nicht vereinheitlicht.
 
 </details>
 
 <details>
-<summary><strong>Validation- und Test-Referenzen für ScholarQA-CS2</strong></summary>
+<summary><strong>Volltext-Fragenbeantwortung — 70 von 75 Antworten richtig</strong></summary>
 
-![AIPOCH Open-Science erreicht einen Gesamtwert von 0.9289 auf dem ScholarQA-CS2-Validation-Datensatz mit 100 Fragen; offizielle Test-Referenzen verwenden andere Fragen und bilden keine direkte Rangfolge](../images/readme/astabench-scholarqa-cs2.jpg)
+AIPOCH führte den LitQA2-FullText-Testsplit mit 75 Fragen in AstaBench v0.5.4 aus. Die Grafik ordnet das lokale Ergebnis und historische Referenzwerte nach Punktzahl. „#1“ bezieht sich auf diesen Vergleich.
 
-Die Grafik trennt ein lokales Validation-Ergebnis von 41 offiziellen Test-Referenzen. Ein zusätzlicher Validation-Wert von 0.7905 mit `gpt-5.6-sol` wurde im Berichtstext erwähnt, fehlte jedoch in der Quelltabelle; die Anzahl der Fragen wurde nicht angegeben.
+![LitQA2-Volltextvergleich von AIPOCH Open-Science: lokale Antwortgenauigkeit von 93.33%](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+Die Genauigkeit misst den Anteil richtiger Antworten. Hier sind 93.33% die lokale Antwortgenauigkeit und 90.67% eine historische Referenzgenauigkeit. Die Suchgrafik oben verwendet eine andere Kennzahl. Die Referenzen wurden am 28. Oktober 2026 erfasst; der höchste Referenzwert wurde am 2. November erneut geprüft.
 
 </details>
-
-Recall@30 misst, ob die Zielpublikation unter den ersten 30 eingereichten Ergebnissen erscheint, nicht die Richtigkeit wissenschaftlicher Antworten. Der ScholarQA-CS2-Wert ist ein zusammengesetztes Maß für die Antwortqualität und nicht der Anteil vollständig richtig beantworteter Fragen.
-
-#### AstaBench LitQA2-FullText — 93.33% Genauigkeit bei Fragen zur wissenschaftlichen Literatur
-
-In einer von AIPOCH durchgeführten Auswertung des LitQA2-FullText-Test-Splits mit 75 Fragen aus AstaBench v0.5.4 beantwortete AIPOCH Open-Science mit `deepseek-flash` und der Denkstufe Max 70 Fragen richtig (93.33% Genauigkeit). Die Aufgabe prüft die Beantwortung von Fragen zur wissenschaftlichen Literatur: Publikationen finden und lesen, Versuchsbedingungen unterscheiden, berichtete Ergebnisse entnehmen und eine Antwort auswählen. Dies ist vom oben genannten Recall@30 für die LitQA2-FullText-Search-Retrieval-Aufgabe zu unterscheiden.
-
-Am 2. November 2026 zeigte die [offizielle LitQA2-FullText-Testtabelle](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding) als höchsten erfassten Wert 90.67% (68/75). AIPOCH Open-Science erzielte in diesem Zahlenvergleich einen um 2.67 Prozentpunkte höheren Wert.
 
 <details>
+<summary><strong>Qualität belegter Antworten — lokale Validierung und offizielle Testreferenzen</strong></summary>
 
-<summary><strong>AstaBench LitQA2-FullText-Ergebnisvergleich</strong></summary>
+Das lokale ScholarQA-CS2-Ergebnis misst die Qualität zitierter Antworten auf 100 Validation-Fragen. Die Referenzen stammen aus dem Testsplit; die Werte begründen daher keine Rangfolge aus einem direkten Vergleich.
 
-![AIPOCH Open-Science erreicht 93.33% bei AstaBench LitQA2-FullText-Fragen zur wissenschaftlichen Literatur im Vergleich mit offiziellen Einträgen vom 28. Oktober](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+![ScholarQA-CS2-Vergleich von AIPOCH Open-Science: lokaler Validation-Gesamtwert 0.9289, getrennt von offiziellen Testreferenzen](../images/readme/astabench-scholarqa-cs2.jpg)
 
-Die Grafik verwendet offizielle Vergleichseinträge vom 28. Oktober; der höchste angezeigte Wert wurde am 2. November erneut geprüft.
+Der zusammengesetzte Wert liegt auf einer Skala von 0 bis 1; er ist nicht der Prozentsatz vollständig richtig beantworteter Fragen.
 
 </details>
 
-### 🏆 ASI-Bench B1–B4 — Höchste angezeigte Werte in allen vier Vergleichen des Berichts
+### ASI-Bench — Pläne ausführen und Methoden auswählen
 
-AIPOCH Open-Science erzielte mit **GPT-6 (gpt-6-astra / xhigh)**, Fachspezialisten und Skills in ASI-Bench B1, B2, B3 und B4 **79.35, 56.11, 59.67 und 59.46 Punkte** — jeweils den höchsten angezeigten Wert der im Bericht erfassten Vergleiche. Die vier Bedingungen prüfen **das Ausführen eines vollständigen Plans, das Organisieren eines Arbeitsablaufs, die selbstständige Methodenwahl und autonome Forschung mit ablenkenden Hintergrundinformationen**.
+Die vier Bedingungen verlangen die Ausführung eines vorgegebenen Plans (B1), die Organisation eines Arbeitsablaufs (B2), die Auswahl von Forschungsmethoden (B3) oder Forschung mit ablenkenden Informationen (B4). Die ersten beiden Zeilen der Grafik vergleichen lokale Läufe mit demselben GPT-6-Astra-Modell.
 
-Die lokalen Codex-Vergleichswerte mit demselben Modell und derselben angegebenen Schlussfolgerungsstufe betragen 74.78, 56.09, 58.12 und 55.45. Die numerischen Abstände sind **+4.57, +0.02, +1.55 und +4.01 Punkte**. Für B1/B2 wurden drei lokale Wiederholungen berichtet; B3/B4 sind jeweils Mittelwerte aus drei lokalen Durchläufen mit je 60 Aufgaben.
+![ASI-Bench-B1–B4-Ergebnisse von AIPOCH Open-Science neben lokalen Codex-Läufen und veröffentlichten Referenzen](../images/readme/asi-bench-b1-b4.jpg)
 
-![AIPOCH Open-Science erzielt 79.35, 56.11, 59.67 und 59.46 in ASI-Bench B1–B4; lokale Ergebnisse und öffentliche Referenzen sind gekennzeichnet](../images/readme/asi-bench-b1-b4.jpg)
+Open-Science erzielte auf B1–B4 **79.35, 56.11, 59.67 und 59.46**; die lokale Codex-Referenz erzielte **74.78, 56.09, 58.12 und 55.45**. Die B2-Werte waren nahezu gleich. Andere veröffentlichte Läufe unterscheiden sich bei Aufgabeninstanzen, Konfigurationen oder Bewertung.
 
-Die lokalen Durchläufe nutzten seed31415. Bei AIPOCH wurden in B1 59 Aufgaben gewertet; eine wurde wegen des im Bericht beschriebenen Bewertungsfehlers ausgeschlossen. B3/B4 verwendeten v0.32.0 und einen Ersatzbewerter. Öffentliche Referenzen unterscheiden sich in Aufgabeninstanzen, Konfiguration und Bewertung; der B2-Abstand von 0.02 Punkten ist nur ein numerischer Unterschied.
+Der lokale B1-Wert umfasst 59 Aufgaben nach einem Ausschluss wegen eines Problems im Bewertungssystem. Für B1/B2 wurden drei lokale Wiederholungen berichtet. B3/B4 verwendeten Open-Science v0.32.0 und ein Ersatz-Bewertungsmodell; jeder Wert ist der Mittelwert aus drei Läufen mit je 60 Aufgaben.
 
-### 🏆 BiomniBench-DA Public 50 — Höchster angezeigter Wert im zusammengestellten Vergleich: 79.05
+### BiomniBench-DA — Biomedizinische Datenanalyse
 
-AIPOCH Open-Science erreichte mit **gpt-5.6-sol (xhigh)** in einer internen Bewertung der als BiomniBench-DA Public 50 bezeichneten 50 Aufgaben **79.05**, den höchsten angezeigten Wert im zusammengestellten Vergleich. Der Wert ist das gleich gewichtete Mittel aus **81.04** des Gemini-3.1-Pro-Bewerters und **77.06** des DeepSeek-v4-pro-Bewerters und beschreibt die biomedizinische Datenanalyse dieser Konfiguration. Siehe den [Bewertungsbericht](https://aipoch.com/blog/open-science-biomnibench-da).
+Auf dem Aufgabensatz Public 50 bewertete Gemini 3.1 Pro die Ergebnisse mit **81.04** und DeepSeek v4-pro mit **77.06**. AIPOCH berichtet ihren gleich gewichteten Mittelwert **79.05** für die Konfiguration gpt-5.6-sol (xhigh).
 
-![AIPOCH Open-Science: interner BiomniBench-DA-Public-50-Mittelwert 79.05 aus den Bewertungen 77.06 und 81.04](../images/readme/biomnibench-public50-leaderboard.png)
+<details>
+<summary><strong>Bewertungen und historische Referenzen — unterschiedliche Abdeckung durch Bewertungsmodelle</strong></summary>
 
-Der Vergleich mischt Einträge mit unterschiedlicher Bewerterabdeckung und ist keine offizielle Rangfolge unter einheitlichen Bewertungsbedingungen.
+Die Grafik kombiniert Einträge mit unterschiedlicher Abdeckung durch Bewertungsmodelle. „#1“ bezeichnet die Reihenfolge dieser Sammlung. Eine Rangliste nach einem gemeinsamen Bewertungsverfahren würde vergleichbare Bewertungen aller Einträge erfordern.
 
-**Bewertungsumfang:** Es handelt sich um selbst berichtete lokale/interne Ergebnisse auf den angegebenen Datensätzen und Teilmengen aus Berichten von August bis November 2026; die Auswertungen wurden für die aktuelle Version nicht wiederholt. Ein lokaler Durchlauf auf einem offiziellen Test-Datensatz bedeutet weder eine offizielle Ranglisteneinreichung noch eine Platzierung. Referenzwerte sind historische Momentaufnahmen aus Berichten und keine Live-Ranglisten; Validation- und Test-Ergebnisse sind nicht direkt vergleichbar. Unterschiede bei Aufgabeninstanzen, Modellkonfigurationen, Bewerterabdeckung und Kostenerfassung schränken systemübergreifende Vergleiche ein. Numerische Gleichstände oder Abstände belegen keine statistisch signifikanten Verbesserungen.
+![BiomniBench-DA-Public-50-Vergleich von AIPOCH Open-Science mit zwei Bewertungswerten und ihrem Mittelwert](../images/readme/biomnibench-public50-leaderboard.png)
+
+79.05 ist ein mittlerer Bewertungswert dieser internen Evaluation.
+
+</details>
+
+**Bewertungsumfang:** Die Berichte umfassen lokale oder interne Läufe von August bis November 2026 mit den angegebenen Modellen und Datensplits; für die aktuelle Version wurden sie nicht wiederholt. Referenzwerte sind historische Momentaufnahmen, keine Live-Ranglisten. Werte verschiedener Benchmark-Familien sind nicht direkt vergleichbar, und numerische Unterschiede belegen keine statistische Signifikanz.
+
+Details stehen im [AstaBench- und ASI-Bench-Bericht](https://aipoch.com/benchmark/open-science) sowie im [BiomniBench-DA-Bericht](https://aipoch.com/blog/open-science-biomnibench-da).
 
 ## Kernkompetenzen
 
@@ -309,13 +315,17 @@ AIPOCH Open-Science verbindet Projektverwaltung, modellübergreifende Agentenaus
 | **Wissenschaftliche Dateien und Vorschauen** | Laden Sie Dateien bis **10 GiB pro Datei** hoch, organisieren Sie Projektdateien und betrachten Sie wissenschaftliche Daten, PDFs, Office-Dokumente, Bilder, Code und Molekülstrukturen. Diese Upload-Grenze garantiert nicht, dass ein Modell alles lesen kann: Kontext, Anhangsanalyse und Vorschauen haben eigene Grenzen. Große Dateien erfordern meist abschnittsweises Lesen oder Analysieren per Code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Artefakte und Provenienz**                 | Speichern Sie unveränderliche Ergebnisversionen mit verfügbarem Erzeugungscode, Eingaben, Ausführungsverlauf, Umgebungsinformationen und Prüfnachweisen. Importieren Sie Artefakte aus autorisierten Ordnern; AIPOCH Open-Science kopiert jede importierte Datei in den verwalteten Artefaktspeicher. Auf dem Desktop können geeignete Versionen mit vollständigem Rezept, benötigten Eingaben und nutzbarer Laufzeit wiederholt, Ausgaben verglichen und Prüfprotokolle exportiert werden. Fehlende Nachweise können die Prüfung verhindern; Wiederholung belegt keine wissenschaftliche Gültigkeit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
+Bei Koordinatenabfragen im eQTL Catalogue prüft Open-Science, ob die Koordinaten zum Referenzgenom GRCh38 gehören.
+
 Importieren Sie Literaturangaben, Schlagwörter, Sammlungen und Quellenlinks aus Zotero 10 oder höher, das auf demselben Computer läuft. Lokale PDF-Anhänge können Sie optional kopieren; der Import ist einseitig und ändert Zotero nicht.
 
-Fügen Sie Literaturangaben einzeln über eine DOI, einen DOI-Link oder einen Link zur arXiv-Zusammenfassung oder zum arXiv-PDF hinzu. Prüfen und bearbeiten Sie die abgerufenen Metadaten vor dem Speichern. Volltext-PDFs können separat hinzugefügt werden.
+Fügen Sie eine Literaturangabe über eine DOI, eine arXiv-ID, eine PMID, eine PMCID oder einen unterstützten Artikellink hinzu oder fügen Sie bis zu 100 Literaturangaben mit jeweils einem Eintrag pro Zeile ein. Prüfen und bearbeiten Sie eine einzelne Literaturangabe vor dem Speichern oder wählen Sie die Einträge für einen Stapelimport aus. Volltext-PDFs können separat hinzugefügt werden.
 
 Dauerhafte PDF-Anmerkungen und Dokumentnotizen sind verfügbar. Mit konfiguriertem Screening-Modell bewerten intelligente Sammlungen Literatur anhand Ihrer Ein- und Ausschlusskriterien. KI- und manuelle Entscheidungen bleiben getrennt und unterstützen die menschliche Prüfung.
 
 Im Lesemodus können Agenten Notizen und Markierungen in verknüpften PDFs auflisten, auffinden und erstellen. PDF-Anmerkungen sind an die kommentierte Dateiversion gebunden und werden nicht zwischen Computern synchronisiert.
+
+In der Detailansicht einer Publikation fasst das konfigurierte Hauptmodell Forschungsfrage, Studienpopulation, Methoden, Hauptergebnisse und Einschränkungen zusammen. Die Übersicht gibt an, ob sie auf dem Volltext oder dem Abstract beruht.
 
 Die optionale OCR erkennt gescannte PDF-Seiten, nachdem die Komponente und die erforderlichen Sprachpakete heruntergeladen wurden. Neun Sprachpakete stehen zur Verfügung: Englisch, vereinfachtes Chinesisch, traditionelles Chinesisch, Deutsch, Spanisch, Französisch, Japanisch, Koreanisch und Russisch. Seitenbezogene Abdeckungsanzeigen zeigen, auf welchen Seiten noch Text fehlt.
 
@@ -323,7 +333,7 @@ Die optionale OCR erkennt gescannte PDF-Seiten, nachdem die Komponente und die e
 
 In der Desktop-App lässt sich die Artefaktherkunft auch als RO-Crate 1.1 exportieren. Ein versionsgebundenes Umgebungspaket kann nur bei vollständiger Erfassung und Kompatibilität mit der Zielplattform eine verwaltete Umgebung erzeugen; es ist keine vollständige Rechnersicherung.
 
-Durchsuchen Sie den Sharing-Marktplatz nach Forschungsbeispielen, vom Startbildschirm oder aus dem Gesprächsarbeitsbereich aus. Filtern Sie nach Kategorie, suchen Sie nach Stichworten und laden Sie Pakete aus den Detailansichten herunter. Beim Wechsel zwischen Marktplatz und Projekt bleiben Filter und Scrollposition erhalten.
+Durchsuchen Sie den Sharing-Marktplatz nach Forschungsbeispielen, vom Startbildschirm oder aus dem Gesprächsarbeitsbereich aus. Filtern Sie nach Kategorie, suchen Sie nach Stichworten und laden Sie Pakete aus den Detailansichten herunter.
 
 ## Modellanbieter
 
@@ -416,19 +426,37 @@ Die eigenständige CLI kann ihre Recherchewerkzeuge über `open-science mcp` fü
 
 ## Häufig gestellte Fragen
 
-### Warum schlägt der Modellverbindungstest fehl?
+<a id="warum-schlägt-der-modellverbindungstest-fehl"></a>
+
+<details>
+<summary>Warum schlägt der Modellverbindungstest fehl?</summary>
 
 A: Prüfen Sie den API-Schlüssel auf fehlende Zeichen oder Leerzeichen, kontrollieren Sie Basis-URL und Region, verwenden Sie die exakte Modell-ID des Anbieters und stellen Sie Netzwerkzugriff sowie ausreichendes Guthaben sicher. Bei einem Claude-Abonnement können Sie je nach ausgewähltem Modus die gemeinsame Browseranmeldung wiederholen oder die isolierten Anmeldedaten aus `claude setup-token` erneuern.
 
-### Warum ist `Continue` während des Setups deaktiviert?
+</details>
+
+<a id="warum-ist-continue-während-des-setups-deaktiviert"></a>
+
+<details>
+<summary>Warum ist <code>Continue</code> während des Setups deaktiviert?</summary>
 
 A: Mindestens eine Pflichtbedingung des aktuellen Schritts ist noch nicht erfüllt. Bearbeiten Sie alle mit `Action needed` gekennzeichneten Umgebungsprüfungen, installieren oder reparieren Sie die ausgewählte Agent-Runtime beziehungsweise validieren Sie den Modellanbieter. Die Notebook-Einrichtung ist optional und betrifft ausschließlich die Notebook-Ausführung.
 
-### Wie führe ich Jobs auf einem Remote-HPC-Cluster aus?
+</details>
+
+<a id="wie-führe-ich-jobs-auf-einem-remote-hpc-cluster-aus"></a>
+
+<details>
+<summary>Wie führe ich Jobs auf einem Remote-HPC-Cluster aus?</summary>
 
 A: **Remote Compute (SSH)** ist dauerhaft aktiviert und muss nicht in den Einstellungen eingeschaltet werden. Registrieren Sie unter **Einstellungen → Rechenressourcen** einen SSH-Rechenhost, stellen Sie ihn für die aktuelle Sitzung bereit und verwenden Sie anschließend natürliche Sprache oder `/remote-compute-ssh`. Erforderlich sind ein erreichbarer SSH-Host, gültige Anmeldedaten, Rechte für die benötigten Verzeichnisse sowie die für den Auftrag nötige Software, Abhängigkeiten und Rechenleistung. Direct SSH benötigt keinen Scheduler; der Slurm-Modus setzt eine funktionsfähige Slurm-Umgebung und das Recht zur Jobübermittlung voraus. „Dauerhaft aktiviert“ bezieht sich auf die Fähigkeit, nicht auf die ständige Verfügbarkeit jedes registrierten Hosts.
 
-### Gibt es eine Befehlszeilenschnittstelle?
+</details>
+
+<a id="gibt-es-eine-befehlszeilenschnittstelle"></a>
+
+<details>
+<summary>Gibt es eine Befehlszeilenschnittstelle?</summary>
 
 A: Ja. Installieren Sie die eigenständige CLI oder verwenden Sie **Einstellungen → Allgemein → Befehlszeile → Befehl installieren**, um eine bereits laufende Desktop-Instanz zu steuern. Die Installation über npm benötigt Node.js; Homebrew und eigenständige Pakete mit gebündelter Laufzeit enthalten es bereits. Initialisieren Sie das lokale Profil, steuern Sie anschließend den Dienst und übermitteln Sie Forschungsaufgaben, ohne einen Browser zu öffnen:
 
@@ -452,13 +480,25 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 Die vollständige Befehlsreferenz, JSON/JSONL-Ausgabeformate, Exit-Codes und Headless-Dienstoptionen finden Sie im [CLI-Handbuch](../../packages/open-science/CLI.md).
 
-### Wie überprüfe ich, woher ein generiertes Ergebnis stammt?
+</details>
+
+<a id="wie-überprüfe-ich-woher-ein-generiertes-ergebnis-stammt"></a>
+
+<details>
+<summary>Wie überprüfe ich, woher ein generiertes Ergebnis stammt?</summary>
 
 A: Öffnen Sie das generierte Artefakt und wählen Sie **Provenienz**. Wählen Sie eine Version aus, um Inhaltsidentität, verfügbaren Erzeugercode, Ausführungsverlauf, Eingaben, Umgebungsbestand, den erzeugenden Konversationskontext und Reviewer-Belege zu prüfen. Belege, die AIPOCH Open-Science nicht verifizieren konnte, sind als nicht verfügbar gekennzeichnet.
 
-### Kann ich eine frühere Anfrage überarbeiten, ohne die anschließende Konversation zu verlieren?
+</details>
+
+<a id="kann-ich-eine-frühere-anfrage-überarbeiten-ohne-die-anschließende-konversation-zu-verlieren"></a>
+
+<details>
+<summary>Kann ich eine frühere Anfrage überarbeiten, ohne die anschließende Konversation zu verlieren?</summary>
 
 A: Ja. Bearbeiten Sie eine abgeschlossene Benutzernachricht und senden Sie sie erneut, um ab diesem Punkt einen neuen Branch zu erstellen. Die ursprünglichen nachfolgenden Interaktionen bleiben verfügbar. Mit den Versionspfeilen neben der Nachricht wechseln Sie zwischen den alternativen Pfaden.
+
+</details>
 
 ## Mitwirkende
 
@@ -470,7 +510,7 @@ Vielen Dank an alle, die mit Code, Dokumentation, Übersetzungen, Fehlerberichte
 
 ## Machen Sie mit
 
-AIPOCH Open-Science freut sich über Fehlerberichte, Funktionsvorschläge, Designdiskussionen, Fragen aus der Community und Codebeiträge über GitHub, Discord, X oder die AIPOCH-Website. Wählen Sie den passenden Kanal und beachten Sie vor dem Teilen von Projektdetails die verlinkten Beitrags- und Sicherheitshinweise.
+Helfen Sie, AIPOCH Open-Science zu verbessern: Melden Sie einen Fehler, schlagen Sie eine Funktion vor, stellen Sie eine Frage oder leisten Sie einen Beitrag. Wählen Sie unten einen passenden Kanal.
 
 | Kanal                                                                    | Geeignet für                                                              |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
@@ -482,7 +522,7 @@ AIPOCH Open-Science freut sich über Fehlerberichte, Funktionsvorschläge, Desig
 
 Entfernen Sie vor dem Erstellen eines öffentlichen Issues API-Schlüssel, Token, private Dateipfade, unveröffentlichte Daten, Patientenkennungen und anderes vertrauliches Material aus Protokollen und Screenshots. Informationen zum Entwicklungsworkflow finden Sie in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-> ⭐ **Repository mit einem Stern markieren:** Wenn Ihnen das Projekt hilft, freuen wir uns über einen Stern auf GitHub. Damit unterstützen Sie die weitere Entwicklung.
+> Wenn AIPOCH Open-Science für Sie nützlich ist, geben Sie dem Repository auf GitHub einen Stern.
 
 Gelieferte, teilweise umgesetzte und geplante Funktionen finden Sie in der [Capability Map](../ROADMAP.md#capability-map).
 
