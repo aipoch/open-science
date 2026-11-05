@@ -6,6 +6,8 @@ import { ApplicationCallerLeaseRegistry } from './caller-lifecycle'
 const f = vi.hoisted(() => ({
   initLogs: vi.fn(),
   stopIntent: vi.fn(),
+  createLifetime: vi.fn(),
+  startFirstConnectionTimeout: vi.fn(),
   lifetimeAdmission: undefined as (() => void) | undefined,
   startupFailure: false,
   healthyCredentials: false,
@@ -93,6 +95,7 @@ vi.mock('./local-service-lifetime', () => ({
     stop(reason: string): void
     onStoppingAdmission?(): void
   }) => {
+    f.createLifetime(options)
     f.lifetimeAdmission = options.onStoppingAdmission
     let stopping = false
     return {
@@ -104,6 +107,7 @@ vi.mock('./local-service-lifetime', () => ({
         apps: 1
       }),
       close: vi.fn(),
+      startFirstConnectionTimeout: f.startFirstConnectionTimeout,
       stop: async (_force: boolean, reason = 'user-stop') => {
         f.stopIntent(reason)
         if (!stopping) {
@@ -639,3 +643,41 @@ it('closes business admission without starting cleanup when a stop grant may hav
   f.lifecycle.mock.calls[0][0].quit()
   await vi.waitFor(() => expect(process.exitCode).toBe(0))
 })
+
+it('arms the first-App deadline after runtime discovery, before database startup', async () => {
+  const control = Promise.withResolvers<Awaited<ReturnType<typeof f.startControl>>>()
+  f.startControl.mockReturnValueOnce(control.promise)
+  const send = await startHealthyRuntime()
+  await vi.waitFor(() => expect(f.startControl).toHaveBeenCalledOnce())
+  expect(f.createLifetime).toHaveBeenCalledWith(
+    expect.objectContaining({ deferFirstConnectionTimeout: true })
+  )
+  expect(f.startFirstConnectionTimeout).not.toHaveBeenCalled()
+  control.resolve(f.control)
+  await waitForReady(send)
+  expect(f.startFirstConnectionTimeout).toHaveBeenCalledOnce()
+  expect(f.startFirstConnectionTimeout.mock.invocationCallOrder[0]).toBeLessThan(
+    f.verifyDatabase.mock.invocationCallOrder[0]
+  )
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(f.closeNetwork).toHaveBeenCalled())
+})
+
+it.each(['failure', 'cancellation'] as const)(
+  'does not arm the first-App timeout after discovery %s',
+  async (mode) => {
+    const control = Promise.withResolvers<Awaited<ReturnType<typeof f.startControl>>>()
+    f.startControl.mockReturnValueOnce(control.promise)
+    await startHealthyRuntime()
+    await vi.waitFor(() => expect(f.startControl).toHaveBeenCalledOnce())
+    if (mode === 'failure') control.reject(new Error('Discovery could not be published'))
+    else {
+      f.lifecycle.mock.calls[0][0].quit()
+      await vi.waitFor(() => expect(f.stopIntent).toHaveBeenCalled())
+      control.resolve(f.control)
+    }
+    await vi.waitFor(() => expect(f.closeNetwork).toHaveBeenCalled())
+    expect(f.startFirstConnectionTimeout).not.toHaveBeenCalled()
+    expect(f.verifyDatabase).not.toHaveBeenCalled()
+  }
+)
