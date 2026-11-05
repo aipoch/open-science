@@ -45,6 +45,29 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
 const sessionPath = (input: SessionDiagnosticWorkerInput): string =>
   join(input.configRoot, 'sessions/project/session.json')
 describe('session diagnostics isolated collector', () => {
+  it.each([
+    { id: 'log:main.log', output: 'logs/main.log' },
+    { id: 'desktop-log:main.log', output: 'logs/desktop/main.log' }
+  ])('marks malformed canonical log records as partial: $id', async ({ id, output }) => {
+    const input = await fixture()
+    input.desktopLogPath = input.logPath
+    await writeFile(
+      input.logPath!,
+      `${JSON.stringify({ level: 'info', msg: 'startup completed' })}\n{"level":"error","msg":"PRIVATE_TRUNCATED_RECORD`
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: [id] })
+    const extracted = join(input.directory!, 'extracted')
+    await mkdir(extracted)
+    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+    const exported = await readFile(join(extracted, output), 'utf8')
+    expect(exported).toContain('startup completed')
+    expect(exported).not.toContain('PRIVATE_TRUNCATED_RECORD')
+    const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+    const source = manifest.items.find((item: { id: string }) => item.id === id)
+    expect(source.sourceMetadata).toMatchObject({ retainedRecords: 1, omittedLines: 1 })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(source.status).toBe('partial')
+  })
   it.each([false, true])(
     'exports filtered backend logs successfully with a bounded tail: %s',
     async (bounded) => {

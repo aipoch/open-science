@@ -891,9 +891,15 @@ export async function runSessionDiagnosticWorker(
                 omittedLines,
                 missingEventTextRecords
               }
-              // Filtering arbitrary stdout is part of the export policy. Keep its counts
-              // in the archive without turning a successful export into a UI warning.
-              if (omittedLines) record('Unstructured log records omitted')
+              // Backend captures include arbitrary stdout; filtering it is expected.
+              // Canonical logs should be structured, so omitted records indicate lost evidence.
+              if (omittedLines) {
+                if (!source.tailBytes) {
+                  partial = true
+                  state.status = 'partial'
+                }
+                record('Unstructured log records omitted')
+              }
               if (missingEventTextRecords) {
                 partial = true
                 state.status = 'partial'
