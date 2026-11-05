@@ -7833,6 +7833,9 @@
     "Include research films": "研究ショート動画を含める",
     "Delete research film": "研究ショート動画を削除",
     "Delete research film?": "研究ショート動画を削除しますか？",
-    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "この分岐の動画とローカルの生成ファイルを削除しますか？会話の内容と別途保存したファイルは保持されます。"
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "この分岐の動画とローカルの生成ファイルを削除しますか？会話の内容と別途保存したファイルは保持されます。",
+    "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
+    "Collapse question panel": "質問パネルを折りたたむ",
+    "Expand question panel": "質問パネルを展開"
   }
 }

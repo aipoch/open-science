@@ -8173,6 +8173,11 @@
     "Include research films": "Inclure les films de recherche",
     "Delete research film": "Supprimer le film de recherche",
     "Delete research film?": "Supprimer le film de recherche ?",
-    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Supprimer le film de cette branche et les fichiers générés localement ? Le contenu de la conversation et les fichiers enregistrés séparément seront conservés."
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Supprimer le film de cette branche et les fichiers générés localement ? Le contenu de la conversation et les fichiers enregistrés séparément seront conservés.",
+    "{{count}} questions awaiting your answer_one": "{{count}} question en attente de votre réponse",
+    "{{count}} questions awaiting your answer_many": "{{count}} questions en attente de votre réponse",
+    "{{count}} questions awaiting your answer_other": "{{count}} questions en attente de votre réponse",
+    "Collapse question panel": "Replier le panneau des questions",
+    "Expand question panel": "Déplier le panneau des questions"
   }
 }

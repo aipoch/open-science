@@ -235,8 +235,9 @@ const attachmentLimitsText = (t: TFunction): string =>
 
 const ResizableElicitationComposer = ({
   children,
-  choice
-}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
+  choice,
+  collapsed
+}: React.PropsWithChildren<{ choice: boolean; collapsed: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -247,6 +248,7 @@ const ResizableElicitationComposer = ({
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
       contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
+      collapsed={collapsed}
     >
       {children}
     </ResizableBottomPanel>
@@ -1110,6 +1112,26 @@ const ConversationPanel = ({
   const ordinaryComposerBlocked = Boolean(
     blockingInteraction || packageLocked || authenticationRequired
   )
+  const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
+    pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
+  )
+  const elicitationPresentationKey = pendingElicitationRequest
+    ? `${activeSession?.id}:${pendingElicitationRequest.requestId}`
+    : undefined
+  const [elicitationPresentation, setElicitationPresentation] = useState<{
+    key: string | undefined
+    collapsed: boolean
+    focusRequestId: number
+  }>({ key: undefined, collapsed: false, focusRequestId: 0 })
+  const elicitationCollapsed =
+    elicitationPresentation.key === elicitationPresentationKey && elicitationPresentation.collapsed
+  const canRevealElicitation = Boolean(
+    pendingChoiceQuestions &&
+    blockingInteraction === 'elicitation' &&
+    !pendingElicitation?.continuationRecovery &&
+    !authenticationRequired &&
+    !packageLocked
+  )
 
   useEffect(() => {
     let tooltipEscape: KeyboardEvent | undefined
@@ -1713,6 +1735,19 @@ const ConversationPanel = ({
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sessionPendingElicitations}
+              pendingElicitationControl={
+                canRevealElicitation && pendingElicitationRequest
+                  ? {
+                      activityId: pendingElicitationRequest.toolCallId,
+                      onReveal: () =>
+                        setElicitationPresentation((current) => ({
+                          key: elicitationPresentationKey,
+                          collapsed: false,
+                          focusRequestId: current.focusRequestId + 1
+                        }))
+                    }
+                  : undefined
+              }
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
@@ -1968,11 +2003,8 @@ const ConversationPanel = ({
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
-                          choice={Boolean(
-                            resolveAgentUserChoiceQuestions(
-                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
-                            )
-                          )}
+                          choice={Boolean(pendingChoiceQuestions)}
+                          collapsed={elicitationCollapsed}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -1981,6 +2013,22 @@ const ConversationPanel = ({
                             elicitation={pendingElicitation}
                             request={pendingElicitationRequest}
                             embedded
+                            collapsed={elicitationCollapsed}
+                            onCollapsedChange={
+                              pendingChoiceQuestions
+                                ? (collapsed) =>
+                                    setElicitationPresentation((current) => ({
+                                      ...current,
+                                      key: elicitationPresentationKey,
+                                      collapsed
+                                    }))
+                                : undefined
+                            }
+                            focusRequestId={
+                              elicitationPresentation.key === elicitationPresentationKey
+                                ? elicitationPresentation.focusRequestId
+                                : 0
+                            }
                             onRespond={onRespondToElicitation}
                             editDraft={
                               pendingElicitationActivity

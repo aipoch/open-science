@@ -7833,6 +7833,9 @@
     "Include research films": "包含研究短片",
     "Delete research film": "删除研究短片",
     "Delete research film?": "删除研究短片？",
-    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "删除此分支的短片和本地生成文件？会话内容和已另存的文件将保留。"
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "删除此分支的短片和本地生成文件？会话内容和已另存的文件将保留。",
+    "{{count}} questions awaiting your answer_other": "有 {{count}} 个问题待回答",
+    "Collapse question panel": "收起问题面板",
+    "Expand question panel": "展开问题面板"
   }
 }

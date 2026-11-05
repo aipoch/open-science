@@ -13,7 +13,6 @@ import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
 import { researchPrompt, runResearchAnalysis } from './research-analysis.mjs'
 
-const autoReviewResumeCounts = new Map()
 // A provider-boundary fault used by the Resume recovery journey. Application state and IPC stay real.
 const failResumeAttachmentWhenRequested = async (cwd) => {
   let message
@@ -136,8 +135,17 @@ const DELEGATED_RELIABLE_FAILURE_NAME = 'Post-fence reliable question'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_A = 'Queue reliable fairness question A.'
 const DELEGATED_RELIABLE_FAIRNESS_TASK_B = 'Queue reliable fairness question B.'
 const RELIABLE_CHILD_DIRECTIVE = 'Use the renderer-visible reliable evidence.'
+const DELEGATION_SETTLEMENT_PROMPT =
+  'Delegated work settlement update (application-owned context, not a user message).'
 const RELIABLE_CONTROL_MARKERS = [
+  DELEGATION_SETTLEMENT_PROMPT,
+  DELEGATION_TERMINAL_PROMPT,
+  DELEGATION_BOUNDED_COLLECT_PROMPT,
+  DELEGATION_BOUNDED_RECOLLECT_PROMPT,
+  DELEGATION_PERMISSION_PROMPT,
+  DELEGATION_STOP_PROMPT,
   RELIABLE_CHILD_DIRECTIVE,
+  DELEGATION_INHERITED_SPECIALIST_PROMPT,
   'Child reliable question reached Main',
   'Main answered the reliable child question',
   'Parked reliable child question',
@@ -156,7 +164,6 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
-const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -1558,7 +1565,16 @@ if (process.argv.includes('--version')) {
       const controlStart = Math.max(
         ...RELIABLE_CONTROL_MARKERS.map((marker) => rawPrompt.lastIndexOf(marker))
       )
-      const prompt = controlStart >= 0 ? rawPrompt.slice(controlStart) : rawPrompt
+      const specialistCheck = rawPrompt.lastIndexOf(
+        'Verify specialist switch runtime remains usable.'
+      )
+      const prompt =
+        specialistCheck >= 0 &&
+        specialistCheck > rawPrompt.lastIndexOf('Continue the original user task as ')
+          ? rawPrompt.slice(specialistCheck)
+          : controlStart >= 0
+            ? rawPrompt.slice(controlStart)
+            : rawPrompt
       await captureProviderPrompt(context.params.sessionId, prompt)
       if (prompt.includes('Run the framework Resume acceptance journey.')) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
@@ -1578,7 +1594,9 @@ if (process.argv.includes('--version')) {
       }
       if (
         !prompt.includes('Generate Session metadata only from the following JSON data:') &&
-        (prompt.includes(PLAN_DISMISS_PROMPT) || prompt.includes(PLAN_RECOVERY_PROMPT))
+        (prompt.includes(PLAN_DISMISS_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_PROMPT) ||
+          prompt.includes(PLAN_RECOVERY_FEEDBACK))
       ) {
         planRecoveryScenarios.add(context.params.sessionId)
       }
@@ -1635,11 +1653,11 @@ if (process.argv.includes('--version')) {
               'return await host.delegate({ task: "Delegation resume held child task.", name: "Interrupted child" }, { wait: false })'
             )
           )
-          globalThis.delegationResumeChild = created.children[0]
+          if (!created.children?.[0]) throw new Error('Delegation resume child was not created.')
         }
         if (shouldDelegate) {
           const code = continuation
-            ? `const before = await host.children(); const receipt = await host.sendFrameMessage(${JSON.stringify(globalThis.delegationResumeChild?.frameId)}, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };`
+            ? 'const before = await host.children(); const child = before.find(child => child.name === "Interrupted child"); if (!child) throw new Error("missing original child"); const receipt = await host.sendFrameMessage(child.frameId, "Finish the explicitly continued task."); return { outcome: "continued", before, receipt };'
             : 'const value = await host.delegate({ task: "Return a short confirmation for the resume audit.", name: "Resume audit child" }, { wait: false }); return { outcome: "admitted", value };'
           const result = await executeControlCode(
             context.params.sessionId,
@@ -1677,10 +1695,17 @@ if (process.argv.includes('--version')) {
       if (reproScenario) {
         const resumed = prompt.includes('Continue the interrupted turn from where it stopped.')
         const correction = prompt.includes('[Auditor] A fresh-context reviewer')
-        const resumeCount = resumed
-          ? (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) + 1
-          : 0
-        if (resumed) autoReviewResumeCounts.set(context.params.sessionId, resumeCount)
+        // Provider replacement changes both process globals and provider Session IDs.
+        const counterPath = join(
+          sessionRoutes.get(context.params.sessionId).cwd,
+          '.e2e-review-resumes'
+        )
+        const previousResumes = await readFile(counterPath, 'utf8').then(Number, (error) => {
+          if (error.code === 'ENOENT') return 0
+          throw error
+        })
+        const resumeCount = previousResumes + (resumed ? 1 : 0)
+        if (resumed) await writeFile(counterPath, String(resumeCount))
         const repeatedStop =
           resumed && prompt.includes('AUTO_REVIEW_REPRO_REPEAT_STOP') && resumeCount === 1
         const waitForStop =
@@ -1689,10 +1714,7 @@ if (process.argv.includes('--version')) {
             (prompt.includes('Run auto review ordinary stop scenario.') ||
               (correction &&
                 /AUTO_REVIEW_REPRO_(?:REPEAT_|DISABLED_|REFLAG_)?STOP/u.test(prompt) &&
-                !(
-                  prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') &&
-                  (autoReviewResumeCounts.get(context.params.sessionId) ?? 0) > 0
-                ))))
+                !(prompt.includes('AUTO_REVIEW_REPRO_REFLAG_STOP') && resumeCount > 0))))
         const text = resumed
           ? repeatedStop
             ? 'Recovered correction is running; ready for Stop.'
@@ -2727,7 +2749,10 @@ if (process.argv.includes('--version')) {
                 await client.callTool({
                   name: 'bash_execute',
                   arguments: {
-                    command: `node -e "setTimeout(() => console.log('background-completion-e2e'), 3000)"`,
+                    command:
+                      process.platform === 'win32'
+                        ? "Start-Sleep -Seconds 3; Write-Output 'background-completion-e2e'"
+                        : "sleep 3; printf 'background-completion-e2e\\n'",
                     background: true
                   }
                 })
@@ -2866,6 +2891,8 @@ if (process.argv.includes('--version')) {
           reply = await createPreviewContextMenuArtifacts(context.params.sessionId)
         } else if (prompt.includes(SPREADSHEET_SEARCH_ARTIFACT_PROMPT)) {
           reply = await createSpreadsheetSearchArtifacts(context.params.sessionId)
+        } else if (prompt.includes(DELEGATION_SETTLEMENT_PROMPT)) {
+          reply = 'Delegated settlement received.'
         } else if (prompt.includes(DELEGATION_TERMINAL_PROMPT)) {
           const delegated = await runProductionDelegation(
             context.params.sessionId,
@@ -2885,7 +2912,7 @@ if (process.argv.includes('--version')) {
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: "Complete the bounded fixture after a delay." }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
@@ -2918,7 +2945,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = globalThis.s2Pending.children[1]; return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
+              `const slow = (await host.children()).find((child) => child.name === "Complete the bounded fixture after a delay."); return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -3008,7 +3035,6 @@ if (process.argv.includes('--version')) {
           if (!child?.frameId || !child?.attemptId) {
             throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
           }
-          reliableMessagingChildren.set(context.params.sessionId, child.frameId)
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3101,15 +3127,12 @@ if (process.argv.includes('--version')) {
           if (delegated.kind !== 'results' || child?.status !== 'completed') {
             throw new Error(`Subagent model initial Attempt failed: ${JSON.stringify(delegated)}`)
           }
-          globalThis.subagentModelContinuationFrameId = child.frameId
           reply = 'Subagent model initial Attempt completed.'
         } else if (prompt.includes(SUBAGENT_MODEL_CONTINUATION_FINISH_PROMPT)) {
-          const frameId = globalThis.subagentModelContinuationFrameId
-          if (!frameId) throw new Error('Subagent model continuation Frame was not captured.')
           const continued = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const receipt = await host.sendFrameMessage(${JSON.stringify(frameId)}, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
+              `const children = await host.children(); const child = children.find(child => child.name === ${JSON.stringify(DELEGATED_MODEL_CONTINUATION_NAME)}); if (!child) throw new Error("missing original model continuation child"); const receipt = await host.sendFrameMessage(child.frameId, "Continue after Settings changed"); return await host.collect([{ frameId: receipt.targetFrameId, attemptId: receipt.continuationAttemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (continued.length !== 1 || continued[0].status !== 'completed') {
@@ -3210,8 +3233,13 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
           reply = 'Child received the reliable Main directive.'
         } else if (prompt.includes('Child reliable question reached Main')) {
-          const childFrameId = reliableMessagingChildren.get(context.params.sessionId)
-          if (!childFrameId) throw new Error('Reliable messaging child Frame was not retained.')
+          const { frameId: childFrameId } = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'const child = (await host.children()).find((child) => child.name === "Send a reliable question to Main."); return { frameId: child?.frameId }'
+            )
+          )
+          if (!childFrameId) throw new Error('Reliable messaging child Frame was not found.')
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,

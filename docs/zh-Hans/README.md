@@ -18,7 +18,7 @@
     <img alt="AIPOCH Open-Science arXiv 预印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
   <a href="#基准测试表现">
-    <img alt="AIPOCH Open-Science — 已报告基准比较中的最高分" src="../../docs/images/readme/benchmark-comparisons.svg">
+    <img alt="AIPOCH Open-Science — 基准测试结果" src="../images/readme/benchmark-comparisons.svg">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="支持平台 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
@@ -61,7 +61,7 @@
 - [产品导览](#产品导览)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
 - [AIPOCH Open-Science 论文与引用](#aipoch-open-science-论文与引用)
-- [基准测试表现](#基准测试表现)
+- [基准测试结果](#基准测试表现)
 - [核心能力](#核心能力)
 - [模型服务商](#模型服务商)
 - [数据、权限与信任](#数据权限与信任)
@@ -85,7 +85,7 @@
 | Linux x64                               | Linux x64 AppImage 或 Debian 软件包       |
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 软件包     |
 
-从[官方应用下载页面](https://aipoch.com/open-science/download)下载安装包；如需校验，请参阅[验证下载](../../SECURITY.md#verifying-your-download)。
+安装前的校验方法见[验证下载](../../SECURITY.md#verifying-your-download)。
 
 macOS 用户也可以通过 [Homebrew](https://brew.sh) 安装：
 
@@ -192,7 +192,7 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 2. 将 `.science` 文件传递给协作者，或转移到另一台计算机。
 3. 将它导入项目。右侧的 **Research replay** 展示记录过程，左侧对话可针对记录提问并引用固定步骤。
 
-导入记录保持只读；浏览回放不会执行代码、调用模型或恢复凭据。首次提问会创建关联的可写讨论；使用 **Create a copy to continue research** 创建副本后可继续研究。重新运行结果仍需要完整配方、必要输入和可用运行环境。
+导入记录保持只读；浏览回放不会执行代码、调用模型或恢复凭据。首次提问会创建关联的可写讨论；使用 **Fork to continue** 创建副本后可继续研究。重新运行结果仍需要完整配方、必要输入和可用运行环境。
 
 Side Chat 对话、私人阅读书签和凭据不随包导出，所含文件取决于导出选择。收到的验证记录描述发送方执行过的检查，不代表接收计算机已重新运行。详见 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
 
@@ -223,75 +223,83 @@ arXiv 预印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交于 2026 �
 
 </details>
 
-## 基准测试表现
+<a id="基准测试表现"></a>
 
-AstaBench、ASI-Bench 与 BiomniBench-DA 是三套相互独立的基准，任务、数据集和评分方式不同，结果分别报告，不能横向比较。
+## 基准测试结果
 
-### 🏆 AstaBench：LitQA2 Test 并列最高展示分数，90.67% Recall@30
+AIPOCH 对 AIPOCH Open-Science 进行了评测，任务涵盖查找论文、回答论文内容相关问题和执行研究计划。以下结果来自 AIPOCH 自行开展的测试，每项成绩对应特定任务与评测配置。
 
-AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75题 LitQA2-FullText-Search Test 题集的本地评测中取得 **90.67% Recall@30（68/75）**。在10月26日报告快照收录的27条结果中，这一本地 Test 成绩与 Asta Paper Finder 和 Asta v0 **并列最高**，三者均为90.67%。该成绩来自官方 Test 题集的本地评测，尚未作为官方榜单结果提交，也不代表取得官方榜单名次。
+| 任务             | AIPOCH Open-Science 的结果                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 找到目标论文     | 在 LitQA2-FullText-Search 的 **75 道测试题中，有 68 道的目标论文出现在前 30 条结果中**（**Recall@30 为 90.67%**，gpt-6-astra）。            |
+| 根据文献回答问题 | 在独立的 LitQA2-FullText 测试中，Open-Science **答对 75 题中的 70 题**（**准确率 93.33%**，deepseek-flash，Max 推理）。                     |
+| 综合带引用的答案 | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道验证题上获得 **0.9289/1 的综合质量分数**。官方测试参考结果使用不同的题目。                |
+| 执行研究流程     | 在使用相同模型的本地 ASI-Bench 测试中，Open-Science 的 B4 得分为 **59.46**，Codex 为 **55.45**。B2 得分几乎相同（**56.11** 与 **56.09**）。 |
+| 分析生物医学数据 | 在 BiomniBench-DA Public 50 上，两位评审模型的评分分别为 **81.04** 和 **77.06**，等权平均为 **79.05**。                                     |
 
-**ScholarQA-CS2：** AIPOCH Open-Science 使用 **deepseek-v4-flash**，在 **100题 Validation 题集**上取得 **0.9289/1的综合得分**。报告所列的官方 Test 最高参考分数为 **0.9192**，来自不同题集，因此两项结果不构成直接排名。
-
-![AIPOCH Open-Science 的 AstaBench 概览：LitQA2 Test 题集 Recall@30 为90.67%，ScholarQA-CS2 Validation 综合得分为0.9289；本地结果与官方参考记录分开展示](../images/readme/astabench-literature-research-overview.jpg)
+### AstaBench — 文献任务
 
 <details>
-<summary><strong>LitQA2-FullText-Search 结果对照</strong></summary>
+<summary><strong>论文检索 — 为 75 道题中的 68 道找到目标论文</strong></summary>
 
-![AIPOCH Open-Science 在75题 LitQA2 Test 题集上取得90.67% Recall@30，与报告快照中的最高展示分数并列；该结果并非官方榜单提交](../images/readme/astabench-litqa2-test.jpg)
+AIPOCH 在本地运行了官方 LitQA2-FullText-Search 的 75 题 Test 集。其 Recall@30 与 2026 年 10 月 26 日对比快照中的最高值相同。这次本地测试未提交至官方榜单，也不代表官方排名。
 
-该本地测试于2026年10月23日运行。图中包含1条 AIPOCH Open-Science 本地 Test 结果和26条官方参考记录。同分结果使用等长条形，行顺序不区分同分名次。AIPOCH 的本地成本未统一核算，因此该图不能支持成本效率比较。
+![AIPOCH Open-Science LitQA2 检索对比：官方 Test 集上的本地 Recall@30 为 90.67%](../images/readme/astabench-litqa2-test.jpg)
 
-此前使用 **DeepSeek v4-flash (max)** 的本地评测在另一组10题 Validation 题集上取得 **100% Recall@30（10/10）**，报告记录了该结果的3次本地重复测试。Test 与 Validation 使用不同题目，分别报告。
+Recall@30 在目标论文出现在前 30 条结果中时计为命中，不衡量答案准确率。各次测试的成本核算未统一。
 
 </details>
 
 <details>
-<summary><strong>ScholarQA-CS2 Validation 结果与 Test 参考</strong></summary>
+<summary><strong>全文问答 — 75 题中答对 70 题</strong></summary>
 
-![AIPOCH Open-Science 在100题 ScholarQA-CS2 Validation 题集上取得0.9289的综合得分；官方 Test 参考记录使用不同题目，不构成直接对比排名](../images/readme/astabench-scholarqa-cs2.jpg)
+AIPOCH 运行了 AstaBench v0.5.4 中 LitQA2-FullText 的 75 题 Test 集。图表按分数排列本地结果与历史参考记录，其中的“#1”指这组对比的排序。
 
-图中将1条本地 Validation 结果与41条官方 Test 参考记录分开展示。报告正文还提及 `gpt-5.6-sol` 的一项 Validation 得分0.7905，但源表未列出该条目，也未说明题数。
+![AIPOCH Open-Science LitQA2 全文问答对比：本地准确率 93.33%](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+准确率衡量回答正确的比例。此处 93.33% 是本地问答准确率，90.67% 是历史参考问答准确率，与上方检索图的指标不同。参考记录采集于 2026 年 10 月 28 日，最高参考分数于 11 月 2 日再次核对。
 
 </details>
-
-Recall@30 衡量目标论文是否出现在提交结果的前30篇中，不是科学问答正确率。ScholarQA-CS2 得分衡量回答的综合质量，不是全部答对的问题所占比例。
-
-#### AstaBench LitQA2-FullText：科学文献问答正确率 93.33%
-
-在 AIPOCH 对 AstaBench v0.5.4 的 LitQA2-FullText Test 划分（75 题）进行的评测中，AIPOCH Open-Science 使用 `deepseek-flash`、Max 推理强度答对 70 题，正确率为 93.33%。该测试考察科学文献问答：检索并阅读论文、辨别实验条件、提取报告结果，再从选项中选择答案。它与上文 LitQA2-FullText-Search 的检索 Recall@30 属于不同指标。
-
-截至 2026 年 11 月 2 日，[官方 LitQA2-FullText Test 榜单](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)显示的最高记录为 90.67%（68/75）。在这一数值对照中，AIPOCH Open-Science 的成绩高出 2.67 个百分点。
 
 <details>
+<summary><strong>引用答案质量 — 本地验证结果与官方测试参考</strong></summary>
 
-<summary><strong>AstaBench LitQA2-FullText 成绩对照</strong></summary>
+本地 ScholarQA-CS2 结果衡量 100 道 Validation 题上的引用答案质量。参考成绩来自 Test 集，因此这些分数不能构成直接对决排名。
 
-![AIPOCH Open-Science 在 AstaBench LitQA2-FullText 科学文献问答测试中取得 93.33%，与 10 月 28 日官方记录对照](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+![AIPOCH Open-Science ScholarQA-CS2 对比：本地 Validation 综合得分 0.9289，与官方 Test 参考结果分开展示](../images/readme/astabench-scholarqa-cs2.jpg)
 
-图中采用 10 月 28 日的官方记录快照；11 月 2 日再次核对了榜单显示的最高成绩。
+综合分数的范围为 0–1，并非完全答对题目的百分比。
 
 </details>
 
-### 🏆 ASI-Bench B1–B4：报告所列四项对照均为最高展示分数
+### ASI-Bench — 执行计划与选择方法
 
-AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，结合领域专家与技能，在 ASI-Bench B1、B2、B3、B4 四项测试中分别取得 **79.35、56.11、59.67和59.46分**，均为报告所列对照中的最高展示分数。四种评测条件依次考察**执行完整科研方案、组织研究流程、自主选择方法，以及在干扰信息下完成自主研究**，覆盖从方法实现到自主科研执行的不同任务条件。
+四种条件分别要求智能体执行指定计划（B1）、组织工作流程（B2）、选择研究方法（B3），以及在干扰信息下开展研究（B4）。图表前两行比较使用相同 GPT-6 Astra 模型的本地测试。
 
-同模型、同名推理强度的本地 Codex 对照分别为74.78、56.09、58.12和55.45分，我方数值分别高 **4.57、0.02、1.55和4.01分**。B1、B2报告完成3次本地重复测试；B3、B4均为每轮60题、3次本地测试的均值。
+![AIPOCH Open-Science ASI-Bench B1–B4 结果与本地 Codex 测试及已发表参考结果](../images/readme/asi-bench-b1-b4.jpg)
 
-![AIPOCH Open-Science 的 ASI-Bench B1–B4 成绩分别为79.35、56.11、59.67和59.46分，图中区分本地结果与公开参照](../images/readme/asi-bench-b1-b4.jpg)
+Open-Science 在 B1–B4 上分别获得 **79.35、56.11、59.67 和 59.46**；本地 Codex 参考成绩为 **74.78、56.09、58.12 和 55.45**。B2 得分几乎相同。其他已发表测试在任务实例、配置或评判方式上存在差异。
 
-本地测试采用seed31415；B1有效计分59项，1项因报告所述评分器异常排除。B3/B4采用v0.32.0及替代裁判。公开参照的任务实例、配置和裁判条件不同；B2的0.02分仅为数值差异。
+本地 B1 因评分器问题排除一项任务后，计入 59 项任务。B1/B2 报告了三次本地重复测试。B3/B4 使用 Open-Science v0.32.0 和替代评审模型，各项得分为三次、每次 60 项任务的平均值。
 
-### 🏆 BiomniBench-DA Public 50：所汇总对照中的最高展示分数，79.05分
+### BiomniBench-DA — 生物医学数据分析
 
-AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在标记为 BiomniBench-DA Public 50 的50项生物医学数据分析任务内部评测中取得 **79.05分**，为所汇总对照中的最高展示分数。成绩由 Gemini 3.1 Pro 裁判的 **81.04分**与 DeepSeek v4-pro 裁判的 **77.06分**等权平均得到，反映该配置在生物医学数据分析过程中的综合表现。详见[评测报告](https://aipoch.com/blog/open-science-biomnibench-da)。
+在 Public 50 任务集上，Gemini 3.1 Pro 评审模型对输出评分 **81.04**，DeepSeek v4-pro 评审模型评分 **77.06**。AIPOCH 报告了 gpt-5.6-sol（xhigh）配置的等权平均分 **79.05**。
 
-![AIPOCH Open-Science 的 BiomniBench-DA Public 50 内部评测取得79.05双裁判均分，两位裁判分数分别为77.06与81.04](../images/readme/biomnibench-public50-leaderboard.png)
+<details>
+<summary><strong>评审分数与历史参考 — 评审覆盖范围不同</strong></summary>
 
-该对照混合了不同裁判覆盖的记录，不能视为统一裁判条件下的正式排名。
+图表汇集了评审覆盖范围不同的记录，其中的“#1”描述这组记录的排序。要在统一评判流程下排名，需要对所有记录采用可比的评分方式。
 
-**评测说明：**以上为 AIPOCH Open-Science 于2026年8—11月自行报告的本地或内部评测结果，使用所注明的数据集及划分，未针对当前发布版本重新运行。在官方 Test 题集上进行本地测试，不代表已提交官方榜单或取得榜单名次。参考数值来自历史报告快照，并非实时排名；Validation 与 Test 结果不能直接比较。任务实例、模型配置、裁判覆盖范围和成本核算方式的差异，限制了跨系统比较。数值持平或存在差距，不代表具有统计显著性的提升。
+![AIPOCH Open-Science BiomniBench-DA Public 50 对比，展示两位评审模型的分数及平均值](../images/readme/biomnibench-public50-leaderboard.png)
+
+79.05 是这次内部评测的平均评审分数。
+
+</details>
+
+**评测范围：** 报告涵盖 2026 年 8 月至 11 月、使用所列模型与数据划分开展的本地或内部测试，并未针对当前版本重新运行。参考成绩是历史快照，并非实时排名。不同基准系列的分数不能直接比较，数值差距不代表统计显著性。
+
+评测详情见 [AstaBench 与 ASI-Bench 报告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 报告](https://aipoch.com/blog/open-science-biomnibench-da)。
 
 ## 核心能力
 
@@ -328,7 +336,7 @@ AIPOCH Open-Science 在一个本地工作区中整合项目管理、多模型智
 
 桌面端还可将产物溯源导出为 RO-Crate 1.1。与版本绑定的环境包只有在捕获内容完整且兼容目标平台时，才能用于创建托管环境；这不等于完整计算机备份。
 
-从首页或对话工作区进入 Sharing 研究案例市场，按类别筛选、按关键词搜索，并从案例详情下载包。在市场与项目之间切换时，筛选条件和滚动位置会保留。
+从首页或对话工作区进入 Sharing 研究案例市场，按类别筛选、按关键词搜索，并从案例详情下载包。
 
 ## 模型服务商
 
@@ -421,19 +429,37 @@ Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`np
 
 ## 常见问题
 
-### 为什么模型连接测试失败？
+<a id="为什么模型连接测试失败"></a>
+
+<details>
+<summary>为什么模型连接测试失败？</summary>
 
 答：检查 API Key 是否缺少字符或含有空格，验证 Base URL 和地区，使用服务商准确的模型 ID，并确认网络访问和账户余额。对于 Claude 订阅，根据所选模式重新尝试共享浏览器登录，或刷新隔离的 `claude setup-token` 凭据。
 
-### 为什么设置期间 `Continue` 被禁用？
+</details>
+
+<a id="为什么设置期间-continue-被禁用"></a>
+
+<details>
+<summary>为什么设置期间 <code>Continue</code> 被禁用？</summary>
 
 答：当前步骤尚未满足必需条件。根据活动步骤，修复标记为 `Action needed` 的环境行，安装或修复所选智能体运行时，或验证模型服务商。Notebook 设置是可选的，只影响 Notebook 执行。
 
-### 如何在远程 HPC 集群上运行任务？
+</details>
+
+<a id="如何在远程-hpc-集群上运行任务"></a>
+
+<details>
+<summary>如何在远程 HPC 集群上运行任务？</summary>
 
 答：**Remote Compute (SSH)** 始终启用，无需在 Settings 中手动启用。先在 **Settings → Compute** 中注册 SSH 计算主机并使其对当前会话可用，然后通过自然语言或 `/remote-compute-ssh` 使用远程计算。你需要可访问的 SSH 主机、有效认证、所需目录的访问权限，以及任务所需的软件、依赖和计算资源。Direct SSH 不要求调度器；Slurm 模式要求可用的 Slurm 环境和作业提交权限。“始终启用”仅指该 Skill，不代表所有已注册主机始终可用。
 
-### 是否提供命令行界面？
+</details>
+
+<a id="是否提供命令行界面"></a>
+
+<details>
+<summary>是否提供命令行界面？</summary>
 
 答：支持。安装独立 CLI，或使用 **设置 → 通用 → 命令行工具 → 安装命令** 控制已经运行的桌面实例。通过 npm 安装需要 Node.js；Homebrew 和自带运行时的独立发行包已包含 Node.js。初始化本地配置后，无需打开浏览器即可控制服务并提交科研任务：
 
@@ -457,13 +483,25 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 完整命令参考、JSON/JSONL 输出格式、退出码和无界面服务选项请查看 [CLI 指南](../../packages/open-science/CLI.md)。
 
-### 如何检查生成结果的来源？
+</details>
+
+<a id="如何检查生成结果的来源"></a>
+
+<details>
+<summary>如何检查生成结果的来源？</summary>
 
 答：打开生成产物并选择 **Provenance**。选择一个版本，以检查内容标识及可用的生成代码、执行历史、输入、环境清单、生成对话上下文和审查证据。AIPOCH Open-Science 无法验证的证据会标记为不可用。
 
-### 能否修改较早的请求而不丢失后续对话？
+</details>
+
+<a id="能否修改较早的请求而不丢失后续对话"></a>
+
+<details>
+<summary>能否修改较早的请求而不丢失后续对话？</summary>
 
 答：可以。编辑已完成的用户消息并重新发送，从该位置新建分支。原有后续轮次仍然可用，消息旁的修订箭头可在不同路径之间切换。
+
+</details>
 
 ## 贡献者
 
@@ -475,7 +513,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 参与项目
 
-AIPOCH Open-Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报告、功能建议、设计讨论、社区问题和项目贡献。请选择最符合你目标的渠道，并在公开分享项目详情前查看相关贡献指南与公开发布安全提醒。
+通过报告问题、建议功能、提问或贡献内容，一起改进 AIPOCH Open-Science。选择下方适合的渠道开始参与。
 
 | 渠道                                                                     | 用途                               |
 | ------------------------------------------------------------------------ | ---------------------------------- |
@@ -487,7 +525,7 @@ AIPOCH Open-Science 通过 GitHub、Discord、X 和 AIPOCH 网站接收缺陷报
 
 提交公开问题前，从日志和截图中移除 API Key、令牌、私有文件路径、未公开数据、患者标识符和其他敏感材料。开发工作流请参阅[贡献指南](../../CONTRIBUTING.md)。
 
-> ⭐ **Star 仓库：** 如果本项目对你有帮助，欢迎在 GitHub 上 Star。Star 仓库可以鼓励项目持续开发，只需片刻，却会对项目产生切实影响。
+> 如果 AIPOCH Open-Science 对你有帮助，欢迎在 GitHub 上为仓库 Star。
 
 已交付、部分实现和计划能力见[能力地图](../ROADMAP.md#capability-map)。
 

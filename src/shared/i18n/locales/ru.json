@@ -8319,6 +8319,12 @@
     "Include research films": "Включить исследовательские фильмы",
     "Delete research film": "Удалить исследовательский фильм",
     "Delete research film?": "Удалить исследовательский фильм?",
-    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Удалить фильм этой ветки и локально созданные файлы? Содержимое диалога и отдельно сохранённые файлы будут сохранены."
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Удалить фильм этой ветки и локально созданные файлы? Содержимое диалога и отдельно сохранённые файлы будут сохранены.",
+    "{{count}} questions awaiting your answer_one": "{{count}} вопрос ожидает вашего ответа",
+    "{{count}} questions awaiting your answer_few": "{{count}} вопроса ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_many": "{{count}} вопросов ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_other": "{{count}} вопроса ожидают вашего ответа",
+    "Collapse question panel": "Свернуть панель вопросов",
+    "Expand question panel": "Развернуть панель вопросов"
   }
 }

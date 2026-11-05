@@ -7999,6 +7999,10 @@
     "Include research films": "Forschungsfilme einschließen",
     "Delete research film": "Forschungsfilm löschen",
     "Delete research film?": "Forschungsfilm löschen?",
-    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Den Film dieses Zweigs und die lokal erzeugten Dateien löschen? Konversationsinhalte und separat gespeicherte Dateien bleiben erhalten."
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Den Film dieses Zweigs und die lokal erzeugten Dateien löschen? Konversationsinhalte und separat gespeicherte Dateien bleiben erhalten.",
+    "{{count}} questions awaiting your answer_one": "{{count}} Frage wartet auf Ihre Antwort",
+    "{{count}} questions awaiting your answer_other": "{{count}} Fragen warten auf Ihre Antwort",
+    "Collapse question panel": "Fragebereich einklappen",
+    "Expand question panel": "Fragebereich ausklappen"
   }
 }
