@@ -6884,13 +6884,17 @@ describe('ACP runtime session management', () => {
       const resumedProcess = new FakeAgentProcess()
       const oldPromptGate = createDeferred()
       const resumedPromptGate = createDeferred()
+      const resumedPromptStarted = createDeferred()
       const oldAgent = startFakeAgent(oldProcess, ['durable-disconnect-session'], {
         supportsResume: true,
         onPrompt: () => oldPromptGate.promise
       })
       const resumedAgent = startFakeAgent(resumedProcess, [], {
         supportsResume: true,
-        onPrompt: () => resumedPromptGate.promise
+        onPrompt: () => {
+          resumedPromptStarted.resolve()
+          return resumedPromptGate.promise
+        }
       })
       let runtime!: AcpRuntime
       const repository = new SessionRepository(root, {
@@ -7032,8 +7036,9 @@ describe('ACP runtime session management', () => {
           },
           { projectId: 'project-1', sessionId: session.sessionId, promptMessageId }
         )
-        void continuation.catch(() => undefined)
-        await vi.waitFor(() => expect(resumedAgent.prompts).toHaveLength(1))
+        void continuation.catch(resumedPromptStarted.reject)
+        await resumedPromptStarted.promise
+        expect(resumedAgent.prompts).toHaveLength(1)
         const resumed = await sessions.loadSessionForContinuation('project-1', session.sessionId)
         const resumedExecutionId = resumed!.runtimeSessionAdmissions!.at(-1)!.executionId
         expect(resumedExecutionId).not.toBe(oldExecutionId)

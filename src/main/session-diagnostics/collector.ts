@@ -400,7 +400,8 @@ async function readSource(source: Source): Promise<{
       return {
         text,
         ...tailMetadata,
-        partial: start > 0,
+        // The bounded tail is the requested log projection, not a collection failure.
+        partial: false,
         note: 'Log snapshot contains at most the file size at open time; later appended bytes are excluded'
       }
     }
@@ -890,12 +891,19 @@ export async function runSessionDiagnosticWorker(
                 omittedLines,
                 missingEventTextRecords
               }
-              if (omittedLines || missingEventTextRecords) {
+              // Backend captures include arbitrary stdout; filtering it is expected.
+              // Canonical logs should be structured, so omitted records indicate lost evidence.
+              if (omittedLines) {
+                if (!source.tailBytes) {
+                  partial = true
+                  state.status = 'partial'
+                }
+                record('Unstructured log records omitted')
+              }
+              if (missingEventTextRecords) {
                 partial = true
                 state.status = 'partial'
-                if (omittedLines) record('Unstructured log records omitted')
-                if (missingEventTextRecords)
-                  record('Retained log records without event text counted in source metadata')
+                record('Retained log records without event text counted in source metadata')
               }
             }
           }
