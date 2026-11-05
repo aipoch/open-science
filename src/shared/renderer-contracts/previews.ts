@@ -1,5 +1,6 @@
 import type {
   ResearchVideoPresentationRequest,
+  ResearchVideoStatusRequest,
   ResearchVideoPresentationStatus
 } from '../research-video-presentation'
 import type {
@@ -128,7 +129,7 @@ export const previewDeleteContracts = {
     (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
   >()('preview-resources', ['research-video:start', ELECTRON]),
   'researchVideo.status': callable<
-    (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
+    (request: ResearchVideoStatusRequest) => Promise<ResearchVideoPresentationStatus>
   >()('preview-resources', ['research-video:status', ELECTRON]),
   'researchVideo.remove': callable<
     (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>

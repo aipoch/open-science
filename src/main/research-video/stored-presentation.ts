@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -149,7 +150,9 @@ export async function deleteStoredResearchFilms(
             branchId: z.string().optional()
           })
         })
-        .parse(JSON.parse(await readFileWithinLimit(sourcePath, 8 * 1024 * 1024)))
+        .parse(
+          JSON.parse(await readFileWithinLimit(sourcePath, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES))
+        )
       if (researchFilmScopeKey(source.provenance) !== researchFilmScopeKey(request)) continue
       await rm(join(base, entry.name), { recursive: true, force: true })
       ids.add(entry.name)

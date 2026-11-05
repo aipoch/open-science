@@ -322,3 +322,38 @@ it.each(['failed', 'cancelled'] as const)(
     expect(document.body.textContent).toContain('Elapsed: 3 s')
   }
 )
+
+it('blocks known failures before narration download and rechecks when the entry is reopened', async () => {
+  snapshot = { ...snapshot, availability: 'notInstalled' }
+  status = { preflightError: 'Runtime unavailable' }
+  await click('Generate research film')
+  expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, checkReadiness: true })
+  expect(document.body.textContent).toContain('Runtime unavailable')
+  expect(document.body.textContent).not.toContain('Install and generate')
+  expect(api.localModels.install).not.toHaveBeenCalled()
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+  status = {}
+  await click('Generate research film')
+  expect(document.body.textContent).toContain('Install and generate')
+  status = { preflightError: 'Model unavailable' }
+  await click('Install and generate')
+  expect(api.localModels.install).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain('Model unavailable')
+})
+
+it('still plays an existing film when generation preflight is blocked', async () => {
+  status = {
+    result: {
+      id: 'saved',
+      title: 'Saved film',
+      duration: 5,
+      playerPath: '/player.html',
+      sourcePath: '/source.zip'
+    },
+    preflightError: 'Runtime unavailable'
+  }
+  await click('Generate research film')
+  await click('Play research film')
+  expect(openPreview).toHaveBeenCalledOnce()
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
+})

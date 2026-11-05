@@ -6,12 +6,12 @@ import { SAFE_SEGMENT_PATTERN } from '../artifacts/storage-layout'
 import { readVideoSourceFile } from '@aipoch/research-film'
 import type { ResearchVideoSessionSource } from './session-source'
 
-/** Snapshot only images owned by messages on this branch, retaining each referenced Version. */
+/** Validate branch-owned images; supplying a destination also stages their referenced Versions. */
 export async function stageResearchVideoSessionImages(
   source: ResearchVideoSessionSource,
   session: PersistedChatSession,
   dataRoot: string,
-  destination: string,
+  destination: string | undefined,
   signal: AbortSignal
 ): Promise<ResearchVideoSessionSource> {
   if (!SAFE_SEGMENT_PATTERN.test(session.projectId)) throw new Error('Invalid research Project')
@@ -49,8 +49,10 @@ export async function stageResearchVideoSessionImages(
         total += bytes.length
         if (total > 100 * 1024 * 1024) throw new Error('Research images exceed 100 MiB')
         staged = `${createHash('sha256').update(artifact.id).digest('hex')}${extname(name).toLowerCase()}`
-        await mkdir(destination, { recursive: true })
-        await writeFile(join(destination, staged), bytes, { flag: 'wx', signal })
+        if (destination) {
+          await mkdir(destination, { recursive: true })
+          await writeFile(join(destination, staged), bytes, { flag: 'wx', signal })
+        }
         copied.set(artifact.id, staged)
       }
       message.md = message.md.replaceAll(match[0], `![${match[1]}](files/${staged})`)

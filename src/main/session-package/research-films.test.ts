@@ -578,3 +578,22 @@ it('deletes the remaining imported files even when the player is already missing
     await owner.close()
   }
 })
+
+it('captures and deletes films whose full source exceeds 8 MiB', async () => {
+  const f = await setup()
+  const session = (await f.repository.loadSession('project', 'session'))!
+  const branchId = session.conversationGraph!.branches[0].id
+  const directory = await saveFilm(f.root, session, branchId)
+  const sourcePath = join(directory, 'session.json')
+  const source = JSON.parse(await readFile(sourcePath, 'utf8'))
+  source.messages = [{ md: 'Research evidence. '.repeat(500_000) }]
+  await writeFile(sourcePath, JSON.stringify(source))
+  expect((await lstat(sourcePath)).size).toBeGreaterThan(8 * 1024 * 1024)
+  expect((await captureResearchFilms(f.root, session)).films).toHaveLength(1)
+  await deleteStoredResearchFilms(f.root, {
+    projectId: session.projectId,
+    sessionId: session.id,
+    branchId
+  })
+  await expect(lstat(directory)).rejects.toMatchObject({ code: 'ENOENT' })
+})

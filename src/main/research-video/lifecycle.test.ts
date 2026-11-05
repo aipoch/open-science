@@ -182,14 +182,14 @@ it('does not wait for a blocked publisher while catalog reconciliation owns the 
   expect(await exists(join(saved.directory, 'session.json'))).toBe(false)
 })
 
-it('cleans snapshots expanded by staged image references beyond the original input limit', async () => {
+it('cleans full conversation snapshots larger than 8 MiB', async () => {
   const { root, owner } = await fixture()
   const saved = await presentation(root, 'expanded')
   await writeFile(
     join(saved.directory, 'session.json'),
     JSON.stringify({
       provenance: { projectId: 'project', sessionId: 'expanded' },
-      messages: [{ md: '![image](files/long-checksummed-image-name.png)'.repeat(16000) }]
+      messages: [{ md: '![image](files/long-checksummed-image-name.png)'.repeat(200000) }]
     })
   )
   await owner.deleteSessions(['expanded'])

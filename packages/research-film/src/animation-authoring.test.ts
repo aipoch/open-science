@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { writeResearchVideoAnimations } from './animation-authoring.js'
 import { parseResearchVideoScreenplay } from './screenplay.js'
 import { buildResearchVideoPlayer } from './build-player.js'
+import { ResearchFilmOutputLimitError } from './authoring-correction.js'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -152,6 +153,38 @@ it('does not persist model output after cancellation', async () => {
   ).rejects.toThrow()
   await expect(readFile(join(root, 'anims/satellite.js'))).rejects.toThrow()
 })
+
+it.each(['complete', 'invalid', 'truncated', 'cancelled'])(
+  'bounds animation truncation recovery when the replacement is %s',
+  async (replacement) => {
+    const root = await directory()
+    const controller = new AbortController()
+    const writer = vi.fn().mockRejectedValueOnce(new ResearchFilmOutputLimitError('output limit'))
+    writer.mockImplementation(async () => {
+      if (replacement === 'cancelled') controller.abort()
+      if (replacement === 'truncated') throw new ResearchFilmOutputLimitError('output limit')
+      return replacement === 'invalid' ? 'function(' : 'function satellite() {}'
+    })
+    const result = writeResearchVideoAnimations(original, root, writer, controller.signal)
+    if (replacement === 'complete') {
+      await result
+      expect(writer).toHaveBeenCalledTimes(3) // Two helper attempts, then one scene.
+      expect(await readFile(join(root, 'anims/satellite.js'), 'utf8')).toBe(
+        'function satellite() {}'
+      )
+    } else {
+      await expect(result).rejects.toThrow()
+      expect(writer).toHaveBeenCalledTimes(2)
+      await expect(readFile(join(root, 'anims/satellite.js'))).rejects.toMatchObject({
+        code: 'ENOENT'
+      })
+    }
+    expect(writer.mock.calls[1][2]).toMatchObject({
+      draft: '',
+      error: expect.stringContaining('shorter')
+    })
+  }
+)
 
 it('accepts the original checklist type and rejects added artwork fields', () => {
   const spec = structuredClone(original)

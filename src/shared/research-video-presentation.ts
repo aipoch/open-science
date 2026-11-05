@@ -12,6 +12,10 @@ export const researchVideoPresentationRequestSchema = z
 export type ResearchVideoPresentationRequest = z.infer<
   typeof researchVideoPresentationRequestSchema
 >
+export const researchVideoStatusRequestSchema = researchVideoPresentationRequestSchema.extend({
+  checkReadiness: z.boolean().optional()
+})
+export type ResearchVideoStatusRequest = z.infer<typeof researchVideoStatusRequestSchema>
 export type ResearchVideoPresentation = {
   id: string
   title: string
@@ -24,6 +28,7 @@ export type ResearchVideoPresentationStatus = {
   progress?: ResearchVideoProgress
   result?: ResearchVideoPresentation
   error?: string
+  preflightError?: string
 }
 
 /** One portable display/export name for both formats; internal job paths remain stable. */

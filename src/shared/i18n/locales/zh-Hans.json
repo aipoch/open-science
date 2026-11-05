@@ -7848,6 +7848,9 @@
     "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "删除此分支的短片和本地生成文件？会话内容和已另存的文件将保留。",
     "{{count}} questions awaiting your answer_other": "有 {{count}} 个问题待回答",
     "Collapse question panel": "收起问题面板",
-    "Expand question panel": "展开问题面板"
+    "Expand question panel": "展开问题面板",
+    "Set up the selected agent runtime in Settings before generating a research film.": "请先在设置中配置所选智能体的运行时，再生成研究影片。",
+    "Check the selected model and credentials in Settings before generating a research film.": "请先在设置中检查所选模型及凭据，再生成研究影片。",
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "所选模型的输入上限无法容纳研究影片生成指令。请选择输入上限更大的模型。"
   }
 }

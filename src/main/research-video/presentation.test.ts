@@ -1,6 +1,6 @@
 import { parseResearchVideoScreenplay } from '@aipoch/research-film'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PersistedChatSession } from '../../shared/session-persistence'
@@ -63,6 +63,7 @@ async function fixture(): Promise<{
   roots.push(root)
   const release = vi.fn()
   const models = {
+    getSnapshot: vi.fn(async () => ({ availability: 'notInstalled' })),
     acquireUse: vi.fn(async () => ({
       release,
       revision: 'model',
@@ -328,7 +329,7 @@ it('checks managed session images before invoking the main model or narration', 
   const owner = createResearchVideoPresentationOwner(f.options)
   await owner.start(request)
   await vi.waitFor(async () =>
-    expect((await owner.status(request)).error).toContain('available managed Artifact')
+    expect((await owner.status(request)).preflightError).toContain('available managed Artifact')
   )
   expect(f.options.writeScreenplay).not.toHaveBeenCalled()
   expect(f.options.generate).not.toHaveBeenCalled()
@@ -349,7 +350,7 @@ it.each([
       expect((await owner.status(request)).generationBlock).toBe(reason)
       await owner.start(request)
       await vi.waitFor(async () =>
-        expect((await owner.status(request)).progress?.phase).toBe('failed')
+        expect((await owner.status(request)).preflightError).toBeDefined()
       )
       expect(f.options.models.acquireUse).not.toHaveBeenCalled()
       expect(f.options.writeScreenplay).not.toHaveBeenCalled()
@@ -420,4 +421,156 @@ it('removes saved versions through the host mutation lane and allows a fresh gen
   await vi.waitFor(async () => expect((await reopened.status(request)).result).toBeDefined())
   expect((await reopened.status(request)).result!.id).not.toBe(saved.id)
   await reopened.close()
+})
+
+it.each([['missing image', '![Missing](missing.png)', 'available managed Artifact']])(
+  'rejects %s material at preflight and direct start without creating a job',
+  async (_case, content, reason) => {
+    const f = await fixture()
+    f.options.loadSession = async () => ({
+      ...session,
+      messages: [{ ...session.messages[0], content }, session.messages[1]]
+    })
+    const owner = createResearchVideoPresentationOwner(f.options)
+    try {
+      expect((await owner.status({ ...request, checkReadiness: true })).preflightError).toContain(
+        reason
+      )
+      const result = await owner.start(request)
+      expect(result.preflightError).toContain(reason)
+      expect(result.progress).toBeUndefined()
+      expect(f.options.models.acquireUse).not.toHaveBeenCalled()
+      expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+      expect(await readdir(f.options.dataRoot())).toEqual([])
+    } finally {
+      await owner.close()
+    }
+  }
+)
+
+it('keeps a saved film available and refreshes admission after readiness is repaired', async () => {
+  const f = await fixture()
+  const checkReadiness = vi.fn(async () => {})
+  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  try {
+    await owner.start(request)
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const saved = (await owner.status(request)).result
+    checkReadiness.mockRejectedValue(new Error('Runtime unavailable'))
+    expect(await owner.status({ ...request, checkReadiness: true })).toMatchObject({
+      result: saved,
+      preflightError: 'Runtime unavailable'
+    })
+    expect((await owner.start(request)).preflightError).toBe('Runtime unavailable')
+    expect(f.options.writeScreenplay).toHaveBeenCalledOnce()
+    checkReadiness.mockResolvedValue(undefined)
+    expect(
+      (await owner.status({ ...request, checkReadiness: true })).preflightError
+    ).toBeUndefined()
+    expect((await owner.status(request)).result).toEqual(saved)
+  } finally {
+    await owner.close()
+  }
+})
+
+it('discards a delayed preflight failure after a newer generation succeeds', async () => {
+  const f = await fixture()
+  let rejectProbe!: (error: Error) => void
+  const checkReadiness = vi
+    .fn(async () => {})
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProbe = reject
+        })
+    )
+  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  try {
+    const oldProbe = owner.status({ ...request, checkReadiness: true })
+    await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
+    await owner.start(request)
+    await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+    const saved = (await owner.status(request)).result
+    rejectProbe(new Error('Obsolete runtime failure'))
+    expect(await oldProbe).toMatchObject({ result: saved })
+    expect((await owner.status(request)).preflightError).toBeUndefined()
+  } finally {
+    await owner.close()
+  }
+})
+
+it('reserves admission across duplicate starts and cancels before acquiring resources', async () => {
+  const f = await fixture()
+  let finishProbe!: () => void
+  const checkReadiness = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishProbe = resolve
+      })
+  )
+  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  try {
+    const first = owner.start(request)
+    await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
+    const duplicate = owner.start(request)
+    await expect(owner.start({ ...request, sessionId: 'other' })).rejects.toThrow(
+      'Another research explanation'
+    )
+    owner.cancel(request)
+    finishProbe()
+    await Promise.all([first, duplicate])
+    expect(checkReadiness).toHaveBeenCalledOnce()
+    expect((await owner.status(request)).progress?.phase).toBe('cancelled')
+    expect(f.options.models.acquireUse).not.toHaveBeenCalled()
+    expect(f.options.writeScreenplay).not.toHaveBeenCalled()
+    expect(await readdir(f.options.dataRoot())).toEqual([])
+  } finally {
+    await owner.close()
+  }
+})
+
+it('keeps the newest readiness result when concurrent refreshes finish out of order', async () => {
+  const f = await fixture()
+  let rejectProbe!: (error: Error) => void
+  const checkReadiness = vi
+    .fn(async () => {})
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectProbe = reject
+        })
+    )
+  const owner = createResearchVideoPresentationOwner({ ...f.options, checkReadiness })
+  try {
+    const oldProbe = owner.status({ ...request, checkReadiness: true })
+    await vi.waitFor(() => expect(checkReadiness).toHaveBeenCalledOnce())
+    await owner.status({ ...request, checkReadiness: true })
+    rejectProbe(new Error('Obsolete failure'))
+    expect((await oldProbe).preflightError).toBeUndefined()
+    expect((await owner.status(request)).preflightError).toBeUndefined()
+    expect(checkReadiness).toHaveBeenCalledTimes(2)
+  } finally {
+    await owner.close()
+  }
+})
+
+it('retains conversation text and Artifact references above the former byte cap', () => {
+  const content = 'Research evidence. '.repeat(40_000)
+  const source = researchVideoSessionSource(
+    {
+      ...session,
+      messages: [
+        { ...session.messages[0], content, artifactIds: ['plot-version'] },
+        session.messages[1]
+      ]
+    },
+    request
+  )
+  expect(source.messages[0]).toMatchObject({
+    i: 0,
+    id: 'question',
+    md: content,
+    artifactIds: ['plot-version']
+  })
+  expect(Buffer.byteLength(JSON.stringify(source))).toBeGreaterThan(512 * 1024)
 })

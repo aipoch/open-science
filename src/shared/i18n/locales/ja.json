@@ -7848,6 +7848,9 @@
     "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "この分岐の動画とローカルの生成ファイルを削除しますか？会話の内容と別途保存したファイルは保持されます。",
     "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
     "Collapse question panel": "質問パネルを折りたたむ",
-    "Expand question panel": "質問パネルを展開"
+    "Expand question panel": "質問パネルを展開",
+    "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
+    "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。"
   }
 }
