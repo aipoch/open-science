@@ -241,7 +241,7 @@ const decide = async (
   if (purpose === 'probe')
     return {
       allowed: false,
-      source: verdict.addresses ? 'explicit' : verdict.kind === 'ask' ? verdict.source : 'explicit',
+      source: verdict.kind === 'ask' ? verdict.source : 'explicit',
       address: verdict.address
     }
   violations.record(commandId, `deny network-outbound ${host}:${port} (not approved)`)

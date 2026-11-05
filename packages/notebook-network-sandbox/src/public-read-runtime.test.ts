@@ -281,6 +281,10 @@ describe('public-read runtime decision lifecycle', () => {
     })
     expect(approval).toHaveBeenLastCalledWith({
       host: 'unknown.example',
+      protocol: 'https',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),
@@ -293,6 +297,10 @@ describe('public-read runtime decision lifecycle', () => {
     })
     expect(approval).toHaveBeenLastCalledWith({
       host: 'unknown.example',
+      protocol: 'https',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),
@@ -349,6 +357,10 @@ describe('public-read runtime decision lifecycle', () => {
     })
     expect(approval).toHaveBeenCalledWith({
       host: 'unknown.example',
+      protocol: 'https',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),

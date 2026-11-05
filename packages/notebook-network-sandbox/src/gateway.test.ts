@@ -539,14 +539,36 @@ describe('Notebook command gateway', () => {
     await expect(readBytes(socket, 10)).resolves.toEqual(
       Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
     )
-    socket.write('gateway-ok')
-    await expect(readBytes(socket, 10)).resolves.toEqual(Buffer.from('gateway-ok'))
+    const gatewayPayload = Buffer.from([0x16, 0x03, 0x03, 0x00, 0x05, 1, 2, 3, 4, 5])
+    socket.write(gatewayPayload)
+    await expect(readBytes(socket, gatewayPayload.length)).resolves.toEqual(gatewayPayload)
 
     const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     gateway.resetConnections()
     await closed
 
     expect(decisions).toEqual([{ host: 'localhost', port: echo.port }])
+  })
+
+  it('rejects plaintext bytes inside an HTTPS CONNECT tunnel', async () => {
+    const echo = await listen((socket) => socket.pipe(socket))
+    const gateway = await CommandGateway.open({
+      decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+      credentials
+    })
+    closeTasks.push(() => gateway.close())
+    const socket = connect({ host: '127.0.0.1', port: gateway.port })
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+    })
+    socket.write(
+      `CONNECT example.invalid:${echo.port} HTTP/1.1\r\nHost: example.invalid:${echo.port}\r\nProxy-Authorization: ${authorization}\r\n\r\n`
+    )
+    await expect(readHttpHeader(socket)).resolves.toContain('200 Connection Established')
+    const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
+    socket.write('GET / HTTP/1.1\r\nHost: example.invalid\r\n\r\n')
+    await closed
   })
 
   it('connects to the address approved by policy instead of resolving the hostname again', async () => {
@@ -627,8 +649,9 @@ describe('Notebook command gateway', () => {
         `CONNECT packages.example.org:443 HTTP/1.1\r\nHost: packages.example.org:443\r\nProxy-Authorization: ${authorization}\r\n\r\n`
       )
       await expect(readHttpHeader(socket)).resolves.toContain('200 Connection Established')
-      socket.write('tunneled')
-      await expect(readBytes(socket, 8)).resolves.toEqual(Buffer.from('tunneled'))
+      const tunneled = Buffer.from([0x16, 0x03, 0x03, 0x00, 0x03, 0x01, 0x02, 0x03])
+      socket.write(tunneled)
+      await expect(readBytes(socket, tunneled.length)).resolves.toEqual(tunneled)
       socket.destroy()
 
       expect(destination).toEqual({ address: '203.0.113.9', port: 443 })

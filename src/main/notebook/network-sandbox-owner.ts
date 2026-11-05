@@ -1295,7 +1295,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (notebookNetworkSettingsAllowDomain(settings, normalized.hostname)) {
       return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
         message:
-          'Public-domain policy already allows this hostname. Address checks still apply. For private-network access, review the service and port in Settings > Network > Notebook network access.'
+          'Public-domain policy already allows this hostname. For HTTP or literal IP access, review the service, protocol and port in Settings > Network > Notebook network access.'
       })
     }
 

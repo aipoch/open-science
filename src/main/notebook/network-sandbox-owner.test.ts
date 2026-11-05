@@ -5134,7 +5134,7 @@ describe('trusted gateway destination records', () => {
       port: 8443,
       evidence: {
         addresses: ['127.0.0.1'],
-        risks: expect.arrayContaining(['sensitive']),
+        risks: [],
         recordId: expect.any(String)
       }
     })

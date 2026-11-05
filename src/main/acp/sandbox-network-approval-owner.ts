@@ -106,6 +106,7 @@ export class SandboxNetworkApprovalOwner {
       candidate.commandFingerprint === network.commandFingerprint &&
       candidate.hostname === network.hostname &&
       candidate.port === network.port &&
+      (candidate.protocol ?? 'https') === (network.protocol ?? 'https') &&
       (!network.evidence ? !candidate.evidence : Boolean(candidate.evidence))
     const grant = activeSandboxNetworkApprovals(session).find(
       (candidate) =>

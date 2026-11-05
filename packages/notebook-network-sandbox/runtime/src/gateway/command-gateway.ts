@@ -4,6 +4,7 @@ import { request as httpsRequest } from 'node:https'
 import { connect as connectTcp, createServer as createTcpServer, isIP, type Socket } from 'node:net'
 import { connect as connectTls, TLSSocket, type SecureContext } from 'node:tls'
 import { domainToASCII } from 'node:url'
+import { Transform } from 'node:stream'
 import { inspectReadRequest, MAX_HEADER_BYTES, MAX_TARGET_BYTES } from './read-request.js'
 import { timingSafeEqual } from 'node:crypto'
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
@@ -24,6 +25,46 @@ const proxyRequestTarget = (request: IncomingMessage): { target: URL; path: stri
   if (!target.hostname || target.username || target.password || target.pathname !== '/')
     throw new Error('Invalid authority')
   return { target, path }
+}
+
+const isTlsClientHello = (value: Buffer): boolean =>
+  value.length >= 3 &&
+  value[0] === 0x16 &&
+  value[1] === 0x03 &&
+  value[2]! >= 0x01 &&
+  value[2]! <= 0x04
+
+const bridgeTlsTunnel = (client: Socket, upstream: Socket, initial: Buffer): void => {
+  let checked = false
+  let prefix = Buffer.alloc(0)
+  const guard = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      if (checked) {
+        callback(null, chunk)
+        return
+      }
+      prefix = Buffer.concat([prefix, chunk])
+      if (prefix.length < 3) {
+        callback()
+        return
+      }
+      if (!isTlsClientHello(prefix)) {
+        callback(new Error('Notebook network tunnels require TLS.'))
+        return
+      }
+      checked = true
+      callback(null, prefix)
+    }
+  })
+  const reject = (): void => {
+    client.destroy()
+    upstream.destroy()
+  }
+  guard.once('error', reject)
+  upstream.once('error', reject)
+  if (initial.length) guard.write(initial)
+  client.pipe(guard).pipe(upstream)
+  upstream.pipe(client)
 }
 
 const forwardResponse = (
@@ -1046,8 +1087,10 @@ class CommandGateway {
         return
       }
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-      if (head.length) upstream.write(head)
-      client.pipe(upstream).pipe(client)
+      if (destination.port === 80) {
+        if (head.length) upstream.write(head)
+        client.pipe(upstream).pipe(client)
+      } else bridgeTlsTunnel(client, upstream, head)
     } catch (error) {
       rejectSocket(
         client,
@@ -1479,8 +1522,10 @@ class CommandGateway {
     }
     client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
     const buffered = reader.remainder()
-    if (buffered.length) upstream.write(buffered)
-    client.pipe(upstream).pipe(client)
+    if (port === 80) {
+      if (buffered.length) upstream.write(buffered)
+      client.pipe(upstream).pipe(client)
+    } else bridgeTlsTunnel(client, upstream, buffered)
   }
 }
 

@@ -221,6 +221,7 @@ export async function composeSettingsBootstrap({
         sessionId,
         hostname,
         port,
+        protocol,
         runtime,
         reason,
         allowOnce,
@@ -249,6 +250,7 @@ export async function composeSettingsBootstrap({
                     ...(evidence ? { evidence } : {}),
                     hostname,
                     port: port ?? 443,
+                    protocol,
                     runtime
                   },
                   canResume
@@ -257,6 +259,7 @@ export async function composeSettingsBootstrap({
             rawInput: {
               notebookNetworkApproval: {
                 hostname,
+                ...(protocol === undefined ? {} : { protocol }),
                 ...(port === undefined ? {} : { port }),
                 ...(runtime === undefined ? {} : { runtime }),
                 ...(reason === undefined ? {} : { reason })
