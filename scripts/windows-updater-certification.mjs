@@ -632,7 +632,9 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
   const observations = []
   const command = async (action) => {
     const started = Date.now()
-    const status = await withTimeout(invoke(action), `blocked update ${action}`, 30_000)
+    // Production permits 120 seconds for a cold Restart Manager scan. Allow that scan and the
+    // surrounding preflight to settle instead of aborting a healthy installed app after 30 seconds.
+    const status = await withTimeout(invoke(action), `blocked update ${action}`, UPDATE_TIMEOUT_MS)
     observations.push({
       action,
       elapsedMs: Date.now() - started,
@@ -847,12 +849,6 @@ const main = async () => {
                   return { pid: child.pid, release: () => terminateProcessTree(child) }
                 },
                 onBlocked: async () => {
-                  const processSnapshot = await runProcess('powershell.exe', [
-                    '-NoProfile', '-NonInteractive', '-Command',
-                    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress'
-                  ], { env, timeoutMs: 30_000 })
-                  await writeFile(`${options.output}.processes.json`, processSnapshot.stdout)
-                  console.log('[DEBUG-update-blocker] Captured process identity snapshot.')
                   const dialog = page.getByTestId('runtime-update-dialog')
                   await expect(dialog).toContainText('Another app is using Open-Science files')
                   await expect(dialog).toContainText('Quit the other app, then recheck.')

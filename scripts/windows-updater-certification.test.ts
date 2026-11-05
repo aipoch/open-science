@@ -135,6 +135,43 @@ describe('Windows updater certification', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('allows a cold occupancy scan to finish within the production scan budget', async () => {
+    vi.useFakeTimers()
+    let held = true
+    let first = true
+    try {
+      const result = certifyForeignProcessRecovery({
+        invoke: async () => {
+          if (first) {
+            first = false
+            await new Promise((resolve) => setTimeout(resolve, 70_000))
+          }
+          return held
+            ? {
+                state: 'ready',
+                reason: 'installation-busy',
+                recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+              }
+            : { state: 'ready', recovery: { canRetryInstall: true } }
+        },
+        acquireLock: async () => ({
+          pid: 123,
+          release: async () => {
+            held = false
+          }
+        })
+      })
+      const completed = result.then(
+        (value) => ({ value }),
+        (error) => ({ error })
+      )
+      await vi.advanceTimersByTimeAsync(70_000)
+      expect(await completed).toHaveProperty('value.length', 3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('releases its owned handle even if the application fails to identify the blocker', async () => {
     const release = vi.fn(async () => undefined)
     await expect(
