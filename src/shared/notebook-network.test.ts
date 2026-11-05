@@ -263,21 +263,22 @@ describe('custom public domain input', () => {
     ).toMatchObject({ kind: 'ask', source: 'explicit' })
   })
 
-  it('keeps private service grants exact-only', () => {
+  it('keeps trusted service grants exact-only and accepts literal hosts', () => {
     expect(
       normalizeNotebookNetworkSettings({
         trustedPrivateDestinations: [
           {
-            hostname: '*.example.com',
+            hostname: '127.0.0.1',
             port: 443,
-            approvedAddresses: ['10.32.0.7']
+            protocol: 'http',
+            approvedAddresses: []
           }
         ]
       }).trustedPrivateDestinations
-    ).toEqual([])
+    ).toMatchObject([{ hostname: '127.0.0.1', protocol: 'http' }])
   })
 
-  it('never permits a private DNS destination through a custom wildcard', async () => {
+  it('does not classify a private DNS answer as a policy violation', async () => {
     lookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
     const settings = normalizeNotebookNetworkSettings({ allowedDomains: ['*.example.com'] })
     expect(
@@ -285,7 +286,7 @@ describe('custom public domain input', () => {
         'data.example.com',
         443
       )
-    ).toMatchObject({ kind: 'deny', configurable: false })
+    ).toMatchObject({ kind: 'allow' })
   })
 })
 

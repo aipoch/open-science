@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
 import type { TrustedPrivateDestination } from '../../../../shared/notebook-network-settings'
-import { validateCustomAllowedDomain } from '../../../../shared/notebook-network'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -26,6 +25,7 @@ export function TrustedPrivateServices({
   const [editing, setEditing] = useState(false)
   const [hostname, setHostname] = useState('')
   const [port, setPort] = useState('443')
+  const [protocol, setProtocol] = useState<'http' | 'https'>('https')
   const [reviewed, setReviewed] = useState<TrustedPrivateDestination>()
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState('')
@@ -60,10 +60,18 @@ export function TrustedPrivateServices({
     setEditing(false)
     setHostname('')
     setPort('443')
+    setProtocol('https')
   }
   const review = async (): Promise<void> => {
-    const host = validateCustomAllowedDomain(hostname)
-    if (!host.ok || !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+    const value = hostname.trim().toLowerCase().replace(/\.$/, '')
+    let normalizedHost: string | undefined
+    try {
+      const authority = value.includes(':') && !value.startsWith('[') ? `[${value}]` : value
+      normalizedHost = new URL(`https://${authority}`).hostname.replace(/^\[|\]$/g, '')
+    } catch {
+      normalizedHost = undefined
+    }
+    if (!normalizedHost || !/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
       setError(t('Enter an exact hostname and a port from 1 to 65535.'))
       return
     }
@@ -73,8 +81,9 @@ export function TrustedPrivateServices({
     setError('')
     try {
       const result = await window.api.settings.reviewNotebookPrivateDestination({
-        hostname: host.hostname,
-        port: Number(port)
+        hostname: normalizedHost,
+        port: Number(port),
+        protocol
       })
       if (current !== generation.current) return
       if (result.ok) setReviewed(result.destination)
@@ -124,12 +133,12 @@ export function TrustedPrivateServices({
         <ul className="mt-3 divide-y divide-border">
           {rules.map((rule) => (
             <li
-              key={`${rule.hostname}:${rule.port}:${rule.managedGrantId ?? 'manual'}`}
+              key={`${rule.protocol ?? 'https'}:${rule.hostname}:${rule.port}:${rule.managedGrantId ?? 'manual'}`}
               className="flex items-start justify-between gap-3 py-3"
             >
               <div className="min-w-0 text-sm">
                 <code className="break-all">
-                  {rule.hostname}:{rule.port}
+                  {(rule.protocol ?? 'https').toUpperCase()}://{rule.hostname}:{rule.port}
                 </code>
                 <p className="mt-1 break-all text-xs text-muted-foreground">
                   {t('Approved addresses: {{addresses}}', {
@@ -150,6 +159,7 @@ export function TrustedPrivateServices({
                     invalidate()
                     setHostname(rule.hostname)
                     setPort(String(rule.port))
+                    setProtocol(rule.protocol ?? 'https')
                     setEditing(true)
                   }}
                 >
@@ -173,7 +183,7 @@ export function TrustedPrivateServices({
       ) : null}
       {editing ? (
         <div className="mt-4 space-y-4 rounded-xl border border-border p-4">
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_7rem]">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_7rem_7rem]">
             <div>
               <label htmlFor="private-hostname" className="mb-1.5 block text-sm font-medium">
                 {t('Hostname')}
@@ -209,9 +219,27 @@ export function TrustedPrivateServices({
                 }}
               />
             </div>
+            <div>
+              <label htmlFor="private-protocol" className="mb-1.5 block text-sm font-medium">
+                {t('Protocol')}
+              </label>
+              <select
+                id="private-protocol"
+                className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                value={protocol}
+                disabled={disabled}
+                onChange={(event) => {
+                  invalidate()
+                  setProtocol(event.target.value as 'http' | 'https')
+                }}
+              >
+                <option value="https">{t('HTTPS')}</option>
+                <option value="http">{t('HTTP')}</option>
+              </select>
+            </div>
           </div>
           <p id="private-service-help" className="text-xs leading-5 text-muted-foreground">
-            {t('No wildcards or IP addresses. Review checks DNS addresses, not connectivity.')}
+            {t('The rule takes effect after you save changes.')}
           </p>
           {error ? (
             <InlineNotice id="private-service-error" level="error" role="alert">
@@ -222,18 +250,16 @@ export function TrustedPrivateServices({
             <div className="space-y-2 text-sm" role="status">
               <p className="font-medium">{t('Review private access')}</p>
               <code className="block break-all">
-                {reviewed.hostname}:{reviewed.port}
+                {(reviewed.protocol ?? protocol).toUpperCase()}://{reviewed.hostname}:
+                {reviewed.port}
               </code>
-              <p className="break-all text-xs text-muted-foreground">
-                {t('Approved addresses: {{addresses}}', {
-                  addresses: reviewed.approvedAddresses.join(', ')
-                })}
-              </p>
-              <p className="leading-5">
-                {t(
-                  'Protected Notebook and Shell code can send data to this service across all projects. Address changes require another review.'
-                )}
-              </p>
+              {reviewed.approvedAddresses.length ? (
+                <p className="break-all text-xs text-muted-foreground">
+                  {t('Approved addresses: {{addresses}}', {
+                    addresses: reviewed.approvedAddresses.join(', ')
+                  })}
+                </p>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 {t('The rule takes effect after you save changes.')}
               </p>
@@ -251,9 +277,11 @@ export function TrustedPrivateServices({
                     [
                       ...rules.filter(
                         (entry) =>
-                          entry.hostname !== reviewed.hostname || entry.port !== reviewed.port
+                          entry.hostname !== reviewed.hostname ||
+                          entry.port !== reviewed.port ||
+                          (entry.protocol ?? 'https') !== (reviewed.protocol ?? protocol)
                       ),
-                      reviewed
+                      { ...reviewed, protocol }
                     ].sort((a, b) => a.hostname.localeCompare(b.hostname) || a.port - b.port)
                   )
                   close()

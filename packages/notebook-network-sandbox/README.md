@@ -35,7 +35,7 @@ See [safety and integration](#safety-and-integration) for the limits of these co
 Settings > Network
   ├─ built-in automatic-access groups
   ├─ custom public domains
-  └─ trusted private services (hostname + port + reviewed addresses)
+  └─ trusted private services (protocol + exact hostname/IP + port)
             │
             ▼
 buildNotebookNetworkPolicy() ── public approval policy + private-service grants
@@ -80,9 +80,11 @@ module.
 Policy is evaluated in this order:
 
 1. malformed hosts and explicit deny rules are rejected;
-2. all DNS answers are resolved. Non-public destinations require an exact trusted private-service
-   rule for that hostname and port, with every answer still in its reviewed address set;
-3. enabled built-in groups and custom public domains allow ordinary public requests. Turning off a
+2. only HTTPS domain requests continue through the ordinary allow/ask chain. HTTP requests and
+   literal IP destinations are hard-denied unless an exact trusted private-service rule matches the
+   protocol, hostname and port. DNS answers are used only to choose a route address; public/private,
+   loopback, metadata and host-interface classification is not performed;
+3. enabled built-in groups and custom public domains allow ordinary HTTPS requests. Turning off a
    built-in rule requires approval; it does not create a hard deny, and an exact custom grant can
    override it;
 4. unknown public destinations can use the gateway's restricted HTTPS GET/HEAD path on port 443
@@ -91,8 +93,8 @@ Policy is evaluated in this order:
 5. the Agent may call `request_network_access` for public access. An approved one-time grant is
    consumed by the next matching execution; an always grant is persisted and hot-applied.
 
-“Allow once” and “Always allow” never bypass address validation or create private-service grants.
-A stored public hostname is not proof of DNS eligibility, connectivity, credentials or TLS trust.
+“Allow once” and “Always allow” apply to HTTPS domain authorization only. A stored public hostname is
+not proof of connectivity, credentials or TLS trust.
 
 ### Shell approvals and recovery
 
@@ -124,29 +126,23 @@ mode retains its documented advisory protection boundary.
 
 ### Trusted private services
 
-Only the local Settings flow can review and save private services. Review resolves DNS without
-connecting to the service. The user sees the hostname, exact port, IP addresses and installation-wide
-permission to send data before adding the rule to the draft. Save resolves new or changed rules again;
-changed answers require another review. Concurrent private editors use a baseline check, while public
-allowlist updates retain their existing delta merge. Removing a rule works offline. Policy changes
-reset active gateway connections and invalidate pending decisions.
-
-Eligible addresses are RFC 1918 IPv4 and IPv6 unique-local service addresses, excluding current host
-interfaces and AWS's IPv6 metadata address `fd00:ec2::254`. Loopback, link-local/metadata, CGNAT,
-multicast, transition encodings, literal IP inputs, wildcard hosts and unrestricted ports remain
-unsupported. Every new connection checks every DNS answer; a subset of the reviewed set is accepted,
-but any new, public, reserved or host-interface answer rejects the private exception. Connections,
-including parent-proxy tunnels, use the validated numeric address. A private rule does not implicitly
-allow the hostname if it later resolves publicly; normal public policy applies instead.
+Only the local Settings flow can review and save private services. A rule records a protocol, exact
+hostname or literal IP and port; HTTP rules are explicit exceptions to the HTTPS default. DNS is not
+resolved during Settings review and a later DNS answer change does not revoke the rule. Concurrent
+private editors use a baseline check, while public allowlist updates retain their existing delta
+merge. Removing a rule works offline. Policy changes reset active gateway connections and invalidate
+pending decisions.
 
 Settings persists the optional `notebookNetwork.trustedPrivateDestinations` array as
-`{ hostname, port, approvedAddresses }` in the existing local `settings.json` transaction. Missing
-means no private grants. Existing public entries are never promoted; no database migration or settings
-version bump is required. Session packages and data-folder relocation do not transfer Settings.
+`{ protocol, hostname, port, approvedAddresses }` in the existing local `settings.json` transaction.
+Missing protocol values are treated as HTTPS for compatibility. `approvedAddresses` is retained for
+old settings and grant records but is not an authorization condition. Missing means no private grants.
+Existing public entries are never promoted; no database migration or settings version bump is required.
+Session packages and data-folder relocation do not transfer Settings.
 Manually copying the whole configuration also copies its trust grants: review or remove private
-rules before using that configuration on another machine/network. This is address-set trust, not
-cryptographic service identity; HTTPS certificate checks still apply, and raw TCP/HTTP services
-remain the user's explicit trust decision.
+rules before using that configuration on another machine/network. This is endpoint trust, not
+cryptographic service identity; HTTPS certificate checks still apply, and raw HTTP services remain
+the user's explicit trust decision.
 
 Private rules do not authorize conversation-link previews/icons, model endpoints, Connectors, remote
 Compute hosts or agent-native tools outside the application-owned execution boundary. Rules do not

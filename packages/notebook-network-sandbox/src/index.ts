@@ -175,6 +175,7 @@ class NotebookNetworkSandbox {
         try {
           const allowed = await command.onNetworkAccessRequest({
             host: request.host,
+            ...(request.protocol ? { protocol: request.protocol } : {}),
             ...(request.addresses
               ? {
                   addresses: request.addresses,
@@ -566,7 +567,5 @@ export type {
 
 export {
   reviewPrivateDestination,
-  reviewNetworkDestination,
-  networkDestinationRisks,
   validPrivateDestination
 } from '../runtime/src/gateway/address-policy.js'

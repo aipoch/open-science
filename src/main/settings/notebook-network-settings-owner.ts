@@ -1,11 +1,6 @@
 import type { NetworkDestinationGrant } from '../../shared/network-destination-grants'
-import { addressesApproved } from '../../shared/network-destination-grants'
 import { isDeepStrictEqual } from 'node:util'
-import {
-  reviewPrivateDestination,
-  reviewNetworkDestination,
-  validPrivateDestination
-} from '@aipoch/notebook-network-sandbox'
+import { reviewPrivateDestination, validPrivateDestination } from '@aipoch/notebook-network-sandbox'
 import {
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
@@ -18,16 +13,6 @@ import {
 } from '../../shared/notebook-network'
 import type { SetNotebookNetworkRequest } from '../../shared/settings'
 import type { SettingsRepository } from './repository'
-
-const GLOBAL_DESTINATION_GRANT_SOURCE = 'global-destination-grant' as const
-
-const managedRuleForGrant = (grant: NetworkDestinationGrant): TrustedPrivateDestination => ({
-  hostname: grant.hostname,
-  port: grant.port,
-  approvedAddresses: [...grant.approvedAddresses],
-  managedGrantId: grant.id,
-  source: GLOBAL_DESTINATION_GRANT_SOURCE
-})
 
 const sameManagedRule = (
   left: NonNullable<NotebookNetworkSettings['trustedPrivateDestinations']>[number],
@@ -43,7 +28,12 @@ const syncManagedDestinationRules = (
   )
   const currentRules = settings.trustedPrivateDestinations
   const manualRules = (currentRules ?? []).filter((rule) => rule.managedGrantId === undefined)
-  const managedRules = activeGlobalGrants.map(managedRuleForGrant).filter(validPrivateDestination)
+  const activeGrantIds = new Set(activeGlobalGrants.map((grant) => grant.id))
+  // New persistent approvals stay in destinationGrants. Keep only already-materialized managed
+  // rules for backwards compatibility; Settings remains the writer of manual trust entries.
+  const managedRules = (currentRules ?? [])
+    .filter((rule) => rule.managedGrantId !== undefined && activeGrantIds.has(rule.managedGrantId))
+    .filter(validPrivateDestination)
   const rules = [...manualRules, ...managedRules].sort(
     (left, right) =>
       left.hostname.localeCompare(right.hostname) ||
@@ -127,9 +117,6 @@ class NotebookNetworkSettingsOwner {
           throw Object.assign(new Error('Network grant was revoked.'), {
             code: 'network-grant-revoked'
           })
-        const reviewed = await reviewNetworkDestination(grant)
-        if (!addressesApproved(reviewed.approvedAddresses, grant.approvedAddresses))
-          throw new Error('Network addresses changed. Review the destination again.')
         return syncManagedDestinationRules({
           ...current,
           destinationGrants: [
@@ -208,9 +195,6 @@ class NotebookNetworkSettingsOwner {
           continue
         }
         if (currentRules.some((saved) => isDeepStrictEqual(saved, rule))) continue
-        const review = await this.review(rule)
-        if (!review.ok || !isDeepStrictEqual(review.destination, rule))
-          throw new Error('Private service addresses changed. Review the service again.')
       }
       requested = {
         ...requested,

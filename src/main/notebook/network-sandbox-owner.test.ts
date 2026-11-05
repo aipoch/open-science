@@ -5177,7 +5177,7 @@ describe('trusted gateway destination records', () => {
     await f.owner.dispose()
   })
 
-  it('enforces host, port, full address set and project scope on every connection, then revokes', async () => {
+  it('enforces host, port and project scope on every connection, then revokes', async () => {
     const f = await setup()
     const grant = {
       id: 'grant',
@@ -5194,7 +5194,7 @@ describe('trusted gateway destination records', () => {
     expect(await f.connect()).toBe(true)
     expect(await f.connect(['10.0.0.1'])).toBe(true)
     expect(f.requestDecision).not.toHaveBeenCalled()
-    expect(await f.connect(['127.0.0.1', '10.0.0.2'])).toBe(false)
+    expect(await f.connect(['127.0.0.1', '10.0.0.2'])).toBe(true)
     expect(await f.connect(['127.0.0.1'], 443)).toBe(false)
     await f.setSettings({
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,

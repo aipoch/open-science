@@ -94,7 +94,8 @@ type CommandGatewayOptions = Readonly<{
     host: string,
     port: number,
     purpose?: 'probe' | 'block',
-    canResume?: () => boolean
+    canResume?: () => boolean,
+    protocol?: 'http' | 'https'
   ) => Promise<GatewayDecision>
   inspection?: Readonly<{
     certificate: (host: string) => Promise<SecureContext>
@@ -806,12 +807,13 @@ class CommandGateway {
     port: number,
     generation: number,
     purpose: 'probe' | 'block' = 'block',
-    connectionAlive: () => boolean = () => true
+    connectionAlive: () => boolean = () => true,
+    protocol: 'http' | 'https' = 'https'
   ): Promise<GatewayDecision> {
     const canResume = (): boolean =>
       this.#active && generation === this.#connectionGeneration && connectionAlive()
     try {
-      const decision = await this.#options.decide(host, port, purpose, canResume)
+      const decision = await this.#options.decide(host, port, purpose, canResume, protocol)
       if (!canResume()) {
         return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
       }
@@ -868,7 +870,8 @@ class CommandGateway {
       port,
       generation,
       'block',
-      () => !response.destroyed && !request.socket.destroyed
+      () => !response.destroyed && !request.socket.destroyed,
+      target.protocol === 'https:' ? 'https' : 'http'
     )
     if (!decision.allowed) {
       rejectHttp(response, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
@@ -999,7 +1002,8 @@ class CommandGateway {
       destination.port,
       generation,
       'probe',
-      () => !client.destroyed
+      () => !client.destroyed,
+      destination.port === 80 ? 'http' : 'https'
     )
     if (
       !decision.allowed &&
@@ -1017,7 +1021,8 @@ class CommandGateway {
         destination.port,
         generation,
         'block',
-        () => !client.destroyed
+        () => !client.destroyed,
+        destination.port === 80 ? 'http' : 'https'
       )
       if (!decision.allowed) {
         rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
@@ -1450,7 +1455,14 @@ class CommandGateway {
       throw new Error('Unsupported SOCKS address type.')
     }
     const port = (await reader.receive(2)).readUInt16BE(0)
-    const decision = await this.#authorize(host, port, generation, 'block', () => !client.destroyed)
+    const decision = await this.#authorize(
+      host,
+      port,
+      generation,
+      'block',
+      () => !client.destroyed,
+      port === 80 ? 'http' : 'https'
+    )
     if (!decision.allowed) {
       client.end(Buffer.from([5, 2, 0, 1, 0, 0, 0, 0, 0, 0]))
       return

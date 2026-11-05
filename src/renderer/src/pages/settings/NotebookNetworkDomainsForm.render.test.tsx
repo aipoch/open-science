@@ -533,7 +533,12 @@ it('does not replace completed setup with a late preparation status response', a
 })
 
 describe('private service draft review', () => {
-  const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+  const rule = {
+    hostname: 'lab.internal.example',
+    port: 8443,
+    protocol: 'https' as const,
+    approvedAddresses: ['10.32.0.7']
+  }
   const start = async (): Promise<void> => {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await act(async () => button('Add service').click())
@@ -548,7 +553,7 @@ describe('private service draft review', () => {
     expect(button('Save changes').disabled).toBe(true)
     await act(async () => button('Review service').click())
     expect(container.textContent).toContain('10.32.0.7')
-    expect(container.textContent).toContain('across all projects')
+    expect(container.textContent).toContain('The rule takes effect after you save changes.')
     expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
     await typeInput(container.querySelector('#private-port')!, '443')
     expect(button('Add to trusted services')).toBeUndefined()
@@ -622,7 +627,8 @@ describe('private service draft review', () => {
     )
     expect(window.api.settings.reviewNotebookPrivateDestination).toHaveBeenCalledExactlyOnceWith({
       hostname: rule.hostname,
-      port: rule.port
+      port: rule.port,
+      protocol: 'https'
     })
     expect(save).not.toHaveBeenCalled()
     await act(async () => button('Add to trusted services').click())

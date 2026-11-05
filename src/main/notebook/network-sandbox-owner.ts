@@ -2,7 +2,7 @@ import {
   destinationGrantAllows,
   type NetworkBlockEvidence
 } from '../../shared/network-destination-grants'
-import { NotebookNetworkSandbox, networkDestinationRisks } from '@aipoch/notebook-network-sandbox'
+import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, realpathSync, type Stats } from 'node:fs'
@@ -89,6 +89,7 @@ type NotebookNetworkDecisionRequest = Readonly<{
   projectId: string
   hostname: string
   port?: number
+  protocol?: 'http' | 'https'
   runtime?: NotebookSandboxInvocation['runtime']
   reason?: string
   allowOnce: boolean
@@ -692,6 +693,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             // This snapshot is emitted by the trusted gateway, never parsed from process output.
             const hostname = request.host
             const port = request.port ?? 443
+            const protocol = request.protocol ?? 'https'
             const addresses = [...request.addresses]
             if (!addresses.length) return false
             if (this.options.hasFullAccess?.(invocation.sessionId)) return true
@@ -700,7 +702,14 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
             const grants = settings.destinationGrants ?? []
             if (
               grants.some((grant) =>
-                destinationGrantAllows(grant, invocation.projectId, hostname, port, addresses)
+                destinationGrantAllows(
+                  grant,
+                  invocation.projectId,
+                  hostname,
+                  port,
+                  addresses,
+                  protocol
+                )
               )
             )
               return true
@@ -713,7 +722,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
                 (grant) =>
                   grant.hostname === hostname &&
                   grant.port === port &&
-                  addresses.every((address) => grant.approvedAddresses.includes(address))
+                  (grant.protocol ?? 'https') === protocol
               )
             )
               return true
@@ -727,10 +736,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               !exactTarget
             )
               return true
-            const destinationKey = JSON.stringify([hostname, port])
+            const destinationKey = JSON.stringify([hostname, port, protocol])
             const once = exactExecutionGrants.get(destinationKey)
-            if (once && addresses.every((address) => once.includes(address))) return true
-            const key = JSON.stringify([executionGeneration, hostname, port, addresses])
+            if (once) return true
+            const key = JSON.stringify([executionGeneration, hostname, port, protocol])
             const previous = decisions.get(key)
             if (previous) return previous
             if (request.purpose === 'probe') return false
@@ -738,10 +747,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               recordId: randomUUID(),
               revision: 0,
               addresses,
-              risks: networkDestinationRisks(addresses),
-              blockReason: exactTarget
-                ? 'addresses-or-scope-changed'
-                : (request.reason ?? 'approval-required')
+              risks: [],
+              blockReason: request.reason ?? 'approval-required'
             }
             const signal = activeSignal ?? new AbortController().signal
             let approvedOnceAddresses: readonly string[] = addresses
@@ -753,6 +760,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               projectId: invocation.projectId,
               hostname,
               port,
+              protocol,
               runtime: invocation.runtime,
               allowOnce: true,
               executionId: activeExecutionId,
@@ -1231,7 +1239,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           {
             message:
               saved.revokedAt === undefined
-                ? 'Access was saved. Check side effects and retry explicitly; each new connection rechecks addresses.'
+                ? 'Access was saved. Check side effects and retry explicitly.'
                 : 'Access was revoked. Do not retry without new user approval.'
           }
         )
@@ -1277,7 +1285,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (!request.signal?.aborted && this.options.hasFullAccess?.(request.sessionId)) {
       return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
         message:
-          'The current session allows public network access without approval. Private-network and address checks still apply.'
+          'The current session allows public network access without approval. Explicit deny rules still apply.'
       })
     }
     const settings = normalizeNotebookNetworkSettings(
@@ -1370,11 +1378,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   applySettings(settings: NotebookNetworkSettings): void {
     this.settings = normalizeNotebookNetworkSettings(settings)
     try {
-      if (this.initialized)
-        this.sandbox!.updatePolicy({
-          ...buildNotebookNetworkPolicy(this.settings),
-          reviewDestinations: true
-        })
+      if (this.initialized) this.sandbox!.updatePolicy(buildNotebookNetworkPolicy(this.settings))
       this.log.info('network policy applied', {
         active: this.initialized,
         customDomainCount: this.settings.allowedDomains.length,
@@ -2385,7 +2389,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
   ): NotebookNetworkSandbox {
     return new NotebookNetworkSandbox({
       packaged: this.options.packaged,
-      policy: { ...buildNotebookNetworkPolicy(settings), reviewDestinations: true },
+      policy: buildNotebookNetworkPolicy(settings),
       resources: { root: this.options.resourceRoot },
       ...(parentProxy ? { parentProxy } : {}),
       ...(this.trustBundle
@@ -2411,8 +2415,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
     if (request.signal.aborted) return Promise.resolve(false)
     const normalized = validateCustomAllowedDomain(request.host)
     if (!normalized.ok || !executionActive) return Promise.resolve(false)
-    // The gateway still enforces private-address and explicit-deny rules. Read live authority
-    // on every connection/probe so another session or a later downgrade cannot inherit access.
+    // Read live authority on every connection/probe so another session or a later downgrade
+    // cannot inherit access.
     if (this.options.hasFullAccess?.(sessionId)) return Promise.resolve(true)
     if (allowedNetworkHosts.has(normalized.hostname)) return Promise.resolve(true)
     if (commandGrants.has(normalized.hostname)) return Promise.resolve(true)

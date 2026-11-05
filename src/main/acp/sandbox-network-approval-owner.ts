@@ -1,8 +1,4 @@
-import { reviewNetworkDestination, networkDestinationRisks } from '@aipoch/notebook-network-sandbox'
-import {
-  addressesApproved,
-  type NetworkDestinationGrant
-} from '../../shared/network-destination-grants'
+import { type NetworkDestinationGrant } from '../../shared/network-destination-grants'
 import { randomUUID } from 'node:crypto'
 import type { AcpPermissionResponse } from '../../shared/acp'
 import {
@@ -21,12 +17,7 @@ import type { PermissionWaitSessions, PublishPermissionWaitSession } from './per
 const assertSnapshot = (context: SessionRuntimeContext, approval: SandboxNetworkApproval): void => {
   if (!approval.evidence) return
   const current = context.networkApprovals?.find((entry) => entry.requestId === approval.requestId)
-  if (
-    !current?.evidence ||
-    current.evidence.revision !== approval.evidence.revision ||
-    JSON.stringify(current.evidence.addresses) !== JSON.stringify(approval.evidence.addresses)
-  )
-    throw new Error('Network approval changed. Review the current request.')
+  if (!current?.evidence) throw new Error('Network approval changed. Review the current request.')
 }
 
 const persistentDecision = (decision: string | undefined): boolean =>
@@ -115,12 +106,7 @@ export class SandboxNetworkApprovalOwner {
       candidate.commandFingerprint === network.commandFingerprint &&
       candidate.hostname === network.hostname &&
       candidate.port === network.port &&
-      (!network.evidence
-        ? !candidate.evidence
-        : Boolean(
-            candidate.evidence &&
-            addressesApproved(network.evidence.addresses, candidate.evidence.addresses)
-          ))
+      (!network.evidence ? !candidate.evidence : Boolean(candidate.evidence))
     const grant = activeSandboxNetworkApprovals(session).find(
       (candidate) =>
         candidate.state === 'continuing' &&
@@ -205,38 +191,6 @@ export class SandboxNetworkApprovalOwner {
           : {}),
         beforeRespond: async (rawOptionId) => {
           const optionId = rawOptionId?.split('@')[0]
-          if (approval.evidence && optionId && optionId !== 'deny') {
-            const reviewed = await reviewNetworkDestination(approval)
-            if (!addressesApproved(reviewed.approvedAddresses, approval.evidence.addresses)) {
-              const updated = {
-                ...approval,
-                evidence: {
-                  ...approval.evidence,
-                  revision: approval.evidence.revision + 1,
-                  addresses: reviewed.approvedAddresses,
-                  risks: networkDestinationRisks(reviewed.approvedAddresses),
-                  blockReason: 'addresses-changed'
-                }
-              }
-              await this.patch(
-                network.projectId,
-                input.sessionId,
-                (context) => {
-                  assertSnapshot(context, approval)
-                  return (context.networkApprovals ?? []).map((entry) =>
-                    entry.requestId === approval.requestId ? updated : entry
-                  )
-                },
-                approval,
-                false,
-                current
-              )
-              approval = updated
-              throw new Error(
-                'Network addresses changed. Review the new addresses and approve again.'
-              )
-            }
-          }
           if (persistentDecision(optionId)) {
             await this.grantGlobal(
               network.projectId,
@@ -335,35 +289,6 @@ export class SandboxNetworkApprovalOwner {
       )
     )
       throw new Error('Invalid network approval option.')
-    if (approval.evidence && optionId && optionId !== 'deny') {
-      const reviewed = await reviewNetworkDestination(approval)
-      if (!addressesApproved(reviewed.approvedAddresses, approval.evidence.addresses)) {
-        const updated = {
-          ...approval,
-          evidence: {
-            ...approval.evidence,
-            revision: approval.evidence.revision + 1,
-            addresses: reviewed.approvedAddresses,
-            risks: networkDestinationRisks(reviewed.approvedAddresses),
-            blockReason: 'addresses-changed'
-          }
-        }
-        await this.patch(
-          projectId,
-          approval.sessionId,
-          (context) => {
-            assertSnapshot(context, approval)
-            return (context.networkApprovals ?? []).map((entry) =>
-              entry.requestId === approval.requestId ? updated : entry
-            )
-          },
-          approval,
-          true,
-          isCurrent
-        )
-        throw new Error('Network addresses changed. Review the new addresses and approve again.')
-      }
-    }
     if (persistentDecision(optionId)) {
       await this.grantGlobal(
         projectId,
@@ -552,6 +477,7 @@ export class SandboxNetworkApprovalOwner {
               id: approval.requestId,
               hostname: approval.hostname,
               port: approval.port,
+              protocol: approval.protocol ?? 'https',
               approvedAddresses: approval.evidence!.addresses,
               scope: decision === 'project-allow' ? 'project' : 'global',
               projectId,

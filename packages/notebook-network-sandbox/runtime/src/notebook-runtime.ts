@@ -45,7 +45,6 @@ import {
 type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
-  reviewDestinations?: boolean
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
@@ -59,6 +58,7 @@ type NetworkRuntimeConfig = Readonly<{
 }>
 
 type NetworkAskCallback = (request: {
+  protocol?: 'http' | 'https'
   addresses?: readonly string[]
   reason?: string
   policyAllowed?: boolean
@@ -175,7 +175,6 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
-    reviewDestinations: config.reviewDestinations,
     trustedPrivateDestinations: config.trustedPrivateDestinations,
     allowedDomains: config.allowedDomains,
     askDomains: config.askDomains,
@@ -188,7 +187,8 @@ const decide = async (
   host: string,
   port: number,
   purpose: 'probe' | 'block' = 'block',
-  connectionAlive?: () => boolean
+  connectionAlive?: () => boolean,
+  protocol: 'http' | 'https' = 'https'
 ): Promise<GatewayDecision> => {
   const context = commandContexts.get(commandId)
   const epoch = context?.epoch
@@ -204,7 +204,7 @@ const decide = async (
     violations.record(commandId, `deny network-outbound ${host}:${port} (policy unavailable)`)
     return { allowed: false, message: NETWORK_POLICY_BLOCKED }
   }
-  const verdict = await policy.inspect(host, port)
+  const verdict = await policy.inspect(host, port, protocol)
   if (!current()) return expired
   if (verdict.kind === 'allow' && !verdict.addresses)
     return { allowed: true, address: verdict.address }
@@ -219,6 +219,7 @@ const decide = async (
   try {
     allowed =
       (await approval?.({
+        protocol,
         host: verdict.host ?? host,
         ...(verdict.addresses
           ? {
@@ -313,8 +314,8 @@ const wrap = async (
       throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
     }
     const gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       credentials,
       ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
       parentProxy: parentSettings(config)
@@ -454,8 +455,8 @@ const wrap = async (
       }
     }
     gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       ...(certificateAuthority
         ? {
             inspection: {

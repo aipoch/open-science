@@ -18,6 +18,7 @@ export type SandboxNetworkApproval = Readonly<{
   commandFingerprint: string
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
   runtime: 'bash' | 'python' | 'r' | 'repl'
   originatingPromptMessageId: string
   agentFrameId: string
@@ -39,6 +40,7 @@ export const sandboxNetworkApprovalRequest = (
   rawInput: {
     notebookNetworkApproval: {
       hostname: approval.hostname,
+      protocol: approval.protocol ?? 'https',
       ...(approval.evidence ? { ...approval.evidence } : {}),
       port: approval.port,
       runtime: approval.runtime,

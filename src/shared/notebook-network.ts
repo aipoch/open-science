@@ -387,7 +387,8 @@ export const buildNotebookNetworkPolicy = (
 }
 import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'
 
-// Shape validation only: the main/runtime owner classifies addresses and rechecks DNS.
+// Shape validation only. Trusted entries are explicit protocol/host exceptions;
+// runtime access does not depend on a DNS address snapshot.
 export const normalizeTrustedPrivateDestinations = (
   value: unknown
 ): TrustedPrivateDestination[] => {
@@ -395,28 +396,29 @@ export const normalizeTrustedPrivateDestinations = (
   const entries = new Map<string, TrustedPrivateDestination>()
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
-    const { hostname, port, approvedAddresses, managedGrantId, source } = item
-    const host = typeof hostname === 'string' ? validateCustomAllowedDomain(hostname) : undefined
+    const { hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
+    const host = typeof hostname === 'string' ? normalizeNetworkHost(hostname) : undefined
     const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
     const hasManagedSource = source === 'global-destination-grant'
     if (
       !host?.ok ||
+      (protocol !== undefined && protocol !== 'http' && protocol !== 'https') ||
       !Number.isInteger(port) ||
       port < 1 ||
       port > 65535 ||
       !Array.isArray(approvedAddresses) ||
-      !approvedAddresses.length ||
       !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45) ||
       hasManagedId !== hasManagedSource ||
       (managedGrantId !== undefined && !hasManagedId)
     )
       continue
-    const key = `${host.hostname}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
+    const key = `${host.hostname}:${port}:${protocol ?? 'https'}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
     if (entries.has(key)) return []
     entries.set(key, {
       hostname: host.hostname,
       port,
+      ...(protocol !== undefined ? { protocol } : {}),
       approvedAddresses: uniqueSorted(approvedAddresses),
       ...(hasManagedId ? { managedGrantId, source: 'global-destination-grant' as const } : {})
     })
@@ -424,4 +426,17 @@ export const normalizeTrustedPrivateDestinations = (
   return [...entries.values()].sort(
     (a, b) => a.hostname.localeCompare(b.hostname) || a.port - b.port
   )
+}
+
+const normalizeNetworkHost = (value: string): { ok: true; hostname: string } | { ok: false } => {
+  const trimmed = value.trim().toLowerCase().replace(/\.$/, '')
+  if (!trimmed || /[\s/\\:@?#%]/.test(trimmed)) return { ok: false }
+  try {
+    const authority = trimmed.includes(':') && !trimmed.startsWith('[') ? `[${trimmed}]` : trimmed
+    const hostname = new URL(`https://${authority}`).hostname.replace(/^\[|\]$/g, '')
+    if (!hostname || hostname.length > 253) return { ok: false }
+    return { ok: true, hostname }
+  } catch {
+    return { ok: false }
+  }
 }

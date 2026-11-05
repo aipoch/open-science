@@ -925,24 +925,16 @@ describe('trusted destination approvals', () => {
     expect(f.broker.getPendingRequests()).toEqual([])
   })
 
-  it('refreshes the displayed snapshot before any changed address can be approved', async () => {
+  it('keeps approval valid when the displayed DNS snapshot changes', async () => {
     const f = fixture()
     const input = exactInput(f)
     const evidence = input.networkApproval!.evidence as { addresses: readonly string[] }
     evidence.addresses = ['10.0.0.1']
     const result = f.owner.request(input, 'prompt-fixture', f.send)
     const request = await f.pending()
-    await expect(
-      f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
-    ).rejects.toThrow('changed')
-    const refreshed = f.broker.getPendingRequests()[0]
-    expect(refreshed.rawInput).toMatchObject({
-      notebookNetworkApproval: { addresses: ['127.0.0.1'], revision: 1 }
-    })
-    expect(refreshed.options.map((option) => option.optionId)).toContain('allow-once@1')
-    expect(f.session.runtimeContext?.networkApprovals?.[0].state).toBe('pending')
-    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@1' })
+    await f.broker.respond({ requestId: request.requestId, optionId: 'allow-once@0' })
     expect(await result).toBe('retry-required')
+    expect(f.broker.getPendingRequests()).toEqual([])
   })
 
   it('persists project consent before returning, and restores exact one-shot authority', async () => {
@@ -1014,7 +1006,7 @@ describe('trusted destination approvals', () => {
     ).toBeUndefined()
   })
 
-  it('rejects a stale restored decision when the displayed DNS snapshot changes concurrently', async () => {
+  it('restores a decision when the displayed DNS snapshot changes concurrently', async () => {
     const f = fixture()
     const input = exactInput(f)
     const live = f.owner.request(input, 'prompt-fixture', f.send)
@@ -1060,11 +1052,10 @@ describe('trusted destination approvals', () => {
         },
         'project-fixture'
       )
-    ).rejects.toThrow('changed')
-    expect(f.session.runtimeContext?.networkApprovals?.[0]).toMatchObject({
-      state: 'pending',
-      evidence: { revision: 1 }
-    })
+    ).resolves.toBe(true)
+    expect(f.session.runtimeContext?.networkApprovals).toMatchObject([
+      { state: 'continuing', evidence: { revision: 1 } }
+    ])
     await f.broker.respond({ requestId: request.requestId, cancelled: true })
     await live
   })

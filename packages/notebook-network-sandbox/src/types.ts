@@ -1,6 +1,5 @@
 import type { TrustedPrivateDestination } from '../runtime/src/gateway/address-policy.js'
 export type NotebookNetworkPolicy = Readonly<{
-  reviewDestinations?: boolean
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   /** Overrides wildcard allows; an exact allow still represents explicit approval. */
@@ -64,6 +63,7 @@ export type NotebookSandboxProcessOutcome = Readonly<{
 }>
 
 export type NotebookNetworkAccessRequest = Readonly<{
+  protocol?: 'http' | 'https'
   addresses?: readonly string[]
   reason?: string
   policyAllowed?: boolean

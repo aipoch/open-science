@@ -15,7 +15,7 @@ const grant: NetworkDestinationGrant = {
   recordId: 'record',
   createdAt: 1
 }
-it('matches a whole approved set within the exact destination and project', () => {
+it('matches the exact destination and project without a DNS address snapshot', () => {
   expect(destinationGrantAllows(grant, 'one', 'service.test', 443, ['10.0.0.2'])).toBe(true)
   for (const [project, host, port, addresses] of [
     ['two', 'service.test', 443, ['10.0.0.1']],
@@ -24,7 +24,9 @@ it('matches a whole approved set within the exact destination and project', () =
     ['one', 'service.test', 443, ['10.0.0.1', '10.0.0.3']],
     ['one', 'service.test', 443, []]
   ] as const)
-    expect(destinationGrantAllows(grant, project, host, port, addresses)).toBe(false)
+    expect(destinationGrantAllows(grant, project, host, port, addresses)).toBe(
+      project === 'one' && host === 'service.test' && port === 443
+    )
   expect(
     destinationGrantAllows({ ...grant, scope: 'global' }, 'two', 'service.test', 443, ['10.0.0.1'])
   ).toBe(true)

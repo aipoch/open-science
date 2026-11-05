@@ -18,13 +18,18 @@ export type OpenScienceDomainGroup = Readonly<{
 export type TrustedPrivateDestination = Readonly<{
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
   approvedAddresses: readonly string[]
   /** Present only for rules derived by the trusted backend from a global grant. */
   managedGrantId?: string
   source?: 'global-destination-grant'
 }>
 
-export type PrivateDestinationRequest = Readonly<{ hostname: string; port: number }>
+export type PrivateDestinationRequest = Readonly<{
+  hostname: string
+  port: number
+  protocol?: 'http' | 'https'
+}>
 export type PrivateDestinationReview =
   | Readonly<{ ok: true; destination: TrustedPrivateDestination }>
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>

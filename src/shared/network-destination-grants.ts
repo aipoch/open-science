@@ -1,6 +1,7 @@
 export type NetworkDestination = Readonly<{
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
   approvedAddresses: readonly string[]
 }>
 
@@ -23,23 +24,23 @@ export type NetworkBlockEvidence = Readonly<{
   blockReason: string
 }>
 
-export const addressesApproved = (
-  addresses: readonly string[],
-  approved: readonly string[]
-): boolean => addresses.length > 0 && addresses.every((address) => approved.includes(address))
-
 export const destinationGrantAllows = (
   grant: NetworkDestinationGrant,
   projectId: string,
   hostname: string,
   port: number,
-  addresses: readonly string[]
-): boolean =>
-  grant.revokedAt === undefined &&
-  (grant.scope === 'global' || grant.projectId === projectId) &&
-  grant.hostname === hostname &&
-  grant.port === port &&
-  addressesApproved(addresses, grant.approvedAddresses)
+  addresses: readonly string[],
+  protocol: 'http' | 'https' = 'https'
+): boolean => {
+  void addresses
+  return (
+    grant.revokedAt === undefined &&
+    (grant.scope === 'global' || grant.projectId === projectId) &&
+    grant.hostname === hostname &&
+    grant.port === port &&
+    (grant.protocol ?? 'https') === protocol
+  )
+}
 
 export const normalizeNetworkDestinationGrants = (value: unknown): NetworkDestinationGrant[] => {
   if (!Array.isArray(value)) return []
@@ -55,11 +56,11 @@ export const normalizeNetworkDestinationGrants = (value: unknown): NetworkDestin
       (entry.revokedAt !== undefined &&
         (!Number.isSafeInteger(entry.revokedAt) || entry.revokedAt < 0)) ||
       !['project', 'global'].includes(entry.scope) ||
+      (entry.protocol !== undefined && entry.protocol !== 'http' && entry.protocol !== 'https') ||
       !Number.isInteger(entry.port) ||
       entry.port < 1 ||
       entry.port > 65535 ||
       !Array.isArray(entry.approvedAddresses) ||
-      !entry.approvedAddresses.length ||
       entry.approvedAddresses.length > 128 ||
       !entry.approvedAddresses.every(
         (address: unknown) =>
@@ -77,6 +78,9 @@ export const normalizeNetworkDestinationGrants = (value: unknown): NetworkDestin
       hostname: entry.hostname,
       port: entry.port,
       approvedAddresses: [...new Set<string>(entry.approvedAddresses)].sort(),
+      ...(entry.protocol === 'http' || entry.protocol === 'https'
+        ? { protocol: entry.protocol }
+        : {}),
       scope: entry.scope,
       projectId: entry.projectId,
       sessionId: entry.sessionId,

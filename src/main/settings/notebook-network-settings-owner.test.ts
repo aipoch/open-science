@@ -212,24 +212,16 @@ describe('NotebookNetworkSettingsOwner', () => {
   const privateRule = {
     hostname: 'lab.internal.example',
     port: 8443,
+    protocol: 'https' as const,
     approvedAddresses: ['10.32.0.7']
   }
-  it('reviews DNS and revalidates new rules before saving', async () => {
+  it('reviews shape without revalidating DNS addresses before saving', async () => {
     const state = harness()
     await expect(state.owner.review(privateRule)).resolves.toEqual({
       ok: true,
-      destination: privateRule
+      destination: { ...privateRule, approvedAddresses: [] }
     })
     lookup.mockResolvedValue([{ address: '10.32.0.8', family: 4 }])
-    await expect(
-      state.owner.set({
-        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-        trustedPrivateDestinations: [privateRule],
-        baseTrustedPrivateDestinations: []
-      })
-    ).rejects.toThrow('addresses changed')
-    expect(state.repository.setNotebookNetwork).not.toHaveBeenCalled()
-    lookup.mockResolvedValue([{ address: '10.32.0.7', family: 4 }])
     await state.owner.set({
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       trustedPrivateDestinations: [privateRule],
@@ -338,7 +330,7 @@ describe('NotebookNetworkSettingsOwner', () => {
 })
 
 describe('exact destination grants', () => {
-  it('rechecks addresses, persists an exact project grant and only accepts revocation from settings', async () => {
+  it('persists an exact project grant without rechecking DNS addresses', async () => {
     let stored: NotebookNetworkSettings = DEFAULT_NOTEBOOK_NETWORK_SETTINGS
     const repository = {
       getSettings: async (): Promise<StoredSettings> => ({
@@ -366,15 +358,16 @@ describe('exact destination grants', () => {
     await owner.allowDestination(grant)
     expect((await owner.get()).destinationGrants).toEqual([grant])
     lookup.mockResolvedValue([{ address: '10.32.0.8', family: 4 }])
-    await expect(owner.allowDestination({ ...grant, id: 'second' })).rejects.toThrow('changed')
+    await expect(owner.allowDestination({ ...grant, id: 'second' })).resolves.toBeDefined()
     await owner.set({
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       destinationGrants: [{ ...grant, id: 'forged' }]
     })
-    expect((await owner.get()).destinationGrants).toEqual([grant])
+    expect((await owner.get()).destinationGrants).toEqual([grant, { ...grant, id: 'second' }])
     await owner.set({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, revokeNetworkGrantIds: ['grant'] })
     expect((await owner.get()).destinationGrants).toEqual([
-      expect.objectContaining({ id: 'grant', revokedAt: expect.any(Number) })
+      expect.objectContaining({ id: 'grant', revokedAt: expect.any(Number) }),
+      { ...grant, id: 'second' }
     ])
     const restarted = new NotebookNetworkSettingsOwner({ repository, apply: async () => {} })
     await expect(restarted.allowDestination(grant)).rejects.toThrow('revoked')
@@ -401,7 +394,7 @@ describe('exact destination grants', () => {
     expect(state.read().trustedPrivateDestinations).toBeUndefined()
   })
 
-  it('derives a global trusted rule with matching metadata and addresses', async () => {
+  it('keeps a global destination grant separate from manual trusted services', async () => {
     const state = createHarness()
     const grant = {
       id: 'global-grant',
@@ -418,15 +411,7 @@ describe('exact destination grants', () => {
     await state.owner.allowDestination(grant)
 
     expect(state.read().destinationGrants).toEqual([grant])
-    expect(state.read().trustedPrivateDestinations).toEqual([
-      {
-        hostname: grant.hostname,
-        port: grant.port,
-        approvedAddresses: grant.approvedAddresses,
-        managedGrantId: grant.id,
-        source: 'global-destination-grant'
-      }
-    ])
+    expect(state.read().trustedPrivateDestinations).toBeUndefined()
   })
 
   it('keeps public global grants in destination grants without projecting a private rule', async () => {
@@ -530,7 +515,7 @@ describe('exact destination grants', () => {
     ])
   })
 
-  it('rebuilds a missing managed rule from an active global grant after restart', async () => {
+  it('does not materialize a missing managed rule from an active global grant after restart', async () => {
     const global = {
       id: 'global-grant',
       hostname: 'private.example',
@@ -547,16 +532,8 @@ describe('exact destination grants', () => {
       destinationGrants: [global]
     })
 
-    await expect(state.owner.get()).resolves.toMatchObject({
-      destinationGrants: [global],
-      trustedPrivateDestinations: [
-        expect.objectContaining({
-          managedGrantId: global.id,
-          approvedAddresses: global.approvedAddresses
-        })
-      ]
-    })
-    expect(state.repository.setNotebookNetwork).toHaveBeenCalled()
+    await expect(state.owner.get()).resolves.toMatchObject({ destinationGrants: [global] })
+    expect(state.repository.setNotebookNetwork).not.toHaveBeenCalled()
   })
 
   it('serializes restart repair ahead of a concurrent global revocation', async () => {
@@ -587,7 +564,6 @@ describe('exact destination grants', () => {
     })
 
     const repaired = state.owner.get()
-    await vi.waitFor(() => expect(state.repository.setNotebookNetwork).toHaveBeenCalledOnce())
     const revoked = state.owner.set({
       ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
       revokeNetworkGrantIds: [global.id]
@@ -599,7 +575,7 @@ describe('exact destination grants', () => {
     expect(state.read().destinationGrants).toEqual([
       expect.objectContaining({ id: global.id, revokedAt: expect.any(Number) })
     ])
-    expect(state.read().trustedPrivateDestinations).toEqual([])
+    expect(state.read().trustedPrivateDestinations).toBeUndefined()
   })
 
   it('rejects renderer attempts to add a backend-managed rule', async () => {
