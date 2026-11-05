@@ -229,6 +229,8 @@ test('failed provider attachment exposes original details and exports real diagn
   await error.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
   await expect(dialog.getByRole('checkbox', { name: 'Current log', exact: true })).toBeChecked()
+  // Raw backend stderr can contain non-JSON startup lines; this journey verifies the current log.
+  await dialog.getByRole('checkbox', { name: 'Backend startup logs', exact: true }).uncheck()
   await page.screenshot({ path: info.outputPath('resume-diagnostics-dialog.png'), fullPage: true })
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({

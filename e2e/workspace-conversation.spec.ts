@@ -399,7 +399,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
 
 test('keeps Memory reversible while the replacement session awaits history replay', async ({
   app
-}) => {
+}, testInfo) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
@@ -407,6 +407,24 @@ test('keeps Memory reversible while the replacement session awaits history repla
 
   await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(async () =>
+        Boolean((await window.api.sessions.loadAll()).sessions[0].activeRun)
+      )
+    )
+    .toBe(false)
+  // Completed turns release their provider. Explicitly establish the replacement under test.
+  await page.evaluate(async () => {
+    const session = (await window.api.sessions.loadAll()).sessions[0]
+    await window.api.acp.resetSessionContext({
+      sessionId: session.id,
+      projectId: session.projectId,
+      cwd: session.cwd!,
+      agentTarget: { ...session.agentConfiguration!, frameworkId: session.agentFrameworkId! },
+      memoryEnabled: true
+    })
+  })
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
   const memory = page.getByRole('menuitem', { name: 'Memory', exact: true })
@@ -441,6 +459,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
       autoReviewEnabled: false,
       pendingHistoryReplay: { kind: 'all' }
     })
+  await page.screenshot({ path: testInfo.outputPath('memory-restored-after-restart.png') })
 })
 
 test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline-conversation', async ({
