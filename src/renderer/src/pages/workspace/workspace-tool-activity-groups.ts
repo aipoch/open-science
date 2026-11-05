@@ -48,6 +48,14 @@ type RenderableActivityEntry = {
 }
 
 const WEB_SEARCH_PROVIDER_TOOL_NAME = 'websearch'
+const NOTEBOOK_TERMINAL_PHASES: ReadonlySet<string> = new Set([
+  'completed',
+  'declined',
+  'failed',
+  'limit-reached',
+  'interrupted',
+  'cancelled'
+])
 
 // Collapses consecutive activity items into one transcript group between chat messages.
 const groupConversationItems = (
@@ -400,14 +408,46 @@ const formatActivityGroupPresentationTitle = (
   const noun =
     notebookCount === 1 ? t('Notebook run') : t('{{count}} Notebook runs', { count: notebookCount })
 
-  if (phases.includes('awaiting-approval')) return t('Waiting for your approval')
-  if (phases.includes('executing')) return t('Running {{noun}}', { noun })
-  if (phases.includes('prepared')) return t('Notebook code shown')
-  if (phases.includes('declined')) return t('Declined {{noun}}', { noun })
-  if (phases.includes('failed')) return t('Failed {{noun}}', { noun })
-  if (phases.includes('limit-reached')) return t('Execution limit reached for {{noun}}', { noun })
-  if (phases.includes('interrupted')) return t('Interrupted {{noun}}', { noun })
-  if (phases.includes('cancelled')) return t('Cancelled {{noun}}', { noun })
+  const transientPhase = (['awaiting-approval', 'executing', 'prepared'] as const).find((phase) =>
+    phases.includes(phase)
+  )
+  switch (transientPhase) {
+    case 'awaiting-approval':
+      return t('Waiting for your approval')
+    case 'executing':
+      return t('Running {{noun}}', { noun })
+    case 'prepared':
+      return t('Notebook code shown')
+  }
+
+  // A group can contain many successful runs and one failed run. Only apply an outcome label when
+  // every Notebook run shares that outcome; mixed terminal results stay neutral and let the step
+  // summary show the exact failure count.
+  const uniformPhase =
+    phases.length > 0 && phases.every((phase) => phase === phases[0]) ? phases[0] : undefined
+  const outcomePhase =
+    uniformPhase ??
+    (phases.length > 1 &&
+    phases.some((phase) => phase !== 'completed') &&
+    phases.every((phase) => NOTEBOOK_TERMINAL_PHASES.has(phase))
+      ? 'mixed'
+      : undefined)
+
+  switch (outcomePhase) {
+    case 'declined':
+      return t('Declined {{noun}}', { noun })
+    case 'failed':
+      return t('Failed {{noun}}', { noun })
+    case 'limit-reached':
+      return t('Execution limit reached for {{noun}}', { noun })
+    case 'interrupted':
+      return t('Interrupted {{noun}}', { noun })
+    case 'cancelled':
+      return t('Cancelled {{noun}}', { noun })
+    case 'mixed':
+      return noun
+  }
+
   return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 
