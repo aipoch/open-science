@@ -1,8 +1,23 @@
-import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  link,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
+import * as fs from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RESOURCE_LOG_LIMIT, ResourceLogStore } from './store'
+
+vi.mock('node:fs/promises', async (original) => ({
+  ...(await original<typeof import('node:fs/promises')>())
+}))
 
 const directories: string[] = []
 const stores: ResourceLogStore[] = []
@@ -37,11 +52,43 @@ const content = async (path: string, prefix: string): Promise<string> =>
   ).join('')
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   for (const value of stores.splice(0)) await value.close(false)
   for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true })
 })
 
 describe('bounded resource journal', () => {
+  it.each([false, true])(
+    'does not overwrite a linked target inserted before marker creation (previous run: %s)',
+    async (previousRun) => {
+      const path = await directory()
+      const marker = join(path, 'open')
+      const target = join(await directory(), 'user-data')
+      const original = 'user data must survive diagnostic startup'
+      await writeFile(target, original)
+      if (previousRun) await writeFile(marker, '1')
+      const actualWrite = fs.writeFile
+      let inserted = false
+      vi.spyOn(fs, 'writeFile').mockImplementation(async (file, data, options) => {
+        if (file === marker && !inserted) {
+          inserted = true
+          await rm(marker, { force: true })
+          // Windows hard links exercise real target truncation without elevation; POSIX
+          // additionally exercises the exact symlink race from the review.
+          await (process.platform === 'win32' ? link(target, marker) : symlink(target, marker))
+        }
+        return actualWrite(file, data, options)
+      })
+      const value = store(path)
+      value.append('{"run":"new"}\n')
+      await value.flush()
+      expect(inserted).toBe(true)
+      expect(await readFile(target, 'utf8')).toBe(original)
+      expect(value.status.failed).toBe(true)
+      expect(value.status.pendingBytes).toBe(0)
+    }
+  )
+
   it('reserves bounded anomaly capacity when ordinary events exhaust both rate and queue', async () => {
     const path = await directory()
     const value = store(path, {

@@ -155,7 +155,10 @@ export class ResourceLogStore {
       for (const item of this.live) await rm(this.path(item.name))
       this.live = []
     }
-    await writeFile(this.path('open'), '1', { flag: 'w' })
+    // Previous-run evidence is sealed before replacing its marker. Unlinking never writes
+    // through a file link; exclusive creation rejects any entry inserted before the open.
+    await rm(this.path('open'), { force: true })
+    await writeFile(this.path('open'), '1', { flag: 'wx' })
   }
 
   // Serialized by the writer. A pending marker makes a partially renamed window recoverable.
