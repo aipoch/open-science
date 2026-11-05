@@ -95,9 +95,8 @@ describe('AppVersionSection', () => {
     expect(grid?.classList.contains('sm:grid-cols-2')).toBe(true)
     expect(cards).toHaveLength(6)
     expect(cards.every((card) => card.classList.contains('min-h-20'))).toBe(true)
-    expect(
-      cards.every((card) => card.classList.contains('bg-card') && card.classList.contains('ring-1'))
-    ).toBe(true)
+    expect(cards.every((card) => card.classList.contains('bg-card'))).toBe(true)
+    expect(cards.every((card) => card.classList.contains('border-border'))).toBe(true)
     expect(cards.every((card) => card.classList.contains('rounded-lg'))).toBe(true)
   })
 
