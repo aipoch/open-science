@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile, rm, symlink, lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
@@ -196,35 +196,31 @@ it('cleans snapshots expanded by staged image references beyond the original inp
   expect(await exists(join(saved.directory, 'session.json'))).toBe(false)
 })
 
-it('cleans durable film deletion receipts when the owning session is permanently deleted', async () => {
+it('deletes film files and empty scope directories without writing a deletion record', async () => {
   const { root, owner } = await fixture()
   const { deleteStoredResearchFilms } = await import('./stored-presentation')
   const saved = await presentation(root, 'session')
   await deleteStoredResearchFilms(root, { projectId: 'project', sessionId: 'session' })
-  expect(await exists(join(saved.base, 'deleted.json'))).toBe(true)
+  await expect(lstat(saved.base)).rejects.toMatchObject({ code: 'ENOENT' })
+  await deleteStoredResearchFilms(root, { projectId: 'project', sessionId: 'session' })
   await owner.deleteSessions(['session'])
-  expect(await exists(join(saved.base, 'deleted.json'))).toBe(false)
-  expect(await exists(join(saved.base, 'latest.json'))).toBe(false)
+  await expect(lstat(saved.base)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-it('retries a partially removed live film from its deletion receipt without deleting a new result', async () => {
-  const { root, owner } = await fixture()
-  const old = await presentation(root, 'session')
-  const newer = await presentation(root, 'session')
-  const id = old.directory.split(/[\\/]/).at(-1)!
-  await rm(join(old.directory, 'session.json'))
-  await writeFile(
-    join(old.base, 'deleted.json'),
-    JSON.stringify({ provenance: { projectId: 'project', sessionId: 'session' }, ids: [id] })
-  )
-  await owner.reconcileSessions(['session'])
-  expect(await exists(join(old.directory, 'output/player.html'))).toBe(false)
-  expect(await exists(join(newer.directory, 'output/player.html'))).toBe(true)
-  expect(await exists(join(old.base, 'deleted.json'))).toBe(true)
+it('removes an interrupted stale latest pointer without a deletion record', async () => {
+  const { root } = await fixture()
+  const { deleteStoredResearchFilms, readStoredResearchFilm } =
+    await import('./stored-presentation')
+  const saved = await presentation(root, 'session')
+  await rm(saved.directory, { recursive: true })
+  const request = { projectId: 'project', sessionId: 'session' }
+  expect(await readStoredResearchFilm(root, request)).toBeUndefined()
+  await deleteStoredResearchFilms(root, request)
+  await expect(lstat(saved.base)).rejects.toMatchObject({ code: 'ENOENT' })
 })
 
-it('rejects imported-film symlinks, retains the deletion receipt and retries after the obstruction is removed', async () => {
-  const { root, owner } = await fixture()
+it('rejects imported-film symlinks without deleting local films and allows an explicit retry', async () => {
+  const { root } = await fixture()
   const { deleteStoredResearchFilms } = await import('./stored-presentation')
   const saved = await presentation(root, 'session')
   const id = saved.directory.split(/[\\/]/).at(-1)!
@@ -234,13 +230,13 @@ it('rejects imported-film symlinks, retains the deletion receipt and retries aft
   const parent = join(root, 'artifacts', 'project', 'session', '.research-films')
   await mkdir(parent, { recursive: true })
   await symlink(outside, join(parent, id), process.platform === 'win32' ? 'junction' : 'dir')
-  await expect(
-    deleteStoredResearchFilms(root, { projectId: 'project', sessionId: 'session' }, id)
-  ).rejects.toThrow('Unsafe imported')
-  expect(await exists(join(saved.base, 'deleted.json'))).toBe(true)
+  const request = { projectId: 'project', sessionId: 'session' }
+  await expect(deleteStoredResearchFilms(root, request, id)).rejects.toThrow('Unsafe imported')
+  expect(await exists(join(saved.base, 'deleted.json'))).toBe(false)
+  expect(await exists(join(saved.directory, 'output/player.html'))).toBe(true)
   expect(await readFile(join(outside, 'player.html'), 'utf8')).toBe('keep')
   await rm(join(parent, id))
-  await owner.reconcileSessions(['session'])
-  expect(await exists(join(saved.base, 'latest.json'))).toBe(false)
+  await deleteStoredResearchFilms(root, request, id)
+  await expect(lstat(saved.base)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readFile(join(outside, 'player.html'), 'utf8')).toBe('keep')
 })

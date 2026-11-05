@@ -1,8 +1,3 @@
-import {
-  researchFilmDeletionSchema,
-  researchFilmScopeKey,
-  cleanupDeletedResearchFilms
-} from './stored-presentation'
 import type { Stats } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
@@ -113,14 +108,7 @@ export function createResearchFilmLifecycle(options: {
           await rm(join(base, 'latest.json'), { force: true })
         await rm(directory, { recursive: true, force: true })
       }
-      const deletion = researchFilmDeletionSchema.safeParse(
-        await readReceipt(join(base, 'deleted.json'), 1024 * 1024)
-      )
-      if (deletion.success && researchFilmScopeKey(deletion.data.provenance) === key) {
-        await cleanupDeletedResearchFilms(root, deletion.data.provenance, deletion.data.ids)
-        if (remove(deletion.data.provenance.sessionId))
-          await rm(join(base, 'deleted.json'), { force: true })
-      }
+      await rm(join(base, 'deleted.json'), { force: true })
       // Preserve unrecognized files instead of recursively removing an unproven owner.
       await rmdir(base).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOTEMPTY' && error.code !== 'ENOENT') throw error

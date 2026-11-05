@@ -6,7 +6,7 @@ import { UploadRepository } from '../uploads/repository'
 import { ProvenanceMessageSnapshotRepository } from '../artifacts/provenance-message-snapshot'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, writeFile, rm, readdir, utimes } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, rm, readdir, utimes, lstat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { zipSync } from 'fflate'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -24,7 +24,7 @@ import {
 } from '../research-video/stored-presentation'
 import { createResearchVideoPresentationOwner } from '../research-video/presentation'
 import { SessionPackageService } from './service'
-import { captureResearchFilms, validateResearchFilms } from './research-films'
+import { appendResearchFilms, captureResearchFilms, validateResearchFilms } from './research-films'
 import { readPackageArchive } from './archive'
 import type { SessionPackageManifest, PackageSelectionSummary } from '../../shared/session-package'
 import type { PackageRecords } from './records-contract'
@@ -193,7 +193,7 @@ it('round-trips all branches, plays without generation, forwards opt-in films an
   const owner = createResearchVideoPresentationOwner({
     dataRoot: () => f.root,
     loadSession: (p, s) => f.repository.loadSession(p, s),
-    loadImportedFilm: (r) => f.service.readResearchFilm(r),
+    loadImportedFilm: (r, options) => f.service.readResearchFilm(r, options),
     models: { acquireUse } as never,
     generate,
     writeScreenplay,
@@ -276,22 +276,171 @@ it('chooses the newest local completion per branch, including legacy unscoped re
   expect(captured.films[0].title).toBe('Newer')
 })
 
-it('rejects a film changed during selection without replacing the previous export', async () => {
+it('omits a film changed during selection while exporting the Session and healthy branches', async () => {
   const f = await setup(),
     session = (await f.repository.loadSession('project', 'session'))!
   const directory = await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+  await saveFilm(f.root, session, session.conversationGraph!.branches[1].id, 'Healthy')
   const archive = join(f.root, 'previous.science')
-  await writeFile(archive, 'previous')
-  await expect(
-    f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
-      selectFiles: async () => {
-        await writeFile(join(directory, 'output/player.html'), 'Changed film')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: async () => {
+      await writeFile(join(directory, 'output/player.html'), 'Changed film')
+      return include()
+    }
+  })
+  const { manifest, records } = await unpack(archive, join(f.root, 'changed-export'))
+  expect(records.researchFilms?.map((film) => film.title)).toEqual(['Healthy'])
+  expect(
+    manifest.inventory.filter((entry) => entry.storageKey?.includes('.research-films'))
+  ).toHaveLength(2)
+  expect((await f.service.importFrom(archive)).sessionId).toBeDefined()
+})
+
+it.each(['receipt', 'ownership', 'empty-player', 'missing-source'])(
+  'exports the Session without a film with damaged %s',
+  async (damage) => {
+    const f = await setup(),
+      session = (await f.repository.loadSession('project', 'session'))!
+    const directory = await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+    if (damage === 'receipt') await writeFile(join(dirname(directory), 'latest.json'), '{')
+    else if (damage === 'ownership') await writeFile(join(directory, 'session.json'), '{')
+    else if (damage === 'empty-player') await writeFile(join(directory, 'output/player.html'), '')
+    else await rm(join(directory, 'output/sources.zip'))
+    const archive = join(f.root, 'without-film.science')
+    await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+      selectFiles: async (_files, _signal, summary) => {
+        expect(summary?.researchFilms).toBeUndefined()
         return include()
       }
     })
-  ).rejects.toThrow('changed during export')
-  expect(await readFile(archive, 'utf8')).toBe('previous')
+    const { manifest, records } = await unpack(archive, join(f.root, 'without-film'))
+    expect(records.researchFilms).toBeUndefined()
+    expect(manifest.requiredFeatures).not.toContain('research-film')
+    expect(manifest.inventory.some((entry) => entry.storageKey?.includes('.research-films'))).toBe(
+      false
+    )
+  }
+)
+
+it('skips damaged imported film copies and retained film objects when exporting and forking', async () => {
+  const f = await setup(),
+    session = (await f.repository.loadSession('project', 'session'))!
+  for (const [index, branch] of session.conversationGraph!.branches.entries())
+    await saveFilm(f.root, session, branch.id, `Branch ${index}`)
+  const archive = join(f.root, 'imported-films.science')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: include
+  })
+  const imported = await f.service.importFrom(archive)
+  const origin = await f.service.readOrigin(imported)
+  const damaged = origin.researchFilms![0]
+  const player = await f.service.readResearchFilm({
+    ...imported,
+    branchId: origin.identities[damaged.branchId!]
+  })
+  const bytes = await readFile(player!.playerPath)
+  await writeFile(player!.playerPath, Buffer.alloc(bytes.length, 'x'))
+  const entry = origin.sourceManifest.inventory.find(
+    (entry) => entry.storageKey === damaged.playerStorageKey
+  )!
+  await rm(
+    join(
+      f.root,
+      'artifacts',
+      imported.projectId,
+      imported.sessionId,
+      '.session-package',
+      'source',
+      entry.path
+    )
+  )
+  const forwarded = join(f.root, 'forward-damaged.science')
+  await f.service.exportTo(imported, forwarded, {
+    selectFiles: async (_files, _signal, summary) => {
+      expect(summary?.researchFilms?.count).toBe(1)
+      return include()
+    }
+  })
+  const { records } = await unpack(forwarded, join(f.root, 'forward-damaged'))
+  expect(records.researchFilms).toHaveLength(1)
+  expect(records.researchFilms?.some((film) => film.id === damaged.id)).toBe(false)
+  const fork = await f.service.fork(imported)
+  expect((await f.service.readOrigin(fork)).researchFilms).toHaveLength(1)
+}, 60_000)
+
+it('does not swallow cancellation when omitting damaged films', async () => {
+  const f = await setup(),
+    session = (await f.repository.loadSession('project', 'session'))!
+  await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+  const controller = new AbortController()
+  controller.abort(new Error('cancelled export'))
+  await expect(captureResearchFilms(f.root, session, [], controller.signal)).rejects.toThrow(
+    'cancelled export'
+  )
 })
+
+it('rolls back a partially copied film without leaving objects or references', async () => {
+  const f = await setup(),
+    session = (await f.repository.loadSession('project', 'session'))!
+  const directory = await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+  const archive = join(f.root, 'base.science')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive)
+  const staging = join(f.root, 'base')
+  const { manifest, records } = await unpack(archive, staging)
+  await mkdir(join(staging, 'objects'), { recursive: true })
+  const captured = await captureResearchFilms(f.root, session)
+  const originalManifest = structuredClone(manifest)
+  const originalObjects = await readdir(join(staging, 'objects'))
+  await appendResearchFilms({
+    root: f.root,
+    directory: staging,
+    manifest,
+    records,
+    captured,
+    signal: new AbortController().signal,
+    checkFile: async (_path, storageKey) => {
+      if (storageKey.endsWith('/player.html')) await rm(join(directory, 'output/sources.zip'))
+    }
+  })
+  expect(manifest).toEqual(originalManifest)
+  expect(records.researchFilms).toBeUndefined()
+  expect(await readdir(join(staging, 'objects'))).toEqual(originalObjects)
+})
+
+it.each(['destination', 'content-check', 'cancel'])(
+  'does not suppress %s failures while copying optional films',
+  async (failure) => {
+    const f = await setup(),
+      session = (await f.repository.loadSession('project', 'session'))!
+    await saveFilm(f.root, session, session.conversationGraph!.branches[0].id)
+    const archive = join(f.root, 'base.science')
+    await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive)
+    const staging = join(f.root, 'base')
+    const { manifest, records } = await unpack(archive, staging)
+    await mkdir(join(staging, 'objects'), { recursive: true })
+    const captured = await captureResearchFilms(f.root, session)
+    const controller = new AbortController()
+    if (failure === 'destination') {
+      await rm(join(staging, 'objects'), { recursive: true })
+      await writeFile(join(staging, 'objects'), 'not a directory')
+    }
+    const result = appendResearchFilms({
+      root: f.root,
+      directory: staging,
+      manifest,
+      records,
+      captured,
+      signal: controller.signal,
+      checkFile: async () => {
+        if (failure === 'content-check') throw new Error('sensitive content')
+        if (failure === 'cancel') controller.abort(new Error('cancelled export'))
+      }
+    })
+    await expect(result).rejects.toThrow()
+    expect(records.researchFilms).toBeUndefined()
+    expect(manifest.requiredFeatures).not.toContain('research-film')
+  }
+)
 
 it('rolls back imported film files on cancellation and collects them through existing deletion recovery', async () => {
   const f = await setup(),
@@ -366,6 +515,7 @@ it('deletes all local versions of one branch, suppresses imported fallback acros
   const before = JSON.stringify(session)
   await deleteStoredResearchFilms(f.root, request, saved.id)
   await deleteStoredResearchFilms(f.root, request) // interrupted/repeated cleanup remains safe
+  await expect(lstat(dirname(latest))).rejects.toMatchObject({ code: 'ENOENT' })
   for (const path of [
     saved.playerPath,
     saved.sourcePath,
@@ -389,4 +539,42 @@ it('deletes all local versions of one branch, suppresses imported fallback acros
   expect((await f.service.readOrigin(forked)).researchFilms).toHaveLength(branches.length - 1)
   await saveFilm(f.root, session, branchId, 'New after deletion')
   expect((await captureResearchFilms(f.root, session)).films[0].title).toBe('New after deletion')
+})
+
+it('deletes the remaining imported files even when the player is already missing', async () => {
+  const f = await setup()
+  const session = (await f.repository.loadSession('project', 'session'))!
+  const branchId = session.conversationGraph!.branches[0].id
+  await saveFilm(f.root, session, branchId)
+  const archive = join(f.root, 'partial-film.science')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: include
+  })
+  const imported = await f.service.importFrom(archive)
+  const origin = await f.service.readOrigin(imported)
+  const request = { ...imported, branchId: origin.identities[branchId] }
+  const film = (await f.service.readResearchFilm(request))!
+  await rm(film.playerPath)
+  expect(await f.service.readResearchFilm(request)).toBeUndefined()
+  const owner = createResearchVideoPresentationOwner({
+    dataRoot: () => f.root,
+    loadSession: (projectId, sessionId) => f.repository.loadSession(projectId, sessionId),
+    loadImportedFilm: (request, options) => f.service.readResearchFilm(request, options),
+    models: {} as never,
+    generate: vi.fn(),
+    writeScreenplay: vi.fn(),
+    engineDirectory: ''
+  })
+  try {
+    expect((await owner.remove(request)).result).toBeUndefined()
+    expect((await owner.remove(request)).result).toBeUndefined()
+    await expect(lstat(dirname(film.sourcePath))).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      lstat(join(f.root, 'research-video-presentations', researchFilmScopeKey(request)))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await f.repository.loadSession(imported.projectId, imported.sessionId)).toBeDefined()
+    expect((await readFile(archive)).length).toBeGreaterThan(0)
+  } finally {
+    await owner.close()
+  }
 })

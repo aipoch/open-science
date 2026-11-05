@@ -1,4 +1,3 @@
-import { deletedResearchFilmIds } from '../research-video/stored-presentation'
 import {
   captureResearchFilms,
   appendResearchFilms,
@@ -641,7 +640,8 @@ export class SessionPackageService {
         filmOrigin?.researchFilms ?? [],
         filmOrigin?.identities ?? {}
       ) as PackageResearchFilms,
-      this.signal
+      this.signal,
+      new Map(filmOrigin?.files.map((file) => [file.localStorageKey, file.localChecksum]))
     )
     const filmSummary = capturedFilms.films.length
       ? {
@@ -693,7 +693,13 @@ export class SessionPackageService {
         '.session-package',
         'source'
       )
-      const manifest = await validatePackageDirectory(source, this.signal)
+      const manifest = await validatePackageDirectory(
+        source,
+        this.signal,
+        undefined,
+        undefined,
+        new Set(researchFilmStorageKeys(origin.researchFilms))
+      )
       if (manifest.source.projectId !== origin.sourceManifest.source.projectId)
         throw new Error('Session package source identity mismatch.')
       if (!options.consumeSnapshot && !options.allowSensitiveContent)
@@ -2073,7 +2079,8 @@ export class SessionPackageService {
   }
 
   async readResearchFilm(
-    request: ResearchVideoPresentationRequest
+    request: ResearchVideoPresentationRequest,
+    options: { includeUnavailable?: boolean } = {}
   ): Promise<ResearchVideoPresentation | undefined> {
     const loaded = await loadSessionMutationAuthority(
       new SessionRepository(this.configRoot),
@@ -2095,17 +2102,20 @@ export class SessionPackageService {
       origin.identities
     ) as PackageResearchFilms
     const film = films.find((film) => film.branchId === branchId)
-    if (
-      !film ||
-      (await deletedResearchFilmIds(this.options.storageRoot, { ...request, branchId })).includes(
-        film.id
-      )
-    )
-      return undefined
-    for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
-      await assertPackageSourcePath(this.options.storageRoot, key)
-      if (!(await lstat(join(this.options.storageRoot, key))).isFile())
-        throw new Error('Research presentation is unavailable.')
+    if (!film) return undefined
+    if (!options.includeUnavailable) {
+      for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
+        const exists = await assertPackageSourcePath(this.options.storageRoot, key).then(
+          () => true,
+          (error: NodeJS.ErrnoException) => {
+            if (error.code === 'ENOENT') return false
+            throw error
+          }
+        )
+        if (!exists) return undefined
+        if (!(await lstat(join(this.options.storageRoot, key))).isFile())
+          throw new Error('Research presentation is unavailable.')
+      }
     }
     return {
       id: film.id,

@@ -43,7 +43,8 @@ export function createResearchVideoPresentationOwner(options: {
   generate: ReturnType<typeof createResearchVideoGenerator>
   engineDirectory: string
   loadImportedFilm?: (
-    request: ResearchVideoPresentationRequest
+    request: ResearchVideoPresentationRequest,
+    options?: { includeUnavailable?: boolean }
   ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
@@ -235,7 +236,7 @@ export function createResearchVideoPresentationOwner(options: {
           request.branchId ??
           graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
         const scope = { ...request, branchId }
-        const imported = await options.loadImportedFilm?.(scope)
+        const imported = await options.loadImportedFilm?.(scope, { includeUnavailable: true })
         await deleteStoredResearchFilms(options.dataRoot(), scope, imported?.id)
         states.delete(scopeKey(request))
         states.delete(scopeKey(scope))

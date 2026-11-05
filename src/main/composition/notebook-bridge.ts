@@ -283,7 +283,8 @@ export async function composeNotebookBridge({
     mutate: (request, work) =>
       sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,
-    loadImportedFilm: (request) => sessionPackageService.readResearchFilm(request),
+    loadImportedFilm: (request, options) =>
+      sessionPackageService.readResearchFilm(request, options),
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
