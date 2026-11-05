@@ -1,14 +1,4 @@
-import {
-  appendFile,
-  link,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  symlink,
-  writeFile
-} from 'node:fs/promises'
+import { link, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import * as fs from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -59,6 +49,73 @@ afterEach(async () => {
 })
 
 describe('bounded resource journal', () => {
+  it.each([false, true])(
+    'refuses a replaced segment before append (existing: %s)',
+    async (existing) => {
+      const path = await directory()
+      const journal = store(path)
+      await journal.flush()
+      const segment = join(path, 'live-00000000.jsonl')
+      if (existing) {
+        journal.append('{"before":true}\n')
+        await journal.flush()
+        await rm(segment)
+      }
+      const target = join(await directory(), 'user-data')
+      await writeFile(target, 'preserve unrelated data')
+      await (process.platform === 'win32' ? link(target, segment) : symlink(target, segment))
+      journal.append('{"after":true}\n')
+      await journal.flush()
+      expect(await readFile(target, 'utf8')).toBe('preserve unrelated data')
+      expect(journal.status.failed).toBe(true)
+    }
+  )
+
+  it('never truncates a replacement target when retrying a partial write', async () => {
+    const path = await directory()
+    let now = 1000
+    const journal = store(path, {
+      now: () => now,
+      write: async (file, data, position) => {
+        await file.write(data, 0, 7, position)
+        throw Object.assign(new Error('full'), { code: 'ENOSPC' })
+      }
+    })
+    journal.append('{"before":true}\n')
+    await journal.flush()
+    expect(journal.status.writeFailures).toBe(1)
+    const segment = join(path, 'live-00000000.jsonl')
+    await rm(segment)
+    const target = join(await directory(), 'user-data')
+    await writeFile(target, 'preserve unrelated data')
+    await (process.platform === 'win32' ? link(target, segment) : symlink(target, segment))
+    now += 1000
+    await journal.flush()
+    expect(await readFile(target, 'utf8')).toBe('preserve unrelated data')
+    expect(journal.status.failed).toBe(true)
+  })
+
+  it('pins the opened file when its path is replaced immediately before writing', async () => {
+    const path = await directory()
+    const segment = join(path, 'live-00000000.jsonl')
+    const target = join(await directory(), 'user-data')
+    await writeFile(target, 'preserve unrelated data')
+    const journal = store(path, {
+      write: async (file, data, position) => {
+        await rm(segment, { force: true })
+        await (process.platform === 'win32' ? link(target, segment) : symlink(target, segment))
+        await file.write(data, 0, data.length, position)
+      }
+    })
+    journal.append('{"first":true}\n')
+    await journal.flush()
+    expect(await readFile(target, 'utf8')).toBe('preserve unrelated data')
+    journal.append('{"next":true}\n')
+    await journal.flush()
+    expect(journal.status.failed).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('preserve unrelated data')
+  })
+
   it('schedules only queued writes, disarms on suspend and preserves queued evidence on resume', async () => {
     vi.useFakeTimers()
     const path = await directory()
@@ -156,13 +213,13 @@ describe('bounded resource journal', () => {
     let writes = 0
     const value = store(path, {
       now: () => now,
-      write: async (file, data) => {
+      write: async (file, data, position) => {
         writes++
         if (writes === 1) {
-          await appendFile(file, String(data).slice(0, 7))
+          await file.write(data, 0, 7, position)
           throw Object.assign(new Error('full'), { code: 'ENOSPC' })
         }
-        await appendFile(file, data)
+        await file.write(data, 0, data.length, position)
       }
     })
     value.append('{"event":"before"}\n')

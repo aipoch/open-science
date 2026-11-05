@@ -1,5 +1,4 @@
 import {
-  appendFile,
   mkdir,
   readdir,
   rename,
@@ -7,7 +6,8 @@ import {
   stat,
   writeFile,
   lstat,
-  truncate
+  open,
+  type FileHandle
 } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -29,7 +29,16 @@ type StoreOptions = {
   now?: () => number
   onFailure?: () => void
   // Fault-injection seam; production always uses the asynchronous filesystem writer.
-  write?: typeof appendFile
+  write?: (file: FileHandle, data: Buffer, position: number) => Promise<void>
+}
+
+const writeSegment = async (file: FileHandle, data: Buffer, position: number): Promise<void> => {
+  let offset = 0
+  while (offset < data.length) {
+    const { bytesWritten } = await file.write(data, offset, data.length - offset, position + offset)
+    if (!bytesWritten) throw new Error('Resource log write made no progress')
+    offset += bytesWritten
+  }
 }
 
 // Dedicated, bounded diagnostic storage. The caller owns the containing runtime directory.
@@ -55,6 +64,7 @@ export class ResourceLogStore {
   private retryAt = 0
   private retryCount = 0
   private partial: Segment | undefined
+  private writer: { segment: Segment; handle: FileHandle; ino: bigint; dev: bigint } | undefined
   private anomalyQueued = false
   private checkpoint: (() => string) | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -174,6 +184,7 @@ export class ResourceLogStore {
 
   private async seal(): Promise<void> {
     if (!this.live.length) return
+    await this.closeWriter()
     for (const item of await this.segments('incident')) await rm(this.path(item.name))
     await writeFile(this.path('seal.pending'), '1', { flag: 'wx' })
     await this.finishSeal()
@@ -246,7 +257,8 @@ export class ResourceLogStore {
     if (this.suspended && !this.closed) return Promise.resolve()
     this.draining = this.drain()
       .catch(() => this.fail())
-      .finally(() => {
+      .finally(async () => {
+        if (this.failed || this.closed) await this.closeWriter().catch(() => this.fail())
         this.draining = undefined
         this.scheduleFlush()
       })
@@ -258,10 +270,10 @@ export class ResourceLogStore {
     if (this.now() < this.retryAt) return
     if (this.partial) {
       try {
-        // appendFile may have written a prefix before reporting ENOSPC. Restore the last known
+        // A write may have written a prefix before reporting ENOSPC. Restore the last known
         // boundary before retrying; a crash instead leaves only an ignorable partial final line.
-        if (await this.exists(this.partial.name))
-          await truncate(this.path(this.partial.name), this.partial.bytes)
+        const handle = await this.writerFor(this.partial)
+        await handle.truncate(this.partial.bytes)
         this.partial = undefined
       } catch (error) {
         if (this.retry(error)) return
@@ -310,12 +322,15 @@ export class ResourceLogStore {
         this.rotatedBytes += oldest.bytes
       }
       try {
-        await (this.options.write ?? appendFile)(
-          this.path(segment.name),
-          prefix + batch.map((entry) => entry.line).join('')
+        const handle = await this.writerFor(segment)
+        await (this.options.write ?? writeSegment)(
+          handle,
+          Buffer.from(prefix + batch.map((entry) => entry.line).join('')),
+          segment.bytes
         )
       } catch (error) {
-        this.partial = segment
+        // A failed exclusive open has not written a prefix and must not trigger truncation.
+        if (this.writer?.segment === segment) this.partial = segment
         if (this.retry(error)) return
         throw error
       }
@@ -332,6 +347,44 @@ export class ResourceLogStore {
         } else this.sealsSuppressed++
       }
     }
+  }
+
+  private async closeWriter(): Promise<void> {
+    const writer = this.writer
+    this.writer = undefined
+    await writer?.handle.close()
+  }
+
+  private async writerFor(segment: Segment): Promise<FileHandle> {
+    if (this.writer?.segment !== segment) {
+      await this.closeWriter()
+      // Never adopt an existing pathname, even for an empty/new segment. Keep this one handle
+      // through appends and partial-write recovery, so a later path swap cannot redirect IO.
+      const handle = await open(this.path(segment.name), 'wx+', 0o600)
+      try {
+        const info = await handle.stat({ bigint: true })
+        this.writer = { segment, handle, ino: info.ino, dev: info.dev }
+      } catch (error) {
+        await handle.close()
+        throw error
+      }
+    }
+    const writer = this.writer
+    const [entry, opened] = await Promise.all([
+      lstat(this.path(segment.name), { bigint: true }),
+      writer.handle.stat({ bigint: true })
+    ])
+    if (
+      !entry.isFile() ||
+      entry.isSymbolicLink() ||
+      entry.ino !== writer.ino ||
+      entry.dev !== writer.dev ||
+      opened.nlink !== 1n ||
+      entry.nlink !== 1n
+    ) {
+      throw new Error('Resource log segment identity changed')
+    }
+    return writer.handle
   }
 
   private retry(error: unknown): boolean {
