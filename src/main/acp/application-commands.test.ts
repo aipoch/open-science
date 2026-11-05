@@ -50,7 +50,6 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     getState: vi.fn(() => ({ ...commandResponse.result, revision: commandResponse.revision })),
     connect: vi.fn(async () => snapshot),
     disconnect: vi.fn(async () => snapshot),
-    resetSessionContext: vi.fn(async () => ({ ...sessionResponse, contextReset: true })),
     compactSession: vi.fn(async () => snapshot),
     cancelPrompt: vi.fn(async () => snapshot),
     steerFollowUp: vi.fn(async () => ({
@@ -67,6 +66,7 @@ const createDependencies = (): AcpApplicationCommandDependencies => ({
     revokePermissionGrant: vi.fn(async () => snapshot)
   },
   workflows: {
+    resetSessionContext: vi.fn(async () => ({ ...sessionResponse, contextReset: true })),
     createSession: vi.fn(async () => sessionResponse),
     resumeSession: vi.fn(async () => sessionResponse),
     continueInterruptedTurn: vi.fn(async () => snapshot),
@@ -232,7 +232,7 @@ describe('ACP application commands', () => {
     expect(dependencies.workflows.createSession).toHaveBeenCalledWith(createSession)
     expect(dependencies.workflows.resumeSession).toHaveBeenCalledWith(resumeSession)
     expect(dependencies.workflows.continueInterruptedTurn).toHaveBeenCalledWith(interruptedTurn)
-    expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith(resumeSession)
+    expect(dependencies.workflows.resetSessionContext).toHaveBeenCalledWith(resumeSession)
     expect(dependencies.runtime.compactSession).toHaveBeenCalledWith(compactSession)
     expect(dependencies.runtime.cancelPrompt).toHaveBeenCalledWith(cancel)
     expect(dependencies.runtime.deleteSession).toHaveBeenCalledWith(deleteSession)
@@ -247,10 +247,7 @@ describe('ACP application commands', () => {
     (operation) => {
       it.each([401, 403, 429])('only normalizes authentication status %s', async (statusCode) => {
         const dependencies = createDependencies()
-        const method =
-          operation === 'resetSessionContext'
-            ? dependencies.runtime.resetSessionContext
-            : dependencies.workflows[operation]
+        const method = dependencies.workflows[operation]
         vi.mocked(method).mockRejectedValueOnce(
           Object.assign(new Error(`Provider status ${statusCode}`), {
             name: 'RequestError',
@@ -643,7 +640,7 @@ describe('ACP application commands', () => {
     ).rejects.toThrow('Restore this archived Session before continuing.')
     expect(admittedById).toHaveBeenCalledTimes(2)
     expect(admittedById).toHaveBeenCalledWith(request.sessionId)
-    expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(dependencies.workflows.resetSessionContext).not.toHaveBeenCalled()
     expect(dependencies.runtime.compactSession).not.toHaveBeenCalled()
   })
 
@@ -662,7 +659,7 @@ describe('ACP application commands', () => {
       invocation([request], createWebCallerContext('local-web'))
     )
 
-    expect(dependencies.runtime.resetSessionContext).toHaveBeenCalledWith({
+    expect(dependencies.workflows.resetSessionContext).toHaveBeenCalledWith({
       ...request,
       projectId: persistedProjectId
     })
@@ -693,7 +690,7 @@ describe('ACP application commands', () => {
       )
     ).rejects.toThrow('Session does not belong to the requested Project.')
 
-    expect(dependencies.runtime.resetSessionContext).not.toHaveBeenCalled()
+    expect(dependencies.workflows.resetSessionContext).not.toHaveBeenCalled()
   })
 
   it('does not nest Session admission around the coordinator follow-up guard', async () => {

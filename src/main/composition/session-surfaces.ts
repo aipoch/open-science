@@ -128,6 +128,15 @@ export async function composeSessionSurfaces({
       }
     }
   )
+  const saveSession = sessionPersistenceHandlers.saveSession
+  sessionPersistenceHandlers.saveSession = (session, options, authority) => {
+    const save = (): ReturnType<typeof saveSession> => saveSession(session, options, authority)
+    // Take root admission before Project/Session persistence gates, then leave the durable
+    // preparation marker to exclude background continuations until provider dispatch.
+    return options?.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')
+      ? runtime.withPromptPreparationAdmission(session.id, save)
+      : save()
+  }
   const sessionDetailsOwner = await modules.add(
     {
       appVersion: runtimeMetadata().version,

@@ -112,6 +112,7 @@ const makeHarness = (
       })
       return {
         createSession: async () => ({ sessionId: providerSessionId }),
+        withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
         sendAppContinuation: async ({ text }) => {
           prompts.push(text)
           return prompt.promise

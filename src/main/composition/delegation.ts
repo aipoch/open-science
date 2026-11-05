@@ -19,7 +19,10 @@ import {
 } from '../delegation/execution-port'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
 import { createProductionDelegatedFrameworkRuntime } from '../delegation/production-framework-runtime'
-import { createDelegationSettlementContinuationDispatch } from '../delegation/settlement-continuation-dispatch'
+import {
+  createDelegationSettlementContinuationDispatch,
+  admitDelegationSettlement
+} from '../delegation/settlement-continuation-dispatch'
 import { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
@@ -187,12 +190,44 @@ export function composeDelegation({
     onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
     settlementContinuations: {
       dispatch: createDelegationSettlementContinuationDispatch({
-        sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
+        sendAppContinuationObserved: (request, onProviderPromptAccepted, settlement) => {
           const activeRuntime = runtimeRef.current
           if (!activeRuntime) {
             throw new DelegateMessagePreAcceptanceError('The Main Agent runtime is unavailable.')
           }
-          return activeRuntime.sendAppContinuationObserved(request, onProviderPromptAccepted)
+          return activeRuntime.sendAppContinuationObserved(
+            request,
+            onProviderPromptAccepted,
+            async (resumeSession) => {
+              const session = await sessionPersistenceCoordinator.loadSessionForContinuation(
+                settlement.projectId,
+                settlement.sessionId
+              )
+              admitDelegationSettlement(session, settlement)
+              const agentTarget = await resolveSessionAgentTarget(session)
+              if (!activeRuntime.hasLiveSession(session.projectId, session.id) || agentTarget) {
+                await resumeSession({
+                  sessionId: session.id,
+                  projectId: session.projectId,
+                  cwd: session.cwd,
+                  permissionProfile: session.permissionProfile,
+                  memoryEnabled: session.memoryEnabled !== false,
+                  previousFrameworkId: session.agentFrameworkId,
+                  previousBackendId: session.agentBackendId,
+                  specialistId: session.specialistId,
+                  specialistBindingPending: session.specialistBindingPending,
+                  providerSessionId: session.providerSessionId,
+                  providerContinuityToken: session.providerContinuityToken,
+                  ...(agentTarget ? { agentTarget } : {})
+                })
+              }
+              await sessionPersistenceCoordinator.mutateRuntimeSession(settlement, (latest) =>
+                admitDelegationSettlement(latest, settlement)
+              )
+            },
+            (operation) =>
+              archiveCoordinator.withProjectDeletionAdmission(settlement.projectId, operation)
+          )
         },
         onPromptEnded: (sessionId, promptId) =>
           delegatedWorkRef.current?.root.settlementPromptEnded?.(sessionId, promptId)

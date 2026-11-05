@@ -1084,8 +1084,11 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     expect(handlers.has('acp:reset-session-context')).toBe(true)
   })
 
-  it('forwards the request to runtime.resetSessionContext and returns its result', async () => {
-    registerWithFakes()
+  it('commits the reset attachment before returning its result', async () => {
+    const completeRuntimeAttachment = vi.fn(async () => {})
+    registerWithFakes({
+      interruptedTurnSessions: { loadSession: vi.fn(), completeRuntimeAttachment }
+    })
     const request: AcpResumeSessionRequest = { sessionId: 's-1', cwd: '/workspace' }
 
     const result = await handlers.get('acp:reset-session-context')?.({}, request)
@@ -1095,6 +1098,7 @@ describe('installAcpIpcHandlers — reset-session-context bridge', () => {
     // The distinct resume channel must not be driven by the reset call.
     expect(resumeSession).not.toHaveBeenCalled()
     expect(result).toEqual({ sessionId: 's-1', cwd: '/workspace', contextReset: true })
+    expect(completeRuntimeAttachment).toHaveBeenCalledWith('project-1', 's-1', result)
   })
 
   it('injects the persisted Project owner when the request omits projectId', async () => {

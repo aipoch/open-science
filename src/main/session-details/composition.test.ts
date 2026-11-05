@@ -11,7 +11,7 @@ vi.mock('../desktop-surface-declarations', () => ({ createSpecialistElectronSurf
 vi.mock('../specialist/application-commands', () => ({ createSpecialistApplicationOwner: vi.fn() }))
 vi.mock('../session-persistence/ipc', () => ({
   withSessionDeletionCleanup: (operation: unknown) => operation,
-  createSessionPersistenceHandlersWithAttributionAuthority: vi.fn()
+  createSessionPersistenceHandlersWithAttributionAuthority: vi.fn(() => ({ saveSession: vi.fn() }))
 }))
 vi.mock('../runtime-metadata', () => ({ runtimeMetadata: () => ({ version: 'test' }) }))
 afterEach(() => vi.restoreAllMocks())

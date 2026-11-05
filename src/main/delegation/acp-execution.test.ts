@@ -122,6 +122,7 @@ const makeHarness = (
     createRuntime: (scope, callbacks): AcpDelegateRuntime => {
       if (scopePaths.createRuntimeError) throw scopePaths.createRuntimeError
       const prompt = deferred<PromptResponse>()
+      let activityHeld = false
       const createdSessions: Parameters<AcpDelegateRuntime['createSession']>[0][] = []
       const permissionProfiles: string[] = []
       const prompts: string[] = []
@@ -147,7 +148,17 @@ const makeHarness = (
           if (error) throw error
           return { sessionId: providerSessionId }
         },
+        withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => {
+          expect(activityHeld).toBe(false)
+          activityHeld = true
+          try {
+            return await work()
+          } finally {
+            activityHeld = false
+          }
+        },
         sendAppContinuation: ({ text, permissionPrompts }) => {
+          expect(activityHeld).toBe(true)
           promptPolicies.push(permissionPrompts)
           prompts.push(text)
           callbacks.onProviderPromptAccepted(providerSessionId)
@@ -168,6 +179,7 @@ const makeHarness = (
           cleanup.push(`delete:${scope.executionId}`)
         },
         shutdownForQuit: async () => {
+          expect(activityHeld).toBe(false)
           cleanup.push(`shutdown:${scope.executionId}`)
           return scopePaths.shutdownResult ? scopePaths.shutdownResult() : { reaped: true }
         }
@@ -444,6 +456,7 @@ describe('ACP delegate execution production adapter', () => {
         let promptCount = 0
         return {
           createSession: async () => ({ sessionId: 'provider-message-boundary' }),
+          withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
           sendAppContinuation: async () => {
             promptCount += 1
             if (promptCount === 1) {
@@ -656,6 +669,7 @@ describe('ACP delegate execution production adapter', () => {
         let promptCount = 0
         return {
           createSession: async () => ({ sessionId: 'provider-message-failure' }),
+          withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
           sendAppContinuation: async () => {
             promptCount += 1
             if (promptCount === 1) {
@@ -1503,6 +1517,7 @@ it.each(['unreaped', 'throws', 'recoverable', 'confirmed-after-retry'] as const)
       assertFrameworkNativeDelegationDisabled: async () => undefined,
       createRuntime: () => ({
         createSession: async () => ({ sessionId: 'provider-audit' }),
+        withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
         sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
         cancelPrompt: async () => undefined,
         setPermissionProfile: async () => undefined,

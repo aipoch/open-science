@@ -42,6 +42,7 @@ const runtimeFor = (
       requests.push({ attemptId, request })
       return { sessionId: `provider-${attemptId}` }
     },
+    withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
     sendAppContinuation: async () => completion,
     cancelPrompt: async () => finish({ stopReason: 'cancelled' }),
     setPermissionProfile: async () => undefined,

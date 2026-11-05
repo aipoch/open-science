@@ -148,6 +148,7 @@ const createHarness = (
       hasLiveSession,
       captureSessionBackend,
       resumeSession,
+      resetSessionContext: resumeSession,
       startPrompt,
       getLatestUserPrompt: vi.fn(),
       startContinuation,
@@ -1088,4 +1089,15 @@ describe('ACP Save as skill workflow', () => {
     )
     expect(harness.startContinuation).not.toHaveBeenCalled()
   })
+})
+
+it('commits a reset attachment before returning and propagates persistence failures', async () => {
+  const { workflows, resumeSession, completeRuntimeAttachment } = createHarness()
+  const request = { projectId: 'project-1', sessionId: 'session-1', cwd: '/workspace' }
+  const attached = { sessionId: 'session-1', providerSessionId: 'replacement', contextReset: true }
+  resumeSession.mockResolvedValue(attached)
+  expect(await workflows.resetSessionContext(request)).toBe(attached)
+  expect(completeRuntimeAttachment).toHaveBeenCalledWith('project-1', 'session-1', attached)
+  completeRuntimeAttachment.mockRejectedValueOnce(new Error('Persistence unavailable'))
+  await expect(workflows.resetSessionContext(request)).rejects.toThrow('Persistence unavailable')
 })

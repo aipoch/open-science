@@ -1346,25 +1346,37 @@ class AcpRuntimeCoordinator {
     )
   }
 
+  withPromptPreparationAdmission<T>(sessionId: string, prepare: () => Promise<T>): Promise<T> {
+    return this.linearizeRootAdmission(sessionId, async (cancellation) => {
+      cancellation.throwIfCancelled()
+      this.assertPromptAdmissionOpen()
+      return prepare()
+    })
+  }
+
   sendAppContinuationObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void
-  ): ReturnType<AcpRuntime['sendAppContinuation']> {
-    return this.linearizeRootAdmission(request.sessionId, (cancellation) =>
-      this.dispatchPrompt(
-        request,
-        observePromptAcceptance(onProviderPromptAccepted),
-        'sendAppContinuation',
-        undefined,
-        false,
-        undefined,
-        undefined,
-        undefined,
-        'renderer',
-        undefined,
-        cancellation
-      )
+    onProviderPromptAccepted: () => void,
+    validate: (
+      resumeSession: (request: AcpResumeSessionRequest) => Promise<AcpCreateSessionResponse>
+    ) => Promise<void> = async () => undefined,
+    admitDispatch?: (operation: () => Promise<void>) => Promise<void>
+  ): Promise<void> {
+    const { accepted, completion } = this.startContinuationWhenWithDispatchAdmission(
+      request,
+      validate,
+      Boolean(admitDispatch),
+      undefined,
+      undefined,
+      admitDispatch
     )
+    void accepted.then(
+      (evidence) => {
+        if (evidence === 'provider_prompt_accepted') onProviderPromptAccepted()
+      },
+      () => undefined
+    )
+    return completion
   }
 
   private linearizeRootAdmission<Result>(
@@ -1480,7 +1492,7 @@ class AcpRuntimeCoordinator {
     request: AcpPromptRequest,
     validate: () => Promise<void>
   ): Promise<DelegateMessageAcceptanceEvidence> {
-    return this.startContinuationWhenWithDispatchAdmission(request, validate, false)
+    return this.startContinuationWhenWithDispatchAdmission(request, validate, false).accepted
   }
 
   startContinuationWhenDispatchAdmitted(
@@ -1502,7 +1514,7 @@ class AcpRuntimeCoordinator {
       delegatedMessageId,
       onAdmissionQueued,
       admitDispatch
-    )
+    ).accepted
   }
 
   private startContinuationWhenWithDispatchAdmission(
@@ -1514,7 +1526,7 @@ class AcpRuntimeCoordinator {
     delegatedMessageId?: string,
     onAdmissionQueued?: () => void,
     admitDispatch?: (operation: () => Promise<void>) => Promise<void>
-  ): Promise<DelegateMessageAcceptanceEvidence> {
+  ): { accepted: Promise<DelegateMessageAcceptanceEvidence>; completion: Promise<void> } {
     let resolve!: (evidence: DelegateMessageAcceptanceEvidence) => void
     let reject!: (error: unknown) => void
     const accepted = new Promise<DelegateMessageAcceptanceEvidence>(
@@ -1644,7 +1656,7 @@ class AcpRuntimeCoordinator {
     })
     onAdmissionQueued?.()
     void admission.catch((error) => acceptance.reject(error))
-    return accepted
+    return { accepted, completion: admission }
   }
 
   private dispatchPrompt(

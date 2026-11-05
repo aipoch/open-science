@@ -470,6 +470,7 @@ it.each(['local', 'imported'] as const)(
           hasLiveSession: () => false,
           captureSessionBackend: () => undefined,
           resumeSession: resume,
+          resetSessionContext: resume,
           startPrompt: vi.fn(),
           getLatestUserPrompt: () => undefined,
           startContinuation: vi.fn(),
