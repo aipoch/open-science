@@ -98,6 +98,7 @@ describe('AppVersionSection', () => {
     expect(
       cards.every((card) => card.classList.contains('bg-card') && card.classList.contains('ring-1'))
     ).toBe(true)
+    expect(cards.every((card) => card.classList.contains('rounded-lg'))).toBe(true)
   })
 
   it('links manual installation guidance to the localized AIPOCH docs page', async () => {
