@@ -410,7 +410,8 @@ it.each(['delete', 'disable'] as const)(
           : 'The bound specialist is disabled.'
     })
     expect(h.prompts).toHaveLength(1)
-    // The failed attempt releases the connection; restoring an unavailable binding fails closed.
+    // Force the cold path independently of the warm idle window.
+    await h.runtime.disconnect()
     await expect(
       h.runtime.resumeSession({
         sessionId: h.session.sessionId,

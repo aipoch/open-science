@@ -1306,8 +1306,8 @@ class AcpRuntime {
     await this.connectionClose.requestRetirement()
   }
 
-  // Release physical resources after completed work, retaining events for subscribers and using
-  // the ordinary Session resume path on the next turn. Active workflows defer this transition.
+  // Retain a bounded idle connection briefly; expiry releases physical resources.
+  // Active workflows defer release; subsequent cold turns use ordinary Session resume.
   requestIdleRelease(): void {
     if (this.snapshotOwner.status === 'connected') this.connectionTransitions.requestIdleRelease()
   }

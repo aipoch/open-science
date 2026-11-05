@@ -1,6 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import {
+  ACP_IDLE_RELEASE_DELAY_MS,
+  AcpConnectionTransitionOwner
+} from './connection-transition-owner'
 import { AcpConnectionResourceOwner } from './connection-resource-owner'
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -9,6 +12,7 @@ const terminateProcessTree = vi.hoisted(() => vi.fn(async () => ({ reaped: true 
 vi.mock('../process-tree', () => ({ terminateProcessTree }))
 
 describe('AcpConnectionTransitionOwner', () => {
+  afterEach(() => vi.useRealTimers())
   it('keeps failed retirement retryable without recursively retrying activity during cleanup', async () => {
     const failure = new Error('disconnect failed')
     const onRetired = vi.fn()
@@ -83,6 +87,7 @@ describe('AcpConnectionTransitionOwner', () => {
   it.each([false, true])(
     'coalesces reconnects with an in-flight idle release; failure=%s',
     async (fail) => {
+      vi.useFakeTimers()
       const gate = Promise.withResolvers<void>()
       const failure = new Error('idle teardown failed')
       const disconnect = vi.fn(async () => {
@@ -102,6 +107,7 @@ describe('AcpConnectionTransitionOwner', () => {
         reportFailure: vi.fn()
       })
       owner.requestIdleRelease()
+      vi.advanceTimersByTime(ACP_IDLE_RELEASE_DELAY_MS)
       let reconnectSettled = false
       const reconnect = owner.requestProviderReconnect().then(
         () => {
@@ -132,6 +138,7 @@ describe('AcpConnectionTransitionOwner', () => {
   )
 
   it('waits for operation leases before idle release and fences startup during teardown', async () => {
+    vi.useFakeTimers()
     let operationActive = true
     let finish!: () => void
     const teardown = new Promise<void>((resolve) => {
@@ -153,6 +160,7 @@ describe('AcpConnectionTransitionOwner', () => {
     expect(owner.barrier).toBeUndefined()
     operationActive = false
     owner.activityChanged()
+    vi.advanceTimersByTime(ACP_IDLE_RELEASE_DELAY_MS)
     expect(disconnect).toHaveBeenCalledExactlyOnceWith(false)
     expect(owner.barrier).toBeDefined()
     finish()
@@ -327,5 +335,135 @@ describe('AcpConnectionTransitionOwner', () => {
       'deferred reconnect disconnect failed',
       disconnectFailure
     )
+  })
+})
+
+describe('ACP warm idle window', () => {
+  afterEach(() => vi.useRealTimers())
+
+  const setup = (): {
+    owner: AcpConnectionTransitionOwner
+    disconnect: ReturnType<typeof vi.fn<() => Promise<void>>>
+    setBlocked: (value: boolean) => void
+    supersede: () => void
+  } => {
+    vi.useFakeTimers()
+    let blocked = false
+    let generation = 1
+    const disconnect = vi.fn(async () => undefined)
+    const owner = new AcpConnectionTransitionOwner({
+      blockers: () => ({ reconnect: false, retirement: blocked }),
+      connectionGeneration: () => generation,
+      cleanupConfirmed: () => true,
+      disconnect,
+      onRetired: vi.fn(),
+      publishIdle: vi.fn(),
+      recoverFailedDeferredDisconnect: vi.fn(),
+      reportFailure: vi.fn()
+    })
+    return {
+      owner,
+      disconnect,
+      setBlocked: (value: boolean) => {
+        blocked = value
+        owner.activityChanged()
+      },
+      supersede: () => {
+        generation += 1
+      }
+    }
+  }
+
+  it('reuses until expiry without a startup barrier; repeated settlement does not extend expiry', async () => {
+    const { owner, disconnect } = setup()
+    owner.requestIdleRelease()
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS - 1)
+    owner.requestIdleRelease()
+    expect(disconnect).not.toHaveBeenCalled()
+    expect(owner.barrier).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('starts a full new idle window after the last active lease settles', async () => {
+    const { owner, disconnect, setBlocked } = setup()
+    owner.requestIdleRelease()
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS - 1)
+    setBlocked(true)
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS * 2)
+    expect(disconnect).not.toHaveBeenCalled()
+    setBlocked(false)
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS - 1)
+    expect(disconnect).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['provider', 'skills', 'retirement', 'close', 'crash'] as const)(
+    '%s cancels the warm timer immediately',
+    async (reason) => {
+      const { owner, disconnect } = setup()
+      owner.requestIdleRelease()
+      if (reason === 'provider') await owner.requestProviderReconnect()
+      if (reason === 'skills') {
+        owner.requestSkillsReload()
+        await owner.barrier
+      }
+      if (reason === 'retirement') await owner.requestRetirement()
+      if (reason === 'close') await owner.settleTeardown(async () => undefined)
+      if (reason === 'crash') owner.resetReconnect()
+      expect(vi.getTimerCount()).toBe(0)
+      const calls = disconnect.mock.calls.length
+      await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS * 2)
+      expect(disconnect).toHaveBeenCalledTimes(calls)
+    }
+  )
+
+  it('evicts the oldest idle connection when the host cache exceeds two entries', async () => {
+    const first = setup()
+    const second = setup()
+    const third = setup()
+    first.owner.requestIdleRelease()
+    second.owner.requestIdleRelease()
+    first.owner.requestIdleRelease()
+    third.owner.requestIdleRelease()
+    expect(first.disconnect).toHaveBeenCalledOnce()
+    expect(first.owner.barrier).toBeDefined()
+    expect(second.disconnect).not.toHaveBeenCalled()
+    expect(third.disconnect).not.toHaveBeenCalled()
+    await first.owner.barrier
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS)
+    expect(second.disconnect).toHaveBeenCalledOnce()
+    expect(third.disconnect).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('removes active work from the cache and re-enters after its final lease releases', async () => {
+    const first = setup()
+    const second = setup()
+    const third = setup()
+    first.owner.requestIdleRelease()
+    second.owner.requestIdleRelease()
+    first.setBlocked(true)
+    third.owner.requestIdleRelease()
+    expect(first.disconnect).not.toHaveBeenCalled()
+    expect(second.disconnect).not.toHaveBeenCalled()
+    first.setBlocked(false)
+    expect(second.disconnect).toHaveBeenCalledOnce()
+    expect(first.disconnect).not.toHaveBeenCalled()
+    expect(third.disconnect).not.toHaveBeenCalled()
+    await second.owner.barrier
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS)
+    expect(first.disconnect).toHaveBeenCalledOnce()
+    expect(third.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('does not disconnect a replacement generation from an old idle timer', async () => {
+    const { owner, disconnect, supersede } = setup()
+    owner.requestIdleRelease()
+    supersede()
+    await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS)
+    expect(disconnect).not.toHaveBeenCalled()
   })
 })
