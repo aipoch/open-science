@@ -8340,6 +8340,18 @@
     "Expand question panel": "Развернуть панель вопросов",
     "Set up the selected agent runtime in Settings before generating a research film.": "Перед созданием исследовательского фильма настройте среду выполнения выбранного агента в настройках.",
     "Check the selected model and credentials in Settings before generating a research film.": "Перед созданием исследовательского фильма проверьте выбранную модель и учётные данные в настройках.",
-    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Лимит ввода выбранной модели не вмещает инструкции для создания исследовательского фильма. Выберите модель с большим лимитом ввода."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Лимит ввода выбранной модели не вмещает инструкции для создания исследовательского фильма. Выберите модель с большим лимитом ввода.",
+    "Batch snapshots": "Пакетные обзоры",
+    "Generate batch snapshots": "Создать пакетные обзоры",
+    "Select up to {{limit}} references.": "Выберите до {{limit}} источников.",
+    "Retry failed snapshots": "Повторить неудавшиеся обзоры",
+    "Could not generate batch snapshots. Check the selection and try again.": "Не удалось обработать пакетные обзоры. Проверьте выбор и повторите попытку.",
+    "Snapshot saved": "Обзор сохранён",
+    "Snapshot failed": "Ошибка обзора",
+    "Show reference results": "Показать результаты по публикациям",
+    "Hide reference results": "Скрыть результаты по публикациям",
+    "Pause after active references": "Приостановить после завершения обработки текущих публикаций",
+    "Current references: {{titles}}": "Текущие публикации: {{titles}}",
+    "Batch paused after a reference failed.": "Пакет приостановлен после сбоя при обработке публикации."
   }
 }

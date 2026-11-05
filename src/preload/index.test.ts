@@ -407,6 +407,7 @@ describe('preload bridge — public surface inventory', () => {
       'literature.publicationCheck',
       'literature.related',
       'literature.search',
+      'literature.snapshotBatch',
       'literature.sources',
       'literature.studySnapshot',
       'literature.supplementAttachment',

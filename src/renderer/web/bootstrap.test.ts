@@ -101,6 +101,24 @@ const chunkOperations = [
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
   {
+    channel: 'literature:snapshot-batch',
+    result: {
+      id: '00000000-0000-4000-8000-000000000000',
+      paused: false,
+      rows: [
+        {
+          request: { itemId: 'paper-1', language: 'en', expectedSourceKey: 'source-1' },
+          status: 'succeeded'
+        }
+      ]
+    },
+    invoke: (api: WebApi) =>
+      api.literature.snapshotBatch({
+        action: 'advance',
+        jobId: '00000000-0000-4000-8000-000000000000'
+      })
+  },
+  {
     channel: 'literature:collect',
     result: { entries: [], savedItemIds: [], failures: [], pdfCount: 0 },
     invoke: (api: WebApi) => api.literature.collect({ kind: 'zotero-preview' })

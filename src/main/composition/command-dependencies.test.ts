@@ -150,6 +150,7 @@ function fixture() {
     notebookRuntime: {},
     researchCatalog: {
       literatureStudySnapshot: { run: vi.fn() },
+      literatureSnapshotBatch: { run: vi.fn() },
       literatureCatalog: { get: vi.fn() },
       memoryService,
       tagService: {}

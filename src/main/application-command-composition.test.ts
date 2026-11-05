@@ -272,6 +272,7 @@ describe('application command composition', () => {
       'literature:publication-check',
       'literature:related',
       'literature:search',
+      'literature:snapshot-batch',
       'literature:sources',
       'literature:study-snapshot',
       'literature:supplement-attachment',

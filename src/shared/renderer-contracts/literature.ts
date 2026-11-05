@@ -1,3 +1,4 @@
+import type { SnapshotBatchRequest, SnapshotBatch } from '../literature-snapshot-batch'
 import type { CollectorRequest, CollectorResult } from '../literature-collector'
 import type { LiteratureSnapshotRequest, LiteratureSnapshotResult } from '../literature-snapshot'
 import type {
@@ -86,6 +87,9 @@ export const contracts = {
     'literature',
     ['literature:collect', WEB, undefined, undefined, RUNTIME_VALIDATED]
   ),
+  'literature.snapshotBatch': callable<
+    (request: SnapshotBatchRequest) => Promise<SnapshotBatch | null>
+  >()('literature', ['literature:snapshot-batch', WEB, undefined, undefined, RUNTIME_VALIDATED]),
   'literature.studySnapshot': callable<
     (request: LiteratureSnapshotRequest) => Promise<LiteratureSnapshotResult>
   >()('literature', ['literature:study-snapshot', WEB, undefined, undefined, RUNTIME_VALIDATED]),

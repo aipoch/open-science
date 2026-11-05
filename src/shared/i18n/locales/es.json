@@ -8193,6 +8193,18 @@
     "Expand question panel": "Expandir el panel de preguntas",
     "Set up the selected agent runtime in Settings before generating a research film.": "Configure el entorno de ejecución del agente seleccionado en Ajustes antes de generar una película de investigación.",
     "Check the selected model and credentials in Settings before generating a research film.": "Revise el modelo seleccionado y las credenciales en Ajustes antes de generar una película de investigación.",
-    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "El límite de entrada del modelo seleccionado no permite incluir las instrucciones para generar la película de investigación. Seleccione un modelo con un límite de entrada mayor."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "El límite de entrada del modelo seleccionado no permite incluir las instrucciones para generar la película de investigación. Seleccione un modelo con un límite de entrada mayor.",
+    "Batch snapshots": "Resúmenes por lotes",
+    "Generate batch snapshots": "Generar resúmenes por lotes",
+    "Select up to {{limit}} references.": "Seleccione hasta {{limit}} referencias.",
+    "Retry failed snapshots": "Reintentar resúmenes fallidos",
+    "Could not generate batch snapshots. Check the selection and try again.": "No se pudieron procesar los resúmenes por lotes. Revise la selección e inténtelo de nuevo.",
+    "Snapshot saved": "Resumen guardado",
+    "Snapshot failed": "Error en el resumen",
+    "Show reference results": "Mostrar resultados por referencia",
+    "Hide reference results": "Ocultar resultados por referencia",
+    "Pause after active references": "Pausar después de completar las referencias en curso",
+    "Current references: {{titles}}": "Referencias en curso: {{titles}}",
+    "Batch paused after a reference failed.": "El lote se pausó tras fallar una referencia."
   }
 }

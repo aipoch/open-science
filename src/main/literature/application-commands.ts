@@ -1,3 +1,4 @@
+import type { SnapshotBatchRequest, SnapshotBatch } from '../../shared/literature-snapshot-batch'
 import type {
   LiteratureSnapshotRequest,
   LiteratureSnapshotResult
@@ -70,6 +71,7 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  snapshotBatch(request: SnapshotBatchRequest, signal?: AbortSignal): Promise<SnapshotBatch | null>
   studySnapshot(
     request: LiteratureSnapshotRequest,
     signal?: AbortSignal
@@ -192,6 +194,11 @@ const literatureApplicationCommands = Object.freeze({
     readonly [string],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
+  snapshotBatch: defineApplicationCommand<
+    'literature:snapshot-batch',
+    readonly [SnapshotBatchRequest],
+    SnapshotBatch | null
+  >('literature:snapshot-batch', literatureApplicationCommandContracts.snapshotBatch),
   studySnapshot: defineApplicationCommand<
     'literature:study-snapshot',
     readonly [LiteratureSnapshotRequest],
@@ -269,6 +276,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
   literatureApplicationCommands.studySnapshot,
+  literatureApplicationCommands.snapshotBatch,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
@@ -347,6 +355,12 @@ const registerLiteratureApplicationCommands = (
         run(
           () =>
             owner.studySnapshot(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
+      'literature:snapshot-batch': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.snapshotBatch(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
           false
         ),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),

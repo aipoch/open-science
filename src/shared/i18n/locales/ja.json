@@ -7851,6 +7851,18 @@
     "Expand question panel": "質問パネルを展開",
     "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
     "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
-    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。"
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。",
+    "Batch snapshots": "一括概要",
+    "Generate batch snapshots": "概要を一括生成",
+    "Select up to {{limit}} references.": "文献は {{limit}} 件まで選択できます。",
+    "Retry failed snapshots": "失敗した概要を再試行",
+    "Could not generate batch snapshots. Check the selection and try again.": "概要を一括処理できませんでした。選択内容を確認して再試行してください。",
+    "Snapshot saved": "概要を保存しました",
+    "Snapshot failed": "概要の生成に失敗",
+    "Show reference results": "文献ごとの結果を表示",
+    "Hide reference results": "文献ごとの結果を非表示",
+    "Pause after active references": "処理中の文献の完了後に一時停止",
+    "Current references: {{titles}}": "処理中の文献：{{titles}}",
+    "Batch paused after a reference failed.": "文献の処理に失敗したため、バッチを一時停止しました。"
   }
 }

@@ -19,9 +19,13 @@ import {
 import { CollapsibleAbstract, CollapsibleAuthors } from './LiteratureDetailText'
 
 export function LiteratureBibliographicDetails({
-  selectedItem
+  selectedItem,
+  snapshotRevision,
+  snapshotBatchGenerating
 }: {
   selectedItem: LiteratureItemView
+  snapshotRevision?: number
+  snapshotBatchGenerating?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const selectedItemExternalUrl = getExternalLiteratureUrl(selectedItem.item.url)
@@ -49,7 +53,11 @@ export function LiteratureBibliographicDetails({
           <CollapsibleAbstract text={selectedItem.item.abstract} />
         </section>
       ) : null}
-      <LiteratureStudySnapshot item={selectedItem} />
+      <LiteratureStudySnapshot
+        item={selectedItem}
+        snapshotRevision={snapshotRevision}
+        batchGenerating={snapshotBatchGenerating}
+      />
       <JournalAttributes item={selectedItem.item} itemId={selectedItem.id} detail />
       {hasFields || selectedItem.item.identifiers.length > 0 ? (
         <section className="py-4">

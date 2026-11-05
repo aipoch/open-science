@@ -1,3 +1,4 @@
+import { LiteratureSnapshotBatch } from '../literature/study-snapshot-batch'
 import { LiteratureStudySnapshot, LiteratureSnapshotStore } from '../literature/study-snapshot'
 import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { runtimeMetadata } from '../runtime-metadata'
@@ -81,6 +82,7 @@ export async function composeResearchCatalog({
   tagService: TagService
   memoryService: MemoryService
   literatureCatalog: LiteratureCatalog
+  literatureSnapshotBatch: LiteratureSnapshotBatch
   literatureStudySnapshot: LiteratureStudySnapshot
   journalAttributes: JournalAttributes
   literatureCitationFormatter: LiteratureCitationFormatter
@@ -198,6 +200,10 @@ export async function composeResearchCatalog({
         outputLimitBytes: 24_000
       })
   })
+  const literatureSnapshotBatch = new LiteratureSnapshotBatch(
+    () => join(resolveDataRoot(), 'literature', 'snapshot-batch.json'),
+    literatureStudySnapshot
+  )
   const literatureCitationStyles = new LiteratureCitationStyleLibrary(
     join(resolveDataRoot(), 'literature', 'citation-styles')
   )
@@ -315,6 +321,7 @@ export async function composeResearchCatalog({
     journalAttributes,
     literatureCatalog,
     literatureStudySnapshot,
+    literatureSnapshotBatch,
     literatureCitationFormatter,
     literatureCitationDocument,
     literatureReferenceResolver,

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
@@ -13,6 +14,8 @@ import {
   type LiteratureSnapshotResult
 } from '../../shared/literature-snapshot'
 import type { LiteratureDocumentReader } from './document-reader'
+
+const log = createLogger('literature-study-snapshot')
 
 const SYSTEM_PROMPT = [
   'Produce a concise study snapshot of one paper using only the supplied source.',
@@ -71,7 +74,7 @@ type Options = {
 }
 
 export class LiteratureStudySnapshot {
-  private active = 0
+  private readonly active = new Set<string>()
   constructor(private readonly options: Options) {}
 
   async run(
@@ -83,12 +86,17 @@ export class LiteratureStudySnapshot {
       issue
     })
     const generating = request.mode !== 'read'
-    if (generating && this.active >= 4) return unavailable('busy')
-    if (generating) this.active++
+    const key = JSON.stringify([request.itemId, request.expectedSourceKey, request.language])
+    // Admit before any async source work; keep ownership through persistence and final checks.
+    // Duplicate callers retain independent cancellation and receive the existing busy outcome.
+    if (generating && (this.active.has(key) || this.active.size >= 4)) return unavailable('busy')
+    if (generating) this.active.add(key)
     const signal = AbortSignal.any([
       AbortSignal.timeout(180_000),
       ...(callerSignal ? [callerSignal] : [])
     ])
+    let stage: 'source' | 'inference' | 'json' | 'validation' | 'persist' = 'source'
+    let responseBytes: number | undefined
     try {
       signal.throwIfAborted()
       const item = await this.options.catalog.get(request.itemId)
@@ -142,11 +150,17 @@ export class LiteratureStudySnapshot {
       }
       const prompt = JSON.stringify(source)
       if (Buffer.byteLength(prompt, 'utf8') > 60_000) return unavailable('input-too-large')
+      stage = 'inference'
       const response = await this.options.infer({ prompt, systemPrompt: SYSTEM_PROMPT, signal })
       signal.throwIfAborted()
-      const sections = literatureSnapshotSectionsSchema.parse(
-        JSON.parse(response.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/u, '$1'))
+      responseBytes = Buffer.byteLength(response.text.trim(), 'utf8')
+      stage = 'json'
+      const parsed: unknown = JSON.parse(
+        response.text.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/u, '$1')
       )
+      stage = 'validation'
+      const sections = literatureSnapshotSectionsSchema.parse(parsed)
+      stage = 'source'
       const current = await this.options.catalog.get(request.itemId)
       signal.throwIfAborted()
       const currentSource = current ? literatureSnapshotSource(current) : undefined
@@ -159,18 +173,52 @@ export class LiteratureStudySnapshot {
         model: response.model,
         sections
       }
+      stage = 'persist'
       await this.options.store?.write(request, snapshot)
       signal.throwIfAborted()
       if (this.options.store) {
         // Saving adds an async boundary: do not publish a source that changed during the write.
+        stage = 'source'
         const latest = await this.options.catalog.get(request.itemId)
         signal.throwIfAborted()
         if (!latest || literatureSnapshotSource(latest).key !== request.expectedSourceKey)
           return unavailable('source-changed')
       }
       return snapshot
+    } catch (error) {
+      if (generating) {
+        const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined
+        // Never persist provider text, source text, exception messages or stacks here.
+        const safeCode =
+          typeof code === 'string' &&
+          [
+            'tool-violation',
+            'output-limit',
+            'transport-unavailable',
+            'cancelled',
+            'shutting-down'
+          ].includes(code)
+            ? code
+            : undefined
+        const category = signal.aborted
+          ? 'cancelled'
+          : (safeCode ??
+            (stage === 'json'
+              ? responseBytes === 0
+                ? 'empty-response'
+                : 'invalid-json'
+              : stage === 'validation'
+                ? 'invalid-sections'
+                : 'operation-failed'))
+        log.warn('Study snapshot generation failed', {
+          stage,
+          category,
+          responseBytes
+        })
+      }
+      throw error
     } finally {
-      if (generating) this.active--
+      if (generating) this.active.delete(key)
     }
   }
 }

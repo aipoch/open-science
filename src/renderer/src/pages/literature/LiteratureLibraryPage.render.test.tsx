@@ -28,6 +28,11 @@ import {
   literatureCatalogCommandSchema
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+import {
+  literatureSnapshotSource,
+  type LiteratureSnapshot
+} from '../../../../shared/literature-snapshot'
+import type { SnapshotBatch } from '../../../../shared/literature-snapshot-batch'
 import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
@@ -437,6 +442,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          snapshotBatch: vi.fn().mockResolvedValue(null),
           studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
             sourceKey: request.expectedSourceKey,
             issue: 'not-generated' as const
@@ -594,6 +600,190 @@ describe('LiteratureLibraryPage', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe('older')
     }
   )
+
+  it.each([
+    ['matching source and language', undefined, 'en', true],
+    ['obsolete source', 'obsolete-source', 'en', false],
+    ['another language', undefined, 'fr', false]
+  ] as const)(
+    'refreshes a mounted detail only for its saved batch result: %s',
+    async (_name, otherSource, language, shouldRefresh) => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      const sourceKey = literatureSnapshotSource(libraryItem).key
+      const wave = Promise.withResolvers<void>()
+      const job: SnapshotBatch = {
+        id: '00000000-0000-4000-8000-000000000000',
+        paused: true,
+        rows: [
+          {
+            request: {
+              itemId: libraryItem.id,
+              expectedSourceKey: otherSource ?? sourceKey,
+              language
+            },
+            status: 'pending'
+          }
+        ]
+      }
+      const saved: LiteratureSnapshot = {
+        sourceKey: otherSource ?? sourceKey,
+        model: 'test',
+        coverage: 'abstract',
+        sections: {
+          question: 'Saved by the batch without another inference',
+          population: null,
+          methods: null,
+          results: null,
+          limitations: null
+        }
+      }
+      let stored: LiteratureSnapshot | undefined
+      const snapshot = vi.fn<typeof window.api.literature.studySnapshot>(async (request) =>
+        request.mode === 'read'
+          ? stored &&
+            request.language === language &&
+            request.expectedSourceKey === stored.sourceKey
+            ? stored
+            : { sourceKey: request.expectedSourceKey, issue: 'not-generated' }
+          : saved
+      )
+      window.api.literature.studySnapshot = snapshot
+      vi.mocked(window.api.literature.snapshotBatch).mockImplementation(async (request) => {
+        if (request.action === 'resume') job.paused = false
+        if (request.action === 'advance') {
+          await wave.promise
+          stored = saved
+          job.rows[0].status = 'succeeded'
+        }
+        return structuredClone(job)
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const row = await screen.findByRole('button', { name: libraryItem.item.title })
+      const batch = await screen.findByRole('region', { name: 'Batch snapshots' })
+      fireEvent.click(within(batch).getByRole('button', { name: 'Resume' }))
+      await waitFor(() =>
+        expect(window.api.literature.snapshotBatch).toHaveBeenCalledWith({
+          action: 'advance',
+          jobId: job.id
+        })
+      )
+      fireEvent.click(row)
+      const overview = await screen.findByRole('region', { name: 'Study overview' })
+      await waitFor(() => expect(snapshot).toHaveBeenCalledTimes(1))
+      if (shouldRefresh) {
+        const generating = within(overview).getByRole('button', { name: 'Generating overview…' })
+        expect(generating).toHaveProperty('disabled', true)
+        expect(overview.getAttribute('aria-busy')).toBe('true')
+        fireEvent.click(generating)
+        expect(snapshot.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+      } else {
+        expect(within(overview).getByRole('button', { name: 'Generate overview' })).toBeTruthy()
+        expect(overview.getAttribute('aria-busy')).toBe('false')
+      }
+
+      await act(async () => {
+        wave.resolve()
+        await wave.promise
+      })
+      await waitFor(() => expect(batch.textContent).toContain('Snapshot saved'))
+
+      expect(screen.getByRole('region', { name: 'Study overview' })).toBe(overview)
+      if (shouldRefresh) {
+        await within(overview).findByText('Saved by the batch without another inference')
+        expect(snapshot).toHaveBeenCalledTimes(2)
+        expect(within(overview).getByRole('button', { name: 'Regenerate' })).toBeTruthy()
+        expect(overview.getAttribute('aria-busy')).toBe('false')
+      } else {
+        expect(
+          within(overview).queryByText('Saved by the batch without another inference')
+        ).toBeNull()
+        expect(snapshot).toHaveBeenCalledTimes(1)
+      }
+      expect(snapshot.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+    }
+  )
+
+  it.each(['failed', 'pending'] as const)(
+    'restores the manual overview action after an observed running batch reference becomes %s',
+    async (status) => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      const job: SnapshotBatch = {
+        id: '00000000-0000-4000-8000-000000000000',
+        paused: true,
+        rows: [
+          {
+            request: {
+              itemId: libraryItem.id,
+              expectedSourceKey: literatureSnapshotSource(libraryItem).key,
+              language: 'en'
+            },
+            status: 'running'
+          }
+        ]
+      }
+      vi.mocked(window.api.literature.snapshotBatch).mockImplementation(async () =>
+        structuredClone(job)
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByRole('button', { name: libraryItem.item.title }))
+      const overview = await screen.findByRole('region', { name: 'Study overview' })
+      expect(
+        await within(overview).findByRole('button', { name: 'Generating overview…' })
+      ).toHaveProperty('disabled', true)
+      job.rows[0].status = status
+      expect(
+        await within(overview).findByRole(
+          'button',
+          { name: 'Generate overview' },
+          { timeout: 2500 }
+        )
+      ).toHaveProperty('disabled', false)
+      expect(overview.getAttribute('aria-busy')).toBe('false')
+    }
+  )
+
+  it('keeps five batch results outside the toolbar while selection remains responsive', async () => {
+    const records = Array.from({ length: 5 }, (_, index) => createLibraryItem(index))
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+      request.scope === 'library' ? { entries: records } : { entries: [] }
+    )
+    vi.mocked(window.api.literature.snapshotBatch).mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000000',
+      paused: true,
+      rows: records.map((item, index) => ({
+        request: { itemId: item.id, expectedSourceKey: item.id, language: 'en' },
+        status: index === 0 ? 'failed' : 'succeeded',
+        issue: index === 0 ? 'source-unavailable' : undefined
+      }))
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('button', { name: records[0].item.title })
+    const batch = await screen.findByRole('region', { name: 'Batch snapshots' })
+    expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
+    expect(within(batch).getAllByText('Snapshot saved')).toHaveLength(4)
+    expect(
+      within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
+    ).toBeTruthy()
+    const toolbar = batch.previousElementSibling!
+    expect(toolbar.contains(batch)).toBe(false)
+    expect(batch.parentElement?.closest('[data-slot="literature-action-rail"]')).toBeTruthy()
+    const generate = within(batch).getByRole('button', { name: 'Generate batch snapshots' })
+    expect(generate).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByLabelText(`Select ${records[0].item.title}`))
+    await waitFor(() => expect(generate).toHaveProperty('disabled', false))
+    expect(batch.previousElementSibling).toBe(toolbar)
+    expect(toolbar.contains(screen.getByRole('button', { name: 'Clear selection' }))).toBe(true)
+    expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
+  })
 
   describe('reading status', () => {
     const filterUnread = async (): Promise<void> => {
@@ -3846,6 +4036,62 @@ describe('LiteratureLibraryPage', () => {
     expect(
       screen.getByLabelText('Search references').closest('label')?.parentElement?.className
     ).toContain('shrink-0')
+  })
+
+  it('adapts navigation to its container until the user chooses a sidebar state', () => {
+    let width = 420
+    const resize: (() => void)[] = []
+    const disconnected = vi.fn()
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return { width: this.tagName === 'MAIN' ? width : 0 } as DOMRect
+      })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private main = false
+        constructor(private callback: () => void) {}
+        observe(element: Element): void {
+          if (element.tagName === 'MAIN') {
+            this.main = true
+            resize.push(this.callback)
+          }
+        }
+        unobserve(): void {
+          // The production observers disconnect their entire observation set.
+        }
+        disconnect(): void {
+          if (this.main) disconnected()
+        }
+      }
+    )
+    try {
+      const view = render(<LiteratureLibraryPage />)
+      const sidebar = screen.getByRole('complementary')
+      expect(sidebar.className).toContain('w-14')
+      expect(window.innerWidth).toBeGreaterThan(width)
+      const resizeTo = (nextWidth: number): void => {
+        width = nextWidth
+        act(() => resize.forEach((callback) => callback()))
+      }
+      resizeTo(1100)
+      expect(sidebar.className).toContain('w-60')
+      resizeTo(420)
+      expect(sidebar.className).toContain('w-14')
+      fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar panel' }))
+      resizeTo(1100)
+      resizeTo(420)
+      expect(sidebar.className).toContain('w-60')
+      fireEvent.keyDown(window, { key: 'b', metaKey: true })
+      expect(sidebar.className).toContain('w-14')
+      resizeTo(1100)
+      expect(sidebar.className).toContain('w-14')
+      view.unmount()
+      expect(disconnected).toHaveBeenCalledTimes(1)
+    } finally {
+      measure.mockRestore()
+    }
   })
 
   it('collapses the Literature navigation into an icon rail', async () => {
@@ -7781,7 +8027,9 @@ describe('LiteratureLibraryPage', () => {
     expect(referenceRow?.className).toContain('hover:bg-bg-200')
     expect(referenceRow?.className).toContain('bg-bg-000')
     expect(referenceRow?.className).not.toContain('transition-colors')
-    const stickyRowCells = Array.from(referenceRow?.querySelectorAll('td.sticky') ?? [])
+    const stickyRowCells = Array.from(referenceRow?.querySelectorAll('td') ?? []).filter((cell) =>
+      cell.classList.contains('@min-[640px]/literature-results:sticky')
+    )
     expect(stickyRowCells).toHaveLength(2)
     for (const cell of stickyRowCells) {
       expect(cell.className).toContain('bg-inherit')

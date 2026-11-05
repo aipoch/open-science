@@ -13,7 +13,17 @@ import { useLiteratureHost } from '../renderer-host'
 
 type SnapshotFailure = LiteratureSnapshotIssue | 'generation-failed'
 
-export function LiteratureStudySnapshot({ item }: { item: LiteratureItemView }): React.JSX.Element {
+type SnapshotProps = {
+  item: LiteratureItemView
+  snapshotRevision?: number
+  batchGenerating?: boolean
+}
+
+export function LiteratureStudySnapshot({
+  item,
+  snapshotRevision,
+  batchGenerating
+}: SnapshotProps): React.JSX.Element {
   const { i18n } = useTranslation()
   // A source/language owns its own state. Late responses cannot update another keyed instance.
   return (
@@ -23,22 +33,40 @@ export function LiteratureStudySnapshot({ item }: { item: LiteratureItemView }):
         i18n.resolvedLanguage ?? i18n.language
       ])}
       item={item}
+      snapshotRevision={snapshotRevision}
+      batchGenerating={batchGenerating}
     />
   )
 }
 
-function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Element {
+function SnapshotContent({
+  item,
+  snapshotRevision,
+  batchGenerating
+}: SnapshotProps): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { api } = useLiteratureHost()
   const [result, setResult] = useState<LiteratureSnapshot>()
   const [pending, setPending] = useState(false)
   const [failure, setFailure] = useState<SnapshotFailure>()
+  const [readRevision, setReadRevision] = useState(0)
   const busy = useRef(false)
+  const deferredRead = useRef(false)
+  const readInFlight = useRef(false)
+  const sourceInvalidated = useRef(false)
   const generation = useRef(0)
   const source = literatureSnapshotSource(item)
   const available = source.active && Boolean(item.item.abstract?.trim() || source.document)
   useEffect(() => {
+    // A cached result cannot establish that a source rejected by generation is usable again.
+    if (sourceInvalidated.current) return
+    // A manual generation owns the result; recover the batch save if that generation fails.
+    if (busy.current) {
+      deferredRead.current = true
+      return
+    }
     let current = true
+    readInFlight.current = true
     const initialGeneration = generation.current
     const initialLanguage = i18n.resolvedLanguage ?? i18n.language
     void api.literature
@@ -54,22 +82,37 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
           generation.current === initialGeneration &&
           saved.sourceKey === source.key &&
           !('issue' in saved)
-        )
+        ) {
           setResult(saved)
+        }
       })
       .catch(() => {
         /* Generation remains available when loading a saved result fails. */
       })
+      .finally(() => {
+        if (current) readInFlight.current = false
+      })
     return () => {
       current = false
+      readInFlight.current = false
     }
-  }, [api, item.id, source.key, i18n.resolvedLanguage, i18n.language])
+  }, [
+    api,
+    item.id,
+    source.key,
+    i18n.resolvedLanguage,
+    i18n.language,
+    snapshotRevision,
+    readRevision
+  ])
   const generate = async (): Promise<void> => {
-    if (busy.current) return
+    if (busy.current || batchGenerating) return
+    if (readInFlight.current) deferredRead.current = true
     busy.current = true
     generation.current++
     setPending(true)
     setFailure(undefined)
+    let generated = false
     try {
       const snapshot = await api.literature.studySnapshot({
         itemId: item.id,
@@ -79,16 +122,25 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
       if (snapshot.sourceKey !== source.key) throw new Error('Stale study snapshot response.')
       if ('issue' in snapshot) {
         setFailure(snapshot.issue)
-        if (snapshot.issue === 'source-changed' || snapshot.issue === 'source-unavailable')
+        if (snapshot.issue === 'source-changed' || snapshot.issue === 'source-unavailable') {
+          sourceInvalidated.current = true
+          deferredRead.current = false
           setResult(undefined)
+        }
         return
       }
+      sourceInvalidated.current = false
       setResult(snapshot)
+      generated = true
     } catch {
       setFailure('generation-failed')
     } finally {
       busy.current = false
       setPending(false)
+      if (deferredRead.current) {
+        deferredRead.current = false
+        if (!generated) setReadRevision((revision) => revision + 1)
+      }
     }
   }
   const failureDescriptions: Record<SnapshotFailure, string> = {
@@ -112,8 +164,9 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
         [t('Study limitations'), result.sections.limitations]
       ]
     : []
+  const generating = pending || Boolean(batchGenerating)
   return (
-    <section className="py-4" aria-label={t('Study overview')} aria-busy={pending}>
+    <section className="py-4" aria-label={t('Study overview')} aria-busy={generating}>
       <div className="rounded-lg border border-primary/25 bg-primary/5 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="flex items-center gap-1.5 font-medium">
@@ -134,15 +187,15 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
             size="sm"
             variant="ghost"
             className="ml-auto"
-            disabled={pending || !available}
+            disabled={generating || !available}
             onClick={() => void generate()}
           >
-            {pending ? (
+            {generating ? (
               <LoaderCircle className="size-3.5 animate-spin" aria-hidden="true" />
             ) : result ? (
               <RefreshCw className="size-3.5" aria-hidden="true" />
             ) : null}
-            {pending
+            {generating
               ? t('Generating overview…')
               : failure
                 ? t('Retry')
@@ -151,14 +204,14 @@ function SnapshotContent({ item }: { item: LiteratureItemView }): React.JSX.Elem
                   : t('Generate overview')}
           </Button>
         </div>
-        {!result && !pending && !available ? (
+        {!result && !generating && !available ? (
           <p className="mt-2 text-xs text-muted-foreground">
             {!source.active
               ? t('This reference is no longer available.')
               : t('Add an abstract or readable full-text PDF to generate an overview.')}
           </p>
         ) : null}
-        {pending ? (
+        {generating ? (
           <p role="status" className="mt-2 text-xs text-muted-foreground">
             {t('Reading the available source and generating an overview…')}
           </p>

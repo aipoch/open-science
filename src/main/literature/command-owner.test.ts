@@ -592,3 +592,13 @@ it.each(['new Map([["key",1]])', 'new Set([1])', 'new Date(0)'])(
     ).toBe(false)
   }
 )
+
+it('forwards batch controls and cancellation without constructing storage in the adapter', async () => {
+  const run = vi.fn().mockResolvedValue(null)
+  const owner = createLiteratureCommandOwner({
+    literatureSnapshotBatch: { run }
+  } as unknown as Services)
+  const signal = new AbortController().signal
+  await expect(owner.snapshotBatch({ action: 'read' }, signal)).resolves.toBeNull()
+  expect(run).toHaveBeenCalledExactlyOnceWith({ action: 'read' }, signal)
+})

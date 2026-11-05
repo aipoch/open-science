@@ -14,6 +14,18 @@ import {
   type LiteratureSnapshot
 } from '../../shared/literature-snapshot'
 
+const { failureLog } = vi.hoisted(() => ({ failureLog: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
+  return {
+    ...actual,
+    createLogger: (scope: string) =>
+      scope === 'literature-study-snapshot'
+        ? { ...actual.createLogger(scope), warn: failureLog }
+        : actual.createLogger(scope)
+  }
+})
+
 const request = { itemId: 'paper', expectedSourceKey: 'source-key', language: 'zh-Hans' }
 const sections = {
   question: 'What works?',
@@ -199,6 +211,43 @@ describe('single-paper study snapshot', () => {
     await expect(f.owner.run(f.request)).rejects.toThrow()
     await expect(f.owner.run(f.request)).resolves.toMatchObject({ sections })
   })
+  it.each([
+    ['   ', 'json', 'empty-response'],
+    ['PRIVATE_RESPONSE', 'json', 'invalid-json'],
+    [
+      JSON.stringify({ ...sections, results: ['PRIVATE_RESPONSE'] }),
+      'validation',
+      'invalid-sections'
+    ]
+  ])('records only bounded failure metadata for %s', async (text, stage, category) => {
+    failureLog.mockClear()
+    const f = fixture()
+    f.infer.mockResolvedValueOnce({ text, model: 'PRIVATE_MODEL_VALUE' })
+    await expect(f.owner.run(f.request)).rejects.toThrow()
+    expect(failureLog).toHaveBeenCalledExactlyOnceWith('Study snapshot generation failed', {
+      stage,
+      category,
+      responseBytes: Buffer.byteLength(text.trim(), 'utf8')
+    })
+    expect(JSON.stringify(failureLog.mock.calls)).not.toContain('PRIVATE_')
+    await expect(f.owner.run(f.request)).resolves.toMatchObject({ sections })
+  })
+  it.each(['tool-violation', 'PRIVATE_EXCEPTION_CODE'])(
+    'keeps the original inference error while sanitizing its code %s',
+    async (code) => {
+      failureLog.mockClear()
+      const f = fixture()
+      const error = Object.assign(new Error('PRIVATE_EXCEPTION_MESSAGE'), { code })
+      f.infer.mockRejectedValueOnce(error)
+      await expect(f.owner.run(f.request)).rejects.toBe(error)
+      expect(failureLog.mock.calls[0][1]).toEqual({
+        stage: 'inference',
+        category: code === 'tool-violation' ? code : 'operation-failed',
+        responseBytes: undefined
+      })
+      expect(JSON.stringify(failureLog.mock.calls)).not.toContain('PRIVATE_')
+    }
+  )
   it('uses a current PDF after a non-PDF full-text attachment', async () => {
     const item = withPdf()
     const invalid = structuredClone(item.attachments[0])
@@ -298,6 +347,100 @@ describe('single-paper study snapshot', () => {
       expect(f.infer).not.toHaveBeenCalled()
     }
   )
+  it.each(['initial-read', 'pdf', 'inference', 'persist', 'final-read'])(
+    'rejects duplicate generation while the first request is in %s without sharing cancellation',
+    async (stage) => {
+      const f = fixture(withPdf())
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let entered = false
+      let reads = 0
+      const wait = async (): Promise<void> => {
+        entered = true
+        await gate
+      }
+      const infer = vi.fn(async () => {
+        if (stage === 'inference') await wait()
+        return { text: JSON.stringify(sections), model: 'test' }
+      })
+      const write = vi.fn(async () => {
+        if (stage === 'persist') await wait()
+      })
+      const owner = new LiteratureStudySnapshot({
+        catalog: {
+          get: async () => {
+            reads++
+            if (
+              (stage === 'initial-read' && reads === 1) ||
+              (stage === 'final-read' && reads === 3)
+            )
+              await wait()
+            return structuredClone(f.item)
+          }
+        },
+        reader: {
+          classificationEvidence: async () => {
+            if (stage === 'pdf') await wait()
+            return {
+              coverage: 'full-text',
+              passages: [{ pageStart: 1, pageEnd: 1, content: 'Evidence' }]
+            }
+          }
+        },
+        infer,
+        store: { read: async () => undefined, write }
+      })
+      const first = owner.run(f.request)
+      try {
+        await vi.waitFor(() => expect(entered).toBe(true))
+        const duplicate = new AbortController()
+        await expect(owner.run(f.request, duplicate.signal)).resolves.toEqual({
+          sourceKey: f.request.expectedSourceKey,
+          issue: 'busy'
+        })
+        duplicate.abort()
+      } finally {
+        release()
+        await first
+      }
+      expect(infer).toHaveBeenCalledTimes(1)
+      expect(write).toHaveBeenCalledTimes(1)
+      await expect(owner.run(f.request)).resolves.toMatchObject({ sections })
+    }
+  )
+  it.each(['item', 'source', 'language'])(
+    'admits concurrent generation when the %s identity differs',
+    async (identity) => {
+      const f = fixture()
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      f.infer.mockImplementation(async () => {
+        await gate
+        return { text: JSON.stringify(sections), model: 'test' }
+      })
+      const first = f.owner.run(f.request)
+      let second: ReturnType<typeof f.owner.run> | undefined
+      try {
+        await vi.waitFor(() => expect(f.infer).toHaveBeenCalledTimes(1))
+        if (identity === 'item') f.item.id = 'other-paper'
+        if (identity === 'source') f.item.metadataRevision++
+        second = f.owner.run({
+          ...f.request,
+          itemId: f.item.id,
+          expectedSourceKey: literatureSnapshotSource(f.item).key,
+          language: identity === 'language' ? 'ja' : f.request.language
+        })
+        await vi.waitFor(() => expect(f.infer).toHaveBeenCalledTimes(2))
+      } finally {
+        release()
+        await Promise.all([first, second])
+      }
+    }
+  )
   it('bounds concurrent inference and releases admission after completion', async () => {
     const f = fixture()
     let finish!: (result: { text: string; model: string }) => void
@@ -305,7 +448,9 @@ describe('single-paper study snapshot', () => {
       finish = resolve
     })
     f.infer.mockReturnValue(pending)
-    const running = Array.from({ length: 4 }, () => f.owner.run(f.request))
+    const running = Array.from({ length: 4 }, (_, index) =>
+      f.owner.run({ ...f.request, language: `language-${index}` })
+    )
     let fifth: Promise<string> | undefined
     try {
       await vi.waitFor(() => expect(f.infer).toHaveBeenCalledTimes(4))
@@ -332,9 +477,9 @@ describe('single-paper study snapshot', () => {
         f.infer.mockResolvedValue({ text: 'invalid JSON', model: 'test' })
       if (failure === 'source-unavailable') f.item.item.abstract = ''
       if (failure === 'aborted') controller.abort()
-      const attempts = await Promise.allSettled(
-        Array.from({ length: 4 }, () => f.owner.run(f.request, controller.signal))
-      )
+      const attempts = []
+      for (let i = 0; i < 4; i++)
+        attempts.push(...(await Promise.allSettled([f.owner.run(f.request, controller.signal)])))
       if (failure === 'source-unavailable') {
         for (const attempt of attempts)
           expect(attempt).toMatchObject({
@@ -572,7 +717,9 @@ describe('saved study snapshots', () => {
     for (let i = 0; i < 4; i++)
       expect(await owner.run({ ...f.request, mode: 'read' })).toEqual(saved)
     let fifth: ReturnType<typeof owner.run> | undefined
-    const running = Array.from({ length: 4 }, () => owner.run(f.request))
+    const running = Array.from({ length: 4 }, (_, index) =>
+      owner.run({ ...f.request, language: `language-${index}` })
+    )
     try {
       await vi.waitFor(() => expect(infer).toHaveBeenCalledTimes(4))
       expect(await owner.run({ ...f.request, mode: 'read' })).toEqual(saved)
@@ -595,6 +742,8 @@ describe('saved study snapshots', () => {
       model: 'previous-model',
       sections
     }
+    const persistenceError = new Error('PRIVATE_STORAGE_ERROR')
+    failureLog.mockClear()
     const owner = new LiteratureStudySnapshot({
       catalog: { get: async () => structuredClone(f.item) },
       reader: {
@@ -606,13 +755,24 @@ describe('saved study snapshots', () => {
       store: {
         read: async () => saved,
         write: async (_request, snapshot) => {
-          if (fail) throw new Error('No space left on device')
+          if (fail) throw persistenceError
           saved = snapshot
         }
       }
     })
-    const attempts = await Promise.allSettled(Array.from({ length: 4 }, () => owner.run(f.request)))
-    expect(attempts.every((attempt) => attempt.status === 'rejected')).toBe(true)
+    const attempts = []
+    for (let i = 0; i < 4; i++) attempts.push(...(await Promise.allSettled([owner.run(f.request)])))
+    expect(
+      attempts.every(
+        (attempt) => attempt.status === 'rejected' && attempt.reason === persistenceError
+      )
+    ).toBe(true)
+    expect(failureLog).toHaveBeenCalledWith('Study snapshot generation failed', {
+      stage: 'persist',
+      category: 'operation-failed',
+      responseBytes: Buffer.byteLength(JSON.stringify(sections), 'utf8')
+    })
+    expect(JSON.stringify(failureLog.mock.calls)).not.toContain('PRIVATE_STORAGE_ERROR')
     expect(await owner.run({ ...f.request, mode: 'read' })).toMatchObject({
       model: 'previous-model'
     })

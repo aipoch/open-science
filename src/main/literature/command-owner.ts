@@ -1,3 +1,4 @@
+import type { LiteratureSnapshotBatch } from './study-snapshot-batch'
 import type { LiteratureStudySnapshot } from './study-snapshot'
 import type { LiteratureCitationFormatter } from '@aipoch/literature-citations'
 import type {
@@ -40,6 +41,7 @@ import {
 } from '../../shared/literature-collector'
 
 type LiteratureCommandServices = Readonly<{
+  literatureSnapshotBatch: Pick<LiteratureSnapshotBatch, 'run'>
   literatureStudySnapshot: Pick<LiteratureStudySnapshot, 'run'>
   journalAttributes: Pick<JournalAttributes, 'run'>
   literatureBatchJobs: Pick<LiteratureBatchJobs, 'run'>
@@ -84,6 +86,7 @@ type LiteratureCommandServices = Readonly<{
 
 export const createLiteratureCommandOwner = ({
   literatureStudySnapshot,
+  literatureSnapshotBatch,
   journalAttributes,
   literatureBatchJobs,
   literatureCitationFormatter,
@@ -122,6 +125,7 @@ export const createLiteratureCommandOwner = ({
       throw error
     }
   },
+  snapshotBatch: (request, signal) => literatureSnapshotBatch.run(request, signal),
   studySnapshot: (request, signal) => literatureStudySnapshot.run(request, signal),
   getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),

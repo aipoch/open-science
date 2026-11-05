@@ -242,7 +242,7 @@ describe('research catalog composition', () => {
         appVersion: '1.2.3-test',
         configRoot: d.configRoot,
         profileNamespace: 'study-snapshot',
-        allowNativeCodexSubscription: true
+          allowNativeCodexSubscription: true
       })
       const target = { id: 'chosen-model' }
       const context = { origin: 'snapshot' }

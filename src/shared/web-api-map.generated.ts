@@ -101,6 +101,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.publicationCheck': 'literature:publication-check',
   'literature.related': 'literature:related',
   'literature.search': 'literature:search',
+  'literature.snapshotBatch': 'literature:snapshot-batch',
   'literature.sources': 'literature:sources',
   'literature.studySnapshot': 'literature:study-snapshot',
   'literature.supplementAttachment': 'literature:supplement-attachment',

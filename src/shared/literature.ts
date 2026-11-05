@@ -1,3 +1,4 @@
+import { snapshotBatchRequestSchema, snapshotBatchResultSchema } from './literature-snapshot-batch'
 import {
   literatureSnapshotRequestSchema,
   literatureSnapshotResultSchema
@@ -192,6 +193,10 @@ const literatureApplicationCommandContracts = Object.freeze({
       ])
     ),
     validationCodec(literatureItemInputSchema)
+  ),
+  snapshotBatch: defineApplicationCommandContract(
+    validationCodec(z.tuple([snapshotBatchRequestSchema])),
+    validationCodec(snapshotBatchResultSchema)
   ),
   studySnapshot: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureSnapshotRequestSchema])),
