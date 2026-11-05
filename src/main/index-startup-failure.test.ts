@@ -17,6 +17,8 @@ const f = vi.hoisted(() => {
     inventory: vi.fn(() => [Buffer.from('synthetic-profile-ciphertext')]),
     key: vi.fn(),
     launch: vi.fn(),
+    discover: vi.fn(),
+    readLifetime: vi.fn(),
     connect: vi.fn(),
     lifecycle: vi.fn(),
     windowCreated: vi.fn(),
@@ -31,6 +33,7 @@ const f = vi.hoisted(() => {
       setPath: vi.fn(),
       setAppLogsPath: vi.fn(),
       quit: vi.fn(),
+      relaunch: vi.fn(),
       exit: vi.fn(),
       on: vi.fn(),
       once: vi.fn(),
@@ -40,7 +43,7 @@ const f = vi.hoisted(() => {
       getVersion: () => 'test',
       getLocale: () => 'en',
       getPreferredSystemLanguages: () => ['en'],
-      commandLine: { getSwitchValue: () => '', appendSwitch: vi.fn() },
+      commandLine: { getSwitchValue: (): string => '', appendSwitch: vi.fn() },
       isReady: (): boolean => false,
       whenReady: vi.fn(async () => {}),
       requestSingleInstanceLock: vi.fn(() => true)
@@ -100,7 +103,12 @@ vi.mock('./ipc-handler-registry', () => ({
   ipcMainHandle: (name: string, fn: (...args: unknown[]) => unknown) => f.handlers.set(name, fn)
 }))
 vi.mock('./runtime-ownership', () => ({
-  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease })
+  acquireCredentialBootstrapLease: () => ({ release: f.leaseRelease }),
+  acquireRuntimeDirectorySync: () => ({ release: vi.fn() })
+}))
+vi.mock('./local-service-lifetime', async (original) => ({
+  ...(await original<typeof import('./local-service-lifetime')>()),
+  readServiceLifetime: f.readLifetime
 }))
 vi.mock('./settings/credential-store-mode', () => ({
   configureCredentialStore: vi.fn(),
@@ -120,6 +128,7 @@ vi.mock('./storage/electron-profile', () => ({
 }))
 vi.mock('./desktop-runtime-launcher', () => ({
   desktopBackendPaths: () => ({ command: '/test/node', entry: '/test/backend.cjs' }),
+  discoverDesktopBackend: f.discover,
   startOrAttachDesktopBackend: f.launch
 }))
 vi.mock('./desktop-runtime-client', () => ({ connectDesktopRuntime: f.connect }))
@@ -240,6 +249,8 @@ beforeEach(() => {
   })
   f.app.requestSingleInstanceLock.mockReturnValue(true)
   f.launch.mockRejectedValue(new Error('authenticated backend refused the connection'))
+  f.discover.mockResolvedValue(undefined)
+  f.readLifetime.mockResolvedValue(undefined)
   vi.spyOn(process, 'on').mockImplementation(() => process)
 })
 afterEach(() => {
@@ -482,6 +493,247 @@ it.each(['win32', 'linux', 'darwin'] as const)(
       lifecycleOptions.holdSettingsInstallAdmission()
     } finally {
       Object.defineProperty(process, 'platform', originalPlatform)
+    }
+  }
+)
+
+it.each([false, true])(
+  'retries only the observed startup stop (record changed: %s)',
+  async (changed) => {
+    vi.spyOn(f.app.commandLine, 'getSwitchValue').mockReturnValue('gnome-libsecret')
+    const { createMainWindow, isMainWindow } = await import('./windows')
+    const { BrowserWindow } = await import('electron')
+    const stopped = {
+      version: 1,
+      generation: '50b27d82-5b48-4bd4-93a3-0e6ec76576a5',
+      explicit: false,
+      stopping: true,
+      reason: 'disconnect'
+    }
+    f.readLifetime.mockResolvedValue(stopped)
+    const client = {
+      ownsRuntime: () => false,
+      processId: () => 123,
+      runtimeInfo: () => ({ generation: 'recovered-startup' }),
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'checking' }),
+      close: vi.fn()
+    }
+    f.lifecycle.mockReturnValue({
+      showMainWindow: vi.fn(),
+      getMainWindow: () => undefined,
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    })
+    f.launch.mockImplementation(async (options) => {
+      await options.beforeLaunch?.()
+      if (vi.mocked(createMainWindow).mock.calls.length)
+        throw Object.assign(new Error('Credential inventory cannot read the open Cookies file.'), {
+          code: 'EBUSY'
+        })
+      return {}
+    })
+    // Process/socket boundaries only: startup recovery and stop authorization remain real.
+    f.connect
+      .mockRejectedValueOnce(new Error('Desktop connection timed out.'))
+      .mockResolvedValue(client)
+    await import('./index')
+    await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())
+    const window = vi.mocked(createMainWindow).mock.results[0].value
+    vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(window)
+    vi.mocked(isMainWindow).mockReturnValue(true)
+    const frame = {}
+    const event = { sender: { mainFrame: frame }, senderFrame: frame }
+    expect(f.handlers.get('runtime-startup:get-state')!(event)).toMatchObject({
+      phase: 'blocked',
+      issue: { diagnostics: 'The local service was intentionally stopped.' }
+    })
+    // A user may leave the failure page open longer than the credential inventory's 60s TTL.
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 120_000)
+    if (changed)
+      f.readLifetime.mockResolvedValue({
+        ...stopped,
+        generation: '1e1f1d5f-79b8-43bc-bd73-c24ef73c4dad'
+      })
+    await f.handlers.get('runtime-startup:recover')!(event)
+    if (changed) {
+      expect(f.handlers.get('runtime-startup:get-state')!(event)).toMatchObject({
+        phase: 'blocked'
+      })
+      expect(f.connect).toHaveBeenCalledOnce()
+      expect(f.completedStartup).not.toHaveBeenCalled()
+      // A later stop needs a new explicit click; the first action must not renew its authority.
+      await f.handlers.get('runtime-startup:recover')!(event)
+    }
+    expect(f.handlers.get('runtime-startup:get-state')!(event)).not.toMatchObject({
+      phase: 'blocked'
+    })
+    expect(f.app.relaunch).toHaveBeenCalledOnce()
+    const retryArgument = f.app.relaunch.mock.calls[0][0].args.find((arg: string) =>
+      arg.startsWith('--desktop-startup-retry=')
+    )
+    expect(
+      JSON.parse(Buffer.from(retryArgument.split('=')[1], 'base64url').toString())
+    ).toMatchObject({
+      options: { passwordStore: 'gnome-libsecret' }
+    })
+    expect(f.app.exit).toHaveBeenCalledWith(0)
+    expect(f.completedStartup).not.toHaveBeenCalled()
+  }
+)
+
+it.each([
+  'matching',
+  'changed',
+  'invalid',
+  'installation-recovery',
+  'configuration-only',
+  'cold-repair'
+] as const)(
+  'consumes a startup retry once and checks its successor authorization (%s)',
+  async (mode) => {
+    const argv = process.argv
+    const stop = {
+      version: 1,
+      generation: '50b27d82-5b48-4bd4-93a3-0e6ec76576a5',
+      explicit: false,
+      stopping: true,
+      reason: 'disconnect'
+    }
+    const options = {
+      configRoot: '/test/retry-config',
+      profilePath: '/test/profile',
+      credentialStore: 'os',
+      passwordStore: 'gnome-libsecret',
+      port: 49123,
+      host: '127.0.0.1'
+    }
+    vi.spyOn(f.app.commandLine, 'getSwitchValue').mockReturnValue(options.passwordStore)
+    const argument =
+      '--desktop-startup-retry=' +
+      (mode === 'invalid'
+        ? 'invalid'
+        : Buffer.from(
+            JSON.stringify({
+              options,
+              ...(mode === 'configuration-only' ? {} : { restart: { stop } })
+            })
+          ).toString('base64url'))
+    process.argv = ['electron', 'app', argument]
+    if (mode === 'installation-recovery') {
+      const startup = await import('./desktop-startup-recovery')
+      vi.spyOn(startup, 'resolveDesktopInstallationStartup').mockRejectedValue(
+        new startup.DesktopRuntimeStartupError(
+          {
+            reason: 'startup-recovery-required',
+            desktopVersion: 'test',
+            canStop: false,
+            canRecover: true
+          },
+          'The installation needs recovery before Open-Science can start.',
+          undefined,
+          async () => {}
+        )
+      )
+    }
+    f.readLifetime.mockResolvedValue(
+      mode === 'changed' ? { ...stop, generation: '1e1f1d5f-79b8-43bc-bd73-c24ef73c4dad' } : stop
+    )
+    let spawned = false
+    f.launch.mockImplementation(async (request) => {
+      await request.beforeLaunch?.()
+      spawned = true
+      if (mode === 'cold-repair') f.readLifetime.mockResolvedValue(undefined)
+      return {}
+    })
+    f.connect.mockResolvedValue({
+      ownsRuntime: () => false,
+      processId: () => 123,
+      runtimeInfo: () => ({ generation: 'successor', control: 'granted' }),
+      waitForStopped: async () => undefined,
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'checking' }),
+      close: vi.fn()
+    })
+    if (mode === 'cold-repair')
+      f.connect.mockRejectedValueOnce(new Error('Backend exited before Desktop attached.'))
+    f.lifecycle.mockReturnValue({
+      showMainWindow: vi.fn(),
+      getMainWindow: () => undefined,
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    })
+    try {
+      await import('./index')
+      if (mode === 'matching' || mode === 'configuration-only' || mode === 'cold-repair') {
+        await vi.waitFor(() => expect(f.completedStartup).toHaveBeenCalledOnce())
+        expect(spawned).toBe(true)
+        expect(f.inventory).toHaveBeenCalledWith({
+          configRoot: options.configRoot,
+          profilePath: options.profilePath
+        })
+        expect(f.launch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            configRoot: options.configRoot,
+            profilePath: options.profilePath,
+            credentialInventory: [Buffer.from('synthetic-profile-ciphertext')],
+            args: ['--credential-store=os', '--password-store=gnome-libsecret', '--serve=49123']
+          })
+        )
+        if (mode === 'cold-repair') {
+          expect(f.launch).toHaveBeenCalledTimes(2)
+          expect(f.launch.mock.calls[1][0].args).toEqual([
+            '--credential-store=os',
+            '--serve=49123',
+            '--password-store=gnome-libsecret'
+          ])
+        }
+        const connection = f.connect.mock.calls.at(-1)![0]
+        const request = { request: { operation: 'runtime-relaunch' } }
+        expect(await connection.onNativeRequest(request, new AbortController().signal)).toBe(true)
+        connection.onNativeResponseSent(request, true)
+        await vi.waitFor(() => expect(f.app.relaunch).toHaveBeenCalledOnce())
+        // Electron's implicit relaunch retains its original native argv, not mutated process.argv.
+        const args = f.app.relaunch.mock.calls[0][0].args
+        expect(args).toHaveLength(2)
+        expect(args[0]).toBe('app')
+        expect(
+          JSON.parse(Buffer.from(args[1].split('=')[1], 'base64url').toString('utf8'))
+        ).toEqual({ options })
+        if (mode === 'configuration-only') expect(f.readLifetime).not.toHaveBeenCalled()
+      } else if (mode === 'installation-recovery') {
+        const { createMainWindow, isMainWindow } = await import('./windows')
+        const { BrowserWindow } = await import('electron')
+        await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())
+        const window = vi.mocked(createMainWindow).mock.results[0].value
+        vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(window)
+        vi.mocked(isMainWindow).mockReturnValue(true)
+        const frame = {}
+        await f.handlers.get('runtime-startup:recover')!({
+          sender: { mainFrame: frame },
+          senderFrame: frame
+        })
+        expect(f.app.relaunch).toHaveBeenCalledOnce()
+        const args = f.app.relaunch.mock.calls[0][0].args
+        expect(args).toHaveLength(2)
+        expect(args[0]).toBe('app')
+        expect(
+          JSON.parse(Buffer.from(args[1].split('=')[1], 'base64url').toString('utf8'))
+        ).toEqual({ options, restart: { stop } })
+        expect(f.inventory).not.toHaveBeenCalled()
+      } else if (mode === 'changed') {
+        const { createMainWindow } = await import('./windows')
+        await vi.waitFor(() => expect(createMainWindow).toHaveBeenCalledOnce())
+        expect(spawned).toBe(false)
+        expect(f.connect).not.toHaveBeenCalled()
+      } else {
+        await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+        expect(f.launch).not.toHaveBeenCalled()
+        expect(f.inventory).not.toHaveBeenCalled()
+      }
+      if (mode !== 'invalid') expect(process.argv).not.toContain(argument)
+    } finally {
+      process.argv = argv
     }
   }
 )
