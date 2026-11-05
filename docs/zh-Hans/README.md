@@ -58,7 +58,6 @@
 ## 目录
 
 - [快速开始](#-快速开始)
-- [产品导览](#产品导览)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
 - [AIPOCH Open-Science 论文与引用](#aipoch-open-science-论文与引用)
 - [基准测试结果](#基准测试表现)
@@ -141,44 +140,6 @@ Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重�
 3. 查看工具活动并处理批准请求，预览结果，通过 **Provenance** 检查可用证据。
 
 > 本 README 中的截图用于说明工作流程。标签、目录和其他界面细节可能与所安装版本不同。
-
-## 产品导览
-
-### 从研究请求到可追溯结果
-
-以一个具有代表性的生物信息学任务为例：复现已发表的差异表达分析，将重新生成的结果与论文比较，并交付审阅所需的报告、表格和图像。以下截图来自已记录的 AIPOCH Open-Science 工作流，用于展示各个阶段，并非同一次连续会话。
-
-#### 1. 明确研究任务与证据
-
-说明研究问题、来源论文与数据集、必需的方法或阈值、预期输出和验收标准。上传支持文件，或使用 `@` 引用已有项目产物，让智能体从明确的输入开始，而不是依赖隐藏上下文。
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 论文复现任务，在同一工作区中显示研究结论、生成产物和来源比较" width="900">
-</p>
-
-#### 2. 使用可检查的科学工具执行
-
-智能体可以在共享 Notebook 中组合科学技能、受权限控制的研究连接器、搜索、文件操作以及 Python 或 R 代码。生成图像可与研究摘要并排审阅，产物记录则提供已捕获的生成代码和执行证据供检查。
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物信息学分析，并排显示研究摘要、生成图像和已捕获的生成代码" width="900">
-</p>
-
-#### 3. 就地审阅报告、表格和图像
-
-最终回答会概述哪些结果成功复现、哪些存在差异，以及需要关注的局限。生成的 Markdown 报告、CSV 表格、图像和其他研究产物会继续附属于会话，并汇集到项目文件库，可在对话旁预览，也可用于后续工作。
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 复现结果，在智能体说明旁预览差异表达图像和生成文件" width="900">
-</p>
-
-#### 4. 将每个产物追溯到证据
-
-每个生成产物都以不可变且带校验和的版本保存。其 **Provenance** 视图可显示生成代码与执行历史、引用的输入、观测到的环境清单、生成该产物的对话分支，以及限定到该版本的 Reviewer 结果。无法验证的证据会标记为不可用，而不会被推断补全。
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究产物预览，其中包含用于追溯生成结果的 Provenance 入口" width="900">
-</p>
 
 ## AIPOCH Open-Science `.science` 包
 
