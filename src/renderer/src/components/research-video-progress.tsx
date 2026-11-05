@@ -1,10 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ProgressBar } from './ui/progress-bar'
-import type {
-  ResearchVideoProgress,
-  ResearchVideoProgressRequest
-} from '@aipoch/research-film/contracts'
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
 
 export function ResearchVideoProgressLine({
   progress
@@ -74,38 +71,4 @@ export function ResearchVideoProgressLine({
       </p>
     </div>
   )
-}
-
-export function ResearchVideoGenerationProgress(
-  props: ResearchVideoProgressRequest
-): React.JSX.Element | null {
-  const { projectId, sessionId, branchId } = props
-  const requestKey = JSON.stringify([projectId, sessionId, branchId])
-  const [snapshot, setSnapshot] = useState<{ key: string; progress?: ResearchVideoProgress }>()
-  const progress = snapshot?.key === requestKey ? snapshot.progress : undefined
-  useEffect(() => {
-    let live = true
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async (): Promise<void> => {
-      let next: ResearchVideoProgress | undefined
-      try {
-        next = await window.api.researchVideo.getProgress({ projectId, sessionId, branchId })
-      } catch {
-        /* A recovering runtime may be unavailable briefly. */
-      }
-      if (!live) return
-      setSnapshot({ key: requestKey, progress: next })
-      timer = setTimeout(() => void poll(), next ? 500 : 1500)
-    }
-    void poll()
-    return () => {
-      live = false
-      clearTimeout(timer)
-    }
-  }, [projectId, sessionId, branchId, requestKey])
-  return progress ? (
-    <div className="mx-4 mb-2 rounded-md border border-border p-3">
-      <ResearchVideoProgressLine progress={progress} />
-    </div>
-  ) : null
 }

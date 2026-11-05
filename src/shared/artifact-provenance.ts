@@ -139,7 +139,6 @@ export type ReplayArtifactVersionRequest = {
 
 export type ArtifactRpcMethod =
   | 'artifactSaveVersion'
-  | 'researchVideoGenerate'
   | 'artifactReserveWrite'
   | 'artifactReleaseWrite'
   | 'artifactCreateVersion'

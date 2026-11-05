@@ -13031,7 +13031,7 @@ describe('ACP runtime session management', () => {
         appSessionId: session.sessionId,
         artifactRunId: capturedContext?.artifactRunId,
         rootFrameId: 'root-frame-1',
-        allowedMethods: ['artifactSaveVersion', 'researchVideoGenerate']
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(revokedTokens).toEqual(['run-capability-1'])

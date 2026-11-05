@@ -4,7 +4,6 @@ import type {
 } from '../research-video-presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoProgressRequest,
   ResearchVideoExportResult
 } from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
@@ -138,9 +137,6 @@ export const previewDeleteContracts = {
     'preview-resources',
     ['research-video:cancel', ELECTRON]
   ),
-  'researchVideo.getProgress': callable<
-    (request: ResearchVideoProgressRequest) => Promise<ResearchVideoProgress | undefined>
-  >()('preview-resources', ['research-video:progress']),
   'previewResources.researchVideoExportProgress': callable<
     (request: { resourceId: string }) => Promise<ResearchVideoProgress | null>
   >()('preview-resources', ['preview-resources:research-video-progress', ELECTRON]),

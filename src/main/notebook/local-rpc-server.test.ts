@@ -5865,7 +5865,7 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
   })
 })
 
-it('binds research generation to the active Artifact capability and cancels it on revocation', async () => {
+it('rejects research generation through a conversation Artifact capability', async () => {
   const root = await createStorageRoot()
   const runtime = new NotebookRuntimeService({
     configRoot: root,
@@ -5873,52 +5873,19 @@ it('binds research generation to the active Artifact capability and cancels it o
     projectId: 'project-1',
     repository: new NotebookRunRepository(root)
   })
-  let started!: () => void
-  const accepted = new Promise<void>((resolve) => {
-    started = resolve
-  })
-  const generate = vi.fn(async (_input, _scope, signal: AbortSignal) => {
-    started()
-    return new Promise<never>((_resolve, reject) =>
-      signal.addEventListener('abort', () => reject(signal.reason), { once: true })
-    )
-  })
-  const server = new NotebookLocalRpcServer(runtime, {
-    transport: 'tcp',
-    researchVideo: { generate, close: vi.fn(), getProgress: vi.fn() }
-  })
+  const server = new NotebookLocalRpcServer(runtime, { transport: 'tcp' })
   const connection = await server.ensureStarted()
-  const binding = {
-    ...artifactCapabilityBinding,
-    sourceScope: { allowedImportRoots: [root], workspaceCwd: root }
-  }
-  const token = server.issueArtifactRunCapability({
-    ...binding,
-    allowedMethods: ['researchVideoGenerate']
-  })
-  const call = (params: Record<string, unknown>, capability = token): Promise<Response> =>
-    fetch(connection.endpoint, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ method: 'researchVideoGenerate', params })
-    })
-  const params = {
-    ...binding,
-    specPath: 'video.json',
-    filename: 'research',
-    sourceScope: { allowedImportRoots: ['/'] }
-  }
+  const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
   try {
-    expect((await call({ ...params, messageBranchId: 'other' })).status).toBe(403)
-    const defaultToken = server.issueArtifactRunCapability(binding)
-    expect((await call(params, defaultToken)).status).toBe(403)
-    const pending = call(params)
-    await accepted
-    expect(generate.mock.calls[0][1].sourceScope.allowedImportRoots).toEqual([root])
-    const drain = server.revokeArtifactRunCapability(token)
-    expect((await pending).status).toBe(500)
-    await drain
-    expect((await call(params)).status).toBe(401)
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'researchVideoGenerate', params: { specPath: 'video.json' } })
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({
+      error: 'Unknown notebook RPC method: researchVideoGenerate'
+    })
   } finally {
     await server.close()
   }

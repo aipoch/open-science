@@ -1,6 +1,3 @@
-import { z } from 'zod'
-import { generateResearchVideoSchema } from '@aipoch/research-film'
-import type { createResearchVideoService, ResearchVideoScope } from '../research-video/service'
 import type { AuthorizedDirectoriesSnapshot } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
@@ -246,7 +243,6 @@ type NotebookLocalRpcServerOptions = {
     }): Promise<unknown>
   }
   requestUserInput?: (request: AgentUserChoiceRequest) => Promise<AgentUserChoiceResult>
-  researchVideo?: ReturnType<typeof createResearchVideoService>
   artifactProvenance?: {
     saveVersion?(
       request: SaveArtifactVersionRequest,
@@ -392,7 +388,6 @@ type NotebookLocalRpcServerOptions = {
 
 type ArtifactRpcCapability = Omit<ArtifactRpcCapabilityBinding, 'allowedMethods'> & {
   allowedMethods: Set<ArtifactRpcMethod>
-  generationLifetime: AbortController
   expiresAt: number
   isOwnerActive?: () => boolean
   inFlightRequests: number
@@ -519,7 +514,6 @@ class BackgroundHostMethodUnsafeError extends RpcHttpError {
 
 const ARTIFACT_RPC_METHODS = new Set<ArtifactRpcMethod>([
   'artifactSaveVersion',
-  'researchVideoGenerate',
   'artifactReserveWrite',
   'artifactReleaseWrite',
   'artifactCreateVersion',
@@ -677,7 +671,6 @@ class NotebookLocalRpcServer {
   private readonly skillImporter: NotebookLocalRpcServerOptions['skillImporter']
   private readonly planService: NotebookLocalRpcServerOptions['planService']
   private readonly requestUserInput: NotebookLocalRpcServerOptions['requestUserInput']
-  private readonly researchVideo: NotebookLocalRpcServerOptions['researchVideo']
   private readonly artifactProvenance: NotebookLocalRpcServerOptions['artifactProvenance']
   private readonly inputRegistry: NotebookLocalRpcServerOptions['inputRegistry']
   private readonly hostArtifacts: NotebookLocalRpcServerOptions['hostArtifacts']
@@ -777,7 +770,6 @@ class NotebookLocalRpcServer {
     this.skillImporter = options.skillImporter
     this.planService = options.planService
     this.requestUserInput = options.requestUserInput
-    this.researchVideo = options.researchVideo
     this.artifactProvenance = options.artifactProvenance
     this.inputRegistry = options.inputRegistry
     this.hostArtifacts = options.hostArtifacts
@@ -818,7 +810,6 @@ class NotebookLocalRpcServer {
         : undefined,
       messageAncestry: binding.messageAncestry ? [...binding.messageAncestry] : undefined,
       allowedMethods: new Set(binding.allowedMethods ?? ['artifactSaveVersion']),
-      generationLifetime: new AbortController(),
       expiresAt: this.now() + ttlMs,
       isOwnerActive,
       inFlightRequests: 0,
@@ -834,7 +825,6 @@ class NotebookLocalRpcServer {
     const capability = this.artifactRpcCapabilities.get(token)
     this.artifactRpcCapabilities.delete(token)
     if (!capability) return
-    capability.generationLifetime.abort(new Error('Research video turn ended'))
     const releaseReservations = (): Promise<void> =>
       this.artifactProvenance?.releaseRunWriteReservations?.({
         projectId: capability.projectId,
@@ -1826,7 +1816,7 @@ class NotebookLocalRpcServer {
       throw new RpcHttpError(403, `Artifact RPC capability does not allow ${method}.`)
     }
 
-    if (method !== 'artifactSaveVersion' && method !== 'researchVideoGenerate') {
+    if (method !== 'artifactSaveVersion') {
       throw new RpcHttpError(
         409,
         'Artifact save protocol changed. Restart the Agent MCP connection.'
@@ -2490,9 +2480,6 @@ class NotebookLocalRpcServer {
       writeProducerSignal?.throwIfAborted()
       const dispatchSignals = [
         disconnect.signal,
-        ...(method === 'researchVideoGenerate' && artifactCapability
-          ? [artifactCapability.generationLifetime.signal]
-          : []),
         ...(writeProducerSignal ? [writeProducerSignal] : []),
         ...(authenticatedBinding?.capabilityLifetime
           ? [authenticatedBinding.capabilityLifetime.signal]
@@ -2709,16 +2696,6 @@ class NotebookLocalRpcServer {
     // Artifact stdio/HTTP MCP handlers cannot own SQLite connections. Route the trusted run-bound
     // save envelope back into the main process, where the Provenance repository owns transactions,
     // immutable Version publication, and idempotency.
-    if (method === 'researchVideoGenerate') {
-      if (!this.researchVideo) throw new Error('Research video generation is unavailable.')
-      const input = parseRpcParams(() => z.object(generateResearchVideoSchema).parse(params))
-      return this.researchVideo.generate(
-        input,
-        params as ResearchVideoScope,
-        signal ?? new AbortController().signal
-      )
-    }
-
     if (method === 'artifactSaveVersion') {
       if (!this.artifactProvenance?.saveVersion) throw new Error('Artifact save is unavailable.')
       const request = artifactSaveRequestSchema.parse(params)

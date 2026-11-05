@@ -1,4 +1,3 @@
-import type { LocalModelSnapshot } from '../../shared/local-models'
 import { PdfAnnotationAgent } from '../pdf-annotations/agent-tools'
 import { netFetchStandard } from '../network-fetch'
 import { realpath } from 'node:fs/promises'
@@ -10,7 +9,6 @@ import { type ApplicationModuleBuilder } from '../application-runtime'
 import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { BookmarkService } from '../bookmarks/service'
-import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { LiteratureDocumentReader } from '../literature/document-reader'
 import { literatureIndex } from '../literature/full-text-index'
@@ -30,8 +28,6 @@ import {
   OCR_RUNTIME_REVISIONS,
   PDF_TRANSLATION_MODEL_REVISIONS
 } from '../local-models/catalog'
-import { RESEARCH_NARRATION_MODELS } from '@aipoch/research-film'
-import { createLocalModelApi } from '../local-models/owner'
 import { createLocalOcrModelOwner } from '../local-models/ocr-owner'
 import type { OcrLanguage } from '../../shared/local-models'
 import { runtimeMetadata } from '../runtime-metadata'
@@ -39,8 +35,6 @@ import { ProviderTextGenerationService } from '../literature/pdf-translation/tex
 import type { SettingsService } from '../settings/service'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
-import { VIDEO_EXPORT_REVISIONS } from '@aipoch/research-film'
-import { createVideoExportTools } from '@aipoch/research-film'
 import { createLocalModelOwner } from '../local-models/owner'
 import { PdfAnnotationRepository } from '../pdf-annotations/repository'
 import { PdfAnnotationService } from '../pdf-annotations/service'
@@ -52,7 +46,6 @@ import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export async function composeDocumentReading({
-  declareElectronAdapter,
   applicationEvents,
   pdfUploadImporter,
   uploadRepository,
@@ -66,7 +59,6 @@ export async function composeDocumentReading({
   settingsService,
   defaultOcrLanguages
 }: {
-  declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   applicationEvents: ApplicationEvents
   pdfUploadImporter: { current?: PdfAnnotationService }
   sessionPackageService: Pick<
@@ -96,10 +88,9 @@ export async function composeDocumentReading({
   sessionPdfContextOwner: SessionPdfContextOwner
   literatureContextLog: ReturnType<typeof createLogger>
   localModelOwner: ReturnType<typeof createLocalModelOwner>
-  researchNarrationModels: ReturnType<typeof createLocalModelOwner>
   pdfTranslationOwner: PdfTranslationOwner
-  videoExportTools: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
-  localModels: ReturnType<typeof createLocalModelApi>
+  localTranslationModels: ReturnType<typeof createLocalModelOwner>
+  ocrModels: ReturnType<typeof createLocalOcrModelOwner>
   pdfStructureReader: PdfStructureReader
   pdfAnnotationAgent: PdfAnnotationAgent
   pdfElementReader: PdfElementAgentReader
@@ -219,34 +210,6 @@ export async function composeDocumentReading({
     capability: undefined,
     dispose: () => owner.close()
   }))
-  const researchNarrationModels = createLocalModelOwner({
-    namespace: 'research-narration',
-    requireRecommendedRevision: true,
-    revisions: RESEARCH_NARRATION_MODELS
-  })
-  await modules.add({ researchNarrationModels }, ({ researchNarrationModels: owner }) => ({
-    name: 'research-narration-models',
-    capability: undefined,
-    dispose: () => owner.close()
-  }))
-  const videoExportModels = createLocalModelOwner({
-    namespace: 'video-export',
-    revisions: VIDEO_EXPORT_REVISIONS
-  })
-  await modules.add({ videoExportModels }, ({ videoExportModels: owner }) => ({
-    name: 'video-export-tools',
-    capability: undefined,
-    dispose: () => owner.close()
-  }))
-  const videoExportTools = createVideoExportTools(videoExportModels)
-  const localModels = createLocalModelApi(
-    localModelOwner,
-    localTranslationModels,
-    ocrModels,
-    researchNarrationModels,
-    videoExportModels
-  )
-  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const pdfStructureSources = new PdfStructureSourceAuthority({
     literature: literatureAttachmentAuthority,
     sources: sessionPdfSourceResolver,
@@ -340,9 +303,8 @@ export async function composeDocumentReading({
     sessionPdfContextOwner,
     literatureContextLog,
     localModelOwner,
-    researchNarrationModels,
-    videoExportTools,
-    localModels,
+    localTranslationModels,
+    ocrModels,
     pdfTranslationOwner,
     pdfStructureReader,
     pdfElementReader,

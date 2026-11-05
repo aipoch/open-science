@@ -292,12 +292,12 @@ describe('ArtifactTurnOwner', () => {
       expect.objectContaining({
         executionId: 'root-execution',
         artifactRunId: 'artifact-run-100-1',
-        allowedMethods: ['artifactSaveVersion', 'researchVideoGenerate']
+        allowedMethods: ['artifactSaveVersion']
       }),
       expect.objectContaining({
         executionId: 'parallel-execution',
         artifactRunId: 'artifact-run-100-2',
-        allowedMethods: ['artifactSaveVersion', 'researchVideoGenerate']
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(owner.activeRunIds()).toEqual(['artifact-run-100-2'])
@@ -454,7 +454,7 @@ describe('ArtifactTurnOwner', () => {
         artifactStorageSessionId: 'artifact-session-1',
         artifactRunId: 'artifact-run-123-1',
         notebookSessionId: 'session-1',
-        allowedMethods: ['artifactSaveVersion', 'researchVideoGenerate']
+        allowedMethods: ['artifactSaveVersion']
       })
     ])
     expect(notebookContexts).toEqual([

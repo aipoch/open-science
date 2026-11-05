@@ -1,3 +1,6 @@
+import { composeResearchFilm } from './composition/research-film'
+import { createLocalModelApi } from './local-models/owner'
+import { registerLocalModelIpcHandlers } from './desktop-surface-declarations'
 import { hasPendingLifecycleSettlement, waitForLifecycleSettlement } from './lifecycle-settlement'
 import { type DiagnosticOperation } from '@aipoch/diagnostics/node'
 import type { ArtifactReproducibilityCheckState } from '../shared/artifact-reproducibility'
@@ -314,7 +317,6 @@ export const createApplicationModules = async (
   })
   const documentReading = await composeDocumentReading({
     sessionPackageService: sessionPackages.sessionPackageService,
-    declareElectronAdapter,
     applicationEvents,
     pdfUploadImporter: uploadStorage.pdfUploadImporter,
     uploadRepository: uploadStorage.uploadRepository,
@@ -325,6 +327,21 @@ export const createApplicationModules = async (
     settingsService: settingsBootstrap.settingsService,
     defaultOcrLanguages: () => defaultOcrLanguagesForLocale(localeOwner.snapshot().locale)
   })
+  const researchFilm = await composeResearchFilm({
+    ...settingsBootstrap,
+    ...sessionFoundation,
+    ...sessionAuthority,
+    ...sessionPackages,
+    modules
+  })
+  const localModels = createLocalModelApi(
+    documentReading.localModelOwner,
+    documentReading.localTranslationModels,
+    documentReading.ocrModels,
+    researchFilm.researchNarrationModels,
+    researchFilm.videoExportModels
+  )
+  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const projectLifecycle = composeProjectLifecycle({
     applicationEvents,
     ...storageStartup,
@@ -461,7 +478,6 @@ export const createApplicationModules = async (
     mainEntryPath
   })
   const notebookBridge = await composeNotebookBridge({
-    researchNarrationModels: documentReading.researchNarrationModels,
     ...settingsBootstrap,
     managedFileVersionService: uploadStorage.managedFileVersionService,
     runtimeRef,
@@ -778,8 +794,8 @@ export const createApplicationModules = async (
     managedFiles,
     sessionAuthority,
     documentReading,
-    researchVideo: notebookBridge.researchVideo,
-    researchVideoPresentation: notebookBridge.researchVideoPresentation,
+    researchFilm,
+    localModels,
     projectLifecycle,
     notebookRuntime,
     researchCatalog,

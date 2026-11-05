@@ -130,6 +130,8 @@ function fixture() {
       sessionPersistenceCoordinator: coordinator,
       notebookInputRegistry: { readPreview: vi.fn() }
     },
+    researchFilm: {},
+    localModels: {},
     documentReading: {
       sessionPdfContextOwner: pdfContext,
       literatureContextLog: { error: vi.fn(), warn: vi.fn() }

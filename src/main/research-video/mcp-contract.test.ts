@@ -57,73 +57,19 @@ async function setup(): Promise<{
   )
   return { client, currentRunFile, context }
 }
-describe('research video Agent contract', () => {
-  it('exposes matching MCP and Codex declarations with an authoring guide', async () => {
+describe('research film user-only entry', () => {
+  it('does not expose generation to conversation MCP or Codex tools', async () => {
     const { client } = await setup()
     const names = (await client.listTools()).tools.map((tool) => tool.name)
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'research_video_guide',
-        'generate_research_video',
-        'write_artifact_file'
-      ])
-    )
     const bridge = createCodexBridgeMcpTools({ artifacts: true }).map((tool) => tool.name)
-    expect(bridge).toEqual(expect.arrayContaining(names))
-    const guide = await client.callTool({ name: 'research_video_guide', arguments: {} })
-    expect(JSON.stringify(guide)).toContain('active conversation branch')
+    expect(names).toContain('write_artifact_file')
+    expect(bridge).toContain('write_artifact_file')
+    for (const name of ['research_video_guide', 'generate_research_video']) {
+      expect(names).not.toContain(name)
+      expect(bridge).not.toContain(name)
+      const result = await client.callTool({ name, arguments: {} })
+      expect(result.isError).toBe(true)
+    }
     expect(rpc).not.toHaveBeenCalled()
-  })
-  it('delegates generation to the run-bound primary runtime and returns only its Artifact receipts', async () => {
-    const { client, currentRunFile, context } = await setup()
-    rpc.mockImplementation(async (_connection, request) => {
-      const body = JSON.parse(request.body)
-      expect(body).toMatchObject({
-        method: 'researchVideoGenerate',
-        params: {
-          projectId: 'project',
-          appSessionId: 'session',
-          artifactRunId: 'run',
-          messageBranchId: 'branch',
-          specPath: 'video.json'
-        }
-      })
-      expect(request.headers.authorization).toBe('Bearer token')
-      expect(body.params).not.toHaveProperty('sourceScope')
-      await writeFile(
-        currentRunFile,
-        JSON.stringify({ ...context, messageBranchId: 'another-branch' })
-      )
-      return new Response(
-        JSON.stringify({
-          result: {
-            player: {
-              artifactId: 'player',
-              versionId: 'v1',
-              versionNumber: 1,
-              name: 'explanation.html',
-              size: 20
-            },
-            sources: {
-              artifactId: 'sources',
-              versionId: 'v2',
-              versionNumber: 1,
-              name: 'sources.zip',
-              size: 10
-            },
-            duration: 5,
-            preparationMs: 100
-          }
-        })
-      )
-    })
-    const result = await client.callTool({
-      name: 'generate_research_video',
-      arguments: { specPath: 'video.json' }
-    })
-    expect(result.isError).not.toBe(true)
-    expect(JSON.stringify(result)).toContain('v1')
-    expect(JSON.stringify(result)).toContain('v2')
-    expect(rpc).toHaveBeenCalledOnce()
   })
 })

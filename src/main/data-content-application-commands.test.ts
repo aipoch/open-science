@@ -312,7 +312,6 @@ type DataContentCommandKey = keyof typeof dataContentApplicationCommands
 const WRAPPED_COMMAND_KEYS = [
   'previewResearchVideoExport',
   'previewResearchVideoCancel',
-  'researchVideoProgress',
   'researchVideoPresentationStart',
   'researchVideoPresentationStatus',
   'researchVideoPresentationRemove',
@@ -485,7 +484,6 @@ describe('Data and content application commands', () => {
         'research-video:status',
         'research-video:remove',
         'research-video:cancel',
-        'research-video:progress',
         'preview-resources:research-video-progress',
         'project-files:get-overview',
         'project-files:list-artifact-groups',

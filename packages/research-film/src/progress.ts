@@ -39,11 +39,6 @@ export const researchVideoProgressSchema = z
   )
 export type ResearchVideoProgress = z.infer<typeof researchVideoProgressSchema>
 export type ResearchVideoStep = Omit<ResearchVideoProgress, 'startedAt'>
-export type ResearchVideoProgressRequest = {
-  projectId: string
-  sessionId: string
-  branchId?: string
-}
 export type ResearchVideoExportResult = {
   canceled: boolean
   needsInstallation?: { downloadBytes: number }

@@ -17,8 +17,6 @@ const registrations: Record<
   string,
   'allow_once' | 'inner_authorization' | 'legacy' | 'operations' | 'review'
 > = {
-  "artifacts/mcp-server.ts:'research_video_guide'": 'review',
-  "artifacts/mcp-server.ts:'generate_research_video'": 'review',
   "artifacts/mcp-server.ts:'write_artifact_file'": 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_SEARCH_TOOL_NAME': 'allow_once',
   'literature/library-mcp-server.ts:LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME': 'allow_once',
@@ -161,10 +159,10 @@ describe('Auto operation completeness against real tool registrations', () => {
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
-        // Reviewed: research film generation requires the complete active-run capability; neither new tool gains automatic approval.
+        // Reviewed: 401 publication errors now explain recovery without dropping provenance.
         // Strict inputs, allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
-          '2826f24e8277bb0e5d53ff5c0d92a5ebedaa9f2911f55200b7cf640a61ab16a1',
+          'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
         'literature/library-mcp-server.ts':
           'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
         // Reviewed: linked-PDF reading order is resolved automatically from logical structure

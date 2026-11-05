@@ -1,12 +1,3 @@
-import type { SessionPackageService } from '../session-package/service'
-import { createResearchVideoPresentationOwner } from '../research-video/presentation'
-import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
-import { createResearchFilmAuthor, researchFilmResources } from '@aipoch/research-film'
-import { randomUUID } from 'node:crypto'
-import { tmpdir } from 'node:os'
-import { createResearchVideoService } from '../research-video/service'
-import { createResearchVideoGenerator } from '@aipoch/research-film'
-import type { LocalModelOwner } from '../local-models/owner'
 import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { runtimeMetadata } from '../runtime-metadata'
 import { bindNotebookApprovals } from './notebook-approvals'
@@ -64,9 +55,6 @@ export async function composeNotebookBridge({
   wslSetupSessions,
   wslSetup,
   settingsService,
-  researchNarrationModels,
-  researchFilmLifecycle,
-  sessionPackageService,
   managedFileVersionService,
   runtimeRef,
   requestSkillCatalogRefresh,
@@ -98,9 +86,6 @@ export async function composeNotebookBridge({
 }: {
   wslSetupSessions: WslSetupSessionOwner
   wslSetup: WslSetupOwner
-  researchNarrationModels: LocalModelOwner
-  researchFilmLifecycle: ResearchFilmLifecycle
-  sessionPackageService: SessionPackageService
   settingsService: SettingsService
   managedFileVersionService: ManagedFileVersionService
   runtimeRef: { current: ReturnType<typeof createAcpRuntime> | undefined }
@@ -131,8 +116,6 @@ export async function composeNotebookBridge({
   modules: ApplicationModuleBuilder
   composition: DiagnosticOperation
 }): Promise<{
-  researchVideo: ReturnType<typeof createResearchVideoService>
-  researchVideoPresentation: ReturnType<typeof createResearchVideoPresentationOwner>
   notebookRpcServer: NotebookLocalRpcServer
   imageInputCompatibility: ImageInputCompatibilityOwner
 }> {
@@ -224,85 +207,8 @@ export async function composeNotebookBridge({
       : undefined
   }
   bindNotebookApprovals(notebookService, () => runtimeRef.current)
-  const researchVideoEngineDirectory = researchFilmResources().stageDirectory
-  const researchVideoGenerate = createResearchVideoGenerator({ temporaryRoot: tmpdir() })
-  const researchVideo = createResearchVideoService({
-    lifecycle: researchFilmLifecycle,
-    models: researchNarrationModels,
-    dataRoot: resolveDataRoot,
-    engineDirectory: researchVideoEngineDirectory,
-    generate: researchVideoGenerate,
-    save: (request, scope, signal) =>
-      artifactProvenanceRepository.saveVersion(request, scope, signal)
-  })
-  await modules.add({ researchVideo }, ({ researchVideo: owner }) => ({
-    name: 'research-video',
-    capability: undefined,
-    dispose: () => owner.close()
-  }))
-  const researchVideoInference = new RestrictedInferenceRunner({
-    appVersion: runtimeMetadata().version,
-    configRoot,
-    profileNamespace: 'research-video',
-    allowNativeCodexSubscription: true,
-    resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
-  })
-  const inferResearchVideo = async (
-    source: Parameters<
-      Parameters<typeof createResearchVideoPresentationOwner>[0]['writeScreenplay']
-    >[0],
-    systemPrompt: string,
-    payload: unknown,
-    signal: AbortSignal
-  ): Promise<string> => {
-    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
-    const response = await researchVideoInference.run({
-      target,
-      prompt: JSON.stringify(payload),
-      systemPrompt,
-      agentName: 'Research explanation',
-      description: 'Generate a research explanation from a frozen session',
-      outputLimitBytes: 64 * 1024,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
-    })
-    if (response.usage)
-      await recordAuxiliaryUsage({
-        projectId: source.provenance.projectId,
-        sessionId: source.provenance.sessionId,
-        eventId: randomUUID(),
-        source: 'host-llm',
-        frameworkId: response.frameworkId,
-        providerId: target.providerId,
-        model: response.model,
-        completedAtMs: Date.now(),
-        usage: response.usage
-      })
-    return response.text
-  }
-  const researchVideoPresentation = createResearchVideoPresentationOwner({
-    mutate: (request, work) =>
-      sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
-    lifecycle: researchFilmLifecycle,
-    loadImportedFilm: (request, options) =>
-      sessionPackageService.readResearchFilm(request, options),
-    dataRoot: resolveDataRoot,
-    models: researchNarrationModels,
-    loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
-    generate: researchVideoGenerate,
-    engineDirectory: researchVideoEngineDirectory,
-    ...createResearchFilmAuthor(inferResearchVideo)
-  })
-  await modules.add({ researchVideoPresentation }, ({ researchVideoPresentation: owner }) => ({
-    name: 'research-video-presentation',
-    capability: undefined,
-    dispose: async () => {
-      await owner.close()
-      await researchVideoInference.shutdown()
-    }
-  }))
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
-      researchVideo,
       authorizedDirectories: () => grantedRootsRepository.authorizedSnapshot(),
       // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
       // Keep its privileged Host SDK channel on an explicitly shared local socket instead.
@@ -523,5 +429,5 @@ export async function composeNotebookBridge({
         executionCwd
       )
   )
-  return { notebookRpcServer, imageInputCompatibility, researchVideo, researchVideoPresentation }
+  return { notebookRpcServer, imageInputCompatibility }
 }

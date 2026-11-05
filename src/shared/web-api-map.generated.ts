@@ -207,7 +207,6 @@ export const WEB_INVOKE_CHANNELS = {
   'remoteAccess.reject': 'remote-access:reject',
   'remoteAccess.revokeBrowser': 'remote-access:revoke-browser',
   'remoteAccess.revokeBrowsers': 'remote-access:revoke-browsers',
-  'researchVideo.getProgress': 'research-video:progress',
   'reviewer.abortFixLoop': 'reviewer:abort-fix-loop',
   'reviewer.getForSession': 'reviewer:get-for-session',
   'reviewer.getReviewLog': 'reviewer:get-review-log',

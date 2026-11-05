@@ -2,8 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it, vi } from 'vitest'
-import { RESEARCH_VIDEO_GUIDE } from './tool-contract.js'
-import { authorResearchFilmSource, generateResearchFilm } from './authoring.js'
+import { generateResearchFilm } from './authoring.js'
 
 const source = {
   sessionTitle: 'Evidence',
@@ -79,27 +78,3 @@ it.each([false, true])(
     }
   }
 )
-
-it('authors the minimal tool-guide screenplay with its documented animation files', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'film-guide-'))
-  try {
-    const screenplay = RESEARCH_VIDEO_GUIDE.split('\n').find((line) =>
-      line.startsWith('{"version":1')
-    )!
-    const helper = RESEARCH_VIDEO_GUIDE.split('anims/subject.js: ')[1].split('\n')[0]
-    const scene = RESEARCH_VIDEO_GUIDE.split('anims/hook.js: ')[1].split('\n')[0]
-    const result = await authorResearchFilmSource({
-      source,
-      directory,
-      signal: new AbortController().signal,
-      author: {
-        writeScreenplay: async () => screenplay,
-        writeAnimation: async (_source, input) => (input.shared ? helper : scene)
-      }
-    })
-    expect(JSON.parse(await readFile(result.specPath, 'utf8')).scenes[0].panels).toHaveLength(2)
-    expect(await readFile(join(directory, 'anims/hook.js'), 'utf8')).toBe(scene)
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-})

@@ -350,7 +350,7 @@ describe('application command composition', () => {
     expect(composition.localWeb.commandNames()).toEqual(expectedLocalWebCommands())
   })
 
-  it('keeps research video export desktop-only while exposing generation progress', async () => {
+  it('keeps research film generation and export desktop-only without conversation progress', async () => {
     const composition = createApplicationCommandComposition(dependencies())
     for (const name of [
       'preview-resources:export-research-video',
@@ -366,7 +366,14 @@ describe('application command composition', () => {
       expect(composition.remoteWeb.commandNames()).not.toContain(name)
       expect(composition.task.commandNames()).not.toContain(name)
     }
-    expect(composition.localWeb.commandNames()).toContain('research-video:progress')
+    for (const surface of [
+      composition.desktop,
+      composition.localWeb,
+      composition.remoteWeb,
+      composition.task
+    ]) {
+      expect(surface.commandNames()).not.toContain('research-video:progress')
+    }
     await composition.dispose()
   })
 

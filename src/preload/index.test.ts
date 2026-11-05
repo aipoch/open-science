@@ -569,7 +569,6 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.revokeBrowsers',
       'remoteAccess.setMode',
       'researchVideo.cancel',
-      'researchVideo.getProgress',
       'researchVideo.remove',
       'researchVideo.start',
       'researchVideo.status',

@@ -4,6 +4,8 @@ Generate English narrated research films from frozen session snapshots or an exi
 
 The package owns screenplay validation and correction, shared and per-scene animation authoring, narration chunking and synthesis, caption alignment, audio mixing, timeline construction, the player and its bundled stage, source archives, encoding, and worker lifetimes. It preserves the original `video.json` / `anims/*.js` format.
 
+In Open-Science, generation starts only from the user's research-film button and runs independently of conversation turns. The host uses tool-less model inference for authoring; generation is not exposed as an Agent/MCP tool. Players and source bundles are stored as session-derived film files, not published as conversation Artifacts.
+
 The host owns session/branch authorization, frozen source and approved image staging, model selection and usage accounting, model downloads and leases, data-root admission, storage/publication, UI, and Electron capture/save dialogs. No host imports or Electron dependency are used here.
 
 ```ts

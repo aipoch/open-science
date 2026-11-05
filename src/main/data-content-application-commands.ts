@@ -6,11 +6,9 @@ import type {
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
 import type {
   ResearchVideoProgress,
-  ResearchVideoProgressRequest,
   ResearchVideoExportResult
 } from '@aipoch/research-film/contracts'
 import type { createVideoExportTools } from '@aipoch/research-film'
-import type { createResearchVideoService } from './research-video/service'
 import { createResearchVideoExportControl } from './research-video/export-control'
 import type { UseCaseCatalog } from './session-package/use-case-catalog'
 import {
@@ -239,7 +237,6 @@ type DataContentApplicationCommandDependencies = Readonly<{
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
   managedFileVersions: ManagedFileVersionCommandOwner
-  researchVideo?: ReturnType<typeof createResearchVideoService>
   researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
   videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
@@ -460,11 +457,6 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: ResearchVideoPresentationRequest],
     void
   >('research-video:cancel'),
-  researchVideoProgress: defineApplicationCommand<
-    'research-video:progress',
-    readonly [request: ResearchVideoProgressRequest],
-    ResearchVideoProgress | undefined
-  >('research-video:progress'),
   previewResearchVideoProgress: defineApplicationCommand<
     'preview-resources:research-video-progress',
     readonly [request: { resourceId: string }],
@@ -740,7 +732,6 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.researchVideoPresentationStatus,
     dataContentApplicationCommands.researchVideoPresentationRemove,
     dataContentApplicationCommands.researchVideoPresentationCancel,
-    dataContentApplicationCommands.researchVideoProgress,
     dataContentApplicationCommands.previewResearchVideoProgress
   ] as const),
   defineApplicationCommandGroup('project-files', [
@@ -1034,7 +1025,6 @@ const registerDataContentApplicationCommands = (
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.cancel(invocation.args[0])
       },
-      'research-video:progress': ({ args }) => dependencies.researchVideo?.getProgress(args[0]),
       'preview-resources:research-video-progress': (invocation) => {
         assertElectronCaller(invocation, 'preview-resources:research-video-progress')
         return videoExports.progress(invocation.callerLease, invocation.args[0])
