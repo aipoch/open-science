@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest'
 import { projectDiagnosticLog, projectDiagnosticSession } from './projection'
 
 describe('diagnostic log projection', () => {
+  it.each(['never-started', 'started-and-reaped', 'termination-unknown'])(
+    'preserves the recorded Notebook process state %s',
+    (processState) => {
+      expect(
+        projectDiagnosticLog({ scope: 'notebook:network-sandbox', data: { processState } })
+      ).toEqual({ scope: 'notebook:network-sandbox', diagnostics: { processState } })
+    }
+  )
+
   it('keeps absent, invalid and unrelated Notebook lifecycle evidence out of the export', () => {
     expect(projectDiagnosticLog({ scope: 'notebook:runtime', data: {} })).toEqual({
       scope: 'notebook:runtime'
@@ -15,6 +24,7 @@ describe('diagnostic log projection', () => {
           stage: 'PRIVATE_STAGE',
           terminationReason: 'PRIVATE_REASON',
           cleanupState: 'PRIVATE_STATE',
+          processState: 'PRIVATE_PROCESS_STATE',
           executionReference: '/private/execution',
           parentOperationId: 'private operation',
           processesTerminated: 'false',
@@ -34,6 +44,7 @@ describe('diagnostic log projection', () => {
           stage: 'execution',
           terminationReason: 'cancel',
           cleanupState: 'complete',
+          processState: 'never-started',
           executionReference: 'execution-1',
           parentOperationId: 'operation-1',
           processesTerminated: true,

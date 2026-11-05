@@ -326,7 +326,8 @@ const notebookLogStates: Record<string, readonly string[]> = {
   runtime: ['python', 'r', 'repl', 'bash', 'powershell', 'native-posix', 'wsl2-bash'],
   stage: ['sandbox-prepare', 'execution'],
   terminationReason: ['cleanup-incomplete', 'cancel', 'timeout', 'exit'],
-  cleanupState: ['complete', 'incomplete']
+  cleanupState: ['complete', 'incomplete'],
+  processState: ['never-started', 'started-and-reaped', 'termination-unknown']
 }
 
 // Permission traces carry fixed product classifications and hashed correlation identities only.

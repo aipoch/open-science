@@ -32,6 +32,7 @@ it('preserves Notebook cleanup and Shell termination evidence in the diagnostic 
     executionReference: 'shell-run-1',
     phase: 'sandbox-cleanup',
     result: 'incomplete',
+    processState: 'started-and-reaped',
     processesTerminated: true,
     networkClosed: true,
     temporaryResourcesRemoved: false,
@@ -53,6 +54,7 @@ it('preserves Notebook cleanup and Shell termination evidence in the diagnostic 
   await flushLogs()
   const before = await readFile(join(logDir, 'main.log'), 'utf8')
   expect(before).toContain('"temporaryResourcesRemoved":false')
+  expect(before).toContain('"processState":"started-and-reaped"')
   const files = await exportDiagnosticFiles(
     {
       configRoot,
@@ -81,6 +83,7 @@ it('preserves Notebook cleanup and Shell termination evidence in the diagnostic 
       diagnostics: {
         executionReference: 'shell-run-1',
         result: 'incomplete',
+        processState: 'started-and-reaped',
         processesTerminated: true,
         networkClosed: true,
         temporaryResourcesRemoved: false,
