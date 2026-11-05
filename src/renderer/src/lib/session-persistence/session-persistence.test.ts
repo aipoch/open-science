@@ -8,6 +8,7 @@ import { SessionPersistenceStateOwner } from '../../../../main/session-persisten
 import { sanitizeRendererSaveSessionOptions } from '../../../../main/session-persistence/renderer-save-options'
 import { preserveImportedSession } from '../../../../main/session-persistence/imported-session'
 import { ARTIFACT_FINALIZATION_INVALID_PROOF } from '../../../../shared/artifacts'
+import { DesktopRuntimeWriteNotSubmittedError } from '../../../../shared/desktop-runtime-recovery'
 import { useWorkspaceOperationErrors } from '../acp/workspace-operation-error'
 import {
   activateConversationBranch,
@@ -36,6 +37,7 @@ import {
   useSessionStore
 } from '../../stores/session-store'
 import {
+  acknowledgeSessionConversationCommands,
   pendingSessionConversationCommands,
   resetSessionConversationIntentsForTests
 } from '../../stores/session-conversation-intents'
@@ -2574,6 +2576,91 @@ describe('renderer session persistence bridge', () => {
     expect(saveSession).toHaveBeenCalledTimes(2)
     expect(saveSession.mock.calls[1][0].title).toBe('Latest')
     expect(saveSession.mock.calls[1][1]).toMatchObject({ conflictRebaseFields: ['title'] })
+  })
+
+  it.each(['full', 'metadata'] as const)(
+    'retains all %s edits when a coalesced save is rejected before its task starts',
+    async (mode) => {
+      const authority = createPersistedSession({
+        title: 'Original',
+        pinned: false,
+        runtimeTranscriptOwner: 'main',
+        revision: 1
+      })
+      useSessionStore.getState().hydrateSessions([authority])
+      if (mode === 'metadata') {
+        useSessionStore.setState((state) => ({
+          sessions: state.sessions.map((session) => ({ ...session, contentLoaded: false }))
+        }))
+      }
+      const api = createApi({ loadOne: vi.fn(async () => authority) })
+      const persistence = createOrderedSessionPersistence(api)
+      const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+      useSessionStore.getState().togglePinned(authority.id)
+      const pinned = save(useSessionStore.getState())
+      useSessionStore.getState().renameSession(authority.id, 'Renamed')
+      const renamed = save(useSessionStore.getState())
+      const settled = Promise.allSettled([pinned, renamed])
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected' })
+      await settled
+
+      expect(api.saveSession).not.toHaveBeenCalled()
+      expect(persistence.recovery.get(`session:${authority.id}`)?.intent).toMatchObject({
+        base: { title: 'Original', pinned: false },
+        session: { title: 'Renamed', pinned: true },
+        options: { conflictRebaseFields: ['pinned', 'title'] }
+      })
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      await persistence.recovery.reconcile(
+        async () => authority,
+        {},
+        () => true
+      )
+      expect(persistence.recovery.getSnapshot()).toEqual([
+        expect.objectContaining({ state: 'failed', kind: 'connection', reviewRequired: true })
+      ])
+    }
+  )
+
+  it('retains earlier coalesced commands after their pending buffer has been acknowledged', async () => {
+    const authority = materializeSessionConversationGraph(
+      createPersistedSession({ runtimeTranscriptOwner: 'main', revision: 1 })
+    )
+    useSessionStore.getState().hydrateSessions([authority])
+    const api = createApi({
+      saveSession: vi.fn().mockRejectedValue(new DesktopRuntimeWriteNotSubmittedError())
+    })
+    const persistence = createOrderedSessionPersistence(api)
+    const save = createStoreSaver(api, useSessionStore.getState(), {}, persistence)
+    useSessionStore.getState().appendUserMessage({
+      sessionId: authority.id,
+      content: 'Keep this command in the failed write'
+    })
+    const commands = pendingSessionConversationCommands(authority.id)
+    expect(commands).toHaveLength(2)
+    const appended = save(useSessionStore.getState())
+    acknowledgeSessionConversationCommands({
+      ...authority,
+      runtimeConversationCommandIds: commands.map(({ id }) => id)
+    })
+    expect(pendingSessionConversationCommands(authority.id)).toEqual([])
+    useSessionStore.getState().renameSession(authority.id, 'Renamed')
+    const renamed = save(useSessionStore.getState())
+    await Promise.allSettled([appended, renamed])
+
+    expect(api.saveSession).toHaveBeenCalledOnce()
+    expect(persistence.recovery.get(`session:${authority.id}`)?.intent?.options).toEqual({
+      conversationCommands: commands,
+      conflictRebaseFields: ['title']
+    })
+    await persistence.recovery.reconcile(
+      async () => authority,
+      {},
+      () => true
+    )
+    expect(persistence.recovery.getSnapshot()).toEqual([
+      expect.objectContaining({ state: 'failed', kind: 'connection' })
+    ])
   })
 
   it('bounds fast whole-Session writes during a 30 fps live stream', async () => {

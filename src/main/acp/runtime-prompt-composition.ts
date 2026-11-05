@@ -484,7 +484,9 @@ const composeAcpRuntimePromptOwners = (
             )
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
-            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId),
+          waitForRuntimeSessionTerminalWrites: (sessionId: string, signal: AbortSignal) =>
+            options.runtimeSessions!.waitForTerminalWrites(sessionId, signal)
         }
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {

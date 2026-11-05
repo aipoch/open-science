@@ -10,6 +10,7 @@ import {
   ChevronRight,
   ChevronUp,
   CircleHelp,
+  LoaderCircle,
   MessageCircleQuestion,
   Minus,
   Pencil
@@ -665,6 +666,30 @@ const WorkspaceElicitationCard = ({
     }
     setValues(nextValues)
     setError(undefined)
+  }
+
+  // Reserve the interaction lane while the saved decision waits for continuation.
+  // Transcript cards have no responder and keep showing the recorded answer.
+  if (
+    !readOnly &&
+    request &&
+    onRespond &&
+    elicitation.continuationPending &&
+    (elicitation.state === 'answered' || elicitation.state === 'declined')
+  ) {
+    return (
+      <div
+        data-testid="elicitation-continuation-progress"
+        role="status"
+        className="flex items-center gap-2 rounded-2xl bg-bg-000 p-4 text-sm text-text-300"
+      >
+        <LoaderCircle
+          className="size-4 animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        {t('Resuming session')}
+      </div>
+    )
   }
 
   if (isPendingPlaceholder && choiceQuestions && !readOnly && onReveal) {

@@ -248,6 +248,7 @@ type AcpPromptTurnWorkflowOptions = Readonly<{
     approvedHandoffContinuation?: boolean
   ) => Promise<void>
   assertRuntimeSessionAdmissionAvailable?: (sessionId: string) => Promise<void>
+  waitForRuntimeSessionTerminalWrites?: (sessionId: string, signal: AbortSignal) => Promise<void>
   onPromptStarted: (sessionId: string, turnToken: string, promptAttemptId?: string) => void
   emitState: () => void
 }>
@@ -299,10 +300,28 @@ class AcpPromptTurnWorkflow {
     if (!activeSession) throw new Error(`ACP session not found: ${request.sessionId}`)
     this.assertSessionIdle(request.sessionId)
 
-    if (this.options.assertRuntimeSessionAdmissionAvailable) {
+    if (
+      this.options.assertRuntimeSessionAdmissionAvailable &&
+      (mode.kind !== 'app-continuation' || !this.options.waitForRuntimeSessionTerminalWrites)
+    ) {
       await this.options.assertRuntimeSessionAdmissionAvailable(request.sessionId)
     }
     let reservation = this.reserve(request)
+    if (mode.kind === 'app-continuation' && this.options.waitForRuntimeSessionTerminalWrites) {
+      try {
+        await this.options.waitForRuntimeSessionTerminalWrites(
+          request.sessionId,
+          reservation.signal
+        )
+        reservation.signal.throwIfAborted()
+      } catch (error) {
+        if (reservation.signal.aborted)
+          await this.options.interactions.cancellationCheckpoint(reservation)
+        this.options.interactions.release(reservation)
+        if (reservation.signal.aborted) return { stopReason: 'cancelled' }
+        throw error
+      }
+    }
     let plan: AcpPromptTurnPlanContext
     let skill: TurnSkillHandle
     try {
