@@ -134,6 +134,60 @@ afterEach(() => {
 
 describe('workspace prompt preparation with Main rollback authority', () => {
   it.each([false, true])(
+    'retries the exact preparation after a storage failure (committed: %s)',
+    async (committed) => {
+      const main = mainAdapter()
+      const save = vi.mocked(main.api.saveSession).getMockImplementation()!
+      const failure = new Error('Preparation storage unavailable')
+      vi.mocked(main.api.saveSession).mockImplementationOnce(async (candidate, options) => {
+        if (committed) await save(candidate, options)
+        throw failure
+      })
+      await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toBe(failure)
+      const commands = vi.mocked(main.api.saveSession).mock.calls[0][1]?.conversationCommands
+      await expect(prepareWorkspacePrompt(current(), 'different', 'new')).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      const preparation = await prepareWorkspacePrompt(current(), 'new', 'new')
+      expect(vi.mocked(main.api.saveSession).mock.calls.at(-1)?.[1]?.conversationCommands).toEqual(
+        commands
+      )
+      expect(preparation.id).toBe(commands?.[0].id)
+      expect(main.read().promptPreparation?.id).toBe(preparation.id)
+      expect(await rollbackWorkspacePrompt(preparation)).toBe(true)
+      expect(main.read().promptPreparation).toBeUndefined()
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    }
+  )
+
+  it.each(['disconnected', 'not-submitted', 'metadata'] as const)(
+    'does not bypass retained write review for a preparation retry: %s',
+    async (kind) => {
+      const main = mainAdapter()
+      const failure =
+        kind === 'disconnected'
+          ? new DesktopRuntimeDisconnectedError()
+          : kind === 'not-submitted'
+            ? new DesktopRuntimeWriteNotSubmittedError()
+            : new Error('Metadata save failed')
+      vi.mocked(main.api.saveSession).mockRejectedValueOnce(failure)
+      if (kind === 'metadata') {
+        await expect(
+          saveSessionInOrder({ ...current(), title: 'Retained title' }, undefined, undefined, {
+            conflictRebaseFields: ['title']
+          })
+        ).rejects.toBe(failure)
+      } else {
+        await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toBe(failure)
+      }
+      await expect(prepareWorkspacePrompt(current(), 'new', 'new')).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      expect(main.api.saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each([false, true])(
     'does not clear a newer rearm replay pointer on a late submitted release (started: %s)',
     async (started) => {
       const main = mainAdapter()

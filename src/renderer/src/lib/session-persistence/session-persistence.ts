@@ -1420,9 +1420,9 @@ const saveSessionInOrder = async (
   let saveOptions = withPendingConversationCommands(session, options)
   const retained = persistence.recovery.get(target)
   const retainedCommands = retained?.intent?.options?.conversationCommands
-  const rejectedRollback = retainedCommands?.length === 1 ? retainedCommands[0] : undefined
+  const rejectedCommand = retainedCommands?.length === 1 ? retainedCommands[0] : undefined
   const commands = saveOptions?.conversationCommands
-  const rollback = commands?.length === 1 ? commands[0] : undefined
+  const command = commands?.length === 1 ? commands[0] : undefined
   if (
     retained?.state === 'failed' &&
     !retained.reviewRequired &&
@@ -1432,15 +1432,29 @@ const saveSessionInOrder = async (
     sessionIntentFields(retained.intent).length === 0 &&
     !saveOptions?.conflictRebaseFields?.length &&
     !saveOptions?.runtimeWriterToken &&
-    rejectedRollback?.kind === 'rollback-prompt' &&
-    rollback?.kind === 'rollback-prompt' &&
-    rejectedRollback.preparationId === rollback.preparationId &&
-    Boolean(rejectedRollback.preserveSubmittedMessage) ===
-      Boolean(rollback.preserveSubmittedMessage)
+    ((rejectedCommand?.kind === 'rollback-prompt' &&
+      command?.kind === 'rollback-prompt' &&
+      rejectedCommand.preparationId === command.preparationId &&
+      Boolean(rejectedCommand.preserveSubmittedMessage) ===
+        Boolean(command.preserveSubmittedMessage)) ||
+      (rejectedCommand?.kind === 'prepare-prompt' &&
+        command?.kind === 'prepare-prompt' &&
+        rejectedCommand.promptMessageId === command.promptMessageId &&
+        rejectedCommand.mode === command.mode) ||
+      (command?.kind === 'rollback-prompt' &&
+        session.promptPreparation?.id === command.preparationId &&
+        retainedCommands?.length &&
+        retainedCommands.every((pending) => pending.preparationId === command.preparationId) &&
+        retainActivePreparationCommands(retainedCommands).length === 0))
   ) {
-    // Retry only the rejected conditional compensation, with its original receipt identity. A
-    // fresh rollback ID would leave the old command unconfirmed even after Main releases it.
-    saveOptions = { ...saveOptions, conversationCommands: [rejectedRollback] }
+    saveOptions = {
+      ...saveOptions,
+      conversationCommands: [
+        rejectedCommand?.kind === 'prepare-prompt' || rejectedCommand?.kind === 'rollback-prompt'
+          ? rejectedCommand
+          : command!
+      ]
+    }
   } else {
     persistence.recovery.assertSettled(target)
   }

@@ -1,5 +1,3 @@
-import { isDesktopRuntimeConnectionError } from './desktop-runtime-recovery'
-
 export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-arguments',
   'invalid-command-result',
@@ -89,7 +87,10 @@ export const toApplicationCommandErrorEnvelope = (
             ? { parameters: { macro: error.parameters.macro } }
             : {})
         }
-      : error instanceof Error && isDesktopRuntimeConnectionError(error)
+      : error instanceof Error &&
+          'code' in error &&
+          (error.code === 'desktop-runtime-disconnected' ||
+            error.code === 'desktop-runtime-not-submitted')
         ? { code: error.code, message: error.message }
         : {
             code: 'command-failed' as const,

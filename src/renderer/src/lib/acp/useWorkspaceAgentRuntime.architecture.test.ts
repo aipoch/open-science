@@ -889,13 +889,15 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
       'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
-      'src/renderer/src/lib/acp/workspace-operation-error.ts',
       'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
       'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
       'src/renderer/src/lib/handled-failure-diagnostics.ts'
+    ])
+    expectBoundaryPaths(manifest, 'renderer_runtime_errors', [
+      'src/renderer/src/lib/acp/workspace-operation-error.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual(
       expect.arrayContaining([

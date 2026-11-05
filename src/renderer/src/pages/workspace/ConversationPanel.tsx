@@ -1,6 +1,5 @@
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
-import { ErrorNotice } from '@/components/error-notice'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
@@ -1779,59 +1778,54 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
-                {persistenceBlocked ? (
-                  <ErrorNotice
-                    inline
-                    className="mb-2"
-                    role={persistenceChecking ? 'status' : 'alert'}
-                    level={persistenceChecking ? 'info' : 'error'}
-                    title={
-                      persistenceSizeLimit
-                        ? t('Conversation storage limit reached')
-                        : persistenceChecking
-                          ? t('Checking conversation storage…')
-                          : t('Conversation storage needs attention')
-                    }
-                    description={
-                      persistenceSizeLimit
-                        ? t(
-                            'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
-                          )
-                        : persistenceChecking
-                          ? t(
-                              'The connection changed while saving. Checking which conversation changes were saved.'
-                            )
-                          : persistenceIssue.kind === 'conflict'
-                            ? t(
-                                'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
-                              )
-                            : persistenceIssue.kind === 'connection'
-                              ? t(
-                                  'Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.'
-                                )
-                              : t(
-                                  'Open-Science could not save the latest conversation changes. Retry before closing the app.'
-                                )
-                    }
-                    primaryButton={
-                      persistenceSizeLimit && sessionTools.newConversation
-                        ? {
-                            label: t('New conversation'),
-                            onClick: sessionTools.newConversation
-                          }
-                        : !persistenceChecking && sessionTools.reviewPersistence
-                          ? {
-                              label: t('Review recovery options'),
-                              onClick: sessionTools.reviewPersistence
-                            }
-                          : undefined
-                    }
-                  />
-                ) : null}
                 <ComposerNoticeSlot
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
+                  persistence={
+                    persistenceBlocked
+                      ? {
+                          role: persistenceChecking ? 'status' : 'alert',
+                          level: persistenceChecking ? 'info' : 'error',
+                          title: persistenceSizeLimit
+                            ? t('Conversation storage limit reached')
+                            : persistenceChecking
+                              ? t('Checking conversation storage…')
+                              : t('Conversation storage needs attention'),
+                          description: persistenceSizeLimit
+                            ? t(
+                                'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+                              )
+                            : persistenceChecking
+                              ? t(
+                                  'The connection changed while saving. Checking which conversation changes were saved.'
+                                )
+                              : persistenceIssue.kind === 'conflict'
+                                ? t(
+                                    'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
+                                  )
+                                : persistenceIssue.kind === 'connection'
+                                  ? t(
+                                      'Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.'
+                                    )
+                                  : t(
+                                      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+                                    ),
+                          primaryButton:
+                            persistenceSizeLimit && sessionTools.newConversation
+                              ? {
+                                  label: t('New conversation'),
+                                  onClick: sessionTools.newConversation
+                                }
+                              : !persistenceChecking && sessionTools.reviewPersistence
+                                ? {
+                                    label: t('Review recovery options'),
+                                    onClick: sessionTools.reviewPersistence
+                                  }
+                                : undefined
+                        }
+                      : undefined
+                  }
                 />
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
