@@ -7850,6 +7850,9 @@
     "Collapse question panel": "收起问题面板",
     "Expand question panel": "展开问题面板",
     "Set up the selected agent runtime in Settings before generating a research film.": "请先在设置中配置所选智能体的运行时，再生成研究影片。",
+    "Select a model in Settings before generating a research film.": "生成研究短片前，请在设置中选择模型。",
+    "The selected provider credentials are unavailable. Check them in Settings.": "所选服务商的凭据不可用。请在设置中检查。",
+    "The selected model is unavailable. Select another model in Settings.": "所选模型不可用。请在设置中选择其他模型。",
     "Check the selected model and credentials in Settings before generating a research film.": "请先在设置中检查所选模型及凭据，再生成研究影片。",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "所选模型的输入上限无法容纳研究影片生成指令。请选择输入上限更大的模型。"
   }
