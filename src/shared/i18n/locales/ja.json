@@ -7830,6 +7830,9 @@
     "Wait for the current response to finish before generating.": "現在の応答が完了してから生成してください。",
     "Research film jobs": "リサーチ動画のジョブ",
     "Research films": "リサーチ動画",
-    "Include research films": "研究ショート動画を含める"
+    "Include research films": "研究ショート動画を含める",
+    "Delete research film": "研究ショート動画を削除",
+    "Delete research film?": "研究ショート動画を削除しますか？",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "この分岐の動画とローカルの生成ファイルを削除しますか？会話の内容と別途保存したファイルは保持されます。"
   }
 }

@@ -18,11 +18,16 @@ const log = createLogger('research-video')
 import { stageResearchVideoSessionImages } from './session-images'
 import type { ResearchFilmLifecycle } from './lifecycle'
 
-import { researchFilmScopeKey as scopeKey, readStoredResearchFilm } from './stored-presentation'
+import {
+  researchFilmScopeKey as scopeKey,
+  readStoredResearchFilm,
+  deleteStoredResearchFilms
+} from './stored-presentation'
 
 export type ResearchVideoPresentationOwner = {
   status(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
   start(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
+  remove(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
   cancel(request: ResearchVideoPresentationRequest): void
   close(): Promise<void>
 }
@@ -30,6 +35,7 @@ export type ResearchVideoPresentationOwner = {
 /** User-initiated derived presentations live separately from immutable imported conversation history. */
 export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
+  mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
   models: LocalModelOwner
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
@@ -41,6 +47,7 @@ export function createResearchVideoPresentationOwner(options: {
   ) => Promise<ResearchVideoPresentationStatus['result']>
   lifecycle?: ResearchFilmLifecycle
 }): ResearchVideoPresentationOwner {
+  let removing = false
   let closed = false
   let active: { key: string; controller: AbortController; done: Promise<void> } | undefined
   const states = new Map<string, ResearchVideoPresentationStatus>()
@@ -192,6 +199,7 @@ export function createResearchVideoPresentationOwner(options: {
     ): Promise<ResearchVideoPresentationStatus> {
       const request = researchVideoPresentationRequestSchema.parse(rawRequest),
         key = scopeKey(request)
+      if (removing) throw new Error('Research film deletion is in progress.')
       if (closed) throw new Error('Research presentation generation is closed.')
       if (active) {
         if (active.key === key) return status(request)
@@ -212,6 +220,32 @@ export function createResearchVideoPresentationOwner(options: {
         })
       active = { key, controller, done }
       return status(request)
+    },
+    async remove(rawRequest) {
+      const request = researchVideoPresentationRequestSchema.parse(rawRequest)
+      if (closed || active || removing)
+        throw new Error('Wait for the current research film operation to finish.')
+      removing = true
+      const work = async (): Promise<ResearchVideoPresentationStatus> => {
+        const session = await options.loadSession(request.projectId, request.sessionId)
+        if (!session || researchVideoGenerationBlock(session, request) === 'unavailable')
+          throw new Error('Research session is unavailable.')
+        const graph = session.conversationGraph
+        const branchId =
+          request.branchId ??
+          graph?.frames.find((frame) => frame.id === graph.rootFrameId)?.activeBranchId
+        const scope = { ...request, branchId }
+        const imported = await options.loadImportedFilm?.(scope)
+        await deleteStoredResearchFilms(options.dataRoot(), scope, imported?.id)
+        states.delete(scopeKey(request))
+        states.delete(scopeKey(scope))
+        return status(request)
+      }
+      try {
+        return await (options.mutate ? options.mutate(request, work) : work())
+      } finally {
+        removing = false
+      }
     },
     cancel(rawRequest: ResearchVideoPresentationRequest): void {
       const key = scopeKey(researchVideoPresentationRequestSchema.parse(rawRequest))

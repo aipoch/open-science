@@ -1,8 +1,23 @@
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from './ui/dropdown-menu'
 import { researchVideoFilename } from '../../../shared/research-video-presentation'
 import { dialogBodyClassName, dialogFooterClassName } from './ui/dialog-chrome'
 import { WorkflowDialogFrame } from './ui/workflow-dialog-frame'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Video, Loader2, Play, Clock3, AudioLines, RotateCcw } from 'lucide-react'
+import {
+  Video,
+  Loader2,
+  Play,
+  Clock3,
+  AudioLines,
+  RotateCcw,
+  MoreHorizontal,
+  Trash2
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from './ui/button'
 import { ErrorNotice } from './error-notice'
@@ -34,7 +49,20 @@ export function ResearchVideoButton({
   const { t } = useTranslation()
   const { projectId, sessionId, branchId } = request
   const [open, setOpen] = useState(false)
+  const deletionScope = JSON.stringify([projectId, sessionId, branchId])
+  const [deletionTarget, setDeletionTarget] = useState<string>()
+  const confirmDeletion = deletionTarget === deletionScope
+  const setConfirmDeletion = (confirm: boolean): void =>
+    setDeletionTarget(confirm ? deletionScope : undefined)
   const [confirmRegeneration, setConfirmRegeneration] = useState(false)
+  const deleteTriggerRef = useRef<HTMLButtonElement>(null)
+  const cancelDeletionRef = useRef<HTMLButtonElement>(null)
+  const wasDeleting = useRef(false)
+  useLayoutEffect(() => {
+    if (confirmDeletion) cancelDeletionRef.current?.focus()
+    else if (wasDeleting.current) deleteTriggerRef.current?.focus()
+    wasDeleting.current = confirmDeletion
+  }, [confirmDeletion])
   const confirmationDescriptionId = useId()
   const [status, setStatus] = useState<ResearchVideoPresentationStatus>({})
   const [model, setModel] = useState<LocalModelSnapshot>()
@@ -48,6 +76,7 @@ export function ResearchVideoButton({
     if (confirmRegeneration) cancelRegenerationRef.current?.focus()
     else regenerateRef.current?.focus()
   }, [confirmRegeneration])
+  const statusVersion = useRef(0)
   const live = useRef(true)
   const startAfterInstall = useRef(false)
   const busy =
@@ -75,10 +104,11 @@ export function ResearchVideoButton({
     let timer: ReturnType<typeof setTimeout>
     const poll = async (): Promise<void> => {
       if (!desktop) return
+      const version = statusVersion.current
       const finishingInstallation = startAfterInstall.current
       try {
         const next = await window.api.researchVideo.status({ projectId, sessionId, branchId })
-        if (live.current) setStatus(next)
+        if (live.current && version === statusVersion.current) setStatus(next)
         if (startAfterInstall.current) {
           const snapshot = await window.api.localModels.getSnapshot('research-narration')
           if (!live.current) return
@@ -171,6 +201,26 @@ export function ResearchVideoButton({
       if (live.current) setPending(false)
     }
   }
+  const remove = async (): Promise<void> => {
+    if (pending || busy || installing) return
+    setPending(true)
+    setError(undefined)
+    try {
+      const result = status.result
+      const next = await window.api.researchVideo.remove(request)
+      statusVersion.current++
+      if (!live.current) return
+      if (result)
+        usePreviewWorkbenchStore.getState().removeItem(`research-video-${result.id}-player`)
+      setStatus(next)
+      setConfirmDeletion(false)
+      setOpen(false)
+    } catch (caught) {
+      if (live.current) setError(caught instanceof Error ? caught.message : String(caught))
+    } finally {
+      if (live.current) setPending(false)
+    }
+  }
   const preview = (result: ResearchVideoPresentation): void => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem({
       id: `research-video-${result.id}-player`,
@@ -219,6 +269,7 @@ export function ResearchVideoButton({
           busy={false}
           onClose={() => {
             setConfirmRegeneration(false)
+            setConfirmDeletion(false)
             setOpen(false)
           }}
           onCloseAutoFocus={(event) => {
@@ -238,6 +289,36 @@ export function ResearchVideoButton({
                       {t('Cancel')}
                     </Button>
                   </>
+                ) : confirmDeletion ? (
+                  <div
+                    className="w-full space-y-3"
+                    role="group"
+                    aria-label={t('Delete research film?')}
+                  >
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {t(
+                        'Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.'
+                      )}
+                    </p>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button
+                        ref={cancelDeletionRef}
+                        variant="ghost"
+                        disabled={pending}
+                        onClick={() => setConfirmDeletion(false)}
+                      >
+                        {t('Cancel')}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        disabled={pending}
+                        onClick={() => void remove()}
+                      >
+                        {pending && <Loader2 className="animate-spin" aria-hidden="true" />}
+                        {t('Delete research film')}
+                      </Button>
+                    </div>
+                  </div>
                 ) : confirmRegeneration ? (
                   <div
                     className="w-full space-y-3"
@@ -272,6 +353,32 @@ export function ResearchVideoButton({
                   </div>
                 ) : (
                   <>
+                    {status.result && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            ref={deleteTriggerRef}
+                            variant="ghost"
+                            size="sm"
+                            aria-label={t('More actions')}
+                            disabled={pending}
+                          >
+                            <MoreHorizontal aria-hidden="true" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              setConfirmRegeneration(false)
+                              setConfirmDeletion(true)
+                            }}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            {t('Delete research film')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    )}
                     {(status.result || model?.availability === 'ready') && (
                       <Button
                         ref={regenerateRef}

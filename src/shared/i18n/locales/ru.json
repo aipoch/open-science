@@ -8316,6 +8316,9 @@
     "Wait for the current response to finish before generating.": "Перед созданием фильма дождитесь завершения текущего ответа.",
     "Research film jobs": "Задания исследовательских видео",
     "Research films": "Исследовательские видео",
-    "Include research films": "Включить исследовательские фильмы"
+    "Include research films": "Включить исследовательские фильмы",
+    "Delete research film": "Удалить исследовательский фильм",
+    "Delete research film?": "Удалить исследовательский фильм?",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Удалить фильм этой ветки и локально созданные файлы? Содержимое диалога и отдельно сохранённые файлы будут сохранены."
   }
 }

@@ -394,3 +394,23 @@ it('never returns a saved player once its session is unavailable', async () => {
   expect(await owner.status(request)).toEqual({ generationBlock: 'unavailable' })
   await owner.close()
 })
+
+it('removes saved versions through the host mutation lane and allows a fresh generation', async () => {
+  const f = await fixture()
+  const mutate = vi.fn(async (_request, work) => work())
+  const owner = createResearchVideoPresentationOwner({ ...f.options, mutate })
+  await owner.start(request)
+  await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
+  const saved = (await owner.status(request)).result!
+  expect((await owner.remove(request)).result).toBeUndefined()
+  expect(mutate).toHaveBeenCalledOnce()
+  await expect(readFile(saved.playerPath)).rejects.toMatchObject({ code: 'ENOENT' })
+  await owner.close()
+  const reopened = createResearchVideoPresentationOwner(f.options)
+  expect((await reopened.status(request)).result).toBeUndefined()
+  await reopened.start(request)
+  await vi.waitFor(async () => expect((await reopened.status(request)).result).toBeDefined())
+  expect((await reopened.status(request)).result!.id).not.toBe(saved.id)
+  await reopened.close()
+})

@@ -7828,6 +7828,9 @@
     "Wait for the current response to finish before generating.": "현재 응답이 완료된 후 생성하세요.",
     "Research film jobs": "연구 영상 작업",
     "Research films": "연구 영상",
-    "Include research films": "연구 영상 포함"
+    "Include research films": "연구 영상 포함",
+    "Delete research film": "연구 단편 영상 삭제",
+    "Delete research film?": "연구 단편 영상을 삭제하시겠습니까?",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "이 분기의 영상과 로컬 생성 파일을 삭제하시겠습니까? 대화 내용과 별도로 저장한 파일은 유지됩니다."
   }
 }

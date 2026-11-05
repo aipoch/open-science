@@ -7830,6 +7830,9 @@
     "Wait for the current response to finish before generating.": "请等待当前回复完成后再生成。",
     "Research film jobs": "研究短片任务",
     "Research films": "研究短片",
-    "Include research films": "包含研究短片"
+    "Include research films": "包含研究短片",
+    "Delete research film": "删除研究短片",
+    "Delete research film?": "删除研究短片？",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "删除此分支的短片和本地生成文件？会话内容和已另存的文件将保留。"
   }
 }

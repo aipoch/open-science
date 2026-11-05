@@ -8170,6 +8170,9 @@
     "Wait for the current response to finish before generating.": "Attendez la fin de la réponse en cours avant de générer le film.",
     "Research film jobs": "Tâches de films de recherche",
     "Research films": "Films de recherche",
-    "Include research films": "Inclure les films de recherche"
+    "Include research films": "Inclure les films de recherche",
+    "Delete research film": "Supprimer le film de recherche",
+    "Delete research film?": "Supprimer le film de recherche ?",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "Supprimer le film de cette branche et les fichiers générés localement ? Le contenu de la conversation et les fichiers enregistrés séparément seront conservés."
   }
 }

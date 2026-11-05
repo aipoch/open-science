@@ -358,6 +358,7 @@ describe('application command composition', () => {
       'preview-resources:research-video-progress',
       'research-video:start',
       'research-video:status',
+      'research-video:remove',
       'research-video:cancel'
     ]) {
       expect(composition.desktop.commandNames()).toContain(name)

@@ -280,6 +280,8 @@ export async function composeNotebookBridge({
     return response.text
   }
   const researchVideoPresentation = createResearchVideoPresentationOwner({
+    mutate: (request, work) =>
+      sessionPersistenceCoordinator.runSessionMutation(request.projectId, request.sessionId, work),
     lifecycle: researchFilmLifecycle,
     loadImportedFilm: (request) => sessionPackageService.readResearchFilm(request),
     dataRoot: resolveDataRoot,

@@ -10,7 +10,10 @@ import {
   type SessionPackageManifest,
   type PackageProgress
 } from '../../shared/session-package'
-import { readStoredResearchFilm } from '../research-video/stored-presentation'
+import {
+  readStoredResearchFilm,
+  deletedResearchFilmIds
+} from '../research-video/stored-presentation'
 import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
 import { assertPackageSourcePath, packageEntry } from './archive'
 import { assertPackageCapacity } from './capacity'
@@ -36,6 +39,21 @@ export async function captureResearchFilms(
   inherited: PackageResearchFilms = [],
   signal?: AbortSignal
 ): Promise<CapturedResearchFilms> {
+  inherited = (
+    await Promise.all(
+      inherited.map(async (film) =>
+        (
+          await deletedResearchFilmIds(root, {
+            projectId: session.projectId,
+            sessionId: session.id,
+            branchId: film.branchId
+          })
+        ).includes(film.id)
+          ? undefined
+          : film
+      )
+    )
+  ).filter((film): film is PackageResearchFilms[number] => Boolean(film))
   const films = new Map(inherited.map((film) => [film.branchId ?? '', film]))
   const sources = new Map(researchFilmStorageKeys(inherited).map((key) => [key, key]))
   const localUpdated = new Map<string, number>()

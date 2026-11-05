@@ -1,3 +1,4 @@
+import { deletedResearchFilmIds } from '../research-video/stored-presentation'
 import {
   captureResearchFilms,
   appendResearchFilms,
@@ -2058,7 +2059,13 @@ export class SessionPackageService {
       origin.identities
     ) as PackageResearchFilms
     const film = films.find((film) => film.branchId === branchId)
-    if (!film) return undefined
+    if (
+      !film ||
+      (await deletedResearchFilmIds(this.options.storageRoot, { ...request, branchId })).includes(
+        film.id
+      )
+    )
+      return undefined
     for (const key of [film.playerStorageKey, film.sourceStorageKey]) {
       await assertPackageSourcePath(this.options.storageRoot, key)
       if (!(await lstat(join(this.options.storageRoot, key))).isFile())

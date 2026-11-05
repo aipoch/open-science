@@ -18,7 +18,10 @@ import {
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { SessionRepository } from '../session-persistence/repository'
 import { initDataRoot } from '../storage-root'
-import { researchFilmScopeKey } from '../research-video/stored-presentation'
+import {
+  researchFilmScopeKey,
+  deleteStoredResearchFilms
+} from '../research-video/stored-presentation'
 import { createResearchVideoPresentationOwner } from '../research-video/presentation'
 import { SessionPackageService } from './service'
 import { captureResearchFilms, validateResearchFilms } from './research-films'
@@ -342,3 +345,48 @@ it('rolls back imported film files on cancellation and collects them through exi
   expect((await readFile(archive)).length).toBeGreaterThan(0)
   expect((await readFile(join(local, 'output/player.html'))).length).toBeGreaterThan(0)
 }, 60_000)
+
+it('deletes all local versions of one branch, suppresses imported fallback across restart and exports only retained films', async () => {
+  const f = await setup()
+  const original = (await f.repository.loadSession('project', 'session'))!
+  const branches = original.conversationGraph!.branches
+  for (const branch of branches) await saveFilm(f.root, original, branch.id)
+  const archive = join(f.root, 'delete-fixture.science')
+  await f.service.exportTo({ projectId: 'project', sessionId: 'session' }, archive, {
+    selectFiles: include
+  })
+  const imported = await f.service.importFrom(archive)
+  const session = (await f.repository.loadSession(imported.projectId, imported.sessionId))!
+  const origin = await f.service.readOrigin(imported)
+  const branchId = origin.identities[branches[0].id]
+  const request = { ...imported, branchId }
+  const saved = (await f.service.readResearchFilm(request))!
+  const first = await saveFilm(f.root, session, branchId, 'Old')
+  const latest = await saveFilm(f.root, session, branchId, 'Latest')
+  const before = JSON.stringify(session)
+  await deleteStoredResearchFilms(f.root, request, saved.id)
+  await deleteStoredResearchFilms(f.root, request) // interrupted/repeated cleanup remains safe
+  for (const path of [
+    saved.playerPath,
+    saved.sourcePath,
+    join(first, 'session.json'),
+    join(latest, 'session.json')
+  ])
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+  expect(await f.service.readResearchFilm(request)).toBeUndefined()
+  expect(
+    JSON.stringify(await f.repository.loadSession(imported.projectId, imported.sessionId))
+  ).toBe(before)
+  expect((await readFile(archive)).length).toBeGreaterThan(0)
+  const captured = await captureResearchFilms(f.root, session)
+  expect(captured.films).toEqual([])
+  const forwarded = join(f.root, 'after-delete.science')
+  await f.service.exportTo(imported, forwarded, { selectFiles: include })
+  const contents = await unpack(forwarded, join(f.root, 'after-delete'))
+  expect(contents.records.researchFilms).toHaveLength(branches.length - 1)
+  expect(contents.records.researchFilms!.some((film) => film.id === saved.id)).toBe(false)
+  const forked = await f.service.fork(imported)
+  expect((await f.service.readOrigin(forked)).researchFilms).toHaveLength(branches.length - 1)
+  await saveFilm(f.root, session, branchId, 'New after deletion')
+  expect((await captureResearchFilms(f.root, session)).films[0].title).toBe('New after deletion')
+})

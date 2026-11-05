@@ -6,9 +6,14 @@ import { i18next } from '@/i18n'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import type { ResearchVideoPresentationStatus } from '../../../shared/research-video-presentation'
 import { ResearchVideoButton } from './research-video-button'
-const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }))
+const { openPreview, removePreview } = vi.hoisted(() => ({
+  openPreview: vi.fn(),
+  removePreview: vi.fn()
+}))
 vi.mock('@/stores/preview-workbench-store', () => ({
-  usePreviewWorkbenchStore: { getState: () => ({ upsertAndActivateItem: openPreview }) }
+  usePreviewWorkbenchStore: {
+    getState: () => ({ upsertAndActivateItem: openPreview, removeItem: removePreview })
+  }
 }))
 let root: Root, container: HTMLDivElement
 let snapshot: LocalModelSnapshot
@@ -18,6 +23,7 @@ const api = {
   researchVideo: {
     status: vi.fn(async () => status),
     start: vi.fn(async () => (status = { progress: { phase: 'writing', startedAt: Date.now() } })),
+    remove: vi.fn(async () => (status = {})),
     cancel: vi.fn(async () => {
       status = { progress: { phase: 'cancelled', startedAt: Date.now() } }
     })
@@ -262,4 +268,40 @@ it('offers installation for a transferred narration revision and waits for the c
   }
   await act(async () => vi.advanceTimersByTimeAsync(750))
   expect(api.researchVideo.start).toHaveBeenCalledExactlyOnceWith(request)
+})
+
+it('requires inline confirmation to delete a film and closes its preview after deletion', async () => {
+  status = {
+    result: {
+      id: 'saved',
+      title: 'Saved',
+      duration: 4,
+      playerPath: '/film.html',
+      sourcePath: '/film.zip'
+    }
+  }
+  await act(async () => vi.advanceTimersByTimeAsync(750))
+  await click('View research film')
+  const openMenu = async (): Promise<void> => {
+    const trigger = document.querySelector('[aria-label="More actions"]')!
+    await act(async () =>
+      trigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    )
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find((x) =>
+      x.textContent?.includes('Delete research film')
+    )!
+    expect(item).toBeDefined()
+    await act(async () => (item as HTMLElement).click())
+  }
+  await openMenu()
+  expect(api.researchVideo.remove).not.toHaveBeenCalled()
+  expect(document.activeElement?.textContent).toBe('Cancel')
+  await click('Cancel')
+  expect(api.researchVideo.remove).not.toHaveBeenCalled()
+  await openMenu()
+  await click('Delete research film')
+  expect(api.researchVideo.remove).toHaveBeenCalledExactlyOnceWith(request)
+  expect(removePreview).toHaveBeenCalledWith('research-video-saved-player')
+  expect(document.body.textContent).toContain('Generate research film')
+  expect(api.researchVideo.start).not.toHaveBeenCalled()
 })

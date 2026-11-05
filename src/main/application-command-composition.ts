@@ -166,6 +166,7 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'research-video:start',
   'research-video:status',
+  'research-video:remove',
   'research-video:cancel',
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',

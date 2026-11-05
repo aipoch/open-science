@@ -131,6 +131,9 @@ export const previewDeleteContracts = {
   'researchVideo.status': callable<
     (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
   >()('preview-resources', ['research-video:status', ELECTRON]),
+  'researchVideo.remove': callable<
+    (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
+  >()('preview-resources', ['research-video:remove', ELECTRON]),
   'researchVideo.cancel': callable<(request: ResearchVideoPresentationRequest) => Promise<void>>()(
     'preview-resources',
     ['research-video:cancel', ELECTRON]

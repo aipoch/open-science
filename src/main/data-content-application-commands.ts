@@ -450,6 +450,11 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: ResearchVideoPresentationRequest],
     ResearchVideoPresentationStatus
   >('research-video:status'),
+  researchVideoPresentationRemove: defineApplicationCommand<
+    'research-video:remove',
+    readonly [request: ResearchVideoPresentationRequest],
+    ResearchVideoPresentationStatus
+  >('research-video:remove'),
   researchVideoPresentationCancel: defineApplicationCommand<
     'research-video:cancel',
     readonly [request: ResearchVideoPresentationRequest],
@@ -733,6 +738,7 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.previewResearchVideoCancel,
     dataContentApplicationCommands.researchVideoPresentationStart,
     dataContentApplicationCommands.researchVideoPresentationStatus,
+    dataContentApplicationCommands.researchVideoPresentationRemove,
     dataContentApplicationCommands.researchVideoPresentationCancel,
     dataContentApplicationCommands.researchVideoProgress,
     dataContentApplicationCommands.previewResearchVideoProgress
@@ -1015,6 +1021,12 @@ const registerDataContentApplicationCommands = (
         if (!dependencies.researchVideoPresentation)
           throw new Error('Research explanation service is unavailable.')
         return dependencies.researchVideoPresentation.status(invocation.args[0])
+      },
+      'research-video:remove': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:remove')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.remove(invocation.args[0])
       },
       'research-video:cancel': (invocation) => {
         assertElectronCaller(invocation, 'research-video:cancel')

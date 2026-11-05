@@ -8170,6 +8170,9 @@
     "Wait for the current response to finish before generating.": "Espere a que termine la respuesta actual antes de generar el cortometraje.",
     "Research film jobs": "Tareas de vídeos de investigación",
     "Research films": "Vídeos de investigación",
-    "Include research films": "Incluir vídeos de investigación"
+    "Include research films": "Incluir vídeos de investigación",
+    "Delete research film": "Eliminar el cortometraje de investigación",
+    "Delete research film?": "¿Eliminar el cortometraje de investigación?",
+    "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "¿Eliminar el cortometraje de esta rama y los archivos generados localmente? Se conservarán el contenido de la conversación y los archivos guardados por separado."
   }
 }
