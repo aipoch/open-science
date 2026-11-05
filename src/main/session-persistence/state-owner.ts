@@ -20,6 +20,7 @@ import {
   sanitizePlanHistoryProjections,
   sanitizeSessionRuntimeContext,
   SessionConfigurationBusyError,
+  SessionRevisionConflictError,
   sessionRevision,
   type DelegationPolicy,
   type PersistedChatMessage,
@@ -1466,6 +1467,12 @@ class SessionPersistenceStateOwner {
       )
     }
     const authority = authoritative.status === 'found' ? authoritative.session : undefined
+    const assertRecoveryRevision = (current: PersistedChatSession | undefined): void => {
+      const actualRevision = current ? sessionRevision(current) : 0
+      if (options.expectedRevision !== undefined && options.expectedRevision !== actualRevision)
+        throw new SessionRevisionConflictError(options.expectedRevision, actualRevision)
+    }
+    assertRecoveryRevision(authority)
     if (
       !authority &&
       options.conversationCommands?.some(
@@ -1517,7 +1524,10 @@ class SessionPersistenceStateOwner {
           // The next terminal save retries the command against an authority with no active run.
           // Real branch identity conflicts still reject.
           if (error instanceof SessionConversationCommandDeferredError)
-            return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+            return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+              assertRecoveryRevision(current)
+              return candidate
+            })
           throw error
         }
         if (this.options.uploads)
@@ -1525,7 +1535,10 @@ class SessionPersistenceStateOwner {
             mode: 'live-save'
           })
       }
-      return this.mutateRuntimeSession({ projectId, sessionId }, () => candidate)
+      return this.mutateRuntimeSession({ projectId, sessionId }, (current) => {
+        assertRecoveryRevision(current)
+        return candidate
+      })
     }
     session = {
       ...session,

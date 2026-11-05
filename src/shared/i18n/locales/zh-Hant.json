@@ -1284,7 +1284,6 @@
     "Conversation storage limit reached": "已達到對話儲存上限",
     "One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.": "一個或多個已儲存的對話超過了 256 MiB 儲存上限。檔案保持不變，但無法開啟。請先檢查受影響的檔案，再重試。",
     "These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.": "這些檔案保持不變。請先將它們移出工作階段資料夾再重試，或使用舊版應用程式匯出它們。",
-    "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "此對話已在另一個視窗中變更。你的本機變更尚未儲存。請在關閉應用程式前重試，以重新載入最新版本。",
     "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "此對話已超過 256 MiB 的儲存上限。目前執行已停止。請建立新對話以繼續工作。上次成功儲存後的變更不會持久保留。",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "仍綁定到 <name>{{name}}</name> 的對話將變為<em>不可用</em>，並且<em>不會</em>自動切換到主智能體。對每個受影響的對話，你需要先明確選擇一個新專家或主智能體，之後它才能繼續傳送訊息。",
     "Copied": "已複製",
@@ -7783,6 +7782,18 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "無法重新產生概覽。仍顯示先前的結果。請重試。",
     "Another app is using Open-Science files": "其他程式正在使用 Open-Science 檔案",
     "Quit {{name}}, then recheck.": "結束 {{name}}，然後重新檢查。",
-    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。"
+    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。",
+    "Checking conversation storage…": "正在核對對話儲存…",
+    "The connection changed while saving. Checking which conversation changes were saved.": "儲存時連線發生變化，正在核對哪些對話變更已儲存。",
+    "Affected conversations": "受影響的對話",
+    "Open conversation: {{title}}": "開啟對話：{{title}}",
+    "Conversation selection": "對話選取紀錄",
+    "Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.": "部分對話變更尚無法確認已儲存。請檢視受影響的對話，並在關閉應用程式前重試。",
+    "Open-Science could not save the latest conversation changes. Retry before closing the app.": "Open-Science 無法儲存最新的對話變更。請在關閉應用程式前重試。",
+    "This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.": "此對話已在另一視窗中變更。本機變更已保留。請檢視對話，然後重試或捨棄保留的變更。",
+    "Discard retained changes for {{title}}": "捨棄 {{title}} 的保留變更",
+    "Discard retained changes…": "捨棄保留的變更…",
+    "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "要捨棄「{{title}}」的保留變更並重新載入已儲存的版本嗎？此操作無法復原。",
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "無法重新載入已儲存的對話。保留的變更仍在，請重試。"
   }
 }

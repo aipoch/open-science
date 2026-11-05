@@ -1252,7 +1252,6 @@
     "Teacher": "Учитель",
     "Telescope": "Телескоп",
     "Terminal": "Командная строка",
-    "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "Этот диалог изменился в другом окне. Локальные изменения не были сохранены. Повторите попытку загрузить последнюю версию перед закрытием приложения.",
     "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "Этот диалог превысил лимит хранилища 256 МиБ. Текущий запуск остановлен. Чтобы продолжить работу, начните новый диалог. Изменения после последнего успешного сохранения не будут сохранены.",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "Диалоги, по-прежнему связанные с <name>{{name}}</name>, станут <em>недоступны</em> и <em>не</em> будут автоматически переключены на главного агента. Для каждого затронутого диалога потребуется явно выбрать нового специалиста или главного агента, прежде чем снова можно будет отправлять сообщения.",
     "Copied": "Скопировано",
@@ -8269,6 +8268,18 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Не удалось повторно создать обзор. По-прежнему отображается предыдущий результат. Повторите попытку.",
     "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
     "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
-    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова.",
+    "Checking conversation storage…": "Проверка сохранения диалогов…",
+    "The connection changed while saving. Checking which conversation changes were saved.": "Соединение изменилось во время сохранения. Проверяется, какие изменения диалогов были сохранены.",
+    "Affected conversations": "Затронутые диалоги",
+    "Open conversation: {{title}}": "Открыть диалог: {{title}}",
+    "Conversation selection": "Выбор диалога",
+    "Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.": "Не удалось подтвердить сохранение некоторых изменений диалогов. Проверьте затронутые диалоги и повторите попытку перед закрытием приложения.",
+    "Open-Science could not save the latest conversation changes. Retry before closing the app.": "Open-Science не удалось сохранить последние изменения диалогов. Повторите попытку перед закрытием приложения.",
+    "This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.": "Этот диалог изменён в другом окне. Локальные изменения сохранены в памяти. Проверьте диалог, затем повторите попытку или отмените удерживаемые изменения.",
+    "Discard retained changes for {{title}}": "Отменить удерживаемые изменения диалога {{title}}",
+    "Discard retained changes…": "Отменить удерживаемые изменения…",
+    "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Отменить удерживаемые изменения диалога «{{title}}» и загрузить сохранённую версию? Это действие нельзя отменить.",
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Не удалось загрузить сохранённый диалог. Удерживаемые изменения сохранены в памяти. Повторите попытку."
   }
 }

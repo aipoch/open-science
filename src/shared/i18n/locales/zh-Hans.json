@@ -1284,7 +1284,6 @@
     "Conversation storage limit reached": "已达到对话存储上限",
     "One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.": "一个或多个已保存的对话超过了 256 MiB 存储上限。文件保持不变，但无法打开。请先检查受影响的文件，再重试。",
     "These files were left unchanged. Move them out of the Session folder before retrying, or use an older app version to export them.": "这些文件保持不变。请先将它们移出会话文件夹再重试，或使用旧版应用导出它们。",
-    "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "此对话已在另一个窗口中更改。你的本地更改尚未保存。请在关闭应用前重试，以重新加载最新版本。",
     "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "此对话已超过 256 MiB 的存储上限。当前运行已停止。请新建对话以继续工作。上次成功保存后的更改不会持久保留。",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "仍绑定到 <name>{{name}}</name> 的对话将变为<em>不可用</em>，并且<em>不会</em>自动切换到主智能体。对每个受影响的对话，你需要先明确选择一个新专家或主智能体，之后它才能继续发送消息。",
     "Copied": "已复制",
@@ -7783,6 +7782,18 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "无法重新生成概览。仍显示之前的结果。请重试。",
     "Another app is using Open-Science files": "其他程序正在使用 Open-Science 文件",
     "Quit {{name}}, then recheck.": "退出 {{name}}，然后重新检查。",
-    "Quit the other app, then recheck.": "退出该程序，然后重新检查。"
+    "Quit the other app, then recheck.": "退出该程序，然后重新检查。",
+    "Checking conversation storage…": "正在核对对话存储…",
+    "The connection changed while saving. Checking which conversation changes were saved.": "保存时连接发生变化，正在核对哪些对话改动已保存。",
+    "Affected conversations": "受影响的对话",
+    "Open conversation: {{title}}": "打开对话：{{title}}",
+    "Conversation selection": "对话选择记录",
+    "Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.": "部分对话改动尚无法确认已保存。请查看受影响的对话，并在关闭应用前重试。",
+    "Open-Science could not save the latest conversation changes. Retry before closing the app.": "Open-Science 无法保存最新的对话改动。请在关闭应用前重试。",
+    "This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.": "此对话已在另一窗口中更改。本地改动已保留。请查看对话，然后重试或放弃保留的改动。",
+    "Discard retained changes for {{title}}": "放弃 {{title}} 的保留改动",
+    "Discard retained changes…": "放弃保留的改动…",
+    "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "要放弃“{{title}}”的保留改动并重新加载已保存的版本吗？此操作无法撤销。",
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "无法重新加载已保存的对话。保留的改动仍在，请重试。"
   }
 }

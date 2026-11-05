@@ -1186,7 +1186,6 @@
     "The database was updated by a newer version of Open-Science.": "Die Datenbank wurde durch eine neuere Version von Open-Science aktualisiert.",
     "The database's migration record doesn't match this app — the file may have been copied from another installation or modified outside the app.": "Der Migrationsdatensatz der Datenbank stimmt nicht mit dieser App überein – die Datei wurde möglicherweise von einer anderen Installation kopiert oder außerhalb der App geändert.",
     "The existing database does not satisfy the required schema contract.": "Die vorhandene Datenbank erfüllt nicht den erforderlichen Schemavertrag.",
-    "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "Diese Konversation wurde in einem anderen Fenster geändert. Ihre lokalen Änderungen wurden nicht gespeichert. Laden Sie vor dem Schließen der App die neueste Version erneut.",
     "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "Diese Konversation hat das Speicherlimit von 256 MiB überschritten. Der aktuelle Lauf wurde angehalten. Starten Sie eine neue Konversation, um weiterzuarbeiten. Änderungen nach dem letzten erfolgreichen Speichern werden nicht dauerhaft gespeichert.",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "Konversationen, die noch an <name>{{name}}</name> gebunden sind, werden <em>nicht verfügbar</em> und <em>nicht</em> automatisch auf den Hauptagenten umgestellt. Für jede betroffene Konversation wählen Sie ausdrücklich einen neuen Spezialisten oder den Hauptagenten aus, bevor sie erneut senden kann.",
     "Copied": "Kopiert",
@@ -7949,6 +7948,18 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Der Überblick konnte nicht erneut erstellt werden. Das vorherige Ergebnis wird weiterhin angezeigt. Bitte versuchen Sie es erneut.",
     "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
     "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
-    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
+    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut.",
+    "Checking conversation storage…": "Konversationsspeicherung wird geprüft…",
+    "The connection changed while saving. Checking which conversation changes were saved.": "Die Verbindung hat sich beim Speichern geändert. Es wird geprüft, welche Konversationsänderungen gespeichert wurden.",
+    "Affected conversations": "Betroffene Konversationen",
+    "Open conversation: {{title}}": "Konversation öffnen: {{title}}",
+    "Conversation selection": "Konversationsauswahl",
+    "Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.": "Für einige Konversationsänderungen konnte das Speichern nicht bestätigt werden. Prüfen Sie die betroffenen Konversationen und versuchen Sie es erneut, bevor Sie die App schließen.",
+    "Open-Science could not save the latest conversation changes. Retry before closing the app.": "Open-Science konnte die letzten Konversationsänderungen nicht speichern. Versuchen Sie es erneut, bevor Sie die App schließen.",
+    "This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.": "Diese Konversation wurde in einem anderen Fenster geändert. Lokale Änderungen bleiben erhalten. Prüfen Sie die Konversation und versuchen Sie es erneut oder verwerfen Sie die aufbewahrten Änderungen.",
+    "Discard retained changes for {{title}}": "Aufbewahrte Änderungen für {{title}} verwerfen",
+    "Discard retained changes…": "Aufbewahrte Änderungen verwerfen…",
+    "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Aufbewahrte Änderungen für „{{title}}“ verwerfen und die gespeicherte Version neu laden? Dies kann nicht rückgängig gemacht werden.",
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Die gespeicherte Konversation konnte nicht neu geladen werden. Die Änderungen bleiben erhalten. Versuchen Sie es erneut."
   }
 }

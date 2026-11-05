@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, useImperativeHandle, type ReactNode, type Ref } from 'react'
 import type { SettingsPageHandle } from './pages/settings/SettingsPage'
+import type { SessionWriteIssue } from './lib/session-persistence/session-write-recovery'
 import { createRoot, type Root } from 'react-dom/client'
 import { i18next } from './i18n'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
@@ -89,6 +90,7 @@ const mocks = vi.hoisted(() => {
     })),
     initUpdates: vi.fn(),
     openSessionById: vi.fn(),
+    openSession: vi.fn(),
     requestSettingsLeave: vi.fn((leave: () => void) => leave()),
     notificationNudgeBox,
     notifications: {
@@ -126,6 +128,10 @@ const mocks = vi.hoisted(() => {
       loadWarning: undefined as string | undefined,
       writeError: undefined as string | undefined,
       writeErrorRetryable: true,
+      isCheckingWrites: false,
+      isRetryingWrites: false,
+      writeIssues: [] as SessionWriteIssue[],
+      discardWrite: vi.fn().mockResolvedValue(undefined),
       persistenceBlockedSessionIds: [] as string[],
       reportSessionSizeLimit: vi.fn(),
       dismissLoadWarning: vi.fn(),
@@ -217,7 +223,11 @@ vi.mock('@/stores/navigation-store', () => ({
     <T,>(selector: (state: typeof mocks.navigation) => T): T => selector(mocks.navigation),
     // Notification navigation reaches the store imperatively (outside React) via getState().
     {
-      getState: () => ({ ...mocks.navigation, openSessionById: mocks.openSessionById }),
+      getState: () => ({
+        ...mocks.navigation,
+        openSessionById: mocks.openSessionById,
+        openSession: mocks.openSession
+      }),
       subscribe: (
         listener: (state: typeof mocks.navigation, previousState: typeof mocks.navigation) => void
       ) => {
@@ -537,6 +547,11 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.loadWarning = undefined
     mocks.sessionPersistence.writeError = undefined
     mocks.sessionPersistence.writeErrorRetryable = true
+    mocks.sessionPersistence.isCheckingWrites = false
+    mocks.sessionPersistence.isRetryingWrites = false
+    mocks.sessionPersistence.writeIssues = []
+    mocks.sessionPersistence.discardWrite.mockClear()
+    mocks.openSession.mockClear()
     mocks.sessionPersistence.persistenceBlockedSessionIds = []
     mocks.sessionPersistence.reportSessionSizeLimit.mockClear()
     mocks.update.isDialogOpen = false
@@ -1928,6 +1943,67 @@ describe('App startup routing', () => {
 
     container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')?.click()
     expect(mocks.sessionPersistence.retryWrites).toHaveBeenCalledOnce()
+  })
+
+  it('shows a checking status without Retry and navigates only when the affected Session is clicked', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.isCheckingWrites = true
+    mocks.sessionPersistence.writeIssues = [
+      {
+        target: 'session:other',
+        sessionId: 'other',
+        projectId: 'project-1',
+        title: 'Background research',
+        kind: 'connection',
+        state: 'checking'
+      }
+    ]
+    await render()
+    const alert = container.querySelector('[data-testid="session-persistence-alert"]')!
+    expect(alert.textContent).toContain('Checking conversation storage…')
+    expect(alert.querySelector('[role="status"]')).not.toBeNull()
+    expect(alert.querySelector('[data-testid="session-persistence-retry"]')).toBeNull()
+    expect(mocks.openSession).not.toHaveBeenCalled()
+    alert
+      .querySelector<HTMLButtonElement>(
+        'button[aria-label="Open conversation: Background research"]'
+      )!
+      .click()
+    expect(mocks.openSession).toHaveBeenCalledExactlyOnceWith('project-1', 'other', 'user')
+  })
+
+  it('requires an explicit confirmation to discard a particular Session’s retained changes', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.writeError =
+      'Some conversation changes could not be confirmed as saved.'
+    mocks.sessionPersistence.writeIssues = [
+      {
+        target: 'session:other',
+        sessionId: 'other',
+        projectId: 'project-1',
+        title: 'Background research',
+        kind: 'connection',
+        state: 'failed',
+        canDiscard: true
+      }
+    ]
+    await render()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Discard retained changes for Background research"]'
+        )!
+        .click()
+    )
+    const dialog = document.querySelector('[data-testid="session-write-discard-dialog"]')!
+    expect(dialog.textContent).toContain('Background research')
+    expect(mocks.sessionPersistence.discardWrite).not.toHaveBeenCalled()
+    const confirm = [...dialog.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent === 'Discard changes'
+    )!
+    await act(async () => confirm.click())
+    expect(mocks.sessionPersistence.discardWrite).toHaveBeenCalledExactlyOnceWith('session:other')
+    expect(document.querySelector('[data-testid="session-write-discard-dialog"]')).toBeNull()
   })
 
   it('offers a new conversation instead of retrying a Session size-limit failure', async () => {
