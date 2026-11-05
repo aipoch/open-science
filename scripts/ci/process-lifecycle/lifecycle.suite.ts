@@ -237,6 +237,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
               const backends = new AcpBackendGenerationOwner(framework)
               const cleanupFailure = vi.fn()
               const releaseTransport = vi.fn(async () => {})
+              const releaseResponses = vi.fn(async () => {})
               const pending = new AcpAgentConnectionAdapter().open(
                 {
                   epoch: 1,
@@ -246,6 +247,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
                     env: {},
                     ...(mode === 'codex-bridge'
                       ? {
+                          responsesTransportLease: {
+                            selectSkills: async () => [],
+                            registerReviewerSession: () => {},
+                            unregisterReviewerSession: () => true,
+                            release: releaseResponses
+                          },
                           providerTransportLease: {
                             setTarget: () => true,
                             release: releaseTransport
@@ -290,6 +297,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
               }
               expect(cleanupFailure).not.toHaveBeenCalled()
               expect(releaseTransport).toHaveBeenCalledTimes(mode === 'codex-bridge' ? 1 : 0)
+              expect(releaseResponses).toHaveBeenCalledTimes(mode === 'codex-bridge' ? 1 : 0)
             }
             // Check before fallback owner cleanup, so recovery cannot hide an adapter leak.
             await observer.checkpoint('acp-tree-stopped')
