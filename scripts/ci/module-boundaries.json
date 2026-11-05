@@ -3517,6 +3517,7 @@
         "node:net",
         "node:os",
         "node:path",
+        "node:stream",
         "node:tls",
         "node:url",
         "node:zlib",
