@@ -81,8 +81,10 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
+    sessionCleanups: {},
     actionError: null,
     pendingPermissions: [],
+    deleteSession,
     sendMessage: runtime.sendMessage,
     cancelRun: runtime.cancelRun,
     resumeInterruptedSession: runtime.resumeInterruptedSession,

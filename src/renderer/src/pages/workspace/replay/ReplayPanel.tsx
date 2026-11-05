@@ -8,6 +8,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { ResearchVideoMenu } from '@/components/research-video-menu'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -829,6 +830,15 @@ const ReplayPanelContent = ({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        {active && branch?.kind === 'conversation' && (
+          <ResearchVideoMenu
+            key={scene.branchId}
+            projectId={replayDocument.source.projectId}
+            sessionId={replayDocument.source.sessionId}
+            branchId={branch.agentFrameId ? scene.branchId : undefined}
+            onOpen={pause}
+          />
+        )}
         {onToggleExpanded ? (
           <TooltipProvider>
             <Tooltip>

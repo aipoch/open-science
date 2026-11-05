@@ -1,6 +1,10 @@
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
-import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import {
+  RuntimeSessionOwner,
+  TERMINAL_ADMISSION_WAIT_BUDGET_MS,
+  TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+} from '../session-persistence/runtime-session-owner'
 import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
@@ -31,11 +35,11 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -1244,6 +1248,8 @@ afterEach(async () => {
     temporaryRoot = undefined
   }
 })
+
+beforeEach(shortenIdleReleaseWindow)
 
 describe('completed coordinator process release', () => {
   it.each(['disconnect', 'quit', 'update'] as const)(
@@ -9430,6 +9436,204 @@ describe('ACP runtime session management', () => {
     }
   )
 
+  it.each(['release', 'cancel', 'disconnect', 'storage-failure', 'timeout'] as const)(
+    'waits for the previous terminal write before continuing a saved answer (%s)',
+    async (outcome) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['restored-choice-session'])
+      let persisted = addPendingRestoredChoice(
+        createRestoredContinuationSession(
+          'prompt-restored-1',
+          'restored-choice-session',
+          'project-1'
+        )
+      )
+      const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
+        _scope,
+        mutate
+      ) => {
+        persisted = mutate(structuredClone(persisted))
+        return structuredClone(persisted)
+      }
+      const writeEntered = createDeferred()
+      const writeRelease = createDeferred()
+      let delayTerminal = false
+      let storageFailed = false
+      const runtimeSessions = new RuntimeSessionOwner({
+        loadSession: async () => structuredClone(persisted),
+        mutateSession: async (scope, mutate) => {
+          if (delayTerminal) {
+            writeEntered.resolve()
+            await writeRelease.promise
+          }
+          if (storageFailed) throw new Error('Terminal storage unavailable')
+          return mutateRuntimeSession(scope, mutate)
+        },
+        finalizeArtifacts: async () => [],
+        scheduleFlush: () => () => undefined
+      })
+      const runtime = new AcpRuntime({
+        appVersion: 'test',
+        defaultCwd: '/workspace',
+        framework: opencodeFramework,
+        spawnAgent: () => asAgentProcess(process),
+        runtimeSessions,
+        callbacks: { onEvent: (event) => runtimeSessions.accept(event) },
+        permissionWait: {
+          sessions: {
+            readSessionRuntimeContext: vi.fn(async () => ({ version: 1 as const, revision: 0 })),
+            patchSessionRuntimeContext: vi.fn(),
+            containsMessageOnActiveBranch: vi.fn(),
+            sessionProjectId: async () => 'project-1',
+            loadSessionForContinuation: async () => structuredClone(persisted),
+            mutateRuntimeSession
+          }
+        }
+      })
+      await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const provenance = getActiveConversationContext(
+        persisted.conversationGraph!,
+        'prompt-restored-1'
+      )!
+      await runtimeSessions.begin({
+        ...provenance,
+        projectId: persisted.projectId,
+        sessionId: persisted.id,
+        executionId: 'previous-execution'
+      })
+      persisted = addPendingRestoredChoice(persisted)
+      persisted.runtimeTranscriptLastRun = persisted.activeRun
+      vi.useFakeTimers()
+      delayTerminal = true
+      const terminal = runtimeSessions.commitTerminal(
+        {
+          ...provenance,
+          id: 'previous-terminal',
+          sessionId: persisted.id,
+          promptExecutionId: 'previous-execution',
+          kind: 'stop',
+          level: 'info',
+          text: 'end_turn',
+          timestamp: Date.now()
+        },
+        () => undefined
+      )
+      await writeEntered.promise
+      try {
+        await vi.advanceTimersByTimeAsync(500)
+        await terminal
+        runtimeSessions.retryTerminalCommits(persisted.id)
+        const projection = persisted.activities![0].elicitation!
+        const request = {
+          sessionId: persisted.id,
+          toolCallId: persisted.activities![0].id,
+          requestId: projection.durable!.requestId,
+          message: projection.message,
+          fields: projection.fields,
+          durable: projection.durable
+        }
+        await runtime.respondToElicitation({
+          requestId: projection.durable!.requestId,
+          action: 'accept',
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+          request
+        })
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(persisted.activities![0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+          continuationPending: true
+        })
+        expect(persisted.activities![0].elicitation?.continuationRecovery).toBeUndefined()
+        expect(runtime.getSnapshot().promptInFlightSessionIds).toContain(persisted.id)
+        expect(runtime.getSnapshot().events).not.toContainEqual(
+          expect.objectContaining({ title: 'Could not continue the Agent task' })
+        )
+        const endWait = runtime
+          .respondToElicitation({ requestId: request.requestId, action: 'cancel', request })
+          .then(
+            () => ({ status: 'ended' }),
+            (error: unknown) => ({ status: 'rejected', error })
+          )
+        await vi.advanceTimersByTimeAsync(0)
+        expect(await Promise.race([endWait, Promise.resolve('pending')])).toMatchObject({
+          status: 'rejected',
+          error: { message: 'Wait for the current Agent run to finish before ending this wait.' }
+        })
+        if (outcome === 'cancel') {
+          await runtime.cancelPrompt({ sessionId: persisted.id })
+          await vi.advanceTimersByTimeAsync(TERMINAL_ADMISSION_WAIT_BUDGET_MS)
+          expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+        }
+        if (outcome === 'disconnect') await runtime.disconnect()
+        if (outcome === 'timeout') {
+          await vi.advanceTimersByTimeAsync(
+            TERMINAL_CONTINUATION_WAIT_BUDGET_MS - 12_000 + TERMINAL_ADMISSION_WAIT_BUDGET_MS
+          )
+          expect(runtime.getSnapshot().events).toContainEqual(
+            expect.objectContaining({
+              title: 'Could not continue the Agent task',
+              text: 'Main runtime completion has not committed yet.'
+            })
+          )
+          expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'Runtime terminal write wait timed out',
+            expect.objectContaining({
+              sessionId: persisted.id,
+              elapsedMs: TERMINAL_CONTINUATION_WAIT_BUDGET_MS
+            })
+          )
+          expect(warnLogSpy).toHaveBeenCalledWith(
+            'App continuation recovery failed',
+            expect.objectContaining({ sessionId: persisted.id, phase: 'preflight' })
+          )
+          expect(persisted.activities![0].elicitation?.answers).toEqual([
+            { fieldId: 'question_0', value: 'Expanded' }
+          ])
+        }
+        storageFailed = outcome === 'storage-failure'
+        delayTerminal = false
+        writeRelease.resolve()
+        await runtimeSessions.flush(persisted.id, 'prompt-restored-1').catch(() => undefined)
+        await vi.advanceTimersByTimeAsync(0)
+        if (outcome === 'release') {
+          expect(runtime.getSnapshot().events.filter((event) => event.kind === 'error')).toEqual([])
+          await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
+          await vi.waitFor(() =>
+            expect(persisted.activities![0].elicitation?.continuationPending).toBeUndefined()
+          )
+          expect(fakeAgent.prompts[0].text).toContain('Expanded')
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(2)
+        } else {
+          await vi.waitFor(() =>
+            expect(runtime.getSnapshot().promptInFlightSessionIds).not.toContain(persisted.id)
+          )
+          expect(fakeAgent.prompts).toHaveLength(0)
+          expect(persisted.runtimeSessionAdmissions).toHaveLength(1)
+          if (outcome === 'storage-failure') {
+            expect(runtime.getSnapshot().events).toContainEqual(
+              expect.objectContaining({
+                title: 'Could not continue the Agent task',
+                text: 'Terminal storage unavailable'
+              })
+            )
+          }
+        }
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(fakeAgent.prompts).toHaveLength(outcome === 'release' ? 1 : 0)
+      } finally {
+        storageFailed = false
+        delayTerminal = false
+        writeRelease.resolve()
+        await runtimeSessions.flush(persisted.id, 'prompt-restored-1')
+        vi.useRealTimers()
+        await runtime.disconnect()
+      }
+    }
+  )
+
   it.each(
     RESTORED_CONTINUATION_FRAMEWORKS.flatMap((route) =>
       [
@@ -9621,7 +9825,7 @@ describe('ACP runtime session management', () => {
           continuationPending: true
         })
         expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
-        expect(continuationPublications).toEqual([])
+        expect(continuationPublications).toEqual([persisted])
       }
       if (scenario === 'prepared-attachment-failed-write') {
         await expect(

@@ -3,6 +3,8 @@ export const APPLICATION_COMMAND_ERROR_CODES = [
   'invalid-command-result',
   'command-unavailable',
   'command-failed',
+  'desktop-runtime-disconnected',
+  'desktop-runtime-not-submitted',
   'settings-storage-unavailable',
   'settings-invalid',
   'settings-credential-unavailable',
@@ -85,10 +87,15 @@ export const toApplicationCommandErrorEnvelope = (
             ? { parameters: { macro: error.parameters.macro } }
             : {})
         }
-      : {
-          code: 'command-failed' as const,
-          message: error instanceof Error ? error.message : String(error)
-        }
+      : error instanceof Error &&
+          'code' in error &&
+          (error.code === 'desktop-runtime-disconnected' ||
+            error.code === 'desktop-runtime-not-submitted')
+        ? { code: error.code, message: error.message }
+        : {
+            code: 'command-failed' as const,
+            message: error instanceof Error ? error.message : String(error)
+          }
   )
 
 const invalidOutcome = (): ApplicationCommandError =>

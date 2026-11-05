@@ -1,3 +1,5 @@
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
+import type { VideoEncoderPaths } from '@aipoch/research-film'
 import type { CliLauncherEnv } from './cli-launcher-contract'
 import type { z } from 'zod'
 import type {
@@ -18,6 +20,11 @@ export type DesktopInteraction = Readonly<{
   notificationCtor: typeof Notification
   hasFocusedWindow: () => boolean
   hasWindow: () => boolean
+  renderResearchVideo?: (
+    request: { htmlPath: string } & VideoEncoderPaths,
+    signal: AbortSignal
+  ) => Promise<string>
+  researchVideoProgress?: (request: { htmlPath: string }) => Promise<ResearchVideoProgress | null>
   printConversationPdf(request: {
     htmlPath: string
     timeoutMs: number
@@ -78,6 +85,8 @@ export type DesktopFileInteraction = Readonly<{
     callerId?: string
   ): Promise<{ response: number }>
   printConversationPdf: DesktopInteraction['printConversationPdf']
+  renderResearchVideo?: DesktopInteraction['renderResearchVideo']
+  researchVideoProgress?: DesktopInteraction['researchVideoProgress']
 }>
 let fileInteraction: DesktopFileInteraction | undefined
 export function configureDesktopFileInteraction(value: DesktopFileInteraction): void {
@@ -98,6 +107,8 @@ export function desktopFileInteraction(): DesktopFileInteraction {
     },
     chooseSavePath: (options, callerId) => host.chooseSavePathForCaller(callerId, options),
     confirm: (options) => host.confirm(options),
+    renderResearchVideo: host.renderResearchVideo,
+    researchVideoProgress: host.researchVideoProgress,
     printConversationPdf: host.printConversationPdf
   }
 }
@@ -117,6 +128,13 @@ export function createRemoteDesktopFileInteraction(
       },
     confirm: async (options, callerId) =>
       (await request({ operation: 'message-box', options }, callerId)) as { response: number },
+    researchVideoProgress: async (options) =>
+      (await request({
+        operation: 'research-video-progress',
+        ...options
+      })) as ResearchVideoProgress | null,
+    renderResearchVideo: async (options) =>
+      (await request({ operation: 'research-video-mp4', ...options })) as string,
     printConversationPdf: async (options) => {
       // The runtime created and owns this private export directory. A file handoff avoids limiting
       // existing exports to the WebSocket frame budget; normal export cleanup removes it on failure.

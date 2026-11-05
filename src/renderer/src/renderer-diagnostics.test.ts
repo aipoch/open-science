@@ -3,6 +3,22 @@ import { describe, expect, it } from 'vitest'
 import { installRendererFailureDiagnostics, projectRendererFailure } from './renderer-diagnostics'
 
 describe('projectRendererFailure', () => {
+  it('distinguishes reviewed plain-object failure codes without exposing their messages', () => {
+    const size = projectRendererFailure(
+      'handled-error',
+      { code: 'session-size-limit', message: 'private data' },
+      'workspace',
+      'session-save'
+    )
+    const unknown = projectRendererFailure(
+      'handled-error',
+      { code: 'desktop-runtime-disconnected', message: 'private data' },
+      'workspace',
+      'session-save'
+    )
+    expect(size.fingerprint).not.toBe(unknown.fingerprint)
+    expect(JSON.stringify([size, unknown])).not.toContain('private data')
+  })
   it('projects a renderer error to fixed vocabulary without retaining its message or stack', () => {
     const failure = new TypeError('private study /Users/example/patient.csv')
     failure.stack = 'TypeError: private study\n at /Users/example/private.ts:10:2'

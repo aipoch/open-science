@@ -378,6 +378,7 @@ type ElectronApp = {
     credentialProfile?: string
   ) => Promise<Page>
   createTestDirectory: (name: string) => Promise<string>
+  holdNextFakeSessionCreate: () => Promise<{ started: string; release: string; closed: string }>
   configureSessionPackageDialogs: (options?: { availableBytes?: number }) => Promise<string>
   restartWithPackage: (path: string) => Promise<Page>
   emitPackageFileOpen: (path: string) => Promise<void>
@@ -1367,6 +1368,21 @@ class ElectronAppHarness implements ElectronApp {
     const path = join(this.testRoot, name)
     await mkdir(path, { recursive: true })
     return path
+  }
+
+  async holdNextFakeSessionCreate(): Promise<{ started: string; release: string; closed: string }> {
+    const directory = await this.createTestDirectory('session-create-gate')
+    const gate = {
+      started: join(directory, 'started'),
+      release: join(directory, 'release'),
+      closed: join(directory, 'closed')
+    }
+    await writeFile(
+      join(this.roots.storageRoot, 'e2e-session-create-gate.json'),
+      JSON.stringify(gate),
+      'utf8'
+    )
+    return gate
   }
 
   async emitSessionPackageProgress(snapshot: PackageOperationSnapshot): Promise<void> {

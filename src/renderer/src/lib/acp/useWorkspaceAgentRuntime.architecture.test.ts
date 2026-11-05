@@ -90,6 +90,7 @@ const ownerNames = [
   'workspace-runtime-event-owner',
   'workspace-runtime-prompt-preparation-owner',
   'workspace-runtime-session-branch-owner',
+  'workspace-runtime-session-cleanup-owner',
   'workspace-runtime-attachment-owner',
   'workspace-runtime-command-owner',
   'workspace-runtime-session-lifecycle-owner',
@@ -487,12 +488,15 @@ const hookKeys = [
   'saveAsSkillInFlightSessionIds',
   'nativeContextCompactionSessionIds',
   'subagentTranscripts',
+  'sessionCleanups',
   'compactContext',
   'ensureSessionReady',
   'saveAsSkill',
   'sendMessage',
   'resendEditedMessage',
   'cancelRun',
+  'deleteSession',
+  'retrySessionCleanup',
   'steerFollowUp',
   'resumeInterruptedSession',
   'respondToPermission',
@@ -650,10 +654,12 @@ describe('workspace runtime architecture', () => {
       'workspace-runtime-event-owner': [],
       'workspace-runtime-prompt-preparation-owner': [],
       'workspace-runtime-session-branch-owner': [],
+      'workspace-runtime-session-cleanup-owner': [],
       'workspace-runtime-attachment-owner': [],
       'workspace-runtime-command-owner': [
         'workspace-runtime-prompt-preparation-owner',
         'workspace-runtime-session-branch-owner',
+        'workspace-runtime-session-cleanup-owner',
         'workspace-runtime-attachment-owner'
       ],
       'workspace-runtime-session-lifecycle-owner': [
@@ -862,6 +868,7 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-cleanup-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
@@ -882,13 +889,15 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
       'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
-      'src/renderer/src/lib/acp/workspace-operation-error.ts',
       'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
       'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
       'src/renderer/src/lib/handled-failure-diagnostics.ts'
+    ])
+    expectBoundaryPaths(manifest, 'renderer_runtime_errors', [
+      'src/renderer/src/lib/acp/workspace-operation-error.ts'
     ])
     expect(workspaceRuntime.interfacePaths).toEqual(
       expect.arrayContaining([

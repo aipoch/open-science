@@ -70,6 +70,7 @@ type ApplicationEventProjection = Readonly<{
   allowsArchiveUndoShortcut: () => boolean
   navigation: Readonly<{
     view: NavigationView
+    openSession: (projectId: string, sessionId: string) => void
   }>
   globalSearch: Readonly<{
     open: () => void
@@ -535,7 +536,12 @@ const useApplicationEventBindings = ({
       dismissUnavailable: () => setUnavailableNotificationToken(undefined)
     },
     allowsArchiveUndoShortcut,
-    navigation: { view },
+    navigation: {
+      view,
+      openSession: (projectId, sessionId) => {
+        useNavigationStore.getState().openSession(projectId, sessionId, 'user')
+      }
+    },
     globalSearch: {
       open: openGlobalSearch,
       setOpen: setGlobalSearchOpen,

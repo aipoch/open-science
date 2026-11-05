@@ -310,6 +310,13 @@ const createDependencies = () => {
 
 type DataContentCommandKey = keyof typeof dataContentApplicationCommands
 const WRAPPED_COMMAND_KEYS = [
+  'previewResearchVideoExport',
+  'previewResearchVideoCancel',
+  'researchVideoPresentationStart',
+  'researchVideoPresentationStatus',
+  'researchVideoPresentationRemove',
+  'researchVideoPresentationCancel',
+  'previewResearchVideoProgress',
   'artifactFinalizeRun',
   'artifactOpenFile',
   'lifecycleClientId',
@@ -471,6 +478,13 @@ describe('Data and content application commands', () => {
         'preview-resources:acquire',
         'preview-resources:read-range',
         'preview-resources:release',
+        'preview-resources:export-research-video',
+        'preview-resources:cancel-research-video-export',
+        'research-video:start',
+        'research-video:status',
+        'research-video:remove',
+        'research-video:cancel',
+        'preview-resources:research-video-progress',
         'project-files:get-overview',
         'project-files:list-artifact-groups',
         'project-files:list-files',

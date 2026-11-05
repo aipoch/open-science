@@ -47,6 +47,7 @@ export const verificationFamilies = [
     packages: [
       'pdf-structure',
       'pdf-translation',
+      'research-film',
       'literature-citations',
       'journal-catalog',
       'literature-discovery',

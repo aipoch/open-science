@@ -1,3 +1,13 @@
+import type { ResearchVideoProgress } from '@aipoch/research-film/contracts'
+import {
+  localModelDownloadProgress,
+  type LocalModelSnapshot
+} from '../../../../../../shared/local-models'
+import { DownloadProgressLine } from '../../../../components/DownloadProgressLine'
+import { ResearchVideoProgressLine } from '../../../../components/research-video-progress'
+import { Button } from '@/components/ui/button'
+import { ErrorNotice } from '@/components/error-notice'
+import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../../../../shared/web-event-connection'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -58,14 +68,32 @@ const HtmlSourceContent = ({
 }
 
 export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.Element => {
+  const requestKey = usePreviewResourceKey(props.item)
+  return <HtmlPreviewContent key={requestKey} {...props} />
+}
+
+const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element => {
   const { item } = props
   const { t } = useTranslation()
+  const [videoKey, setVideoKey] = useState<string>()
+  const [exporting, setExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState<ResearchVideoProgress>()
+  const [installBytes, setInstallBytes] = useState<number>()
+  const [installSnapshot, setInstallSnapshot] = useState<LocalModelSnapshot>()
+  const installingTools = useRef(false)
+  const [exportError, setExportError] = useState<string>()
+  const exportResource = useRef<string | undefined>(undefined)
+  const exportCancelled = useRef(false)
   const [mode, setMode] = useState<HtmlPreviewMode>('render')
   const requestKey = usePreviewResourceKey(item)
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
-  const resourceState = useManagedPreviewResource(item, mode === 'render' && !hasFailed)
+  // Source mode may unmount the frame, but an export still owns its readable capability.
+  const resourceState = useManagedPreviewResource(
+    item,
+    (mode === 'render' && !hasFailed) || exporting
+  )
   const renderedFrameUrl =
     mode === 'render' && resourceState.status === 'ready' ? resourceState.resource.url : ''
   useRegisterPreviewContextMenuFrame({
@@ -80,6 +108,11 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
 
     const handleMessage = (event: MessageEvent): void => {
       if (
+        event.source === iframeRef.current?.contentWindow &&
+        event.data?.type === 'open-science-research-video-ready'
+      )
+        setVideoKey(requestKey)
+      if (
         event.data === MANAGED_PREVIEW_LOAD_ERROR &&
         event.source === iframeRef.current?.contentWindow
       ) {
@@ -92,6 +125,84 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
     return () => window.removeEventListener('message', handleMessage)
   }, [requestKey, resourceState])
 
+  useEffect(() => {
+    return () => {
+      const resourceId = exportResource.current
+      if (resourceId)
+        void window.api.previewResources.cancelResearchVideoExport({ resourceId }).catch(() => {})
+      exportResource.current = undefined
+      setInstallBytes(undefined)
+      setInstallSnapshot(undefined)
+      setExportProgress(undefined)
+      setExporting(false)
+      if (installingTools.current)
+        void window.api.localModels.cancel('video-export').catch(() => {})
+    }
+  }, [requestKey])
+
+  const exportVideo = async (install = false): Promise<void> => {
+    if (resourceState.status !== 'ready' || exportResource.current) return
+    const resourceId = resourceState.resource.id
+    exportResource.current = resourceId
+    exportCancelled.current = false
+    setExporting(true)
+    setExportError(undefined)
+    setExportProgress(undefined)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const current = (): boolean => exportResource.current === resourceId && !exportCancelled.current
+    const poll = async (): Promise<void> => {
+      try {
+        const progress = await window.api.previewResources.researchVideoExportProgress({
+          resourceId
+        })
+        if (current()) setExportProgress(progress ?? undefined)
+      } catch {
+        /* Keep the export result authoritative during a transient status failure. */
+      }
+      if (current()) timer = setTimeout(() => void poll(), 500)
+    }
+    try {
+      if (install) {
+        installingTools.current = true
+        let snapshot = await window.api.localModels.install('video-export')
+        while (current() && snapshot.availability === 'installing') {
+          setInstallSnapshot(snapshot)
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          if (!current()) return
+          snapshot = await window.api.localModels.getSnapshot('video-export')
+        }
+        if (!current()) return
+        if (snapshot.availability !== 'ready')
+          throw new Error(t('Video export component installation failed. Retry to continue.'))
+        setInstallBytes(undefined)
+        setInstallSnapshot(undefined)
+        installingTools.current = false
+      }
+      if (!current()) return
+      void poll()
+      const result = await window.api.previewResources.exportResearchVideo({ resourceId })
+      if (current()) setInstallBytes(result.needsInstallation?.downloadBytes)
+    } catch (error) {
+      if (current()) setExportError(error instanceof Error ? error.message : String(error))
+    } finally {
+      clearTimeout(timer)
+      if (exportResource.current === resourceId) {
+        exportResource.current = undefined
+        installingTools.current = false
+        setInstallSnapshot(undefined)
+        setExportProgress(undefined)
+        setExporting(false)
+      }
+    }
+  }
+  const cancelExport = async (): Promise<void> => {
+    const resourceId = exportResource.current
+    if (resourceId) {
+      exportCancelled.current = true
+      if (installingTools.current) await window.api.localModels.cancel('video-export')
+      else await window.api.previewResources.cancelResearchVideoExport({ resourceId })
+    }
+  }
   const modeToggle = (
     <div className="flex shrink-0 items-center justify-between border-b border-border-300 bg-bg-000 px-3 py-2">
       <div className="flex items-center gap-1 rounded-md bg-bg-200 p-0.5">
@@ -111,18 +222,69 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
           </button>
         ))}
       </div>
+      {(mode === 'render' || exporting) &&
+        videoKey === requestKey &&
+        document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
+          <div className="flex items-center gap-2">
+            {exporting ? (
+              <>
+                {installSnapshot ? (
+                  <DownloadProgressLine progress={localModelDownloadProgress(installSnapshot)} />
+                ) : exportProgress ? (
+                  <ResearchVideoProgressLine progress={exportProgress} />
+                ) : (
+                  <span role="status" className="text-xs">
+                    {t('Exporting MP4…')}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void cancelExport().catch((error) => setExportError(String(error)))
+                  }
+                >
+                  {t('Cancel')}
+                </Button>
+              </>
+            ) : (
+              <div className="flex items-center gap-2">
+                {installBytes !== undefined && (
+                  <span className="text-xs text-muted-foreground">
+                    {t('Video export components required: {{size}} MiB', {
+                      size: (installBytes / 1024 / 1024).toFixed(1)
+                    })}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void exportVideo(installBytes !== undefined)}
+                >
+                  {installBytes !== undefined ? t('Install and export') : t('Export MP4')}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
     </div>
+  )
+  const topContent = (
+    <>
+      {modeToggle}
+      {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
+    </>
   )
 
   if (mode === 'source') {
-    return <HtmlSourceContent {...props} topContent={modeToggle} />
+    return <HtmlSourceContent {...props} topContent={topContent} />
   }
 
   if (resourceState.status === 'loading') return <PreviewLoadingContent />
   if (resourceState.status === 'error' || resourceState.status === 'idle' || hasFailed) {
     return (
       <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-        {modeToggle}
+        {topContent}
         <div className="min-h-0 flex-1">
           <PreviewErrorCard
             name={item.name}
@@ -136,7 +298,7 @@ export const HtmlPreviewRenderer = (props: PreviewFileRendererProps): React.JSX.
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-      {modeToggle}
+      {topContent}
       <iframe
         ref={iframeRef}
         title={t('Preview of {{name}}', { name: item.name })}

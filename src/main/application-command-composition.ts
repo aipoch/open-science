@@ -164,11 +164,18 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'research-video:start',
+  'research-video:status',
+  'research-video:remove',
+  'research-video:cancel',
   ...pdfTranslationApplicationCommandGroup.commands.map(({ name }) => name),
   'office-preview:open',
   'office-preview:attach-frame',
   'office-preview:close',
   'office-preview:report-state',
+  'preview-resources:export-research-video',
+  'preview-resources:cancel-research-video-export',
+  'preview-resources:research-video-progress',
 
   'sessions:open-recovery-folder',
   'specialist:get-handoff-events',

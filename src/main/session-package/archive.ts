@@ -321,7 +321,8 @@ export const validatePackageDirectory = async (
   directory: string,
   signal?: AbortSignal,
   entries?: Set<string>,
-  onProgress?: (progress: PackageProgress) => void
+  onProgress?: (progress: PackageProgress) => void,
+  omittedStorageKeys: ReadonlySet<string> = new Set()
 ): Promise<SessionPackageManifest> => {
   const rawManifest: unknown = JSON.parse(
     await readFileWithinLimit(join(directory, 'manifest.json'), MAX_MANIFEST_BYTES)
@@ -374,6 +375,9 @@ export const validatePackageDirectory = async (
       contentPaths.set(entry.path, entry)
     }
     declared.add(entry.path)
+    // Forwarding replaces optional film objects from verified local copies. Import callers
+    // never omit content, and a shared object still needs verification for its other aliases.
+    if (entry.storageKey && omittedStorageKeys.has(entry.storageKey)) continue
     const file = join(directory, entry.path)
     await assertPackageSourcePath(directory, entry.path)
     const details = await lstat(file)

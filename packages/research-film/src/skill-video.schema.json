@@ -1,0 +1,1290 @@
+{
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "enum": [1]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160,
+      "description": ""
+    },
+    "case": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9\\-]{1,40}$"
+    },
+    "session": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "session.json (messages) relative to this file"
+    },
+    "files": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "folder with the session's files, relative to this file"
+    },
+    "start_file": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "file open in the side panel before any scene sets one"
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["marketing", "user"],
+      "description": "user = 'Made with Open-Science' end card"
+    },
+    "disclaimer": {
+      "type": "string",
+      "maxLength": 80,
+      "description": "short note shown on scenes with disclaimer: true"
+    },
+    "voice": {
+      "type": "object",
+      "properties": {
+        "voice": {
+          "type": "string"
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0.8,
+          "maximum": 1.2
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "description": ""
+    },
+    "libs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 160,
+        "description": ""
+      },
+      "minItems": 0,
+      "maxItems": 8,
+      "description": "JavaScript libraries (local files, relative to this file) loaded into the page before the animations, e.g. libs/three.min.js; record each library's licence in sources.md"
+    },
+    "assets": {
+      "type": "string",
+      "maxLength": 120,
+      "description": "folder of SVG and image files the animations use (default: assets, next to this file); record each source in sources.md"
+    },
+    "scenes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,15}$"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["hook", "setup", "method", "result", "limit", "check", "outro"],
+            "description": "where this scene sits in the story template"
+          },
+          "msg": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "session message the background scrolls to"
+          },
+          "highlight": {
+            "type": "string",
+            "maxLength": 160,
+            "description": "exact words from that message, highlighted in gold"
+          },
+          "veil": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 0.85,
+            "description": "how much the background is dimmed behind panels (default 0.6)"
+          },
+          "file": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "session file shown in the side panel from this scene on"
+          },
+          "cite": {
+            "type": "array",
+            "items": {
+              "type": ["integer", "string"]
+            },
+            "minItems": 0,
+            "maxItems": 6,
+            "description": "extra messages / files where this scene's numbers come from"
+          },
+          "disclaimer": {
+            "type": "boolean"
+          },
+          "layout": {
+            "type": "string",
+            "enum": ["stack", "row", "side"],
+            "description": "panels on top of each other; side by side in 16:9; or side: the first panel (e.g. an animation) on the left and the others stacked to its right in 16:9"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "caption": {
+                  "type": "string",
+                  "maxLength": 5000,
+                  "description": "on-screen words"
+                },
+                "say": {
+                  "type": "string",
+                  "maxLength": 5000,
+                  "description": "spoken words; numbers and units in words"
+                }
+              },
+              "required": ["caption"],
+              "additionalProperties": false,
+              "description": ""
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "description": ""
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "title",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 48,
+                      "description": ""
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 120,
+                      "description": "use | for line breaks, **x** for gold words"
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 110,
+                      "description": "pill under the title"
+                    },
+                    "note_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "text"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "stats",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "layout": {
+                      "type": "string",
+                      "enum": ["chips", "split"]
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "value": {
+                            "type": "string",
+                            "maxLength": 14,
+                            "description": "as shown, e.g. 1,800"
+                          },
+                          "unit": {
+                            "type": "string",
+                            "maxLength": 10,
+                            "description": ""
+                          },
+                          "label": {
+                            "type": "string",
+                            "maxLength": 36,
+                            "description": ""
+                          },
+                          "tone": {
+                            "type": "string",
+                            "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          },
+                          "weight": {
+                            "type": "number",
+                            "description": "split only: share of the bar (defaults to the value)"
+                          }
+                        },
+                        "required": ["value", "label"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 1,
+                      "maxItems": 4,
+                      "description": ""
+                    },
+                    "total": {
+                      "type": "string",
+                      "maxLength": 60,
+                      "description": "line under the row"
+                    },
+                    "total_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "items"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "bars",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "label": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "description": ""
+                          },
+                          "value": {
+                            "type": "number"
+                          },
+                          "display": {
+                            "type": "string",
+                            "maxLength": 16,
+                            "description": "shown number, e.g. 19.6 kN"
+                          },
+                          "tone": {
+                            "type": "string",
+                            "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["label", "value"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 2,
+                      "maxItems": 5,
+                      "description": ""
+                    },
+                    "max": {
+                      "type": "number",
+                      "description": "value of a full-width bar (default: largest value)"
+                    },
+                    "badge": {
+                      "type": "string",
+                      "maxLength": 60,
+                      "description": "black pill after the bars, e.g. thrust ÷ weight = **1.78**"
+                    },
+                    "badge_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "description": ""
+                    },
+                    "note_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "items"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "line_chart",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 50,
+                      "description": ""
+                    },
+                    "csv": {
+                      "type": "string",
+                      "maxLength": 120,
+                      "description": "file name in the session's files"
+                    },
+                    "x": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "description": "column"
+                    },
+                    "where": {
+                      "type": "object",
+                      "description": "keep rows where column == value, e.g. {\"task\": 1}"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "y": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "description": "column"
+                          },
+                          "label": {
+                            "type": "string",
+                            "maxLength": 30,
+                            "description": ""
+                          },
+                          "scale": {
+                            "type": "number",
+                            "description": "multiply values, e.g. 0.001 for N -> kN"
+                          },
+                          "tone": {
+                            "type": "string",
+                            "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                          }
+                        },
+                        "required": ["y"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 1,
+                      "maxItems": 3,
+                      "description": ""
+                    },
+                    "x_label": {
+                      "type": "string",
+                      "maxLength": 16,
+                      "description": "unit after x ticks, e.g. s"
+                    },
+                    "y_label": {
+                      "type": "string",
+                      "maxLength": 16,
+                      "description": ""
+                    },
+                    "x_range": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": ""
+                    },
+                    "y_range": {
+                      "type": "array",
+                      "items": {
+                        "type": "number"
+                      },
+                      "minItems": 2,
+                      "maxItems": 2,
+                      "description": ""
+                    },
+                    "refs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "y": {
+                            "type": "number"
+                          },
+                          "label": {
+                            "type": "string",
+                            "maxLength": 30,
+                            "description": ""
+                          },
+                          "tone": {
+                            "type": "string",
+                            "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                          }
+                        },
+                        "required": ["y"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 0,
+                      "maxItems": 3,
+                      "description": "horizontal reference lines (limits, targets)"
+                    },
+                    "band": {
+                      "type": "object",
+                      "properties": {
+                        "x0": {
+                          "type": "number"
+                        },
+                        "x1": {
+                          "type": "number"
+                        },
+                        "y0": {
+                          "type": "number"
+                        },
+                        "y1": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": ""
+                        },
+                        "tone": {
+                          "type": "string",
+                          "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                        },
+                        "at": {
+                          "type": "string",
+                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                          "description": "when it appears (see cue syntax)"
+                        }
+                      },
+                      "required": [],
+                      "additionalProperties": false,
+                      "description": "shaded range: x0/x1 or y0/y1"
+                    },
+                    "marks": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "x": {
+                            "type": "number"
+                          },
+                          "label": {
+                            "type": "string",
+                            "maxLength": 30,
+                            "description": ""
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["x", "label"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 0,
+                      "maxItems": 3,
+                      "description": "labelled dots on the first series"
+                    },
+                    "draw": {
+                      "type": "number",
+                      "minimum": 0.5,
+                      "maximum": 12,
+                      "description": "seconds to draw the line (default 2.5)"
+                    }
+                  },
+                  "required": ["type", "csv", "x", "series"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "criteria",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 30,
+                            "description": ""
+                          },
+                          "chips": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 26,
+                              "description": ""
+                            },
+                            "minItems": 0,
+                            "maxItems": 3,
+                            "description": ""
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["title"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 2,
+                      "maxItems": 4,
+                      "description": ""
+                    },
+                    "foot": {
+                      "type": "string",
+                      "maxLength": 110,
+                      "description": ""
+                    },
+                    "foot_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "items"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "checklist",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 48,
+                      "description": ""
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "text": {
+                            "type": "string",
+                            "maxLength": 46,
+                            "description": ""
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": ["pass", "fail", "open"]
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["text"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 1,
+                      "maxItems": 6,
+                      "description": ""
+                    },
+                    "foot": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "description": ""
+                    },
+                    "foot_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "items"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "formula",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 48,
+                      "description": ""
+                    },
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 60,
+                        "description": ""
+                      },
+                      "minItems": 1,
+                      "maxItems": 3,
+                      "description": ""
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 90,
+                      "description": ""
+                    },
+                    "note_at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    }
+                  },
+                  "required": ["type", "lines"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "progress",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "value": {
+                      "type": "number"
+                    },
+                    "target": {
+                      "type": "number"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "maxLength": 8,
+                      "description": ""
+                    },
+                    "ticks": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "tick spacing, 0 = none"
+                    },
+                    "stop_label": {
+                      "type": "string",
+                      "maxLength": 30,
+                      "description": "label at the stop point"
+                    },
+                    "tone": {
+                      "type": "string",
+                      "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                    },
+                    "draw": {
+                      "type": "number",
+                      "minimum": 0.5,
+                      "maximum": 10
+                    }
+                  },
+                  "required": ["type", "value", "target"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "quote",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 140,
+                      "description": ""
+                    },
+                    "by": {
+                      "type": "string",
+                      "maxLength": 60,
+                      "description": ""
+                    }
+                  },
+                  "required": ["type", "text", "by"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "steps",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string",
+                            "maxLength": 28,
+                            "description": ""
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 70,
+                            "description": ""
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["title"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 2,
+                      "maxItems": 5,
+                      "description": ""
+                    }
+                  },
+                  "required": ["type", "items"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "compare",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "description": ""
+                    },
+                    "left": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "maxLength": 30,
+                          "description": ""
+                        },
+                        "value": {
+                          "type": "string",
+                          "maxLength": 14,
+                          "description": ""
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": ""
+                        },
+                        "tone": {
+                          "type": "string",
+                          "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                        }
+                      },
+                      "required": ["title"],
+                      "additionalProperties": false,
+                      "description": ""
+                    },
+                    "right": {
+                      "type": "object",
+                      "properties": {
+                        "title": {
+                          "type": "string",
+                          "maxLength": 30,
+                          "description": ""
+                        },
+                        "value": {
+                          "type": "string",
+                          "maxLength": 14,
+                          "description": ""
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "description": ""
+                        },
+                        "tone": {
+                          "type": "string",
+                          "enum": ["ink", "gold", "good", "bad", "muted", "blue"]
+                        },
+                        "at": {
+                          "type": "string",
+                          "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                          "description": "when it appears (see cue syntax)"
+                        }
+                      },
+                      "required": ["title"],
+                      "additionalProperties": false,
+                      "description": ""
+                    },
+                    "verdict": {
+                      "type": "string",
+                      "maxLength": 60,
+                      "description": ""
+                    }
+                  },
+                  "required": ["type", "left", "right"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "figure",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "file": {
+                      "type": "string",
+                      "maxLength": 120,
+                      "description": ""
+                    },
+                    "caption": {
+                      "type": "string",
+                      "maxLength": 90,
+                      "description": ""
+                    },
+                    "max_height": {
+                      "type": "number",
+                      "minimum": 200,
+                      "maximum": 900
+                    }
+                  },
+                  "required": ["type", "file"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "report",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "eyebrow": {
+                      "type": "string",
+                      "maxLength": 80,
+                      "description": ""
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "state": {
+                            "type": "string",
+                            "enum": ["pass", "fail", "open"]
+                          },
+                          "title": {
+                            "type": "string",
+                            "maxLength": 36,
+                            "description": ""
+                          },
+                          "result": {
+                            "type": "string",
+                            "maxLength": 40,
+                            "description": ""
+                          },
+                          "file": {
+                            "type": "string",
+                            "maxLength": 44,
+                            "description": ""
+                          },
+                          "at": {
+                            "type": "string",
+                            "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                            "description": "when it appears (see cue syntax)"
+                          }
+                        },
+                        "required": ["state", "title"],
+                        "additionalProperties": false,
+                        "description": ""
+                      },
+                      "minItems": 1,
+                      "maxItems": 5,
+                      "description": ""
+                    }
+                  },
+                  "required": ["type", "rows"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "verdict",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "description": ""
+                    },
+                    "tone": {
+                      "type": "string",
+                      "enum": ["good", "bad", "muted"]
+                    }
+                  },
+                  "required": ["type", "text", "tone"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "animation",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    },
+                    "script": {
+                      "type": "string",
+                      "maxLength": 120,
+                      "description": "the .js file, relative to video.json, e.g. anims/stand.js"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 120,
+                        "description": ""
+                      },
+                      "minItems": 0,
+                      "maxItems": 4,
+                      "description": "CSV files from the session the drawing reads with k.data(name)"
+                    },
+                    "use": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 120,
+                        "description": ""
+                      },
+                      "minItems": 0,
+                      "maxItems": 4,
+                      "description": "shared .js files (relative to video.json) run before the script, for a subject or setup drawn in several scenes, e.g. anims/stand.js"
+                    },
+                    "size": {
+                      "type": "string",
+                      "enum": ["wide", "square", "tall", "slim", "band"],
+                      "description": "canvas shape (default wide); slim = a narrow subject beside cards in 16:9, a short strip above them in 9:16; band = a short, wide strip (e.g. under a title)"
+                    }
+                  },
+                  "required": ["type", "script"],
+                  "additionalProperties": false,
+                  "description": ""
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "const": "end_card",
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "until": {
+                      "type": "string",
+                      "pattern": "^(end|\\d+(\\.end|:[^\\s+\\-]+)?)([+\\-]\\d+(\\.\\d+)?)?$",
+                      "description": "when it appears (see cue syntax)"
+                    },
+                    "box": {
+                      "type": "string",
+                      "enum": ["card", "plain"],
+                      "description": "card (default) or no card"
+                    }
+                  },
+                  "required": ["type"],
+                  "additionalProperties": false,
+                  "description": ""
+                }
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 4,
+            "description": ""
+          }
+        },
+        "required": ["id", "role", "msg", "lines", "panels"],
+        "additionalProperties": false,
+        "description": ""
+      },
+      "minItems": 1,
+      "maxItems": 10,
+      "description": ""
+    }
+  },
+  "required": ["version", "title", "case", "session", "scenes"],
+  "additionalProperties": false,
+  "description": "",
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

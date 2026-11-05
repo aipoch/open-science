@@ -56,7 +56,6 @@ When you want to see how a result was produced, inspect the available inputs, co
 ## Table of Contents
 
 - [Quick Start](#-quick-start)
-- [Product Tour](#product-tour)
 - [AIPOCH Open-Science `.science` Research Packages](#aipoch-open-science-science-research-packages)
 - [AIPOCH Open-Science Paper and Citation](#aipoch-open-science-paper-and-citation)
 - [Benchmark Results](#benchmark-performance)
@@ -140,44 +139,6 @@ After setup, open **System** settings to change appearance or notifications. In 
 3. Review tool activity and any approval requests, preview the results, and check their available evidence in **Provenance**.
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
-
-## Product Tour
-
-### From a research request to a traceable result
-
-Consider a representative bioinformatics task: reproduce a published differential-expression analysis, compare the regenerated results with the paper, and deliver the report, tables, and figures needed for review. The screenshots below are representative views from documented AIPOCH Open-Science workflows; they illustrate each stage rather than one continuous session.
-
-#### 1. Define the research task and evidence
-
-Describe the research question, source paper and datasets, required methods or thresholds, expected outputs, and acceptance criteria. Upload supporting files or reference an existing project artifact with `@`, so the agent starts from explicit inputs instead of hidden context.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science paper reproduction task with the research conclusion, generated artifacts, and source comparison visible in one workspace" width="900">
-</p>
-
-#### 2. Execute with inspectable scientific tools
-
-The agent can combine scientific skills, permissioned research connectors, searches, file operations, and Python or R code in the shared Notebook. Generated figures can be reviewed beside the research summary, while the artifact record exposes captured producer code and execution evidence for inspection.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-execute.png" alt="AIPOCH Open-Science bioinformatics analysis showing the research summary, generated figure, and captured producer code side by side" width="900">
-</p>
-
-#### 3. Review reports, tables, and figures in place
-
-The final response summarizes what reproduced, what differed, and which limitations matter. Generated Markdown reports, CSV tables, images, and other research artifacts remain attached to the session and are collected in the project file library, where they can be previewed beside the conversation and reused in follow-up work.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science reproduction result with differential-expression figures and generated files previewed beside the agent's explanation" width="900">
-</p>
-
-#### 4. Trace every artifact back to its evidence
-
-Each generated artifact is stored as an immutable, checksummed version. Its **Provenance** view can expose the producing code and execution history, referenced inputs, observed environment inventory, producing conversation branch, and version-scoped Reviewer findings. Evidence that could not be verified is marked unavailable rather than inferred.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science research artifact preview with the Provenance entry for tracing a generated result" width="900">
-</p>
 
 ## AIPOCH Open-Science `.science` Research Packages
 

@@ -1,3 +1,4 @@
+import { LocalNarrationControl } from '@/components/local-narration-control'
 import { LocalOcrControl } from '@/components/local-ocr-control'
 import type { ModelView } from '../../lib/settings-navigation'
 import { ClassificationPanel } from './ClassificationPanel'
@@ -251,6 +252,9 @@ const LocalModelsPanel = (): React.JSX.Element => {
         )}
         <div className="mt-4">
           <LocalOcrControl />
+        </div>
+        <div className="mt-4">
+          <LocalNarrationControl />
         </div>
       </SettingsSection>
     </div>

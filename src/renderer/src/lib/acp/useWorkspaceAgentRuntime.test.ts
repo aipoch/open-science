@@ -246,7 +246,13 @@ const createSessionPolicyApi = (): {
     ) => Promise<PersistedChatSession>
   >
   loadOne: Mock<(request: { sessionId: string }) => Promise<PersistedChatSession | undefined>>
+  deleteSession: Mock<typeof window.api.sessions.deleteSession>
 } => ({
+  deleteSession: vi.fn(async ({ sessionId }) => {
+    testDurableSessions.delete(sessionId)
+    useSessionStore.getState().deleteSession(sessionId)
+    return { status: 'deleted' as const, runtimeDetached: true }
+  }),
   loadOne: vi.fn(async ({ sessionId }) => {
     const durable = testDurableSessions.get(sessionId)
     const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
@@ -1639,9 +1645,7 @@ describe('workspace durable elicitation', () => {
             ...(response.continuationFailure
               ? {
                   recovery: {
-                    error:
-                      response.continuationFailure ??
-                      'The task could not continue. Your response is saved.'
+                    error: response.continuationFailure
                   }
                 }
               : {})
@@ -1665,6 +1669,8 @@ describe('workspace durable elicitation', () => {
       expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
       if (!failSecondMutation) expect(resumeSession).toHaveBeenCalledTimes(1)
       if (resumeSession.mock.calls.length > 0) expect(savedBeforeResume).toBe(true)
+      if (failSecondMutation)
+        expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
       expect(stored.activities?.[0].elicitation?.continuationRecovery).toEqual(
         failSecondMutation ? undefined : { error: 'The bound specialist is unavailable.' }
       )
@@ -6798,7 +6804,11 @@ describe('workspace agent message sending', () => {
     expect(sessions.find((session) => session.isPending)?.pendingBindingSessionId).toBeUndefined()
     expect(
       visibleProjectSessions(sessions, 'project-1').some((session) => session.id === 'stopped-seed')
-    ).toBe(true)
+    ).toBe(false)
+    expect(api.deleteSession).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      sessionId: 'stopped-seed'
+    })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
