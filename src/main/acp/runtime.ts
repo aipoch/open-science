@@ -1397,24 +1397,11 @@ class AcpRuntime {
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
       reportCleanupFailure: (stage, error, framework, epoch) => {
-        if (stage === 'bridge-lease') {
-          safeLogError('responses bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'anthropic-bridge-lease') {
-          safeLogError('Anthropic bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'provider-transport-lease') {
-          safeLogError('provider transport lease release failed', errorLogFields(error))
-          return
-        }
         safeLogError(`unattached ACP ${stage} cleanup failed`, {
           ...diagnosticErrorFields(error),
           ...this.diagnosticContext(framework, epoch)
         })
-      },
-      reportProcessTreeError: (message, error) => log.error(message, error)
+      }
     }
 
     return this.connectionAdapter.open(
@@ -1447,6 +1434,8 @@ class AcpRuntime {
         prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
         isCurrent: () => identity.epoch === this.connectionGeneration,
         isShuttingDown: () => this.connectionResources.isShuttingDown,
+        cleanupUnattached: (resource, onFailure) =>
+          this.connectionResources.cleanupUnattached(resource, onFailure),
         ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {}),
         ...(this.options.spawnProcess ? { spawnProcess: this.options.spawnProcess } : {}),
         ...(this.options.registerOpenCodeStoreRelease
@@ -1501,6 +1490,7 @@ class AcpRuntime {
         ? {
             codebuddy: {
               root: codeBuddySkillRuntimeRoot(this.backendGeneration.current.session.options),
+              shellRuntime: this.sessionCapabilities.shellRuntimeBindingFor(request.sessionId),
               selectorAvailable: this.connectionResources.bridgeSkillsAvailable,
               selectSkills: async (text, catalog, signal, observeUsage) =>
                 (await this.connectionResources.selectBridgeSkills(

@@ -281,7 +281,7 @@ describe.skipIf(process.platform !== 'win32')(
       expect(JSON.parse(run('close', root, '', '0'))).toEqual({ graceful: [], forced: [] })
       expect(spawnSync(helper, ['check', root], { windowsHide: true }).status).toBe(3)
       expect(child.exitCode).toBeNull()
-      // A native API result can be a bare system label (Registry on Windows CI), not
+      // A native API result can be empty or a bare system label (Registry on Windows CI), not
       // an executable path. Inject that result only for this retained fixture object;
       // the real file lock and Restart Manager must still prevent installation.
       const labelSource = join(fixture, 'native-label.cs')
@@ -325,7 +325,7 @@ describe.skipIf(process.platform !== 'win32')(
         })
       const empty = join(fixture, 'no-resource-use')
       mkdirSync(empty)
-      for (const label of ['Registry', 'Memory Compression']) {
+      for (const label of ['', 'Registry', 'Memory Compression']) {
         const query = labelRun(label, 'query', root)
         expect(query.status, String(query.stderr)).toBe(0)
         expect(JSON.parse(String(query.stdout))).toEqual({
@@ -344,7 +344,7 @@ describe.skipIf(process.platform !== 'win32')(
         expect(child.exitCode).toBeNull()
       }
       for (const label of [
-        '',
+        ' ',
         'relative\\file.exe',
         '/usr/bin/example',
         'C:example.exe',
@@ -353,7 +353,7 @@ describe.skipIf(process.platform !== 'win32')(
         const unknown = labelRun(label, 'check', empty)
         expect(unknown.status).toBe(2)
         expect(String(unknown.stderr)).toContain(
-          `stage=process-image-native-path-${!label ? 'empty' : label.includes('\n') ? 'control' : 'prefix'};`
+          `stage=process-image-native-path-${!label.trim() ? 'empty' : label.includes('\n') ? 'control' : 'prefix'};`
         )
       }
     })

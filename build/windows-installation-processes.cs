@@ -92,12 +92,13 @@ internal static class InstallationProcesses {
                 if (!owner.Alive()) continue;
                 throw new Win32Exception(nativeCode, "process-image-native");
               }
-              // Windows can return a non-file label such as Registry. That is not an
+              // Windows can return an empty image or a non-file label such as Registry. Neither is an
               // executable path and cannot grant close authority. It also does not prove
               // absence of file use: the independent mandatory Restart Manager scan still
               // reports this object if it holds installation resources. Do not generalize
-              // this to failed queries, empty values, or unresolved path-shaped results.
+              // this to failed queries or unresolved path-shaped results.
               string nativeImage = image.ToString();
+              if (nativeImage.Length == 0) continue;
               if (!string.IsNullOrWhiteSpace(nativeImage) &&
                   nativeImage.IndexOfAny(new char[] { '\\', '/', ':' }) < 0 &&
                   !nativeImage.Any(char.IsControl)) continue;

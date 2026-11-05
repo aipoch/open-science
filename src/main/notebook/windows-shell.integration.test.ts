@@ -836,7 +836,10 @@ describe.runIf(process.platform === 'win32')('Windows notebook shell integration
 
   it('reports unconfirmed launch cleanup as a failure that requires cleanup verification', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-unconfirmed-launch-'))
-    const registry = new ShellProcessOwnershipRegistry(root)
+    // Keep identity capture unavailable without racing the short-lived child against the query.
+    const registry = new ShellProcessOwnershipRegistry(root, {
+      processStartIdentity: () => undefined
+    })
     const sandbox = fixtureSandbox(root, 'process.exit(0)')
     // Exercise the existing adapter contract when no native tree proof is available.
     const adapter = new NotebookShellProcessAdapter(

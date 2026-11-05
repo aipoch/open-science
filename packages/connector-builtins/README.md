@@ -93,7 +93,8 @@ recovery and its rate limiter. Existing filenames and receipts are unchanged.
 `./molecule-render` exposes pure structure calculation. Session/Run selection,
 Artifact creation and Provenance remain the host's responsibility. Rendering loads
 OpenChemLib lazily; the host adapter persists the returned molfile through its
-existing writer.
+existing writer. Output uses V2000 unless the total atom or bond count exceeds 999,
+in which case it uses V3000. Explicit hydrogens count toward these limits.
 
 `./molecule` advertises only `render_molecule`. Application preview/Artifact actions
 are registered by the host.

@@ -223,7 +223,8 @@ export async function composeDocumentReading({
   const pdfStructureOwner = createPdfStructureOwner({
     models: localModelOwner,
     sources: pdfStructureSources,
-    engine: createPdfStructureEngine()
+    engine: createPdfStructureEngine(),
+    ocrModels
   })
   const pdfStructureReader = new PdfStructureReader(pdfStructureOwner)
   await modules.add({ pdfStructureOwner }, ({ pdfStructureOwner: owner }) => ({

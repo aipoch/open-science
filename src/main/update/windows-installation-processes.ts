@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { join } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 
@@ -34,26 +34,6 @@ export function installationQueryStderr(stderr: string): string {
     .filter((line) => /^stage=[a-z-]+;type=[A-Za-z]+;code=-?\d+$/.test(line))
     .join('\n')
     .slice(0, 1024)
-}
-
-export function queryWindowsInstallationDirectSync(root: string): string {
-  const result = spawnSync(windowsInstallationProcessHelper(), ['query', root], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 15_000,
-    maxBuffer: 16 * 1024 * 1024
-  })
-  if (result.error || result.status !== 0)
-    throw new WindowsInstallationQueryError(
-      'direct-query',
-      {
-        code: (result.error as NodeJS.ErrnoException | undefined)?.code,
-        exitCode: result.status,
-        stderr: installationQueryStderr(result.stderr ?? '')
-      },
-      result.error
-    )
-  return result.stdout
 }
 
 /** This fixed helper never starts descendants. Node retains its Windows process handle, so its

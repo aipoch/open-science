@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, rename, writeFile } from 'node:fs/promises'
 import * as fs from 'node:fs'
@@ -9,15 +9,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
+import { windowsProcessCommandLine } from '../windows-process-query'
 import type { ChildProcess } from 'node:child_process'
 
 vi.mock('node:fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs')>())
 }))
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>()
-  return { ...actual, spawnSync: vi.fn(actual.spawnSync) }
+vi.mock('../windows-process-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../windows-process-query')>()
+  return { ...actual, windowsProcessCommandLine: vi.fn(actual.windowsProcessCommandLine) }
 })
 
 const roots: string[] = []
@@ -52,38 +53,29 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 
 describe('Shell process ownership receipt lifecycle', () => {
   it.each([
-    { name: 'timeout', status: null, signal: 'SIGTERM', code: 'ETIMEDOUT', stdout: '' },
-    { name: 'module import failure', status: 1, signal: null, code: undefined, stdout: '' },
-    { name: 'empty identity', status: 0, signal: null, code: undefined, stdout: '' },
-    { name: 'malformed identity', status: 0, signal: null, code: undefined, stdout: 'not-json' },
     {
-      name: 'inaccessible command line',
-      status: 0,
-      signal: null,
-      code: undefined,
-      stdout: '{"ProcessId":12345,"CommandLine":null}'
+      name: 'access failure',
+      read: (): string | undefined => {
+        throw new Error('Open process for query failed (5)')
+      },
+      detail: 'Open process for query failed (5)'
     },
     {
-      name: 'blank command line',
-      status: 0,
-      signal: null,
-      code: undefined,
-      stdout: '{"ProcessId":12345,"CommandLine":" "}'
+      name: 'query failure',
+      read: (): string | undefined => {
+        throw new Error('Query process command line failed (0xC0000001)')
+      },
+      detail: 'Query process command line failed (0xC0000001)'
     },
-    {
-      name: 'mismatched query PID',
-      status: 0,
-      signal: null,
-      code: undefined,
-      stdout: '{"ProcessId":54321,"CommandLine":"node fixture"}'
-    }
+    { name: 'unavailable command line', read: () => undefined, detail: 'command line unavailable' },
+    { name: 'blank command line', read: () => ' ', detail: 'command line unavailable' }
   ] as const)(
     'preserves the receipt and redacts identity-query $name',
-    async ({ status, signal, code, stdout }) => {
-      const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
+    async ({ read, detail }) => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-query-failure-'))
       roots.push(root)
       const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
-        runId: 'timeout',
+        runId: 'failure',
         projectId: 'project',
         sessionId: 'session',
         platform: 'win32',
@@ -91,38 +83,16 @@ describe('Shell process ownership receipt lifecycle', () => {
       }).host!
       await rename(
         host.pendingPath,
-        join(root, 'shell-process-ownership', `timeout.active.12345.${host.receiptId}.json`)
+        join(root, 'shell-process-ownership', `failure.active.12345.${host.receiptId}.json`)
       )
-      vi.mocked(spawnSync).mockReturnValueOnce({
-        pid: 0,
-        output: [null, stdout, 'private-command-line'],
-        stdout,
-        stderr: 'private-command-line',
-        status,
-        signal,
-        error: code ? Object.assign(new Error('query timed out'), { code }) : undefined
-      })
+      vi.mocked(windowsProcessCommandLine).mockImplementationOnce(read)
       const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => true })
       await expect(restarted.recover()).rejects.toMatchObject({
         code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
-        cause: {
-          message: `Windows host identity query failed: status=${status}, code=${code ?? 'none'}, receiptMatched=false`
-        }
+        cause: { message: `Windows host identity query failed: ${detail}` }
       })
       expect(restarted.hasReceipts()).toBe(true)
-      expect(vi.mocked(spawnSync)).toHaveBeenLastCalledWith(
-        expect.any(String),
-        [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
-            'Get-CimInstance Win32_Process -Filter "ProcessId = 12345" -ErrorAction Stop | ' +
-            'Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress'
-        ],
-        { encoding: 'utf8', windowsHide: true, timeout: 5000 }
-      )
+      expect(vi.mocked(windowsProcessCommandLine)).toHaveBeenLastCalledWith(12345)
     }
   )
 
@@ -174,7 +144,7 @@ describe('Shell process ownership receipt lifecycle', () => {
   it.runIf(process.platform === 'win32').each(['owned', 'unrelated'] as const)(
     'verifies the actual Windows host identity and recovers without system tools in PATH: %s',
     async (identity) => {
-      vi.mocked(spawnSync).mockClear()
+      vi.mocked(windowsProcessCommandLine).mockClear()
       const root = await mkdtemp(join(tmpdir(), 'shell-host-identity-'))
       roots.push(root)
       const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
@@ -247,17 +217,13 @@ describe('Shell process ownership receipt lifecycle', () => {
       } catch (error) {
         console.error(
           'Windows host identity query results',
-          vi.mocked(spawnSync).mock.results.map((entry) => {
-            if (entry.type !== 'return') return { type: entry.type }
-            const result = entry.value
-            return {
-              status: result.status,
-              signal: result.signal,
-              errorCode: (result.error as NodeJS.ErrnoException | undefined)?.code,
-              receiptMatched: result.stdout?.toString().includes(host.receiptId),
-              stderr: result.stderr?.toString().slice(0, 1000)
-            }
-          })
+          vi
+            .mocked(windowsProcessCommandLine)
+            .mock.results.map((entry) =>
+              entry.type === 'return'
+                ? { type: entry.type, receiptMatched: entry.value?.includes(host.receiptId) }
+                : { type: entry.type, error: (entry.value as Error | undefined)?.message }
+            )
         )
         throw error
       } finally {

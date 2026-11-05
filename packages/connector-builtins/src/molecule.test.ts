@@ -60,6 +60,60 @@ describe('molecule/render_molecule', () => {
     expect(out.filename_suggestion).toBe('C9H8O4.mol')
   })
 
+  it.each([999, 1000])(
+    'round-trips a %i-atom structure from SMILES and V3000 input',
+    async (atoms) => {
+      const smiles = 'C'.repeat(atoms)
+      const source = Molecule.fromSmiles(smiles)
+      for (const args of [{ smiles }, { molfile: source.toMolfileV3() }]) {
+        const out = (await renderMolecule.run!(ctx, args)) as RenderResult
+        expect(out.valid).toBe(true)
+        expect(out.molfile).toContain(atoms > 999 ? 'V3000' : 'V2000')
+        const restored = Molecule.fromMolfile(out.molfile!)
+        expect(restored.getAllAtoms()).toBe(atoms)
+        expect(restored.getAllBonds()).toBe(atoms - 1)
+        expect(restored.toSmiles()).toBe(source.toSmiles())
+        expect(out.heavy_atom_count).toBe(atoms)
+        expect(out.formula).toBe(source.getMolecularFormula().formula)
+      }
+    },
+    // Each case round-trips both inputs; OpenChemLib is slower under CI's V8 coverage.
+    120_000
+  )
+
+  it.each([999, 1000])('round-trips a structure with 999 atoms and %i bonds', async (bonds) => {
+    const source = Molecule.fromSmiles('C'.repeat(999))
+    source.addBond(0, 2)
+    if (bonds === 1000) source.addBond(3, 5)
+    expect(source.getAllAtoms()).toBe(999)
+    expect(source.getAllBonds()).toBe(bonds)
+
+    const out = (await renderMolecule.run!(ctx, { molfile: source.toMolfileV3() })) as RenderResult
+    expect(out.valid).toBe(true)
+    expect(out.molfile).toContain(bonds > 999 ? 'V3000' : 'V2000')
+    const restored = Molecule.fromMolfile(out.molfile!)
+    expect(restored.getAllAtoms()).toBe(999)
+    expect(restored.getAllBonds()).toBe(bonds)
+    expect(restored.toSmiles()).toBe(source.toSmiles())
+  })
+
+  it('includes explicit hydrogens when selecting the molfile format', async () => {
+    const source = Molecule.fromSmiles('C'.repeat(334))
+    source.addImplicitHydrogens()
+    expect(source.getAtoms()).toBe(334)
+    expect(source.getAllAtoms()).toBe(1004)
+    expect(source.getAllBonds()).toBe(1003)
+
+    const out = (await renderMolecule.run!(ctx, { molfile: source.toMolfileV3() })) as RenderResult
+    expect(out.valid).toBe(true)
+    expect(out.molfile).toContain('V3000')
+    const restored = Molecule.fromMolfile(out.molfile!)
+    expect(restored.getAllAtoms()).toBe(1004)
+    expect(restored.getAllBonds()).toBe(1003)
+    expect(restored.toSmiles()).toBe(source.toSmiles())
+    expect(out.heavy_atom_count).toBe(334)
+  })
+
   it.each([
     ['[H][H]', 0],
     ['[2H]O[2H]', 1],

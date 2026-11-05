@@ -20,6 +20,7 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
+import { windowsProcessCommandLine } from '../windows-process-query'
 import {
   readProcessStartToken,
   bootTokenProvesReboot,
@@ -182,12 +183,12 @@ const processEvidence = async (
     }
   }
   if (platform === 'win32') {
-    return capture('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `(Get-CimInstance Win32_Process -Filter "ProcessId = ${record.pid}").CommandLine`
-    ])
+    try {
+      return windowsProcessCommandLine(record.pid)
+    } catch {
+      // Unreadable evidence keeps the startup fence closed; see the caller.
+      return undefined
+    }
   }
   return capture('ps', ['eww', '-p', String(record.pid), '-o', 'command='])
 }

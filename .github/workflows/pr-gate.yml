@@ -1459,6 +1459,9 @@ jobs:
         if: ${{ !(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) }}
         id: setup
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
+      - name: Install headless Chromium
+        if: ${{ matrix.group == 'presentation' || (matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos')) }}
+        run: npx playwright install chromium --only-shell
       - name: Test macOS-native behavior
         id: unit_macos_native
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}
@@ -1536,9 +1539,6 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-      - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' }}
-        run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
         if: ${{ matrix.group == 'regressions' && steps.setup.outcome == 'success' }}
