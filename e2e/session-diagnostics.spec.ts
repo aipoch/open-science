@@ -11,6 +11,66 @@ import { openGeneralSettings } from './fixtures/settings-preferences'
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
 test.use({ windowMode: 'hidden' })
 
+test('pauses resource sampling when hidden or suspended and resumes on actual window focus', async ({
+  app
+}) => {
+  test.skip(process.platform !== 'win32', 'Resource sampling is Windows-only.')
+  await app.completeOnboarding()
+  const application = (app as unknown as { application: ElectronApplication }).application
+  const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
+  const journal = join(configRoot, 'logs/resources')
+  const sampleCount = async (): Promise<number> => {
+    const names = await readdir(journal)
+    const contents = await Promise.all(
+      names
+        .filter((name) => name.endsWith('.jsonl'))
+        .map((name) => readFile(join(journal, name), 'utf8'))
+    )
+    return contents
+      .join('\n')
+      .split('\n')
+      .filter((line) => line.includes('"event":"sample-start"')).length
+  }
+  // A final queued write may settle after hiding; subsequent whole sampling intervals must be silent.
+  const expectQuiet = async (): Promise<void> => {
+    await app.page.waitForTimeout(2500)
+    const count = await sampleCount()
+    await app.page.waitForTimeout(11_000)
+    expect(await sampleCount()).toBe(count)
+  }
+  await expectQuiet()
+  const beforeFocus = await sampleCount()
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.show()
+    window.focus()
+  })
+  await expect
+    .poll(() =>
+      application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((window) => window.isFocused())
+      )
+    )
+    .toBe(true)
+  await expect.poll(sampleCount).toBeGreaterThan(beforeFocus)
+  // Simulate the Electron notification only; never suspend or wake the user's machine.
+  await application.evaluate(({ powerMonitor }) => powerMonitor.emit('suspend'))
+  await expectQuiet()
+  await application.evaluate(({ BrowserWindow, powerMonitor }) => {
+    BrowserWindow.getAllWindows()[0].hide()
+    powerMonitor.emit('resume')
+  })
+  await expectQuiet()
+  const beforeResume = await sampleCount()
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.show()
+    window.focus()
+  })
+  await expect.poll(sampleCount).toBeGreaterThan(beforeResume)
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide())
+})
+
 test('exports retained resource records from Settings only after consent, without a session', async ({
   app
 }, testInfo) => {

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WindowsResourceSample } from '@aipoch/process-tree-native'
 import { ResourceLogStore } from './store'
+import { ResourceActivity } from './activity'
 import {
   ResourceRecorder,
   installResourceRecorder,
@@ -28,7 +29,7 @@ const setup = async (
   now = () => 1000,
   scheduling: Pick<
     ConstructorParameters<typeof ResourceRecorder>[0],
-    'monotonicNow' | 'yieldToLoop'
+    'monotonicNow' | 'yieldToLoop' | 'activity' | 'timers'
   > = {}
 ): Promise<{
   recorder: ResourceRecorder
@@ -74,6 +75,114 @@ afterEach(async () => {
 })
 
 describe('resource correlation recorder', () => {
+  it('sleeps through slow-sample backoff rather than waking at every normal interval', async () => {
+    vi.useFakeTimers()
+    const activity = new ResourceActivity()
+    const native = {
+      sampleWindowsResources: vi.fn().mockRejectedValue(new Error('busy')),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { store } = await setup(native, Date.now, {
+      activity,
+      timers: true,
+      monotonicNow: Date.now
+    })
+    await store.flush()
+    activity.setDesktop({ foreground: true, suspended: false })
+    await vi.advanceTimersByTimeAsync(0)
+    await store.flush()
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(1)
+    activity.setDesktop({ foreground: false, suspended: false })
+    expect(vi.getTimerCount()).toBe(0)
+    activity.setDesktop({ foreground: true, suspended: false })
+    await vi.advanceTimersByTimeAsync(29_999)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(2)
+    activity.setDesktop({ foreground: false, suspended: false })
+    await store.flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('has no idle or suspended sampling timers and resumes only for foreground or work', async () => {
+    vi.useFakeTimers()
+    const activity = new ResourceActivity()
+    const native = {
+      sampleWindowsResources: vi.fn().mockResolvedValue(sample()),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { store } = await setup(native, Date.now, {
+      activity,
+      timers: true,
+      monotonicNow: Date.now
+    })
+    await store.flush()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(native.sampleWindowsResources).not.toHaveBeenCalled()
+    activity.setDesktop({ foreground: true, suspended: false })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    // Rapid focus edges must not defeat the normal sampling interval.
+    for (let i = 0; i < 10; i++) {
+      activity.setDesktop({ foreground: false, suspended: false })
+      activity.setDesktop({ foreground: true, suspended: false })
+      await vi.advanceTimersByTimeAsync(0)
+    }
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    const endWork = activity.begin()
+    activity.setDesktop({ foreground: false, suspended: false })
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(2)
+    activity.setDesktop({ foreground: false, suspended: true })
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(2)
+    endWork()
+    activity.setDesktop({ foreground: false, suspended: false })
+    await store.flush()
+    expect(vi.getTimerCount()).toBe(0)
+    const finish = activity.begin()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(3)
+    finish()
+    await store.flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('keeps a single outstanding query through suspend and does not retain its delayed timer', async () => {
+    vi.useFakeTimers()
+    const activity = new ResourceActivity()
+    const pending = Promise.withResolvers<WindowsResourceSample>()
+    const native = {
+      sampleWindowsResources: vi.fn().mockReturnValue(pending.promise),
+      readWindowsResourceBirth: vi.fn()
+    }
+    const { recorder, store } = await setup(native, Date.now, {
+      activity,
+      timers: true,
+      monotonicNow: Date.now
+    })
+    await store.flush()
+    activity.setDesktop({ foreground: true, suspended: false })
+    await vi.advanceTimersByTimeAsync(0)
+    const query = recorder.sample()
+    activity.setDesktop({ foreground: true, suspended: true })
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60_000)
+    activity.setDesktop({ foreground: true, suspended: false })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(native.sampleWindowsResources).toHaveBeenCalledTimes(1)
+    activity.setDesktop({ foreground: false, suspended: true })
+    pending.resolve(sample())
+    await query
+    expect(vi.getTimerCount()).toBe(0)
+    activity.setDesktop({ foreground: false, suspended: false })
+    await store.flush()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('yields large snapshots while keeping one query and preserving concurrent identity updates', async () => {
     const suspended = Promise.withResolvers<void>()
     const yielded = Promise.withResolvers<void>()

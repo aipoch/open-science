@@ -14,6 +14,7 @@ import { broadcastJobUpdated } from './ipc'
 import { createNotifyingJobPoller, emitJobNotification } from './job-notifier'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
+import { resourceActivity } from '../resource-diagnostics/activity'
 
 const log = createLogger('compute-integrity')
 
@@ -78,15 +79,17 @@ export const createComputeJobRuntime = (
       if (signal.aborted) return
       const latest = await deps.jobRepository.get(job.job_id)
       if (!latest || latest.harvested_at || latest.remote_cleanup_disposition === 'cleaned') return
-      await harvest(latest, {
-        connectionBroker: deps.connectionBroker,
-        hostRepository: deps.hostRepository,
-        jobRepository: deps.jobRepository,
-        storageRoot: deps.storageRoot,
-        broadcast,
-        publishJobUpdated: deps.computeService.handleJobUpdated,
-        signal
-      })
+      await resourceActivity.run(() =>
+        harvest(latest, {
+          connectionBroker: deps.connectionBroker,
+          hostRepository: deps.hostRepository,
+          jobRepository: deps.jobRepository,
+          storageRoot: deps.storageRoot,
+          broadcast,
+          publishJobUpdated: deps.computeService.handleJobUpdated,
+          signal
+        })
+      )
     }
   }
 

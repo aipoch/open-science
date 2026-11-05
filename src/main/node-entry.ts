@@ -1,5 +1,6 @@
 import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
 import { ResourceLogStore } from './resource-diagnostics/store'
+import { resourceActivity } from './resource-diagnostics/activity'
 import {
   configureMainAgentProcessOwnership,
   closeMainAgentProcessOwnership
@@ -500,6 +501,7 @@ async function main(): Promise<void> {
       ...(passwordStore ? { passwordStore } : {})
     }
     desktop = await startDesktopRuntimeTransport({
+      onResourceActivity: (state) => resourceActivity.setDesktop(state),
       lifetime,
       version: metadata.version,
       generation,

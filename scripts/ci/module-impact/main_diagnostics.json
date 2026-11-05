@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/resource-diagnostics/activity.ts",
+    "src/main/resource-diagnostics/activity.test.ts",
     "src/main/resource-diagnostics/recorder.ts",
     "src/main/resource-diagnostics/facts.ts",
     "src/main/resource-diagnostics/store.ts",
@@ -14,6 +16,7 @@
     "src/main/diagnostics/integration-test-helpers.ts"
   ],
   "interfacePaths": [
+    "src/main/resource-diagnostics/activity.ts",
     "src/main/resource-diagnostics/recorder.ts",
     "src/main/resource-diagnostics/facts.ts",
     "src/main/resource-diagnostics/store.ts",
@@ -24,6 +27,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/resource-diagnostics/activity.test.ts",
       "src/main/resource-diagnostics/recorder.test.ts",
       "src/main/resource-diagnostics/store.test.ts",
       "src/main/diagnostics/ipc-rejection.test.ts",

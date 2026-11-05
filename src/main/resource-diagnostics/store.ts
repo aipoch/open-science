@@ -57,7 +57,8 @@ export class ResourceLogStore {
   private partial: Segment | undefined
   private anomalyQueued = false
   private checkpoint: (() => string) | undefined
-  private timer: ReturnType<typeof setInterval>
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private suspended = false
   dropped = 0
   sealsSuppressed = 0
   rotatedBytes = 0
@@ -71,8 +72,6 @@ export class ResourceLogStore {
     this.rateBytes = Math.min(options.rateBytes ?? RATE_LIMIT, RATE_LIMIT)
     this.now = options.now ?? Date.now
     this.ready = this.initialize().catch(() => this.fail())
-    this.timer = setInterval(() => void this.flush(), 1000)
-    this.timer.unref()
   }
 
   private path(name: string): string {
@@ -85,7 +84,7 @@ export class ResourceLogStore {
     this.dropped += this.queue.length
     this.queue = []
     this.pendingBytes = 0
-    clearInterval(this.timer)
+    clearTimeout(this.timer)
     try {
       this.options.onFailure?.()
     } catch {
@@ -204,7 +203,36 @@ export class ResourceLogStore {
     if (priority) this.anomalyQueued = true
     this.pendingBytes += bytes
     this.queue.push({ line, bytes, anomaly })
+    this.scheduleFlush()
     return true
+  }
+
+  setSuspended(suspended: boolean): void {
+    this.suspended = suspended
+    if (suspended) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+    } else this.scheduleFlush()
+  }
+
+  private scheduleFlush(): void {
+    if (
+      this.timer ||
+      this.draining ||
+      this.closed ||
+      this.failed ||
+      this.suspended ||
+      !this.queue.length
+    )
+      return
+    this.timer = setTimeout(
+      () => {
+        this.timer = undefined
+        void this.flush()
+      },
+      Math.max(1000, this.retryAt - this.now())
+    )
+    this.timer.unref()
   }
 
   setCheckpoint(checkpoint: () => string): void {
@@ -213,10 +241,14 @@ export class ResourceLogStore {
 
   flush(): Promise<void> {
     if (this.draining) return this.draining
+    clearTimeout(this.timer)
+    this.timer = undefined
+    if (this.suspended && !this.closed) return Promise.resolve()
     this.draining = this.drain()
       .catch(() => this.fail())
       .finally(() => {
         this.draining = undefined
+        this.scheduleFlush()
       })
     return this.draining
   }
@@ -236,7 +268,7 @@ export class ResourceLogStore {
         throw error
       }
     }
-    while (this.queue.length && !this.failed) {
+    while (this.queue.length && !this.failed && (!this.suspended || this.closed)) {
       let segment = this.live.at(-1)
       const first = this.queue[0]
       if (!segment || segment.bytes + first.bytes > this.segmentBytes) {
@@ -314,7 +346,7 @@ export class ResourceLogStore {
 
   async close(clean: boolean): Promise<void> {
     this.closed = true
-    clearInterval(this.timer)
+    clearTimeout(this.timer)
     await this.flush()
     this.checkpoint = undefined
     // A failed write must not erase the evidence that this run may be incomplete.

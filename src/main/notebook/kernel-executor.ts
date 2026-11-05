@@ -1,5 +1,6 @@
 import { createLogger } from '@aipoch/diagnostics/node'
 import { observeResourceProcess, recordResourceEvent } from '../resource-diagnostics/recorder'
+import { resourceActivity } from '../resource-diagnostics/activity'
 import { resolveExternalRLibrary } from '@aipoch/environment'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -596,6 +597,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
   // Sends one cell to the kind's loop and resolves with the mapped execution result.
   async execute(request: NotebookExecutionRequest): Promise<NotebookExecutionResult> {
+    const endObservation = resourceActivity.begin()
     let workingFileObservation: WorkingFileObservation | undefined
     let kernelDispatched = false
     let cwdBefore: string | undefined
@@ -760,7 +762,11 @@ class NotebookKernelExecutor implements NotebookExecutor {
           : {})
       }
     } finally {
-      endSandboxExecution?.()
+      try {
+        endSandboxExecution?.()
+      } finally {
+        endObservation()
+      }
     }
   }
 

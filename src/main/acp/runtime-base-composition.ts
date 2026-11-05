@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { resourceActivity } from '../resource-diagnostics/activity'
 import { resolve } from 'node:path'
 import {
   recordResourceEvent,
@@ -493,6 +494,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     effects().modelChanges.activityChanged()
   }
   const generationActivity = new AcpGenerationActivityOwner({
+    observeWork: () => resourceActivity.begin(),
     activityChanged: generationActivityChanged,
     hasActivePrompts: () => sessionInteractions.snapshot().length > 0,
     hasActiveReviewerSessions: () => effects().reviewerSessions.hasActiveSessions()

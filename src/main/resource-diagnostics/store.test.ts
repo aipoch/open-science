@@ -52,12 +52,39 @@ const content = async (path: string, prefix: string): Promise<string> =>
   ).join('')
 
 afterEach(async () => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   for (const value of stores.splice(0)) await value.close(false)
   for (const path of directories.splice(0)) await rm(path, { recursive: true, force: true })
 })
 
 describe('bounded resource journal', () => {
+  it('schedules only queued writes, disarms on suspend and preserves queued evidence on resume', async () => {
+    vi.useFakeTimers()
+    const path = await directory()
+    const journal = store(path)
+    await journal.flush()
+    expect(vi.getTimerCount()).toBe(0)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    expect(vi.getTimerCount()).toBe(0)
+    journal.append('{"before":true}\n')
+    expect(vi.getTimerCount()).toBe(1)
+    journal.setSuspended(true)
+    expect(vi.getTimerCount()).toBe(0)
+    journal.append('{"during":true}\n')
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    await journal.flush()
+    expect(await content(path, 'live')).toBe('')
+    expect(vi.getTimerCount()).toBe(0)
+    journal.setSuspended(false)
+    expect(vi.getTimerCount()).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    await journal.flush()
+    expect(await content(path, 'live')).toContain('"before":true')
+    expect(await content(path, 'live')).toContain('"during":true')
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it.each([false, true])(
     'does not overwrite a linked target inserted before marker creation (previous run: %s)',
     async (previousRun) => {

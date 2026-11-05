@@ -8,6 +8,7 @@ type AcpGenerationActivityOwnerOptions = Readonly<{
   activityChanged: () => void
   hasActivePrompts: () => boolean
   hasActiveReviewerSessions: () => boolean
+  observeWork?: () => () => void
 }>
 
 // Owns the balanced leases and startup membership for one backend generation. Transition intent stays
@@ -57,21 +58,25 @@ export class AcpGenerationActivityOwner {
   }
 
   async withOperation<T>(work: () => Promise<T>): Promise<T> {
+    const endObservation = this.options.observeWork?.()
     this.operationLeaseCount += 1
     try {
       return await work()
     } finally {
       this.operationLeaseCount -= 1
+      endObservation?.()
       this.options.activityChanged()
     }
   }
 
   async withActivity<T>(work: () => Promise<T>): Promise<T> {
+    const endObservation = this.options.observeWork?.()
     this.activityLeaseCount += 1
     try {
       return await work()
     } finally {
       this.activityLeaseCount -= 1
+      endObservation?.()
       this.options.activityChanged()
     }
   }

@@ -4,6 +4,7 @@ import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import type { ChildProcess } from 'node:child_process'
 import type { ResourceProcessIdentity, WindowsResourceSample } from '@aipoch/process-tree-native'
 import { ResourceLogStore } from './store'
+import { resourceActivity, type ResourceActivity } from './activity'
 import { resourceFacts, type ResourceFacts } from './facts'
 
 const requireNative = createRequire(import.meta.url)
@@ -17,6 +18,7 @@ type Options = {
   native?: Pick<NativeSampler, 'sampleWindowsResources' | 'readWindowsResourceBirth'>
   now?: () => number
   timers?: boolean
+  activity?: ResourceActivity
   // Deterministic scheduling seams. Production uses monotonic time and a macrotask yield.
   monotonicNow?: () => number
   yieldToLoop?: () => Promise<void>
@@ -44,7 +46,11 @@ export class ResourceRecorder {
   private pending: Promise<void> | undefined
   private closed = false
   private lastFull = -Infinity
-  private timer: ReturnType<typeof setInterval> | undefined
+  private timer: ReturnType<typeof setTimeout> | undefined
+  private lastScheduledSample = -Infinity
+  private delayTimer: ReturnType<typeof setTimeout> | undefined
+  private unsubscribeActivity: (() => void) | undefined
+  private readonly activity: ResourceActivity
   private missing = 0
   private backoffMs = 0
   private nextSampleAt = -Infinity
@@ -53,6 +59,7 @@ export class ResourceRecorder {
   private sampleBytes = 0
 
   constructor(private readonly options: Options) {
+    this.activity = options.activity ?? resourceActivity
     this.now = options.now ?? Date.now
     this.clock = options.monotonicNow ?? (() => performance.now())
     try {
@@ -65,10 +72,38 @@ export class ResourceRecorder {
     options.store.setCheckpoint(() => this.checkpoint())
     this.event('run-start', { pid: process.pid, processCoverage: 'backend-family' })
     if (options.timers !== false) {
-      this.timer = setInterval(() => void this.sample(), 10_000)
-      this.timer.unref()
-      void this.sample()
+      this.unsubscribeActivity = this.activity.subscribe(() => this.syncActivity())
+      this.syncActivity()
     }
+  }
+
+  private syncActivity(): void {
+    if (this.closed) return
+    const { sampling, suspended } = this.activity.state
+    this.options.store.setSuspended(suspended)
+    if (!sampling) {
+      clearTimeout(this.timer)
+      this.timer = undefined
+      clearTimeout(this.delayTimer)
+      this.delayTimer = undefined
+    } else if (!this.timer) {
+      this.lastFull = -Infinity
+      this.scheduleSample()
+    }
+  }
+
+  private scheduleSample(): void {
+    if (this.closed || this.timer || !this.activity.state.sampling) return
+    const delay = Math.max(
+      0,
+      this.lastScheduledSample + 10_000 - this.clock(),
+      this.nextSampleAt - this.clock()
+    )
+    this.timer = setTimeout(() => {
+      this.timer = undefined
+      void this.sample().finally(() => this.scheduleSample())
+    }, delay)
+    this.timer.unref()
   }
 
   event(event: string, fields: ResourceFacts, anomaly = false, sampled = false): void {
@@ -201,6 +236,8 @@ export class ResourceRecorder {
 
   sample(): Promise<void> {
     if (this.pending || this.closed) return this.pending ?? Promise.resolve()
+    if (this.options.timers !== false && !this.activity.state.sampling) return Promise.resolve()
+    if (this.options.timers !== false) this.lastScheduledSample = this.clock()
     if (this.clock() < this.nextSampleAt) return Promise.resolve()
     this.sampleBytes = 0
     const full = this.now() - this.lastFull >= 30_000
@@ -214,6 +251,7 @@ export class ResourceRecorder {
       true
     )
     const timeout = setTimeout(() => this.event('sample-delayed', { sampleId }, false, true), 2000)
+    this.delayTimer = timeout
     timeout.unref()
     // A timeout records a gap but never releases this guard while the OS query remains outstanding.
     this.pending = (async () => {
@@ -223,6 +261,10 @@ export class ResourceRecorder {
         const sample = await this.native?.sampleWindowsResources(full, this.retained)
         const nativeMs = this.clock() - started
         if (this.closed) return
+        if (this.options.timers !== false && !this.activity.state.sampling) {
+          reason = 'inactive'
+          return
+        }
         if (!sample) {
           reason = 'unavailable'
           this.event('sample-unavailable', { sampleId }, false, true)
@@ -235,7 +277,8 @@ export class ResourceRecorder {
         this.event('sample-failed', { sampleId }, false, true)
       } finally {
         clearTimeout(timeout)
-        if (!this.closed) {
+        if (this.delayTimer === timeout) this.delayTimer = undefined
+        if (!this.closed && reason !== 'inactive') {
           if (reason) {
             this.backoffMs = Math.min(this.backoffMs ? this.backoffMs * 2 : 30_000, 300_000)
             this.nextSampleAt = this.clock() + this.backoffMs
@@ -267,6 +310,8 @@ export class ResourceRecorder {
     let items = 0
     try {
       while (!this.closed) {
+        if (this.options.timers !== false && !this.activity.state.sampling)
+          return { reason: 'inactive', processingMs }
         const elapsed = this.clock() - sliceStarted
         if (this.sampleBytes >= SERIALIZATION_BUDGET_BYTES)
           return { reason: 'serialization-budget', processingMs: processingMs + elapsed }
@@ -414,7 +459,9 @@ export class ResourceRecorder {
 
   async close(clean: boolean): Promise<void> {
     if (this.closed) return
-    clearInterval(this.timer)
+    clearTimeout(this.timer)
+    clearTimeout(this.delayTimer)
+    this.unsubscribeActivity?.()
     this.event('run-end', { expected: clean, missing: this.missing, ...this.options.store.status })
     this.closed = true
     this.runtimes.clear()
