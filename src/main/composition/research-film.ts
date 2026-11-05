@@ -6,10 +6,16 @@ import {
   createResearchVideoGenerator,
   createVideoExportTools,
   researchFilmResources,
+  ResearchFilmOutputLimitError,
+  type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
   VIDEO_EXPORT_REVISIONS
 } from '@aipoch/research-film'
-import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
+import {
+  RestrictedInferenceRunner,
+  RestrictedInferenceError,
+  extractRestrictedInferenceUsage
+} from '../acp/restricted-inference-runner'
 import type { ApplicationModuleBuilder } from '../application-runtime'
 import { createLocalModelOwner } from '../local-models/owner'
 import type { ResearchFilmLifecycle } from '../research-video/lifecycle'
@@ -76,24 +82,51 @@ export async function composeResearchFilm({
     allowNativeCodexSubscription: true,
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
+  // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
+  const targets = new WeakMap<
+    ResearchVideoSessionSource,
+    ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>
+  >()
   const inferResearchVideo = async (
-    source: Parameters<
-      Parameters<typeof createResearchVideoPresentationOwner>[0]['writeScreenplay']
-    >[0],
+    source: ResearchVideoSessionSource,
     systemPrompt: string,
     payload: unknown,
     signal: AbortSignal
   ): Promise<string> => {
-    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
-    const response = await researchVideoInference.run({
-      target,
-      prompt: JSON.stringify(payload),
-      systemPrompt,
-      agentName: 'Research explanation',
-      description: 'Generate a research explanation from a frozen session',
-      outputLimitBytes: 64 * 1024,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
-    })
+    signal.throwIfAborted()
+    if (!targets.has(source))
+      targets.set(source, settingsService.captureActiveExplicitAgentBackendTarget())
+    const target = await targets.get(source)!
+    signal.throwIfAborted()
+    const response = await researchVideoInference
+      .run({
+        target,
+        prompt: JSON.stringify(payload),
+        systemPrompt,
+        agentName: 'Research explanation',
+        description: 'Generate a research explanation from a frozen session',
+        outputLimitBytes: 64 * 1024,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(300_000)])
+      })
+      .catch(async (error: unknown) => {
+        const usage = extractRestrictedInferenceUsage(error)
+        if (usage)
+          await recordAuxiliaryUsage({
+            projectId: source.provenance.projectId,
+            sessionId: source.provenance.sessionId,
+            eventId: randomUUID(),
+            source: 'host-llm',
+            frameworkId: target.frameworkId,
+            providerId: target.providerId,
+            model: target.model.kind === 'required' ? target.model.id : undefined,
+            completedAtMs: Date.now(),
+            usage
+          })
+        signal.throwIfAborted()
+        if (error instanceof RestrictedInferenceError && error.code === 'output-limit')
+          throw new ResearchFilmOutputLimitError(error.message)
+        throw error
+      })
     if (response.usage)
       await recordAuxiliaryUsage({
         projectId: source.provenance.projectId,
@@ -106,8 +139,9 @@ export async function composeResearchFilm({
         completedAtMs: Date.now(),
         usage: response.usage
       })
+    signal.throwIfAborted()
     if (response.stopReason === 'max_tokens')
-      throw new Error(
+      throw new ResearchFilmOutputLimitError(
         'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
       )
     if (response.stopReason !== 'end_turn')

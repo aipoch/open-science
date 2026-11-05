@@ -1,5 +1,5 @@
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { join, relative, sep } from 'node:path'
 import {
   parseResearchVideoScreenplay,
   RESEARCH_VIDEO_ANIMATION_PROMPT,
@@ -7,12 +7,16 @@ import {
 } from './screenplay.js'
 import {
   writeResearchVideoAnimations,
+  researchVideoAnimationPlan,
   type ResearchVideoAnimationInput
 } from './animation-authoring.js'
 import type { ResearchVideoSessionSource } from './source.js'
 import { researchFilmResources } from './resources.js'
+import {
+  writeWithResearchFilmCorrection,
+  type ResearchFilmCorrection as Correction
+} from './authoring-correction.js'
 
-type Correction = { draft: string; error: string }
 export type ResearchFilmAuthor = {
   writeScreenplay(
     source: ResearchVideoSessionSource,
@@ -47,10 +51,41 @@ export function createResearchFilmAuthor(
     async writeAnimation(source, input, signal, correction) {
       const kit = await readFile(join(researchFilmResources().authoringDirectory, 'KIT.md'), 'utf8')
       signal.throwIfAborted()
+      const scenes = input.spec.scenes.filter((scene) =>
+        scene.panels.some((panel) =>
+          input.shared
+            ? Array.isArray(panel.use) && panel.use.includes(input.path)
+            : panel.script === input.path
+        )
+      )
+      const messages = new Set(scenes.map((scene) => scene.msg))
+      const helpers = new Set(
+        scenes.flatMap((scene) =>
+          scene.panels.flatMap((panel) =>
+            panel.script === input.path ||
+            (input.shared && Array.isArray(panel.use) && panel.use.includes(input.path))
+              ? Array.isArray(panel.use)
+                ? panel.use
+                : []
+              : []
+          )
+        )
+      )
       return infer(
         source,
         RESEARCH_VIDEO_ANIMATION_PROMPT + '\n\n' + kit,
-        { source, ...input, correction },
+        {
+          source: {
+            ...source,
+            messages: source.messages.filter((message) => messages.has(message.i))
+          },
+          ...input,
+          spec: { ...input.spec, scenes },
+          sharedFiles: Object.fromEntries(
+            Object.entries(input.sharedFiles).filter(([path]) => helpers.has(path))
+          ),
+          correction
+        },
         signal
       )
     }
@@ -67,20 +102,58 @@ export async function authorResearchFilmSource(options: {
 }): Promise<{ specPath: string; title: string }> {
   const { source, directory, author, signal } = options
   signal.throwIfAborted()
-  const output = await author.writeScreenplay(source, signal)
-  signal.throwIfAborted()
-  let spec: ReturnType<typeof parseResearchVideoScreenplay>
-  try {
-    spec = parseResearchVideoScreenplay(output, source.messages.length)
-  } catch (error) {
-    signal.throwIfAborted()
-    const corrected = await author.writeScreenplay(source, signal, {
-      draft: output,
-      error: error instanceof Error ? error.message : String(error)
-    })
-    signal.throwIfAborted()
-    spec = parseResearchVideoScreenplay(corrected, source.messages.length)
-  }
+  const filesDirectory = join(directory, 'files')
+  // Inspect host storage outside model correction. Only staged, portable asset names reach prompts.
+  const entries = await readdir(filesDirectory, { recursive: true, withFileTypes: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return []
+      throw error
+    }
+  )
+  const stagedFiles = new Set(
+    entries
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        relative(filesDirectory, join(entry.parentPath, entry.name)).split(sep).join('/')
+      )
+  )
+  const spec = await writeWithResearchFilmCorrection(
+    (correction) => author.writeScreenplay(source, signal, correction),
+    (output) => {
+      const parsed = parseResearchVideoScreenplay(output, source.messages.length)
+      researchVideoAnimationPlan(parsed)
+      if (parsed.libs || parsed.assets || parsed.subjects)
+        throw new Error(
+          'External libraries and asset bundles are not supported by this authoring surface yet'
+        )
+      const voice = parsed.voice as { voice?: unknown; speed?: unknown } | undefined
+      if (
+        voice &&
+        ((voice.voice !== undefined && voice.voice !== 'af_heart') ||
+          (voice.speed !== undefined && voice.speed !== 1))
+      )
+        throw new Error('This version supports af_heart English narration at speed 1 only')
+      const assets = new Set<unknown>([parsed.start_file])
+      for (const scene of parsed.scenes) {
+        assets.add(scene.file)
+        for (const panel of scene.panels) {
+          assets.add(panel.file)
+          assets.add(panel.csv)
+          if (Array.isArray(panel.data)) for (const file of panel.data) assets.add(file)
+        }
+      }
+      for (const file of assets) {
+        signal.throwIfAborted()
+        if (file === undefined) continue
+        if (typeof file !== 'string' || !stagedFiles.has(file))
+          throw new Error(
+            'Reference only files staged in the supplied session; omit unavailable assets.'
+          )
+      }
+      return parsed
+    },
+    signal
+  )
   options.onAnimations?.()
   await writeResearchVideoAnimations(
     spec,

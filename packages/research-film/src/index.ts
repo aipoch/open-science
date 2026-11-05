@@ -1,8 +1,13 @@
 export * from './generation.js'
 export * from './screenplay.js'
 export * from './source.js'
-export * from './animation-authoring.js'
+export {
+  writeResearchVideoAnimations,
+  type ResearchVideoAnimationInput,
+  type ResearchVideoAnimationWriter
+} from './animation-authoring.js'
 export * from './authoring.js'
+export { ResearchFilmOutputLimitError } from './authoring-correction.js'
 export * from './resources.js'
 export * from './model-catalog.js'
 export * from './ffmpeg-catalog.js'

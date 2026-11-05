@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { Script } from 'node:vm'
 import type { VideoSpec } from './timeline.js'
+import { writeWithResearchFilmCorrection } from './authoring-correction.js'
 
 export type ResearchVideoAnimationInput = {
   path: string
@@ -15,16 +16,13 @@ export type ResearchVideoAnimationWriter = (
   correction?: { draft: string; error: string }
 ) => Promise<string>
 
-/** Original skill format: local shared helpers (`use`) followed by per-scene draw(k) bodies. */
-export async function writeResearchVideoAnimations(
-  spec: VideoSpec,
-  directory: string,
-  writer: ResearchVideoAnimationWriter | undefined,
-  parentSignal: AbortSignal
-): Promise<void> {
+/** Validate before authoring so an invalid plan can use the screenplay's correction allowance. */
+export function researchVideoAnimationPlan(spec: VideoSpec): {
+  panels: VideoSpec['scenes'][number]['panels']
+  shared: string[]
+  scripts: string[]
+} {
   const panels = spec.scenes.flatMap((scene) => scene.panels).filter((p) => p.type === 'animation')
-  if (!panels.length) return
-  if (!writer) throw new Error('Animation authoring is unavailable.')
   const path = (value: unknown): string => {
     if (typeof value !== 'string' || !/^anims\/[a-zA-Z0-9][\w-]{0,100}\.js$/.test(value))
       throw new Error('Animation files must use anims/<name>.js')
@@ -37,6 +35,19 @@ export async function writeResearchVideoAnimations(
     throw new Error(
       'Use at most 16 distinct animation files; shared helpers and scene scripts must have separate names.'
     )
+  return { panels, shared, scripts }
+}
+
+/** Original skill format: local shared helpers (`use`) followed by per-scene draw(k) bodies. */
+export async function writeResearchVideoAnimations(
+  spec: VideoSpec,
+  directory: string,
+  writer: ResearchVideoAnimationWriter | undefined,
+  parentSignal: AbortSignal
+): Promise<void> {
+  const { panels, shared, scripts } = researchVideoAnimationPlan(spec)
+  if (!panels.length) return
+  if (!writer) throw new Error('Animation authoring is unavailable.')
   const controller = new AbortController()
   const signal = AbortSignal.any([parentSignal, controller.signal])
   const files: Record<string, string> = {}
@@ -49,7 +60,6 @@ export async function writeResearchVideoAnimations(
       spec,
       sharedFiles: Object.fromEntries(shared.filter((p) => files[p]).map((p) => [p, files[p]]))
     }
-    let output = await writer(input, signal)
     const validate = (raw: string): string => {
       const code = raw.trim().replace(/^```(?:javascript|js)?\s*\n([\s\S]*?)\n```$/u, '$1')
       if (!code || Buffer.byteLength(code) > 64 * 1024)
@@ -62,17 +72,11 @@ export async function writeResearchVideoAnimations(
       new Script(`(function(k){${helpers}\n;\n${code}\n})`, { filename: name })
       return code
     }
-    let code: string
-    try {
-      code = validate(output)
-    } catch (error) {
-      signal.throwIfAborted()
-      output = await writer(input, signal, {
-        draft: output,
-        error: error instanceof Error ? error.message : String(error)
-      })
-      code = validate(output)
-    }
+    const code = await writeWithResearchFilmCorrection(
+      (correction) => writer(input, signal, correction),
+      validate,
+      signal
+    )
     signal.throwIfAborted()
     await writeFile(join(directory, name), code, { flag: 'wx', mode: 0o600, signal })
     files[name] = code

@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest'
 import { composeApplicationRuntime } from '../application-runtime'
 import { createResearchFilmLifecycle } from '../research-video/lifecycle'
 import { composeResearchFilm } from './research-film'
+import { RestrictedInferenceError } from '../acp/restricted-inference-contract'
 
 const mocks = vi.hoisted(() => ({
   root: '',
@@ -25,14 +26,25 @@ vi.mock('../local-models/owner', () => ({
     }
   })
 }))
-vi.mock('../acp/restricted-inference-runner', () => ({
+vi.mock('../acp/restricted-inference-runner', async () => ({
+  ...(await import('../acp/restricted-inference-contract')),
   RestrictedInferenceRunner: class {
     run = mocks.run
     shutdown = mocks.shutdown
   }
 }))
 
-it.each(['running', 'max_tokens', 'refusal', 'empty'] as const)(
+const outcomes = [
+  'running',
+  'max_tokens',
+  'output-limit',
+  'transport',
+  'recovered',
+  'refusal',
+  'empty'
+] as const
+
+it.each(outcomes)(
   'handles %s generation without publishing incomplete content',
   async (outcome) => {
     vi.clearAllMocks()
@@ -90,13 +102,66 @@ it.each(['running', 'max_tokens', 'refusal', 'empty'] as const)(
         stopReason: outcome === 'empty' ? 'end_turn' : outcome,
         usage: { inputTokens: 10, outputTokens: 16384 }
       })
+    if (outcome === 'output-limit')
+      mocks.run.mockRejectedValue(
+        new RestrictedInferenceError('output-limit', 'byte output limit', {
+          inputTokens: 10,
+          outputTokens: 16384,
+          cacheTokens: 0
+        })
+      )
+    if (outcome === 'transport')
+      mocks.run.mockRejectedValue(
+        new RestrictedInferenceError('transport-unavailable', 'transport unavailable', {
+          inputTokens: 10,
+          outputTokens: 20,
+          cacheTokens: 0
+        })
+      )
+    if (outcome === 'recovered') {
+      const result = {
+        frameworkId: 'pi',
+        model: 'test',
+        usage: { inputTokens: 10, outputTokens: 20 }
+      }
+      mocks.run
+        .mockResolvedValueOnce({ ...result, text: '{', stopReason: 'max_tokens' })
+        .mockResolvedValueOnce({
+          ...result,
+          stopReason: 'end_turn',
+          text: JSON.stringify({
+            version: 1,
+            case: 'evidence',
+            title: 'Evidence',
+            session: 'session.json',
+            scenes: [
+              {
+                id: 'hook',
+                role: 'hook',
+                msg: 1,
+                lines: [{ caption: 'The result is uncertain.' }],
+                panels: [
+                  { type: 'title', text: 'Evidence' },
+                  { type: 'animation', script: 'anims/hook.js', size: 'band' }
+                ]
+              }
+            ]
+          })
+        })
+        .mockResolvedValue({ ...result, text: '', stopReason: 'refusal' })
+    }
     mocks.shutdown.mockImplementation(async () => {
       mocks.events.push('shutdown')
     })
     const input = {
       configRoot: mocks.root,
       settingsService: {
-        captureActiveExplicitAgentBackendTarget: vi.fn(async () => ({ providerId: 'test' }))
+        captureActiveExplicitAgentBackendTarget: vi.fn(async () => ({
+          frameworkId: 'pi',
+          providerId: 'test',
+          model: { kind: 'required', id: 'test' },
+          reasoningEffort: 'medium'
+        }))
       },
       sessionRepository: { loadSession: vi.fn(async () => session) },
       sessionPersistenceCoordinator: { runSessionMutation: vi.fn() },
@@ -118,22 +183,44 @@ it.each(['running', 'max_tokens', 'refusal', 'empty'] as const)(
       expect(mocks.install).not.toHaveBeenCalled()
       expect(await readdir(mocks.root)).toEqual([])
       await owner.start(request)
-      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledOnce())
+      await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
       if (outcome !== 'running') {
         await vi.waitFor(async () =>
           expect((await owner.status(request)).progress?.phase).toBe('failed')
         )
         const status = await owner.status(request)
         expect(status.error).toContain(
-          outcome === 'max_tokens'
-            ? 'output token limit'
-            : outcome === 'empty'
-              ? 'no research film content'
-              : 'refusal'
+          outcome === 'transport'
+            ? 'transport unavailable'
+            : outcome === 'output-limit'
+              ? 'byte output limit'
+              : outcome === 'max_tokens'
+                ? 'output token limit'
+                : outcome === 'empty'
+                  ? 'no research film content'
+                  : 'refusal'
         )
         expect(status.result).toBeUndefined()
-        expect(mocks.run).toHaveBeenCalledOnce()
-        expect(input.recordAuxiliaryUsage).toHaveBeenCalledOnce()
+        const calls =
+          outcome === 'recovered' ? 3 : ['max_tokens', 'output-limit'].includes(outcome) ? 2 : 1
+        expect(mocks.run).toHaveBeenCalledTimes(calls)
+        expect(input.recordAuxiliaryUsage).toHaveBeenCalledTimes(calls)
+        expect(input.settingsService.captureActiveExplicitAgentBackendTarget).toHaveBeenCalledOnce()
+        expect(new Set(mocks.run.mock.calls.map(([request]) => request.target)).size).toBe(1)
+        if (calls > 1) {
+          const correction = JSON.parse(mocks.run.mock.calls[1][0].prompt).correction
+          expect(correction).toMatchObject({ draft: '', error: expect.stringContaining('shorter') })
+        }
+        if (outcome === 'recovered') {
+          expect(mocks.run.mock.calls[2][0].systemPrompt).toContain('JavaScript animation')
+          await owner.start(request)
+          await vi.waitFor(async () =>
+            expect((await owner.status(request)).progress?.phase).toBe('failed')
+          )
+          expect(
+            input.settingsService.captureActiveExplicitAgentBackendTarget
+          ).toHaveBeenCalledTimes(2)
+        }
         return
       }
       expect((await owner.status(request)).progress?.phase).toBe('writing')
