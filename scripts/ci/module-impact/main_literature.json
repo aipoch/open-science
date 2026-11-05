@@ -75,7 +75,9 @@
     "src/main/literature/collector-identity.test.ts",
     "src/main/literature/pdf-attachment.ts",
     "src/main/literature/study-snapshot.ts",
-    "src/main/literature/study-snapshot.test.ts"
+    "src/main/literature/study-snapshot.test.ts",
+    "src/main/literature/pdf-structure/ocr.ts",
+    "src/main/literature/pdf-structure/ocr.test.ts"
   ],
   "interfacePaths": [
     "src/main/literature/command-owner.ts",
@@ -145,7 +147,8 @@
       "src/main/literature/publication-check.test.ts",
       "src/main/literature/collector.test.ts",
       "src/main/literature/collector-identity.test.ts",
-      "src/main/literature/study-snapshot.test.ts"
+      "src/main/literature/study-snapshot.test.ts",
+      "src/main/literature/pdf-structure/ocr.test.ts"
     ],
     "contract": [
       "src/main/acp/auto-operation-inventory.test.ts",

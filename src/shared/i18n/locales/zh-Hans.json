@@ -7746,8 +7746,7 @@
     "Find reference": "查找文献",
     "When identifiers match: {{policy}}": "标识符相同时：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "无法获取文献信息。请检查标识符并重试，或导入 PDF 或参考文献文件。",
-    "Add from DOI or link": "通过 DOI 或链接添加",
-    "DOI and arXiv links": "DOI 和 arXiv 链接",
+    "Add from identifiers or links": "通过标识符或链接添加",
     "Review reference details": "核对文献信息",
     "Versioned arXiv links use the latest metadata.": "带版本号的 arXiv 链接使用最新的元数据。",
     "Retrieved via {{source}}.": "已通过 {{source}} 获取文献信息。",
@@ -7798,6 +7797,9 @@
     "Discard retained changes for {{title}}": "放弃 {{title}} 的保留改动",
     "Discard retained changes…": "放弃保留的改动…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "要放弃“{{title}}”的保留改动并重新加载已保存的版本吗？此操作无法撤销。",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "无法重新加载已保存的对话。保留的改动仍在，请重试。"
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "无法重新加载已保存的对话。保留的改动仍在，请重试。",
+    "{{count}} questions awaiting your answer_other": "有 {{count}} 个问题待回答",
+    "Collapse question panel": "收起问题面板",
+    "Expand question panel": "展开问题面板"
   }
 }

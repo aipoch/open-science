@@ -75,6 +75,31 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it('retains an unresolved scanned table caption in diagnostics without inventing cells', async () => {
+    await save({
+      ...raw(),
+      figures: [],
+      tables: [
+        {
+          id: 'p1-unresolved-1',
+          page: 1,
+          caption: { text: 'TABLE 1 Unbounded scan', rect: [50, 60, 250, 80] },
+          sourceViewport: { width: 600, height: 800 },
+          grid: [],
+          cells: [],
+          unassigned: [],
+          issues: ['no-source-cell-grid']
+        }
+      ]
+    })
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements).toEqual([])
+    expect(result.issues).toContainEqual({
+      code: 'unresolved-region',
+      detail: 'TABLE 1 Unbounded scan'
+    })
+  })
+
   it('retains bounded unreliable mathematical origins on their own table', async () => {
     const table = rawTable(),
       origins = structuredClone(table.cells[0].sourceItems)

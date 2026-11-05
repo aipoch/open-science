@@ -13,7 +13,7 @@ for (const [url, reference, label] of [
     await page.goto('/literature-recovery.html?mode=links')
     await page.getByRole('button', { name: 'All references', exact: true }).click()
     await page.getByRole('button', { name: 'Add', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
     await page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true }).fill(url)
     await page.getByRole('button', { name: 'Find reference', exact: true }).click()
     await expect
@@ -35,7 +35,7 @@ for (const foreign of [false, true]) {
     await page.goto(`/literature-recovery.html?mode=links${foreign ? '&foreign-metadata=1' : ''}`)
     await page.getByRole('button', { name: 'All references', exact: true }).click()
     await page.getByRole('button', { name: 'Add', exact: true }).click()
-    await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
     const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
     await input.fill('10.1234/paper\ninvalid\nhttps://pubmed.ncbi.nlm.nih.gov/35486828/')
     await input.press('ControlOrMeta+Enter')
@@ -61,7 +61,9 @@ for (const foreign of [false, true]) {
       )
       await title.hover()
       await expect(page.getByRole('tooltip')).toHaveText(await title.innerText())
-      await page.getByRole('heading', { name: 'Add from DOI or link', exact: true }).hover()
+      await page
+        .getByRole('heading', { name: 'Add from identifiers or links', exact: true })
+        .hover()
       const input = table.getByRole('rowheader').last().locator('span').first()
       expect(await input.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
         true
@@ -107,7 +109,9 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   const add = page.getByRole('button', { name: 'Add', exact: true })
   await add.focus()
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
   const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
   await expect(input).toBeFocused()
   await input.fill('10.1234/paper')
@@ -128,7 +132,9 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   await expect(add).toBeFocused()
   await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
   await expect(input).toBeFocused()
   await input.fill('10.1234/paper')
   await input.press('ControlOrMeta+Enter')
@@ -150,7 +156,9 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(add).toBeFocused()
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
   await input.fill('10.1234/paper')
   await input.press('ControlOrMeta+Enter')
   await expect
@@ -198,8 +206,8 @@ for (const viewport of [
     await page.getByRole('button', { name: 'All references', exact: true }).click()
     const add = page.getByRole('button', { name: 'Add', exact: true })
     await add.click()
-    await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
-    const lookup = page.getByRole('dialog', { name: 'Add from DOI or link' })
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
+    const lookup = page.getByRole('dialog', { name: 'Add from identifiers or links' })
     const lookupWidth = await lookup.evaluate((element) =>
       parseFloat(getComputedStyle(element).width)
     )

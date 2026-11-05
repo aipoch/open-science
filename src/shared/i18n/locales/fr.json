@@ -8086,8 +8086,7 @@
     "Find reference": "Rechercher une référence",
     "When identifiers match: {{policy}}": "Si les identifiants correspondent : {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Impossible de récupérer les informations bibliographiques. Vérifiez l’identifiant et réessayez, ou importez un PDF ou un fichier bibliographique.",
-    "Add from DOI or link": "Ajouter via un DOI ou un lien",
-    "DOI and arXiv links": "Liens DOI et arXiv",
+    "Add from identifiers or links": "Ajouter via des identifiants ou des liens",
     "Review reference details": "Vérifier les informations bibliographiques",
     "Versioned arXiv links use the latest metadata.": "Les liens arXiv avec un numéro de version utilisent les métadonnées les plus récentes.",
     "Retrieved via {{source}}.": "Informations obtenues via {{source}}.",
@@ -8138,6 +8137,11 @@
     "Discard retained changes for {{title}}": "Abandonner les modifications conservées pour {{title}}",
     "Discard retained changes…": "Abandonner les modifications conservées…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Abandonner les modifications conservées pour « {{title}} » et recharger la version enregistrée? Cette action est irréversible.",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Impossible de recharger la conversation enregistrée. Les modifications sont conservées. Veuillez réessayer."
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Impossible de recharger la conversation enregistrée. Les modifications sont conservées. Veuillez réessayer.",
+    "{{count}} questions awaiting your answer_one": "{{count}} question en attente de votre réponse",
+    "{{count}} questions awaiting your answer_many": "{{count}} questions en attente de votre réponse",
+    "{{count}} questions awaiting your answer_other": "{{count}} questions en attente de votre réponse",
+    "Collapse question panel": "Replier le panneau des questions",
+    "Expand question panel": "Déplier le panneau des questions"
   }
 }

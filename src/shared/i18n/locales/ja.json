@@ -7746,8 +7746,7 @@
     "Find reference": "文献を検索",
     "When identifiers match: {{policy}}": "識別子が一致する場合：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "文献情報を取得できませんでした。識別子を確認して再試行するか、PDF または文献ファイルをインポートしてください。",
-    "Add from DOI or link": "DOI またはリンクから追加",
-    "DOI and arXiv links": "DOI と arXiv のリンク",
+    "Add from identifiers or links": "識別子またはリンクから追加",
     "Review reference details": "文献情報を確認",
     "Versioned arXiv links use the latest metadata.": "バージョン付きの arXiv リンクでも最新のメタデータを使用します。",
     "Retrieved via {{source}}.": "{{source}} から取得しました。",
@@ -7798,6 +7797,9 @@
     "Discard retained changes for {{title}}": "{{title}} の保持された変更を破棄",
     "Discard retained changes…": "保持された変更を破棄…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "「{{title}}」の保持された変更を破棄し、保存済みのバージョンを再読み込みしますか？この操作は元に戻せません。",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "保存済みの会話を再読み込みできませんでした。変更は保持されています。もう一度お試しください。"
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "保存済みの会話を再読み込みできませんでした。変更は保持されています。もう一度お試しください。",
+    "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
+    "Collapse question panel": "質問パネルを折りたたむ",
+    "Expand question panel": "質問パネルを展開"
   }
 }

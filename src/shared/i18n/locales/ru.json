@@ -8232,8 +8232,7 @@
     "Find reference": "Найти публикацию",
     "When identifiers match: {{policy}}": "При совпадении идентификаторов: {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Не удалось получить сведения о публикации. Проверьте идентификатор и повторите попытку или импортируйте PDF либо файл библиографии.",
-    "Add from DOI or link": "Добавить по DOI или ссылке",
-    "DOI and arXiv links": "Ссылки DOI и arXiv",
+    "Add from identifiers or links": "Добавить по идентификаторам или ссылкам",
     "Review reference details": "Проверка сведений о публикации",
     "Versioned arXiv links use the latest metadata.": "Для ссылок arXiv с номером версии используются последние метаданные.",
     "Retrieved via {{source}}.": "Получено через {{source}}.",
@@ -8284,6 +8283,12 @@
     "Discard retained changes for {{title}}": "Отменить удерживаемые изменения диалога {{title}}",
     "Discard retained changes…": "Отменить удерживаемые изменения…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Отменить удерживаемые изменения диалога «{{title}}» и загрузить сохранённую версию? Это действие нельзя отменить.",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Не удалось загрузить сохранённый диалог. Удерживаемые изменения сохранены в памяти. Повторите попытку."
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Не удалось загрузить сохранённый диалог. Удерживаемые изменения сохранены в памяти. Повторите попытку.",
+    "{{count}} questions awaiting your answer_one": "{{count}} вопрос ожидает вашего ответа",
+    "{{count}} questions awaiting your answer_few": "{{count}} вопроса ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_many": "{{count}} вопросов ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_other": "{{count}} вопроса ожидают вашего ответа",
+    "Collapse question panel": "Свернуть панель вопросов",
+    "Expand question panel": "Развернуть панель вопросов"
   }
 }

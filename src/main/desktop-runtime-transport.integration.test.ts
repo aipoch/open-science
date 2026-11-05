@@ -1105,6 +1105,7 @@ it.each(['abort', 'disconnect', 'expiry'] as const)(
       disconnect: vi.fn(async () => {})
     }
     const lifetime = {
+      startFirstConnectionTimeout: vi.fn(),
       preservesService: () => false,
       snapshot: () => ({
         version: 1 as const,
@@ -1174,6 +1175,7 @@ it('passes an app-exit deadline even when the caller did not prepare an attempt'
   const generation = randomUUID()
   const snapshot = { version: 1 as const, generation, explicit: true, stopping: false, apps: 0 }
   const lifetime = {
+    startFirstConnectionTimeout: vi.fn(),
     preservesService: () => true,
     snapshot: () => snapshot,
     connect: vi.fn(),
@@ -1212,6 +1214,7 @@ it('passes an app-exit deadline even when the caller did not prepare an attempt'
 it('rolls back global desktop update preparation only when its controller disconnects', async () => {
   const generation = randomUUID()
   const lifetime = {
+    startFirstConnectionTimeout: vi.fn(),
     preservesService: () => true,
     snapshot: () => ({
       version: 1 as const,

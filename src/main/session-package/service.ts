@@ -3,7 +3,8 @@ import type { PackageLiteratureSource } from './literature-source'
 import {
   createLogger,
   diagnosticErrorFields,
-  startDiagnosticOperation
+  startDiagnosticOperation,
+  type DiagnosticOperation
 } from '@aipoch/diagnostics/node'
 import { defaultFileDurability, writeDurableJsonFile } from '@aipoch/durable-files'
 import type { PrismaClient } from '@prisma/client'
@@ -580,16 +581,35 @@ export class SessionPackageService {
     options: PackageSnapshotOptions
   ): Promise<SessionPackagePreview> {
     const request = sessionPackageRequestSchema.parse(rawRequest)
-    return withWorkingFileEvidenceRead(this.options.storageRoot, request.projectId, () =>
-      this.exportSnapshot(request, path, options)
-    )
+    // These internal phases are log evidence only, independent of the UI's coarse progress.
+    // Never include source paths, filenames, content or arbitrary exception messages.
+    const diagnostic = startDiagnosticOperation(createLogger('session-package'), {
+      operation: 'session-package.export-snapshot',
+      fields: { projectId: request.projectId, sessionId: request.sessionId }
+    })
+    diagnostic.phase('wait-for-evidence')
+    try {
+      const result = await withWorkingFileEvidenceRead(
+        this.options.storageRoot,
+        request.projectId,
+        () => this.exportSnapshot(request, path, options, diagnostic)
+      )
+      diagnostic.complete()
+      return result
+    } catch (error) {
+      if (this.signal.aborted) diagnostic.cancel()
+      else diagnostic.fail(error)
+      throw error
+    }
   }
 
   private async exportSnapshot(
     request: SessionPackageRequest,
     path: string,
-    options: PackageSnapshotOptions
+    options: PackageSnapshotOptions,
+    diagnostic: DiagnosticOperation
   ): Promise<SessionPackagePreview> {
+    diagnostic.phase('load-session')
     const sessions = new SessionRepository(this.configRoot)
     const loaded = await loadSessionMutationAuthority(
       sessions,
@@ -601,6 +621,7 @@ export class SessionPackageService {
     // Remove local selectors before collecting annotation file dependencies as well.
     const session = withoutPrivateAuthority(loaded.session)
     if (session.packageOrigin) {
+      diagnostic.phase('validate-retained-package')
       if (this.options.isSessionActive?.(request.projectId, request.sessionId))
         throw new Error('The Session is still active.')
       // Forward the retained source package, never relabel locally derived hashes as original.
@@ -651,6 +672,7 @@ export class SessionPackageService {
           )
       )
       const inheritedExclusions = packageReproducibilityExclusions(records)
+      diagnostic.phase('select-files')
       const selectable = selectablePackageFiles(records, notebooks).filter(
         (file) => !alreadyExcluded.has(file.storageKey)
       )
@@ -683,6 +705,7 @@ export class SessionPackageService {
         session.title
       )
       const excluded = new Set(selection.excludedStorageKeys)
+      diagnostic.phase('forward-content')
       if (!selection.includePdfNotes && !options.consumeSnapshot) delete records.pdfNotes
       filterPackagePdfNotes(records, new Set([...excluded, ...alreadyExcluded]))
       const forwardedRecordsJson = JSON.stringify(records)
@@ -783,8 +806,10 @@ export class SessionPackageService {
           await writePackageRoCrateMetadata(staging, forwarded, records, this.signal)
           await writeFile(join(staging, 'manifest.json'), JSON.stringify(forwarded))
           options.onProgress?.({ phase: 'validating' })
+          diagnostic.phase('validate-package')
           await validatePackageDirectory(staging, this.signal)
           await validatePackageRecords(staging, forwarded, records, this.signal)
+          diagnostic.phase('publish-snapshot')
           if (options.consumeSnapshot) await options.consumeSnapshot(staging)
           else {
             options.onProgress?.({ phase: 'compressing' })
@@ -797,6 +822,7 @@ export class SessionPackageService {
         () => rm(staging, { recursive: true, force: true })
       )
     }
+    diagnostic.phase('read-notebooks')
     const assertSettled = (): void => {
       assertSettledHistory(session)
       if (this.options.isSessionActive?.(request.projectId, request.sessionId))
@@ -814,6 +840,7 @@ export class SessionPackageService {
     }
     const notebookKeys = await readNotebookKeys()
     const notebooks = await readPackageNotebooks(this.options.storageRoot, notebookKeys)
+    diagnostic.phase('collect-records')
     const bookmarkTargets = options.consumeSnapshot
       ? await readSessionBookmarkTargets(client, request)
       : []
@@ -858,8 +885,10 @@ export class SessionPackageService {
       bookmarkLiteratureIds
     )
     const sourceKey = (key: string): string => literatureSources.get(key) ?? key
+    diagnostic.phase('collect-history')
     const history = await this.captureHistory(session)
     records.history = history
+    diagnostic.phase('collect-reproducibility')
     records.reproducibility = await capturePackageReproducibility(
       this.options.storageRoot,
       records,
@@ -878,6 +907,7 @@ export class SessionPackageService {
       ).values()
     ]
     const selectable = selectablePackageFiles(records, notebooks)
+    diagnostic.phase('collect-execution-evidence')
     const executionKeys = await executionEvidenceKeys(
       this.options.storageRoot,
       records,
@@ -893,6 +923,7 @@ export class SessionPackageService {
     )
     const retainedFiles: PackageSelectionSummary['retainedFiles'] = []
     const measuredContent = new Map<string, { checksum: string; sizeBytes: number }>()
+    diagnostic.phase('measure-content')
     for (const key of new Set([
       ...nativeStorageKeys(records),
       ...notebookKeys,
@@ -923,6 +954,7 @@ export class SessionPackageService {
       Buffer.byteLength(sessionJson) +
       Buffer.byteLength(recordsJson) +
       Buffer.byteLength(PACKAGE_README)
+    diagnostic.phase('select-files')
     const selection = await this.chooseFiles(
       options,
       markRequiredPackageFiles(records, selectable, [
@@ -943,6 +975,7 @@ export class SessionPackageService {
       ...selection.excludedStorageKeys,
       ...inheritedExclusions.map((file) => file.storageKey)
     ])
+    diagnostic.phase('prepare-content')
     if (selection.includePdfNotes) {
       records.pdfNotes = await capturePackagePdfNotes(client, records, excludedKeys)
       retainInheritedPdfNotes(records, inheritedPdfNotes, excludedKeys)
@@ -972,6 +1005,7 @@ export class SessionPackageService {
     )
     return withPackageCleanup(
       async () => {
+        diagnostic.phase('copy-content')
         if (!options.consumeSnapshot && !options.allowSensitiveContent)
           await assertShareable(records, this.signal, 'records.json')
         const totalBytes = metadataBytes
@@ -1166,6 +1200,7 @@ export class SessionPackageService {
         await writePackageRoCrateMetadata(directory, manifest, records, this.signal)
         await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
         options.onProgress?.({ phase: 'validating' })
+        diagnostic.phase('validate-package')
         await validatePackageRecords(directory, manifest, records, this.signal)
         assertSettled()
         if (JSON.stringify(await readNotebookKeys()) !== JSON.stringify(notebookKeys))
@@ -1224,6 +1259,7 @@ export class SessionPackageService {
           !isDeepStrictEqual(currentRecords, records)
         )
           throw new Error('The Session changed during export. Try again.')
+        diagnostic.phase('publish-snapshot')
         if (options.consumeSnapshot) await options.consumeSnapshot(directory)
         else {
           options.onProgress?.({ phase: 'compressing' })

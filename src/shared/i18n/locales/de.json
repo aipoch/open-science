@@ -7912,8 +7912,7 @@
     "Find reference": "Literatur suchen",
     "When identifiers match: {{policy}}": "Bei übereinstimmenden Kennungen: {{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "Die Literaturangaben konnten nicht abgerufen werden. Prüfen Sie die Kennung und versuchen Sie es erneut oder importieren Sie eine PDF- oder Bibliografiedatei.",
-    "Add from DOI or link": "Über DOI oder Link hinzufügen",
-    "DOI and arXiv links": "DOI- und arXiv-Links",
+    "Add from identifiers or links": "Über Kennungen oder Links hinzufügen",
     "Review reference details": "Bibliografische Angaben prüfen",
     "Versioned arXiv links use the latest metadata.": "arXiv-Links mit Versionsnummer verwenden die neuesten Metadaten.",
     "Retrieved via {{source}}.": "Über {{source}} abgerufen.",
@@ -7964,6 +7963,10 @@
     "Discard retained changes for {{title}}": "Aufbewahrte Änderungen für {{title}} verwerfen",
     "Discard retained changes…": "Aufbewahrte Änderungen verwerfen…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "Aufbewahrte Änderungen für „{{title}}“ verwerfen und die gespeicherte Version neu laden? Dies kann nicht rückgängig gemacht werden.",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Die gespeicherte Konversation konnte nicht neu geladen werden. Die Änderungen bleiben erhalten. Versuchen Sie es erneut."
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "Die gespeicherte Konversation konnte nicht neu geladen werden. Die Änderungen bleiben erhalten. Versuchen Sie es erneut.",
+    "{{count}} questions awaiting your answer_one": "{{count}} Frage wartet auf Ihre Antwort",
+    "{{count}} questions awaiting your answer_other": "{{count}} Fragen warten auf Ihre Antwort",
+    "Collapse question panel": "Fragebereich einklappen",
+    "Expand question panel": "Fragebereich ausklappen"
   }
 }

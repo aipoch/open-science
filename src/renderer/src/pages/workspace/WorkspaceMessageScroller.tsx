@@ -159,6 +159,7 @@ type WorkspaceMessageScrollerProps = {
   forkSourceContent?: ReactNode
   trailingContent?: ReactNode
   pendingElicitations?: PendingElicitationRequest[]
+  pendingElicitationControl?: { activityId: string; onReveal: () => void }
   // Events are read-only projections; retry sends an intent that main validates against its state.
   handoffLifecycleSource?: HandoffLifecycleEventSource
   onRetryHandoff?: (request: HandoffRetryRequest) => Promise<void>
@@ -553,6 +554,7 @@ const WorkspaceMessageScrollerImpl = ({
   forkSourceContent,
   trailingContent,
   pendingElicitations = [],
+  pendingElicitationControl,
   handoffLifecycleSource,
   onRetryHandoff,
   reportPresentationRevealing = false,
@@ -2197,6 +2199,11 @@ const WorkspaceMessageScrollerImpl = ({
                             key={elicitationRequest?.requestId ?? item.activity.id}
                             elicitation={item.activity.elicitation}
                             request={elicitationRequest}
+                            onReveal={
+                              pendingElicitationControl?.activityId === item.activity.id
+                                ? pendingElicitationControl.onReveal
+                                : undefined
+                            }
                             variant={
                               item.activity.elicitation.state === 'pending'
                                 ? 'pending-placeholder'

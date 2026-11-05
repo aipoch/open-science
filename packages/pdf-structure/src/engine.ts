@@ -21,7 +21,7 @@ export const createEngineAt = (
         .update(JSON.stringify(options.modelRecipe))
       const require = createRequire(pathToFileURL(join(resources, 'host.mjs')))
       hash.update(JSON.stringify(sharp.versions))
-      for (const dependency of ['pdfjs-dist', '@napi-rs/canvas']) {
+      for (const dependency of ['pdfjs-dist', '@napi-rs/canvas', 'tesseract.js']) {
         hash
           .update(dependency)
           .update(await readFile(require.resolve(`${dependency}/package.json`)))
@@ -106,7 +106,8 @@ export const createEngineAt = (
           output,
           assets: dirname(runtime.path),
           runtime: runtime.path,
-          pages: request.identity.requestedPages
+          pages: request.identity.requestedPages,
+          ...(request.ocr ? { ocr: request.ocr } : {})
         }) + '\n'
       )
       if (request.signal.aborted) abort()

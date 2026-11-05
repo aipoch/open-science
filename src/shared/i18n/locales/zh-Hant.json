@@ -7746,8 +7746,7 @@
     "Find reference": "尋找文獻",
     "When identifiers match: {{policy}}": "識別碼相同時：{{policy}}",
     "Reference details could not be retrieved. Check the identifier and try again, or import a PDF or bibliography file.": "無法取得文獻資訊。請檢查識別碼並重試，或匯入 PDF 或參考文獻檔案。",
-    "Add from DOI or link": "透過 DOI 或連結新增",
-    "DOI and arXiv links": "DOI 與 arXiv 連結",
+    "Add from identifiers or links": "透過識別碼或連結新增",
     "Review reference details": "核對文獻資訊",
     "Versioned arXiv links use the latest metadata.": "含版本號的 arXiv 連結使用最新的中繼資料。",
     "Retrieved via {{source}}.": "已透過 {{source}} 取得文獻資訊。",
@@ -7798,6 +7797,9 @@
     "Discard retained changes for {{title}}": "捨棄 {{title}} 的保留變更",
     "Discard retained changes…": "捨棄保留的變更…",
     "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "要捨棄「{{title}}」的保留變更並重新載入已儲存的版本嗎？此操作無法復原。",
-    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "無法重新載入已儲存的對話。保留的變更仍在，請重試。"
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "無法重新載入已儲存的對話。保留的變更仍在，請重試。",
+    "{{count}} questions awaiting your answer_other": "有 {{count}} 個問題待回答",
+    "Collapse question panel": "收合問題面板",
+    "Expand question panel": "展開問題面板"
   }
 }

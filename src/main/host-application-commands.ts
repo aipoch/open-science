@@ -180,12 +180,12 @@ const logsCommands = Object.freeze({
   getStatus: defineApplicationCommand<'logs:get-status', readonly [], LogFileStatus>(
     'logs:get-status'
   ),
-  openFile: defineApplicationCommand<'logs:open-file', readonly [], OpenLogFileResult>(
+  openFile: defineApplicationCommand<'logs:open-file', readonly [name?: string], OpenLogFileResult>(
     'logs:open-file'
   ),
   revealInFolder: defineApplicationCommand<
     'logs:reveal-in-folder',
-    readonly [],
+    readonly [name?: string],
     RevealLogFileResult
   >('logs:reveal-in-folder')
 })
@@ -715,11 +715,11 @@ const registerHostApplicationCommands = (
     scope.registerGroup(hostApplicationCommandGroups[3], {
       'logs:get-status': ({ callerContext }) =>
         localCommand(callerContext, 'logs:get-status', () => dependencies.logs.getStatus()),
-      'logs:open-file': ({ callerContext }) =>
-        localCommand(callerContext, 'logs:open-file', () => dependencies.logs.openFile()),
-      'logs:reveal-in-folder': ({ callerContext }) =>
+      'logs:open-file': ({ callerContext, args }) =>
+        localCommand(callerContext, 'logs:open-file', () => dependencies.logs.openFile(args[0])),
+      'logs:reveal-in-folder': ({ callerContext, args }) =>
         localCommand(callerContext, 'logs:reveal-in-folder', () =>
-          dependencies.logs.revealInFolder()
+          dependencies.logs.revealInFolder(args[0])
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
