@@ -2,6 +2,7 @@ import { applyCachedPdfTableSources } from './table-source.js'
 import { applyCachedPdfFigureSources } from './figure-source.js'
 import { createPdfTranslationSource } from './source.js'
 import { structureRegionContains } from './structure-regions.js'
+import { carryNativeCaptionEligibility } from './caption-eligibility.js'
 import type { PdfTranslationExtraction } from './extraction.js'
 
 /** Prepare cached structure, or project safe crops onto an existing translation snapshot. */
@@ -65,13 +66,16 @@ export async function applyCachedPdfStructureSources(
     retainedUnitIds: Object.freeze(retainedUnitIds),
     extraction: Object.freeze({
       ...original,
-      source: createPdfTranslationSource({
-        ...original.source,
-        originalRegions: [...originalRegions, ...additionalRegions],
-        units: original.source.units.map((unit) =>
-          retained.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
-        )
-      })
+      source: carryNativeCaptionEligibility(
+        original.source,
+        createPdfTranslationSource({
+          ...original.source,
+          originalRegions: [...originalRegions, ...additionalRegions],
+          units: original.source.units.map((unit) =>
+            retained.has(unit.id) ? { ...unit, sourceOnly: true as const } : unit
+          )
+        })
+      )
     })
   }
 }

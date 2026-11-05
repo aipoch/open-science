@@ -6,7 +6,13 @@ import { createPdfTranslationSource, type PdfTranslationFragment } from './sourc
 import type { PdfTranslationSourceIdentity } from './table-source.js'
 import { verifiedPdfStructureRegions } from './structure-regions.js'
 import { nativeLabelRegion } from './native-source-geometry.js'
-import { retainPdfWholeRegionSources } from './whole-region-retention.js'
+import {
+  retainPdfWholeRegionSources,
+  isCurrentCaptionedMathBodyRetention
+} from './whole-region-retention.js'
+import { restoreReferenceFigureCaptions } from './reference-figure-caption.js'
+import { carryNativeCaptionEligibility } from './caption-eligibility.js'
+import { restoreNativeOrdinaryAppendixProse } from './wrapped-section-prose.js'
 
 type Rect = PdfTranslationFragment['rect']
 type Matrix = readonly number[]
@@ -287,15 +293,18 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
   if (!preserved.size && !originalRegions.length) return extraction
   return Object.freeze({
     ...extraction,
-    source: createPdfTranslationSource({
-      ...source,
-      originalRegions,
-      units: source.units.map((unit) =>
-        preserved.has(unit.id)
-          ? { ...unit, ...(skipTranslation ? { sourceOnly: true as const } : {}), figure: true }
-          : unit
-      )
-    })
+    source: carryNativeCaptionEligibility(
+      source,
+      createPdfTranslationSource({
+        ...source,
+        originalRegions,
+        units: source.units.map((unit) =>
+          preserved.has(unit.id)
+            ? { ...unit, ...(skipTranslation ? { sourceOnly: true as const } : {}), figure: true }
+            : unit
+        )
+      })
+    )
   })
 }
 
@@ -406,6 +415,7 @@ export async function applyCachedPdfFigureSources({
               issue.code !== 'native-raster-composite-grid' &&
               issue.code !== 'native-raster-side-by-side' &&
               issue.code !== 'native-raster-quad' &&
+              issue.code !== 'native-vector-bar-chart' &&
               issue.code !== 'native-raster-horizontal-array' &&
               issue.code !== 'native-disjoint-mixed-group'
           )
@@ -514,17 +524,20 @@ export async function applyCachedPdfFigureSources({
       return changed || originalRegions.length
         ? Object.freeze({
             ...extraction,
-            source: createPdfTranslationSource({
-              ...source,
-              units,
-              ...(originalRegions.length
-                ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
-                : {})
-            })
+            source: carryNativeCaptionEligibility(
+              source,
+              createPdfTranslationSource({
+                ...source,
+                units,
+                ...(originalRegions.length
+                  ? { originalRegions: [...(source.originalRegions ?? []), ...originalRegions] }
+                  : {})
+              })
+            )
           })
         : extraction
     })()
-    return retainPdfWholeRegionSources({
+    const retained = await retainPdfWholeRegionSources({
       extraction: figureExtraction,
       document,
       results,
@@ -532,6 +545,25 @@ export async function applyCachedPdfFigureSources({
       nativeDocumentFactory,
       signal
     })
+    const restored = await restoreReferenceFigureCaptions({
+      extraction: retained,
+      document,
+      results,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    const ordinary = await restoreNativeOrdinaryAppendixProse({
+      extraction: restored,
+      document,
+      sourceIdentity: identity,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    return ordinary
   } catch {
     signal.throwIfAborted()
     return extraction

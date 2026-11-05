@@ -88,6 +88,8 @@ beforeAll(async () => {
     import('./ConnectorImportView'),
     import('./ConnectorsPanel'),
     import('./GeneralPanel'),
+    import('./AppearancePanel'),
+    import('./NotificationsPanel'),
     import('./MemoryPanel'),
     import('./NetworkPanel'),
     import('./PermissionsPanel'),
@@ -1370,7 +1372,8 @@ describe('SettingsPage layout', () => {
 
     // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
     // Connections (Connectors, Network, Remote, Credentials), Workspace (Tags, Permissions,
-    // Runtimes, Storage, Compute, Usage, Archived) and System (General). Feedback remains a
+    // Runtimes, Storage, Compute, Usage, Archived) and System (General, Appearance, Notifications).
+    // Feedback remains a
     // separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
     expect(nav).not.toBeNull()
@@ -1390,24 +1393,26 @@ describe('SettingsPage layout', () => {
     expect(nav?.textContent).toContain('System')
     expect(nav?.textContent).not.toContain('Remote access')
     const navItems = navScroll?.querySelectorAll('li') ?? []
-    expect(navItems).toHaveLength(17)
+    expect(navItems).toHaveLength(19)
     expect(navItems[0]?.textContent).toContain('General')
-    expect(navItems[1]?.textContent).toContain('Model')
-    expect(navItems[2]?.textContent).toContain('Agent')
-    expect(navItems[3]?.textContent).toContain('Skills')
-    expect(navItems[4]?.textContent).toContain('Specialists')
-    expect(navItems[5]?.textContent).toContain('Memory')
-    expect(navItems[6]?.textContent).toContain('Connectors')
-    expect(navItems[7]?.textContent).toContain('Network')
-    expect(navItems[8]?.textContent).toContain('Remote')
-    expect(navItems[9]?.textContent).toContain('Credentials')
-    expect(navItems[10]?.textContent).toContain('Tags')
-    expect(navItems[11]?.textContent).toContain('Permissions')
-    expect(navItems[12]?.textContent).toContain('Runtimes')
-    expect(navItems[13]?.textContent).toContain('Storage')
-    expect(navItems[14]?.textContent).toContain('Compute')
-    expect(navItems[15]?.textContent).toContain('Usage')
-    expect(navItems[16]?.textContent).toContain('Archived')
+    expect(navItems[1]?.textContent).toContain('Appearance')
+    expect(navItems[2]?.textContent).toContain('Notifications')
+    expect(navItems[3]?.textContent).toContain('Model')
+    expect(navItems[4]?.textContent).toContain('Agent')
+    expect(navItems[5]?.textContent).toContain('Skills')
+    expect(navItems[6]?.textContent).toContain('Specialists')
+    expect(navItems[7]?.textContent).toContain('Memory')
+    expect(navItems[8]?.textContent).toContain('Connectors')
+    expect(navItems[9]?.textContent).toContain('Network')
+    expect(navItems[10]?.textContent).toContain('Remote')
+    expect(navItems[11]?.textContent).toContain('Credentials')
+    expect(navItems[12]?.textContent).toContain('Tags')
+    expect(navItems[13]?.textContent).toContain('Permissions')
+    expect(navItems[14]?.textContent).toContain('Runtimes')
+    expect(navItems[15]?.textContent).toContain('Storage')
+    expect(navItems[16]?.textContent).toContain('Compute')
+    expect(navItems[17]?.textContent).toContain('Usage')
+    expect(navItems[18]?.textContent).toContain('Archived')
     expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
@@ -1418,7 +1423,7 @@ describe('SettingsPage layout', () => {
     expect(agentNavButton?.className).toContain('text-sm')
     expect(agentNavButton?.parentElement?.tagName).toBe('LI')
     expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('General')
-    expect(document.body.querySelector('[aria-label="Theme"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-settings-anchor="general.about"]')).not.toBeNull()
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
 
     // The header shows the panel title and a close control.
@@ -2637,8 +2642,9 @@ describe('SettingsPage layout', () => {
       generalTab?.click()
     })
 
-    // Appearance, AppVersion, Notifications, App icon, Diagnostics, Command line tool, Community.
-    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(7)
+    // Window behavior, diagnostics, and command line tool; app information and community use
+    // direct resource layouts.
+    expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
     // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.

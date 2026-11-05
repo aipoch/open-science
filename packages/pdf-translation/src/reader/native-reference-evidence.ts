@@ -1,4 +1,376 @@
-import type { PDFPageProxy } from 'pdfjs-dist'
+import type { PDFPageProxy, PDFDocumentProxy } from 'pdfjs-dist'
+import type { PdfLayoutPage } from './layout.js'
+
+type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
+const referenceRolePages = new WeakMap<
+  PdfLayoutPage,
+  {
+    resolve: (indices: readonly number[]) => object | undefined
+    checks: (() => boolean)[]
+    unreliable: Set<string>
+    rowClosed: (indices: readonly number[]) => boolean
+  }
+>()
+const referenceRoleFonts = new WeakMap<object, () => boolean>()
+
+/** Native item/font identity for reference roles only; never a paint witness. */
+export async function bindNativeReferenceRolePage(
+  raw: PdfLayoutPage,
+  page: PDFPageProxy,
+  content: Content,
+  document: Pick<PDFDocumentProxy, 'fingerprints' | 'numPages'>,
+  signal: AbortSignal,
+  unreliable: Set<string>,
+  viewport = page.getViewport({ scale: 1 })
+): Promise<void> {
+  if (!content.items.some((item) => 'str' in item && /^\[\d{1,4}\]$/u.test(item.str))) return
+  let endTextAtEOF = false
+  let eofCurrent = (): boolean => false
+  try {
+    const { OPS, normalizeUnicode } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      operators = await page.getOperatorList(),
+      last = content.items.findLast((item) => 'str' in item && item.str.trim())
+    if (
+      last &&
+      'str' in last &&
+      operators.fnArray.length <= 100000 &&
+      operators.fnArray.length === operators.argsArray.length &&
+      'lastChunk' in operators &&
+      operators.lastChunk === true
+    ) {
+      const show = operators.fnArray.lastIndexOf(OPS.showText),
+        fontAt = operators.fnArray.findLastIndex((op, i) => i < show && op === OPS.setFont),
+        literal = (operators.argsArray[show]?.[0] ?? [])
+          .filter((g: unknown) => !!g && typeof g === 'object')
+          .map((g: { unicode?: string }) => g.unicode ?? '\uFFFD')
+          .join(''),
+        compact = (s: string): string => normalizeUnicode(s).normalize('NFD').replace(/\s/gu, '')
+      endTextAtEOF =
+        show >= 0 &&
+        fontAt >= 0 &&
+        operators.argsArray[fontAt]?.[0] === last.fontName &&
+        compact(literal).endsWith(compact(last.str)) &&
+        operators.fnArray.slice(show + 1).includes(OPS.endText) &&
+        !operators.fnArray
+          .slice(show + 1)
+          .some((op) =>
+            [
+              OPS.beginText,
+              OPS.showSpacedText,
+              OPS.nextLineShowText,
+              OPS.nextLineSetSpacingShowText
+            ].includes(op)
+          )
+      if (endTextAtEOF) {
+        const fn = operators.fnArray,
+          args = operators.argsArray,
+          getOperators = page.getOperatorList,
+          showArgs = args[show],
+          fontArgs = args[fontAt],
+          count = fn.length,
+          tail = JSON.stringify([
+            fn[fontAt],
+            fontArgs,
+            fn[show],
+            showArgs,
+            fn.slice(show + 1),
+            args.slice(show + 1)
+          ])
+        eofCurrent = () =>
+          page.getOperatorList === getOperators &&
+          operators.fnArray === fn &&
+          operators.argsArray === args &&
+          fn.length === count &&
+          args.length === count &&
+          args[show] === showArgs &&
+          args[fontAt] === fontArgs &&
+          operators.lastChunk === true &&
+          JSON.stringify([
+            fn[fontAt],
+            args[fontAt],
+            fn[show],
+            args[show],
+            fn.slice(show + 1),
+            args.slice(show + 1)
+          ]) === tail
+      }
+    }
+  } catch {
+    /* Optional role evidence; keep the old reader path. */
+  }
+  const nativeItems = content.items,
+    rawItems = raw.items,
+    styles = content.styles,
+    commonObjsAtBinding = page.commonObjs,
+    getFontAtBinding = page.commonObjs?.get,
+    originalFonts = new Map<string, unknown>(),
+    viewportTransform = viewport.transform,
+    viewportValue = JSON.stringify([
+      viewport.width,
+      viewport.height,
+      viewport.rotation,
+      viewport.scale,
+      viewport.transform
+    ]),
+    fingerprints = document.fingerprints,
+    fingerprint = fingerprints[0],
+    pageCount = document.numPages,
+    geometry = [raw.page, raw.width, raw.height, raw.rotation],
+    folioEvidence = raw.nativeFolioFontEvidence,
+    folioValues = JSON.stringify(folioEvidence),
+    nativeRefs = [...nativeItems],
+    rawRefs = [...rawItems],
+    nativeTransforms = nativeRefs.map((item) => ('transform' in item ? item.transform : undefined)),
+    rawTransforms = rawRefs.map((item) => item.transform),
+    nativeValues = JSON.stringify(nativeItems),
+    rawValues = JSON.stringify(rawItems),
+    checks: (() => boolean)[] = []
+  for (const item of nativeItems)
+    if ('str' in item && item.str.trim() && !originalFonts.has(item.fontName)) {
+      try {
+        originalFonts.set(item.fontName, commonObjsAtBinding.get(item.fontName))
+      } catch {
+        originalFonts.set(item.fontName, undefined)
+      }
+    }
+  const current = (): boolean =>
+    !signal.aborted &&
+    !!fingerprint &&
+    document.fingerprints === fingerprints &&
+    document.fingerprints[0] === fingerprint &&
+    document.numPages === pageCount &&
+    geometry.every((value, i) => value === [raw.page, raw.width, raw.height, raw.rotation][i]) &&
+    page.pageNumber === raw.page &&
+    content.items === nativeItems &&
+    content.styles === styles &&
+    page.commonObjs === commonObjsAtBinding &&
+    page.commonObjs.get === getFontAtBinding &&
+    viewport.transform === viewportTransform &&
+    JSON.stringify([
+      viewport.width,
+      viewport.height,
+      viewport.rotation,
+      viewport.scale,
+      viewport.transform
+    ]) === viewportValue &&
+    raw.items === rawItems &&
+    nativeItems.length === nativeRefs.length &&
+    rawItems.length === rawRefs.length &&
+    raw.nativeFolioFontEvidence === folioEvidence &&
+    JSON.stringify(folioEvidence) === folioValues &&
+    nativeItems.every(
+      (item, i) =>
+        item === nativeRefs[i] && (!('transform' in item) || item.transform === nativeTransforms[i])
+    ) &&
+    rawItems.every((item, i) => item === rawRefs[i] && item.transform === rawTransforms[i]) &&
+    JSON.stringify(nativeItems) === nativeValues &&
+    JSON.stringify(rawItems) === rawValues
+  referenceRolePages.set(raw, {
+    checks,
+    unreliable,
+    rowClosed(indices) {
+      if (
+        !current() ||
+        !indices.length ||
+        indices.some(
+          (index, n) =>
+            !nativeItems[index] ||
+            !('str' in nativeItems[index]) ||
+            (n > 0 && index <= indices[n - 1])
+        )
+      )
+        return false
+      const last = indices.at(-1)!,
+        next = nativeItems.findIndex((item, i) => i > last && 'str' in item && item.str.trim()),
+        item = nativeItems[last]
+      if (
+        !('str' in item) ||
+        !indices.slice(0, -1).every((index) => {
+          const part = nativeItems[index]
+          return 'str' in part && part.hasEOL === false
+        })
+      )
+        return false
+      if (
+        item.hasEOL === true ||
+        nativeItems
+          .slice(last + 1, next < 0 ? undefined : next)
+          .some((item) => 'str' in item && !item.str.trim() && item.hasEOL === true)
+      )
+        return true
+      if (next < 0 && endTextAtEOF && eofCurrent()) {
+        checks.push(eofCurrent)
+        return true
+      }
+      return false
+    },
+    resolve(indices) {
+      if (
+        !current() ||
+        !indices.length ||
+        indices.length > 10000 ||
+        new Set(indices).size !== indices.length ||
+        nativeItems.length !== rawItems.length
+      )
+        return
+      const selected = indices.map((index) => nativeItems[index])
+      if (
+        selected.some((item, n) => {
+          const rawItem = rawItems[indices[n]]
+          if (
+            !item ||
+            !('str' in item) ||
+            !rawItem ||
+            item.str !== rawItem.str ||
+            item.fontName !== rawItem.fontName ||
+            item.dir !== rawItem.dir ||
+            item.hasEOL !== rawItem.hasEOL ||
+            unreliable.has(`${raw.page}:${indices[n]}`)
+          )
+            return true
+          const [a, b, c, d, x, y] = item.transform,
+            [ma, mb, mc, md, mx, my] = viewport.transform,
+            scale = Math.hypot(ma, mb),
+            transform = [
+              ma * a + mc * b,
+              -(mb * a + md * b),
+              ma * c + mc * d,
+              -(mb * c + md * d),
+              ma * x + mc * y + mx,
+              viewport.height - (mb * x + md * y + my)
+            ],
+            style = styles[item.fontName]
+          return (
+            item.width * scale !== rawItem.width ||
+            item.height * scale !== rawItem.height ||
+            transform.some((v, i) => v !== rawItem.transform[i]) ||
+            rawItem.fontAscent !== style?.ascent ||
+            rawItem.fontDescent !== style?.descent ||
+            rawItem.fontVertical !== style?.vertical
+          )
+        })
+      )
+        return
+      const witness = nativeReferenceFontWitnesses(page, { ...content, items: selected })
+      if (!witness) return
+      const commonObjs = page.commonObjs,
+        fonts = Object.keys(witness).map((name) => {
+          const font = commonObjs.get(name),
+            style = styles[name],
+            keys = [
+              'missingFile',
+              'isType3Font',
+              'isInvalidPDFjsFont',
+              'systemFontInfo',
+              'vertical',
+              'ascent',
+              'descent'
+            ],
+            values = keys.map((key) => font[key]),
+            prototype = Object.getPrototypeOf(font),
+            slots = keys.map((key) => {
+              let owner = font
+              while (owner && !Object.hasOwn(owner, key)) owner = Object.getPrototypeOf(owner)
+              return {
+                key,
+                owner,
+                descriptor: owner && Object.getOwnPropertyDescriptor(owner, key)
+              }
+            }),
+            unicode = font.toUnicode,
+            map = unicode?._map,
+            mapKeys = map && typeof map === 'object' ? Object.keys(map) : [],
+            mapValues = mapKeys.map((key) => map[key])
+          return () =>
+            page.commonObjs === commonObjs &&
+            commonObjs.get(name) === font &&
+            font === originalFonts.get(name) &&
+            Object.getPrototypeOf(font) === prototype &&
+            styles[name] === style &&
+            font.toUnicode === unicode &&
+            unicode?._map === map &&
+            (!map ||
+              (Object.keys(map).length === mapKeys.length &&
+                mapKeys.every((key, i) => Object.hasOwn(map, key) && map[key] === mapValues[i]))) &&
+            keys.every((key, i) => Object.is(font[key], values[i])) &&
+            style.ascent === witness[name].ascent &&
+            style.descent === witness[name].descent &&
+            style.vertical === false &&
+            slots.every(({ key, owner, descriptor }) => {
+              let next = font
+              while (next && !Object.hasOwn(next, key)) next = Object.getPrototypeOf(next)
+              const now = next && Object.getOwnPropertyDescriptor(next, key)
+              return (
+                next === owner &&
+                !!now &&
+                !!descriptor &&
+                now.get === descriptor.get &&
+                now.set === descriptor.set &&
+                now.value === descriptor.value &&
+                now.writable === descriptor.writable &&
+                now.enumerable === descriptor.enumerable &&
+                now.configurable === descriptor.configurable
+              )
+            })
+        })
+      const stillCurrent = (): boolean =>
+        current() &&
+        fonts.every((check) => check()) &&
+        indices.every((index) => !unreliable.has(`${raw.page}:${index}`))
+      if (!stillCurrent()) return
+      const token = Object.freeze({})
+      referenceRoleFonts.set(token, stillCurrent)
+      checks.push(stillCurrent)
+      return token
+    }
+  })
+}
+
+export function nativeReferenceRolePageFonts(
+  raw: PdfLayoutPage,
+  indices: readonly number[]
+): object | undefined {
+  try {
+    return referenceRolePages.get(raw)?.resolve(indices)
+  } catch {
+    return
+  }
+}
+
+export function nativeReferenceRoleRowClosed(
+  raw: PdfLayoutPage,
+  indices: readonly number[]
+): boolean {
+  try {
+    return referenceRolePages.get(raw)?.rowClosed(indices) === true
+  } catch {
+    return false
+  }
+}
+
+export function nativeReferenceRoleFontsCurrent(token: object): boolean {
+  try {
+    return referenceRoleFonts.get(token)?.() === true
+  } catch {
+    return false
+  }
+}
+
+export function nativeReferenceRolePagesCurrent(
+  pages: readonly PdfLayoutPage[],
+  unreliable: Set<string>
+): boolean {
+  try {
+    return pages.every((page) => {
+      const binding = referenceRolePages.get(page)
+      return (
+        !binding || (binding.unreliable === unreliable && binding.checks.every((check) => check()))
+      )
+    })
+  } catch {
+    return false
+  }
+}
 
 export type NativeReferenceFontWitness = {
   ascent: number
@@ -153,6 +525,7 @@ async function readNativeLinearRuleEvidence(
       OPS.beginText,
       OPS.endText,
       OPS.moveText,
+      OPS.nextLine,
       OPS.setTextMatrix,
       OPS.setFont,
       OPS.showText,
@@ -295,5 +668,37 @@ async function readNativeLinearRuleEvidence(
     return { complete: true, rules: merged, fonts }
   } catch {
     return fail('native-evidence-unavailable')
+  }
+}
+
+/** Request the existing whole-page font/opaque-rule proof only for appendix
+ * table Notes. No model grid, caption rectangle or partial font packet is used. */
+export async function readNativeTableNoteEvidence(
+  page: PDFPageProxy,
+  content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
+  unreliable: ReadonlySet<number>
+): Promise<NativeReferenceEvidence> {
+  const items = content.items.filter((i) => 'str' in i && i.str.trim())
+  if (
+    unreliable.size ||
+    !('str' in (items[0] ?? {})) ||
+    !/^Table [A-Z]\.[1-9]\d*:/u.test((items[0] as { str: string }).str) ||
+    !items.some((i) => 'str' in i && i.str === 'Note')
+  )
+    return { complete: false, reason: 'no-reliable-native-table-note' }
+  try {
+    const { OPS } = await import('pdfjs-dist/legacy/build/pdf.mjs'),
+      operators = await page.getOperatorList()
+    if (
+      operators.fnArray.some(
+        (op, n) =>
+          (op === OPS.constructPath && operators.argsArray[n]?.[0] !== OPS.stroke) ||
+          (op === OPS.setFillRGBColor && operators.argsArray[n]?.[0] === '#ffffff')
+      )
+    )
+      return { complete: false, reason: 'occluded-table-note' }
+    return readNativeLinearRuleEvidence(page, content)
+  } catch {
+    return { complete: false, reason: 'native-evidence-unavailable' }
   }
 }

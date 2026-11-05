@@ -305,6 +305,43 @@ const skippedOutlineArray = (): ReturnType<typeof anonymousScriptedArray> => {
   )
   return f
 }
+it.each(['\t', '\u2009'])(
+  'keeps a renderer-skipped native whitespace advance without rewriting Source: %j',
+  (unicode) => {
+    for (const fault of [
+      'complete',
+      'missing-unicode',
+      'different-whitespace',
+      'wrong-operation',
+      'painted'
+    ]) {
+      const { args: a } = skippedOutlineArray(),
+        sourceBefore = JSON.stringify(a[6].content)
+      for (const proof of a[6].skippedSpaceGlyphs) {
+        const glyph = a[6].operators.argsArray[proof.operationIndex][0][proof.glyphIndex]
+        glyph.unicode = unicode
+        glyph.isSpace = false
+        proof.unicode = unicode
+        proof.isSpace = false
+      }
+      const first = a[6].skippedSpaceGlyphs[0],
+        glyph = a[6].operators.argsArray[first.operationIndex][0][first.glyphIndex]
+      if (fault === 'missing-unicode') delete first.unicode
+      if (fault === 'different-whitespace') glyph.unicode = unicode === '\t' ? '\u2009' : '\t'
+      if (fault === 'wrong-operation') first.operationIndex++
+      if (fault === 'painted') glyph.isInFont = true
+      const packet = nativePageTextPacketInventory(a[0], a[5], a[6], true)
+      if (fault === 'complete') {
+        expect(packet).toBeDefined()
+        const blanks = packet.glyphs.filter((g: { rendererSkipped?: boolean }) => g.rendererSkipped)
+        expect(blanks).toHaveLength(a[6].skippedSpaceGlyphs.length)
+        expect(blanks.every((g: { text: string }) => g.text === unicode)).toBe(true)
+      } else expect(packet).toBeUndefined()
+      expect(JSON.stringify(a[6].content)).toBe(sourceBefore)
+      expect(nativePageTextPacketInventory(a[0], a[5], a[6])).toBeUndefined()
+    }
+  }
+)
 it('keeps each proved skipped space advance while another identical font character still paints', () => {
   const { args: a } = skippedOutlineArray(),
     o = a[6].operators
@@ -690,3 +727,380 @@ it('still binds the full raw glyph stream when an external token has already bee
   expect(result.records.at(-1).r.str).toBe('C')
   expect(JSON.stringify(a)).toBe(before)
 })
+
+const {
+  createNativeFooterCaptionMetadata,
+  nativeFooterCaptionMetadataData,
+  nativeWholeCellInkPacket
+} = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
+)
+
+// A mismatched foreign body literal is never used to claim a footer or a cell.
+type FooterSourceIdentity = { pageNumber: number; index: number; text: string }
+const anonymousFooterMetadata = (): ReturnType<typeof nativeSpacingFixture> & {
+  notes: FooterSourceIdentity[]
+  captions: FooterSourceIdentity[]
+} => {
+  const fnArray: number[] = [],
+    argsArray: unknown[] = [],
+    items: Array<{
+      str: string
+      width: number
+      height: number
+      dir: string
+      transform: number[]
+      fontName: string
+      sourceItem: { pageNumber: number; index: number; text: string }
+    }> = []
+  const add = (op: number, args: unknown = null): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const viewport = {
+    width: 500,
+    height: 300,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 300],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, 300 - y]
+  }
+  const text = (literal: string, painted: string, x: number, y: number): void => {
+    items.push({
+      str: literal,
+      width: painted.length * 5,
+      height: 10,
+      dir: 'ltr',
+      transform: [10, 0, 0, 10, x, y],
+      fontName: 'F',
+      sourceItem: { pageNumber: 1, index: items.length, text: literal }
+    })
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, y]])
+    add(OPS.showText, [
+      Array.from(painted, (c) => ({
+        unicode: c,
+        fontChar: c,
+        width: 500,
+        isSpace: c === ' ',
+        isInFont: true,
+        accent: null
+      }))
+    ])
+  }
+  add(OPS.beginText)
+  add(OPS.setFont, ['F', 10])
+  text('N', '2', 20, 250)
+  text('Notes:', 'Notes:', 20, 100)
+  text('Values remain fixed.', 'Values remain fixed.', 55, 100)
+  text('Table 2: Groups', 'Table 2: Groups', 215, 70)
+  add(OPS.endText)
+  const chars = [...new Set('N2Notes:Values remain fixed.Table 2: Groups')],
+    graphicsBounds: unknown[] = [],
+    page = { pageNumber: 1, width: 500, height: 300, invalidGraphicsBounds: 0, graphicsBounds },
+    context = {
+      operators: { fnArray, argsArray },
+      viewport,
+      content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+      graphicsBounds,
+      glyphBounds: [
+        {
+          fontName: 'F',
+          glyphs: chars.map((fontChar) => ({
+            fontChar,
+            bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, -0.1, 0.5, 0.7]
+          }))
+        }
+      ],
+      pageNumber: 1,
+      sourceSha256: 'a'.repeat(64)
+    },
+    tokens = items.map((i) => tableTextToken(i, viewport, 0)),
+    notes = [items[1].sourceItem, items[2].sourceItem],
+    captions = [items[3].sourceItem]
+  return { page, tokens, context, notes, captions }
+}
+const footerData = (
+  f: ReturnType<typeof anonymousFooterMetadata>,
+  handle: unknown
+): ReturnType<typeof nativeFooterCaptionMetadataData> =>
+  nativeFooterCaptionMetadataData(handle, f.page, f.tokens, f.context, f.notes, f.captions)
+const proveFooterMetadata = (
+  f: ReturnType<typeof anonymousFooterMetadata>
+): ReturnType<typeof createNativeFooterCaptionMetadata> =>
+  createNativeFooterCaptionMetadata(f.page, f.tokens, f.context, f.notes, f.captions)
+it('seals local footer metadata without completing an unrelated foreign Source or cell', () => {
+  const f = anonymousFooterMetadata(),
+    before = JSON.stringify(f),
+    handle = proveFooterMetadata(f),
+    data = footerData(f, handle)
+  expect(data?.ownedRecords.map((r: { sourceText: string }) => r.sourceText)).toEqual([
+    'Notes:',
+    'Values remain fixed.',
+    'Table 2: Groups'
+  ])
+  expect(data.foreignNativePaint.glyphBounds.some((g: { text: string }) => g.text === '2')).toBe(
+    true
+  )
+  expect(data).not.toHaveProperty('records')
+  expect(data).not.toHaveProperty('glyphs')
+  expect(data).not.toHaveProperty('evidence')
+  expect(nativePageTextPacketInventory(f.page, f.tokens, f.context, true)).toBeUndefined()
+  expect(nativeWholeCellInkPacket(f.page, f.tokens, f.context, handle)).toBeUndefined()
+  expect(nativePageTextPacketInventory(f.page, f.tokens, handle, true)).toBeUndefined()
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each([
+  'clone-owner',
+  'token-rectangle',
+  'source-height',
+  'middle-item-omitted',
+  'repeated-source-carrier',
+  'partial-literal',
+  'duplicate-source',
+  'foreign-ink',
+  'foreign-Type3',
+  'unknown-state',
+  'unbalanced-stack',
+  'accessor',
+  'wrong-font'
+])('declines incomplete or interfering local footer evidence: %s', (mode) => {
+  const f = anonymousFooterMetadata()
+  if (mode === 'token-rectangle') f.tokens[1].rect[0]++
+  if (mode === 'source-height') f.context.content.items[1].height = 0
+  if (mode === 'middle-item-omitted') f.notes.pop()
+  if (mode === 'repeated-source-carrier') Object.assign(f.context.content, { extra: f.notes[0] })
+  if (mode === 'clone-owner') f.notes[0] = { ...f.notes[0] }
+  if (mode === 'partial-literal') f.notes[0] = { ...f.notes[0], text: 'Note' }
+  if (mode === 'duplicate-source') f.tokens.push({ ...f.tokens[1] })
+  if (mode === 'foreign-ink') f.context.operators.argsArray[2] = [[1, 0, 0, 1, 20, 80]]
+  if (mode === 'foreign-Type3')
+    Object.assign((f.context.operators.argsArray[3] as Array<Array<object>>)[0][0], {
+      operatorListId: 'unknown'
+    })
+  if (mode === 'unknown-state') f.context.operators.fnArray[0] = -1
+  if (mode === 'unbalanced-stack') {
+    f.context.operators.fnArray.unshift(OPS.restore)
+    f.context.operators.argsArray.unshift(null)
+  }
+  if (mode === 'accessor')
+    Object.defineProperty(f.context, 'glyphBounds', {
+      get() {
+        throw Error('must not execute')
+      }
+    })
+  if (mode === 'wrong-font') f.context.content.items[1].fontName = 'unknown'
+  expect(proveFooterMetadata(f)).toBeUndefined()
+})
+it('rejects fake handles, equal tuples and cross-page metadata reuse', () => {
+  const f = anonymousFooterMetadata(),
+    h = proveFooterMetadata(f)
+  expect(footerData(f, h)).toBeDefined()
+  expect(footerData(f, { complete: true, ...h })).toBeUndefined()
+  expect(
+    nativeFooterCaptionMetadataData(h, { ...f.page }, f.tokens, f.context, f.notes, f.captions)
+  ).toBeUndefined()
+  expect(
+    nativeFooterCaptionMetadataData(h, f.page, [...f.tokens], f.context, f.notes, f.captions)
+  ).toBeUndefined()
+  expect(
+    nativeFooterCaptionMetadataData(h, f.page, f.tokens, { ...f.context }, f.notes, f.captions)
+  ).toBeUndefined()
+  expect(
+    nativeFooterCaptionMetadataData(h, f.page, f.tokens, f.context, [...f.notes], f.captions)
+  ).toBeUndefined()
+  expect(
+    nativeFooterCaptionMetadataData(h, f.page, f.tokens, f.context, f.notes, [...f.captions])
+  ).toBeUndefined()
+})
+it.each([
+  'source-literal',
+  'equal-source',
+  'font-outline',
+  'equal-operands',
+  'output',
+  'viewport-result'
+])('expires footer metadata after a late change: %s', (mode) => {
+  const f = anonymousFooterMetadata(),
+    h = proveFooterMetadata(f),
+    data = footerData(f, h)
+  expect(data).toBeDefined()
+  if (mode === 'source-literal') f.context.content.items[1].str += '!'
+  if (mode === 'equal-source') f.context.content.items[1] = { ...f.context.content.items[1] }
+  if (mode === 'font-outline') f.context.glyphBounds[0].glyphs[0].bounds[0] += 0.01
+  if (mode === 'equal-operands')
+    f.context.operators.argsArray[3] = structuredClone(f.context.operators.argsArray[3])
+  if (mode === 'output') data.foreignNativePaint.glyphBounds[0].inkRect[0]++
+  if (mode === 'viewport-result') f.context.viewport.convertToViewportPoint = () => [0, 0]
+  expect(footerData(f, h)).toBeUndefined()
+})
+
+it.each(['notes-proxy', 'caption-proxy', 'notes-accessor', 'caption-accessor'])(
+  'rejects unsafe footer Source arrays before reading them: %s',
+  (mode) => {
+    const f = anonymousFooterMetadata(),
+      side: 'notes' | 'captions' = mode.startsWith('notes') ? 'notes' : 'captions'
+    let reads = 0
+    if (mode.endsWith('proxy'))
+      f[side] = new Proxy(f[side], {
+        get() {
+          reads++
+          throw Error('must not read proxy')
+        }
+      })
+    else {
+      const source = f[side][0]
+      Object.defineProperty(f[side], '0', {
+        get() {
+          reads++
+          return source
+        }
+      })
+    }
+    expect(proveFooterMetadata(f)).toBeUndefined()
+    expect(reads).toBe(0)
+  }
+)
+
+it('binds distinct original token and raw footer Sources without rebinding either', () => {
+  const f = anonymousFooterMetadata()
+  for (const token of f.tokens) token.sourceItem = { ...token.sourceItem }
+  const before = JSON.stringify(f),
+    h = proveFooterMetadata(f),
+    data = footerData(f, h)
+  expect(data).toBeDefined()
+  for (const record of data.ownedRecords) {
+    expect(record.sourceItem).toBe(f.context.content.items[record.sourceItem.index].sourceItem)
+    expect(record.tokenOrigin).toBe(f.tokens[record.sourceItem.index].sourceItem)
+    expect(record.tokenOrigin).not.toBe(record.sourceItem)
+  }
+  expect(nativePageTextPacketInventory(f.page, f.tokens, f.context, true)).toBeUndefined()
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each(['page', 'index', 'text', 'token-text'])(
+  'rejects a mismatched distinct token footer identity: %s',
+  (mode) => {
+    const f = anonymousFooterMetadata()
+    for (const token of f.tokens) token.sourceItem = { ...token.sourceItem }
+    if (mode === 'page') f.tokens[1].sourceItem.pageNumber++
+    if (mode === 'index') f.tokens[1].sourceItem.index++
+    if (mode === 'text') f.tokens[1].sourceItem.text += '!'
+    if (mode === 'token-text') f.tokens[1].text += '!'
+    expect(proveFooterMetadata(f)).toBeUndefined()
+  }
+)
+it.each(['token-origin', 'raw-origin'])(
+  'expires distinct footer metadata after an equal original identity replacement: %s',
+  (mode) => {
+    const f = anonymousFooterMetadata()
+    for (const token of f.tokens) token.sourceItem = { ...token.sourceItem }
+    const h = proveFooterMetadata(f)
+    expect(footerData(f, h)).toBeDefined()
+    if (mode === 'token-origin') f.tokens[1].sourceItem = { ...f.tokens[1].sourceItem }
+    else f.context.content.items[1].sourceItem = { ...f.context.content.items[1].sourceItem }
+    expect(footerData(f, h)).toBeUndefined()
+  }
+)
+
+it.each([
+  ['Artifact', undefined],
+  ['Artifact', null],
+  ['P', 0],
+  ['Span', 3]
+])('keeps balanced paint-neutral %s metadata without changing source text', (tag, property) => {
+  const f = nativeSpacingFixture('space')
+  const { fnArray, argsArray } = f.context.operators
+  fnArray.unshift(OPS.beginMarkedContentProps)
+  argsArray.unshift([tag, property])
+  fnArray.push(OPS.endMarkedContent)
+  argsArray.push(null)
+  expect(nativePageTextPacketInventory(f.page, f.tokens, f.context, true)?.records[0].r.str).toBe(
+    'A B'
+  )
+})
+
+it.each(['OC', 'ActualText', 'hole', 'trailing', 'hidden', 'unbalanced', 'accessor', 'proxy'])(
+  'rejects unsupported marked-content %s without granting source ownership',
+  (mode) => {
+    const f = nativeSpacingFixture('space')
+    const { fnArray, argsArray } = f.context.operators
+    const args: unknown[] = ['Artifact', undefined]
+    fnArray.unshift(OPS.beginMarkedContentProps)
+    argsArray.unshift(args)
+    fnArray.push(OPS.endMarkedContent)
+    argsArray.push(null)
+    let reads = 0
+    const forbidden = (): never => {
+      reads++
+      throw new Error('must not execute')
+    }
+    if (mode === 'OC') args[0] = 'OC'
+    else if (mode === 'ActualText') args[1] = { ActualText: 'Changed' }
+    else if (mode === 'hole') delete args[1]
+    else if (mode === 'trailing') args.push('extra')
+    else if (mode === 'hidden') Object.defineProperty(args, 'hidden', { value: 1 })
+    else if (mode === 'unbalanced') {
+      fnArray.pop()
+      argsArray.pop()
+    } else if (mode === 'accessor') Object.defineProperty(args, '0', { get: forbidden })
+    else argsArray[0] = new Proxy(args, { get: forbidden })
+    expect(nativePageTextPacketInventory(f.page, f.tokens, f.context, true)).toBeUndefined()
+    expect(reads).toBe(0)
+  }
+)
+
+it('applies an opaque normal text state after a translucent exterior state', () => {
+  const f = nativeSpacingFixture('space')
+  const { fnArray, argsArray } = f.context.operators
+  const begin = fnArray.indexOf(OPS.beginText)
+  fnArray.splice(begin, 0, OPS.setGState)
+  argsArray.splice(begin, 0, [[['ca', 0.9]]])
+  fnArray.splice(begin + 2, 0, OPS.setGState)
+  argsArray.splice(begin + 2, 0, [
+    [
+      ['BM', 'source-over'],
+      ['ca', 1]
+    ]
+  ])
+  const packet = nativePageTextPacketInventory(f.page, f.tokens, f.context, true)
+  expect(packet?.records[0].r.str).toBe('A B')
+  expect(packet?.glyphs.every((glyph) => glyph.textPaint.fillAlpha === 1)).toBe(true)
+})
+
+it.each(['alpha', 'blend', 'duplicate', 'mask', 'getter', 'proxy', 'late replacement'])(
+  'rejects unsupported or changed text graphics state: %s',
+  (mode) => {
+    const f = nativeSpacingFixture('space')
+    const { fnArray, argsArray } = f.context.operators
+    const index = fnArray.indexOf(OPS.beginText) + 1
+    const entries: unknown[][] = [
+      ['BM', 'source-over'],
+      ['ca', 1]
+    ]
+    const args: unknown[] = [entries]
+    fnArray.splice(index, 0, OPS.setGState)
+    argsArray.splice(index, 0, args)
+    let reads = 0
+    const forbidden = (): never => {
+      reads++
+      throw new Error('must not execute')
+    }
+    if (mode === 'alpha') entries[1][1] = 0.9
+    else if (mode === 'blend') entries[0][1] = 'multiply'
+    else if (mode === 'duplicate') entries.push(['ca', 1])
+    else if (mode === 'mask') entries.push(['SMask', false])
+    else if (mode === 'getter') Object.defineProperty(entries[0], '0', { get: forbidden })
+    else if (mode === 'proxy') argsArray[index] = new Proxy(args, { get: forbidden })
+    else {
+      const item = f.context.content.items[0]
+      const text = item.str
+      Object.defineProperty(item, 'str', {
+        get: () => {
+          argsArray[index] = [entries.map((entry) => [...entry])]
+          return text
+        }
+      })
+    }
+    expect(nativePageTextPacketInventory(f.page, f.tokens, f.context, true)).toBeUndefined()
+    expect(reads).toBe(0)
+  }
+)

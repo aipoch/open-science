@@ -9,7 +9,15 @@ import { spawnOpenCodeProcess } from '../agent-framework/opencode'
 import type { AgentProcessSpawner, ResolvedAgentBackend } from '../agent-framework'
 import { spawnMainAgentProcess } from './main-agent-process-ownership'
 
-export class OpenCodeServiceCleanupError extends Error {}
+export class OpenCodeServiceCleanupError extends Error {
+  constructor(
+    message: string,
+    options?: ErrorOptions,
+    readonly service?: OpenCodeServiceLease
+  ) {
+    super(message, options)
+  }
+}
 
 export type OpenCodeServiceLease = Readonly<{
   release: () => Promise<ProcessTreeKillResult>
@@ -67,9 +75,19 @@ export const startOpenCodeService = async (
   const release = (): Promise<ProcessTreeKillResult> => {
     if (released) return released
     stopping = true
-    // Keep the leader alive until tree termination settles. Ending the stdio lifetime lease
+    // Keep the leader alive until tree termination is confirmed. Ending the stdio lifetime lease
     // first lets serve exit before tree termination can discover and confirm its descendants.
-    released ??= terminateProcessTree(child).finally(() => child.stdin.end())
+    released = terminateProcessTree(child).then(
+      (result) => {
+        if (result.reaped) child.stdin.end()
+        else released = undefined
+        return result
+      },
+      (error) => {
+        released = undefined
+        throw error
+      }
+    )
     return released
   }
   // Drain diagnostics without retaining config/provider secrets in a startup error.
@@ -160,12 +178,17 @@ export const startOpenCodeService = async (
     }
   } catch (error) {
     const result = await release().catch((cause) => {
-      throw new OpenCodeServiceCleanupError('OpenCode HTTP service cleanup failed.', { cause })
+      throw new OpenCodeServiceCleanupError(
+        'OpenCode HTTP service cleanup failed.',
+        { cause },
+        { release }
+      )
     })
     if (!result.reaped)
       throw new OpenCodeServiceCleanupError(
         'OpenCode HTTP service could not be stopped after startup failed.',
-        { cause: error }
+        { cause: error },
+        { release }
       )
     throw error
   }

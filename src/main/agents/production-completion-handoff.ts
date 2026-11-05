@@ -38,25 +38,15 @@ export const withApprovedSpecialistBinding = (
     ProductionCompletionHandoffDependencies,
     'getSpecialistBinding' | 'getSpecialist'
   >
-): CompletionGateRuntime => ({
-  ...(adapter.canHandle ? { canHandle: (context) => adapter.canHandle!(context) } : {}),
-  ...(adapter.canCapture ? { canCapture: (context) => adapter.canCapture!(context) } : {}),
-  stopOldPrompt: (context) => adapter.stopOldPrompt(context),
-  waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
-  cleanupCancelledHandoff: (context) =>
-    adapter.cleanupCancelledHandoff?.(context) ?? Promise.resolve(),
-  reconfigure: async (handoff, context, isCurrentAttempt) => {
-    const reconfigureIfCurrent = async (): Promise<void> => {
-      if (isCurrentAttempt && !isCurrentAttempt()) {
-        throw new Error('The approved handoff attempt was superseded.')
-      }
-      await adapter.reconfigure(handoff, context, isCurrentAttempt)
-    }
+): CompletionGateRuntime => {
+  const validateApprovedBinding = async (
+    handoff: Parameters<CompletionGateRuntime['reconfigure']>[0],
+    context: TrustedToolCompletionContext
+  ): Promise<void> => {
     const currentBinding = await dependencies.getSpecialistBinding(context.sessionId)
     if (handoff.targetName === null) {
       if (currentBinding !== undefined)
         throw new Error('The approved Main Agent binding was superseded.')
-      await reconfigureIfCurrent()
       return
     }
     if (!handoff.approvedSpecialistId || handoff.approvedSpecialistRevision === undefined) {
@@ -74,20 +64,37 @@ export const withApprovedSpecialistBinding = (
     ) {
       throw new Error('The durable approved Specialist identity no longer matches its approval.')
     }
-    // Profile lookup can yield to a newer picker switch. Reject before an adapter can restore a
-    // detached provider, stage replay, or apply the old identity.
+    // Reject before restoring a detached provider, including continuation-start retries.
     if (
       (await dependencies.getSpecialistBinding(context.sessionId)) !== handoff.approvedSpecialistId
     ) {
       throw new Error('The approved Specialist binding was superseded.')
     }
-    await reconfigureIfCurrent()
-  },
-  continueAsApproved: (handoff, context, continuationContext) =>
-    adapter.continueAsApproved(handoff, context, continuationContext),
-  reportHandoffFailure: (error, handoff, context) =>
-    adapter.reportHandoffFailure(error, handoff, context)
-})
+  }
+  return {
+    ...(adapter.canHandle ? { canHandle: (context) => adapter.canHandle!(context) } : {}),
+    ...(adapter.canCapture ? { canCapture: (context) => adapter.canCapture!(context) } : {}),
+    stopOldPrompt: (context, generation) => adapter.stopOldPrompt(context, generation),
+    waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
+    cleanupCancelledHandoff: (context) =>
+      adapter.cleanupCancelledHandoff?.(context) ?? Promise.resolve(),
+    releaseSupersededHandoff: (context, generation) =>
+      adapter.releaseSupersededHandoff?.(context, generation),
+    reconfigure: async (handoff, context, isCurrentAttempt) => {
+      await validateApprovedBinding(handoff, context)
+      if (isCurrentAttempt && !isCurrentAttempt()) {
+        throw new Error('The approved handoff attempt was superseded.')
+      }
+      await adapter.reconfigure(handoff, context, isCurrentAttempt)
+    },
+    continueAsApproved: async (handoff, context, continuationContext) => {
+      await validateApprovedBinding(handoff, context)
+      await adapter.continueAsApproved(handoff, context, continuationContext)
+    },
+    reportHandoffFailure: (error, handoff, context) =>
+      adapter.reportHandoffFailure(error, handoff, context)
+  }
+}
 
 // Provider-neutral production fallback. Framework continuation callbacks re-enter ACP through an
 // application-owned, non-user prompt route after the shared approval checks.

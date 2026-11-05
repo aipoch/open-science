@@ -16,12 +16,18 @@ export const openSettingsPage = async (page: Page, section: string): Promise<Loc
 
 export const openGeneralSettings = async (page: Page): Promise<Locator> => {
   const settings = await openSettingsPage(page, 'General')
+  await expect(settings.getByRole('region', { name: 'App version', exact: true })).toBeVisible()
+  return settings
+}
+
+export const openAppearanceSettings = async (page: Page): Promise<Locator> => {
+  const settings = await openSettingsPage(page, 'Appearance')
   await expect(settings.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible()
   return settings
 }
 
 export const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<void> => {
-  const settings = await openGeneralSettings(page)
+  const settings = await openAppearanceSettings(page)
   const choice = settings.getByRole('radiogroup', { name: 'Theme' }).getByRole('radio', {
     name: theme,
     exact: true
@@ -35,7 +41,7 @@ export const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<voi
 }
 
 export const selectLanguage = async (page: Page, label: string): Promise<void> => {
-  const settings = await openGeneralSettings(page)
+  const settings = await openAppearanceSettings(page)
   await settings.getByRole('combobox', { name: 'Interface language' }).click()
   await page.getByRole('option', { name: label, exact: true }).click()
   // The dialog name changes with the locale; use Escape rather than the old English close label.

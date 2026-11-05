@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **[AIPOCH Open-Science v1.0.7 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 11 月）_。Pi が 5 つ目のエージェントフレームワークとして追加され、DOI や arXiv リンクから参考文献を直接追加できるようになりました。リーディングエージェントはリンクした PDF に注釈を付けられ、スキャン PDF は 9 言語パック対応のオプションの OCR で読み取れるようになります。研究事例マーケットプレイスでは検索も可能になりました。また、Windows の Notebook シェル設定、OpenCode のコンテキスト圧縮時のクラッシュ、Fake-IP DNS 環境でのダウンロードを修正しました。詳細は [v1.0.7 リリースノート](../../release-notes/1.0.7/ja.md)をご覧ください。
+> 💡 **[AIPOCH Open-Science v1.0.8 をリリース](https://github.com/aipoch/open-science/releases/latest)** _（最終更新：2026 年 11 月）_。設定がタブに再編成され、DOI・arXiv・PubMed の識別子から一度に最大 100 件の参考文献をインポートできるようになり、文献ライブラリの詳細ビューに AI スタディスナップショットが追加されました。終了したセッションはエージェントプロセスを解放し、eQTL Catalogue のクエリが復旧し、macOS と Windows のアップデートがスムーズになります。詳細は [v1.0.8 リリースノート](../../release-notes/1.0.8/ja.md)をご覧ください。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

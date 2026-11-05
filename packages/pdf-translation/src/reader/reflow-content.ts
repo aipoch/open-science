@@ -1,4 +1,8 @@
 import type { PdfTranslationSource } from './source.js'
+import {
+  hasNativeCaptionEligibility,
+  hasNativeOrdinaryProseEligibility
+} from './caption-eligibility.js'
 
 export type PdfReflowContentKind = 'text' | 'reference' | 'visual'
 
@@ -9,6 +13,13 @@ export function pdfReflowContentKinds(
   const kinds = new Map<string, PdfReflowContentKind>()
   let reference: PdfTranslationSource['units'][number]['fragments'][number] | undefined
   for (const unit of source.units) {
+    if (
+      hasNativeCaptionEligibility(source, unit) ||
+      hasNativeOrdinaryProseEligibility(source, unit)
+    ) {
+      kinds.set(unit.id, 'text')
+      continue
+    }
     if (unit.figure || (unit.preserve && unit.preserve !== 'reference')) {
       kinds.set(unit.id, 'visual')
       continue

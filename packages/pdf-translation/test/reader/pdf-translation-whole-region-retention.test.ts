@@ -1,3 +1,4 @@
+import { retainPdfWholeRegionSources } from '../../src/reader/whole-region-retention.js'
 /* eslint-disable @typescript-eslint/explicit-function-return-type -- inferred test fixture types */
 import { expect, it, vi } from 'vitest'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -1563,6 +1564,144 @@ it('splits only the fully proved native single fragment while conserving source 
   ])
   expect(structuredClone(f.context.extraction)).toEqual(before)
 })
+
+function numberedPseudocodeOwner() {
+  const f = bodyBeforeCaptionOwner(),
+    rows: [string, number, number][] = [
+      ['Algorithm 1 Example Pseudocode', 5, 90],
+      ['1:', 10, 70],
+      ['Initialize x', 20, 70],
+      ['2:', 10, 60],
+      ['Update x', 20, 60],
+      ['\u0338', 21, 60],
+      ['3:', 10, 50],
+      ['Store x', 20, 50],
+      ['4:', 10, 40],
+      ['Return x', 20, 40],
+      ['External prose', 10, 10]
+    ]
+  f.items.splice(
+    0,
+    f.items.length,
+    ...rows.map(([s, x, y]) => f.item(s, x, y, s === '\u0338' ? 0 : s.length * 0.4))
+  )
+  f.fnArray.length = f.argsArray.length = 0
+  for (const i of f.items) {
+    f.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+    f.argsArray.push(
+      null,
+      ['f', 10],
+      [1, 0, 0, 1, i.transform[4], i.transform[5]],
+      [
+        Array.from(i.str, (c) => ({
+          unicode: c,
+          fontChar: c,
+          width: c === '\u0338' ? 0 : 40,
+          isInFont: true,
+          isSpace: c === ' ',
+          accent: null
+        }))
+      ],
+      null
+    )
+    for (const c of i.str)
+      f.outlines.set('loaded_path_' + c, {
+        path: c === ' ' ? [] : [0, 0, -0.05, 1, 0.04, -0.05, 1, 0.04, 0.45, 1, 0, 0.45, 4]
+      })
+  }
+  const e = f.cached.elements[0]
+  e.regions = [{ page: 1, x: 0.05, y: 0.04, width: 0.7, height: 0.71 }]
+  e.caption = {
+    text: f.items[0].str,
+    regions: [{ page: 1, x: 0.05, y: 0.04, width: 0.7, height: 0.12 }]
+  }
+  e.nativeBody!.sourceItems = f.items
+    .slice(1, -1)
+    .map((i, n) => ({ pageNumber: 1, index: n + 1, text: i.str }))
+  const units = f.items.map((i, n) => {
+    const u = f.unit(n, 'numbered-' + n)
+    u.fragments[0].rect.width = Math.max(0.004, u.fragments[0].rect.width)
+    if (n === 1) u.fragments[0].rect.x = 0 // Only independent ink proves this coarse owner.
+    return u
+  })
+  f.context.extraction = {
+    ...f.extraction,
+    source: createPdfTranslationSource({ ...f.extraction.source, units }),
+    coverage: {
+      ...f.extraction.coverage,
+      textItemCount: f.items.length,
+      includedItemCount: f.items.length,
+      warnings: []
+    }
+  }
+  return f
+}
+
+it('retains numbered pseudocode through cached preparation without claiming its caption or exterior prose', async () => {
+  const f = numberedPseudocodeOwner(),
+    before = structuredClone(f.context.extraction),
+    result = await applyCachedPdfFigureSources(f.context),
+    prepared = await applyCachedPdfStructureSources(f.context)
+  const expected = before.source.units.map((u, n) =>
+    n > 0 && n < 10 ? { ...u, sourceOnly: true } : u
+  )
+  expect(result.source.units).toEqual(expected)
+  expect(prepared.extraction.source.units).toEqual(expected)
+  expect(applyPdfContentFirstPolicy(result.source).units).toEqual(expected)
+  expect(result.coverage).toEqual(before.coverage)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+it.each([
+  'missing-number',
+  'source-order',
+  'zero-advance',
+  'multiple-zero-glyphs',
+  'missing-outline',
+  'transparent',
+  'clip',
+  'source-text',
+  'no-pseudocode',
+  'competing-claim'
+])('leaves numbered pseudocode unchanged without %s proof', async (mode) => {
+  const f = numberedPseudocodeOwner(),
+    e = f.cached.elements[0]
+  if (mode === 'missing-number')
+    e.nativeBody!.sourceItems = e.nativeBody!.sourceItems.filter((s) => s.text !== '2:')
+  if (mode === 'source-order') e.nativeBody!.sourceItems.reverse()
+  if (mode === 'zero-advance') f.items[5].width = 1
+  if (mode === 'multiple-zero-glyphs') {
+    f.items[5].str = e.nativeBody!.sourceItems[4].text = '\u0338\u0338'
+    f.argsArray[5 * 5 + 3] = [
+      [
+        { unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null },
+        { unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null }
+      ]
+    ]
+  }
+  if (mode === 'missing-outline') f.outlines.delete('loaded_path_\u0338')
+  if (mode === 'transparent') {
+    f.fnArray.unshift(OPS.setGState)
+    f.argsArray.unshift([[['ca', 0.5]]])
+  }
+  if (mode === 'clip') {
+    f.fnArray.unshift(OPS.clip)
+    f.argsArray.unshift(null)
+  }
+  if (mode === 'source-text') e.nativeBody!.sourceItems[2].text += '!'
+  if (mode === 'no-pseudocode') e.caption!.text = 'Algorithm 1 Example list'
+  if (mode === 'competing-claim')
+    f.cached.elements.push({
+      id: 'other',
+      kind: 'figure',
+      issues: [],
+      regions: [{ page: 1, x: 0.1, y: 0.2, width: 0.1, height: 0.1 }],
+      sourceItems: [{ pageNumber: 1, index: 1, text: '1:' }]
+    })
+  const before = structuredClone(f.context.extraction)
+  expect(structuredClone(await applyCachedPdfFigureSources(f.context))).toEqual(before)
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
 it.each(['missing-body', 'wrong-literal', 'near-caption', 'Unicode', 'clipped', 'metadata'])(
   'leaves a single fragment untouched without complete evidence: %s',
   async (mode) => {
@@ -1587,5 +1726,295 @@ it.each(['missing-body', 'wrong-literal', 'near-caption', 'Unicode', 'clipped', 
     const before = structuredClone(f.context.extraction),
       r = await applyCachedPdfFigureSources(f.context)
     expect(structuredClone(r)).toEqual(before)
+  }
+)
+
+it.each(['math-table', 'algorithm'] as const)(
+  'uses complete native math owners while retaining the %s navigation geometry',
+  async (kind) => {
+    const f = setup(kind)
+    f.context.extraction = {
+      ...f.extraction,
+      source: createPdfTranslationSource({
+        ...f.extraction.source,
+        units: f.extraction.source.units.map((unit, index) =>
+          index === 0
+            ? {
+                ...unit,
+                fragments: unit.fragments.map((fragment) => ({
+                  ...fragment,
+                  rect: { ...fragment.rect, width: 1.2 }
+                }))
+              }
+            : unit
+        )
+      })
+    }
+    const before = f.context.extraction,
+      out = await applyCachedPdfFigureSources(f.context)
+    if (kind === 'algorithm') {
+      expect(out).toBe(before)
+      return
+    }
+    expect(out.source.units[0].sourceOnly).toBe(true)
+    expect(out.source.units.map((unit) => unit.fragments)).toEqual(
+      before.source.units.map((unit) => unit.fragments)
+    )
+    expect(out.source.units.map((unit) => unit.source)).toEqual(
+      before.source.units.map((unit) => unit.source)
+    )
+    expect(out.source.units.slice(2)).toEqual(before.source.units.slice(2))
+    expect(before.source.units[0].sourceOnly).toBeUndefined()
+  }
+)
+
+function captionedAdvanceOverlapMath() {
+  const f = boundedMathSetup(),
+    element = f.cached.elements[0]
+  Object.assign(f.objects.get('F') as object, { data: new Uint8Array([1, 2, 3]) })
+  for (const [key, object] of f.objects)
+    if (key.startsWith('F_path_'))
+      f.objects.set(key, { path: new Float64Array((object as { path: number[] }).path) })
+  delete element.table
+  delete element.nativeBody!.boundary
+  f.cached.thumbnails = []
+  delete element.thumbnailId
+  element.issues = [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }]
+  element.regions[0].height = 64 / 220
+  element.caption = {
+    text: 'Z',
+    regions: [{ page: 1, x: 19 / 200, y: 103 / 220, width: 162 / 200, height: 12 / 220 }]
+  }
+  const last = f.native.content.items.at(-1)!
+  last.transform[5] = 220 - 111
+  const at = f.native.operators.fnArray.lastIndexOf(OPS.setTextMatrix)
+  f.native.operators.argsArray[at][0][5] = last.transform[5]
+  return f
+}
+
+it.each([
+  'complete',
+  'native literal',
+  'font',
+  'metrics',
+  'foreign font',
+  'crossing ink',
+  'late source',
+  'late item',
+  'late font',
+  'late fingerprint',
+  'late retainer font',
+  'late retainer content',
+  'late retainer outline',
+  'late retainer outline path',
+  'late retainer outline bytes',
+  'late retainer operators',
+  'late retainer source',
+  'late proof outline',
+  'late text outline',
+  'late text native item'
+])('uses complete native ink only for captioned mathematical advance overlap: %s', async (mode) => {
+  const f = captionedAdvanceOverlapMath(),
+    before = structuredClone(f.context.extraction),
+    body = f.cached.elements[0].nativeBody!,
+    originalOperatorList = f.page.getOperatorList.getMockImplementation()!
+  if (mode === 'native literal') body.sourceItems[0].text = 'Other'
+  if (mode === 'font') (f.objects.get('F') as { missingFile: boolean }).missingFile = true
+  if (mode === 'metrics') f.native.content.styles.F.descent = 1
+  if (mode === 'foreign font') f.objects.delete('F_path_Z')
+  if (mode === 'crossing ink')
+    f.objects.set('F_path_j', {
+      path: new Float64Array([0, 0, -0.4, 1, 0.5, -0.4, 1, 0.5, 0.7, 1, 0, 0.7, 4])
+    })
+  if (mode === 'crossing ink') {
+    const ink = await nativeAlgorithmInkRegions(
+      f.page as unknown as PDFPageProxy,
+      f.native.content as never,
+      f.native.viewport as never,
+      1,
+      new Set(body.sourceItems.map((i) => i.index))
+    )
+    expect(ink?.size).toBe(9)
+    const crossing = ink!.get(7)!
+    expect(crossing.y + crossing.height).toBeGreaterThan(f.cached.elements[0].caption!.regions[0].y)
+  }
+  let calls = 0,
+    lateMutated = false
+  let pageCalls = 0
+  f.document.getPage.mockImplementation(async () => {
+    if (++pageCalls && calls >= 3 && !lateMutated) {
+      lateMutated = true
+      if (mode === 'late retainer font') f.objects.set('F', { ...(f.objects.get('F') as object) })
+      if (mode === 'late retainer content')
+        f.native.content.items[0] = { ...f.native.content.items[0] }
+      if (mode === 'late retainer outline')
+        f.objects.set('F_path_j', { ...(f.objects.get('F_path_j') as object) })
+      if (mode === 'late retainer outline path')
+        (f.objects.get('F_path_j') as { path: Float64Array }).path = new Float64Array(
+          (f.objects.get('F_path_j') as { path: Float64Array }).path
+        )
+      if (mode === 'late retainer outline bytes')
+        (f.objects.get('F_path_j') as { path: Float64Array }).path[1] = 0.01
+      if (mode === 'late retainer operators')
+        f.native.operators.argsArray = [...f.native.operators.argsArray]
+      if (mode === 'late retainer source') body.sourceItems[0] = { ...body.sourceItems[0] }
+    }
+    return f.page
+  })
+  const originalContent = f.page.getTextContent.getMockImplementation()!
+  f.page.getTextContent.mockImplementation(async () => {
+    if (calls >= 3) {
+      if (mode === 'late text outline')
+        f.objects.set('F_path_j', { ...(f.objects.get('F_path_j') as object) })
+      if (mode === 'late text native item')
+        f.native.content.items[0] = { ...f.native.content.items[0] }
+    }
+    return originalContent()
+  })
+  f.page.getOperatorList.mockImplementation(async () => {
+    ++calls
+    if (mode === 'late proof outline' && calls === 3)
+      f.objects.set('F_path_j', { ...(f.objects.get('F_path_j') as object) })
+    if (calls === 2) {
+      if (mode === 'late source') body.sourceItems[0] = { ...body.sourceItems[0] }
+      if (mode === 'late item') f.native.content.items[0] = { ...f.native.content.items[0] }
+      if (mode === 'late font') f.objects.set('F', { ...(f.objects.get('F') as object) })
+      if (mode === 'late fingerprint') f.document.fingerprints[0] = 'changed'
+    }
+    return originalOperatorList()
+  })
+  const out = await retainPdfWholeRegionSources({ ...f.context, results: [f.cached] })
+  if (mode !== 'complete') {
+    expect(out).toEqual(f.context.extraction)
+    expect(structuredClone(f.context.extraction)).toEqual(before)
+    return
+  }
+  expect(out.source.units.map((u) => u.sourceOnly)).toEqual([
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    true,
+    undefined
+  ])
+  expect(out.source.units.at(-1)).toEqual(before.source.units.at(-1))
+  expect(out.source.units.map((u) => u.fragments)).toEqual(
+    before.source.units.map((u) => u.fragments)
+  )
+  expect(out.coverage.warnings).toEqual(
+    before.source.units
+      .slice(0, -1)
+      .map((u) => ({ unitId: u.id, reasons: ['table-structure-unreliable'] }))
+  )
+  expect(structuredClone(f.context.extraction)).toEqual(before)
+})
+
+function captionedMathWithExternalReferenceCaption() {
+  const f = captionedAdvanceOverlapMath(),
+    first = f.native.content.items.length
+  for (const [str, x] of [
+    ['Figure 1:', 20],
+    ['Caption', 60]
+  ] as const) {
+    const item = {
+      ...f.native.content.items[0],
+      str,
+      width: str.length * 4,
+      height: 8,
+      transform: [8, 0, 0, 8, x, 40],
+      sourceItem: { pageNumber: 1, index: f.native.content.items.length, text: str }
+    }
+    f.native.content.items.push(item)
+    for (const c of str)
+      f.objects.set('F_path_' + c, {
+        path: new Float64Array(
+          c === ' ' ? [] : [0, 0, -0.1, 1, 0.5, -0.1, 1, 0.5, 0.7, 1, 0, 0.7, 4]
+        )
+      })
+    for (const [op, args] of [
+      [OPS.beginText, null],
+      [OPS.setFont, ['F', 8]],
+      [OPS.setTextMatrix, [[1, 0, 0, 1, x, 40]]],
+      [
+        OPS.showText,
+        [
+          [...str].map((c) => ({
+            unicode: c,
+            fontChar: c,
+            width: 500,
+            isInFont: true,
+            isSpace: c === ' '
+          }))
+        ]
+      ],
+      [OPS.endText, null]
+    ] as const) {
+      f.native.operators.fnArray.push(op)
+      f.native.operators.argsArray.push(args)
+    }
+  }
+  const old = f.context.extraction
+  f.context.extraction = {
+    ...old,
+    source: createPdfTranslationSource({
+      ...old.source,
+      units: [
+        ...old.source.units,
+        {
+          id: 'external-reference',
+          source: 'Figure 1: Caption',
+          sourceOnly: true,
+          preserve: 'reference',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 172 / 220, width: 68 / 200, height: 8 / 220 },
+              items: f.native.content.items
+                .slice(first)
+                .map((i, index) => ({ index: first + index, text: i.str }))
+            }
+          ]
+        }
+      ]
+    }),
+    coverage: { ...old.coverage, textItemCount: 11, includedItemCount: 11 }
+  }
+  f.cached.elements.push({
+    id: 'external-figure',
+    kind: 'figure',
+    issues: [],
+    regions: [{ page: 1, x: 0.6, y: 0.6, width: 0.1, height: 0.05 }],
+    caption: {
+      text: 'Figure 1: Caption',
+      regions: [{ page: 1, x: 0.1, y: 172 / 220, width: 68 / 200, height: 8 / 220 }]
+    }
+  })
+  return f
+}
+
+it.each(['stable', 'font', 'outline', 'native Source'])(
+  'rechecks only the new math permission after outer reference restoration awaits: %s',
+  async (mode) => {
+    const f = captionedMathWithExternalReferenceCaption(),
+      before = structuredClone(f.context.extraction)
+    let reachedReferenceRestore = false
+    f.document.getPage.mockImplementation(async () => {
+      if (new Error().stack?.includes('restoreReferenceFigureCaptions')) {
+        reachedReferenceRestore = true
+        if (mode === 'font') f.objects.set('F', { ...(f.objects.get('F') as object) })
+        if (mode === 'outline')
+          f.objects.set('F_path_j', { ...(f.objects.get('F_path_j') as object) })
+        if (mode === 'native Source') f.native.content.items[0] = { ...f.native.content.items[0] }
+      }
+      return f.page
+    })
+    const out = await applyCachedPdfFigureSources(f.context)
+    expect(reachedReferenceRestore).toBe(true)
+    if (mode !== 'stable') expect(out).toEqual(f.context.extraction)
+    else expect(out.source.units.slice(0, 8).every((u) => u.sourceOnly)).toBe(true)
+    expect(structuredClone(f.context.extraction)).toEqual(before)
   }
 )

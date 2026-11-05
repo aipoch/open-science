@@ -496,6 +496,7 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
     blockers: () => generationActivity.blockers(),
     connectionGeneration: () => connectionResources.epoch,
     disconnect: (emitClosedStatus) => effects().connectionClose.disconnect(emitClosedStatus),
+    cleanupConfirmed: () => connectionResources.cleanupConfirmed,
     onRetired: () => callbacks.onRetired?.(),
     publishIdle: () => effects().publishIdle(),
     recoverFailedDeferredDisconnect: (_error, disconnectedGeneration) =>

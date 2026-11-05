@@ -152,3 +152,121 @@ it('rejects supplementary directories and affiliation blocks while preserving ca
   expect(hasTableEvidence(affiliations)).toBe(false)
   expect(hasTableEvidence(affiliations, { lines: ['Table 1. Contacts'] })).toBe(true)
 })
+
+const fencedListContinuation = (
+  fault = ''
+): {
+  source: ReturnType<typeof model>
+  items: (ReturnType<typeof token> & {
+    sourceItem: { pageNumber: number; index: number; text: string }
+  })[]
+  rules: number[][]
+} => {
+  let index = 0
+  const whole = (
+    text: string,
+    x: number,
+    y: number
+  ): ReturnType<typeof fencedListContinuation>['items'][number] => ({
+    ...token(text, x, y, 50),
+    sourceItem: { pageNumber: 2, index: index++, text }
+  })
+  const source = model(
+    3,
+    [
+      [5, 24],
+      [28, 57],
+      [63, 88],
+      [92, 126]
+    ],
+    145
+  )
+  const items = [
+    whole('Field', 5, 8),
+    whole('Value', 105, 8),
+    whole('Origin', 205, 8),
+    whole('delta', 5, 32),
+    whole('4', 105, 32),
+    whole('Reference A', 205, 32),
+    whole('epsilon', 5, 68),
+    whole('5', 105, 68),
+    whole('Reference B', 205, 68),
+    whole('alpha,', 5, 94),
+    whole('10;', 105, 94),
+    whole('Dataset note', 205, 94),
+    whole('beta,', 5, 108),
+    whole('20;', 105, 108),
+    whole('continued', 205, 108),
+    whole('gamma', 5, 122),
+    whole('30; 40', 105, 122)
+  ]
+  let rules = [0, 25, 60, 90, 140].map((y) => [0, y, 300, y])
+  if (fault === 'page') items.at(-1)!.sourceItem.pageNumber = 3
+  if (fault === 'literal') items.at(-1)!.sourceItem.text = 'partial'
+  if (fault === 'fence') rules = rules.filter((rule) => rule[1] !== 90)
+  if (fault === 'peer') items.splice(8, 1)
+  if (fault === 'separator') {
+    items[13].text = '20'
+    items[13].sourceItem.text = '20'
+  }
+  return { source, items, rules }
+}
+
+it('refuses a new scalar row that cuts two whole native lists inside one complete ruled face', () => {
+  const { source, items, rules } = fencedListContinuation()
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.repairs).not.toContain('final-record-recovered')
+  expect(result.issues).toContain('native-table-structure-ambiguous')
+  expect(result.reviewCandidate).toBe(false)
+  expect(result.repairs).toContain('ruled-final-continuation-recovered')
+  expect(result.grid.at(-1)).toEqual([
+    'alpha, beta, gamma',
+    '10; 20; 30; 40',
+    'Dataset note continued'
+  ])
+  expect(result.unassigned).toEqual([])
+  const claims = result.cells.flatMap(
+    (cell: { sourceItems?: { index: number; text: string }[] }) => cell.sourceItems ?? []
+  )
+  expect(
+    claims.map((item: { index: number }) => item.index).sort((a: number, b: number) => a - b)
+  ).toEqual(items.map((item) => item.sourceItem.index))
+  expect(
+    new Map(claims.map((item: { index: number; text: string }) => [item.index, item.text]))
+  ).toEqual(new Map(items.map((item) => [item.sourceItem.index, item.text])))
+})
+
+it('does not infer a list continuation across different native pages', () => {
+  const { source, items, rules } = fencedListContinuation('page')
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.issues).not.toContain('native-table-structure-ambiguous')
+  expect(result.repairs).toContain('final-record-recovered')
+})
+
+it('requires complete literal Source text before refusing the final record repair', () => {
+  const { source, items, rules } = fencedListContinuation('literal')
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.issues).not.toContain('native-table-structure-ambiguous')
+  expect(result.repairs).toContain('final-record-recovered')
+})
+
+it('does not turn an unfenced list-shaped suffix into a native record conflict', () => {
+  const { source, items, rules } = fencedListContinuation('fence')
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.issues).not.toContain('native-table-structure-ambiguous')
+  expect(result.repairs).toContain('final-record-recovered')
+})
+
+it('requires complete three-lane peer faces before blocking the scalar repair', () => {
+  const { source, items, rules } = fencedListContinuation('peer')
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.issues).not.toContain('native-table-structure-ambiguous')
+  expect(result.repairs).toContain('final-record-recovered')
+})
+
+it('keeps an otherwise supported final record without both native trailing separators', () => {
+  const { source, items, rules } = fencedListContinuation('separator')
+  const result = refineTable(source, items, [], [], rules)
+  expect(result.issues).not.toContain('native-table-structure-ambiguous')
+  expect(result.repairs).toContain('final-record-recovered')
+})

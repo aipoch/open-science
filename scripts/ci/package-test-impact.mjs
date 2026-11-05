@@ -283,10 +283,13 @@ export function packageTestPlanFromRevisions(
     const paths = git('diff', '--name-only', '--no-renames', '-z', mergeBase, head)
       .split('\0')
       .filter(Boolean)
-    // A downstream source edit between the PR base and its merge checkout may affect an
-    // upstream package too. Include that delta when testing the synthetic merge checkout.
+    // PR preflight's base is the fork point; trustedBase retains the target branch tip.
+    // Exclude main's intervening changes while retaining merge-resolution edits.
+    const checkoutBase = git('merge-base', trustedBase, 'HEAD').trim()
     paths.push(
-      ...git('diff', '--name-only', '--no-renames', '-z', head, 'HEAD').split('\0').filter(Boolean)
+      ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD')
+        .split('\0')
+        .filter(Boolean)
     )
     return createPackageTestPlan([...new Set(paths)], registry, { verification })
   } catch (error) {

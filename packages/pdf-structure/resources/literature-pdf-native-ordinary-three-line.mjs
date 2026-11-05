@@ -4,6 +4,11 @@ import { collectTableRules } from './literature-pdf-graphics.mjs'
 import { nativeFractionInkPacket } from './literature-pdf-figure-native-plot-labels.mjs'
 import { getInitialPdfCropRaster } from './literature-pdf-crop.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { preciseNativeGraphicsBounds } from './literature-pdf-native-table-boundary-ink.mjs'
+import {
+  retainNativeRecoveryInputs,
+  nativeRecoveryOwnValues
+} from './literature-pdf-native-figure-recovery-profile.mjs'
 import { refineTable } from './literature-pdf-table-refine.mjs'
 
 const rect = (r) =>
@@ -193,6 +198,436 @@ function paintInventory(packet) {
     })
   }
   return result
+}
+
+// A lower caption and an actual stub close this independent two-rule family.
+// Whole native fields may contain several tokens, but no string is subdivided.
+function recoverLowerCaptionTwoRuleTable(
+  page,
+  tokens,
+  context,
+  competing,
+  captions,
+  rails,
+  scale,
+  serial
+) {
+  const own = nativeRecoveryOwnValues(context),
+    witness =
+      own?.runningHeadWitness === undefined
+        ? undefined
+        : nativeRecoveryOwnValues(own.runningHeadWitness)
+  if (
+    !own ||
+    (own.runningHeadWitness !== undefined &&
+      (!witness || !witness.witnessViewport || typeof witness.witnessViewport !== 'object'))
+  )
+    return
+  const retained = retainNativeRecoveryInputs(
+    [page, tokens, context, competing, captions, rails],
+    own.viewport,
+    witness?.witnessViewport
+  )
+  if (!retained || rails.length !== 2 || !(scale > 0) || !Number.isFinite(scale)) return
+  const rulePaintBounds = new Map(),
+    rules = collectTableRules(context.operators, context.viewport, rulePaintBounds),
+    stub = rules.filter(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > rails[0][0] &&
+        r[0] < rails[0][2] &&
+        r[1] < rails[1][1] &&
+        r[3] <= rails[1][1] &&
+        r[1] >= 0
+    )
+  if (stub.length < 2 || stub.length > 9 || new Set(stub.map((r) => r[0])).size !== 1) return
+  const top = Math.min(...stub.map((r) => r[1])),
+    bottom = rails[1][1],
+    selected = tokens.filter(
+      (t) =>
+        t.horizontal &&
+        t.text?.trim() &&
+        t.baseline >= top &&
+        t.baseline < bottom &&
+        rect(t.rect) &&
+        t.rect[0] >= rails[0][0] &&
+        t.rect[2] <= rails[0][2]
+    )
+  if (top >= rails[0][1] || selected.length < 9 || selected.length > 54) return
+  const height = Math.max(...selected.map((t) => t.height)),
+    caps = captions.filter(
+      (c) =>
+        c.page === page.pageNumber &&
+        c.rect[1] > bottom &&
+        c.rect[1] - bottom < height * 3 &&
+        c.lines?.length === 1 &&
+        /^TABLE\s+\S/iu.test(c.lines[0])
+    )
+  if (caps.length !== 1) return
+  const cap = caps[0],
+    capFields = tokens.filter((t) => rect(t.rect) && inside(cap.rect, t.rect))
+  if (!capFields.length || capFields.map((t) => t.text).join(' ') !== cap.lines.join(' ')) return
+  const following = tokens.filter(
+      (t) => t.sourceItem?.index > Math.max(...capFields.map((t) => t.sourceItem.index))
+    ),
+    next = following[0],
+    capHeight = Math.max(...capFields.map((t) => t.height)),
+    continuation =
+      next &&
+      next.rect[1] > cap.rect[3] &&
+      next.rect[1] - cap.rect[3] < capHeight &&
+      Math.abs(next.rect[0] + next.rect[2] - cap.rect[0] - cap.rect[2]) < capHeight * 0.02
+        ? following.filter((t) => Math.abs(t.baseline - next.baseline) < capHeight * 0.02)
+        : []
+  if (
+    continuation.length !== 1 ||
+    context.content.items[next.sourceItem.index].fontName !==
+      context.content.items[capFields[0].sourceItem.index].fontName ||
+    next.height !== capHeight ||
+    !/[.!?]$/u.test(next.text.trim()) ||
+    /[.!?]$/u.test(cap.lines.join(' ').trim())
+  )
+    return
+  const captionFields = [...capFields, ...continuation],
+    all = [...selected, ...captionFields]
+  if (all.length > 64 || new Set(all.map((t) => t.sourceItem?.index)).size !== all.length) return
+  if (
+    all.some((t) => {
+      const r = context.content.items[t.sourceItem?.index],
+        s = context.content.styles[r?.fontName]
+      return (
+        !r ||
+        r.str !== t.text ||
+        !eq(r.sourceItem, t.sourceItem) ||
+        r.dir !== 'ltr' ||
+        !s ||
+        s.vertical !== false ||
+        !Number.isFinite(s.ascent) ||
+        !(s.ascent > 0) ||
+        !Number.isFinite(s.descent) ||
+        s.descent > 0 ||
+        !(s.ascent > s.descent) ||
+        !Array.isArray(r.transform) ||
+        !r.transform.every(Number.isFinite) ||
+        !(r.transform[0] > 0) ||
+        !(r.transform[3] > 0) ||
+        r.transform[1] !== 0 ||
+        r.transform[2] !== 0 ||
+        r.height !== r.transform[3] ||
+        !(r.width > 0)
+      )
+    })
+  )
+    return
+  const packet = nativeFractionInkPacket(
+    page,
+    tokens,
+    context,
+    all.map((t) => t.sourceItem)
+  )
+  if (!packet || packet.evidence.images.length) return
+  const byIndex = new Map(packet.records.map((r) => [r.index, r])),
+    records = all.map((t) => {
+      const record = byIndex.get(t.sourceItem.index)
+      return (
+        record && {
+          ...t,
+          ...tableTextToken(context.content.items[t.sourceItem.index], context.viewport, 0),
+          record,
+          ink: box(record.part.map((p) => p.g.ink))
+        }
+      )
+    })
+  if (
+    records.some(
+      (r) =>
+        !r?.record.advanceComplete ||
+        r.record.part.some(
+          ({ g }) =>
+            g.rendererSkipped ||
+            g.textPaint?.fillColor !== '#000000' ||
+            g.textPaint?.fillAlpha !== 1
+        )
+    )
+  )
+    return
+  const body = records.slice(0, selected.length),
+    captionRecords = records.slice(selected.length),
+    baselines = [...new Set(body.filter((r) => r.height === height).map((r) => r.baseline))].sort(
+      (a, b) => a - b
+    ),
+    groups = baselines.map((y) =>
+      body.filter((r) =>
+        r.height === height ? r.baseline === y : r.rect[1] < y && r.rect[3] > y - height
+      )
+    )
+  if (
+    groups.length < 3 ||
+    groups.length > 9 ||
+    body.some((r) => groups.filter((g) => g.includes(r)).length !== 1)
+  )
+    return
+  for (const g of groups) g.sort((a, b) => a.rect[0] - b.rect[0])
+  const header = groups[0],
+    lanes = header.map(() => [])
+  if (
+    header.length < 3 ||
+    header.length > 6 ||
+    header.some((r) => r.height !== height || !/\p{L}/u.test(r.text))
+  )
+    return
+  const cells = groups.map(() => header.map(() => []))
+  for (const [row, g] of groups.entries())
+    for (const r of g) {
+      const cols = header.flatMap((h, c) =>
+        r.rect[0] < h.rect[2] && r.rect[2] > h.rect[0] ? [c] : []
+      )
+      if (cols.length !== 1) return
+      cells[row][cols[0]].push(r)
+      lanes[cols[0]].push(r)
+    }
+  if (cells.some((row) => row.some((c) => !c.length))) return
+  const domains = lanes.map((l) => box(l.flatMap((r) => [r.rect, r.ink]))),
+    rowDomains = groups.map((g) => box(g.flatMap((r) => [r.rect, r.ink])))
+  if (
+    domains.slice(1).some((d, c) => d[0] <= domains[c][2]) ||
+    stub[0][0] <= domains[0][2] ||
+    stub[0][0] >= domains[1][0]
+  )
+    return
+  if (rowDomains.slice(2).some((r, i) => r[1] <= rowDomains[i + 1][3])) return
+  if (
+    header.some((r) => r.ink[3] >= rails[0][1]) ||
+    groups.slice(1).some((g) => g.some((r) => r.ink[1] <= rails[0][1] || r.ink[3] >= bottom))
+  )
+    return
+  const identity = page.graphicsBounds.map((g) => ({
+      kind: g.kind,
+      operationIndex: g.operationIndex,
+      rect: g.normalizedRect.map((z, i) => z * (i % 2 ? page.height : page.width))
+    })),
+    precise = preciseNativeGraphicsBounds({
+      rulePaintBounds,
+      nativeGlyphContext: context,
+      viewport: context.viewport,
+      nativeEvidenceGraphics: identity.map(({ kind, rect }) => ({ kind, rect })),
+      nativePaintIdentityGraphics: identity
+    })
+  if (precise.length !== identity.length || precise.some((r) => !rect(r))) return
+  const colors = new Map(),
+    stack = []
+  let color
+  for (const [i, op] of packet.o.fnArray.entries()) {
+    const a = packet.o.argsArray[i]
+    if (
+      [OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd, OPS.beginGroup, OPS.endGroup].includes(
+        op
+      )
+    )
+      return
+    if (op === OPS.save) stack.push(color)
+    else if (op === OPS.restore) {
+      if (!stack.length) return
+      color = stack.pop()
+    } else if (op === OPS.setStrokeRGBColor)
+      color = a?.length === 1 && /^#[a-f0-9]{6}$/iu.test(a[0]) ? a[0].toLowerCase() : undefined
+    else if (
+      [
+        OPS.setStrokeColor,
+        OPS.setStrokeColorN,
+        OPS.setStrokeCMYKColor,
+        OPS.setStrokeGray,
+        OPS.setStrokeColorSpace
+      ].includes(op)
+    )
+      color = undefined
+    else if (op === OPS.constructPath) colors.set(i, color)
+  }
+  if (stack.length) return
+  const selectedRules = [...rails, ...stub],
+    owned = []
+  for (const rule of selectedRules) {
+    const found = identity.flatMap((g, i) => {
+      const a = packet.o.argsArray[g.operationIndex],
+        state = packet.evidence.paths.get(g.operationIndex),
+        cmd = a?.[1]?.[0]
+      if (
+        g.kind !== 'path' ||
+        packet.o.fnArray[g.operationIndex] !== OPS.constructPath ||
+        a?.[0] !== OPS.stroke ||
+        a[1]?.length !== 1 ||
+        cmd?.length !== 6 ||
+        cmd[0] !== 0 ||
+        cmd[3] !== 1 ||
+        !state ||
+        state.strokeAlpha !== 1 ||
+        state.solidStroke !== true ||
+        state.lineCap !== 0 ||
+        !(state.lineWidth > 0) ||
+        colors.get(g.operationIndex) !== '#000000'
+      )
+        return []
+      const m = Util.transform(packet.v.transform, state.transform)
+      if (m[1] || m[2] || !(m[0] > 0) || !(m[3] < 0)) return []
+      const points = [
+          cmd[1] * m[0] + m[4],
+          cmd[2] * m[3] + m[5],
+          cmd[4] * m[0] + m[4],
+          cmd[5] * m[3] + m[5]
+        ],
+        r = [
+          Math.min(points[0], points[2]),
+          Math.min(points[1], points[3]),
+          Math.max(points[0], points[2]),
+          Math.max(points[1], points[3])
+        ]
+      return eq(r, rule) && inside(state.clip, precise[i]) ? [i] : []
+    })
+    if (found.length !== 1 || owned.includes(found[0])) return
+    owned.push(found[0])
+  }
+  const verticalIntervals = owned
+      .slice(rails.length)
+      .map((i) => precise[i])
+      .sort((a, b) => a[1] - b[1]),
+    joined = []
+  for (const r of verticalIntervals) {
+    const last = joined.at(-1)
+    if (last && r[1] <= last[1]) last[1] = Math.max(last[1], r[3])
+    else joined.push([r[1], r[3]])
+  }
+  if (
+    body.some((r) =>
+      r.record.part.some(({ g }) => !joined.some((y) => g.ink[1] >= y[0] && g.ink[3] <= y[1]))
+    )
+  )
+    return
+  const strokes = owned.map((i) => precise[i]),
+    crop = box([...body.flatMap((r) => [r.rect, r.ink]), ...strokes]),
+    raster = getInitialPdfCropRaster(crop, page)
+  if (
+    !raster ||
+    !inside([0, 0, page.width, page.height], raster.protection) ||
+    competing.some((r) => over(r, raster.protection)) ||
+    captions.some((c) => over(c.rect, raster.protection))
+  )
+    return
+  const glyphs = new Set(body.flatMap((r) => r.record.part.map(({ g }) => g)))
+  if (
+    packet.glyphs.some((g) => !glyphs.has(g) && over(g.ink, raster.protection)) ||
+    precise.some((r, i) => !owned.includes(i) && over(r, raster.protection)) ||
+    body.some((r) => strokes.some((s) => over(r.ink, s)))
+  )
+    return
+  const capRect = box(captionFields.map((t) => t.rect)),
+    capInk = box(captionRecords.map((r) => r.ink)),
+    capEnvelope = box([capRect, capInk]),
+    capGlyphs = new Set(captionRecords.flatMap((r) => r.record.part.map(({ g }) => g)))
+  if (
+    packet.glyphs.some((g) => !capGlyphs.has(g) && over(g.ink, capEnvelope)) ||
+    precise.some((r) => over(r, capEnvelope)) ||
+    competing.some((r) => over(r, capEnvelope))
+  )
+    return
+  const ys = [
+      crop[1],
+      ...rowDomains.slice(1).map((r, i) => (rowDomains[i][3] + r[1]) / 2),
+      crop[3]
+    ],
+    xs = [
+      crop[0],
+      stub[0][0],
+      ...domains.slice(2).map((d, c) => (domains[c + 1][2] + d[0]) / 2),
+      crop[2]
+    ],
+    workTransform = context.viewport.transform.map((n) => n * scale),
+    workViewport = {
+      ...context.viewport,
+      scale,
+      width: page.width * scale,
+      height: page.height * scale,
+      transform: workTransform,
+      convertToViewportPoint: (x, y) =>
+        context.viewport.convertToViewportPoint(x, y).map((n) => n * scale)
+    },
+    source = body.map((r) => ({
+      ...tableTextToken(context.content.items[r.sourceItem.index], workViewport, 0),
+      fontAscent: context.content.styles[context.content.items[r.sourceItem.index].fontName].ascent,
+      fontDescent:
+        context.content.styles[context.content.items[r.sourceItem.index].fontName].descent
+    })),
+    workCrop = crop.map((n) => n * scale),
+    objects = [
+      ...ys.slice(1).map((y, i) => ({
+        label: 'table row',
+        rect: [0, ys[i] * scale - workCrop[1], workCrop[2] - workCrop[0], y * scale - workCrop[1]]
+      })),
+      ...xs.slice(1).map((x, i) => ({
+        label: 'table column',
+        rect: [xs[i] * scale - workCrop[0], 0, x * scale - workCrop[0], workCrop[3] - workCrop[1]]
+      })),
+      {
+        label: 'table column header',
+        rect: [0, 0, workCrop[2] - workCrop[0], ys[1] * scale - workCrop[1]]
+      }
+    ],
+    table = refineTable(
+      {
+        id: `p${page.pageNumber}-open-rule-table-${serial}`,
+        pageNumber: page.pageNumber,
+        cropRect: workCrop,
+        recoveredGrid: true,
+        structure: { objects }
+      },
+      source,
+      [],
+      [],
+      selectedRules.map((r) => r.map((n) => n * scale))
+    )
+  if (
+    table.issues?.length ||
+    table.notes?.length ||
+    table.unassigned?.length ||
+    table.caption ||
+    table.cells.length !== cells.length * header.length
+  )
+    return
+  for (const [row, g] of cells.entries())
+    for (const [col, fields] of g.entries()) {
+      const found = table.cells.filter((c) => c.row === row && c.column === col),
+        expected = fields.map((r) => r.sourceItem)
+      if (
+        found.length !== 1 ||
+        found[0].rowSpan !== 1 ||
+        found[0].colSpan !== 1 ||
+        !eq(found[0].sourceItems, expected) ||
+        !eq(
+          found[0].sourceRects,
+          fields.map((r) => source.find((t) => t.sourceItem.index === r.sourceItem.index).rect)
+        )
+      )
+        return
+    }
+  const lines = [cap.lines.join(' '), continuation.map((t) => t.text).join(' ')],
+    result = {
+      table: {
+        ...table,
+        page: page.pageNumber,
+        cropRect: workCrop,
+        notes: [],
+        caption: { text: lines.join(' '), lines, page: page.pageNumber, rect: capRect },
+        sourceViewport: { width: workViewport.width, height: workViewport.height, scale }
+      },
+      nativeCrop: crop,
+      raster,
+      grid: table.grid,
+      sources: body.map((r) => r.sourceItem)
+    },
+    current = () => retained() && outputCurrent(),
+    proof = { ...result, current },
+    outputCurrent = retainNativeRecoveryInputs([proof], undefined)
+  if (!outputCurrent || !retained()) return
+  return proof
 }
 
 export function recoverOrdinaryThreeLineTables(
@@ -432,6 +867,25 @@ export function recoverOrdinaryThreeLineTables(
         grid: plan.grid,
         sources: expected
       })
+    }
+    // Existing three-rule results and their IDs are complete before this family.
+    let twoRuleSerial = 1
+    for (const family of families.values()) {
+      if (family.length !== 2) continue
+      const proof = recoverLowerCaptionTwoRuleTable(
+        page,
+        tokens,
+        context,
+        competingRects,
+        captions,
+        [...family].sort((a, b) => a[1] - b[1]),
+        scale,
+        twoRuleSerial
+      )
+      if (proof && !results.some((p) => over(p.nativeCrop, proof.nativeCrop))) {
+        results.push(proof)
+        twoRuleSerial++
+      }
     }
     return results
   } catch {

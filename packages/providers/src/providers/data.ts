@@ -729,16 +729,31 @@ const definitions: readonly OfficialVendor[] = [
       }
     ],
     models: [
+      { id: 'hy4', contextWindow: 1_000_000 },
       { id: 'hy4-preview', contextWindow: 1_000_000 },
       { id: 'glm-5.3', contextWindow: 1_000_000 },
       { id: 'glm-5.3-flash', contextWindow: 1_000_000 },
       { id: 'kimi-k3', contextWindow: 1_048_576 },
+      { id: 'deepseek/deepseek-flash', contextWindow: 1_000_000 },
+      { id: 'deepseek-v4.1-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-flash', contextWindow: 1_000_000 },
       { id: 'deepseek-v4-pro', contextWindow: 1_000_000 },
       { id: 'minimax-m3', contextWindow: 1_000_000 }
-    ]
-    // The curated language models above are text-only in TokenHub's model matrix, so no
-    // `multimodal` rule.
+    ],
+    // Image input follows explicit model declarations; the International matrix omits image
+    // labels for Kimi K3 and MiniMax M3, so omission there is not evidence of text-only models.
+    // https://cloud.tencent.com/document/product/1823/130051
+    // https://intl.cloud.tencent.com/zh/document/product/1300/78934
+    multimodal: {
+      multimodalModels: [
+        'hy4',
+        'glm-5.3-flash',
+        'kimi-k3',
+        'deepseek/deepseek-flash',
+        'deepseek-v4.1-flash',
+        'minimax-m3'
+      ]
+    }
   },
   {
     id: 'tencentcodingplan',

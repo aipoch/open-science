@@ -254,6 +254,8 @@ it('preserves explicit running only across an intentional restart or update', as
 it('does not restart the disconnect grace after a vanished App preparation is rolled back', async () => {
   vi.useFakeTimers()
   const { lifetime, stop } = await fixture()
+  const stopped = Promise.withResolvers<void>()
+  stop.mockImplementation(() => stopped.resolve())
   lifetime.connect('app', 'socket')
   const attempt = { attemptId: randomUUID(), deadlineAt: Date.now() + 10000 }
   await lifetime.prepareLeave('app', 'socket', attempt)
@@ -265,7 +267,8 @@ it('does not restart the disconnect grace after a vanished App preparation is ro
   await lifetime.abortLeave('app', 'socket', attempt.attemptId)
   await vi.advanceTimersByTimeAsync(0)
   expect(beforeWrite).toHaveBeenCalledOnce()
-  await vi.waitFor(() => expect(stop).toHaveBeenCalledWith('disconnect', expect.any(Number)))
+  await stopped.promise
+  expect(stop).toHaveBeenCalledWith('disconnect', expect.any(Number))
 })
 
 it('rechecks disconnected Apps after a pending durable explicit-hold release', async () => {
@@ -295,7 +298,8 @@ it('bounds a hung stop-intent write and compensates late publication without sto
   vi.useFakeTimers()
   const writing = Promise.withResolvers<void>()
   persistence.beforeWrite = () => writing.promise
-  const afterWrite = vi.fn(async () => {})
+  const compensated = Promise.withResolvers<void>()
+  const afterWrite = vi.fn(async () => compensated.resolve()).mockResolvedValueOnce(undefined)
   persistence.afterWrite = afterWrite
   const stopping = lifetime.stop(true, 'user-stop', Date.now() + 50)
   const result = expect(stopping).rejects.toMatchObject({ code: 'service-stop-intent-timeout' })
@@ -305,7 +309,8 @@ it('bounds a hung stop-intent write and compensates late publication without sto
   await expect(lifetime.start()).rejects.toMatchObject({ code: 'service-stop-intent-timeout' })
   persistence.beforeWrite = undefined
   writing.resolve()
-  await vi.waitFor(() => expect(afterWrite).toHaveBeenCalledTimes(2))
+  await compensated.promise
+  expect(afterWrite).toHaveBeenCalledTimes(2)
   expect(await readServiceLifetime(configRoot)).toMatchObject({ stopping: false })
   expect(() => lifetime.connect('b', 'socket-b')).toThrow('stopping')
   expect(lifetime.snapshot().stopping).toBe(true)
