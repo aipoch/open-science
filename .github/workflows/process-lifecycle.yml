@@ -22,6 +22,7 @@ on:
       - 'src/main/agent-framework/claude-code.ts'
       - 'src/main/agent-framework/opencode.ts'
       - 'src/main/agent-framework/codex.ts'
+      - 'src/main/settings/managed-codex.ts'
       - 'src/main/delegation/process-ownership.ts'
       - 'src/main/process-tree.ts'
       - 'src/main/process-tree-windows.ts'
