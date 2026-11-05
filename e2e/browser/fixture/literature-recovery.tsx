@@ -235,6 +235,10 @@ window.api = {
         ]
       }
     },
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
+    }),
     get: async () => fileItem,
     importPdf: async (request: { itemId: string; attachment: { name: string } }) => {
       fileRequests.push(request)

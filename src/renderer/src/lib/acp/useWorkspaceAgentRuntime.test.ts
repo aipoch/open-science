@@ -1545,11 +1545,17 @@ describe('workspace durable elicitation', () => {
 
   it.each(
     [true, false].flatMap((mainOwned) =>
-      [false, true].map((failSecondMutation) => ({ mainOwned, failSecondMutation }))
+      [false, true].flatMap((failSecondMutation) =>
+        (failSecondMutation ? [false, true] : [true]).map((attachmentFailed) => ({
+          mainOwned,
+          failSecondMutation,
+          attachmentFailed
+        }))
+      )
     )
   )(
-    'retains a cold response and a usable exit after failure (Main-owned: $mainOwned, second mutation fails: $failSecondMutation)',
-    async ({ mainOwned, failSecondMutation }) => {
+    'retains a cold response and a usable exit after failure (Main-owned: $mainOwned, second mutation fails: $failSecondMutation, attachment failed: $attachmentFailed)',
+    async ({ mainOwned, failSecondMutation, attachmentFailed }) => {
       const source = useSessionStore.getState().sessions[0]
       const promptMessageId = source.messages[0].id
       let stored: PersistedChatSession = materializeSessionConversationGraph({
@@ -1576,10 +1582,10 @@ describe('workspace durable elicitation', () => {
           }
         ]
       })
-      const publish = (): void =>
+      const publish = (session = stored): void =>
         useSessionStore.getState().applyDurableSessionProjection({
           source: useSessionStore.getState().sessions[0],
-          session: stored,
+          session,
           mode: 'runtime-transcript-authority'
         })
       publish()
@@ -1609,8 +1615,10 @@ describe('workspace durable elicitation', () => {
       let savedBeforeResume = false
       const resumeSession = vi.fn(async () => {
         savedBeforeResume = stored.activities?.[0].elicitation?.state === 'answered'
-        throw new Error('The bound specialist is unavailable.')
+        if (attachmentFailed) throw new Error('The bound specialist is unavailable.')
+        return { sessionId: stored.id }
       })
+      let prepared = false
       const runtime = {
         state: createSnapshot([]),
         resumeSession,
@@ -1623,10 +1631,12 @@ describe('workspace durable elicitation', () => {
             sessionId: stored.id,
             toolCallId: request.toolCallId
           }
+          const continuePrepared = !response.prepareContinuation && prepared
+          if (continuePrepared) prepared = false
           await owner.prepareElicitation({
             ...input,
-            continuePrepared: !!response.continuationFailure,
-            ...(response.continuationFailure || response.prepareContinuation
+            continuePrepared,
+            ...(response.continuationFailure
               ? {
                   recovery: {
                     error:
@@ -1636,6 +1646,7 @@ describe('workspace durable elicitation', () => {
                 }
               : {})
           })
+          if (response.prepareContinuation) prepared = true
           return createSnapshot([])
         }
       }
@@ -1654,9 +1665,16 @@ describe('workspace durable elicitation', () => {
       expect(stored.activities?.[0].elicitation?.answers).toEqual(answers)
       if (!failSecondMutation) expect(resumeSession).toHaveBeenCalledTimes(1)
       if (resumeSession.mock.calls.length > 0) expect(savedBeforeResume).toBe(true)
-      expect
-        .soft(stored.activities?.[0].elicitation?.continuationRecovery)
-        .toEqual(expect.objectContaining({ error: expect.any(String) }))
+      expect(stored.activities?.[0].elicitation?.continuationRecovery).toEqual(
+        failSecondMutation ? undefined : { error: 'The bound specialist is unavailable.' }
+      )
+      expect(
+        useSessionStore.getState().sessions[0].activities?.[0].elicitation?.continuationRecovery
+      ).toEqual({
+        error: attachmentFailed
+          ? 'The bound specialist is unavailable.'
+          : 'Injected recovery persistence failure'
+      })
       expect
         .soft(pendingWorkspaceElicitations(useSessionStore.getState().sessions[0]))
         .toHaveLength(1)

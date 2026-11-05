@@ -7787,6 +7787,9 @@
     "Quit the other app, then recheck.": "退出该程序，然后重新检查。",
     "Resource diagnostics (including pre-failure records)": "资源诊断（含故障前记录）",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "包含本应用的系统内存、进程标识和各会话活动。将复制保留的故障前记录及当前记录，原始文件仍保存在此设备上。仅在同意分享这些记录时勾选。",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "保存应用日志以提供给开发者。资源诊断需由您勾选，不会上传任何内容。"
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "保存应用日志以提供给开发者。资源诊断需由您勾选，不会上传任何内容。",
+    "{{count}} questions awaiting your answer_other": "有 {{count}} 个问题待回答",
+    "Collapse question panel": "收起问题面板",
+    "Expand question panel": "展开问题面板"
   }
 }

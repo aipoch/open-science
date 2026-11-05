@@ -8273,6 +8273,12 @@
     "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова.",
     "Resource diagnostics (including pre-failure records)": "Диагностика ресурсов (включая записи до сбоя)",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "Включает системную память, идентификаторы процессов и активность сеансов всего приложения. Сохранённые записи до сбоя и текущие записи копируются; оригиналы остаются на этом устройстве. Выбирайте только при согласии передать эти записи.",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Сохранение журналов приложения для разработчиков. Диагностику ресурсов необходимо выбрать отдельно; данные никуда не отправляются."
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Сохранение журналов приложения для разработчиков. Диагностику ресурсов необходимо выбрать отдельно; данные никуда не отправляются.",
+    "{{count}} questions awaiting your answer_one": "{{count}} вопрос ожидает вашего ответа",
+    "{{count}} questions awaiting your answer_few": "{{count}} вопроса ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_many": "{{count}} вопросов ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_other": "{{count}} вопроса ожидают вашего ответа",
+    "Collapse question panel": "Свернуть панель вопросов",
+    "Expand question panel": "Развернуть панель вопросов"
   }
 }

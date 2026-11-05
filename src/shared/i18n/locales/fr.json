@@ -8127,6 +8127,11 @@
     "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez.",
     "Resource diagnostics (including pre-failure records)": "Diagnostic des ressources (y compris les données précédant la panne)",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "Comprend la mémoire système, les identifiants des processus et l’activité des sessions de toute l’application. Les données conservées avant la panne et les données actuelles sont copiées ; les originaux restent sur cet appareil. Sélectionnez uniquement si vous acceptez de partager ces données.",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Enregistrez les journaux de l’application pour les développeurs. Le diagnostic des ressources nécessite votre sélection ; rien n’est téléversé."
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Enregistrez les journaux de l’application pour les développeurs. Le diagnostic des ressources nécessite votre sélection ; rien n’est téléversé.",
+    "{{count}} questions awaiting your answer_one": "{{count}} question en attente de votre réponse",
+    "{{count}} questions awaiting your answer_many": "{{count}} questions en attente de votre réponse",
+    "{{count}} questions awaiting your answer_other": "{{count}} questions en attente de votre réponse",
+    "Collapse question panel": "Replier le panneau des questions",
+    "Expand question panel": "Déplier le panneau des questions"
   }
 }

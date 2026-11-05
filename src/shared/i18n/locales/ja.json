@@ -7787,6 +7787,9 @@
     "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。",
     "Resource diagnostics (including pre-failure records)": "リソース診断（障害前の記録を含む）",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "システムメモリ、プロセス識別情報、このアプリ全体のセッション活動を含みます。保存された障害前の記録と現在の記録をコピーし、元のファイルはこのデバイスに残します。これらの記録の共有に同意する場合のみ選択してください。",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "開発者に提供するアプリのログを保存します。リソース診断は選択した場合のみ含まれ、何もアップロードされません。"
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "開発者に提供するアプリのログを保存します。リソース診断は選択した場合のみ含まれ、何もアップロードされません。",
+    "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
+    "Collapse question panel": "質問パネルを折りたたむ",
+    "Expand question panel": "質問パネルを展開"
   }
 }

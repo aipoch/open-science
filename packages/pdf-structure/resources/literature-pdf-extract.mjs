@@ -1,3 +1,5 @@
+import { workerData } from 'node:worker_threads'
+import { isSearchableScan, readScannedPageElements } from './literature-pdf-scanned-page.mjs'
 import { createNativeTableFontRoleWitness } from './literature-pdf-native-table-font-role.mjs'
 import {
   createNativeVectorFigureLabelCertificate,
@@ -904,6 +906,77 @@ try {
         const nativeViewport = page.getViewport({ scale: 1, rotation: pageGeometry.renderRotation })
         const operators = await page.getOperatorList()
         const originalContent = await page.getTextContent()
+        const scanGeometry = originalPages.get(pageNumber) ?? pageGeometry
+        if (isSearchableScan(scanGeometry, operators)) {
+          const recovered = await readScannedPageElements(
+            page,
+            scanGeometry,
+            captions,
+            workerData?.ocr
+          )
+          const published = []
+          for (const [index, element] of recovered.entries()) {
+            const id = `p${pageNumber}-${element.kind}-${index + 1}`
+            const thumbnail = await crop(element.rect, id)
+            if (!thumbnail) continue
+            published.push(element)
+            const value = {
+              id,
+              page: pageNumber,
+              caption: captionValue(element.caption),
+              region: normalize(element.rect, pageGeometry.width, pageGeometry.height),
+              thumbnail
+            }
+            if (element.kind === 'figure') figures.push({ ...value, graphicsCount: 1 })
+            else
+              tables.push({
+                ...value,
+                sourceViewport: {
+                  width: pageGeometry.width,
+                  height: pageGeometry.height,
+                  scale: 1
+                },
+                grid: [],
+                cells: [],
+                unassigned: [],
+                issues: ['no-source-cell-grid']
+              })
+          }
+          // Unproved scans retain caption-only evidence; the page carrier itself
+          // is never a crop or a source of verified scientific table cells.
+          for (const [index, candidate] of captions
+            .filter((c) => c.page === pageNumber)
+            .entries()) {
+            const kind = captionKind(candidate.lines[0])
+            if (
+              !['figure', 'table'].includes(kind) ||
+              published.some(
+                (e) =>
+                  e.kind === kind &&
+                  e.caption.lines[0].match(/\d+/)?.[0] === candidate.lines[0].match(/\d+/)?.[0]
+              )
+            )
+              continue
+            const unresolved = {
+              id: `p${pageNumber}-unresolved-${index + 1}`,
+              page: pageNumber,
+              caption: captionValue(candidate)
+            }
+            if (kind === 'figure')
+              figures.push({ ...unresolved, issue: 'no-unambiguous-adjacent-graphics' })
+            else
+              tables.push({
+                ...unresolved,
+                sourceViewport: { width: pageGeometry.width, height: pageGeometry.height },
+                grid: [],
+                cells: [],
+                unassigned: [],
+                issues: ['no-source-cell-grid']
+              })
+          }
+          console.log(JSON.stringify({ phase: 'assembled', page: pageNumber }))
+          return
+        }
         const figureSnapshot = structurePhase.nativeFigureRenderContexts.get(pageNumber)
         const matchedFigureContext = matchNativeFigureRenderContext(
           figureSnapshot,

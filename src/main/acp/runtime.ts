@@ -2168,11 +2168,9 @@ class AcpRuntime {
         answers: response.answers,
         retryContinuation: response.retryContinuation,
         continuePrepared: !response.prepareContinuation && continuePrepared,
-        recovery: {
-          error:
-            response.continuationFailure?.slice(0, 4_000) ??
-            'The task could not continue. Your response is saved.'
-        }
+        ...(response.continuationFailure !== undefined
+          ? { recovery: { error: response.continuationFailure.slice(0, 4_000) } }
+          : {})
       })
       return this.getSnapshot()
     }

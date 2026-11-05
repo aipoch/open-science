@@ -9534,6 +9534,9 @@ describe('ACP runtime session management', () => {
         'unknown',
         'post-dispatch',
         'prepared',
+        'prepared-attachment-failed-write',
+        'prepared-continuation-failed-write',
+        'prepared-read-retry',
         'prepared-restart',
         'prepared-end',
         'prepared-rotation'
@@ -9569,14 +9572,25 @@ describe('ACP runtime session management', () => {
         )
       )
       persisted.runtimeTranscriptOwner = 'main'
+      let responseMutations = 0
+      let continuationReads = 0
       const mutateRuntimeSession: SessionPersistenceCoordinator['mutateRuntimeSession'] = async (
         _scope,
         mutate
       ) => {
+        responseMutations += 1
+        if (
+          (scenario === 'prepared-attachment-failed-write' ||
+            scenario === 'prepared-continuation-failed-write') &&
+          responseMutations === 2
+        ) {
+          throw new Error('Recovery persistence failed')
+        }
         persisted = mutate(structuredClone(persisted))
         return structuredClone(persisted)
       }
       let failRead = scenario !== 'post-dispatch' && !scenario.startsWith('prepared')
+      const continuationPublications: PersistedChatSession[] = []
       const admission = Promise.withResolvers<void>()
       let admissionEntered = false
       const runtimeSessions = new RuntimeSessionOwner({
@@ -9628,12 +9642,21 @@ describe('ACP runtime session management', () => {
             }
           },
           permissionWait: {
+            onContinuationSessionUpdated: (session) => {
+              continuationPublications.push(structuredClone(session))
+            },
             sessions: {
               readSessionRuntimeContext: vi.fn(),
               patchSessionRuntimeContext: vi.fn(),
               containsMessageOnActiveBranch: vi.fn(),
               sessionProjectId: async () => 'project-1',
-              loadSessionForContinuation: async () => structuredClone(persisted),
+              loadSessionForContinuation: async () => {
+                continuationReads += 1
+                if (scenario === 'prepared-read-retry' && continuationReads === 2) {
+                  throw new Error('Temporary authority read failure')
+                }
+                return structuredClone(persisted)
+              },
               mutateRuntimeSession
             }
           }
@@ -9684,13 +9707,45 @@ describe('ACP runtime session management', () => {
       if (scenario.startsWith('prepared')) {
         await coordinator.respondToElicitation({ ...response, prepareContinuation: true })
         expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        // Saving a cold decision is preparation, not a failed continuation.
+        expect(fakeAgent.prompts).toHaveLength(0)
+        expect(runtime.getSnapshot().events.filter(({ kind }) => kind === 'error')).toEqual([])
+        expect(persisted.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          continuationPending: true
+        })
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        expect(continuationPublications).toEqual([])
+      }
+      if (scenario === 'prepared-attachment-failed-write') {
+        await expect(
+          coordinator.respondToElicitation({
+            ...response,
+            continuationFailure: 'The bound specialist is unavailable.'
+          })
+        ).rejects.toThrow('Recovery persistence failed')
+        expect(continuationPublications.at(-1)?.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: response.answers,
+          continuationRecovery: { error: 'The bound specialist is unavailable.' }
+        })
         expect(
-          persisted.activities?.[0].elicitation?.continuationRecovery?.retryable
+          continuationPublications.at(-1)?.activities?.[0].elicitation?.continuationRecovery
+            ?.retryable
         ).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        await coordinator.respondToElicitation({ ...response, action: 'cancel' })
+        expect(persisted.status).toBe('idle')
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
       }
       if (scenario === 'prepared-rotation') await coordinator.requestSkillsReload()
       if (scenario === 'prepared-restart') {
         persisted = normalizeSessionFile(JSON.parse(JSON.stringify(persisted)))!
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toEqual({
+          error: 'The task could not continue. Your response is saved.'
+        })
         coordinator = new AcpRuntimeCoordinator(createRuntime)
       }
       if (scenario === 'prepared-end')
@@ -9706,12 +9761,42 @@ describe('ACP runtime session management', () => {
         expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
         return
       }
+      if (scenario === 'prepared-continuation-failed-write') {
+        await expect(coordinator.respondToElicitation(response)).rejects.toThrow(
+          'Recovery persistence failed'
+        )
+        expect(continuationPublications.at(-1)?.activities?.[0].elicitation).toMatchObject({
+          state: 'answered',
+          answers: response.answers,
+          continuationRecovery: { error: 'Recovery persistence failed' }
+        })
+        expect(
+          continuationPublications.at(-1)?.activities?.[0].elicitation?.continuationRecovery
+            ?.retryable
+        ).toBeUndefined()
+        expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        await coordinator.respondToElicitation({ ...response, action: 'cancel' })
+        expect(persisted.status).toBe('idle')
+        expect(persisted.activities?.[0].elicitation?.answers).toEqual(response.answers)
+        expect(fakeAgent.prompts).toHaveLength(0)
+        return
+      }
       await coordinator.respondToElicitation(response)
-      if (scenario === 'prepared' || scenario === 'prepared-rotation') {
+      if (
+        scenario === 'prepared' ||
+        scenario === 'prepared-rotation' ||
+        scenario === 'prepared-read-retry'
+      ) {
         await vi.waitFor(() => expect(process.killed).toBe(true))
         if (scenario === 'prepared-rotation') expect(generations).toBe(2)
         await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
         expect(fakeAgent.prompts[0].text).toContain('Expanded')
+        if (scenario === 'prepared-read-retry') expect(continuationReads).toBeGreaterThanOrEqual(3)
+        await vi.waitFor(() => {
+          expect(persisted.activities?.[0].elicitation?.continuationPending).toBeUndefined()
+          expect(persisted.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+        })
+        expect(runtime.getSnapshot().events.filter(({ kind }) => kind === 'error')).toEqual([])
         if (mixedSkip) {
           expect(fakeAgent.prompts[0].text).toContain(
             'Approach\nStatus: answered\nAnswer: Expanded'

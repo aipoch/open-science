@@ -7953,6 +7953,10 @@
     "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut.",
     "Resource diagnostics (including pre-failure records)": "Ressourcendiagnose (einschließlich Aufzeichnungen vor dem Fehler)",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "Enthält Systemspeicher, Prozesskennungen und Sitzungsaktivitäten der gesamten App. Gespeicherte Aufzeichnungen vor dem Fehler und aktuelle Aufzeichnungen werden kopiert; die Originale bleiben auf diesem Gerät. Nur auswählen, wenn Sie der Weitergabe dieser Aufzeichnungen zustimmen.",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Anwendungsprotokolle für Entwickler speichern. Die Ressourcendiagnose muss ausdrücklich ausgewählt werden; es wird nichts hochgeladen."
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Anwendungsprotokolle für Entwickler speichern. Die Ressourcendiagnose muss ausdrücklich ausgewählt werden; es wird nichts hochgeladen.",
+    "{{count}} questions awaiting your answer_one": "{{count}} Frage wartet auf Ihre Antwort",
+    "{{count}} questions awaiting your answer_other": "{{count}} Fragen warten auf Ihre Antwort",
+    "Collapse question panel": "Fragebereich einklappen",
+    "Expand question panel": "Fragebereich ausklappen"
   }
 }

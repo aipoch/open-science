@@ -7785,6 +7785,9 @@
     "Quit the other app, then recheck.": "다른 앱을 종료한 후 다시 확인하세요.",
     "Resource diagnostics (including pre-failure records)": "리소스 진단(장애 전 기록 포함)",
     "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "시스템 메모리, 프로세스 식별 정보 및 이 앱 전체의 세션 활동이 포함됩니다. 보관된 장애 전 기록과 현재 기록을 복사하며 원본은 이 기기에 남습니다. 이 기록을 공유하는 데 동의하는 경우에만 선택하세요.",
-    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "개발자에게 제공할 앱 로그를 저장합니다. 리소스 진단은 직접 선택해야 포함되며 아무것도 업로드되지 않습니다."
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "개발자에게 제공할 앱 로그를 저장합니다. 리소스 진단은 직접 선택해야 포함되며 아무것도 업로드되지 않습니다.",
+    "{{count}} questions awaiting your answer_other": "답변을 기다리는 질문 {{count}}개",
+    "Collapse question panel": "질문 패널 접기",
+    "Expand question panel": "질문 패널 펼치기"
   }
 }

@@ -237,6 +237,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     isResumingSession,
     visiblePermissionPending,
     pendingElicitations = [],
+    pendingElicitationControl,
     onStartResearch,
     activeSession,
     turnOutcomeActions
@@ -248,6 +249,7 @@ vi.mock('./WorkspaceMessageScroller', () => ({
     isResumingSession?: boolean
     visiblePermissionPending?: boolean
     pendingElicitations?: unknown[]
+    pendingElicitationControl?: { activityId: string; onReveal: () => void }
     onStartResearch?: (prompt: string) => void
   }): React.JSX.Element => {
     scrollerProps.turnOutcomeActions = turnOutcomeActions
@@ -273,6 +275,14 @@ vi.mock('./WorkspaceMessageScroller', () => ({
           <span data-testid="resume-progress-indicator">Resuming session</span>
         ) : null}
         <span data-testid="scroller-pending-elicitations">{pendingElicitations.length}</span>
+        {pendingElicitationControl ? (
+          <button
+            data-testid="reveal-pending-elicitation"
+            onClick={pendingElicitationControl.onReveal}
+          >
+            Reveal question
+          </button>
+        ) : null}
         <span data-testid="scroller-credential-pending">{String(credentialPending ?? false)}</span>
         <span data-testid="scroller-visible-permission-pending">
           {String(visiblePermissionPending ?? false)}
@@ -2896,7 +2906,7 @@ describe('ConversationPanel composer intake', () => {
     expect(elicitationComposer?.classList.contains('overflow-visible')).toBe(true)
     expect(elicitationComposer?.classList.contains('px-px')).toBe(true)
     expect(elicitationComposer?.classList.contains('pb-px')).toBe(true)
-    const resizeHandle = container.querySelector(
+    let resizeHandle = container.querySelector(
       '[aria-label="Resize question panel"]'
     ) as HTMLButtonElement
     expect(resizeHandle).not.toBeNull()
@@ -2914,6 +2924,28 @@ describe('ConversationPanel composer intake', () => {
     expect(scrollSurface.classList.contains('border-border-200')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-sm')).toBe(true)
     expect(scrollSurface.classList.contains('shadow-card-opaque')).toBe(false)
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse question panel"]')!.click()
+    })
+    expect(
+      container.querySelector<HTMLFormElement>('[data-testid="elicitation-choice-mode"]')?.hidden
+    ).toBe(true)
+    expect(container.querySelector('[aria-label="Resize question panel"]')).toBeNull()
+    expectComposerCoveredByBlockingOverlay()
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('[data-testid="reveal-pending-elicitation"]')!
+        .click()
+    })
+    expect(
+      container.querySelector<HTMLFormElement>('[data-testid="elicitation-choice-mode"]')?.hidden
+    ).toBe(false)
+    expect(container.querySelector('[aria-label="Type your own answer"]')).toBe(ownAnswer)
+    expect(document.activeElement).toBe(ownAnswer)
+    expect(ownAnswer.value).toBe('Research draft')
+    resizeHandle = container.querySelector(
+      '[aria-label="Resize question panel"]'
+    ) as HTMLButtonElement
     expectComposerChromeCovered('[aria-label="Open notebook"]')
     expectComposerChromeCovered('[data-testid="background-tasks-chip"]')
 
@@ -2979,6 +3011,10 @@ describe('ConversationPanel composer intake', () => {
     expect((elicitationComposer as HTMLElement).style.height).toBe('398px')
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalInnerHeight })
 
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse question panel"]')!.click()
+    })
+
     renderPanel({
       view: {
         activeSession: {
@@ -3014,6 +3050,9 @@ describe('ConversationPanel composer intake', () => {
     ) as HTMLDivElement
     expect(nextElicitationComposer).not.toBe(elicitationComposer)
     expect(nextElicitationComposer.style.height).toBe('')
+    expect(
+      container.querySelector<HTMLFormElement>('[data-testid="elicitation-choice-mode"]')?.hidden
+    ).toBe(false)
 
     const surfaceFade = container.querySelector('[data-testid="composer-surface-fade"]')
     expect(surfaceFade?.classList.contains('-top-18')).toBe(true)
@@ -3128,6 +3167,7 @@ describe('ConversationPanel composer intake', () => {
     expect(container.querySelector('[data-testid="permission-approval-controls"]')).not.toBeNull()
     expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
     expectComposerChromeCovered('[aria-label="Open notebook"]')
+    expect(container.querySelector('[data-testid="reveal-pending-elicitation"]')).toBeNull()
     expectComposerChromeCovered('[data-testid="background-tasks-chip"]')
     expectComposerCoveredByBlockingOverlay()
     expect(
@@ -3392,6 +3432,111 @@ describe('ConversationPanel composer intake', () => {
         durable: { kind: 'agent-user-choice', requestId: 'choice-1' }
       }
     })
+  })
+
+  it('keeps a prepared cold Ask-User answer blocked without showing recovery', async () => {
+    let stored: PersistedChatSession = materializeSessionConversationGraph({
+      id: 'session-cold-choice-flash',
+      projectId: 'project-a',
+      title: 'Cold choice',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      runtimeTranscriptOwner: 'main',
+      messages: [
+        {
+          id: 'prompt-cold-choice',
+          role: 'user',
+          content: 'Prepare the report.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [
+        {
+          id: 'tool-cold-choice',
+          kind: 'tool',
+          title: 'Choose an approach',
+          status: 'in_progress',
+          promptMessageId: 'prompt-cold-choice',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 2,
+          updatedAt: 2,
+          elicitation: {
+            message: 'Choose an approach',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Approach',
+                kind: 'single-select',
+                options: [{ value: 'minimal', label: 'Minimal' }]
+              },
+              { id: 'question_0_custom', label: 'Other', kind: 'text' }
+            ],
+            state: 'pending',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-cold',
+              promptMessageId: 'prompt-cold-choice'
+            }
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [hydrateSession(stored)]
+    })
+    useWorkspaceOperationErrors.setState({ errors: {}, diagnostics: {} })
+    const owner = new AcpDurableContinuationContextOwner({
+      loadSessionForContinuation: async () => structuredClone(stored),
+      mutateRuntimeSession: async (_scope, mutate) => {
+        stored = mutate(structuredClone(stored))
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: stored,
+          mode: 'runtime-transcript-authority'
+        })
+        return structuredClone(stored)
+      }
+    })
+    const input = {
+      projectId: stored.projectId,
+      sessionId: stored.id,
+      requestId: 'choice-cold',
+      toolCallId: 'tool-cold-choice',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'minimal' }]
+    }
+    const renderCurrent = (): void =>
+      renderPanel({ view: { activeSession: useSessionStore.getState().sessions[0] } })
+    renderCurrent()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+
+    // Match Main's prepared decision while runtime attachment is still pending.
+    await owner.prepareElicitation(input)
+    renderCurrent()
+    expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+    expect(container.textContent).not.toContain('End this wait')
+    expect(
+      container.querySelector('[data-testid="ordinary-composer-form"]')?.hasAttribute('inert')
+    ).toBe(true)
+    expect(stored.activities?.[0].elicitation?.answers).toEqual(input.answers)
+
+    // The normal second response retains the exact saved answer for provider delivery.
+    await owner.prepareElicitation({ ...input, continuePrepared: true })
+    renderCurrent()
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+    expect(stored.activities?.[0].elicitation?.answers).toEqual(input.answers)
+    expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
   })
 
   it('scopes live Ask-User requests to the active session', () => {

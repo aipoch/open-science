@@ -13,6 +13,101 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
+it('preserves Notebook cleanup and Shell termination evidence in the diagnostic archive', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'notebook-diagnostic-evidence-'))
+  roots.push(root)
+  const logDir = join(root, 'logs')
+  const configRoot = join(root, 'config')
+  await mkdir(configRoot)
+  initLogger({ logDir, runId: 'backend-lifetime', mirrorToConsole: false })
+  const sandbox = createLogger('notebook:network-sandbox')
+  sandbox.info('operation phase', {
+    operation: 'r-runtime-verification',
+    operationId: 'verification-1',
+    parentOperationId: 'authorization-1',
+    phase: 'process-termination',
+    processesTerminated: false
+  })
+  sandbox.info('sandbox cleanup completed', {
+    executionReference: 'shell-run-1',
+    phase: 'sandbox-cleanup',
+    result: 'incomplete',
+    processState: 'started-and-reaped',
+    processesTerminated: true,
+    networkClosed: true,
+    temporaryResourcesRemoved: false,
+    incompleteStageCount: 1,
+    temporaryCleanupErrorCode: 'EBUSY',
+    command: 'PRIVATE_COMMAND',
+    env: { API_KEY: 'PRIVATE_ENV' }
+  })
+  createLogger('notebook:runtime').info('shell execution completed', {
+    executionId: 'shell-run-1',
+    runtime: 'powershell',
+    stage: 'execution',
+    status: 'failed',
+    terminationReason: 'cleanup-incomplete',
+    cleanupState: 'incomplete',
+    exitCode: null,
+    stdout: 'PRIVATE_STDOUT'
+  })
+  await flushLogs()
+  const before = await readFile(join(logDir, 'main.log'), 'utf8')
+  expect(before).toContain('"temporaryResourcesRemoved":false')
+  expect(before).toContain('"processState":"started-and-reaped"')
+  const files = await exportDiagnosticFiles(
+    {
+      configRoot,
+      dataRoot: join(root, 'data'),
+      logPath: join(logDir, 'main.log'),
+      appVersion: 'test'
+    },
+    { projectId: 'project', sessionId: 'session', selectedItems: ['log:main.log'] }
+  )
+  const exported = files['logs/main.log']
+  const records = exported
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+  expect(records).toMatchObject([
+    {
+      runId: 'backend-lifetime',
+      diagnostics: {
+        operationId: 'verification-1',
+        parentOperationId: 'authorization-1',
+        phase: 'process-termination',
+        processesTerminated: false
+      }
+    },
+    {
+      diagnostics: {
+        executionReference: 'shell-run-1',
+        result: 'incomplete',
+        processState: 'started-and-reaped',
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: false,
+        incompleteStageCount: 1,
+        temporaryCleanupErrorCode: 'EBUSY'
+      }
+    },
+    {
+      diagnostics: {
+        executionId: 'shell-run-1',
+        runtime: 'powershell',
+        stage: 'execution',
+        status: 'failed',
+        terminationReason: 'cleanup-incomplete',
+        cleanupState: 'incomplete',
+        exitCode: null
+      }
+    }
+  ])
+  for (const secret of ['PRIVATE_COMMAND', 'PRIVATE_ENV', 'PRIVATE_STDOUT'])
+    expect(exported).not.toContain(secret)
+  expect(await readFile(join(logDir, 'main.log'), 'utf8')).toBe(before)
+})
+
 it('preserves an unfamiliar operation failure through real logging, rotation, reinitialization and archive export', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diagnostic-evidence-'))
   roots.push(root)
