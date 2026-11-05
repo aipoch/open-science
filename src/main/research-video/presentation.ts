@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import {
   researchVideoPresentationRequestSchema,
+  researchVideoStatusRequestSchema,
+  type ResearchVideoStatusRequest,
   type ResearchVideoPresentationRequest,
   type ResearchVideoPresentationStatus
 } from '../../shared/research-video-presentation'
@@ -25,7 +27,7 @@ import {
 } from './stored-presentation'
 
 export type ResearchVideoPresentationOwner = {
-  status(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
+  status(request: ResearchVideoStatusRequest): Promise<ResearchVideoPresentationStatus>
   start(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
   remove(request: ResearchVideoPresentationRequest): Promise<ResearchVideoPresentationStatus>
   cancel(request: ResearchVideoPresentationRequest): void
@@ -36,6 +38,7 @@ export type ResearchVideoPresentationOwner = {
 export function createResearchVideoPresentationOwner(options: {
   dataRoot(): string
   mutate?: <T>(request: ResearchVideoPresentationRequest, work: () => Promise<T>) => Promise<T>
+  checkReadiness?: () => Promise<void>
   models: LocalModelOwner
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   writeScreenplay: ResearchFilmAuthor['writeScreenplay']
@@ -50,8 +53,12 @@ export function createResearchVideoPresentationOwner(options: {
 }): ResearchVideoPresentationOwner {
   let removing = false
   let closed = false
-  let active: { key: string; controller: AbortController; done: Promise<void> } | undefined
+  let operationRevision = 0
+  let active:
+    | { key: string; controller: AbortController; done: Promise<void>; prepared: Promise<void> }
+    | undefined
   const states = new Map<string, ResearchVideoPresentationStatus>()
+  const preflights = new Map<string, symbol>()
   const directory = async (key: string, create = false): Promise<string | undefined> => {
     let current = options.dataRoot()
     for (const part of ['research-video-presentations', key]) {
@@ -71,15 +78,44 @@ export function createResearchVideoPresentationOwner(options: {
     return current
   }
   const status = async (
-    rawRequest: ResearchVideoPresentationRequest
+    rawRequest: ResearchVideoStatusRequest
   ): Promise<ResearchVideoPresentationStatus> => {
-    const request = researchVideoPresentationRequestSchema.parse(rawRequest),
+    const { checkReadiness, ...request } = researchVideoStatusRequestSchema.parse(rawRequest),
       key = scopeKey(request)
+    const revision = operationRevision
     const state = structuredClone(states.get(key) ?? {})
     const session = await options.loadSession(request.projectId, request.sessionId)
     const block = researchVideoGenerationBlock(session, request)
     if (block === 'unavailable') return { generationBlock: block }
     if (block) state.generationBlock = block
+    if (checkReadiness && !block && !active && !closed && !removing) {
+      const probe = Symbol()
+      preflights.set(key, probe)
+      delete state.preflightError
+      try {
+        const source = researchVideoSessionSource(session!, request)
+        await stageResearchVideoSessionImages(
+          source,
+          session!,
+          options.dataRoot(),
+          undefined,
+          new AbortController().signal
+        )
+        await options.checkReadiness?.()
+        const snapshot = await options.models.getSnapshot()
+        if (snapshot.availability === 'ready' && !snapshot.updateAvailable) {
+          const lease = await options.models.acquireUse()
+          lease.release()
+        }
+      } catch (error) {
+        state.preflightError = error instanceof Error ? error.message : String(error)
+      }
+      const currentProbe = preflights.get(key) === probe
+      if (currentProbe) preflights.delete(key)
+      // A newer probe or mutation owns the status. Do not restart work after disposal.
+      if (!currentProbe || revision !== operationRevision) return status(request)
+      states.set(key, { ...states.get(key), preflightError: state.preflightError })
+    }
     const result =
       (await readStoredResearchFilm(options.dataRoot(), request)) ??
       (session?.packageOrigin || session?.forkOrigin
@@ -91,7 +127,8 @@ export function createResearchVideoPresentationOwner(options: {
   const run = async (
     request: ResearchVideoPresentationRequest,
     key: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    prepared: () => void
   ): Promise<void> => {
     const startedAt = Date.now()
     const started = performance.now()
@@ -109,7 +146,7 @@ export function createResearchVideoPresentationOwner(options: {
       measure(step.phase)
       states.set(key, { progress: { ...step, startedAt } })
     }
-    report({ phase: 'preparing' })
+    let admitted = false
     let lease: Awaited<ReturnType<LocalModelOwner['acquireUse']>> | undefined
     let job: string | undefined
     let completed = false
@@ -128,9 +165,17 @@ export function createResearchVideoPresentationOwner(options: {
                 ? 'Add conversation content before generating.'
                 : 'Research session is unavailable.'
         )
+      let source = researchVideoSessionSource(session, request)
+      await stageResearchVideoSessionImages(source, session, options.dataRoot(), undefined, signal)
+      await options.checkReadiness?.()
+      signal.throwIfAborted()
       lease = await options.models.acquireUse()
       signal.throwIfAborted()
-      let source = researchVideoSessionSource(session, request)
+      const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
+      if (!model) throw new Error('Install the research narration model before generating.')
+      admitted = true
+      report({ phase: 'preparing' })
+      prepared()
       const base = (await directory(key, true))!
       const id = randomUUID()
       job = join(base, id)
@@ -148,8 +193,6 @@ export function createResearchVideoPresentationOwner(options: {
         signal
       )
       await writeDurableJsonFile(join(job, 'session.json'), JSON.stringify(source))
-      const model = lease.assets.find((asset) => asset.file === 'model_quantized.onnx')
-      if (!model) throw new Error('Install the research narration model before generating.')
       const generated = await generateResearchFilm({
         source,
         directory: job,
@@ -174,17 +217,25 @@ export function createResearchVideoPresentationOwner(options: {
       completed = true
       states.delete(key)
     } catch (error) {
-      states.set(key, {
-        progress: {
-          phase: signal.aborted ? 'cancelled' : 'failed',
-          startedAt,
-          endedAt: Date.now()
-        },
-        ...(!signal.aborted
-          ? { error: error instanceof Error ? error.message : String(error) }
-          : {})
-      })
+      states.set(
+        key,
+        !admitted && !signal.aborted
+          ? {
+              preflightError: error instanceof Error ? error.message : String(error)
+            }
+          : {
+              progress: {
+                phase: signal.aborted ? 'cancelled' : 'failed',
+                startedAt,
+                endedAt: Date.now()
+              },
+              ...(!signal.aborted
+                ? { error: error instanceof Error ? error.message : String(error) }
+                : {})
+            }
+      )
     } finally {
+      prepared()
       measure('finished')
       log.info('generation timing', {
         outcome: completed ? 'completed' : signal.aborted ? 'cancelled' : 'failed',
@@ -207,29 +258,40 @@ export function createResearchVideoPresentationOwner(options: {
       if (removing) throw new Error('Research film deletion is in progress.')
       if (closed) throw new Error('Research presentation generation is closed.')
       if (active) {
-        if (active.key === key) return status(request)
+        if (active.key === key) {
+          await active.prepared
+          return status(request)
+        }
         throw new Error('Another research explanation is being generated. Wait for it to finish.')
       }
+      operationRevision++
       const controller = new AbortController()
+      let finishPreparation!: () => void
+      const prepared = new Promise<void>((resolve) => {
+        finishPreparation = resolve
+      })
       const operation = options.lifecycle
         ? options.lifecycle.run(request.projectId, request.sessionId, (signal) =>
-            run(request, key, AbortSignal.any([signal, controller.signal]))
+            run(request, key, AbortSignal.any([signal, controller.signal]), finishPreparation)
           )
-        : run(request, key, controller.signal)
+        : run(request, key, controller.signal, finishPreparation)
       const done = operation
         .catch((error) => {
           states.set(key, { error: error instanceof Error ? error.message : String(error) })
         })
         .finally(() => {
+          finishPreparation()
           active = undefined
         })
-      active = { key, controller, done }
+      active = { key, controller, done, prepared }
+      await prepared
       return status(request)
     },
     async remove(rawRequest) {
       const request = researchVideoPresentationRequestSchema.parse(rawRequest)
       if (closed || active || removing)
         throw new Error('Wait for the current research film operation to finish.')
+      operationRevision++
       removing = true
       const work = async (): Promise<ResearchVideoPresentationStatus> => {
         const session = await options.loadSession(request.projectId, request.sessionId)
@@ -257,6 +319,7 @@ export function createResearchVideoPresentationOwner(options: {
       if (active?.key === key) active.controller.abort(new Error('Research explanation cancelled.'))
     },
     async close(): Promise<void> {
+      operationRevision++
       closed = true
       active?.controller.abort(new Error('Application is closing.'))
       await active?.done

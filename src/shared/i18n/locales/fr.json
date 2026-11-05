@@ -8191,6 +8191,9 @@
     "{{count}} questions awaiting your answer_many": "{{count}} questions en attente de votre réponse",
     "{{count}} questions awaiting your answer_other": "{{count}} questions en attente de votre réponse",
     "Collapse question panel": "Replier le panneau des questions",
-    "Expand question panel": "Déplier le panneau des questions"
+    "Expand question panel": "Déplier le panneau des questions",
+    "Set up the selected agent runtime in Settings before generating a research film.": "Configurez le moteur de l’agent sélectionné dans les paramètres avant de générer un film de recherche.",
+    "Check the selected model and credentials in Settings before generating a research film.": "Vérifiez le modèle sélectionné et les identifiants dans les paramètres avant de générer un film de recherche.",
+    "This conversation is too large for a research explanation. Select a shorter branch.": "Cette conversation est trop longue pour une explication de recherche. Sélectionnez une branche plus courte."
   }
 }

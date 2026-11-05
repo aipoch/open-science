@@ -162,6 +162,17 @@ export async function composeResearchFilm({
       sessionPackageService.readResearchFilm(request, options),
     dataRoot: resolveDataRoot,
     models: researchNarrationModels,
+    checkReadiness: async () => {
+      const readiness = await settingsService.getPreflight()
+      if (!readiness.agentReady)
+        throw new Error(
+          'Set up the selected agent runtime in Settings before generating a research film.'
+        )
+      if (!readiness.activeProviderReady)
+        throw new Error(
+          'Check the selected model and credentials in Settings before generating a research film.'
+        )
+    },
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
     generate: researchVideoGenerate,
     engineDirectory: researchVideoEngineDirectory,

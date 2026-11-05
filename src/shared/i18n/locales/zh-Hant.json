@@ -7849,6 +7849,9 @@
     "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "刪除此分支的短片和本機生成檔案？對話內容和已另存的檔案將保留。",
     "{{count}} questions awaiting your answer_other": "有 {{count}} 個問題待回答",
     "Collapse question panel": "收合問題面板",
-    "Expand question panel": "展開問題面板"
+    "Expand question panel": "展開問題面板",
+    "Set up the selected agent runtime in Settings before generating a research film.": "請先在設定中配置所選智能體的執行環境，再產生研究影片。",
+    "Check the selected model and credentials in Settings before generating a research film.": "請先在設定中檢查所選模型及憑證，再產生研究影片。",
+    "This conversation is too large for a research explanation. Select a shorter branch.": "此對話過大，無法產生研究講解。請選擇較短的分支。"
   }
 }

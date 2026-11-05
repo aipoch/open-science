@@ -7849,6 +7849,9 @@
     "Delete this branch’s film and local generation files? Conversation content and separately saved files will be kept.": "この分岐の動画とローカルの生成ファイルを削除しますか？会話の内容と別途保存したファイルは保持されます。",
     "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
     "Collapse question panel": "質問パネルを折りたたむ",
-    "Expand question panel": "質問パネルを展開"
+    "Expand question panel": "質問パネルを展開",
+    "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
+    "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
+    "This conversation is too large for a research explanation. Select a shorter branch.": "この会話は研究解説を生成するには長すぎます。短い分岐を選択してください。"
   }
 }

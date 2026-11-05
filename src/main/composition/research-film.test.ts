@@ -35,6 +35,8 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
 }))
 
 const outcomes = [
+  'runtime-unavailable',
+  'provider-unavailable',
   'running',
   'max_tokens',
   'output-limit',
@@ -156,6 +158,10 @@ it.each(outcomes)(
     const input = {
       configRoot: mocks.root,
       settingsService: {
+        getPreflight: vi.fn(async () => ({
+          agentReady: outcome !== 'runtime-unavailable',
+          activeProviderReady: outcome !== 'provider-unavailable'
+        })),
         captureActiveExplicitAgentBackendTarget: vi.fn(async () => ({
           frameworkId: 'pi',
           providerId: 'test',
@@ -182,6 +188,19 @@ it.each(outcomes)(
       expect(mocks.acquire).not.toHaveBeenCalled()
       expect(mocks.install).not.toHaveBeenCalled()
       expect(await readdir(mocks.root)).toEqual([])
+      if (outcome === 'runtime-unavailable' || outcome === 'provider-unavailable') {
+        const preflight = await owner.status({ ...request, checkReadiness: true })
+        expect(preflight.preflightError).toContain(
+          outcome === 'runtime-unavailable' ? 'agent runtime' : 'model and credentials'
+        )
+        expect((await owner.start(request)).preflightError).toBe(preflight.preflightError)
+        expect(mocks.run).not.toHaveBeenCalled()
+        expect(mocks.acquire).not.toHaveBeenCalled()
+        expect(mocks.install).not.toHaveBeenCalled()
+        expect(await readdir(mocks.root)).toEqual([])
+        expect(input.recordAuxiliaryUsage).not.toHaveBeenCalled()
+        return
+      }
       await owner.start(request)
       await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
       if (outcome !== 'running') {

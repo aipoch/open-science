@@ -1,6 +1,7 @@
 import type { LocalModelSnapshot } from '../shared/local-models'
 import type {
   ResearchVideoPresentationRequest,
+  ResearchVideoStatusRequest,
   ResearchVideoPresentationStatus
 } from '../shared/research-video-presentation'
 import type { createResearchVideoPresentationOwner } from './research-video/presentation'
@@ -444,7 +445,7 @@ const dataContentApplicationCommands = Object.freeze({
   >('research-video:start'),
   researchVideoPresentationStatus: defineApplicationCommand<
     'research-video:status',
-    readonly [request: ResearchVideoPresentationRequest],
+    readonly [request: ResearchVideoStatusRequest],
     ResearchVideoPresentationStatus
   >('research-video:status'),
   researchVideoPresentationRemove: defineApplicationCommand<
