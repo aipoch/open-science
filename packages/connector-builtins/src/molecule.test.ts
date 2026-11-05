@@ -76,7 +76,9 @@ describe('molecule/render_molecule', () => {
         expect(out.heavy_atom_count).toBe(atoms)
         expect(out.formula).toBe(source.getMolecularFormula().formula)
       }
-    }
+    },
+    // Each case round-trips both inputs; OpenChemLib is slower under CI's V8 coverage.
+    120_000
   )
 
   it.each([999, 1000])('round-trips a structure with 999 atoms and %i bonds', async (bonds) => {
