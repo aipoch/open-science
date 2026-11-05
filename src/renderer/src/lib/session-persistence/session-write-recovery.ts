@@ -1,4 +1,5 @@
 import { isDesktopRuntimeConnectionError } from '../../../../shared/desktop-runtime-recovery'
+import type { RendererSessionWriteRecoveryDiagnostics } from '../../../../shared/diagnostics'
 import {
   isSessionRevisionConflictError,
   isSessionSizeLimitError,
@@ -16,12 +17,15 @@ export type SessionWriteIntent = Readonly<{
 type RetainedWrite = {
   target: string
   version: number
+  retainedAt: number
   state: 'checking' | 'failed'
   reviewRequired: boolean
   error: unknown
   intent?: SessionWriteIntent
   manifest?: SaveSessionManifestRequest
 }
+
+export type RetainedSessionWrite = Readonly<RetainedWrite>
 
 export type SessionWriteIssue = Readonly<{
   target: string
@@ -56,6 +60,10 @@ export class SessionWriteRecovery {
       satisfied: (intent: SessionWriteIntent, authority: PersistedChatSession) => boolean
       merge: (retained: SessionWriteIntent, next: SessionWriteIntent) => SessionWriteIntent
       ignoreError?: (error: unknown) => boolean
+      report?: (
+        write: RetainedSessionWrite,
+        diagnostics: RendererSessionWriteRecoveryDiagnostics
+      ) => void
     }
   ) {}
 
@@ -65,6 +73,24 @@ export class SessionWriteRecovery {
   }
 
   readonly getSnapshot = (): readonly SessionWriteIssue[] => this.snapshot
+
+  private report(
+    write: RetainedSessionWrite,
+    event: RendererSessionWriteRecoveryDiagnostics['event'],
+    details: Partial<RendererSessionWriteRecoveryDiagnostics> = {}
+  ): void {
+    try {
+      this.policy.report?.(write, {
+        event,
+        state: write.state,
+        attempt: write.version,
+        elapsedMs: Math.max(0, Math.round(performance.now() - write.retainedAt)),
+        ...details
+      })
+    } catch {
+      // A diagnostics failure must never change retained intent or a save/quit barrier.
+    }
+  }
 
   private publish(): void {
     this.snapshot = [...this.writes.values()].map((write) => ({
@@ -134,12 +160,14 @@ export class SessionWriteRecovery {
     state?: 'checking' | 'failed'
   ): void {
     if (this.writes.get(target) !== expected) return
-    this.writes.set(target, {
+    const next: RetainedWrite = {
       ...expected,
       error: error instanceof SessionWriteUnconfirmedError ? expected.error : error,
       state: state ?? (isDesktopRuntimeConnectionError(error) ? 'checking' : 'failed'),
       reviewRequired: true
-    })
+    }
+    this.writes.set(target, next)
+    this.report(next, 'retained')
     this.publish()
   }
 
@@ -210,7 +238,10 @@ export class SessionWriteRecovery {
           (retained.intent && result && this.policy.satisfied(retained.intent, result)) ||
           (manifest && retained.manifest?.lastSessionId === manifest.lastSessionId)
         )
-          this.clear(target)
+          this.clear(target, retained, {
+            reason: 'save-acknowledged',
+            ...(result?.revision !== undefined ? { actualRevision: result.revision } : {})
+          })
       }
       return result
     } catch (error) {
@@ -222,9 +253,10 @@ export class SessionWriteRecovery {
         } catch {
           // Serialization itself may be the failure. Preserve the original error and quit gate.
         }
-        this.writes.set(target, {
+        const retained: RetainedWrite = {
           target,
           version: Math.max(version, previous?.version ?? 0),
+          retainedAt: previous?.retainedAt ?? performance.now(),
           error,
           state: isDesktopRuntimeConnectionError(error) ? 'checking' : 'failed',
           reviewRequired:
@@ -243,7 +275,9 @@ export class SessionWriteRecovery {
               : manifest
                 ? { ...manifest }
                 : undefined
-        })
+        }
+        this.writes.set(target, retained)
+        this.report(retained, 'retained')
         this.publish()
       }
       throw error
@@ -259,36 +293,87 @@ export class SessionWriteRecovery {
   ): Promise<void> {
     await Promise.all(
       [...this.writes.values()].map(async (write) => {
+        this.report(write, 'reconcile-started')
+        let reason: RendererSessionWriteRecoveryDiagnostics['reason']
+        let actualRevision: number | undefined
+        let readError: unknown
+        const stale = (): boolean => {
+          const reason = !isCurrent()
+            ? 'runtime-changed'
+            : this.writes.get(write.target) !== write
+              ? 'write-replaced'
+              : undefined
+          if (!reason) return false
+          this.report(write, 'reconcile-stale', { reason })
+          return true
+        }
         try {
           const authority = write.intent ? await load(write.intent) : undefined
-          if (!isCurrent() || this.writes.get(write.target) !== write) return
+          if (stale()) return
+          actualRevision = authority?.revision
           if (
             (write.intent && authority && this.policy.satisfied(write.intent, authority)) ||
             (write.manifest && write.manifest.lastSessionId === manifest.lastSessionId)
           ) {
-            this.clear(write.target)
+            this.clear(write.target, write, {
+              reason: 'authority-confirmed',
+              ...(actualRevision !== undefined ? { actualRevision } : {})
+            })
             return
           }
-        } catch {
-          if (!isCurrent() || this.writes.get(write.target) !== write) return
+          reason = write.manifest
+            ? 'manifest-mismatch'
+            : !authority
+              ? 'session-missing'
+              : 'intent-mismatch'
+        } catch (error) {
+          if (stale()) return
+          readError = error
+          reason = 'read-failed'
         }
-        if (!isCurrent() || this.writes.get(write.target) !== write) return
+        if (stale()) return
         // A successful reconnect proves transport availability, never that a user edit was saved.
-        this.writes.set(write.target, { ...write, state: 'failed', reviewRequired: true })
+        const failed: RetainedWrite = { ...write, state: 'failed', reviewRequired: true }
+        this.writes.set(write.target, failed)
+        this.report(
+          reason === 'read-failed' ? { ...failed, error: readError } : failed,
+          'reconcile-unconfirmed',
+          {
+            reason,
+            ...(actualRevision !== undefined ? { actualRevision } : {})
+          }
+        )
         this.publish()
       })
     )
   }
 
-  clear(target: string, expected?: Readonly<RetainedWrite>): void {
+  clear(
+    target: string,
+    expected?: Readonly<RetainedWrite>,
+    details: Pick<RendererSessionWriteRecoveryDiagnostics, 'reason' | 'actualRevision'> = {
+      reason: 'save-acknowledged'
+    }
+  ): void {
     if (expected && this.writes.get(target) !== expected) return
-    if (this.writes.delete(target)) this.publish()
+    const write = this.writes.get(target)
+    if (write && this.writes.delete(target)) {
+      this.report(write, 'resolved', details)
+      this.publish()
+    }
   }
 
   /** An authoritative deletion or an explicit discard cancels late receipts as well. */
-  forget(target: string): void {
+  forget(
+    target: string,
+    reason: 'authoritative-deletion' | 'explicit-discard' = 'authoritative-deletion'
+  ): void {
     this.attempts.delete(target)
-    this.clear(target)
+    const write = this.writes.get(target)
+    if (write && this.writes.delete(target)) {
+      this.report(write, 'forgotten', { reason })
+      this.publish()
+    }
   }
 
   reset(): void {

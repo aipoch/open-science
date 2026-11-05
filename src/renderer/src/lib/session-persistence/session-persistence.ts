@@ -31,7 +31,11 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../../shared/conversation-graph'
-import type { RendererFailureContext } from '../../../../shared/diagnostics'
+import type {
+  RendererFailureContext,
+  RendererSessionWriteDiagnostics,
+  RendererSessionWriteRecoveryDiagnostics
+} from '../../../../shared/diagnostics'
 import {
   ConversationGraphMaterializationError,
   SessionRevisionConflictError,
@@ -77,6 +81,7 @@ import {
 import {
   SessionWriteRecovery,
   SessionWriteUnconfirmedError,
+  type RetainedSessionWrite,
   type SessionWriteIntent,
   type SessionWriteIssue
 } from './session-write-recovery'
@@ -1033,7 +1038,8 @@ const createOrderedSessionPersistence = (
   const recovery = new SessionWriteRecovery({
     satisfied: isSessionWriteSatisfied,
     merge: mergeSessionWriteIntent,
-    ignoreError: (error) => error instanceof SessionPersistenceGenerationChangedError
+    ignoreError: (error) => error instanceof SessionPersistenceGenerationChangedError,
+    report: reportSessionWriteRecovery
   })
   let queue: Promise<unknown> = Promise.resolve()
   let pendingWriteCount = 0
@@ -1802,6 +1808,102 @@ const pruneRemovedSessionWriteTargets = (
 }
 
 const reportedPersistenceFailures = new WeakMap<object, Set<string>>()
+
+// Recovery milestones share the reviewed diagnostics bridge, but Main records them separately
+// from JavaScript failures. Never send retained snapshots, titles, command payloads or raw errors.
+function reportSessionWriteDiagnostic(
+  error: unknown,
+  identity: Pick<RendererSessionWriteDiagnostics, 'target' | 'sessionId' | 'projectId'>,
+  diagnostics: RendererSessionWriteRecoveryDiagnostics
+): void {
+  try {
+    const runtime = useDesktopRuntimeRecoveryStore.getState()
+    const code = sessionWriteFailureCode(error)
+    window.api?.diagnostics?.reportRendererFailure(
+      projectRendererFailure(
+        'handled-error',
+        error,
+        'workspace',
+        identity.target === 'session' ? 'session-save' : 'session-manifest-save',
+        {
+          ...identity,
+          code,
+          epoch: runtime.epoch,
+          phase:
+            code === 'desktop-runtime-not-submitted'
+              ? 'before-submit'
+              : code === 'desktop-runtime-disconnected'
+                ? 'result-unknown'
+                : 'rejected',
+          recovery: {
+            ...diagnostics,
+            runtimePhase: runtime.phase
+          }
+        }
+      )
+    )
+  } catch {
+    // Logging must not affect save ordering, recovery decisions or quit/send barriers.
+  }
+}
+
+function reportSessionWriteRecovery(
+  write: RetainedSessionWrite,
+  diagnostics: RendererSessionWriteRecoveryDiagnostics
+): void {
+  try {
+    const expectedRevision =
+      write.intent?.options?.expectedRevision ??
+      (write.intent?.base ? sessionRevision(write.intent.base) : undefined)
+    reportSessionWriteDiagnostic(
+      write.error,
+      write.target === 'manifest'
+        ? { target: 'manifest' }
+        : {
+            target: 'session',
+            sessionId: write.intent?.session.id ?? write.target.slice('session:'.length),
+            projectId: write.intent?.session.projectId
+          },
+      {
+        state: write.state,
+        reviewRequired: write.reviewRequired,
+        attempt: write.version,
+        elapsedMs:
+          diagnostics.elapsedMs ?? Math.max(0, Math.round(performance.now() - write.retainedAt)),
+        ...(expectedRevision !== undefined ? { expectedRevision } : {}),
+        commandCount: write.intent?.options?.conversationCommands?.length ?? 0,
+        ...diagnostics
+      }
+    )
+  } catch {
+    // Collecting optional context is also best-effort when the failed intent was not serializable.
+  }
+}
+
+function reportSessionWriteIssue(
+  issue: SessionWriteIssue,
+  diagnostics: RendererSessionWriteRecoveryDiagnostics
+): void {
+  const retained = liveSessionPersistence.recovery.get(issue.target)
+  if (retained) {
+    reportSessionWriteRecovery(retained, diagnostics)
+    return
+  }
+  reportSessionWriteDiagnostic(
+    {
+      code:
+        issue.kind === 'size-limit'
+          ? 'session-size-limit'
+          : issue.kind === 'conflict'
+            ? 'session-revision-conflict'
+            : 'unknown'
+    },
+    issue.target === 'manifest'
+      ? { target: 'manifest' }
+      : { target: 'session', sessionId: issue.sessionId, projectId: issue.projectId },
+    { state: issue.state, ...diagnostics }
+  )
+}
 
 // Retains full diagnostics in the local console while the main-process log receives only a bounded,
 // allowlisted phase, error category, and stack fingerprint. Never bridge raw messages or paths.
@@ -2637,6 +2739,52 @@ const useSessionPersistence = (): SessionPersistenceState => {
   const retryManifestWritePending = useRef(false)
   const saverRef = useRef<StoreSaver | undefined>(undefined)
   const trackedRecoveryTargets = useRef(new Set<string>())
+  const previousWriteNotice = useRef<{
+    signature: string
+    notice: RendererSessionWriteRecoveryDiagnostics['notice']
+    issues: readonly SessionWriteIssue[]
+  }>({ signature: 'hidden:', notice: 'hidden', issues: [] })
+  useEffect(() => {
+    const notice = writeError
+      ? writeErrorRetryable
+        ? 'attention'
+        : 'size-limit'
+      : retainedWriteIssues.some(({ state }) => state === 'checking')
+        ? 'checking'
+        : 'hidden'
+    const issues = new Map(
+      [...retainedWriteIssues, ...terminalWriteIssues].map((issue) => [issue.target, issue])
+    )
+    const signature = `${notice}:${[...issues.values()]
+      .map(({ target, state, kind }) => `${target}:${state}:${kind}`)
+      .sort()
+      .join(',')}`
+    const previous = previousWriteNotice.current
+    if (previous.signature === signature) return
+    previousWriteNotice.current = {
+      signature,
+      notice,
+      issues: notice === 'hidden' ? [] : [...issues.values()]
+    }
+    if (notice === 'hidden' && previous.notice === 'hidden') return
+    // Record presentation state changes once, including Main-owned terminal failures. A warning's
+    // disappearance is useful evidence even when its retained write has already been cleared.
+    const affected = new Map(previous.issues.map((issue) => [issue.target, issue]))
+    for (const [target, issue] of issues) affected.set(target, issue)
+    for (const issue of affected.values()) {
+      reportSessionWriteIssue(issue, {
+        event: 'notice-changed',
+        notice: issues.has(issue.target) ? notice : 'hidden'
+      })
+    }
+    if (affected.size === 0)
+      reportSessionWriteDiagnostic(
+        undefined,
+        { target: 'session' },
+        { event: 'notice-changed', notice }
+      )
+  }, [retainedWriteIssues, terminalWriteIssues, writeError, writeErrorRetryable])
+
   const presentOutstandingWriteFailures = useCallback((): void => {
     const retained = liveSessionPersistence.recovery.getSnapshot()
     const checking = new Set(
@@ -2923,7 +3071,17 @@ const useSessionPersistence = (): SessionPersistenceState => {
     [presentOutstandingWriteFailures]
   )
   // Dismiss only the presentation; failed targets still block flush and remain retryable.
-  const dismissWriteWarning = useCallback(() => setWriteError(undefined), [])
+  const dismissWriteWarning = useCallback(() => {
+    const issues = new Map(
+      [...liveSessionPersistence.recovery.getSnapshot(), ...terminalWriteIssues].map((issue) => [
+        issue.target,
+        issue
+      ])
+    )
+    for (const issue of issues.values())
+      reportSessionWriteIssue(issue, { event: 'warning-dismissed' })
+    setWriteError(undefined)
+  }, [terminalWriteIssues])
   const dismissLoadWarning = useCallback(() => setLoadWarning(undefined), [])
   const startNewConversationAfterSizeLimit = useCallback(() => {
     for (const target of sizeLimitTargets.current) {
@@ -2976,7 +3134,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
       void (async () => {
         for (const { target } of retained) {
           const write = liveSessionPersistence.recovery.get(target)
-          if (!write || !desktopRuntimeWritable()) continue
+          if (!write) continue
+          reportSessionWriteRecovery(write, { event: 'retry-started' })
+          if (!desktopRuntimeWritable()) {
+            reportSessionWriteRecovery(write, { event: 'retry-skipped', reason: 'runtime-changed' })
+            continue
+          }
+          let reason: RendererSessionWriteRecoveryDiagnostics['reason']
+          let actualRevision: number | undefined
           try {
             if (write.manifest) {
               await liveSessionPersistence.saveManifest(write.manifest)
@@ -2992,18 +3157,35 @@ const useSessionPersistence = (): SessionPersistenceState => {
               undefined,
               { bypassCache: true }
             )
-            if (liveSessionPersistence.recovery.get(target) !== write || !desktopRuntimeWritable())
+            actualRevision = authority?.revision
+            if (
+              liveSessionPersistence.recovery.get(target) !== write ||
+              !desktopRuntimeWritable()
+            ) {
+              reportSessionWriteRecovery(write, {
+                event: 'retry-skipped',
+                reason: !desktopRuntimeWritable() ? 'runtime-changed' : 'write-replaced'
+              })
               continue
+            }
             if (authority && isSessionWriteSatisfied(intent, authority)) {
               acknowledgeSessionConversationCommands(authority)
-              liveSessionPersistence.recovery.clear(target, write)
+              liveSessionPersistence.recovery.clear(target, write, {
+                reason: 'authority-confirmed',
+                ...(actualRevision !== undefined ? { actualRevision } : {})
+              })
               liveSessionPersistence.clearWriteFailure(target)
               continue
             }
             // Missing bounded command receipts are not evidence that a command did not run.
-            if (intent.options?.conversationCommands?.length)
+            if (intent.options?.conversationCommands?.length) {
+              reason = 'missing-command-receipts'
               throw new SessionWriteUnconfirmedError()
-            if (!authority && intent.base) throw new SessionWriteUnconfirmedError()
+            }
+            if (!authority && intent.base) {
+              reason = 'session-missing'
+              throw new SessionWriteUnconfirmedError()
+            }
             let candidate =
               authority && intent.base
                 ? rebaseSessionAfterRevisionConflict(intent.base, intent.session, authority)
@@ -3040,6 +3222,14 @@ const useSessionPersistence = (): SessionPersistenceState => {
                 mode: 'replace-persisted-if-current'
               })
           } catch (error) {
+            reportSessionWriteRecovery(
+              { ...write, error },
+              {
+                event: 'retry-failed',
+                ...(reason ? { reason } : {}),
+                ...(actualRevision !== undefined ? { actualRevision } : {})
+              }
+            )
             liveSessionPersistence.recovery.fail(target, error, write)
             reportPersistenceError(
               error,
@@ -3132,34 +3322,40 @@ const useSessionPersistence = (): SessionPersistenceState => {
       const write = liveSessionPersistence.recovery.get(target)
       if (!write?.intent || write.state === 'checking' || retryingTargets.current.has(target))
         throw new SessionWriteUnconfirmedError()
-      const { session } = write.intent
-      const authority = await loadPersistedSession(
-        { projectId: session.projectId, sessionId: session.id },
-        undefined,
-        { bypassCache: true }
-      )
-      if (liveSessionPersistence.recovery.get(target) !== write || !desktopRuntimeWritable())
-        throw new SessionWriteUnconfirmedError()
-      discardSessionConversationIntents(session.id)
-      const source = useSessionStore.getState().sessions.find(({ id }) => id === session.id)
-      if (source && authority) {
-        useSessionStore.getState().applyDurableSessionProjection({
-          source,
-          session: authority,
-          mode: 'replace-persisted-if-current'
-        })
-      } else if (source) {
-        useSessionStore.getState().deleteSession(session.id)
+      reportSessionWriteRecovery(write, { event: 'discard-started' })
+      try {
+        const { session } = write.intent
+        const authority = await loadPersistedSession(
+          { projectId: session.projectId, sessionId: session.id },
+          undefined,
+          { bypassCache: true }
+        )
+        if (liveSessionPersistence.recovery.get(target) !== write || !desktopRuntimeWritable())
+          throw new SessionWriteUnconfirmedError()
+        discardSessionConversationIntents(session.id)
+        const source = useSessionStore.getState().sessions.find(({ id }) => id === session.id)
+        if (source && authority) {
+          useSessionStore.getState().applyDurableSessionProjection({
+            source,
+            session: authority,
+            mode: 'replace-persisted-if-current'
+          })
+        } else if (source) {
+          useSessionStore.getState().deleteSession(session.id)
+        }
+        liveSessionPersistence.recovery.forget(target, 'explicit-discard')
+        liveSessionPersistence.clearWriteFailure(target)
+        failedWriteTargets.current.delete(target)
+        failedConflictRebaseFields.current.delete(target)
+        revisionConflictTargets.current.delete(target)
+        unresolvedSessionRevisionConflictTargets.delete(target)
+        sizeLimitTargets.current.delete(target)
+        abandonedSizeLimitTargets.current.delete(target)
+        presentOutstandingWriteFailures()
+      } catch (error) {
+        reportSessionWriteRecovery({ ...write, error }, { event: 'discard-failed' })
+        throw error
       }
-      liveSessionPersistence.recovery.forget(target)
-      liveSessionPersistence.clearWriteFailure(target)
-      failedWriteTargets.current.delete(target)
-      failedConflictRebaseFields.current.delete(target)
-      revisionConflictTargets.current.delete(target)
-      unresolvedSessionRevisionConflictTargets.delete(target)
-      sizeLimitTargets.current.delete(target)
-      abandonedSizeLimitTargets.current.delete(target)
-      presentOutstandingWriteFailures()
     },
     [presentOutstandingWriteFailures]
   )

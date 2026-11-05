@@ -61,6 +61,92 @@ export const SESSION_WRITE_FAILURE_CODES = [
   'command-unavailable',
   'unknown'
 ] as const
+
+export const SESSION_WRITE_RECOVERY_EVENTS = [
+  'retained',
+  'reconcile-started',
+  'reconcile-unconfirmed',
+  'reconcile-stale',
+  'resolved',
+  'retry-started',
+  'retry-skipped',
+  'retry-failed',
+  'discard-started',
+  'discard-failed',
+  'notice-changed',
+  'warning-dismissed',
+  'forgotten'
+] as const
+
+export const SESSION_WRITE_RECOVERY_REASONS = [
+  'save-acknowledged',
+  'authority-confirmed',
+  'intent-mismatch',
+  'session-missing',
+  'manifest-mismatch',
+  'read-failed',
+  'runtime-changed',
+  'write-replaced',
+  'explicit-discard',
+  'authoritative-deletion',
+  'missing-command-receipts'
+] as const
+
+export type RendererSessionWriteRecoveryDiagnostics = Readonly<{
+  event: (typeof SESSION_WRITE_RECOVERY_EVENTS)[number]
+  reason?: (typeof SESSION_WRITE_RECOVERY_REASONS)[number]
+  state?: 'checking' | 'failed'
+  notice?: 'checking' | 'attention' | 'size-limit' | 'hidden'
+  reviewRequired?: boolean
+  attempt?: number
+  elapsedMs?: number
+  expectedRevision?: number
+  actualRevision?: number
+  commandCount?: number
+  runtimePhase?: 'connected' | 'disconnected' | 'reconnecting' | 'reconciling' | 'unavailable'
+}>
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+
+const isRendererSessionWriteRecoveryDiagnostics = (
+  value: unknown
+): value is RendererSessionWriteRecoveryDiagnostics => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  return (
+    Object.keys(record).every((key) =>
+      [
+        'event',
+        'reason',
+        'state',
+        'notice',
+        'reviewRequired',
+        'attempt',
+        'elapsedMs',
+        'expectedRevision',
+        'actualRevision',
+        'commandCount',
+        'runtimePhase'
+      ].includes(key)
+    ) &&
+    isOneOf(SESSION_WRITE_RECOVERY_EVENTS, record.event) &&
+    (record.reason === undefined || isOneOf(SESSION_WRITE_RECOVERY_REASONS, record.reason)) &&
+    (record.state === undefined || isOneOf(['checking', 'failed'], record.state)) &&
+    (record.notice === undefined ||
+      isOneOf(['checking', 'attention', 'size-limit', 'hidden'], record.notice)) &&
+    (record.reviewRequired === undefined || typeof record.reviewRequired === 'boolean') &&
+    ['attempt', 'elapsedMs', 'expectedRevision', 'actualRevision', 'commandCount'].every(
+      (key) => record[key] === undefined || isNonNegativeInteger(record[key])
+    ) &&
+    (record.runtimePhase === undefined ||
+      isOneOf(
+        ['connected', 'disconnected', 'reconnecting', 'reconciling', 'unavailable'],
+        record.runtimePhase
+      ))
+  )
+}
+
 export type RendererSessionWriteDiagnostics = Readonly<{
   target: 'session' | 'manifest'
   sessionId?: string
@@ -68,6 +154,7 @@ export type RendererSessionWriteDiagnostics = Readonly<{
   code: (typeof SESSION_WRITE_FAILURE_CODES)[number]
   epoch: number
   phase: 'before-submit' | 'result-unknown' | 'rejected'
+  recovery?: RendererSessionWriteRecoveryDiagnostics
 }>
 
 export const isRendererSessionWriteDiagnostics = (
@@ -77,7 +164,8 @@ export const isRendererSessionWriteDiagnostics = (
   const record = value as Record<string, unknown>
   if (
     Object.keys(record).some(
-      (key) => !['target', 'sessionId', 'projectId', 'code', 'epoch', 'phase'].includes(key)
+      (key) =>
+        !['target', 'sessionId', 'projectId', 'code', 'epoch', 'phase', 'recovery'].includes(key)
     )
   )
     return false
@@ -90,10 +178,9 @@ export const isRendererSessionWriteDiagnostics = (
     (record.target === 'session' ||
       (record.sessionId === undefined && record.projectId === undefined)) &&
     isOneOf(SESSION_WRITE_FAILURE_CODES, record.code) &&
-    typeof record.epoch === 'number' &&
-    Number.isSafeInteger(record.epoch) &&
-    record.epoch >= 0 &&
-    isOneOf(['before-submit', 'result-unknown', 'rejected'], record.phase)
+    isNonNegativeInteger(record.epoch) &&
+    isOneOf(['before-submit', 'result-unknown', 'rejected'], record.phase) &&
+    (record.recovery === undefined || isRendererSessionWriteRecoveryDiagnostics(record.recovery))
   )
 }
 

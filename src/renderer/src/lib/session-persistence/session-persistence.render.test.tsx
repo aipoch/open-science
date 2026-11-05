@@ -1216,6 +1216,14 @@ describe('session persistence startup', () => {
     })
     expect(useSessionStore.getState().sessions[0].title).toBe('Durable title')
     await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: 'session-1',
+          recovery: expect.objectContaining({ event: 'forgotten', reason: 'explicit-discard' })
+        })
+      })
+    )
   })
 
   it('checks current authority before an explicit conflict retry without losing the local intent', async () => {
@@ -1354,33 +1362,47 @@ describe('session persistence startup', () => {
     )
   })
 
-  it('checks a late lost acknowledgement without replaying a durable write', async () => {
-    const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
-    loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
-    let resolveRead!: (session: PersistedChatSession) => void
-    window.api.sessions.loadOne = vi.fn(
-      () =>
-        new Promise<PersistedChatSession>((resolve) => {
-          resolveRead = resolve
+  it.each([false, true])(
+    'checks a late lost acknowledgement with diagnostics unavailable=%s',
+    async (diagnosticsUnavailable) => {
+      if (diagnosticsUnavailable)
+        reportRendererFailure.mockImplementation(() => {
+          throw new Error('diagnostics unavailable')
         })
-    )
-    saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
-    await act(async () => root.render(<Probe />))
-    await act(async () =>
-      useSessionStore.getState().renameSession(original.id, 'Saved but reply lost')
-    )
-    expect(container.querySelector('div')?.dataset.checking).toBe('true')
-    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
-      'changes saved'
-    )
-    expect(container.querySelector('div')?.dataset.writeTargets).toBe('session:session-1')
-    await expect(flushSessionPersistence()).rejects.toThrow()
-    await act(async () => resolveRead({ ...original, title: 'Saved but reply lost', revision: 2 }))
-    expect(container.querySelector('div')?.dataset.checking).toBe('false')
-    expect(container.querySelector('div')?.dataset.writeTargets).toBe('')
-    await expect(flushSessionPersistence()).resolves.toBeUndefined()
-    expect(saveSession).toHaveBeenCalledOnce()
-  })
+      const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
+      loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
+      let resolveRead!: (session: PersistedChatSession) => void
+      window.api.sessions.loadOne = vi.fn(
+        () =>
+          new Promise<PersistedChatSession>((resolve) => {
+            resolveRead = resolve
+          })
+      )
+      saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await act(async () => root.render(<Probe />))
+      await act(async () =>
+        useSessionStore.getState().renameSession(original.id, 'Saved but reply lost')
+      )
+      expect(container.querySelector('div')?.dataset.checking).toBe('true')
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      expect(container.querySelector('div')?.dataset.writeTargets).toBe('session:session-1')
+      await expect(flushSessionPersistence()).rejects.toThrow()
+      await act(async () =>
+        resolveRead({ ...original, title: 'Saved but reply lost', revision: 2 })
+      )
+      expect(container.querySelector('div')?.dataset.checking).toBe('false')
+      expect(container.querySelector('div')?.dataset.writeTargets).toBe('')
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+      expect(saveSession).toHaveBeenCalledOnce()
+      const notices = reportRendererFailure.mock.calls
+        .map(([report]) => report.sessionWrite)
+        .filter((write) => write?.recovery?.event === 'notice-changed')
+      expect(notices.map((write) => write.recovery.notice)).toEqual(['checking', 'hidden'])
+      expect(notices.every((write) => write.sessionId === original.id)).toBe(true)
+    }
+  )
 
   it('retains a not-submitted preference across reconnect and retries only on user action', async () => {
     const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
@@ -1412,6 +1434,22 @@ describe('session persistence startup', () => {
     })
     expect(useSessionStore.getState().sessions[0].title).toBe('Retained local title')
     await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: original.id,
+          recovery: expect.objectContaining({ event: 'retry-started', expectedRevision: 1 })
+        })
+      })
+    )
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: original.id,
+          recovery: expect.objectContaining({ event: 'resolved', reason: 'save-acknowledged' })
+        })
+      })
+    )
   })
 
   it('retries an independent terminal failure alongside retained local changes', async () => {

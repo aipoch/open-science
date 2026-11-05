@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   DesktopRuntimeDisconnectedError,
@@ -35,7 +35,74 @@ beforeEach(() =>
   useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
 )
 
+afterEach(() => vi.unstubAllGlobals())
+
 describe('unconfirmed Session writes', () => {
+  it('keeps normal successful saves out of recovery diagnostics', async () => {
+    const reportRendererFailure = vi.fn()
+    vi.stubGlobal('window', { api: { diagnostics: { reportRendererFailure } } })
+    const h = harness()
+    await h.persistence.saveSession(
+      { ...h.base, pinned: true },
+      { conflictRebaseFields: ['pinned'] }
+    )
+    expect(reportRendererFailure).not.toHaveBeenCalled()
+  })
+
+  it('records why a background Session warning can clear after a lost save acknowledgement', async () => {
+    const reportRendererFailure = vi.fn()
+    vi.stubGlobal('window', { api: { diagnostics: { reportRendererFailure } } })
+    const h = harness(session({ title: 'Private conversation title', cwd: '/private/workspace' }))
+    const desired = { ...h.base, pinned: true }
+    h.saveSession.mockRejectedValueOnce(
+      new DesktopRuntimeDisconnectedError('private error with credential=secret')
+    )
+    await expect(
+      h.persistence.saveSession(desired, { conflictRebaseFields: ['pinned'] })
+    ).rejects.toThrow()
+    await h.persistence.recovery.reconcile(
+      async () => ({ ...desired, revision: 8 }),
+      {},
+      () => true
+    )
+
+    const writes = reportRendererFailure.mock.calls.map(([report]) => report.sessionWrite)
+    expect(writes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: 'desktop-runtime-disconnected',
+          epoch: 0,
+          recovery: expect.objectContaining({
+            event: 'retained',
+            state: 'checking',
+            attempt: expect.any(Number),
+            runtimePhase: 'connected'
+          })
+        }),
+        expect.objectContaining({
+          sessionId: 'session-1',
+          recovery: expect.objectContaining({ event: 'reconcile-started' })
+        }),
+        expect.objectContaining({
+          sessionId: 'session-1',
+          recovery: expect.objectContaining({
+            event: 'resolved',
+            reason: 'authority-confirmed',
+            actualRevision: 8
+          })
+        })
+      ])
+    )
+    const serialized = JSON.stringify(reportRendererFailure.mock.calls)
+    expect(serialized).not.toContain('Private conversation title')
+    expect(serialized).not.toContain('/private/workspace')
+    expect(serialized).not.toContain('credential=secret')
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+    expect(h.saveSession).toHaveBeenCalledOnce()
+  })
+
   it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'] as const)(
     'verifies a durable write with a lost acknowledgement without replaying it for %s',
     async (agentFrameworkId) => {
@@ -185,6 +252,8 @@ describe('unconfirmed Session writes', () => {
   })
 
   it('an old authoritative read cannot clear a newer retained edit', async () => {
+    const reportRendererFailure = vi.fn()
+    vi.stubGlobal('window', { api: { diagnostics: { reportRendererFailure } } })
     const h = harness()
     h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
     await expect(
@@ -210,6 +279,88 @@ describe('unconfirmed Session writes', () => {
       base: { title: 'Original' },
       session: { title: 'Second' }
     })
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          recovery: expect.objectContaining({
+            event: 'reconcile-stale',
+            reason: 'write-replaced'
+          })
+        })
+      })
+    )
+    expect(
+      reportRendererFailure.mock.calls.some(
+        ([report]) => report.sessionWrite?.recovery?.event === 'resolved'
+      )
+    ).toBe(false)
+  })
+
+  it.each(['session-missing', 'intent-mismatch', 'read-failed'] as const)(
+    'explains why reconciliation leaves a warning unresolved: %s',
+    async (reason) => {
+      const reportRendererFailure = vi.fn()
+      vi.stubGlobal('window', { api: { diagnostics: { reportRendererFailure } } })
+      const h = harness()
+      h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await expect(
+        h.persistence.saveSession({ ...h.base, pinned: true }, { conflictRebaseFields: ['pinned'] })
+      ).rejects.toThrow()
+      await h.persistence.recovery.reconcile(
+        async () => {
+          if (reason === 'read-failed') throw new Error('private storage read failure')
+          return reason === 'session-missing' ? undefined : { ...h.base, revision: 9 }
+        },
+        {},
+        () => true
+      )
+      expect(reportRendererFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sessionWrite: expect.objectContaining({
+            sessionId: 'session-1',
+            recovery: expect.objectContaining({
+              event: 'reconcile-unconfirmed',
+              state: 'failed',
+              reason,
+              elapsedMs: expect.any(Number)
+            })
+          })
+        })
+      )
+      expect(JSON.stringify(reportRendererFailure.mock.calls)).not.toContain(
+        'private storage read failure'
+      )
+      await expect(h.persistence.flush()).rejects.toThrow()
+      expect(h.saveSession).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('preserves save and recovery outcomes when the diagnostics bridge throws', async () => {
+    vi.stubGlobal('window', {
+      api: {
+        diagnostics: {
+          reportRendererFailure: () => {
+            throw new Error('diagnostics unavailable')
+          }
+        }
+      }
+    })
+    const h = harness()
+    const failure = new DesktopRuntimeDisconnectedError()
+    const desired = { ...h.base, pinned: true }
+    h.saveSession.mockRejectedValueOnce(failure)
+    await expect(
+      h.persistence.saveSession(desired, { conflictRebaseFields: ['pinned'] })
+    ).rejects.toBe(failure)
+    await expect(h.persistence.flush()).rejects.toThrow()
+    await h.persistence.recovery.reconcile(
+      async () => desired,
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+    expect(() => h.persistence.recovery.assertSettled()).not.toThrow()
+    expect(h.saveSession).toHaveBeenCalledOnce()
   })
 
   it('ignores a late rejection after authoritative deletion', async () => {
