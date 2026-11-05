@@ -296,7 +296,7 @@ Translated PDFs can optionally reflow body text and captions into a single-colum
 
 In the desktop app, artifact provenance can also be exported as RO-Crate 1.1. A version-bound environment bundle can create a managed environment only when the captured bundle is complete and compatible with the target platform; this is separate from a full machine backup.
 
-Browse research cases in the Sharing marketplace from Home or the conversation workspace, filter by category, search by keyword, and download packages from case details.
+Browse research cases in the Marketplace from Home or the conversation workspace, filter by category, search by keyword, and download packages from case details.
 
 ## Model Providers
 

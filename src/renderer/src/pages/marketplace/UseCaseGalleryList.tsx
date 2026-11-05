@@ -230,10 +230,10 @@ export const UseCaseGalleryList = ({
                     ...capturePosition(viewportRef.current)
                   })
                 }
-                aria-label={t('View in sharing marketplace')}
-                title={t('View in sharing marketplace')}
+                aria-label={t('View in marketplace')}
+                title={t('View in marketplace')}
               >
-                {t('View in sharing marketplace')}
+                {t('View in marketplace')}
                 <ArrowUpRight aria-hidden="true" />
               </Button>
             ) : (

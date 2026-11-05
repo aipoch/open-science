@@ -36,7 +36,7 @@ export const SharingMarketplacePage = (): React.JSX.Element => {
                 <Store className="size-4" aria-hidden="true" />
               </span>
               <div className="hidden min-w-0 flex-1 sm:block">
-                <h1 className="truncate text-sm font-semibold">{t('Sharing marketplace')}</h1>
+                <h1 className="truncate text-sm font-semibold">{t('Marketplace')}</h1>
                 <p
                   className="truncate text-xs text-muted-foreground"
                   title={t('Discover and reuse research examples')}
@@ -66,7 +66,7 @@ export const SharingMarketplacePage = (): React.JSX.Element => {
           <ArrowLeft className="size-4 shrink-0" aria-hidden="true" />
           {!collapsed && <span className="hidden sm:inline">{returnLabel}</span>}
         </Button>
-        <nav aria-label={t('Sharing marketplace')} className="border-t border-border pt-3">
+        <nav aria-label={t('Marketplace')} className="border-t border-border pt-3">
           <div
             aria-current="page"
             title={t('Use Case Marketplace')}
