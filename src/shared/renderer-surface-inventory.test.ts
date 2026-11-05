@@ -54,6 +54,7 @@ const GENERATED_SOURCE_OMISSIONS = [
   'previewResources.exportResearchVideo',
   'previewResources.researchVideoExportProgress',
   'researchVideo.cancel',
+  'researchVideo.remove',
   'researchVideo.start',
   'researchVideo.status',
   'backgroundResultDelivery.getProjectActivity',
