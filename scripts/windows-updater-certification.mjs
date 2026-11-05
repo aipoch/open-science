@@ -847,6 +847,12 @@ const main = async () => {
                   return { pid: child.pid, release: () => terminateProcessTree(child) }
                 },
                 onBlocked: async () => {
+                  const processSnapshot = await runProcess('powershell.exe', [
+                    '-NoProfile', '-NonInteractive', '-Command',
+                    'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath | ConvertTo-Json -Compress'
+                  ], { env, timeoutMs: 30_000 })
+                  await writeFile(`${options.output}.processes.json`, processSnapshot.stdout)
+                  console.log('[DEBUG-update-blocker] Captured process identity snapshot.')
                   const dialog = page.getByTestId('runtime-update-dialog')
                   await expect(dialog).toContainText('Another app is using Open-Science files')
                   await expect(dialog).toContainText('Quit the other app, then recheck.')
