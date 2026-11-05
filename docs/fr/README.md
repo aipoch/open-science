@@ -58,7 +58,6 @@ Pour comprendre comment un résultat a été obtenu, consultez les données d’
 ## Table des matières
 
 - [Démarrage rapide](#-démarrage-rapide)
-- [Visite du produit](#visite-du-produit)
 - [Paquets de recherche `.science` d’AIPOCH Open-Science](#paquets-de-recherche-science-daipoch-open-science)
 - [AIPOCH Open-Science : article et citation](#aipoch-open-science--article-et-citation)
 - [Résultats des benchmarks](#performances-aux-benchmarks)
@@ -141,44 +140,6 @@ Les réglages d’apparence et de notifications se trouvent dans les paramètres
 3. Examinez l’activité des outils et les demandes d’approbation, prévisualisez les résultats et consultez les preuves disponibles dans **Provenance**.
 
 > Les captures d'écran de ce README illustrent le flux de travail. Les libellés, catalogues et autres détails d'interface peuvent différer de la version que vous installez.
-
-## Visite du produit
-
-### De la demande de recherche au résultat traçable
-
-Prenons une tâche bio-informatique représentative : reproduire une analyse d'expression différentielle publiée, comparer les résultats régénérés à l'article et livrer le rapport, les tableaux et les figures nécessaires à la revue. Les captures ci-dessous sont des vues représentatives de workflows AIPOCH Open-Science documentés ; elles illustrent chaque étape, mais ne proviennent pas d'une même session continue.
-
-#### 1. Définir la tâche de recherche et ses preuves
-
-Décrivez la question de recherche, l'article et les jeux de données sources, les méthodes ou seuils requis, les résultats attendus et les critères d'acceptation. Importez les fichiers utiles ou référencez un artefact existant du projet avec `@`, afin que l'agent parte d'entrées explicites plutôt que d'un contexte caché.
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="Tâche de reproduction d'article dans AIPOCH Open-Science avec la conclusion, les artefacts générés et la comparaison des sources dans un même espace de travail" width="900">
-</p>
-
-#### 2. Exécuter avec des outils scientifiques inspectables
-
-L'agent peut associer des compétences scientifiques, des connecteurs de recherche soumis à autorisation, des recherches, des opérations sur les fichiers et du code Python ou R dans le Notebook partagé. Les figures générées peuvent être examinées à côté de la synthèse, tandis que le dossier de l'artefact rend consultables le code producteur capturé et les preuves d'exécution.
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="Analyse bio-informatique dans AIPOCH Open-Science montrant côte à côte la synthèse, la figure générée et le code producteur capturé" width="900">
-</p>
-
-#### 3. Examiner les rapports, tableaux et figures sur place
-
-La réponse finale résume ce qui a été reproduit, les différences observées et les limites importantes. Les rapports Markdown, tableaux CSV, images et autres artefacts de recherche générés restent liés à la session et sont aussi rassemblés dans la bibliothèque de fichiers du projet, où ils peuvent être prévisualisés à côté de la conversation et réutilisés par la suite.
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="Résultat de reproduction AIPOCH Open-Science avec les figures d'expression différentielle et les fichiers générés prévisualisés à côté de l'explication de l'agent" width="900">
-</p>
-
-#### 4. Relier chaque artefact à ses preuves
-
-Chaque artefact généré est stocké dans une version immuable assortie d'une somme de contrôle. La vue **Provenance** peut présenter le code producteur et l'historique d'exécution, les entrées référencées, l'inventaire observé de l'environnement, la branche de conversation productrice et les conclusions du Reviewer propres à la version. Les preuves qui n'ont pas pu être vérifiées sont indiquées comme indisponibles plutôt que déduites.
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Aperçu d'un artefact de recherche AIPOCH Open-Science avec l'accès Provenance permettant de retracer un résultat généré" width="900">
-</p>
 
 ## Paquets de recherche `.science` d’AIPOCH Open-Science
 
