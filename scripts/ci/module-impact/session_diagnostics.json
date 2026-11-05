@@ -132,5 +132,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Opt-in resource journal export adds a filesystem snapshot owner beyond the reviewed diagnostics boundary; retain complete CI validation until the expanded sources and application export contracts are reviewed and reclassified."
 }
