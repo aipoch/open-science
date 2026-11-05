@@ -14,6 +14,7 @@ import { dump, load } from 'js-yaml'
 import { chromium, expect } from '@playwright/test'
 import {
   prepareOwnedAgentFixture,
+  configureOwnedAgentFixture,
   startOwnedAgentFixture,
   assertOwnedAgentReaped,
   prepareStaleNotebookFixture,
@@ -484,10 +485,13 @@ const runElectronUpdater = async ({
     )
     await page.evaluate(() => window.api.settings.markOnboardingComplete())
     await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    if (ownedAgentFixture) await configureOwnedAgentFixture(page)
+    const notebookEvidence = notebook ? await startUpdateNotebook(page, evidencePath) : undefined
+    // Completed turns release Agent processes. Prepare Notebook first, then hold an active Agent
+    // turn so the upgrade must reap a live process tree rather than observe an already-idle one.
     const ownedEvidence = ownedAgentFixture
       ? await startOwnedAgentFixture(page, ownedAgentFixture)
       : undefined
-    const notebookEvidence = notebook ? await startUpdateNotebook(page, evidencePath) : undefined
     if (windowsRecovery) {
       const { dataRoot } = await page.evaluate(() => window.api.storage.getStatus())
       staleNotebookFixture = await prepareStaleNotebookFixture(dataRoot)
@@ -601,12 +605,6 @@ const runElectronUpdater = async ({
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
-      const state = await page.evaluate(async () => {
-        const value = await window.api.acp.getState()
-        return { status: value.status, error: value.error, events: value.events?.slice(-10) }
-      }).catch((failure) => ({ diagnosticError: String(failure) }))
-      await writeFile(`${evidencePath}.state.json`, JSON.stringify(state, null, 2), 'utf8')
-      console.error('[DEBUG-update-owned]', JSON.stringify(state))
       await page
         .screenshot({ path: `${evidencePath}.failed.png`, timeout: 10_000 })
         .catch(() => undefined)

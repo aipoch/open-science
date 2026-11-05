@@ -3432,6 +3432,11 @@ if (process.argv.includes('--version')) {
         reply = `E2E fixture failure: ${error instanceof Error ? error.message : String(error)}`
       }
 
+      // Updater acceptance needs live owned processes at apply time. Register cancellation before
+      // publishing readiness, and keep this turn active until the production shutdown path stops it.
+      const updateCancellation = prompt.includes('Verify owned process update.')
+        ? waitForSessionCancellation(context.params.sessionId)
+        : undefined
       const replyMessageId = `e2e-message-${fixtureInstanceId}${nextMessageId++}`
       if (prompt.includes('Replay inline thinking.')) {
         for (const text of ['<thi', 'nk>Synthetic reasoning only.', '</thi', 'nk>']) {
@@ -3455,6 +3460,10 @@ if (process.argv.includes('--version')) {
         }
       })
 
+      if (updateCancellation) {
+        await updateCancellation
+        return { stopReason: 'cancelled' }
+      }
       return { stopReason: 'end_turn' }
     })
     .onNotification(acp.methods.agent.session.cancel, (context) => {
