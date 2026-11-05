@@ -3022,6 +3022,8 @@
     "The agent reads these findings and self-corrects in its next message.": "L'agent lit ces résultats et se corrige automatiquement dans son prochain message.",
     "The agent requested an import from <name>{{source}}</name>. Review and choose exactly what Open-Science may install.": "L'agent a demandé une importation à partir de <name>{{source}}</name>. Examinez et choisissez exactement ce que Open-Science peut installer.",
     "The Session was deleted, but some cleanup could not be completed.": "La session a été supprimée, mais certaines opérations de nettoyage n’ont pas pu être terminées.",
+    "Session cleanup needs attention": "Le nettoyage de la session nécessite une intervention",
+    "An unsent Session could not be cleaned up. Retry cleanup to finish removing it.": "Une session sans message envoyé n’a pas pu être nettoyée. Réessayez le nettoyage pour terminer sa suppression.",
     "The agent was stopped, but Open-Science couldn't delete the saved Session. The Session, draft, and attachments were kept. Please try again.": "L'agent a été arrêté, mais Open-Science n'a pas pu supprimer la session enregistrée. La session, le brouillon et les pièces jointes ont été conservés. Veuillez réessayer.",
     "The agent wants to call a connector tool that sends data to an external service. Approve only if you trust this connector with the current request.": "L'agent souhaite appeler un outil de connecteur qui envoie des données à un service externe. Approuvez uniquement si vous faites confiance à ce connecteur avec la demande actuelle.",
     "The base URL is invalid. Enter a full URL like https://gateway.example/v1.": "L'URL de base n'est pas valide. Saisissez une URL complète telle que https://gateway.example/v1.",

@@ -7,7 +7,16 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import JSZip from 'jszip'
 import { utils as spreadsheetUtils, write as writeSpreadsheet } from 'styled-exceljs'
 import { randomUUID } from 'node:crypto'
-import { appendFile, chmod, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  appendFile,
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { Readable, Writable } from 'node:stream'
@@ -171,6 +180,24 @@ const waitForReleaseFile = async (releaseFile, timeout = 30_000) => {
       await delay(50)
     }
   }
+}
+
+// Claim the one-shot gate across provider processes; a follow-up create must remain unblocked.
+const holdFirstSessionCreateWhenRequested = async (sessionId) => {
+  const storageRoot = process.env.OPEN_SCIENCE_STORAGE_ROOT
+  if (!storageRoot) return undefined
+  const control = join(storageRoot, 'e2e-session-create-gate.json')
+  const claimed = `${control}.claimed`
+  try {
+    await rename(control, claimed)
+  } catch (error) {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  }
+  const gate = JSON.parse(await readFile(claimed, 'utf8'))
+  await writeFile(gate.started, sessionId, 'utf8')
+  await waitForReleaseFile(gate.release)
+  return gate.closed
 }
 
 const suspendSessionWrites = async () => {
@@ -1526,9 +1553,11 @@ if (process.argv.includes('--version')) {
     .onRequest(acp.methods.agent.session.new, async (context) => {
       await failResumeAttachmentWhenRequested(context.params.cwd)
       const sessionId = `e2e-session-${fixtureInstanceId}${nextSessionId++}`
+      const createGateClosedFile = await holdFirstSessionCreateWhenRequested(sessionId)
       const mcpServers = context.params.mcpServers ?? []
       sessionRoutes.set(sessionId, {
         cwd: context.params.cwd,
+        createGateClosedFile,
         mcpServers,
         ...(await delegatedArtifactHandoff(mcpServers))
       })
@@ -3462,7 +3491,11 @@ if (process.argv.includes('--version')) {
       sessionCancellationResolvers.delete(context.params.sessionId)
       resolve?.()
     })
-    .onRequest(acp.methods.agent.session.close, () => ({}))
+    .onRequest(acp.methods.agent.session.close, async (context) => {
+      const closed = sessionRoutes.get(context.params.sessionId)?.createGateClosedFile
+      if (closed) await writeFile(closed, context.params.sessionId, 'utf8')
+      return {}
+    })
 
   // OpenCode 1.x exposes native message metadata alongside ACP. Register each emitted
   // reply before delivery so the application's compaction guard can classify it.
