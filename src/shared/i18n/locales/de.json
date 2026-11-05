@@ -7950,6 +7950,10 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Der Überblick konnte nicht erneut erstellt werden. Das vorherige Ergebnis wird weiterhin angezeigt. Bitte versuchen Sie es erneut.",
     "Another app is using Open-Science files": "Eine andere App verwendet Open-Science-Dateien",
     "Quit {{name}}, then recheck.": "Beenden Sie {{name}} und überprüfen Sie erneut.",
-    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut."
+    "Quit the other app, then recheck.": "Beenden Sie die andere App und überprüfen Sie erneut.",
+    "{{count}} questions awaiting your answer_one": "{{count}} Frage wartet auf Ihre Antwort",
+    "{{count}} questions awaiting your answer_other": "{{count}} Fragen warten auf Ihre Antwort",
+    "Collapse question panel": "Fragebereich einklappen",
+    "Expand question panel": "Fragebereich ausklappen"
   }
 }

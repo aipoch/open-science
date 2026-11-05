@@ -7784,6 +7784,9 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "概要を再生成できませんでした。前の結果を引き続き表示しています。再試行してください。",
     "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
     "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
-    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
+    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。",
+    "{{count}} questions awaiting your answer_other": "回答待ちの質問が{{count}}件あります",
+    "Collapse question panel": "質問パネルを折りたたむ",
+    "Expand question panel": "質問パネルを展開"
   }
 }

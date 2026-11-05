@@ -8124,6 +8124,11 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Impossible de régénérer la vue d’ensemble. Le résultat précédent reste affiché. Veuillez réessayer.",
     "Another app is using Open-Science files": "Une autre application utilise des fichiers Open-Science",
     "Quit {{name}}, then recheck.": "Quittez {{name}}, puis revérifiez.",
-    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez."
+    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez.",
+    "{{count}} questions awaiting your answer_one": "{{count}} question en attente de votre réponse",
+    "{{count}} questions awaiting your answer_many": "{{count}} questions en attente de votre réponse",
+    "{{count}} questions awaiting your answer_other": "{{count}} questions en attente de votre réponse",
+    "Collapse question panel": "Replier le panneau des questions",
+    "Expand question panel": "Déplier le panneau des questions"
   }
 }
