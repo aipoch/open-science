@@ -89,7 +89,11 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
   const [failedRequestKey, setFailedRequestKey] = useState<string | undefined>(undefined)
   const hasFailed = failedRequestKey === requestKey
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
-  const resourceState = useManagedPreviewResource(item, mode === 'render' && !hasFailed)
+  // Source mode may unmount the frame, but an export still owns its readable capability.
+  const resourceState = useManagedPreviewResource(
+    item,
+    (mode === 'render' && !hasFailed) || exporting
+  )
   const renderedFrameUrl =
     mode === 'render' && resourceState.status === 'ready' ? resourceState.resource.url : ''
   useRegisterPreviewContextMenuFrame({
@@ -218,7 +222,8 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
           </button>
         ))}
       </div>
-      {videoKey === requestKey &&
+      {(mode === 'render' || exporting) &&
+        videoKey === requestKey &&
         document.documentElement.getAttribute(WEB_EVENT_SURFACE_ATTRIBUTE) !== 'true' && (
           <div className="flex items-center gap-2">
             {exporting ? (

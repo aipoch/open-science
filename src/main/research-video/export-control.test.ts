@@ -19,44 +19,55 @@ const tools = {
   }))
 }
 const content = Buffer.from(
-  '<meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title>player'
+  '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title><style>body{}</style><div id="root">player</div></html>'
 )
-it('exports only caller-owned bytes and atomically replaces the chosen output after rendering', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'video-export-control-'))
-  let htmlPath = ''
-  try {
-    const destination = join(root, 'result.mp4')
-    await writeFile(destination, 'old')
-    const readRange = vi.fn(async (owner, request) => {
-      if (owner.leaseId !== 'owner') throw new Error('not owned')
-      return {
-        begin: request.begin,
-        end: request.end,
-        total: content.length,
-        data: content.subarray(request.begin, request.end)
-      }
-    })
-    native.chooseSavePath.mockResolvedValue({ canceled: false, filePath: destination })
-    native.renderResearchVideo.mockImplementation(async (request) => {
-      htmlPath = request.htmlPath
-      expect(await readFile(destination, 'utf8')).toBe('old')
-      expect(await readFile(htmlPath, 'utf8')).toBe(content.toString())
-      await writeFile(`${htmlPath}.mp4`, 'new')
-      return `${htmlPath}.mp4`
-    })
-    const control = createResearchVideoExportControl({ readRange }, tools)
-    await expect(control.export(lease('other'), { resourceId: 'r' })).rejects.toThrow('not owned')
-    await control.export(lease('owner'), { resourceId: 'r' })
-    expect(native.chooseSavePath).toHaveBeenLastCalledWith(
-      { defaultPath: 'Heat-&-Light-Where.mp4', filters: [{ name: 'MP4', extensions: ['mp4'] }] },
-      undefined
+it.each([
+  ['generated document', content],
+  [
+    'explicit head element',
+    Buffer.from(
+      '<!doctype html><html><head><meta name="open-science-research-video" content="1"><title>Heat &amp; Light: Where?</title></head><body>player</body></html>'
     )
-    expect(await readFile(destination, 'utf8')).toBe('new')
-    await expect(stat(htmlPath)).rejects.toMatchObject({ code: 'ENOENT' })
-  } finally {
-    await rm(root, { recursive: true, force: true })
+  ]
+])(
+  'exports %s with its decoded title and atomically replaces the chosen output',
+  async (_shape, content) => {
+    const root = await mkdtemp(join(tmpdir(), 'video-export-control-'))
+    let htmlPath = ''
+    try {
+      const destination = join(root, 'result.mp4')
+      await writeFile(destination, 'old')
+      const readRange = vi.fn(async (owner, request) => {
+        if (owner.leaseId !== 'owner') throw new Error('not owned')
+        return {
+          begin: request.begin,
+          end: request.end,
+          total: content.length,
+          data: content.subarray(request.begin, request.end)
+        }
+      })
+      native.chooseSavePath.mockResolvedValue({ canceled: false, filePath: destination })
+      native.renderResearchVideo.mockImplementation(async (request) => {
+        htmlPath = request.htmlPath
+        expect(await readFile(destination, 'utf8')).toBe('old')
+        expect(await readFile(htmlPath, 'utf8')).toBe(content.toString())
+        await writeFile(`${htmlPath}.mp4`, 'new')
+        return `${htmlPath}.mp4`
+      })
+      const control = createResearchVideoExportControl({ readRange }, tools)
+      await expect(control.export(lease('other'), { resourceId: 'r' })).rejects.toThrow('not owned')
+      await control.export(lease('owner'), { resourceId: 'r' })
+      expect(native.chooseSavePath).toHaveBeenLastCalledWith(
+        { defaultPath: 'Heat-&-Light-Where.mp4', filters: [{ name: 'MP4', extensions: ['mp4'] }] },
+        undefined
+      )
+      expect(await readFile(destination, 'utf8')).toBe('new')
+      await expect(stat(htmlPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   }
-})
+)
 it('cancels the owning export without publishing, and cannot cancel another caller', async () => {
   const root = await mkdtemp(join(tmpdir(), 'video-export-cancel-'))
   let htmlPath = ''
