@@ -4,7 +4,6 @@ import { request as httpsRequest } from 'node:https'
 import { connect as connectTcp, createServer as createTcpServer, isIP, type Socket } from 'node:net'
 import { connect as connectTls, TLSSocket, type SecureContext } from 'node:tls'
 import { domainToASCII } from 'node:url'
-import { Transform } from 'node:stream'
 import { inspectReadRequest, MAX_HEADER_BYTES, MAX_TARGET_BYTES } from './read-request.js'
 import { timingSafeEqual } from 'node:crypto'
 import type { ClientRequest, IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http'
@@ -35,36 +34,33 @@ const isTlsClientHello = (value: Buffer): boolean =>
   value[2]! <= 0x04
 
 const bridgeTlsTunnel = (client: Socket, upstream: Socket, initial: Buffer): void => {
-  let checked = false
   let prefix = Buffer.alloc(0)
-  const guard = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      if (checked) {
-        callback(null, chunk)
-        return
-      }
-      prefix = Buffer.concat([prefix, chunk])
-      if (prefix.length < 3) {
-        callback()
-        return
-      }
-      if (!isTlsClientHello(prefix)) {
-        callback(new Error('Notebook network tunnels require TLS.'))
-        return
-      }
-      checked = true
-      callback(null, prefix)
-    }
-  })
   const reject = (): void => {
     client.destroy()
     upstream.destroy()
   }
-  guard.once('error', reject)
+  const inspect = (chunk: Buffer): void => {
+    prefix = Buffer.concat([prefix, chunk])
+    if (prefix.length < 3) {
+      client.once('data', inspect)
+      client.resume()
+      return
+    }
+    client.pause()
+    if (!isTlsClientHello(prefix)) {
+      reject()
+      return
+    }
+    const forward = (): void => {
+      if (!client.destroyed && !upstream.destroyed) client.pipe(upstream)
+    }
+    if (upstream.write(prefix)) forward()
+    else upstream.once('drain', forward)
+  }
   upstream.once('error', reject)
-  if (initial.length) guard.write(initial)
-  client.pipe(guard).pipe(upstream)
+  client.once('end', () => upstream.end())
   upstream.pipe(client)
+  inspect(initial)
 }
 
 const forwardResponse = (
