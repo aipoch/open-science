@@ -17,9 +17,7 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science arXiv 프리프린트: 2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#벤치마크-성능">
-    <img alt="AIPOCH Open-Science — 보고된 벤치마크 비교에서 최고 점수" src="../../docs/images/readme/benchmark-comparisons.svg">
-  </a>
+  <a href="#벤치마크-성능">벤치마크 결과</a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="지원 플랫폼 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
@@ -61,7 +59,7 @@
 - [제품 둘러보기](#제품-둘러보기)
 - [AIPOCH Open-Science `.science` 연구 패키지](#aipoch-open-science-science-연구-패키지)
 - [AIPOCH Open-Science 논문 및 인용](#aipoch-open-science-논문-및-인용)
-- [벤치마크 성능](#벤치마크-성능)
+- [벤치마크 결과](#벤치마크-성능)
 - [핵심 기능](#핵심-기능)
 - [모델 제공업체](#모델-제공업체)
 - [데이터, 권한 및 신뢰](#데이터-권한-및-신뢰)
@@ -85,7 +83,7 @@
 | Linux x64                          | Linux x64 AppImage 또는 Debian 패키지   |
 | Linux ARM64                        | Linux ARM64 AppImage 또는 Debian 패키지 |
 
-[공식 다운로드 페이지](https://aipoch.com/open-science/download)에서 다운로드하세요. 필요하면 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
+설치 전 확인 사항은 [다운로드 검증](../../SECURITY.md#verifying-your-download)을 참고하세요.
 
 macOS에서는 [Homebrew](https://brew.sh)로도 설치할 수 있습니다:
 
@@ -192,7 +190,7 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 2. `.science` 파일을 협업자나 다른 컴퓨터로 전송합니다.
 3. 프로젝트로 가져옵니다. 오른쪽 **Research replay**에서 기록된 과정을 확인하고 왼쪽 대화에서 질문하며 고정 단계를 참조할 수 있습니다.
 
-가져온 기록은 읽기 전용입니다. 재생은 코드 실행, 모델 호출 또는 자격 증명 복원을 수행하지 않습니다. 첫 질문은 연결된 쓰기 가능한 대화를 만듭니다. **Create a copy to continue research**로 작업 사본을 만들어 연구를 계속할 수 있습니다. 재실행에는 완전한 레시피, 필요한 입력과 사용 가능한 실행 환경이 필요합니다.
+가져온 기록은 읽기 전용입니다. 재생은 코드 실행, 모델 호출 또는 자격 증명 복원을 수행하지 않습니다. 첫 질문은 연결된 쓰기 가능한 대화를 만듭니다. **Fork to continue**로 작업 사본을 만들어 연구를 계속할 수 있습니다. 재실행에는 완전한 레시피, 필요한 입력과 사용 가능한 실행 환경이 필요합니다.
 
 Side Chat 대화, 비공개 읽기 북마크와 자격 증명은 제외되며, 포함 파일은 내보내기 선택에 따라 달라집니다. 받은 검증 기록은 발신자의 검사 결과이며 이 컴퓨터에서 다시 실행했음을 증명하지 않습니다. [`.science` 패키지 가이드](https://aipoch.com/docs/guides/research-packages/)를 참고하세요.
 
@@ -223,75 +221,83 @@ arXiv 프리프린트 · [v1](https://arxiv.org/abs/2610.17110v1) · 2026년 10�
 
 </details>
 
-## 벤치마크 성능
+<a id="벤치마크-성능"></a>
 
-AstaBench, ASI-Bench, BiomniBench-DA는 과제, 데이터셋, 채점 방식이 서로 다른 별개의 벤치마크이며, 각 결과는 별도로 보고되고 서로 직접 비교할 수 없습니다.
+## 벤치마크 결과
 
-### 🏆 AstaBench — LitQA2 Test: 보고서에 제시된 최고 점수와 동점, 90.67% Recall@30
+AIPOCH는 논문 찾기부터 논문 내용에 대한 답변, 연구 계획 실행까지 다양한 작업에서 AIPOCH Open-Science를 평가했습니다. 아래 결과는 AIPOCH가 직접 실행한 평가에서 얻었으며, 각 점수는 특정 작업과 평가 설정에 해당합니다.
 
-AIPOCH Open-Science는 **gpt-6-astra**를 사용하여 공식 75문항 LitQA2-FullText-Search Test 세트의 로컬 평가에서 **90.67% Recall@30 (68/75)**을 기록했습니다. 10월 26일 보고서 스냅샷에 포함된 27개 결과 가운데 이 로컬 Test 점수는 각각 90.67%를 기록한 Asta Paper Finder 및 Asta v0와 함께 **제시된 최고 Recall@30과 동점**입니다. 공식 Test 세트에 대한 로컬 평가이며, 공식 순위표에 제출하거나 순위를 획득한 결과는 아닙니다.
+| 작업                        | AIPOCH Open-Science의 결과                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 목표 논문 찾기              | LitQA2-FullText-Search의 **테스트 75문항 중 68문항**에서 목표 논문이 상위 30개 결과에 포함되었습니다(**Recall@30 90.67%**, gpt-6-astra).               |
+| 문헌을 바탕으로 답변하기    | 별도의 LitQA2-FullText 평가에서 Open-Science는 **75문항 중 70문항에 정답**을 제시했습니다(**정확도 93.33%**, deepseek-flash, Max 추론).                |
+| 인용을 포함한 답변 종합하기 | ScholarQA-CS2 검증 100문항에서 deepseek-v4-flash로 **종합 품질 점수 0.9289/1**을 기록했습니다. 공식 테스트 참고 결과는 다른 문항을 사용합니다.         |
+| 연구 워크플로 실행하기      | 동일 모델을 사용한 로컬 ASI-Bench 평가에서 B4 점수는 Open-Science **59.46**, Codex **55.45**였습니다. B2 점수는 거의 같았습니다(**56.11**, **56.09**). |
+| 생의학 데이터 분석하기      | BiomniBench-DA Public 50에서 두 평가 모델의 점수는 **81.04**, **77.06**이었으며 동일 가중치 평균은 **79.05**였습니다.                                  |
 
-**ScholarQA-CS2:** AIPOCH Open-Science는 **deepseek-v4-flash**를 사용하여 **Validation 100문항**에 걸쳐 **0.9289/1 종합 점수**를 기록했습니다. 보고서에 제시된 공식 Test 최고 참조 점수인 **0.9192**는 다른 문항 세트의 결과이므로, 두 결과로 직접 비교 순위를 매길 수 없습니다.
-
-![AIPOCH Open-Science AstaBench 요약: LitQA2 Test에서 90.67% Recall@30, ScholarQA-CS2 Validation에서 종합 점수 0.9289. 로컬 결과와 공식 참조를 구분](../images/readme/astabench-literature-research-overview.jpg)
+### AstaBench — 문헌 작업
 
 <details>
-<summary><strong>LitQA2-FullText-Search 결과 비교</strong></summary>
+<summary><strong>논문 검색 — 75문항 중 68문항에서 목표 논문 발견</strong></summary>
 
-![AIPOCH Open-Science는 75문항 LitQA2 Test에서 90.67% Recall@30을 기록하여 보고서 스냅샷에 제시된 최고 점수와 동점임. 공식 순위표에 제출한 결과는 아님](../images/readme/astabench-litqa2-test.jpg)
+AIPOCH는 공식 LitQA2-FullText-Search Test 분할의 75문항을 로컬에서 실행했습니다. Recall@30은 2026년 10월 26일 비교 스냅샷의 최고값과 같았습니다. 이 로컬 실행은 공식 순위표 제출이나 등재 순위를 의미하지 않습니다.
 
-로컬 평가는 2026년 10월 23일에 수행되었습니다. 차트에는 AIPOCH Open-Science의 로컬 Test 결과 1개와 공식 참조 기록 26개가 포함되어 있습니다. 같은 점수는 같은 길이의 막대로 표시하며, 행 순서가 동점의 순위를 나누지는 않습니다. AIPOCH의 로컬 평가 비용은 통일된 기준으로 산정되지 않았으므로 이 차트로 비용 효율성을 비교할 수 없습니다.
+![AIPOCH Open-Science LitQA2 검색 비교: 공식 Test 분할의 로컬 Recall@30 90.67%](../images/readme/astabench-litqa2-test.jpg)
 
-앞서 **DeepSeek v4-flash (max)**를 사용한 로컬 평가에서는 별도의 10문항 Validation 세트에서 **100% Recall@30 (10/10)**을 기록했으며, 이 결과에 대해 로컬 반복 실행 3회가 보고되었습니다. Test와 Validation은 서로 다른 문항을 사용하므로 결과를 구분해 제시합니다.
+Recall@30은 목표 논문이 상위 30개 결과에 포함되면 적중으로 집계하며, 답변 정확도를 측정하지 않습니다. 실행 간 비용 산정 방식은 통일되지 않았습니다.
 
 </details>
 
 <details>
-<summary><strong>ScholarQA-CS2 Validation 및 Test 참조</strong></summary>
+<summary><strong>전문 기반 질의응답 — 75문항 중 70문항 정답</strong></summary>
 
-![AIPOCH Open-Science는 100문항 ScholarQA-CS2 Validation 세트에서 종합 점수 0.9289를 기록함. 공식 Test 참조는 다른 문항을 사용하므로 직접 비교한 순위를 구성하지 않음](../images/readme/astabench-scholarqa-cs2.jpg)
+AIPOCH는 AstaBench v0.5.4의 LitQA2-FullText Test 분할 75문항을 실행했습니다. 차트는 로컬 결과와 과거 참고 기록을 점수순으로 배치하며, “#1”은 이 비교 안에서의 순서를 뜻합니다.
 
-차트는 로컬 Validation 결과 1개와 공식 Test 참조 기록 41개를 구분합니다. 보고서 본문에는 `gpt-5.6-sol`의 추가 Validation 점수 0.7905가 언급되었으나 원본 표에는 해당 행이 없었으며, 문항 수도 명시되지 않았습니다.
+![AIPOCH Open-Science LitQA2 전문 질의응답 비교: 로컬 정확도 93.33%](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+정확도는 올바른 답변의 비율입니다. 여기서 93.33%는 로컬 답변 정확도, 90.67%는 과거 참고 답변 정확도로, 위 검색 차트와는 지표가 다릅니다. 참고 기록은 2026년 10월 28일에 수집했고, 최고 참고 점수는 11월 2일에 다시 확인했습니다.
 
 </details>
-
-Recall@30은 제출한 첫 30개 결과에 대상 논문이 포함되는지를 측정하며, 과학 질문의 정답률을 의미하지 않습니다. ScholarQA-CS2 점수는 응답 품질의 종합 지표이며, 모든 내용을 완전히 정확하게 답한 문항의 비율이 아닙니다.
-
-#### AstaBench LitQA2-FullText — 과학 문헌 질의응답 정확도 93.33%
-
-AIPOCH가 실시한 AstaBench v0.5.4의 LitQA2-FullText Test 분할 75문항 평가에서 AIPOCH Open-Science는 `deepseek-flash`와 Max 추론 강도를 사용해 70문항에 정답을 냈습니다(정확도 93.33%). 이 과제는 과학 문헌 질의응답을 평가합니다. 논문을 찾아 읽고, 실험 조건을 구분하며, 보고된 결과를 추출해 답을 선택해야 합니다. 이는 위의 LitQA2-FullText-Search 검색 Recall@30과 다른 지표입니다.
-
-2026년 11월 2일 [공식 LitQA2-FullText Test 표](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)에서 확인한 최고 기록은 90.67%(68/75)였습니다. AIPOCH Open-Science의 점수는 이 수치 비교에서 2.67%포인트 높습니다.
 
 <details>
+<summary><strong>인용 답변 품질 — 로컬 검증 결과와 공식 테스트 참고값</strong></summary>
 
-<summary><strong>AstaBench LitQA2-FullText 점수 비교</strong></summary>
+로컬 ScholarQA-CS2 결과는 Validation 100문항의 인용 답변 품질을 측정합니다. 참고 결과는 Test 분할에서 나왔으므로 이 점수들로 직접 대결 순위를 정할 수 없습니다.
 
-![AIPOCH Open-Science가 AstaBench LitQA2-FullText 과학 문헌 질문에서 93.33%를 기록하고 10월 28일 공식 기록과 비교](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+![AIPOCH Open-Science ScholarQA-CS2 비교: 로컬 Validation 종합 점수 0.9289와 공식 Test 참고 결과를 구분해 표시](../images/readme/astabench-scholarqa-cs2.jpg)
 
-그림은 10월 28일의 공식 기록을 사용했으며, 표시된 최고 점수는 11월 2일 다시 확인했습니다.
+종합 점수는 0–1 척도이며, 완전히 맞힌 문항의 백분율이 아닙니다.
 
 </details>
 
-### 🏆 ASI-Bench B1–B4 — 보고서의 네 비교 모두에서 최고 표시 점수
+### ASI-Bench — 계획 실행과 방법 선택
 
-AIPOCH Open-Science는 **GPT-6(gpt-6-astra / xhigh)**, 분야별 스페셜리스트와 스킬을 활용해 ASI-Bench B1, B2, B3, B4에서 각각 **79.35, 56.11, 59.67, 59.46점**을 기록했습니다. 각 점수는 보고서에 수록된 해당 비교의 최고 표시 값입니다. 네 조건은 **완전한 계획 실행, 연구 흐름 구성, 자율적인 연구 방법 선택, 방해 배경 정보가 있는 상황에서의 자율 연구**를 평가합니다.
+네 조건은 지정된 계획 실행(B1), 워크플로 구성(B2), 연구 방법 선택(B3), 방해 정보가 있는 상황에서의 연구(B4)를 요구합니다. 차트의 처음 두 행은 동일한 GPT-6 Astra 모델을 사용한 로컬 실행을 비교합니다.
 
-동일한 모델과 같은 이름의 추론 강도를 사용한 로컬 Codex 대조군 점수는 74.78, 56.09, 58.12, 55.45이며, 수치 차이는 각각 **+4.57, +0.02, +1.55, +4.01점**입니다. B1/B2는 로컬 반복 테스트 3회를 보고했으며, B3/B4는 각 60개 과제를 3회 실행한 평균입니다.
+![AIPOCH Open-Science ASI-Bench B1–B4 결과와 로컬 Codex 실행 및 공개 참고 결과](../images/readme/asi-bench-b1-b4.jpg)
 
-![AIPOCH Open-Science의 ASI-Bench B1–B4 점수 79.35, 56.11, 59.67, 59.46. 로컬 결과와 공개 참조를 구분](../images/readme/asi-bench-b1-b4.jpg)
+Open-Science의 B1–B4 점수는 **79.35, 56.11, 59.67, 59.46**이며, 로컬 Codex 참고 점수는 **74.78, 56.09, 58.12, 55.45**입니다. B2 점수는 거의 같았습니다. 다른 공개 실행은 작업 사례, 설정 또는 평가 방식이 다릅니다.
 
-로컬 실행은 seed31415를 사용했습니다. AIPOCH B1은 보고서에 설명된 채점기 문제로 1개를 제외한 59개 과제를 채점했습니다. B3/B4는 v0.32.0 및 대체 평가 모델을 사용했습니다. 공개 참조와 과제 인스턴스, 구성, 채점 조건이 다르며 B2의 0.02점은 수치 차이일 뿐입니다.
+로컬 B1은 채점기 문제로 작업 하나를 제외한 뒤 59개 작업을 포함합니다. B1/B2는 로컬에서 세 번 반복한 것으로 보고되었습니다. B3/B4는 Open-Science v0.32.0과 대체 평가 모델을 사용했으며, 각 점수는 60개 작업을 세 번 실행한 평균입니다.
 
-### 🏆 BiomniBench-DA Public 50 — 취합된 비교의 최고 표시 점수: 79.05
+### BiomniBench-DA — 생의학 데이터 분석
 
-AIPOCH Open-Science는 **gpt-5.6-sol(xhigh)**을 사용해 BiomniBench-DA Public 50으로 표시된 50개 과제의 내부 평가에서 **79.05점**을 얻어 수집된 비교의 최고 표시 점수를 기록했습니다. Gemini 3.1 Pro 평가의 **81.04점**과 DeepSeek v4-pro 평가의 **77.06점**을 동일 가중치로 평균한 결과로, 해당 구성의 생물의학 데이터 분석 성능을 보여줍니다. [평가 보고서](https://aipoch.com/blog/open-science-biomnibench-da)를 참고하세요.
+Public 50 작업 세트에서 Gemini 3.1 Pro 평가 모델은 출력에 **81.04**, DeepSeek v4-pro 평가 모델은 **77.06**을 부여했습니다. AIPOCH는 gpt-5.6-sol(xhigh) 설정의 동일 가중치 평균 **79.05**를 보고합니다.
 
-![AIPOCH Open-Science의 BiomniBench-DA Public 50 내부 평가: 두 평가 점수 77.06과 81.04의 평균 79.05](../images/readme/biomnibench-public50-leaderboard.png)
+<details>
+<summary><strong>평가 점수와 과거 참고값 — 평가 모델 적용 범위가 다름</strong></summary>
 
-서로 다른 평가 모델 적용 범위가 혼합된 비교이며, 동일한 평가 조건의 공식 순위가 아닙니다.
+차트에는 평가 모델의 적용 범위가 다른 기록이 함께 들어 있습니다. “#1”은 이 기록 모음의 정렬 순서입니다. 공통 평가 절차에 따른 순위를 정하려면 모든 기록에 비교 가능한 채점 방식이 필요합니다.
 
-**평가 범위:** 명시된 데이터셋과 분할을 사용해 2026년 8~11월에 자체 보고한 로컬·내부 평가 결과이며, 현재 릴리스를 위해 다시 실행한 평가가 아닙니다. 공식 Test 세트를 로컬에서 실행했다는 사실이 공식 순위표 제출이나 순위를 의미하지는 않습니다. 참조 값은 과거 보고서 시점의 기록이며 실시간 순위가 아닙니다. Validation과 Test 결과는 직접 비교할 수 없습니다. 문항, 모델 구성, 평가 모델 적용 범위, 비용 산정 방식의 차이로 시스템 간 비교에는 제약이 있습니다. 수치상 동점이나 격차가 통계적으로 유의한 개선을 입증하지는 않습니다.
+![AIPOCH Open-Science BiomniBench-DA Public 50 비교: 두 평가 모델의 점수와 평균](../images/readme/biomnibench-public50-leaderboard.png)
+
+79.05는 이 내부 평가의 평균 평가 점수입니다.
+
+</details>
+
+**평가 범위:** 보고서는 명시된 모델과 데이터 분할을 사용한 2026년 8월부터 11월까지의 로컬·내부 실행을 다루며, 현재 릴리스를 위해 다시 실행한 결과가 아닙니다. 참고 점수는 과거 스냅샷으로 실시간 순위가 아닙니다. 서로 다른 벤치마크 계열의 점수는 직접 비교할 수 없으며 수치 차이가 통계적 유의성을 입증하지 않습니다.
+
+자세한 평가 내용은 [AstaBench 및 ASI-Bench 보고서](https://aipoch.com/benchmark/open-science)와 [BiomniBench-DA 보고서](https://aipoch.com/blog/open-science-biomnibench-da)를 참고하세요.
 
 ## 핵심 기능
 
@@ -328,7 +334,7 @@ DOI, arXiv ID, PMID, PMCID 또는 지원되는 논문 링크로 문헌을 추가
 
 데스크톱 앱에서는 산출물 출처를 RO-Crate 1.1로 내보낼 수 있습니다. 버전에 연결된 환경 번들은 캡처가 완전하고 대상 플랫폼과 호환될 때만 관리 환경을 만들 수 있으며, 전체 컴퓨터 백업은 아닙니다.
 
-홈이나 대화 작업 공간에서 Sharing 마켓플레이스의 연구 사례를 탐색하고, 범주별로 필터링하거나 키워드로 검색하고, 사례 상세 화면에서 패키지를 다운로드할 수 있습니다. 마켓플레이스와 프로젝트 사이를 이동해도 필터와 스크롤 위치가 유지됩니다.
+홈이나 대화 작업 공간에서 Sharing 마켓플레이스의 연구 사례를 탐색하고, 범주별로 필터링하거나 키워드로 검색하고, 사례 상세 화면에서 패키지를 다운로드할 수 있습니다.
 
 ## 모델 제공업체
 
@@ -421,19 +427,37 @@ Remote.It 페어링을 통해 휴대전화나 태블릿에서 동일한 localhos
 
 ## 자주 묻는 질문
 
-### 모델 연결 테스트가 실패하는 이유는 무엇인가요?
+<a id="모델-연결-테스트가-실패하는-이유는-무엇인가요"></a>
+
+<details>
+<summary>모델 연결 테스트가 실패하는 이유는 무엇인가요?</summary>
 
 답변: API Key에 빠진 문자나 공백이 없는지, Base URL과 지역이 올바른지, 제공업체의 정확한 모델 ID를 사용했는지 확인하고 네트워크 연결과 계정 잔액도 확인하세요. Claude 구독은 선택한 모드에 따라 공유 브라우저 로그인을 다시 시도하거나 격리된 `claude setup-token` 자격 증명을 갱신하세요.
 
-### 설정 중 `Continue`가 비활성화되는 이유는 무엇인가요?
+</details>
+
+<a id="설정-중-continue가-비활성화되는-이유는-무엇인가요"></a>
+
+<details>
+<summary>설정 중 <code>Continue</code>가 비활성화되는 이유는 무엇인가요?</summary>
 
 답변: 현재 단계의 필수 조건이 충족되지 않았습니다. 해당 단계에 따라 `Action needed` 환경 항목을 해결하거나, 선택한 에이전트 런타임을 설치 또는 복구하거나, 모델 제공업체를 검증하세요. Notebook 설정은 선택 사항이며 Notebook 실행에만 영향을 줍니다.
 
-### 원격 HPC 클러스터에서 작업을 실행하려면 어떻게 하나요?
+</details>
+
+<a id="원격-hpc-클러스터에서-작업을-실행하려면-어떻게-하나요"></a>
+
+<details>
+<summary>원격 HPC 클러스터에서 작업을 실행하려면 어떻게 하나요?</summary>
 
 답변: **Remote Compute (SSH)**는 항상 활성화되어 있으며 Settings에서 따로 활성화할 필요가 없습니다. **Settings → Compute**에서 SSH 컴퓨팅 호스트를 등록하고 현재 세션에서 사용할 수 있게 한 다음 자연어 또는 `/remote-compute-ssh`로 원격 컴퓨팅을 사용하세요. 연결 가능한 SSH 호스트, 유효한 인증, 필요한 디렉터리 권한과 작업에 필요한 소프트웨어, 종속성, 컴퓨팅 리소스가 필요합니다. Direct SSH에는 스케줄러가 필요하지 않지만 Slurm 모드에는 사용 가능한 Slurm 환경과 작업 제출 권한이 필요합니다. “항상 활성화”는 Skill 자체를 뜻하며 등록된 모든 호스트가 항상 사용 가능하다는 뜻은 아닙니다.
 
-### 명령줄 인터페이스가 있나요?
+</details>
+
+<a id="명령줄-인터페이스가-있나요"></a>
+
+<details>
+<summary>명령줄 인터페이스가 있나요?</summary>
 
 답변: 있습니다. 독립형 CLI를 설치하거나 **Settings → General → Command line tool → Install command**를 사용하여 이미 실행 중인 데스크톱 인스턴스를 제어할 수 있습니다. npm 설치에는 Node.js가 필요하며, Homebrew와 런타임이 포함된 독립형 패키지에는 Node.js가 포함되어 있습니다. 로컬 프로필을 초기화한 다음 브라우저를 열지 않고 서비스를 제어하고 연구 작업을 제출하세요:
 
@@ -457,13 +481,25 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 전체 명령 참조, JSON/JSONL 출력 형식, 종료 코드, 헤드리스 서비스 옵션은 [CLI 가이드](../../packages/open-science/CLI.md)를 참고하세요.
 
-### 생성된 결과의 출처를 확인하려면 어떻게 하나요?
+</details>
+
+<a id="생성된-결과의-출처를-확인하려면-어떻게-하나요"></a>
+
+<details>
+<summary>생성된 결과의 출처를 확인하려면 어떻게 하나요?</summary>
 
 답변: 생성된 아티팩트를 열고 **Provenance**를 선택하세요. 버전을 선택하여 콘텐츠 ID와 사용 가능한 생성 코드, 실행 기록, 입력, 환경 인벤토리, 생성 대화 컨텍스트, 리뷰 증거를 확인합니다. AIPOCH Open-Science가 검증할 수 없는 증거는 사용할 수 없음으로 표시됩니다.
 
-### 이후 대화를 잃지 않고 이전 요청을 수정할 수 있나요?
+</details>
+
+<a id="이후-대화를-잃지-않고-이전-요청을-수정할-수-있나요"></a>
+
+<details>
+<summary>이후 대화를 잃지 않고 이전 요청을 수정할 수 있나요?</summary>
 
 답변: 가능합니다. 완료된 사용자 메시지를 편집해 다시 보내면 해당 지점에서 새 브랜치가 생성됩니다. 원래 후속 턴은 계속 사용할 수 있고, 메시지 옆의 수정 화살표로 대체 경로를 전환합니다.
+
+</details>
 
 ## 기여자
 
@@ -475,7 +511,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 참여하기
 
-AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버그 신고, 기능 제안, 설계 토론, 커뮤니티 질문 및 기여를 받습니다. 목적에 가장 잘 맞는 채널을 선택하고 프로젝트 세부 정보를 공개하기 전에 관련 기여 가이드와 공개 게시 안전 안내를 확인하세요.
+버그 신고, 기능 제안, 질문 또는 기여로 AIPOCH Open-Science 개선에 참여하세요. 아래에서 목적에 맞는 채널을 선택해 시작할 수 있습니다.
 
 | 채널                                                                     | 용도                                       |
 | ------------------------------------------------------------------------ | ------------------------------------------ |
@@ -487,7 +523,7 @@ AIPOCH Open-Science는 GitHub, Discord, X 및 AIPOCH 웹사이트를 통해 버�
 
 공개 이슈를 만들기 전에 로그와 스크린샷에서 API Key, 토큰, 비공개 파일 경로, 미공개 데이터, 환자 식별자 및 기타 민감한 정보를 제거하세요. 개발 워크플로는 [기여 가이드](../../CONTRIBUTING.md)를 참고하세요.
 
-> ⭐ **저장소에 Star:** 이 프로젝트가 도움이 되었다면 GitHub에서 Star를 남겨 주세요. Star는 지속적인 개발에 힘이 됩니다. 몇 초면 충분하지만 프로젝트에는 큰 의미가 있습니다.
+> AIPOCH Open-Science가 유용하다면 GitHub 저장소에 Star를 남겨 주세요.
 
 제공 중인 기능, 부분 구현 및 계획은 [기능 지도](../ROADMAP.md#capability-map)를 확인하세요.
 

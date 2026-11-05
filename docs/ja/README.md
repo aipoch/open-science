@@ -17,9 +17,7 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science の arXiv プレプリント：2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#ベンチマーク性能">
-    <img alt="AIPOCH Open-Science — 報告されたベンチマーク比較での最高スコア" src="../../docs/images/readme/benchmark-comparisons.svg">
-  </a>
+  <a href="#ベンチマーク性能">ベンチマーク結果</a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="対応プラットフォーム macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
@@ -61,7 +59,7 @@
 - [製品ツアー](#製品ツアー)
 - [AIPOCH Open-Science `.science` 研究パッケージ](#aipoch-open-science-science-研究パッケージ)
 - [AIPOCH Open-Science の論文と引用](#aipoch-open-science-の論文と引用)
-- [ベンチマーク性能](#ベンチマーク性能)
+- [ベンチマーク結果](#ベンチマーク性能)
 - [主な機能](#主な機能)
 - [モデルプロバイダー](#モデルプロバイダー)
 - [データ、権限、信頼](#データ権限信頼)
@@ -85,7 +83,7 @@
 | Linux x64                            | Linux x64 AppImage または Debian パッケージ   |
 | Linux ARM64                          | Linux ARM64 AppImage または Debian パッケージ |
 
-[公式ダウンロードページ](https://aipoch.com/open-science/download)からダウンロードしてください。必要に応じて[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
+インストール前の確認については、[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
 
 macOS では [Homebrew](https://brew.sh) でもインストールできます：
 
@@ -192,7 +190,7 @@ Windows での再インストールでは研究データが保持されます。
 2. `.science` ファイルを共同研究者または別のコンピューターに移します。
 3. プロジェクトにインポートします。右側の **Research replay** で記録された過程を確認し、左側の会話から質問して固定ステップを参照できます。
 
-インポートした記録は読み取り専用です。再生してもコードの実行、モデルの呼び出し、認証情報の復元は行いません。最初の質問で関連する編集可能な会話が作成されます。研究を続けるには **Create a copy to continue research** で作業用コピーを作成します。再実行には完全なレシピ、必要な入力、利用可能な実行環境が必要です。
+インポートした記録は読み取り専用です。再生してもコードの実行、モデルの呼び出し、認証情報の復元は行いません。最初の質問で関連する編集可能な会話が作成されます。研究を続けるには **Fork to continue** で作業用コピーを作成します。再実行には完全なレシピ、必要な入力、利用可能な実行環境が必要です。
 
 Side Chat、非公開の読書ブックマーク、認証情報は含まれず、ファイルの範囲はエクスポート時の選択によります。受け取った検証記録は送信者のチェックを示すもので、このコンピューターでの再実行を証明しません。[`.science` パッケージガイド](https://aipoch.com/docs/guides/research-packages/)を参照してください。
 
@@ -223,75 +221,83 @@ arXiv プレプリント · [v1](https://arxiv.org/abs/2610.17110v1) · 2026 年
 
 </details>
 
-## ベンチマーク性能
+<a id="ベンチマーク性能"></a>
 
-AstaBench、ASI-Bench、BiomniBench-DA は課題、データセット、採点方法が異なる独立したベンチマーク群であり、結果はそれぞれ別に報告され、相互に直接比較することはできません。
+## ベンチマーク結果
 
-### 🏆 AstaBench — LitQA2 Test：報告時点の比較で最高表示スコアと同点、90.67% Recall@30
+AIPOCH は AIPOCH Open-Science を、論文の検索から内容に関する質問への回答、研究計画の実行までのタスクで評価しました。以下は AIPOCH 自身による実行結果であり、各スコアは特定のタスクと評価設定に対応します。
 
-AIPOCH Open-Science は **gpt-6-astra** を使用し、公式の75問の LitQA2-FullText-Search Test セットを用いたローカル評価で **90.67% Recall@30 (68/75)** を記録しました。10月26日時点の報告に含まれる27件の結果の中で、このローカル Test スコアは、同じく90.67%を記録した Asta Paper Finder および Asta v0 と並び、**掲載された最高の Recall@30 と同点**です。公式 Test セットを用いたローカル評価であり、公式ランキングへの提出や順位を示すものではありません。
+| タスク                     | AIPOCH Open-Science の結果                                                                                                                                       |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 対象論文を見つける         | LitQA2-FullText-Search の **テスト 75 問中 68 問**で、対象論文が上位 30 件に含まれました（**Recall@30：90.67%**、gpt-6-astra）。                                 |
+| 文献に基づいて回答する     | 別の LitQA2-FullText 評価では、Open-Science が **75 問中 70 問に正解**しました（**正解率 93.33%**、deepseek-flash、Max 推論）。                                  |
+| 引用付きの回答をまとめる   | ScholarQA-CS2 の検証用 100 問で、deepseek-v4-flash を使用し **総合品質スコア 0.9289/1** を記録しました。公式テストの参考結果は異なる問題を使用しています。       |
+| 研究ワークフローを実行する | 同じモデルを使ったローカルの ASI-Bench 評価で、B4 は Open-Science が **59.46**、Codex が **55.45** でした。B2 はほぼ同じスコアでした（**56.11** と **56.09**）。 |
+| 生物医学データを分析する   | BiomniBench-DA Public 50 で、2 つの評価モデルのスコアは **81.04** と **77.06**、等重み平均は **79.05** でした。                                                  |
 
-**ScholarQA-CS2:** AIPOCH Open-Science は **deepseek-v4-flash** を使用し、**100問の Validation 問題**で **0.9289/1の複合スコア**を記録しました。報告に掲載された公式 Test の最高参照値 **0.9192** は異なる問題セットによるものであるため、両者の結果から直接比較による順位を付けることはできません。
-
-![AIPOCH Open-Science の AstaBench 概要：LitQA2 Test で90.67% Recall@30、ScholarQA-CS2 Validation で複合スコア0.9289。ローカル結果と公式参照を区別](../images/readme/astabench-literature-research-overview.jpg)
+### AstaBench — 文献タスク
 
 <details>
-<summary><strong>LitQA2-FullText-Search の結果比較</strong></summary>
+<summary><strong>論文検索 — 75 問中 68 問で対象論文を発見</strong></summary>
 
-![AIPOCH Open-Science は75問の LitQA2 Test で90.67% Recall@30を記録し、報告時点の比較で最高表示スコアと同点。公式ランキングへの提出結果ではない](../images/readme/astabench-litqa2-test.jpg)
+AIPOCH は公式 LitQA2-FullText-Search の 75 問の Test 分割をローカルで実行しました。Recall@30 は 2026 年 10 月 26 日の比較スナップショットの最高値と同じでした。このローカル実行は公式ランキングへの提出や順位を意味しません。
 
-このローカル評価は2026年10月23日に実施されました。図には AIPOCH Open-Science のローカル Test 結果1件と公式参照記録26件が含まれます。同じスコアは同じ長さの棒で示し、行の順番で同点を区別していません。AIPOCH のローカル評価のコストは統一した方法で算定されていないため、この図から費用対効果を比較することはできません。
+![AIPOCH Open-Science の LitQA2 検索比較：公式 Test 分割でのローカル Recall@30 は 90.67%](../images/readme/astabench-litqa2-test.jpg)
 
-それ以前に **DeepSeek v4-flash (max)** を使用したローカル評価では、別の10問の Validation セットで **100% Recall@30 (10/10)** が記録され、この結果について3回のローカル反復が報告されています。Test と Validation は異なる問題を使用しているため、結果を分けて示しています。
+Recall@30 は対象論文が上位 30 件に含まれる場合をヒットと数え、回答の正解率は測りません。各実行のコスト計算は統一されていません。
 
 </details>
 
 <details>
-<summary><strong>ScholarQA-CS2 の Validation と Test の参照記録</strong></summary>
+<summary><strong>全文に基づく質疑応答 — 75 問中 70 問に正解</strong></summary>
 
-![AIPOCH Open-Science は100問の ScholarQA-CS2 Validation セットで複合スコア0.9289を記録。公式 Test の参照値は異なる問題によるもので、直接対決の順位を示さない](../images/readme/astabench-scholarqa-cs2.jpg)
+AIPOCH は AstaBench v0.5.4 の LitQA2-FullText の 75 問の Test 分割を実行しました。図はローカル結果と過去の参考記録をスコア順に並べたもので、「#1」はこの比較内での順序を指します。
 
-図ではローカル Validation 結果1件と公式 Test の参照記録41件を分けて示しています。報告本文には `gpt-5.6-sol` による別の Validation スコア0.7905も記載されていましたが、元の表にはその行がなく、問題数も明記されていませんでした。
+![AIPOCH Open-Science の LitQA2 全文質疑応答比較：ローカル正解率 93.33%](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+正解率は正しい回答の割合です。ここで 93.33% はローカルの回答正解率、90.67% は過去の参考回答正解率であり、上の検索図とは指標が異なります。参考記録は 2026 年 10 月 28 日に取得され、最高参考スコアは 11 月 2 日に再確認されました。
 
 </details>
-
-Recall@30 は、提出された最初の30件の結果に対象論文が含まれるかを測る指標であり、科学的な質問への正答率ではありません。ScholarQA-CS2 のスコアは回答品質の複合指標であり、完全に正しく回答できた問題の割合ではありません。
-
-#### AstaBench LitQA2-FullText — 科学文献の質問応答で正答率 93.33%
-
-AIPOCH が実施した AstaBench v0.5.4 の LitQA2-FullText Test 分割（75 問）の評価で、AIPOCH Open-Science は `deepseek-flash` と推論強度 Max を使用し、70 問に正答しました（正答率 93.33%）。この課題は科学文献の質問応答を測定します。論文を探して読み、実験条件を区別し、報告された結果を取り出して答えを選びます。上記の LitQA2-FullText-Search における検索 Recall@30 とは別の指標です。
-
-2026 年 11 月 2 日時点で、[公式 LitQA2-FullText Test 表](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)に表示された最高記録は 90.67%（68/75）でした。AIPOCH Open-Science のスコアは、この数値比較で 2.67 パーセントポイント高くなっています。
 
 <details>
+<summary><strong>引用付き回答の品質 — ローカル検証結果と公式テストの参考値</strong></summary>
 
-<summary><strong>AstaBench LitQA2-FullText のスコア比較</strong></summary>
+ローカルの ScholarQA-CS2 結果は Validation の 100 問に対する引用付き回答の品質を測定します。参考結果は Test 分割のため、これらのスコアは直接対決のランキングを構成しません。
 
-![AIPOCH Open-Science は AstaBench LitQA2-FullText の科学文献質問で 93.33% を記録し、10 月 28 日時点の公式記録と比較](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+![AIPOCH Open-Science の ScholarQA-CS2 比較：ローカル Validation 総合スコア 0.9289 と公式 Test 参考結果を分けて表示](../images/readme/astabench-scholarqa-cs2.jpg)
 
-図には 10 月 28 日時点の公式記録を使用し、表示上の最高スコアは 11 月 2 日に再確認しました。
+総合スコアは 0–1 の尺度であり、完全に正解した問題の割合ではありません。
 
 </details>
 
-### 🏆 ASI-Bench B1–B4 — 報告内の4つの比較すべてで最高の表示スコア
+### ASI-Bench — 計画の実行と手法の選択
 
-AIPOCH Open-Science は **GPT-6（gpt-6-astra / xhigh）**、分野別スペシャリスト、スキルを用い、ASI-Bench B1、B2、B3、B4でそれぞれ **79.35、56.11、59.67、59.46点** を記録しました。各値は報告に掲載された比較の最高表示値です。4条件は順に、**詳細な計画の実行、ワークフローの構成、自律的な研究手法の選択、無関係な背景情報がある状況での自律研究**を評価します。
+4 つの条件は、指定された計画の実行（B1）、ワークフローの構成（B2）、研究手法の選択（B3）、妨害情報のある状況での研究（B4）を求めます。図の最初の 2 行は、同じ GPT-6 Astra モデルを使うローカル実行の比較です。
 
-同じモデルと同名の推論強度を用いたローカルCodex対照は74.78、56.09、58.12、55.45点で、数値差は **+4.57、+0.02、+1.55、+4.01点** です。B1/B2はローカルで3回の反復を報告し、B3/B4はそれぞれ60問を3回実行した平均値です。
+![AIPOCH Open-Science の ASI-Bench B1–B4 結果とローカル Codex 実行、公開参考結果](../images/readme/asi-bench-b1-b4.jpg)
 
-![AIPOCH Open-Science の ASI-Bench B1–B4スコアは79.35、56.11、59.67、59.46。ローカル結果と公開参照を区別](../images/readme/asi-bench-b1-b4.jpg)
+Open-Science の B1–B4 は **79.35、56.11、59.67、59.46**、ローカル Codex の参考値は **74.78、56.09、58.12、55.45** でした。B2 のスコアはほぼ同じです。他の公開結果ではタスク事例、設定、評価方法が異なります。
 
-ローカル実行にはseed31415を使用しました。AIPOCHのB1は59問を採点し、報告に記載された採点器の問題により1問を除外しています。B3/B4はv0.32.0と代替の評価モデルを使用しました。公開参照とは問題インスタンス、構成、採点条件が異なり、B2の0.02点差は数値上の差にとどまります。
+ローカル B1 は採点器の問題による 1 件の除外後、59 タスクを対象としました。B1/B2 はローカルで 3 回の反復が報告されています。B3/B4 は Open-Science v0.32.0 と代替評価モデルを使用し、各スコアは 60 タスクを 3 回実行した平均です。
 
-### 🏆 BiomniBench-DA Public 50 — 集計された比較での最高表示スコア：79.05
+### BiomniBench-DA — 生物医学データ分析
 
-AIPOCH Open-Science は **gpt-5.6-sol（xhigh）** を使用し、BiomniBench-DA Public 50と呼ばれる50タスクの内部評価で **79.05点** を記録しました。これは集計された比較の最高表示値です。Gemini 3.1 Proによる **81.04点** とDeepSeek v4-proによる **77.06点** の等加重平均で、この構成の生物医学データ分析性能を示します。[評価報告](https://aipoch.com/blog/open-science-biomnibench-da)をご覧ください。
+Public 50 タスクセットで、Gemini 3.1 Pro 評価モデルは出力を **81.04**、DeepSeek v4-pro 評価モデルは **77.06** と採点しました。AIPOCH は gpt-5.6-sol（xhigh）構成の等重み平均 **79.05** を報告しています。
 
-![AIPOCH Open-Science のBiomniBench-DA Public 50内部評価は、評価値77.06と81.04の平均で79.05](../images/readme/biomnibench-public50-leaderboard.png)
+<details>
+<summary><strong>評価スコアと過去の参考値 — 評価モデルの適用範囲は異なる</strong></summary>
 
-比較には異なる評価モデルの組み合わせが混在しており、統一された採点条件による公式順位ではありません。
+図には評価モデルの適用範囲が異なる記録が混在しています。「#1」はこの集合内の順序を示します。共通の評価手順で順位を付けるには、すべての記録に比較可能な採点が必要です。
 
-**評価範囲：** これらは、明記されたデータセットと分割を使用し、2026年8～11月に報告された自己報告のローカル・内部評価結果であり、現行リリース向けに再実行したものではありません。公式 Test セットを用いたローカル実行は、公式ランキングへの提出や順位を意味しません。参照値は過去の報告時点の記録であり、リアルタイムの順位ではありません。Validation と Test の結果は直接比較できません。問題の内容、モデル構成、評価モデルの適用範囲、コスト算定方法の違いにより、システム間の比較には制約があります。数値上の同点や差は、統計的に有意な改善を示すものではありません。
+![AIPOCH Open-Science の BiomniBench-DA Public 50 比較：2 つの評価モデルのスコアと平均](../images/readme/biomnibench-public50-leaderboard.png)
+
+79.05 はこの内部評価での平均評価スコアです。
+
+</details>
+
+**評価範囲：** 報告は、記載されたモデルとデータ分割による 2026 年 8 月から 11 月のローカル・内部実行を対象とし、現行リリース用に再実行したものではありません。参考スコアは過去のスナップショットであり、リアルタイムの順位ではありません。異なるベンチマーク系列のスコアは直接比較できず、数値の差は統計的有意性を示しません。
+
+詳細は [AstaBench と ASI-Bench のレポート](https://aipoch.com/benchmark/open-science)、[BiomniBench-DA のレポート](https://aipoch.com/blog/open-science-biomnibench-da)をご覧ください。
 
 ## 主な機能
 
@@ -328,7 +334,7 @@ DOI、arXiv ID、PMID、PMCID、または対応する論文リンクから文献
 
 デスクトップアプリでは、成果物の来歴を RO-Crate 1.1 としてエクスポートできます。バージョンに紐づく環境バンドルから管理対象環境を作成できるのは、記録が完全で対象プラットフォームと互換性がある場合だけです。コンピューター全体のバックアップではありません。
 
-ホームまたは会話ワークスペースから Sharing マーケットプレイスで研究事例を閲覧し、カテゴリで絞り込み、キーワードで検索して、事例の詳細からパッケージをダウンロードできます。マーケットプレイスとプロジェクトの間を移動しても、フィルターとスクロール位置は保持されます。
+ホームまたは会話ワークスペースから Sharing マーケットプレイスで研究事例を閲覧し、カテゴリで絞り込み、キーワードで検索して、事例の詳細からパッケージをダウンロードできます。
 
 ## モデルプロバイダー
 
@@ -421,19 +427,37 @@ Remote.It のペアリングにより、スマートフォンやタブレット�
 
 ## よくある質問
 
-### モデル接続テストが失敗するのはなぜですか？
+<a id="モデル接続テストが失敗するのはなぜですか"></a>
+
+<details>
+<summary>モデル接続テストが失敗するのはなぜですか？</summary>
 
 回答：API Key に文字抜けや空白がないか、Base URL と地域が正しいか、プロバイダーの正確なモデル ID を使用しているかを確認し、ネットワーク接続とアカウント残高も確認してください。Claude サブスクリプションでは、選択モードに応じて共有ブラウザーログインを再試行するか、分離された `claude setup-token` 認証情報を更新してください。
 
-### 設定中に `Continue` が無効なのはなぜですか？
+</details>
+
+<a id="設定中に-continue-が無効なのはなぜですか"></a>
+
+<details>
+<summary>設定中に <code>Continue</code> が無効なのはなぜですか？</summary>
 
 回答：現在の手順の必須条件を満たしていません。手順に応じて、`Action needed` の環境項目を解決する、選択したエージェントランタイムをインストールまたは修復する、モデルプロバイダーを検証する、のいずれかを行ってください。Notebook 設定は任意で、Notebook の実行だけに影響します。
 
-### リモート HPC クラスターでジョブを実行するにはどうすればよいですか？
+</details>
+
+<a id="リモート-hpc-クラスターでジョブを実行するにはどうすればよいですか"></a>
+
+<details>
+<summary>リモート HPC クラスターでジョブを実行するにはどうすればよいですか？</summary>
 
 回答：**Remote Compute (SSH)** は常に有効で、Settings で有効化する必要はありません。**Settings → Compute** で SSH 計算ホストを登録して現在のセッションで利用可能にし、自然言語または `/remote-compute-ssh` でリモート計算を使用します。接続可能な SSH ホスト、有効な認証、必要なディレクトリへの権限、および処理に必要なソフトウェア、依存関係、計算資源が必要です。Direct SSH にはスケジューラーは不要ですが、Slurm モードには利用可能な Slurm 環境とジョブ投入権限が必要です。「常に有効」は Skill 自体を指し、登録済みホストが常に利用可能という意味ではありません。
 
-### コマンドラインインターフェースはありますか？
+</details>
+
+<a id="コマンドラインインターフェースはありますか"></a>
+
+<details>
+<summary>コマンドラインインターフェースはありますか？</summary>
 
 回答：はい。スタンドアロン CLI をインストールするか、**Settings → General → Command line tool → Install command** を使って、すでに起動しているデスクトップインスタンスを操作できます。npm からのインストールには Node.js が必要ですが、Homebrew とランタイム同梱のスタンドアロンパッケージには Node.js が含まれています。ローカルプロファイルを初期化すると、ブラウザーを開かずにサービスを制御し、研究タスクを送信できます：
 
@@ -457,13 +481,25 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 完全なコマンドリファレンス、JSON/JSONL 出力形式、終了コード、ヘッドレスサービスの選択肢は [CLI ガイド](../../packages/open-science/CLI.md)を参照してください。
 
-### 生成結果の出所を確認するにはどうすればよいですか？
+</details>
+
+<a id="生成結果の出所を確認するにはどうすればよいですか"></a>
+
+<details>
+<summary>生成結果の出所を確認するにはどうすればよいですか？</summary>
 
 回答：生成されたアーティファクトを開き、**Provenance** を選択します。バージョンを選択し、コンテンツ ID と、利用できる生成コード、実行履歴、入力、環境インベントリ、生成元の会話コンテキスト、レビュー根拠を確認します。AIPOCH Open-Science が検証できなかった根拠は利用不可と表示されます。
 
-### 後続の会話を失わずに以前のリクエストを変更できますか？
+</details>
+
+<a id="後続の会話を失わずに以前のリクエストを変更できますか"></a>
+
+<details>
+<summary>後続の会話を失わずに以前のリクエストを変更できますか？</summary>
 
 回答：できます。完了したユーザーメッセージを編集して再送信すると、その位置から新しいブランチが作成されます。元の後続ターンは残り、メッセージ横のリビジョン矢印で別の経路に切り替えられます。
+
+</details>
 
 ## 貢献者
 
@@ -475,7 +511,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 参加する
 
-AIPOCH Open-Science では、バグ報告、機能提案、設計に関する議論、コミュニティからの質問、コントリビューションを GitHub、Discord、X、AIPOCH ウェブサイトで受け付けています。目的に合うチャンネルを選び、プロジェクトの詳細を公開する前に、リンク先のコントリビューションガイドと公開投稿に関する安全上の注意を確認してください。
+不具合の報告、機能の提案、質問、貢献を通じて AIPOCH Open-Science の改善に参加できます。目的に合う窓口を以下から選んでください。
 
 | チャンネル                                                               | 用途                                                       |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
@@ -487,7 +523,7 @@ AIPOCH Open-Science では、バグ報告、機能提案、設計に関する議
 
 公開 Issue を作成する前に、ログとスクリーンショットから API Key、トークン、非公開ファイルパス、未公開データ、患者識別子、その他の機密情報を削除してください。開発ワークフローは[コントリビューションガイド](../../CONTRIBUTING.md)を参照してください。
 
-> ⭐ **リポジトリに Star：** このプロジェクトが役立った場合は、GitHub で Star を付けていただけると助かります。Star は継続的な開発を後押しします。数秒ででき、プロジェクトに大きな意味があります。
+> AIPOCH Open-Science が役立ったら、GitHub でリポジトリに Star を付けてください。
 
 提供済み、一部実装、計画中の機能は[機能マップ](../ROADMAP.md#capability-map)を参照してください。
 
