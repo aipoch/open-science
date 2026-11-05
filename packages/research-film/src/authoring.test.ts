@@ -144,16 +144,27 @@ it.each([false, true])('handles staged asset storage (invalid directory: %s)', a
   }
 })
 
-it.each([false, true])(
-  'scopes animation evidence and helpers without renumbering source messages (shared: %s)',
-  async (shared) => {
+it.each(['scene', 'helper', 'file-citation'])(
+  'preserves referenced animation evidence and original message indices: %s',
+  async (kind) => {
+    const shared = kind === 'helper'
     const infer = vi.fn(async () => 'code')
     const author = createResearchFilmAuthor(infer)
     const complete = {
       ...source,
       messages: [
         source.messages[0],
-        { ...source.messages[0], i: 7, id: 'other', md: 'Unrelated evidence' }
+        { ...source.messages[0], i: 7, id: 'other', md: 'Scene question' },
+        { ...source.messages[0], i: 11, id: 'measurement', md: 'Reported measurement: 42' },
+        { ...source.messages[0], i: 13, id: 'result', artifactIds: ['artifact-result'] },
+        {
+          ...source.messages[0],
+          i: 15,
+          id: 'figure',
+          md: '![Measurement](files/plot-123.png)',
+          artifactIds: ['artifact-figure']
+        },
+        { ...source.messages[0], i: 19, id: 'unrelated', md: 'Unrelated evidence' }
       ]
     }
     const screenplay = {
@@ -164,6 +175,7 @@ it.each([false, true])(
           ...spec.scenes[0],
           id: 'other',
           msg: 7,
+          cite: kind === 'file-citation' ? ['files/plot-123.png'] : [11, 'm', 'artifact-result'],
           panels: [{ type: 'animation', script: 'anims/other.js', use: ['anims/other-helper.js'] }]
         }
       ]
@@ -180,7 +192,9 @@ it.each([false, true])(
     )
     expect(infer.mock.calls[0][0]).toBe(complete)
     expect(infer.mock.calls[0][2]).toMatchObject({
-      source: { messages: [complete.messages[1]] },
+      source: {
+        messages: kind === 'file-citation' ? complete.messages : complete.messages.slice(0, 4)
+      },
       spec: { scenes: [screenplay.scenes[1]] },
       sharedFiles: { 'anims/other-helper.js': 'needed' }
     })

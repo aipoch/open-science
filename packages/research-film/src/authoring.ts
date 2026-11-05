@@ -58,7 +58,17 @@ export function createResearchFilmAuthor(
             : panel.script === input.path
         )
       )
-      const messages = new Set(scenes.map((scene) => scene.msg))
+      const references = new Set(
+        scenes.flatMap((scene) => [scene.msg, ...(Array.isArray(scene.cite) ? scene.cite : [])])
+      )
+      // File names need not equal Artifact IDs. Keep the evidence when a cite cannot be resolved.
+      const unresolvedCitation = [...references].some(
+        (reference) =>
+          typeof reference === 'string' &&
+          !source.messages.some(
+            (message) => message.id === reference || message.artifactIds.includes(reference)
+          )
+      )
       const helpers = new Set(
         scenes.flatMap((scene) =>
           scene.panels.flatMap((panel) =>
@@ -77,7 +87,13 @@ export function createResearchFilmAuthor(
         {
           source: {
             ...source,
-            messages: source.messages.filter((message) => messages.has(message.i))
+            messages: source.messages.filter(
+              (message) =>
+                unresolvedCitation ||
+                references.has(message.i) ||
+                references.has(message.id) ||
+                message.artifactIds.some((id) => references.has(id))
+            )
           },
           ...input,
           spec: { ...input.spec, scenes },
