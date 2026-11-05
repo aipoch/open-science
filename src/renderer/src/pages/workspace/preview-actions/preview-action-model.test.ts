@@ -90,6 +90,7 @@ describe('preview action model', () => {
       'provenance',
       'view-in-context',
       'open-fullscreen',
+      'open-in-browser',
       'download',
       'close'
     ])

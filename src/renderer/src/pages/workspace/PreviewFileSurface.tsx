@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  ExternalLink,
   FileDiff,
   GitBranch,
   Link2,
@@ -342,6 +343,9 @@ const PreviewFileHeader = ({
   const viewInContextEntry = previewActions.entries.find(
     (entry) => entry.kind === 'action' && entry.action === 'view-in-context'
   )
+  const openInBrowserEntry = previewActions.entries.find(
+    (entry) => entry.kind === 'action' && entry.action === 'open-in-browser'
+  )
   const managedMenuEntries = [
     ...(provenanceActionEntry ? [provenanceActionEntry] : []),
     ...(provenanceActionEntry && viewInContextEntry ? [{ kind: 'separator' as const }] : []),
@@ -495,6 +499,28 @@ const PreviewFileHeader = ({
                   disabled={viewInContextDisabled ?? false}
                   tooltipClassName={tooltipClassName}
                 />
+              ) : null}
+              {openInBrowserEntry ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className={previewHeaderActionClassName}
+                        disabled={openInBrowserEntry.disabled}
+                        aria-label={t('Open in browser')}
+                        onClick={() => void previewActions.execute('open-in-browser')}
+                      >
+                        <ExternalLink aria-hidden="true" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className={tooltipClassName}>
+                      {t('Open in browser')}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ) : null}
               <ManagedFileDownloadButton
                 source={item.source ?? 'artifact'}
@@ -1070,10 +1096,12 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       [pdfPageCountKey, readingContextBindingId]
     )
     const stageLocalPath = window.api.uploads?.stageLocalPath
-    const isLocalHtmlFile =
-      resolvedPreviewItem.source === 'local' &&
-      (getFileExtension(resolvedPreviewItem.name) === 'html' ||
-        getFileExtension(resolvedPreviewItem.name) === 'htm')
+    const isHtmlFile =
+      getFileExtension(resolvedPreviewItem.name) === 'html' ||
+      getFileExtension(resolvedPreviewItem.name) === 'htm'
+    const isLocalHtmlFile = resolvedPreviewItem.source === 'local' && isHtmlFile
+    const isManagedArtifactHtmlFile =
+      (resolvedPreviewItem.source ?? 'artifact') === 'artifact' && isHtmlFile
 
     const copyPath = async (): Promise<void> => {
       setLocalActionFailure(undefined)
@@ -1117,16 +1145,20 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
       }
     }
 
-    const openLocalHtmlInBrowser = async (): Promise<void> => {
+    const openHtmlInBrowser = async (): Promise<void> => {
       setLocalActionFailure(undefined)
       try {
-        const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
-        if (result) throw new Error(result)
+        if (resolvedPreviewItem.source === 'local') {
+          const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
+          if (result) throw new Error(result)
+        } else {
+          await window.api.artifacts.openFile({ path: resolvedPreviewItem.path })
+        }
       } catch (error) {
         setLocalActionFailure({
           title: t('Could not open this file.'),
           detail: errorDetail(error),
-          retry: () => void openLocalHtmlInBrowser()
+          retry: () => void openHtmlInBrowser()
         })
       }
     }
@@ -1620,7 +1652,7 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
             },
             ...(isLocalHtmlFile
               ? {
-                  'open-in-browser': { execute: openLocalHtmlInBrowser },
+                  'open-in-browser': { execute: openHtmlInBrowser },
                   'reveal-in-folder': { execute: revealLocalHtmlInFolder }
                 }
               : {}),
@@ -1636,6 +1668,9 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           }
         : {
             ...addPdfBinding,
+            ...(isManagedArtifactHtmlFile
+              ? { 'open-in-browser': { execute: openHtmlInBrowser } }
+              : {}),
             ...(visiblePdfContextAction
               ? {
                   'pdf-context': {

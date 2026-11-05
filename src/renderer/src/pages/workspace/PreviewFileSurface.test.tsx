@@ -271,6 +271,7 @@ beforeEach(() => {
     value: {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       artifacts: {
+        openFile: vi.fn().mockResolvedValue(undefined),
         getLineage: vi.fn().mockResolvedValue({
           artifactId: 'artifact-1',
           filename: 'sin.png',
@@ -4753,6 +4754,19 @@ const localHtmlItem: PreviewFileItem = {
   format: 'html'
 }
 
+const managedHtmlItem: PreviewFileItem = {
+  ...item,
+  id: 'artifact-html-1',
+  artifactId: undefined,
+  managedFileId: 'artifact-html-1',
+  projectId: 'project-1',
+  title: 'immersive-showcase.html',
+  name: 'immersive-showcase.html',
+  path: 'artifact-version:project-1/session-1/artifact-html-1/version-1',
+  format: 'html',
+  source: 'artifact'
+}
+
 const setupLocalApi = (): void => {
   Object.defineProperty(navigator, 'clipboard', {
     configurable: true,
@@ -4786,7 +4800,7 @@ const clickHeaderAction = async (label: string): Promise<void> => {
   await click(button)
 }
 
-describe('PreviewFileSurface local file header', () => {
+describe('PreviewFileSurface file header actions', () => {
   beforeEach(() => {
     setupLocalApi()
   })
@@ -4907,6 +4921,41 @@ describe('PreviewFileSurface local file header', () => {
     expect(menu?.textContent).toContain('Download')
     expect(menu?.textContent).toContain('Save as artifact')
     expect(menu?.textContent).not.toContain('On this machine')
+  })
+
+  it('shows the browser action before download for managed HTML previews', async () => {
+    await act(async () => {
+      root.render(<PreviewFileSurface item={managedHtmlItem} onClose={vi.fn()} />)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const browserButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Open in browser"]'
+    )
+    const downloadButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Download immersive-showcase.html"]'
+    )
+    expect(browserButton).not.toBeNull()
+    expect(downloadButton).not.toBeNull()
+    expect(
+      browserButton!.compareDocumentPosition(downloadButton!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    await click(browserButton)
+    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: managedHtmlItem.path })
+
+    await act(async () => {
+      container
+        .querySelector('[data-testid="preview-content"]')
+        ?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      await Promise.resolve()
+    })
+    expect(
+      document.body.querySelector('[data-testid="preview-content-context-menu"]')?.textContent
+    ).toContain('Open in browser')
+    await clickMenuItem('Open in browser')
+    expect(window.api.artifacts.openFile).toHaveBeenLastCalledWith({ path: managedHtmlItem.path })
   })
 
   it('leaves context-menu events outside the preview content region untouched', async () => {

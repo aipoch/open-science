@@ -73,6 +73,7 @@ export const MANAGED_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'provenance' },
   { kind: 'action', action: 'view-in-context' },
   { kind: 'action', action: 'open-fullscreen' },
+  { kind: 'action', action: 'open-in-browser' },
   { kind: 'action', action: 'download' },
   { kind: 'action', action: 'close' }
 ]
