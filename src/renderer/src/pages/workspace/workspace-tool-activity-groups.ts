@@ -427,7 +427,9 @@ const formatActivityGroupPresentationTitle = (
     phases.length > 0 && phases.every((phase) => phase === phases[0]) ? phases[0] : undefined
   const outcomePhase =
     uniformPhase ??
-    (phases.length > 1 && phases.every((phase) => NOTEBOOK_TERMINAL_PHASES.has(phase))
+    (phases.length > 1 &&
+    phases.some((phase) => phase !== 'completed') &&
+    phases.every((phase) => NOTEBOOK_TERMINAL_PHASES.has(phase))
       ? 'mixed'
       : undefined)
 

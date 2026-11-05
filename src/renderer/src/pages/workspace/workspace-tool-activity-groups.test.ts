@@ -490,6 +490,27 @@ describe('formatActivityGroupPresentationTitle', () => {
     )
   })
 
+  it('keeps an all-completed Notebook group labeled as completed', () => {
+    const completed = (id: string): ToolActivity =>
+      notebook({
+        id,
+        executionInvocationId: `${id}-invocation`,
+        rawOutput: {
+          runId: id,
+          executionInvocationId: `${id}-invocation`,
+          status: 'completed'
+        }
+      })
+
+    expect(
+      formatActivityGroupPresentationTitle(
+        [completed('completed-run-1'), completed('completed-run-2')],
+        undefined,
+        undefined
+      )
+    ).toBe('Completed 2 Notebook runs')
+  })
+
   it('reuses the tool row display name and follows the current execution', () => {
     const done = createActivity({ id: 'done', providerToolName: 'read_file' })
     const queued = createActivity({
