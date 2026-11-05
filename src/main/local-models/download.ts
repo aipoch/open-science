@@ -8,11 +8,11 @@ import type { LocalModelRevision } from './catalog'
 import { localModelDownloadSources } from './download-sources'
 
 type Asset = LocalModelRevision['assets'][number]
-type Options = Pick<ResilientDownloadOpts, 'signal' | 'onProgress'>
+type Options = Pick<ResilientDownloadOpts, 'signal' | 'onProgress'> & { namespace?: string }
 type Dependencies = {
   fetchImpl?: typeof fetch
   download?: typeof resilientDownload
-  sources?: (asset: Asset) => readonly string[]
+  sources?: (asset: Asset, namespace?: string) => readonly string[]
   probeTimeoutMs?: number
   now?: () => number
 }
@@ -86,21 +86,25 @@ export const downloadLocalModelAsset = async (
 ): Promise<string> => {
   const fetchImpl = dependencies.fetchImpl ?? netFetchStandard
   const download = dependencies.download ?? resilientDownload
-  const sources = (dependencies.sources ?? localModelDownloadSources)(asset)
+  const sources = (dependencies.sources ?? localModelDownloadSources)(asset, options.namespace)
   options.signal?.throwIfAborted()
-  const candidates = await Promise.all(
-    sources.map(async (url) => ({
-      url,
-      latency: await probe(
-        url,
-        asset.size,
-        fetchImpl,
-        options.signal,
-        dependencies.probeTimeoutMs ?? 4000,
-        dependencies.now ?? (() => performance.now())
-      )
-    }))
-  )
+  // Narration tries its domestic source first; do not wait for upstream probes.
+  const candidates =
+    options.namespace === 'research-narration'
+      ? sources.map((url) => ({ url, latency: 0 }))
+      : await Promise.all(
+          sources.map(async (url) => ({
+            url,
+            latency: await probe(
+              url,
+              asset.size,
+              fetchImpl,
+              options.signal,
+              dependencies.probeTimeoutMs ?? 4000,
+              dependencies.now ?? (() => performance.now())
+            )
+          }))
+        )
   options.signal?.throwIfAborted()
   // Stable sorting retains the catalog order for ties and for unsuccessful probes. A failed probe
   // is only a ranking hint, never a reason to exclude an approved source from a real attempt.
@@ -122,7 +126,7 @@ export const downloadLocalModelAsset = async (
         ...options,
         expectedSize: asset.size,
         expectedSha256: asset.sha256,
-        maxRetries: 1,
+        maxRetries: options.namespace === 'research-narration' && index === 0 ? 0 : 1,
         stallTimeoutMs: 30_000,
         fetchImpl
       })

@@ -46,3 +46,38 @@ npm test
 ```
 
 From the repository, `npm run check:packages -- --packages=research-film` also builds and tests a fresh isolated copy, installs its tarball in a separate consumer, exercises the packaged worker/player, checks CommonJS and ESM imports, browser contracts, declarations and private-import rejection. Native voice quality, hardware performance and Electron frame capture require the host acceptance checks.
+
+## Narration CDN publication
+
+The host presents narration as one installation with aggregate progress. Transport uses individual
+content-addressed files under `https://statics.aipoch.com/open-science/research-narration/<sha256>/<file>`.
+All platforms share identical model/runtime objects; only the native ONNX libraries differ.
+The pinned `onnxruntime-node@1.21.0` package files use npmmirror first and unpkg as fallback;
+these 16 files are excluded from internal CDN publication. Model weights, other dependencies, and
+GitHub-hosted license notices use the internal CDN first. Source selection does not race upstream
+probes, and transport or integrity failures fall back to the pinned upstream URL. Every file still
+requires its catalog size and SHA-256. Existing installed revisions and receipts remain valid; this changes only transport.
+
+Use the **Publish research narration CDN assets** workflow from a reviewed repository revision.
+Like the existing runtime-bundle publisher, it uses the workflow run’s own code and catalog; checkout
+is pinned to `github.sha`, with no separate source-ref input. This remains a trusted-maintainer
+operation: run it only from reviewed code. Start with
+`dry_run: true` to download and verify the internal CDN files and retain the bundle manifest. Then run
+with `dry_run: false` to publish them using the existing S3 secrets and CDN variables. Publication
+uses conditional create-only writes, reuses matching objects, rejects conflicting objects, and checks
+the bytes served by the CDN. Publish and verify the assets before releasing the client.
+
+Local equivalents (after `npm run build:packages`):
+
+```sh
+node scripts/publish-narration-assets.mjs stage
+node scripts/publish-narration-assets.mjs verify
+node scripts/publish-narration-assets.mjs publish
+node scripts/publish-narration-assets.mjs check
+```
+
+`publish` requires the same `CDN_BASE_URL`, `S3_PREFIX`, `S3_BUCKET` and AWS credentials as the existing
+CDN publication workflows. `stage` deduplicates the internal-CDN assets from all platform catalogs
+into `out/research-narration`, with one manifest and files grouped by hash; the client does not download or trust that manifest. MP4
+encoder assets are separate and are not included here. Old content-addressed files must remain
+available while supported client versions reference them.
