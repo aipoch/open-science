@@ -49,7 +49,19 @@
 
 Pour comprendre comment un résultat a été obtenu, consultez les données d’entrée, le code et l’historique d’exécution disponibles. Pour partager votre travail, choisissez les branches de conversation, les versions de fichiers, les enregistrements du Notebook et les éléments de vérification à inclure dans un paquet `.science`, puis exportez-le.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 publié](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en novembre 2026)_. Cette version réorganise les paramètres en onglets dédiés, importe jusqu'à 100 références à la fois depuis des identifiants DOI, arXiv ou PubMed et ajoute des synthèses d'étude par IA à la vue détaillée de la bibliothèque. Les sessions terminées libèrent leurs processus d'agents, les requêtes eQTL Catalogue fonctionnent à nouveau et les mises à jour sur macOS et Windows sont plus fluides. Consultez les [notes de version v1.0.8](../../release-notes/1.0.8/fr.md) pour tous les détails.
+### 💡 AIPOCH Open-Science v1.0.8 — Nouveautés
+
+_4 novembre 2026_
+
+- **Paramètres**: Des onglets par fonction organisent les informations de l'application, les diagnostics et l'aide.
+- **Import de références**: Jusqu'à **100** identifiants DOI, arXiv ou PubMed, ou liens officiels d'articles, par lot, avec normalisation et dédoublonnage.
+- **Synthèses d'études par IA**: Question de recherche, population, méthodes, principaux résultats et limites, avec indication de la source, texte intégral ou résumé.
+- **Ressources des sessions**: Les cinq frameworks d'agents libèrent les processus des sessions terminées pour réduire l'accumulation de mémoire.
+- **Modèles**: Tencent TokenHub ajoute Hy4 et des routes DeepSeek V4.1 Flash, ainsi que l'entrée d'images pour certains modèles.
+- **Données scientifiques et PDF**: Rétablissement des requêtes eQTL Catalogue avec validation GRCh38 et amélioration de l'ordre de lecture et de l'extraction du texte des PDF.
+- **Fiabilité**: Amélioration de la vérification des dépendances R et de la provenance des artefacts ; correction des mises à jour, téléchargements, réseau isolé et installation de Pi.
+
+[Notes complètes v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />

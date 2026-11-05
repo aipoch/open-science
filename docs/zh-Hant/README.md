@@ -49,7 +49,19 @@
 
 想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
 
-> 💡 **[AIPOCH Open-Science v1.0.8 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這次更新將設定重新整理為專屬分頁，支援從 DOI、arXiv 或 PubMed 識別碼一次匯入最多 100 筆參考文獻，並為文獻資料庫詳細檢視新增 AI 研究快照。已結束的工作階段會釋放智慧代理行程，eQTL Catalogue 查詢恢復正常，macOS 和 Windows 上的更新也更加順暢。詳情請參閱 [v1.0.8 發行說明](../../release-notes/1.0.8/zh-Hant.md)。
+### 💡 AIPOCH Open-Science v1.0.8 更新
+
+_2026 年 11 月 4 日_
+
+- **設定重組**：依功能劃分分頁，集中顯示應用程式資訊、診斷與說明入口。
+- **批次匯入文獻**：一次支援最多 **100 筆** DOI、arXiv、PubMed 識別碼或官方文章連結，自動標準化並去除重複項目。
+- **AI 研究快照**：從全文或摘要整理研究問題、研究族群、方法、主要發現及限制，並標示文字來源。
+- **會話資源管理**：五種智能體框架在會話完成後釋放相關程序，減少記憶體累積。
+- **模型支援更新**：騰訊 TokenHub 新增 Hy4、DeepSeek V4.1 Flash 路由，並為部分模型加入圖像輸入。
+- **科學資料與 PDF**：恢復 eQTL Catalogue 查詢，加入 GRCh38 座標驗證，改善 PDF 閱讀順序與文字擷取。
+- **可靠性修正**：完善 R 分析相依性驗證與產物溯源，修正跨平台更新、下載、沙箱網路及 Pi 安裝等問題。
+
+[查看 v1.0.8 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
