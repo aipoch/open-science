@@ -106,6 +106,8 @@ it('validates lifecycle owners and runtime prerequisites at the exact PR head', 
     expect(selected(file), file).toBe(true)
   // Broad business directories and generic dependency updates used to allocate all three runners.
   for (const file of [
+    'src/main/acp/prompt-preparation-owner.ts',
+    'src/main/acp/agent-process.test.ts',
     'src/main/delegation/structured-output.ts',
     'src/main/delegation/process-ownership.test.ts',
     'src/main/settings/workflows/connectors-diagnostic.test.ts',

@@ -120,8 +120,14 @@ Prisma changes do not independently trigger these three native runners. Shared d
 other indirect changes receive lifecycle coverage in the daily default-branch run; use manual
 `core` when earlier feedback is needed. This is an intentional bounded PR policy, not an exhaustive
 transitive dependency selector. Update the workflow inventory and its positive/negative contract
-when scenario dependencies change. The scenario collection and daily coverage remain unchanged.
-The 14 source scenarios retain immediate MCP cancellation/timeout cleanup checks, owned/borrowed
+when scenario dependencies change. PR filtering does not reduce the daily collection.
+The 21 source scenarios include ACP candidate disposal, post-spawn failure cleanup, main-agent
+shutdown, Codex direct/bridged connection disposal and OpenCode companion release/startup-failure
+cleanup using controlled real subprocesses. The bridged case checks transport-lease release, not
+the bridge server or protocol.
+They exercise production ownership and cleanup with an independent OS observer; external CLI
+workloads are substituted, so these scenarios do not certify vendor protocols, model calls, history
+replay or subscriptions. The collection retains immediate MCP cancellation/timeout cleanup checks, owned/borrowed
 runtime behavior and recovery. Twelve detector controls verify the observer itself, including
 delayed/failed initial capture, capture deadlines and spawn failure. Workloads start only after their runner has
 been observed, and the orphan control waits for descendant readiness before reparenting.
