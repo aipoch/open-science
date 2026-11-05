@@ -1,8 +1,13 @@
+import { WorkspacePanelLayout } from '@/pages/workspace/workspace-panel-layout'
+import { ResizablePanel } from '@/components/ui/resizable'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceSidebar } from '@/pages/workspace/WorkspaceSidebar'
 import { PreviewPanelSurface } from '@/pages/workspace/PreviewPanel'
 import {
   createProjectMarketplacePreviewItem,
+  createProjectLibraryPreviewItem,
   PROJECT_MARKETPLACE_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
@@ -187,39 +192,79 @@ if (query.has('panel')) {
 // Sidebar and workbench are real; the conversation draft is a lightweight sibling for layout checks.
 const WorkspaceMarketFixture = (): React.JSX.Element => {
   const activeItem = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const panelState = usePreviewWorkbenchStore((state) => state.panelState)
+  const openRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
+  const sidebar = (
+    <WorkspaceSidebar
+      projectName="Research project"
+      sessions={[]}
+      activeSessionId={undefined}
+      canCreateConversation
+      canMutateConversations
+      canDeleteConversations
+      onGoHome={() => useNavigationStore.getState().goHome('user')}
+      onNewConversation={noop}
+      isFilesOpen={false}
+      onOpenFiles={noop}
+      isMarketplaceOpen={activeItem === PROJECT_MARKETPLACE_PREVIEW_ID}
+      onOpenMarketplace={() =>
+        usePreviewWorkbenchStore
+          .getState()
+          .upsertAndActivateItem(createProjectMarketplacePreviewItem())
+      }
+      onOpenLiterature={() =>
+        usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectLibraryPreviewItem())
+      }
+      onOpenSession={noop}
+      onRenameSession={noop}
+      canDownloadArtifacts={false}
+      onDownloadArtifacts={noop}
+      onViewNotebook={noop}
+      onTogglePin={noop}
+      onDeleteSession={noop}
+      onOpenSettings={noop}
+      onOpenProjectSettings={noop}
+      onNewProject={noop}
+    />
+  )
+  if (query.has('resizable')) {
+    return (
+      <LiteratureRendererProvider host={literatureRendererHost}>
+        <TooltipProvider>
+          <main className="grid h-[100dvh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:p-[10px]">
+            <div />
+            <WorkspacePanelLayout
+              hasPreviewItems={activeItem !== null}
+              preview={{
+                state: panelState,
+                openRequestVersion,
+                toggle: usePreviewWorkbenchStore.getState().togglePanel,
+                syncState: usePreviewWorkbenchStore.getState().syncPanelState
+              }}
+              renderDesktopSidebar={() => sidebar}
+              renderMobileSidebar={() => null}
+              renderConversation={() => (
+                <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
+                  <div className="h-full min-w-0 overflow-auto">
+                    <pre>{'long_result_identifier_'.repeat(100)}</pre>
+                    <textarea
+                      aria-label="Conversation draft"
+                      defaultValue="Keep my draft"
+                      className="w-full"
+                    />
+                  </div>
+                </ResizablePanel>
+              )}
+            />
+          </main>
+        </TooltipProvider>
+      </LiteratureRendererProvider>
+    )
+  }
   return (
     <TooltipProvider>
       <div className="flex h-svh min-h-0">
-        <div className="w-60 shrink-0">
-          <WorkspaceSidebar
-            projectName="Research project"
-            sessions={[]}
-            activeSessionId={undefined}
-            canCreateConversation
-            canMutateConversations
-            canDeleteConversations
-            onGoHome={() => useNavigationStore.getState().goHome('user')}
-            onNewConversation={noop}
-            isFilesOpen={false}
-            onOpenFiles={noop}
-            isMarketplaceOpen={activeItem === PROJECT_MARKETPLACE_PREVIEW_ID}
-            onOpenMarketplace={() =>
-              usePreviewWorkbenchStore
-                .getState()
-                .upsertAndActivateItem(createProjectMarketplacePreviewItem())
-            }
-            onOpenSession={noop}
-            onRenameSession={noop}
-            canDownloadArtifacts={false}
-            onDownloadArtifacts={noop}
-            onViewNotebook={noop}
-            onTogglePin={noop}
-            onDeleteSession={noop}
-            onOpenSettings={noop}
-            onOpenProjectSettings={noop}
-            onNewProject={noop}
-          />
-        </div>
+        <div className="w-60 shrink-0">{sidebar}</div>
         <div className="min-w-0 flex-1 p-6">
           <textarea
             aria-label="Conversation draft"
