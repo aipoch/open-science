@@ -560,7 +560,7 @@ const WorkspacePanelLayout = ({
 
   return (
     <>
-      <div className="relative flex h-full">
+      <div className="relative flex h-full min-w-0">
         {mobileSidebar.isOpen ? (
           <button
             type="button"
