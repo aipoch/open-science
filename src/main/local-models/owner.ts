@@ -325,7 +325,7 @@ export const createLocalModelOwner = (dependencies: Dependencies = {}): LocalMod
               }
             }
             if (download) await download(asset.url, target, options)
-            else await downloadLocalModelAsset(asset, target, options)
+            else await downloadLocalModelAsset(asset, target, { ...options, namespace })
           }
           if (controller.signal.aborted) return
           if (!(await validAsset(target, asset))) throw new DownloadChecksumError()

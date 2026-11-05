@@ -10,7 +10,7 @@ import {
 } from '@aipoch/resilient-download'
 import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
 import { downloadLocalModelAsset } from './download'
-import { localModelDownloadSources } from './download-sources'
+import { localModelDownloadSources, researchNarrationCdnUrl } from './download-sources'
 
 vi.mock('electron', () => ({ net: {} }))
 
@@ -517,4 +517,72 @@ describe('download source failover', () => {
     expect(download).toHaveBeenCalledTimes(urls.length)
     await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+})
+
+describe('research narration CDN preference', () => {
+  it('uses content-addressed internal objects without changing the model recipe', () => {
+    const before = JSON.stringify(asset)
+    expect(localModelDownloadSources(asset, 'research-narration')).toEqual([
+      `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`,
+      asset.url
+    ])
+    expect(localModelDownloadSources(asset, 'video-export')).toEqual([asset.url])
+    expect(JSON.stringify(asset)).toBe(before)
+    expect(() => researchNarrationCdnUrl({ ...asset, file: '../escape' })).toThrow()
+  })
+
+  it('downloads from the CDN immediately without probing or contacting upstream', async () => {
+    const path = await target()
+    const fetchImpl = vi.fn<typeof fetch>(async () => response())
+    await downloadLocalModelAsset(asset, path, { namespace: 'research-narration' }, { fetchImpl })
+    expect(await readFile(path)).toEqual(body)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(fetchImpl.mock.calls[0][0]).toBe(researchNarrationCdnUrl(asset))
+  })
+
+  it.each(['http', 'integrity'])(
+    'falls back to verified upstream bytes after CDN %s failure',
+    async (failure) => {
+      const path = await target()
+      const fetchImpl = vi.fn<typeof fetch>(async (url) =>
+        url === asset.url
+          ? response()
+          : failure === 'http'
+            ? new Response(null, { status: 404 })
+            : response(Buffer.alloc(body.length))
+      )
+      await downloadLocalModelAsset(asset, path, { namespace: 'research-narration' }, { fetchImpl })
+      expect(await readFile(path)).toEqual(body)
+      expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+        researchNarrationCdnUrl(asset),
+        asset.url
+      ])
+    }
+  )
+})
+
+it('abandons a stalled narration CDN after 30 seconds and downloads from upstream', async () => {
+  vi.useFakeTimers()
+  const path = await target()
+  const fetchImpl = vi.fn<typeof fetch>(async (url, init) => {
+    if (url === asset.url) return response()
+    return await new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), { once: true })
+    })
+  })
+  const pending = downloadLocalModelAsset(
+    asset,
+    path,
+    { namespace: 'research-narration' },
+    { fetchImpl }
+  )
+  // Allow real filesystem setup to reach the first request before advancing the stall clock.
+  await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledOnce())
+  await vi.advanceTimersByTimeAsync(30001)
+  await pending
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    researchNarrationCdnUrl(asset),
+    asset.url
+  ])
+  expect(await readFile(path)).toEqual(body)
 })

@@ -1046,3 +1046,30 @@ it('requires the current narration revision without blocking removal or leaking 
   expect((await owner.getSnapshot()).availability).toBe('notInstalled')
   await owner.close()
 })
+
+it('routes the narration bundle through the CDN and reuses the installed bundle', async () => {
+  const root = await prepare()
+  const fixture = revision('narration-v1')
+  vi.mocked(net.fetch).mockImplementation(
+    async () => new Response(content, { headers: { 'Content-Length': String(content.length) } })
+  )
+  const owner = createLocalModelOwner({
+    namespace: 'research-narration',
+    dataRoot: () => root,
+    revisions: [fixture],
+    acquireWriter: () => () => undefined
+  })
+  await owner.install()
+  await waitForIdle(owner)
+  expect((await owner.getSnapshot()).availability).toBe('ready')
+  expect(vi.mocked(net.fetch).mock.calls.map(([url]) => String(url))).toEqual(
+    fixture.assets.map(
+      (asset) =>
+        `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`
+    )
+  )
+  await owner.install()
+  await waitForIdle(owner)
+  expect(net.fetch).toHaveBeenCalledTimes(fixture.assets.length)
+  await owner.close()
+})
