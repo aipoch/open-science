@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
-import { posix } from 'node:path'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 import lifecycleConfig from './vitest.config'
@@ -52,7 +51,7 @@ it('discovers the native suite only through its dedicated configuration', () => 
 }, 60000)
 
 it('runs the three-platform fixed collection daily without an unchanged-SHA bypass', () => {
-  expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'schedule', 'workflow_dispatch'])
+  expect(Object.keys(workflow.on).sort()).toEqual(['schedule', 'workflow_dispatch'])
   expect(workflow.on.schedule).toEqual([{ cron: '23 19 * * *' }])
   expect(workflow.jobs.lifecycle.strategy?.matrix.include.map((row) => row.platform)).toEqual([
     'macos',
@@ -67,37 +66,9 @@ it('runs the three-platform fixed collection daily without an unchanged-SHA bypa
   expect(run.if).toContain("github.event_name != 'workflow_dispatch'")
 })
 
-it('validates lifecycle owners and runtime prerequisites at the exact PR head', () => {
-  const paths = (workflow.on.pull_request as { paths: string[] }).paths
-  const selected = (file: string): boolean =>
-    paths.some((pattern) => posix.matchesGlob(file, pattern))
-  const suite = readFileSync('scripts/ci/process-lifecycle/lifecycle.suite.ts', 'utf8')
-  // Native discovery is separate from portable consumer registration. Keep its direct source
-  // imports and dynamic/package boundaries represented in the standalone trigger inventory.
-  for (const match of suite.matchAll(/from ['"](\.\.\/\.\.\/\.\.\/src\/[^'"]+)['"]/g)) {
-    const owner = `${posix.normalize(posix.join('scripts/ci/process-lifecycle', match[1]))}.ts`
-    expect(selected(owner), owner).toBe(true)
-  }
-  for (const file of [
-    '.github/workflows/process-lifecycle.yml',
-    'scripts/ci/process-lifecycle/observer.mjs',
-    'packages/connector-mcp-client/src/client-manager.ts',
-    'packages/process-tree-native/src/process_tree_native.cc',
-    'resources/notebook/kernel_process_host.js',
-    'src/main/desktop-runtime-transport.ts',
-    'src/main/runtime-stop-confirmation.ts',
-    'src/main/runtime-ownership.ts',
-    'src/main/windows-powershell.ts',
-    'package-lock.json',
-    'vitest.config.ts',
-    'scripts/ci/npm-ci.mjs',
-    'build/native-components-lock.json'
-  ])
-    expect(selected(file), file).toBe(true)
-  expect(selected('src/renderer/src/components/Button.tsx')).toBe(false)
-  expect(selected('docs/PRD.md')).toBe(false)
+it('checks out the selected revision and preserves manual platform selection', () => {
   const checkout = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Checkout')!
-  expect(checkout.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}')
+  expect(checkout.with?.ref).toBe('${{ github.sha }}')
   expect(checkout.with?.['persist-credentials']).toBe(false)
   for (const step of workflow.jobs.lifecycle.steps) {
     expect(step.if).toContain("github.event_name != 'workflow_dispatch'")

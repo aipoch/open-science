@@ -51,7 +51,8 @@ consumers keep their Rust source/build prerequisites, and selected-but-skipped s
 in the independent Windows E2E Regression workflow.
 PR Gate does not allocate Mac runners, including for platform-sensitive changes;
 its Mac validation happens in merge queue. The separate Process Lifecycle workflow runs
-three native platforms for its declared lifecycle owner and harness paths, as described below.
+three native platforms on its daily schedule or manual dispatch, as described below; it does not
+run on PR commits or in merge queue.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
@@ -112,10 +113,9 @@ default-branch SHA is unchanged. Its manual `core` and `detector` modes are focu
 dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
 Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
 module tests do not collect its native suite or count it as portable consumer evidence.
-PRs changing its harness, tested process owners, dynamic Notebook host or declared setup inputs
-also run the same collection at the exact PR head. The workflow's path inventory and discovery
-contract must be updated when scenario dependencies change; it is not an exhaustive transitive
-dependency selector. Unrelated UI/documentation changes do not allocate these native runners.
+The standalone collection does not run on PR commits or in merge queue. Use a manual run on
+an explicit branch when early lifecycle feedback is needed; daily runs validate the default branch.
+Existing PR Gate native checks and merge-queue platform checks retain their own selection rules.
 The 14 source scenarios retain immediate MCP cancellation/timeout cleanup checks, owned/borrowed
 runtime behavior and recovery. Twelve detector controls verify the observer itself, including
 delayed/failed initial capture, capture deadlines and spawn failure. Workloads start only after their runner has

@@ -3,44 +3,6 @@ name: Process Lifecycle
 # Source-level lifecycle checks run even when the default-branch SHA is unchanged.
 # Resource profiling and packaged/OS-reboot certification keep their own workflows.
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/process-lifecycle.yml'
-      - 'scripts/ci/process-lifecycle/**'
-      # Source owners, including the dynamically launched Notebook host.
-      - 'src/main/update/verification-process.ts'
-      - 'src/main/settings/workflows/connectors*.ts'
-      - 'packages/connector-mcp-client/**'
-      - 'src/main/delegation/**'
-      - 'src/main/process-tree*'
-      - 'packages/process-tree-native/**'
-      - 'src/main/notebook/*process*'
-      - 'resources/notebook/kernel_process_host.js'
-      - 'src/main/desktop-runtime*'
-      - 'src/main/desktop-connection*'
-      - 'src/main/desktop-startup-recovery*'
-      - 'src/main/runtime-*'
-      - 'src/main/backend-startup*'
-      - 'src/main/application-events*'
-      - 'src/main/credential-identity/**'
-      - 'src/main/legacy-service-termination*'
-      - 'src/main/windows-powershell*'
-      - 'src/main/system-boot-identity*'
-      - 'src/shared/desktop-runtime*'
-      # Dependency resolution, native preparation and dedicated Vitest setup.
-      - 'package.json'
-      - 'package-lock.json'
-      - '.nvmrc'
-      - 'vitest.config.ts'
-      - 'test/setup-*.ts'
-      - 'tsconfig*.json'
-      - 'patches/**'
-      - 'scripts/ci/npm-ci.mjs'
-      - 'scripts/build-*packages*'
-      - 'scripts/install-native-components.mjs'
-      - 'scripts/check-prisma-client.mjs'
-      - 'build/native-components-lock.json'
-      - 'prisma/**'
   schedule:
     - cron: '23 19 * * *' # UTC; 02:23 the next day in Asia/Saigon
   workflow_dispatch:
@@ -101,7 +63,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
       - name: Setup Node
         if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
