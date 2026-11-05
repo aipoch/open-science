@@ -465,6 +465,31 @@ describe('formatActivityGroupPresentationTitle', () => {
     ).toBe('Running')
   })
 
+  it('keeps a mixed Notebook group neutral when only one run fails', () => {
+    const completed = notebook({
+      id: 'completed-run',
+      executionInvocationId: 'completed-invocation',
+      rawOutput: {
+        runId: 'completed-run',
+        executionInvocationId: 'completed-invocation',
+        status: 'completed'
+      }
+    })
+    const failed = notebook({
+      id: 'failed-run',
+      executionInvocationId: 'failed-invocation',
+      rawOutput: {
+        runId: 'failed-run',
+        executionInvocationId: 'failed-invocation',
+        status: 'failed'
+      }
+    })
+
+    expect(formatActivityGroupPresentationTitle([completed, failed], undefined, undefined)).toBe(
+      '2 Notebook runs'
+    )
+  })
+
   it('reuses the tool row display name and follows the current execution', () => {
     const done = createActivity({ id: 'done', providerToolName: 'read_file' })
     const queued = createActivity({

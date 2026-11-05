@@ -403,11 +403,26 @@ const formatActivityGroupPresentationTitle = (
   if (phases.includes('awaiting-approval')) return t('Waiting for your approval')
   if (phases.includes('executing')) return t('Running {{noun}}', { noun })
   if (phases.includes('prepared')) return t('Notebook code shown')
-  if (phases.includes('declined')) return t('Declined {{noun}}', { noun })
-  if (phases.includes('failed')) return t('Failed {{noun}}', { noun })
-  if (phases.includes('limit-reached')) return t('Execution limit reached for {{noun}}', { noun })
-  if (phases.includes('interrupted')) return t('Interrupted {{noun}}', { noun })
-  if (phases.includes('cancelled')) return t('Cancelled {{noun}}', { noun })
+
+  // A group can contain many successful runs and one failed run. Only apply an outcome label when
+  // every Notebook run shares that outcome; mixed terminal results stay neutral and let the step
+  // summary show the exact failure count.
+  const allPhasesAre = (phase: (typeof phases)[number]): boolean =>
+    phases.length > 0 && phases.every((candidate) => candidate === phase)
+  if (allPhasesAre('declined')) return t('Declined {{noun}}', { noun })
+  if (allPhasesAre('failed')) return t('Failed {{noun}}', { noun })
+  if (allPhasesAre('limit-reached')) return t('Execution limit reached for {{noun}}', { noun })
+  if (allPhasesAre('interrupted')) return t('Interrupted {{noun}}', { noun })
+  if (allPhasesAre('cancelled')) return t('Cancelled {{noun}}', { noun })
+  if (
+    phases.length > 1 &&
+    phases.every((phase) =>
+      ['completed', 'declined', 'failed', 'limit-reached', 'interrupted', 'cancelled'].includes(
+        phase
+      )
+    )
+  )
+    return noun
   return formatActivityGroupTitle(activities, declaredTitle, t)
 }
 
