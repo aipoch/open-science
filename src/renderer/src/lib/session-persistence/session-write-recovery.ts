@@ -99,20 +99,31 @@ export class SessionWriteRecovery {
   }
 
   retainChanges(target: string, intent: () => SessionWriteIntent): void {
-    const retained = this.writes.get(target)
-    if (!retained?.intent) return
-    this.writes.set(target, {
-      ...retained,
-      version: ++this.version,
-      intent: structuredClone(this.policy.merge(retained.intent, intent()))
-    })
-    this.publish()
+    this.retain(target, ++this.version, intent)
   }
 
   retainManifest(manifest: SaveSessionManifestRequest): void {
-    const retained = this.writes.get('manifest')
-    if (!retained) return
-    this.writes.set('manifest', { ...retained, version: ++this.version, manifest: { ...manifest } })
+    this.retain('manifest', ++this.version, undefined, manifest)
+  }
+
+  private retain(
+    target: string,
+    version: number,
+    intent?: () => SessionWriteIntent,
+    manifest?: SaveSessionManifestRequest
+  ): void {
+    const retained = this.writes.get(target)
+    if (retained?.intent && intent) {
+      this.writes.set(target, {
+        ...retained,
+        version,
+        intent: structuredClone(this.policy.merge(retained.intent, intent()))
+      })
+    } else if (retained?.manifest && manifest) {
+      this.writes.set(target, { ...retained, version, manifest: { ...manifest } })
+    } else {
+      return
+    }
     this.publish()
   }
 
@@ -139,26 +150,15 @@ export class SessionWriteRecovery {
   ): number {
     const version = ++this.version
     this.attempts.set(target, version)
-    const retained = this.writes.get(target)
-    if (retained && intent && retained.intent) {
-      this.writes.set(target, {
-        ...retained,
-        intent: this.policy.merge(retained.intent, intent()),
-        version
-      })
-      this.publish()
-    } else if (retained && manifest) {
-      this.writes.set(target, { ...retained, manifest: { ...manifest }, version })
-      this.publish()
-    }
+    this.retain(target, version, intent, manifest)
     return version
   }
 
-  async trackSession<Result>(
+  trackSession(
     target: string,
     intent: () => SessionWriteIntent,
-    run: () => Promise<Result>
-  ): Promise<Result> {
+    run: () => Promise<PersistedChatSession>
+  ): Promise<PersistedChatSession> {
     // Reading identity does not serialize a growing transcript on every streaming tick.
     return this.observe(this.track(target, intent, undefined, run))
   }
@@ -182,12 +182,24 @@ export class SessionWriteRecovery {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending])
   }
 
-  private async track<Result>(
+  private track(
+    target: string,
+    intent: () => SessionWriteIntent,
+    manifest: undefined,
+    run: () => Promise<PersistedChatSession>
+  ): Promise<PersistedChatSession>
+  private track(
+    target: string,
+    intent: undefined,
+    manifest: SaveSessionManifestRequest,
+    run: () => Promise<void>
+  ): Promise<void>
+  private async track(
     target: string,
     intent: (() => SessionWriteIntent) | undefined,
     manifest: SaveSessionManifestRequest | undefined,
-    run: () => Promise<Result>
-  ): Promise<Result> {
+    run: () => Promise<PersistedChatSession | void>
+  ): Promise<PersistedChatSession | void> {
     const version = this.begin(target, intent, manifest)
     try {
       const result = await run()
@@ -195,8 +207,7 @@ export class SessionWriteRecovery {
         const retained = this.writes.get(target)
         if (
           !retained ||
-          (retained.intent &&
-            this.policy.satisfied(retained.intent, result as PersistedChatSession)) ||
+          (retained.intent && result && this.policy.satisfied(retained.intent, result)) ||
           (manifest && retained.manifest?.lastSessionId === manifest.lastSessionId)
         )
           this.clear(target)

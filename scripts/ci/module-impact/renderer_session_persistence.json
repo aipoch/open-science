@@ -3,6 +3,8 @@
     "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
     "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
     "src/renderer/src/lib/session-persistence/session-persistence.ts",
+    "src/renderer/src/lib/session-persistence/session-write-recovery.test.ts",
+    "src/renderer/src/lib/session-persistence/session-write-recovery.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.ts"
   ],
@@ -15,6 +17,7 @@
     "owner": [
       "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+      "src/renderer/src/lib/session-persistence/session-write-recovery.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-client.test.ts"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
