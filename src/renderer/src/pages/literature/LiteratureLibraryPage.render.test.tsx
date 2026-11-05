@@ -663,14 +663,16 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       const row = await screen.findByRole('button', { name: libraryItem.item.title })
-      const batch = await screen.findByRole('region', { name: 'Batch snapshots' })
-      fireEvent.click(within(batch).getByRole('button', { name: 'Resume' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+      const batch = screen.getByRole('dialog', { name: 'Batch snapshots' })
+      fireEvent.click(within(batch).getByRole('button', { name: 'Continue remaining' }))
       await waitFor(() =>
         expect(window.api.literature.snapshotBatch).toHaveBeenCalledWith({
           action: 'advance',
           jobId: job.id
         })
       )
+      fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
       fireEvent.click(row)
       const overview = await screen.findByRole('region', { name: 'Study overview' })
       await waitFor(() => expect(snapshot).toHaveBeenCalledTimes(1))
@@ -689,7 +691,12 @@ describe('LiteratureLibraryPage', () => {
         wave.resolve()
         await wave.promise
       })
-      await waitFor(() => expect(batch.textContent).toContain('Snapshot saved'))
+      await waitFor(() =>
+        expect(window.api.literature.snapshotBatch).toHaveBeenCalledWith({
+          action: 'advance',
+          jobId: job.id
+        })
+      )
 
       expect(screen.getByRole('region', { name: 'Study overview' })).toBe(overview)
       if (shouldRefresh) {
@@ -750,7 +757,7 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
-  it('keeps five batch results outside the toolbar while selection remains responsive', async () => {
+  it('keeps batch details in a dialog and generation in the selection menu', async () => {
     const records = Array.from({ length: 5 }, (_, index) => createLibraryItem(index))
     search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
       request.scope === 'library' ? { entries: records } : { entries: [] }
@@ -767,22 +774,33 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await screen.findByRole('button', { name: records[0].item.title })
-    const batch = await screen.findByRole('region', { name: 'Batch snapshots' })
+    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+    const batch = screen.getByRole('dialog', { name: 'Batch snapshots' })
     expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
     expect(within(batch).getAllByText('Snapshot saved')).toHaveLength(4)
     expect(
       within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
     ).toBeTruthy()
-    const toolbar = batch.previousElementSibling!
-    expect(toolbar.contains(batch)).toBe(false)
-    expect(batch.parentElement?.closest('[data-slot="literature-action-rail"]')).toBeTruthy()
-    const generate = within(batch).getByRole('button', { name: 'Generate batch snapshots' })
-    expect(generate).toHaveProperty('disabled', true)
+    expect(batch.closest('[data-slot="literature-action-rail"]')).toBeNull()
+    fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
     fireEvent.click(screen.getByLabelText(`Select ${records[0].item.title}`))
-    await waitFor(() => expect(generate).toHaveProperty('disabled', false))
-    expect(batch.previousElementSibling).toBe(toolbar)
-    expect(toolbar.contains(screen.getByRole('button', { name: 'Clear selection' }))).toBe(true)
-    expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
+    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    const toolbar = screen
+      .getByRole('button', { name: 'Clear selection' })
+      .closest('[data-slot="literature-selection-toolbar"]') as HTMLElement
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }))
+    const generate = await screen.findByRole('button', { name: 'Generate snapshots' })
+    expect(generate).toHaveProperty('disabled', false)
+    expect(generate.closest('[data-slot="literature-selection-toolbar"]')).toBeNull()
+    fireEvent.click(generate)
+    await screen.findByRole('dialog', { name: 'Batch snapshots' })
+    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Batch snapshots' }))
+    expect(within(screen.getByRole('dialog')).getAllByRole('listitem')).toHaveLength(5)
   })
 
   describe('reading status', () => {

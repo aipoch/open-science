@@ -2021,173 +2021,178 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           items.length > 0 &&
                           items.every((item) => isLiteratureItemSelected(selection, item.id))
                         return (
-                          <>
-                            <div className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}>
-                              {selectedCollection?.smart && !hasSelection && (
-                                <>
-                                  <Tabs.Root
-                                    value={smartFilter}
-                                    onValueChange={(value) =>
-                                      setSmartFilter(value as typeof smartFilter)
-                                    }
-                                    className="mr-auto min-w-0 max-w-full"
-                                  >
-                                    <Tabs.List
-                                      aria-label={t('Filter decisions')}
-                                      className={literatureTabsListClassName}
+                          <LiteratureSnapshotBatch
+                            hasSelection={section !== 'inbox' && hasSelection}
+                            resolveSelection={resolveSelectedItemIds}
+                            onSnapshotSaved={onSnapshotSaved}
+                            onActiveRequestsChange={setActiveSnapshotRequests}
+                            onOpenSnapshot={openSelectedItemDetail}
+                          >
+                            {(snapshotActions, generateSnapshots) => (
+                              <div
+                                className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}
+                              >
+                                {selectedCollection?.smart && !hasSelection && (
+                                  <>
+                                    <Tabs.Root
+                                      value={smartFilter}
+                                      onValueChange={(value) =>
+                                        setSmartFilter(value as typeof smartFilter)
+                                      }
+                                      className="mr-auto min-w-0 max-w-full"
                                     >
-                                      {(
-                                        [
+                                      <Tabs.List
+                                        aria-label={t('Filter decisions')}
+                                        className={literatureTabsListClassName}
+                                      >
+                                        {(
                                           [
-                                            'match',
-                                            t('Included'),
-                                            t(
-                                              'Papers included by the rule or your manual decision.'
-                                            )
-                                          ],
-                                          [
-                                            'review',
-                                            t('Needs review'),
-                                            t('Uncertain or outdated results that need review.')
-                                          ],
-                                          [
-                                            'no-match',
-                                            t('Excluded'),
-                                            t(
-                                              'Papers excluded by the rule or your manual decision.'
-                                            )
-                                          ],
-                                          [
-                                            'pending',
-                                            t('Not evaluated'),
-                                            t(
-                                              'Papers not evaluated by a model: not started, failed, or insufficient evidence.'
-                                            )
-                                          ]
-                                        ] as const
-                                      ).map(([value, label, hint]) => (
-                                        <Tabs.Trigger
-                                          key={value}
-                                          value={value}
-                                          id={`smart-decision-${value}`}
-                                          aria-controls="smart-collection-results"
-                                          title={hint}
-                                          className={literatureTabClassName}
-                                        >
-                                          {label}
-                                          <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
-                                            {(smartDecisionSource === 'all'
-                                              ? smartView?.counts
-                                              : smartView?.countsBySource?.[smartDecisionSource])?.[
-                                              value
-                                            ] ?? '—'}
-                                          </span>
-                                        </Tabs.Trigger>
-                                      ))}
-                                    </Tabs.List>
-                                  </Tabs.Root>
-                                </>
-                              )}
-                              <LiteratureBackgroundTasks
-                                hidden={hasSelection || section === 'inbox'}
-                                onOpen={(job) =>
-                                  setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
-                                }
-                                onChanged={receiveBackgroundItems}
-                              />
-                              {section !== 'inbox' && (
-                                <>
-                                  {!hasSelection && (
-                                    <LiteratureViewControls
-                                      selectedCollection={selectedCollection}
-                                      smartDecisionSource={smartDecisionSource}
-                                      smartView={smartView}
-                                      setSmartDecisionSource={setSmartDecisionSource}
-                                      clearSelection={clearSelection}
-                                      sortBy={sortBy}
-                                      setSortBy={setSortBy}
-                                      filtersOpen={filtersOpen}
-                                      setFiltersOpen={setFiltersOpen}
-                                      yearFilter={yearFilter}
-                                      activeFilterCount={activeFilterCount}
-                                      accessibilityId={accessibilityId}
-                                      tagId={tagId}
-                                      setTagId={setTagId}
-                                      filterItemType={filterItemType}
-                                      setFilterItemType={setFilterItemType}
-                                      itemTypeLabels={itemTypeLabels}
-                                      filterHasPdf={filterHasPdf}
-                                      setFilterHasPdf={setFilterHasPdf}
-                                      filterReadingStatus={filterReadingStatus}
-                                      setFilterReadingStatus={setFilterReadingStatus}
-                                      journalFilterDatasets={journalFilterDatasets}
-                                      journalAttributeFilters={journalAttributeFilters}
-                                      setJournalAttributeFilters={setJournalAttributeFilters}
-                                      clearFilters={clearFilters}
-                                      journalDatasets={journalDatasets}
-                                      journalSourceYears={journalSourceYears}
-                                      tableColumnOrder={tableColumnOrder}
-                                      journalColumns={journalColumns}
-                                      tableColumnLabels={tableColumnLabels}
-                                      visibleTableColumns={visibleTableColumns}
-                                      moveTableColumn={moveTableColumn}
-                                      moveTableColumnBy={moveTableColumnBy}
-                                      setVisibleTableColumns={setVisibleTableColumns}
-                                    />
-                                  )}
-                                  {hasSelection && (
-                                    <LiteratureSelectionToolbar
-                                      selectedItemCount={selectedItemCount}
-                                      selection={selection}
-                                      allLoadedItemsSelected={allLoadedItemsSelected}
-                                      entriesOffset={entriesOffset}
-                                      nextEntriesOffset={nextEntriesOffset}
-                                      formattedMatchingCount={formattedMatchingCount}
-                                      isBatching={isBatching}
-                                      selectionStore={selectionStore}
-                                      clearSelection={clearSelection}
-                                      smartDecisionBatch={smartDecisionBatch}
-                                      collectionId={collectionId}
-                                      selectedCollection={selectedCollection}
-                                      pendingDecisions={pendingDecisions}
-                                      confirmSmartDecision={confirmSmartDecision}
-                                      smartView={smartView}
-                                      prepareSmartReevaluation={prepareSmartReevaluation}
-                                      section={section}
-                                      startingReadingProjectId={startingReadingProjectId}
-                                      requestReadSelection={requestReadSelection}
-                                      setReadingStatus={setReadingStatus}
-                                      batchCollections={batchCollections}
-                                      activeProjects={activeProjects}
-                                      projectsLoaded={projectsLoaded}
-                                      createCollectionForSelection={createCollectionForSelection}
-                                      batchProjectFormDialog={batchProjectFormDialog}
-                                      moveSelectedItems={moveSelectedItems}
-                                      addSelectedItemsToProject={addSelectedItemsToProject}
-                                      items={items}
-                                      previewRestoreSelection={previewRestoreSelection}
-                                      exportSelectedItems={exportSelectedItems}
-                                      requestBatchLookup={requestBatchLookup}
-                                      setMergeSurvivorId={setMergeSurvivorId}
-                                      setMergeFieldSources={setMergeFieldSources}
-                                      setMergeError={setMergeError}
-                                      setMergeOpen={setMergeOpen}
-                                      runLifecycleAction={runLifecycleAction}
-                                      requestPermanentDeletion={requestPermanentDeletion}
-                                    />
-                                  )}
-                                </>
-                              )}
-                            </div>
-                            {section !== 'inbox' && (
-                              <LiteratureSnapshotBatch
-                                hasSelection={hasSelection}
-                                resolveSelection={resolveSelectedItemIds}
-                                onSnapshotSaved={onSnapshotSaved}
-                                onActiveRequestsChange={setActiveSnapshotRequests}
-                              />
+                                            [
+                                              'match',
+                                              t('Included'),
+                                              t(
+                                                'Papers included by the rule or your manual decision.'
+                                              )
+                                            ],
+                                            [
+                                              'review',
+                                              t('Needs review'),
+                                              t('Uncertain or outdated results that need review.')
+                                            ],
+                                            [
+                                              'no-match',
+                                              t('Excluded'),
+                                              t(
+                                                'Papers excluded by the rule or your manual decision.'
+                                              )
+                                            ],
+                                            [
+                                              'pending',
+                                              t('Not evaluated'),
+                                              t(
+                                                'Papers not evaluated by a model: not started, failed, or insufficient evidence.'
+                                              )
+                                            ]
+                                          ] as const
+                                        ).map(([value, label, hint]) => (
+                                          <Tabs.Trigger
+                                            key={value}
+                                            value={value}
+                                            id={`smart-decision-${value}`}
+                                            aria-controls="smart-collection-results"
+                                            title={hint}
+                                            className={literatureTabClassName}
+                                          >
+                                            {label}
+                                            <span className="rounded-sm bg-muted px-1.5 text-xs tabular-nums">
+                                              {(smartDecisionSource === 'all'
+                                                ? smartView?.counts
+                                                : smartView?.countsBySource?.[
+                                                    smartDecisionSource
+                                                  ])?.[value] ?? '—'}
+                                            </span>
+                                          </Tabs.Trigger>
+                                        ))}
+                                      </Tabs.List>
+                                    </Tabs.Root>
+                                  </>
+                                )}
+                                {!hasSelection && section !== 'inbox' && snapshotActions}
+                                <LiteratureBackgroundTasks
+                                  hidden={hasSelection || section === 'inbox'}
+                                  onOpen={(job) =>
+                                    setBatchLookup({ mode: job.mode, jobId: job.id, itemIds: [] })
+                                  }
+                                  onChanged={receiveBackgroundItems}
+                                />
+                                {section !== 'inbox' && (
+                                  <>
+                                    {!hasSelection && (
+                                      <LiteratureViewControls
+                                        selectedCollection={selectedCollection}
+                                        smartDecisionSource={smartDecisionSource}
+                                        smartView={smartView}
+                                        setSmartDecisionSource={setSmartDecisionSource}
+                                        clearSelection={clearSelection}
+                                        sortBy={sortBy}
+                                        setSortBy={setSortBy}
+                                        filtersOpen={filtersOpen}
+                                        setFiltersOpen={setFiltersOpen}
+                                        yearFilter={yearFilter}
+                                        activeFilterCount={activeFilterCount}
+                                        accessibilityId={accessibilityId}
+                                        tagId={tagId}
+                                        setTagId={setTagId}
+                                        filterItemType={filterItemType}
+                                        setFilterItemType={setFilterItemType}
+                                        itemTypeLabels={itemTypeLabels}
+                                        filterHasPdf={filterHasPdf}
+                                        setFilterHasPdf={setFilterHasPdf}
+                                        filterReadingStatus={filterReadingStatus}
+                                        setFilterReadingStatus={setFilterReadingStatus}
+                                        journalFilterDatasets={journalFilterDatasets}
+                                        journalAttributeFilters={journalAttributeFilters}
+                                        setJournalAttributeFilters={setJournalAttributeFilters}
+                                        clearFilters={clearFilters}
+                                        journalDatasets={journalDatasets}
+                                        journalSourceYears={journalSourceYears}
+                                        tableColumnOrder={tableColumnOrder}
+                                        journalColumns={journalColumns}
+                                        tableColumnLabels={tableColumnLabels}
+                                        visibleTableColumns={visibleTableColumns}
+                                        moveTableColumn={moveTableColumn}
+                                        moveTableColumnBy={moveTableColumnBy}
+                                        setVisibleTableColumns={setVisibleTableColumns}
+                                      />
+                                    )}
+                                    {hasSelection && (
+                                      <LiteratureSelectionToolbar
+                                        snapshotActions={snapshotActions}
+                                        snapshotMenuAction={generateSnapshots}
+                                        selectedItemCount={selectedItemCount}
+                                        selection={selection}
+                                        allLoadedItemsSelected={allLoadedItemsSelected}
+                                        entriesOffset={entriesOffset}
+                                        nextEntriesOffset={nextEntriesOffset}
+                                        formattedMatchingCount={formattedMatchingCount}
+                                        isBatching={isBatching}
+                                        selectionStore={selectionStore}
+                                        clearSelection={clearSelection}
+                                        smartDecisionBatch={smartDecisionBatch}
+                                        collectionId={collectionId}
+                                        selectedCollection={selectedCollection}
+                                        pendingDecisions={pendingDecisions}
+                                        confirmSmartDecision={confirmSmartDecision}
+                                        smartView={smartView}
+                                        prepareSmartReevaluation={prepareSmartReevaluation}
+                                        section={section}
+                                        startingReadingProjectId={startingReadingProjectId}
+                                        requestReadSelection={requestReadSelection}
+                                        setReadingStatus={setReadingStatus}
+                                        batchCollections={batchCollections}
+                                        activeProjects={activeProjects}
+                                        projectsLoaded={projectsLoaded}
+                                        createCollectionForSelection={createCollectionForSelection}
+                                        batchProjectFormDialog={batchProjectFormDialog}
+                                        moveSelectedItems={moveSelectedItems}
+                                        addSelectedItemsToProject={addSelectedItemsToProject}
+                                        items={items}
+                                        previewRestoreSelection={previewRestoreSelection}
+                                        exportSelectedItems={exportSelectedItems}
+                                        requestBatchLookup={requestBatchLookup}
+                                        setMergeSurvivorId={setMergeSurvivorId}
+                                        setMergeFieldSources={setMergeFieldSources}
+                                        setMergeError={setMergeError}
+                                        setMergeOpen={setMergeOpen}
+                                        runLifecycleAction={runLifecycleAction}
+                                        requestPermanentDeletion={requestPermanentDeletion}
+                                      />
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             )}
-                          </>
+                          </LiteratureSnapshotBatch>
                         )
                       }}
                     </LiteratureSelectionBoundary>

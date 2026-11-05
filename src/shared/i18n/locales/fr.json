@@ -8195,16 +8195,16 @@
     "Check the selected model and credentials in Settings before generating a research film.": "Vérifiez le modèle sélectionné et les identifiants dans les paramètres avant de générer un film de recherche.",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "La limite d’entrée du modèle sélectionné ne permet pas de contenir les instructions de génération du film de recherche. Sélectionnez un modèle avec une limite d’entrée plus élevée.",
     "Batch snapshots": "Synthèses par lot",
-    "Generate batch snapshots": "Générer les synthèses par lot",
     "Select up to {{limit}} references.": "Sélectionnez jusqu’à {{limit}} références.",
     "Retry failed snapshots": "Réessayer les synthèses en échec",
     "Could not generate batch snapshots. Check the selection and try again.": "Impossible de traiter les synthèses par lot. Vérifiez la sélection et réessayez.",
     "Snapshot saved": "Synthèse enregistrée",
     "Snapshot failed": "Échec de la synthèse",
-    "Show reference results": "Afficher les résultats par référence",
-    "Hide reference results": "Masquer les résultats par référence",
-    "Pause after active references": "Suspendre après le traitement des références en cours",
-    "Current references: {{titles}}": "Références en cours : {{titles}}",
-    "Batch paused after a reference failed.": "Le lot a été mis en pause après l’échec d’une référence."
+    "Generate snapshots": "Générer les aperçus",
+    "Continue remaining": "Continuer les éléments restants",
+    "{{done}} of {{total}} finished": "{{done}} sur {{total}} traités",
+    "{{count}} failed snapshots_one": "{{count}} aperçu en échec",
+    "{{count}} failed snapshots_many": "{{count}} aperçus en échec",
+    "{{count}} failed snapshots_other": "{{count}} aperçus en échec"
   }
 }

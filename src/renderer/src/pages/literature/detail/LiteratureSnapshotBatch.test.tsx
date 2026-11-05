@@ -39,6 +39,7 @@ it('notifies each saved reference while its sibling runs and deduplicates repeat
     />
   )
   await act(async () => {})
+  fireEvent.click(screen.getByRole('button', { name: 'Batch snapshots' }))
   expect(screen.getAllByText('Generating overview…')).toHaveLength(2)
   expect(onActiveRequestsChange).toHaveBeenLastCalledWith(job.rows.map((row) => row.request))
   job.rows[0].status = 'succeeded'
@@ -77,7 +78,7 @@ it('starts selected references with their own current source identities', async 
   })
   render(<LiteratureSnapshotBatch hasSelection resolveSelection={async () => ['b', 'a']} />)
   await waitFor(() => expect(snapshotBatch).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: 'Generate batch snapshots' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshots' }))
   await waitFor(() =>
     expect(snapshotBatch).toHaveBeenCalledWith({
       action: 'start',
@@ -122,12 +123,13 @@ it('offers retry with pending references without rerunning saved references', as
     }
   })
   render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
 
-  await screen.findByRole('button', { name: 'Resume' })
+  await screen.findByRole('button', { name: 'Continue remaining' })
   await screen.findByText('Pending study')
   for (const title of Object.values(titles)) expect(screen.getByText(title)).toBeTruthy()
   const retry = screen.getByRole('button', { name: 'Retry failed snapshots' })
-  expect(screen.getByRole('note').textContent).toContain('Batch paused after a reference failed.')
+  expect(screen.getByText('1 failed snapshot')).toBeTruthy()
   fireEvent.click(retry)
   await waitFor(() =>
     expect(within(screen.getByRole('list')).getAllByText('Snapshot saved')).toHaveLength(3)
@@ -155,8 +157,8 @@ it('rejects oversized selections before fetching references or generating', asyn
     />
   )
   await waitFor(() => expect(snapshotBatch).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: 'Generate batch snapshots' }))
-  await screen.findByText('Could not generate batch snapshots. Check the selection and try again.')
+  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshots' }))
+  await screen.findByText('Select up to 5 references.')
   expect(get).not.toHaveBeenCalled()
   expect(snapshotBatch).toHaveBeenCalledTimes(1)
 })
@@ -182,7 +184,7 @@ it('does not start a task after selection preparation outlives its view', async 
   })
   const view = render(<LiteratureSnapshotBatch hasSelection resolveSelection={() => selection} />)
   await waitFor(() => expect(snapshotBatch).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: 'Generate batch snapshots' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshots' }))
   view.unmount()
   await act(async () => {
     resolve(['a'])
@@ -204,8 +206,9 @@ it('retries observation after a busy owner without starting inference', async ()
     }
   })
   render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
-  await screen.findByRole('button', { name: 'Resume' })
+  await screen.findByRole('button', { name: 'Continue remaining' })
   expect(snapshotBatch.mock.calls.map(([request]) => request.action)).toEqual(['read', 'read'])
 })
 it('honors pause requested while preparing selection before any inference', async () => {
@@ -240,13 +243,14 @@ it('honors pause requested while preparing selection before any inference', asyn
   })
   render(<LiteratureSnapshotBatch hasSelection resolveSelection={() => selection} />)
   await waitFor(() => expect(snapshotBatch).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: 'Generate batch snapshots' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Pause after active references' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshots' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  expect(screen.getByRole('button', { name: 'Pausing…' })).toHaveProperty('disabled', true)
   await act(async () => {
     resolve(['a'])
     await selection
   })
-  await screen.findByRole('button', { name: 'Resume' })
+  await screen.findByRole('button', { name: 'Continue remaining' })
   expect(snapshotBatch.mock.calls.map(([request]) => request.action)).toEqual([
     'read',
     'start',
@@ -284,7 +288,7 @@ it('ignores a failed initial observation after a newer task completed', async ()
   })
   render(<LiteratureSnapshotBatch hasSelection resolveSelection={async () => ['a']} />)
   await waitFor(() => expect(snapshotBatch).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: 'Generate batch snapshots' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Generate snapshots' }))
   await waitFor(() =>
     expect(within(screen.getByRole('list')).getByText('Snapshot saved')).toBeTruthy()
   )
@@ -314,11 +318,12 @@ it('does not leave a phantom running row after advance fails', async () => {
     }
   })
   render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
-  fireEvent.click(await screen.findByRole('button', { name: 'Resume' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue remaining' }))
   await screen.findByText('Could not generate batch snapshots. Check the selection and try again.')
   expect(screen.queryByText('Generating overview…')).toBeNull()
   expect(within(screen.getByRole('list')).getByText('Pending')).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Continue remaining' })).toBeTruthy()
 })
 it('shows both in-flight references and honors pause after they complete', async () => {
   const job: SnapshotBatch = {
@@ -344,34 +349,26 @@ it('shows both in-flight references and honors pause after they complete', async
     value: { literature: { snapshotBatch, get: vi.fn(async (id) => ({ item: { title: id } })) } }
   })
   render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
-  const disclosure = await screen.findByRole('button', { name: 'Show reference results' })
-  const results = document.getElementById(disclosure.getAttribute('aria-controls')!)!
-  expect(disclosure.getAttribute('aria-expanded')).toBe('false')
-  fireEvent.click(disclosure)
-  expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-  fireEvent.click(await screen.findByRole('button', { name: 'Resume' }))
-  await screen.findByText('Current references: a / b')
-  expect(within(screen.getByRole('status')).getByText('Pending').textContent).toBe('Pending1')
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Continue remaining' }))
   await waitFor(() => expect(screen.getAllByText('Generating overview…')).toHaveLength(2))
-  expect(screen.getAllByText('Generating overview…')).toHaveLength(2)
-  expect(within(results).getAllByRole('listitem')).toHaveLength(3)
-  expect(within(screen.getByRole('status')).getByText('Saved').textContent).toBe('Saved0')
-  expect(within(screen.getByRole('status')).getByText('Failed').textContent).toBe('Failed0')
-  fireEvent.click(screen.getByRole('button', { name: 'Pause after active references' }))
+  expect(within(screen.getByRole('list')).getAllByRole('listitem')).toHaveLength(3)
+  expect(screen.getByText('0 of 3 finished')).toBeTruthy()
+  fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(snapshotBatch.mock.calls.filter(([request]) => request.action === 'pause')).toHaveLength(0)
+  fireEvent.click(screen.getByRole('button', { name: 'Batch snapshots' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Pause' }))
+  expect(screen.getByRole('button', { name: 'Pausing…' })).toHaveProperty('disabled', true)
   await act(async () => {
     job.rows[0].status = 'succeeded'
     job.rows[1].status = 'succeeded'
     finish(structuredClone(job))
     await inFlight
   })
-  await screen.findByRole('button', { name: 'Resume' })
+  await screen.findByRole('button', { name: 'Continue remaining' })
   expect(screen.queryByText('Generating overview…')).toBeNull()
-  expect(screen.queryByText('Current references: a / b')).toBeNull()
-  expect(within(screen.getByRole('status')).getByText('Saved').textContent).toBe('Saved2')
-  expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-  fireEvent.click(disclosure)
-  expect(disclosure.getAttribute('aria-expanded')).toBe('false')
-  expect(within(results).getAllByRole('listitem')).toHaveLength(3)
+  expect(screen.getByText('2 of 3 finished')).toBeTruthy()
   expect(snapshotBatch.mock.calls.map(([request]) => request.action)).toEqual([
     'read',
     'resume',
@@ -397,19 +394,18 @@ it('shows five independent results with controlled per-reference failure reasons
     configurable: true,
     value: { literature: { snapshotBatch, get: vi.fn(async (id) => ({ item: { title: id } })) } }
   })
-  render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
+  const onOpenSnapshot = vi.fn()
+  render(
+    <LiteratureSnapshotBatch
+      hasSelection={false}
+      resolveSelection={async () => []}
+      onOpenSnapshot={onOpenSnapshot}
+    />
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
   const rows = await screen.findAllByRole('listitem')
   expect(rows).toHaveLength(5)
-  const disclosure = screen.getByRole('button', { name: 'Show reference results' })
-  fireEvent.click(disclosure)
-  expect(disclosure.getAttribute('aria-expanded')).toBe('true')
-  fireEvent.click(disclosure)
-  expect(disclosure.getAttribute('aria-expanded')).toBe('false')
-  expect(within(screen.getByRole('status')).getByText('Failed').textContent).toBe('Failed4')
-  const region = screen.getByRole('region', { name: 'Batch snapshots' })
-  expect(region.tabIndex).toBe(0)
-  region.focus()
-  expect(document.activeElement).toBe(region)
+  expect(screen.getByText('4 failed snapshots')).toBeTruthy()
 
   const reasons = [
     'Source changed',
@@ -424,6 +420,14 @@ it('shows five independent results with controlled per-reference failure reasons
   })
   expect(within(rows[4]).getByText('Snapshot saved')).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Retry failed snapshots' })).toBeTruthy()
+  fireEvent.click(within(rows[4]).getByRole('button', { name: 'study-4' }))
+  await waitFor(() =>
+    expect(onOpenSnapshot).toHaveBeenCalledWith(
+      { item: { title: 'study-4' } },
+      screen.getByRole('button', { name: 'Batch snapshots' })
+    )
+  )
+  expect(screen.queryByRole('dialog')).toBeNull()
 })
 it.each(['generation-failed', 'private backend exception', undefined])(
   'uses a safe translated fallback for issue %s',
@@ -448,6 +452,7 @@ it.each(['generation-failed', 'private backend exception', undefined])(
       }
     })
     render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
     await screen.findByText('Could not generate the overview. Please try again.')
     if (issue) expect(screen.queryByText(issue)).toBeNull()
   }
@@ -488,7 +493,9 @@ it('observes individual completions during a wave and ignores a late progress re
   const view = render(
     <LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />
   )
-  const resume = await screen.findByRole('button', { name: 'Resume' })
+  if (!screen.queryByRole('dialog'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  const resume = await screen.findByRole('button', { name: 'Continue remaining' })
   vi.useFakeTimers()
   await act(async () => {
     fireEvent.click(resume)
@@ -498,9 +505,11 @@ it('observes individual completions during a wave and ignores a late progress re
     await vi.advanceTimersByTimeAsync(1000)
   })
   const summary = within(screen.getByRole('status'))
-  expect(summary.getByText('Saved').textContent).toBe('Saved1')
+  expect(summary.getByText('1 of 3 finished')).toBeTruthy()
+  expect(
+    screen.getByRole('progressbar', { name: 'Batch snapshots' }).getAttribute('aria-valuenow')
+  ).toBe('33')
   expect(screen.getAllByText('Generating overview…')).toHaveLength(1)
-  expect(screen.getByText('Current references: b')).toBeTruthy()
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1000)
   })
@@ -512,12 +521,15 @@ it('observes individual completions during a wave and ignores a late progress re
     await wave
   })
   expect(screen.getByRole('button', { name: 'Retry failed snapshots' })).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Continue remaining' })).toBeTruthy()
   await act(async () => {
     finishRead(stale)
     await lateRead
   })
-  expect(summary.getByText('Failed').textContent).toBe('Failed1')
+  expect(summary.getByText('1 failed snapshot')).toBeTruthy()
+  expect(
+    screen.getByRole('progressbar', { name: 'Batch snapshots' }).getAttribute('aria-valuenow')
+  ).toBe('67')
   expect(screen.queryByText('Generating overview…')).toBeNull()
   expect(snapshotBatch.mock.calls.filter(([request]) => request.action === 'advance')).toHaveLength(
     1
@@ -550,7 +562,10 @@ it('stops showing a running observation when the advance request fails', async (
     value: { literature: { snapshotBatch, get: vi.fn(async () => ({ item: { title: 'A' } })) } }
   })
   render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
-  const resume = await screen.findByRole('button', { name: 'Resume' })
+  fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  if (!screen.queryByRole('dialog'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  const resume = await screen.findByRole('button', { name: 'Continue remaining' })
   vi.useFakeTimers()
   await act(async () => {
     fireEvent.click(resume)
@@ -567,7 +582,7 @@ it('stops showing a running observation when the advance request fails', async (
     screen.getByText('Could not generate batch snapshots. Check the selection and try again.')
   ).toBeTruthy()
   expect(screen.queryByText('Generating overview…')).toBeNull()
-  expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Continue remaining' })).toBeTruthy()
 })
 
 it('observes a still-running wave after leaving and returning without advancing the queue', async () => {
@@ -599,7 +614,9 @@ it('observes a still-running wave after leaving and returning without advancing 
   const view = render(
     <LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />
   )
-  const resume = await screen.findByRole('button', { name: 'Resume' })
+  if (!screen.queryByRole('dialog'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
+  const resume = await screen.findByRole('button', { name: 'Continue remaining' })
   vi.useFakeTimers()
   await act(async () => {
     fireEvent.click(resume)
@@ -608,8 +625,12 @@ it('observes a still-running wave after leaving and returning without advancing 
   await act(async () => {
     render(<LiteratureSnapshotBatch hasSelection={false} resolveSelection={async () => []} />)
   })
+  fireEvent.click(screen.getByRole('button', { name: 'Batch snapshots' }))
   expect(screen.getAllByText('Generating overview…')).toHaveLength(2)
-  expect(screen.getByRole('button', { name: 'Resume' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: 'Continue remaining' })).toHaveProperty(
+    'disabled',
+    true
+  )
   job.rows[0].status = 'succeeded'
   job.rows[1].status = 'succeeded'
   await act(async () => {
@@ -619,9 +640,12 @@ it('observes a still-running wave after leaving and returning without advancing 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1000)
   })
-  expect(within(screen.getByRole('status')).getByText('Saved').textContent).toBe('Saved2')
+  expect(screen.getByText('2 of 3 finished')).toBeTruthy()
   expect(screen.queryByText('Generating overview…')).toBeNull()
-  expect(screen.getByRole('button', { name: 'Resume' })).toHaveProperty('disabled', false)
+  expect(screen.getByRole('button', { name: 'Continue remaining' })).toHaveProperty(
+    'disabled',
+    false
+  )
   expect(snapshotBatch.mock.calls.filter(([request]) => request.action === 'advance')).toHaveLength(
     1
   )

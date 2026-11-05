@@ -8020,16 +8020,15 @@
     "Check the selected model and credentials in Settings before generating a research film.": "Prüfen Sie vor dem Erstellen eines Forschungsfilms das ausgewählte Modell und die Zugangsdaten in den Einstellungen.",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Das Eingabelimit des ausgewählten Modells reicht nicht für die Anweisungen zur Erstellung des Forschungsfilms aus. Wählen Sie ein Modell mit einem höheren Eingabelimit.",
     "Batch snapshots": "Stapelübersichten",
-    "Generate batch snapshots": "Stapelübersichten erstellen",
     "Select up to {{limit}} references.": "Wählen Sie bis zu {{limit}} Literaturangaben aus.",
     "Retry failed snapshots": "Fehlgeschlagene Übersichten wiederholen",
     "Could not generate batch snapshots. Check the selection and try again.": "Stapelübersichten konnten nicht verarbeitet werden. Prüfen Sie die Auswahl und versuchen Sie es erneut.",
     "Snapshot saved": "Übersicht gespeichert",
     "Snapshot failed": "Übersicht fehlgeschlagen",
-    "Show reference results": "Ergebnisse je Referenz anzeigen",
-    "Hide reference results": "Ergebnisse je Referenz ausblenden",
-    "Pause after active references": "Nach Abschluss der laufenden Literaturangaben pausieren",
-    "Current references: {{titles}}": "Laufende Literaturangaben: {{titles}}",
-    "Batch paused after a reference failed.": "Der Batch wurde nach einem Fehler bei einer Literaturangabe pausiert."
+    "Generate snapshots": "Übersichten erstellen",
+    "Continue remaining": "Verbleibende fortsetzen",
+    "{{done}} of {{total}} finished": "{{done}} von {{total}} verarbeitet",
+    "{{count}} failed snapshots_one": "{{count}} fehlgeschlagene Übersicht",
+    "{{count}} failed snapshots_other": "{{count}} fehlgeschlagene Übersichten"
   }
 }

@@ -7853,16 +7853,14 @@
     "Check the selected model and credentials in Settings before generating a research film.": "请先在设置中检查所选模型及凭据，再生成研究影片。",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "所选模型的输入上限无法容纳研究影片生成指令。请选择输入上限更大的模型。",
     "Batch snapshots": "批量速览",
-    "Generate batch snapshots": "生成批量速览",
     "Select up to {{limit}} references.": "最多选择 {{limit}} 篇文献。",
     "Retry failed snapshots": "重试失败的速览",
     "Could not generate batch snapshots. Check the selection and try again.": "无法处理批量速览。请检查所选文献后重试。",
     "Snapshot saved": "速览已保存",
     "Snapshot failed": "速览失败",
-    "Show reference results": "查看逐篇结果",
-    "Hide reference results": "收起逐篇结果",
-    "Pause after active references": "完成所有正在处理的文献后暂停",
-    "Current references: {{titles}}": "正在处理的文献：{{titles}}",
-    "Batch paused after a reference failed.": "一篇文献处理失败后，批次已暂停。"
+    "Generate snapshots": "生成速览",
+    "Continue remaining": "继续剩余项",
+    "{{done}} of {{total}} finished": "已处理 {{done}} / {{total}} 篇",
+    "{{count}} failed snapshots_other": "{{count}} 篇速览生成失败"
   }
 }

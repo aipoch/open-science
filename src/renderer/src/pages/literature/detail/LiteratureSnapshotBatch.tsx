@@ -1,6 +1,17 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { ProgressBar } from '@/components/ui/progress-bar'
+import { Check, ChevronRight, Circle, CircleAlert, Loader2, Pause, Sparkles, X } from 'lucide-react'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import * as Dialog from '@/components/ui/dialog'
+import {
+  dialogFooterClassName,
+  dialogHeaderClassName,
+  dialogOverlayClassName,
+  dialogPanelClassName,
+  dialogTitleClassName
+} from '@/components/ui/dialog-chrome'
 import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureHost } from '../renderer-host'
 import {
@@ -18,19 +29,26 @@ export function LiteratureSnapshotBatch({
   resolveSelection,
   hasSelection,
   onSnapshotSaved,
-  onActiveRequestsChange
+  onActiveRequestsChange,
+  onOpenSnapshot,
+  children
 }: {
   resolveSelection(): Promise<string[]>
   hasSelection: boolean
   onSnapshotSaved?(request: LiteratureSnapshotRequest): void
   onActiveRequestsChange?(requests: LiteratureSnapshotRequest[]): void
+  onOpenSnapshot?(item: LiteratureItemView, initiator: HTMLElement): void
+  children?(progress: React.ReactNode, generate: React.ReactNode): React.ReactNode
 }): React.JSX.Element {
   const { api } = useLiteratureHost()
   const { t, i18n } = useTranslation()
-  const resultsId = useId()
-  const [resultsExpanded, setResultsExpanded] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [pausing, setPausing] = useState(false)
+  const [selectionError, setSelectionError] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const openingSnapshot = useRef<LiteratureItemView | null>(null)
   const [job, setJob] = useState<SnapshotBatch | null>(null)
-  const [titles, setTitles] = useState<Record<string, string>>({})
+  const [references, setReferences] = useState<Record<string, LiteratureItemView | undefined>>({})
   const [busy, setBusy] = useState(false)
   const [activeItemIds, setActiveItemIds] = useState<string[]>([])
   const [error, setError] = useState(false)
@@ -94,11 +112,11 @@ export function LiteratureSnapshotBatch({
       void Promise.all(
         ids.map(async (itemId) => {
           const item = await api.literature.get(itemId).catch(() => undefined)
-          return [itemId, item?.item.title ?? itemId] as const
+          return [itemId, item] as const
         })
       )
         .then((rows) => {
-          if (current) setTitles(Object.fromEntries(rows))
+          if (current) setReferences(Object.fromEntries(rows))
         })
         .catch(() => {})
     return () => {
@@ -141,7 +159,10 @@ export function LiteratureSnapshotBatch({
     generation.current++
     locked.current = true
     // Preserve a pause requested during start's asynchronous selection preparation.
-    if (request.action !== 'start') stop.current = false
+    if (request.action !== 'start') {
+      stop.current = false
+      setPausing(false)
+    }
     setBusy(true)
     setError(false)
     try {
@@ -178,6 +199,7 @@ export function LiteratureSnapshotBatch({
       if (!signal.aborted) {
         setActiveItemIds([])
         setBusy(false)
+        setPausing(false)
       }
     }
   }
@@ -185,6 +207,9 @@ export function LiteratureSnapshotBatch({
     if (locked.current) return
     const signal = lifetime.current.signal
     stop.current = false
+    setPausing(false)
+    setSelectionError(false)
+    setOpen(true)
     generation.current++
     locked.current = true
     setBusy(true)
@@ -192,8 +217,13 @@ export function LiteratureSnapshotBatch({
     try {
       const ids = await resolveSelection()
       signal.throwIfAborted()
-      if (!ids.length || ids.length > SNAPSHOT_BATCH_LIMIT)
-        throw new Error('Batch selection limit exceeded.')
+      if (!ids.length || ids.length > SNAPSHOT_BATCH_LIMIT) {
+        setSelectionError(true)
+        setBusy(false)
+        setPausing(false)
+        locked.current = false
+        return
+      }
       const language = i18n.resolvedLanguage ?? i18n.language
       const entries = await Promise.all(
         ids.map(async (itemId) => {
@@ -209,6 +239,7 @@ export function LiteratureSnapshotBatch({
       if (!signal.aborted) {
         setError(true)
         setBusy(false)
+        setPausing(false)
       }
       locked.current = false
     }
@@ -235,180 +266,273 @@ export function LiteratureSnapshotBatch({
         (row.status === 'running' ||
           (busy && row.status === 'pending' && activeItemIds.includes(row.request.itemId)))
     ) ?? []
-  return (
-    <section
-      aria-label={t('Batch snapshots')}
-      className="@container/snapshot-batch max-h-[40svh] w-full min-w-0 shrink-0 overflow-y-auto border-b p-3 focus-visible:-outline-offset-2"
-      tabIndex={0}
-      aria-busy={busy}
-    >
-      <div className="space-y-1 @min-[640px]/snapshot-batch:space-y-2">
-        <div className="flex flex-wrap items-center gap-1 @min-[640px]/snapshot-batch:gap-2">
+  const succeeded = job?.rows.filter((row) => row.status === 'succeeded').length ?? 0
+  const failed = job?.rows.filter((row) => row.status === 'failed').length ?? 0
+  const completed = succeeded + failed
+  const total = job?.rows.length ?? 0
+  const working = busy || (hasRunningRows && !error)
+  const status = pausing
+    ? t('Pausing…')
+    : working
+      ? t('Running')
+      : unfinished
+        ? t('Paused')
+        : failed
+          ? t('Failed')
+          : t('Completed')
+  const generateAction = hasSelection ? (
+    <Button size="sm" variant="ghost" disabled={working || unfinished} onClick={() => void start()}>
+      <Sparkles className="size-3.5" aria-hidden="true" />
+      {t('Generate snapshots')}
+    </Button>
+  ) : null
+  const actions = (
+    <>
+      {(job || busy || error || selectionError) && (
+        <Dialog.Trigger asChild>
           <Button
+            ref={triggerRef}
             size="sm"
-            className="h-auto min-h-7 max-w-full whitespace-normal px-2 text-xs @min-[640px]/snapshot-batch:min-h-8 @min-[640px]/snapshot-batch:px-2.5 @min-[640px]/snapshot-batch:text-[0.8rem]"
-            disabled={busy || !hasSelection || unfinished}
-            onClick={() => void start()}
+            variant="ghost"
+            aria-label={t('Batch snapshots')}
+            className="shrink-0 gap-2"
           >
-            {t('Generate batch snapshots')}
-          </Button>
-          <span
-            className={`${job ? 'hidden @min-[640px]/snapshot-batch:inline' : ''} text-xs text-muted-foreground`}
-          >
-            {t('Select up to {{limit}} references.', { limit: SNAPSHOT_BATCH_LIMIT })}
-          </span>
-          {busy ? (
-            <Button
-              size="sm"
-              className="h-auto min-h-7 max-w-full whitespace-normal px-2 text-xs @min-[640px]/snapshot-batch:min-h-8 @min-[640px]/snapshot-batch:px-2.5 @min-[640px]/snapshot-batch:text-[0.8rem]"
-              variant="outline"
-              onClick={() => {
-                stop.current = true
-              }}
-            >
-              {t('Pause after active references')}
-            </Button>
-          ) : job ? (
-            <>
-              {unfinished ? (
-                <Button
-                  size="sm"
-                  className="h-auto min-h-7 max-w-full whitespace-normal px-2 text-xs @min-[640px]/snapshot-batch:min-h-8 @min-[640px]/snapshot-batch:px-2.5 @min-[640px]/snapshot-batch:text-[0.8rem]"
-                  variant="outline"
-                  disabled={hasRunningRows && !error}
-                  onClick={() => void execute({ action: 'resume', jobId: job.id })}
-                >
-                  {t('Resume')}
-                </Button>
-              ) : null}
-              {job.rows.some((row) => row.status === 'failed') ? (
-                <Button
-                  size="sm"
-                  className="h-auto min-h-7 max-w-full whitespace-normal px-2 text-xs @min-[640px]/snapshot-batch:min-h-8 @min-[640px]/snapshot-batch:px-2.5 @min-[640px]/snapshot-batch:text-[0.8rem]"
-                  variant="outline"
-                  disabled={hasRunningRows && !error}
-                  onClick={() => void execute({ action: 'retry', jobId: job.id })}
-                >
-                  {t('Retry failed snapshots')}
-                </Button>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-        {!busy && job?.paused && job.rows.some((row) => row.status === 'failed') ? (
-          <p className="text-xs text-muted-foreground" role="note">
-            {t('Batch paused after a reference failed.')}
-          </p>
-        ) : null}
-        {error ? (
-          <ErrorNotice
-            inline
-            tone="amber"
-            primaryButton={{
-              label: t('Retry'),
-              onClick: () => {
-                const signal = lifetime.current.signal
-                const currentGeneration = generation.current
-                void api.literature
-                  .snapshotBatch({ action: 'read' })
-                  .then((value) => {
-                    if (!signal.aborted && generation.current === currentGeneration) {
-                      setJob(value)
-                      setError(false)
-                    }
-                  })
-                  .catch(() => {})
-              }
-            }}
-            description={t(
-              'Could not generate batch snapshots. Check the selection and try again.'
+            {working ? (
+              <Loader2
+                className="size-3.5 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : failed || error || selectionError ? (
+              <CircleAlert
+                className="size-3.5 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                aria-hidden="true"
+              />
+            ) : unfinished ? (
+              <Pause className="size-3.5" aria-hidden="true" />
+            ) : (
+              <Check
+                className="size-3.5 text-status-success-foreground dark:text-status-success-dark-foreground"
+                aria-hidden="true"
+              />
             )}
-          />
-        ) : null}
-        {job ? (
-          <>
-            <div className="flex flex-wrap items-start gap-x-2 gap-y-0.5 @min-[640px]/snapshot-batch:hidden">
-              <div className="min-w-0 space-y-1 text-xs" role="status" aria-live="polite">
-                <div className="flex flex-wrap gap-x-2 gap-y-1 tabular-nums">
-                  <span className="inline-flex items-center gap-1">
-                    {t('Saved')}
-                    <span className="rounded bg-muted px-1 tabular-nums">
-                      {job.rows.filter((row) => row.status === 'succeeded').length}
-                    </span>
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    {t('Failed')}
-                    <span className="rounded bg-muted px-1 tabular-nums">
-                      {job.rows.filter((row) => row.status === 'failed').length}
-                    </span>
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    {t('Pending')}
-                    <span className="rounded bg-muted px-1 tabular-nums">
-                      {
-                        job.rows.filter(
-                          (row) => row.status === 'pending' && !activeRows.includes(row)
-                        ).length
-                      }
-                    </span>
-                  </span>
-                </div>
-                {activeRows.length ? (
-                  <p className="line-clamp-1 min-w-0 [overflow-wrap:anywhere]">
-                    <span aria-hidden="true" className="mr-1 rounded bg-muted px-1 tabular-nums">
-                      {activeRows.length}
-                    </span>
-                    <span>
-                      {t('Current references: {{titles}}', {
-                        titles: activeRows
-                          .map((row) => titles[row.request.itemId] ?? row.request.itemId)
-                          .join(' / ')
-                      })}
-                    </span>
-                  </p>
-                ) : null}
+            {t('Batch snapshots')}
+            {job && (
+              <span className="text-muted-foreground tabular-nums">
+                {completed}/{total}
+              </span>
+            )}
+            <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+          </Button>
+        </Dialog.Trigger>
+      )}
+    </>
+  )
+  return (
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      {children ? (
+        children(actions, generateAction)
+      ) : (
+        <>
+          {generateAction}
+          {actions}
+        </>
+      )}
+      <Dialog.Portal>
+        <Dialog.Overlay className={dialogOverlayClassName} />
+        <Dialog.Content
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            const item = openingSnapshot.current
+            openingSnapshot.current = null
+            if (!item || !triggerRef.current || !onOpenSnapshot) return
+            event.preventDefault()
+            onOpenSnapshot(item, triggerRef.current)
+          }}
+          className={dialogPanelClassName(
+            'flex max-h-[85vh] w-[min(40rem,calc(100vw-2rem))] flex-col overflow-hidden p-0'
+          )}
+        >
+          <div className={dialogHeaderClassName}>
+            <Dialog.Title className={dialogTitleClassName}>{t('Batch snapshots')}</Dialog.Title>
+            <Dialog.Close asChild>
+              <Button size="icon-sm" variant="ghost" aria-label={t('Close')}>
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            </Dialog.Close>
+          </div>
+          <div className="min-h-0 overflow-y-auto">
+            {selectionError ? (
+              <div className="p-5">
+                <ErrorNotice
+                  inline
+                  tone="amber"
+                  description={t('Select up to {{limit}} references.', {
+                    limit: SNAPSHOT_BATCH_LIMIT
+                  })}
+                />
               </div>
+            ) : null}
+            {error ? (
+              <div className="p-5">
+                <ErrorNotice
+                  inline
+                  tone="amber"
+                  description={t(
+                    'Could not generate batch snapshots. Check the selection and try again.'
+                  )}
+                  primaryButton={{
+                    label: t('Retry'),
+                    onClick: () => {
+                      const signal = lifetime.current.signal
+                      const currentGeneration = generation.current
+                      void api.literature
+                        .snapshotBatch({ action: 'read' })
+                        .then((value) => {
+                          if (!signal.aborted && generation.current === currentGeneration) {
+                            setJob(value)
+                            setError(false)
+                          }
+                        })
+                        .catch(() => {})
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
+            {!selectionError && (job || busy) && (
+              <div className="space-y-3 px-5 py-4" role="status" aria-live="polite">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                  <span>{status}</span>
+                  {job && (
+                    <span className="text-muted-foreground tabular-nums">
+                      {t('{{done}} of {{total}} finished', { done: completed, total })}
+                    </span>
+                  )}
+                </div>
+                {job && (
+                  <ProgressBar
+                    label={t('Batch snapshots')}
+                    value={total > 0 ? (completed / total) * 100 : 0}
+                  />
+                )}
+                {failed > 0 && (
+                  <p className="text-sm text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                    {t('{{count}} failed snapshots', {
+                      count: failed,
+                      defaultValue_one: '{{count}} failed snapshot'
+                    })}
+                  </p>
+                )}
+              </div>
+            )}
+            {job && !selectionError && (
+              <ol className="divide-y divide-border border-t border-border">
+                {job.rows.map((row) => {
+                  const item = references[row.request.itemId]
+                  const title = item?.item.title ?? row.request.itemId
+                  const active = activeRows.includes(row)
+                  const Icon =
+                    row.status === 'succeeded'
+                      ? Check
+                      : row.status === 'failed'
+                        ? CircleAlert
+                        : active
+                          ? Loader2
+                          : Circle
+                  return (
+                    <li key={row.request.itemId} className="space-y-2 px-5 py-4">
+                      <div className="flex items-start gap-3">
+                        <Icon
+                          aria-hidden="true"
+                          className={`mt-0.5 size-4 shrink-0 ${active ? 'animate-spin motion-reduce:animate-none' : ''} ${row.status === 'failed' ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : row.status === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-muted-foreground'}`}
+                        />
+                        <div className="min-w-0 flex-1">
+                          {row.status === 'succeeded' && item && onOpenSnapshot ? (
+                            <button
+                              type="button"
+                              className="text-left text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-ring [overflow-wrap:anywhere]"
+                              onClick={() => {
+                                const initiator = triggerRef.current
+                                if (!initiator) return
+                                openingSnapshot.current = item
+                                setOpen(false)
+                              }}
+                            >
+                              {title}
+                            </button>
+                          ) : (
+                            <p className="text-sm font-medium [overflow-wrap:anywhere]">{title}</p>
+                          )}
+                        </div>
+                        <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
+                          {row.status === 'succeeded'
+                            ? t('Snapshot saved')
+                            : row.status === 'failed'
+                              ? t('Snapshot failed')
+                              : active
+                                ? t('Generating overview…')
+                                : t('Pending')}
+                        </span>
+                      </div>
+                      {row.status === 'failed' && (
+                        <div className="pl-7">
+                          <ErrorNotice
+                            inline
+                            tone="amber"
+                            description={failureDescription(row.issue)}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </div>
+          <div className={dialogFooterClassName}>
+            <Dialog.Close asChild>
+              <Button variant="ghost" size="sm">
+                {t('Close')}
+              </Button>
+            </Dialog.Close>
+            {busy ? (
               <Button
                 size="sm"
-                variant="ghost"
-                className="h-auto min-h-6 max-w-full whitespace-normal px-2 py-0 text-xs"
-                aria-expanded={resultsExpanded}
-                aria-controls={resultsId}
-                onClick={() => setResultsExpanded((current) => !current)}
+                variant="outline"
+                disabled={pausing}
+                onClick={() => {
+                  stop.current = true
+                  setPausing(true)
+                }}
               >
-                {resultsExpanded ? t('Hide reference results') : t('Show reference results')}
+                {pausing ? t('Pausing…') : t('Pause')}
               </Button>
-            </div>
-            <ol
-              id={resultsId}
-              className={`${resultsExpanded ? 'block' : 'hidden'} space-y-1 text-xs @min-[640px]/snapshot-batch:block`}
-              aria-live="polite"
-            >
-              {job.rows.map((row) => (
-                <li key={row.request.itemId} className="min-w-0 space-y-1">
-                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                    <span className="min-w-0 break-words [overflow-wrap:anywhere]">
-                      {titles[row.request.itemId] ?? row.request.itemId}
-                    </span>
-                    <span className="shrink-0">
-                      {row.status === 'succeeded'
-                        ? t('Snapshot saved')
-                        : row.status === 'failed'
-                          ? t('Snapshot failed')
-                          : activeRows.includes(row)
-                            ? t('Generating overview…')
-                            : t('Pending')}
-                    </span>
-                  </div>
-                  {row.status === 'failed' ? (
-                    <ErrorNotice inline tone="amber" description={failureDescription(row.issue)} />
-                  ) : null}
-                </li>
-              ))}
-            </ol>
-          </>
-        ) : null}
-      </div>
-    </section>
+            ) : job && !selectionError ? (
+              <>
+                {unfinished && (
+                  <Button
+                    size="sm"
+                    variant={failed ? 'outline' : 'default'}
+                    disabled={hasRunningRows && !error}
+                    onClick={() => void execute({ action: 'resume', jobId: job.id })}
+                  >
+                    {t('Continue remaining')}
+                  </Button>
+                )}
+                {failed > 0 && (
+                  <Button
+                    size="sm"
+                    disabled={hasRunningRows && !error}
+                    onClick={() => void execute({ action: 'retry', jobId: job.id })}
+                  >
+                    {t('Retry failed snapshots')}
+                  </Button>
+                )}
+              </>
+            ) : null}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
