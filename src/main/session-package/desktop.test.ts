@@ -383,6 +383,30 @@ it.each([
       }
       expect(warning?.data).toEqual(expected)
       expect(projectDiagnosticLog(warning)).toMatchObject({ diagnostics: expected })
+      const snapshotFailures = logs.filter(
+        (record) =>
+          record.data?.operation === 'session-package.export-snapshot' &&
+          record.data?.outcome === 'failed'
+      )
+      expect(snapshotFailures).toHaveLength(1)
+      const snapshotFailure = snapshotFailures[0]
+      const snapshotEvidence = {
+        ...request,
+        operation: 'session-package.export-snapshot',
+        operationId: expect.any(String),
+        phase: notebookJson ? 'read-notebooks' : 'collect-records',
+        outcome: 'failed',
+        errorCategory: reason ? 'error' : 'syntax',
+        durationMs: expect.any(Number)
+      }
+      expect(snapshotFailure.data).toMatchObject(snapshotEvidence)
+      expect(projectDiagnosticLog(snapshotFailure)).toMatchObject({ diagnostics: snapshotEvidence })
+      expect(
+        logs
+          .filter((record) => record.data?.operationId === snapshotFailure.data.operationId)
+          .map((record) => record.data.phase)
+          .filter(Boolean)
+      ).toContain('load-session')
     } finally {
       await desktop.close()
       await service.close()
