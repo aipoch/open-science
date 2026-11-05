@@ -1705,7 +1705,6 @@ describe('mandatory product glossary', () => {
     // inventories were intentionally removed. Keep glossary/structure checks, not stale copy.
     for (const heading of [
       '🚀 Schnellstart',
-      'Produkttour',
       'Benchmark-Ergebnisse',
       'Kernkompetenzen',
       'Modellanbieter',
