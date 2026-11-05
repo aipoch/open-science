@@ -8270,6 +8270,12 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Не удалось повторно создать обзор. По-прежнему отображается предыдущий результат. Повторите попытку.",
     "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
     "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
-    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова.",
+    "{{count}} questions awaiting your answer_one": "{{count}} вопрос ожидает вашего ответа",
+    "{{count}} questions awaiting your answer_few": "{{count}} вопроса ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_many": "{{count}} вопросов ожидают вашего ответа",
+    "{{count}} questions awaiting your answer_other": "{{count}} вопроса ожидают вашего ответа",
+    "Collapse question panel": "Свернуть панель вопросов",
+    "Expand question panel": "Развернуть панель вопросов"
   }
 }

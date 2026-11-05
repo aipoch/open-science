@@ -7784,6 +7784,9 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "無法重新產生概覽。仍顯示先前的結果。請重試。",
     "Another app is using Open-Science files": "其他程式正在使用 Open-Science 檔案",
     "Quit {{name}}, then recheck.": "結束 {{name}}，然後重新檢查。",
-    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。"
+    "Quit the other app, then recheck.": "結束該程式，然後重新檢查。",
+    "{{count}} questions awaiting your answer_other": "有 {{count}} 個問題待回答",
+    "Collapse question panel": "收合問題面板",
+    "Expand question panel": "展開問題面板"
   }
 }
