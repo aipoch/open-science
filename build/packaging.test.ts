@@ -619,14 +619,20 @@ SectionEnd
           'locales'
         ].sort()
       )
+    } catch (error) {
+      console.error('NSIS preservation fixture failed before cleanup:', error)
+      throw error
     } finally {
       if (existsSync(restoreAcl)) {
         const restored = spawnSync(
           powershell,
           ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', restoreAcl],
-          { windowsHide: true, timeout: 15_000, env: powershellEnv }
+          { encoding: 'utf8', windowsHide: true, timeout: 15_000, env: powershellEnv }
         )
-        expect(restored.status, 'restore fixture-only ACL before cleanup').toBe(0)
+        expect(
+          restored.status,
+          `restore fixture-only ACL before cleanup: ${restored.error?.message ?? ''}\n${restored.stderr}\n${restored.stdout}`
+        ).toBe(0)
       }
       rmSync(root, { recursive: true, force: true })
     }
