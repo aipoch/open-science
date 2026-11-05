@@ -1,3 +1,4 @@
+import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
 import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
@@ -1646,17 +1647,43 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && !activeSession.firstPromptDraft && !activeSession.isPending && (
-            <SessionHeaderMenu
-              key={activeSession.id}
-              session={activeSession}
-              bindings={sessionTools.menuBindings}
-              createSideChat={sideChatController.createDraft}
-              credentialPending={pendingCredentialRequest !== undefined}
-              rootPermissionPending={presentedRootPermissionPending}
-              disabledReason={openSideChatReason}
-            />
-          )}
+          {activeSession &&
+            !activeSession.firstPromptDraft &&
+            !activeSession.isPending &&
+            (isImported ? (
+              <SessionHeaderMenu
+                session={activeSession}
+                bindings={sessionTools.menuBindings}
+                createSideChat={sideChatController.createDraft}
+                credentialPending={pendingCredentialRequest !== undefined}
+                rootPermissionPending={presentedRootPermissionPending}
+                disabledReason={openSideChatReason}
+                key={activeSession.id}
+              />
+            ) : (
+              <ResearchVideoButton
+                key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
+                projectId={activeSession.projectId}
+                sessionId={activeSession.id}
+                branchId={
+                  activeSession.conversationGraph?.frames.find(
+                    (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
+                  )?.activeBranchId
+                }
+                renderTrigger={(openResearchExplanation, researchVideoTriggerState) => (
+                  <SessionHeaderMenu
+                    session={activeSession}
+                    bindings={sessionTools.menuBindings}
+                    createSideChat={sideChatController.createDraft}
+                    credentialPending={pendingCredentialRequest !== undefined}
+                    rootPermissionPending={presentedRootPermissionPending}
+                    disabledReason={openSideChatReason}
+                    openResearchExplanation={openResearchExplanation}
+                    researchVideoTriggerState={researchVideoTriggerState}
+                  />
+                )}
+              />
+            ))}
           <PackageExportProgressButton />
           <PackageOperationIndicator />
           <NotificationBell className="md:hidden" />
@@ -2132,19 +2159,11 @@ const ConversationPanel = ({
                         aria-label={t('Imported research history')}
                       >
                         <div className="flex flex-wrap items-center gap-2">
-                          {sessionForkAvailable() ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="px-2 text-xs"
-                              onClick={() => {
-                                void forkSession(activeSession)
-                              }}
-                            >
-                              <GitBranch className="size-4" aria-hidden="true" />
-                              {t('Fork to continue')}
-                            </Button>
-                          ) : null}
+                          <SessionDiscussionButton
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                          />
                           <Button
                             variant="outline"
                             size="sm"
@@ -2165,11 +2184,29 @@ const ConversationPanel = ({
                             <Play className="size-4" aria-hidden="true" />
                             {t('View replay')}
                           </Button>
-                          <SessionDiscussionButton
-                            key={activeSession.id}
+                          <ResearchVideoButton
+                            key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
                             projectId={activeSession.projectId}
                             sessionId={activeSession.id}
+                            branchId={
+                              activeSession.conversationGraph?.frames.find(
+                                (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
+                              )?.activeBranchId
+                            }
                           />
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="px-2 text-xs"
+                              onClick={() => {
+                                void forkSession(activeSession)
+                              }}
+                            >
+                              <GitBranch className="size-4" aria-hidden="true" />
+                              {t('Fork to continue')}
+                            </Button>
+                          ) : null}
                         </div>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
                           <details className="group/exclusions mt-1 text-xs text-muted-foreground">

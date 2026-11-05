@@ -2730,3 +2730,39 @@ it.each([
   await act(async () => root.render(<PackageOperationIndicator />))
   expect(document.querySelector('[aria-label="Package progress"]')).not.toBeNull()
 })
+
+it.each([false, true])(
+  'offers optional films only when complete results exist (%s)',
+  async (available) => {
+    const request = vi.fn(async () => undefined)
+    vi.stubGlobal('api', { sessions: { packageOperation: request } })
+    usePackageOperationStore.setState({
+      operation: {
+        ...snapshot,
+        summary: {
+          retainedFiles: [],
+          metadataBytes: 0,
+          ...(available ? { researchFilms: { count: 2, sizeBytes: 4096 } } : {})
+        }
+      },
+      open: true
+    })
+    await act(async () => root.render(<SessionPackageOperation />))
+    const label = [...document.querySelectorAll('label')].find((node) =>
+      node.textContent?.includes('Include research films')
+    )
+    expect(Boolean(label)).toBe(available)
+    if (available) {
+      const checkbox = label!.querySelector<HTMLInputElement>('input')!
+      expect(checkbox.checked).toBe(false)
+      await act(async () => checkbox.click())
+    }
+    await act(async () => button('Choose save location…').click())
+    expect(request).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: 'select',
+        ...(available ? { includeResearchFilms: true } : {})
+      })
+    )
+  }
+)

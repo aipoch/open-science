@@ -69,6 +69,7 @@ const fixture = (() => {
     broadcast: vi.fn()
   })
   const dependencies = {
+    researchFilmLifecycle: { deleteSessions: vi.fn(), reconcileSessions: vi.fn() },
     applicationEvents: {},
     notificationInbox: {
       setSessionAvailability: vi.fn(),
@@ -165,6 +166,7 @@ describe('Project lifecycle composition', () => {
     await handlers.reconcile(['session-1'], ['session-1'])
     await expect(broker.request(info)).resolves.toBe(false)
     expect(mocks.visionReconcile).toHaveBeenCalledWith(['session-1'])
+    expect(dependencies.researchFilmLifecycle.reconcileSessions).toHaveBeenCalledWith(['session-1'])
     const clearHosts = vi.fn()
     result.sessionEnabledComputeHostsOwnerRef.current = { clear: clearHosts } as never
     mocks.visionDelete.mockRejectedValueOnce(new Error('projection unavailable'))
@@ -176,6 +178,7 @@ describe('Project lifecycle composition', () => {
       'session-1'
     ])
     expect(dependencies.bookmarkRepository.deleteSessions).toHaveBeenCalledWith(['session-1'])
+    expect(dependencies.researchFilmLifecycle.deleteSessions).toHaveBeenCalledWith(['session-1'])
     expect(dependencies.notificationInbox.invalidateSessions).toHaveBeenCalledWith(['session-1'])
     await handlers.commit(['session-1'])
     await expect(next).resolves.toBe(false)
