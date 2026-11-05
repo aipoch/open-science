@@ -360,7 +360,8 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
-      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound }
+      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
+      { id: 'compute', labelKey: 'Compute', Icon: Zap }
     ]
   },
   {
@@ -370,7 +371,6 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
-      { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]

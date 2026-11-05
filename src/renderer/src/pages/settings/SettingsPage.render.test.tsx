@@ -1371,8 +1371,8 @@ describe('SettingsPage layout', () => {
     )
 
     // Left navigation grouped as Intelligence (Model, Agent, Skills, Specialists, Memory),
-    // Connections (Connectors, Network, Remote, Credentials), Workspace (Tags, Permissions,
-    // Runtimes, Storage, Compute, Usage, Archived) and System (General, Appearance, Notifications).
+    // Connections (Connectors, Network, Remote, Credentials, Compute), Workspace (Tags,
+    // Permissions, Runtimes, Storage, Usage, Archived) and System (General, Appearance, Notifications).
     // Feedback remains a
     // separate fixed footer action.
     const nav = document.body.querySelector('nav[aria-label="Settings"]')
@@ -1406,13 +1406,22 @@ describe('SettingsPage layout', () => {
     expect(navItems[9]?.textContent).toContain('Network')
     expect(navItems[10]?.textContent).toContain('Remote')
     expect(navItems[11]?.textContent).toContain('Credentials')
-    expect(navItems[12]?.textContent).toContain('Tags')
-    expect(navItems[13]?.textContent).toContain('Permissions')
-    expect(navItems[14]?.textContent).toContain('Runtimes')
-    expect(navItems[15]?.textContent).toContain('Storage')
-    expect(navItems[16]?.textContent).toContain('Compute')
+    expect(navItems[12]?.textContent).toContain('Compute')
+    expect(navItems[13]?.textContent).toContain('Tags')
+    expect(navItems[14]?.textContent).toContain('Permissions')
+    expect(navItems[15]?.textContent).toContain('Runtimes')
+    expect(navItems[16]?.textContent).toContain('Storage')
     expect(navItems[17]?.textContent).toContain('Usage')
     expect(navItems[18]?.textContent).toContain('Archived')
+    const navGroups = Array.from(navScroll?.querySelectorAll(':scope > div') ?? [])
+    const connectionsGroup = navGroups.find(
+      (group) => group.firstElementChild?.textContent?.trim() === 'Connections'
+    )
+    const workspaceGroup = navGroups.find(
+      (group) => group.firstElementChild?.textContent?.trim() === 'Workspace'
+    )
+    expect(connectionsGroup?.querySelector('li:last-child button')?.textContent).toBe('Compute')
+    expect(workspaceGroup?.contains(navButton('Compute') ?? null)).toBe(false)
     expect(navFooter?.textContent).toContain('Feedback')
     const modelNavButton = navButton('Model')
     const agentNavButton = navButton('Agent')
