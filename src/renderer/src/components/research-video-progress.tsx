@@ -10,10 +10,12 @@ export function ResearchVideoProgressLine({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
+  const terminal = ['completed', 'cancelled', 'failed'].includes(progress.phase)
   useEffect(() => {
+    if (terminal) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [terminal])
   const labels = {
     preparing: t('Preparing research materials…'),
     writing: t('Writing research film…'),
@@ -54,7 +56,7 @@ export function ResearchVideoProgressLine({
           </p>
         )}
       </div>
-      {!['completed', 'cancelled', 'failed'].includes(progress.phase) && (
+      {!terminal && (
         <ProgressBar
           value={
             counted && progress.total! > 0
@@ -66,7 +68,7 @@ export function ResearchVideoProgressLine({
       )}
       <p className="tabular-nums">
         {t('Elapsed: {{seconds}} s', {
-          seconds: Math.max(0, Math.floor((now - progress.startedAt) / 1000))
+          seconds: Math.max(0, Math.floor(((progress.endedAt ?? now) - progress.startedAt) / 1000))
         })}
       </p>
     </div>

@@ -106,6 +106,18 @@ export async function composeResearchFilm({
         completedAtMs: Date.now(),
         usage: response.usage
       })
+    if (response.stopReason === 'max_tokens')
+      throw new Error(
+        'Research film generation reached the model output token limit. Increase the model output limit or select another model and try again.'
+      )
+    if (response.stopReason !== 'end_turn')
+      throw new Error(
+        `Research film generation stopped before completing (${response.stopReason}). Try again or select another model.`
+      )
+    if (!response.text.trim())
+      throw new Error(
+        'The model returned no research film content. Try again or select another model.'
+      )
     return response.text
   }
   const researchVideoPresentation = createResearchVideoPresentationOwner({

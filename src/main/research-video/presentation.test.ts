@@ -171,6 +171,9 @@ it('cancels the background authoring operation and releases the model lease', as
     expect((await owner.status(request)).progress?.phase).toBe('cancelled')
   )
   await owner.close()
+  const progress = (await owner.status(request)).progress!
+  expect(progress.endedAt).toBeGreaterThanOrEqual(progress.startedAt)
+  expect((await owner.status(request)).progress?.endedAt).toBe(progress.endedAt)
   expect(f.options.generate).not.toHaveBeenCalled()
   expect(f.release).toHaveBeenCalledOnce()
 })
@@ -279,6 +282,9 @@ it('stops after one failed correction without generating or publishing invalid c
   await vi.waitFor(async () =>
     expect((await owner.status(request)).error).toContain('missing source message')
   )
+  const progress = (await owner.status(request)).progress!
+  expect(progress.endedAt).toBeGreaterThanOrEqual(progress.startedAt)
+  expect((await owner.status(request)).progress?.endedAt).toBe(progress.endedAt)
   expect(f.options.writeScreenplay).toHaveBeenCalledTimes(2)
   expect(f.options.generate).not.toHaveBeenCalled()
   expect(f.release).toHaveBeenCalledOnce()

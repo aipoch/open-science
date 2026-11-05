@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { ResearchVideoProgressLine } from './research-video-progress'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -305,3 +306,19 @@ it('requires inline confirmation to delete a film and closes its preview after d
   expect(document.body.textContent).toContain('Generate research film')
   expect(api.researchVideo.start).not.toHaveBeenCalled()
 })
+
+it.each(['failed', 'cancelled'] as const)(
+  'freezes elapsed time after %s, including reopening',
+  async (phase) => {
+    await click('Generate research film')
+    const startedAt = status.progress!.startedAt
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(document.body.textContent).toContain('Elapsed: 3 s')
+    status = { progress: { phase, startedAt, endedAt: startedAt + 3000 } }
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(document.body.textContent).toContain('Elapsed: 3 s')
+    await act(async () => root.render(<ResearchVideoProgressLine progress={status.progress!} />))
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(document.body.textContent).toContain('Elapsed: 3 s')
+  }
+)
