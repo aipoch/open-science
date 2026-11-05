@@ -1265,6 +1265,7 @@ it('rolls back global desktop update preparation only when its controller discon
 it('accepts activity only from the current controlling desktop and clears it on disconnect', async () => {
   const generation = randomUUID()
   const lifetime = {
+    startFirstConnectionTimeout: vi.fn(),
     preservesService: () => true,
     snapshot: () => ({
       version: 1 as const,
