@@ -175,7 +175,11 @@ export function createResearchVideoPresentationOwner(options: {
       states.delete(key)
     } catch (error) {
       states.set(key, {
-        progress: { phase: signal.aborted ? 'cancelled' : 'failed', startedAt },
+        progress: {
+          phase: signal.aborted ? 'cancelled' : 'failed',
+          startedAt,
+          endedAt: Date.now()
+        },
         ...(!signal.aborted
           ? { error: error instanceof Error ? error.message : String(error) }
           : {})

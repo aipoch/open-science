@@ -22,7 +22,8 @@ export const researchVideoProgressSchema = z
     total: z.number().int().positive().optional(),
     completedLines: z.number().int().nonnegative().optional(),
     totalLines: z.number().int().positive().optional(),
-    startedAt: z.number().finite().nonnegative()
+    startedAt: z.number().finite().nonnegative(),
+    endedAt: z.number().finite().nonnegative().optional()
   })
   .strict()
   .refine(
@@ -38,7 +39,7 @@ export const researchVideoProgressSchema = z
     'Invalid narration line count'
   )
 export type ResearchVideoProgress = z.infer<typeof researchVideoProgressSchema>
-export type ResearchVideoStep = Omit<ResearchVideoProgress, 'startedAt'>
+export type ResearchVideoStep = Omit<ResearchVideoProgress, 'startedAt' | 'endedAt'>
 export type ResearchVideoExportResult = {
   canceled: boolean
   needsInstallation?: { downloadBytes: number }
