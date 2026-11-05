@@ -135,6 +135,7 @@ export const startOwnedAgentFixture = async (page, fixture) => {
   )
   if (evidence.executable.toLowerCase() !== fixture.executable.toLowerCase())
     throw new Error('The Agent did not use the installed Node executable.')
+  console.log('[DEBUG-update-owned] Recorded process identities:', JSON.stringify(evidence))
   for (const pid of [evidence.leaderPid, evidence.descendantPid]) {
     if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('Invalid owned process identity.')
     process.kill(pid, 0)

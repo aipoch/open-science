@@ -601,6 +601,12 @@ const runElectronUpdater = async ({
   } catch (error) {
     console.error(`Updater failed during ${phase}.`)
     if (page && evidencePath) {
+      const state = await page.evaluate(async () => {
+        const value = await window.api.acp.getState()
+        return { status: value.status, error: value.error, events: value.events?.slice(-10) }
+      }).catch((failure) => ({ diagnosticError: String(failure) }))
+      await writeFile(`${evidencePath}.state.json`, JSON.stringify(state, null, 2), 'utf8')
+      console.error('[DEBUG-update-owned]', JSON.stringify(state))
       await page
         .screenshot({ path: `${evidencePath}.failed.png`, timeout: 10_000 })
         .catch(() => undefined)
