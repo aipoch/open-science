@@ -17,6 +17,7 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
+import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
@@ -24,6 +25,7 @@ import type { LogFileStatus, LogWriteFailureCategory } from '../../../../shared/
 import { APP } from '../../../../shared/app-config'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { SessionDiagnosticsDialog } from '../workspace/SessionDiagnosticsDialog'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -81,6 +83,7 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
+  const [exportDiagnostics, setExportDiagnostics] = useState(false)
   const [selectedLog, setSelectedLog] = useState('main')
   const [sinkStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [isCheckingLog, setIsCheckingLog] = useState(true)
@@ -332,6 +335,25 @@ const GeneralPanel = (): React.JSX.Element => {
             </Button>
           </div>
         </SettingsRow>
+
+        {sessionDiagnosticsAvailable() && (
+          <SettingsRow
+            label={t('Export diagnostics')}
+            description={t(
+              'Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.'
+            )}
+          >
+            <Button type="button" variant="outline" onClick={() => setExportDiagnostics(true)}>
+              {t('Export diagnostics…')}
+            </Button>
+          </SettingsRow>
+        )}
+        {exportDiagnostics && (
+          <SessionDiagnosticsDialog
+            identity={{ scope: 'application' }}
+            onClose={() => setExportDiagnostics(false)}
+          />
+        )}
 
         <pre
           className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"

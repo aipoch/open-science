@@ -8270,6 +8270,9 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Не удалось повторно создать обзор. По-прежнему отображается предыдущий результат. Повторите попытку.",
     "Another app is using Open-Science files": "Другое приложение использует файлы Open-Science",
     "Quit {{name}}, then recheck.": "Закройте {{name}}, затем проверьте снова.",
-    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова."
+    "Quit the other app, then recheck.": "Закройте другое приложение, затем проверьте снова.",
+    "Resource diagnostics (including pre-failure records)": "Диагностика ресурсов (включая записи до сбоя)",
+    "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "Включает системную память, идентификаторы процессов и активность сеансов всего приложения. Сохранённые записи до сбоя и текущие записи копируются; оригиналы остаются на этом устройстве. Выбирайте только при согласии передать эти записи.",
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Сохранение журналов приложения для разработчиков. Диагностику ресурсов необходимо выбрать отдельно; данные никуда не отправляются."
   }
 }

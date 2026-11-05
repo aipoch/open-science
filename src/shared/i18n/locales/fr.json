@@ -8124,6 +8124,9 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "Impossible de régénérer la vue d’ensemble. Le résultat précédent reste affiché. Veuillez réessayer.",
     "Another app is using Open-Science files": "Une autre application utilise des fichiers Open-Science",
     "Quit {{name}}, then recheck.": "Quittez {{name}}, puis revérifiez.",
-    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez."
+    "Quit the other app, then recheck.": "Quittez l'autre application, puis revérifiez.",
+    "Resource diagnostics (including pre-failure records)": "Diagnostic des ressources (y compris les données précédant la panne)",
+    "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "Comprend la mémoire système, les identifiants des processus et l’activité des sessions de toute l’application. Les données conservées avant la panne et les données actuelles sont copiées ; les originaux restent sur cet appareil. Sélectionnez uniquement si vous acceptez de partager ces données.",
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "Enregistrez les journaux de l’application pour les développeurs. Le diagnostic des ressources nécessite votre sélection ; rien n’est téléversé."
   }
 }

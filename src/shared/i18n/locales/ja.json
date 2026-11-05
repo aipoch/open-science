@@ -7784,6 +7784,9 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "概要を再生成できませんでした。前の結果を引き続き表示しています。再試行してください。",
     "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
     "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
-    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
+    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。",
+    "Resource diagnostics (including pre-failure records)": "リソース診断（障害前の記録を含む）",
+    "Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.": "システムメモリ、プロセス識別情報、このアプリ全体のセッション活動を含みます。保存された障害前の記録と現在の記録をコピーし、元のファイルはこのデバイスに残します。これらの記録の共有に同意する場合のみ選択してください。",
+    "Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.": "開発者に提供するアプリのログを保存します。リソース診断は選択した場合のみ含まれ、何もアップロードされません。"
   }
 }

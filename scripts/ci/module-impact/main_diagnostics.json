@@ -1,6 +1,7 @@
 {
   "ownerPaths": [
     "src/main/resource-diagnostics/recorder.ts",
+    "src/main/resource-diagnostics/facts.ts",
     "src/main/resource-diagnostics/store.ts",
     "src/main/resource-diagnostics/recorder.test.ts",
     "src/main/resource-diagnostics/store.test.ts",
@@ -14,6 +15,7 @@
   ],
   "interfacePaths": [
     "src/main/resource-diagnostics/recorder.ts",
+    "src/main/resource-diagnostics/facts.ts",
     "src/main/resource-diagnostics/store.ts",
     "src/main/diagnostics/ipc-rejection.ts",
     "src/main/diagnostics/startup.ts",

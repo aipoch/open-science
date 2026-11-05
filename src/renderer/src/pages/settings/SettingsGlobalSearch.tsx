@@ -169,7 +169,13 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
   },
   { id: 'appearance.language', panel: 'appearance', labelKey: 'Language', keywords: 'locale' },
   { id: 'notifications.preferences', panel: 'notifications', labelKey: 'Notifications' },
-  { id: 'general.diagnostics', panel: 'general', labelKey: 'Diagnostics', keywords: 'log file' },
+  {
+    id: 'general.diagnostics',
+    panel: 'general',
+    labelKey: 'Diagnostics',
+    keywords: 'log file export resource',
+    searchLabels: ['Export diagnostics']
+  },
   {
     id: 'general.cli',
     panel: 'general',

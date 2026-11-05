@@ -6,9 +6,71 @@ import { x as extract } from 'tar'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
+import { openGeneralSettings } from './fixtures/settings-preferences'
 
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
 test.use({ windowMode: 'hidden' })
+
+test('exports retained resource records from Settings only after consent, without a session', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = app.page
+  const application = (app as unknown as { application: ElectronApplication }).application
+  const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
+  const journal = join(configRoot, 'logs/resources')
+  await mkdir(journal, { recursive: true })
+  const name = 'incident-99999999.jsonl'
+  const evidence =
+    JSON.stringify({
+      schema: 1,
+      runId: 'before-fixture-failure',
+      event: 'process-sample',
+      sequence: 1,
+      time: 1700000000000,
+      elapsedMs: 1,
+      data: { pid: 42, birth: '123', privateBytes: 4096 }
+    }) + '\n'
+  await writeFile(join(journal, name), evidence)
+  const archivePath = testInfo.outputPath('application-resources.tar.gz')
+  await mkdir(testInfo.outputPath(), { recursive: true })
+  await application.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: path })
+  }, archivePath)
+  const settings = await openGeneralSettings(page)
+  await settings.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
+  const resources = dialog.getByRole('checkbox', {
+    name: 'Resource diagnostics (including pre-failure records)',
+    exact: true
+  })
+  await expect(resources).toBeEnabled()
+  await expect(resources).not.toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: 'Session state', exact: true })).toHaveCount(0)
+  const selected = dialog.getByRole('checkbox', { checked: true })
+  while (await selected.count()) await selected.first().uncheck()
+  await resources.check()
+  await page.screenshot({ path: testInfo.outputPath('settings-resource-consent.png') })
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect(
+    dialog.getByText(/Diagnostic package (exported successfully|partially exported)/)
+  ).toBeVisible({ timeout: 45_000 })
+  const extracted = testInfo.outputPath('unpacked-resources')
+  await mkdir(extracted)
+  await extract({ file: archivePath, cwd: extracted })
+  expect(JSON.parse(await readFile(join(extracted, 'logs/resources', name), 'utf8'))).toEqual(
+    JSON.parse(evidence)
+  )
+  expect(await readFile(join(journal, name), 'utf8')).toBe(evidence)
+  const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+  expect(manifest.scope).toBe('application')
+  expect(manifest.sessionId).toBeUndefined()
+  expect(manifest.items.filter((item: { selected: boolean }) => item.selected)).toEqual([
+    expect.objectContaining({ id: 'resource-logs', selected: true, scope: 'global' })
+  ])
+  await dialog.locator('button[aria-label="Close"]').click()
+  await expect(settings).toBeVisible()
+})
 
 test('exports selected diagnostics without changing the persisted session', async ({
   app

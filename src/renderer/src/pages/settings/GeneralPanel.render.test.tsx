@@ -61,6 +61,25 @@ const switchTo = (language: string): void => {
   })
 }
 
+it('opens the existing export dialog from Settings without requiring an active session', async () => {
+  const inspectDiagnostics = vi.fn().mockResolvedValue({ items: [] })
+  Object.assign(window.api, {
+    sessions: {
+      inspectDiagnostics,
+      exportDiagnostics: vi.fn(),
+      cancelDiagnostics: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+  await act(async () => root.render(<GeneralPanel />))
+  await flush()
+  await act(async () => fireEvent.click(findButton(/^Export diagnostics…$/)!))
+  expect(inspectDiagnostics).toHaveBeenCalledWith({
+    scope: 'application',
+    operationId: expect.any(String)
+  })
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Export diagnostics')
+})
+
 beforeEach(() => {
   switchTo('en')
   container = document.createElement('div')
