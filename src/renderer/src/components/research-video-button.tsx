@@ -353,32 +353,6 @@ export function ResearchVideoButton({
                   </div>
                 ) : (
                   <>
-                    {status.result && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            ref={deleteTriggerRef}
-                            variant="ghost"
-                            size="sm"
-                            aria-label={t('More actions')}
-                            disabled={pending}
-                          >
-                            <MoreHorizontal aria-hidden="true" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start">
-                          <DropdownMenuItem
-                            onSelect={() => {
-                              setConfirmRegeneration(false)
-                              setConfirmDeletion(true)
-                            }}
-                          >
-                            <Trash2 aria-hidden="true" />
-                            {t('Delete research film')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    )}
                     {(status.result || model?.availability === 'ready') && (
                       <Button
                         ref={regenerateRef}
@@ -396,6 +370,32 @@ export function ResearchVideoButton({
                         )}
                         {t('Generate again')}
                       </Button>
+                    )}
+                    {status.result && (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            ref={deleteTriggerRef}
+                            variant="ghost"
+                            size="sm"
+                            aria-label={t('More actions')}
+                            disabled={pending}
+                          >
+                            <MoreHorizontal aria-hidden="true" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={() => {
+                              setConfirmRegeneration(false)
+                              setConfirmDeletion(true)
+                            }}
+                          >
+                            <Trash2 aria-hidden="true" />
+                            {t('Delete research film')}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                   </>
                 )}
