@@ -1,3 +1,4 @@
+import * as inputContext from '../research-video/input-context'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +38,7 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
 const outcomes = [
   'runtime-unavailable',
   'provider-unavailable',
+  'input-unavailable',
   'running',
   'max_tokens',
   'output-limit',
@@ -50,6 +52,7 @@ it.each(outcomes)(
   'handles %s generation without publishing incomplete content',
   async (outcome) => {
     vi.clearAllMocks()
+    const counter = vi.spyOn(inputContext, 'researchFilmTokenCounter')
     mocks.root = await mkdtemp(join(tmpdir(), 'film-composition-'))
     mocks.events.length = 0
     const request = { projectId: 'p', sessionId: 's' }
@@ -158,6 +161,19 @@ it.each(outcomes)(
     const input = {
       configRoot: mocks.root,
       settingsService: {
+        getSettingsView: vi.fn(async () => ({
+          activeProviderId: 'test',
+          agentFrameworkId: 'pi',
+          activeModel: outcome === 'refusal' ? undefined : 'test',
+          providers: [
+            {
+              id: 'test',
+              type: 'custom',
+              model: outcome === 'refusal' ? 'claude-test' : 'test',
+              contextWindow: outcome === 'input-unavailable' ? 9000 : 200_000
+            }
+          ]
+        })),
         getPreflight: vi.fn(async () => ({
           agentReady: outcome !== 'runtime-unavailable',
           activeProviderReady: outcome !== 'provider-unavailable'
@@ -165,7 +181,8 @@ it.each(outcomes)(
         captureActiveExplicitAgentBackendTarget: vi.fn(async () => ({
           frameworkId: 'pi',
           providerId: 'test',
-          model: { kind: 'required', id: 'test' },
+          model:
+            outcome === 'refusal' ? { kind: 'provider-default' } : { kind: 'required', id: 'test' },
           reasoningEffort: 'medium'
         }))
       },
@@ -188,10 +205,18 @@ it.each(outcomes)(
       expect(mocks.acquire).not.toHaveBeenCalled()
       expect(mocks.install).not.toHaveBeenCalled()
       expect(await readdir(mocks.root)).toEqual([])
-      if (outcome === 'runtime-unavailable' || outcome === 'provider-unavailable') {
+      if (
+        outcome === 'runtime-unavailable' ||
+        outcome === 'provider-unavailable' ||
+        outcome === 'input-unavailable'
+      ) {
         const preflight = await owner.status({ ...request, checkReadiness: true })
         expect(preflight.preflightError).toContain(
-          outcome === 'runtime-unavailable' ? 'agent runtime' : 'model and credentials'
+          outcome === 'runtime-unavailable'
+            ? 'agent runtime'
+            : outcome === 'input-unavailable'
+              ? 'input limit'
+              : 'model and credentials'
         )
         expect((await owner.start(request)).preflightError).toBe(preflight.preflightError)
         expect(mocks.run).not.toHaveBeenCalled()
@@ -203,6 +228,15 @@ it.each(outcomes)(
       }
       await owner.start(request)
       await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
+      if (outcome === 'refusal') {
+        expect(counter).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            frameworkId: 'pi',
+            model: { kind: 'required', id: 'claude-test' }
+          })
+        )
+        expect(mocks.run.mock.calls[0][0].target.model).toEqual({ kind: 'provider-default' })
+      }
       if (outcome !== 'running') {
         await vi.waitFor(async () =>
           expect((await owner.status(request)).progress?.phase).toBe('failed')
@@ -225,6 +259,7 @@ it.each(outcomes)(
         expect(mocks.run).toHaveBeenCalledTimes(calls)
         expect(input.recordAuxiliaryUsage).toHaveBeenCalledTimes(calls)
         expect(input.settingsService.captureActiveExplicitAgentBackendTarget).toHaveBeenCalledOnce()
+        expect(input.settingsService.getSettingsView).toHaveBeenCalledTimes(2)
         expect(new Set(mocks.run.mock.calls.map(([request]) => request.target)).size).toBe(1)
         if (calls > 1) {
           const correction = JSON.parse(mocks.run.mock.calls[1][0].prompt).correction
@@ -254,6 +289,7 @@ it.each(outcomes)(
       expect(session).toEqual(before)
       expect(input.recordAuxiliaryUsage).not.toHaveBeenCalled()
     } finally {
+      counter.mockRestore()
       await runtime.dispose()
       await rm(mocks.root, { recursive: true, force: true })
     }

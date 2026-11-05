@@ -7852,6 +7852,6 @@
     "Expand question panel": "展開問題面板",
     "Set up the selected agent runtime in Settings before generating a research film.": "請先在設定中配置所選智能體的執行環境，再產生研究影片。",
     "Check the selected model and credentials in Settings before generating a research film.": "請先在設定中檢查所選模型及憑證，再產生研究影片。",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "此對話過大，無法產生研究講解。請選擇較短的分支。"
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "所選模型的輸入上限無法容納研究影片產生指令。請選擇輸入上限更大的模型。"
   }
 }

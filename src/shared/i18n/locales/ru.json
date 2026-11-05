@@ -8341,6 +8341,6 @@
     "Expand question panel": "Развернуть панель вопросов",
     "Set up the selected agent runtime in Settings before generating a research film.": "Перед созданием исследовательского фильма настройте среду выполнения выбранного агента в настройках.",
     "Check the selected model and credentials in Settings before generating a research film.": "Перед созданием исследовательского фильма проверьте выбранную модель и учётные данные в настройках.",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "Этот диалог слишком велик для исследовательского объяснения. Выберите более короткую ветку."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Лимит ввода выбранной модели не вмещает инструкции для создания исследовательского фильма. Выберите модель с большим лимитом ввода."
   }
 }

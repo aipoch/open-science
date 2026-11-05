@@ -7852,6 +7852,6 @@
     "Expand question panel": "質問パネルを展開",
     "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
     "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "この会話は研究解説を生成するには長すぎます。短い分岐を選択してください。"
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。"
   }
 }

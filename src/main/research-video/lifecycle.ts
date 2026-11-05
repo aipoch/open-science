@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import type { Stats } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { lstat, readdir, rm, rmdir } from 'node:fs/promises'
@@ -93,7 +94,7 @@ export function createResearchFilmLifecycle(options: {
         if (!uuid.safeParse(id).success) continue
         const directory = join(base, id)
         const parsed = sourceOwner.safeParse(
-          await readReceipt(join(directory, 'session.json'), 8 * 1024 * 1024)
+          await readReceipt(join(directory, 'session.json'), RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
         )
         if (!parsed.success) continue
         const owner = parsed.data.provenance

@@ -89,14 +89,15 @@ export function ResearchVideoButton({
     busy: t('Wait for the current response to finish before generating.')
   }
   const preflightMessages: Record<string, string> = {
+    'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.':
+      t(
+        'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
+      ),
     'Set up the selected agent runtime in Settings before generating a research film.': t(
       'Set up the selected agent runtime in Settings before generating a research film.'
     ),
     'Check the selected model and credentials in Settings before generating a research film.': t(
       'Check the selected model and credentials in Settings before generating a research film.'
-    ),
-    'This conversation is too large for a research explanation. Select a shorter branch.': t(
-      'This conversation is too large for a research explanation. Select a shorter branch.'
     )
   }
   const blocked = status.generationBlock

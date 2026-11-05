@@ -92,9 +92,5 @@ export function researchVideoSessionSource(
       sourceClaimsIndependentlyVerified: false
     }
   }
-  if (Buffer.byteLength(JSON.stringify(source)) > 512 * 1024)
-    throw new Error(
-      'This conversation is too large for a research explanation. Select a shorter branch.'
-    )
   return source
 }

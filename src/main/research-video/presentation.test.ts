@@ -423,10 +423,7 @@ it('removes saved versions through the host mutation lane and allows a fresh gen
   await reopened.close()
 })
 
-it.each([
-  ['oversized', 'x'.repeat(512 * 1024), 'too large'],
-  ['missing image', '![Missing](missing.png)', 'available managed Artifact']
-])(
+it.each([['missing image', '![Missing](missing.png)', 'available managed Artifact']])(
   'rejects %s material at preflight and direct start without creating a job',
   async (_case, content, reason) => {
     const f = await fixture()
@@ -555,4 +552,25 @@ it('keeps the newest readiness result when concurrent refreshes finish out of or
   } finally {
     await owner.close()
   }
+})
+
+it('retains conversation text and Artifact references above the former byte cap', () => {
+  const content = 'Research evidence. '.repeat(40_000)
+  const source = researchVideoSessionSource(
+    {
+      ...session,
+      messages: [
+        { ...session.messages[0], content, artifactIds: ['plot-version'] },
+        session.messages[1]
+      ]
+    },
+    request
+  )
+  expect(source.messages[0]).toMatchObject({
+    i: 0,
+    id: 'question',
+    md: content,
+    artifactIds: ['plot-version']
+  })
+  expect(Buffer.byteLength(JSON.stringify(source))).toBeGreaterThan(512 * 1024)
 })

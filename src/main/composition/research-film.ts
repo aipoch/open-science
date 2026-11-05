@@ -1,5 +1,12 @@
+import {
+  prepareResearchFilmPrompt,
+  researchFilmInputBudget,
+  researchFilmTokenCounter
+} from '../research-video/input-context'
 import type { LocalModelSnapshot } from '../../shared/local-models'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
   createResearchFilmAuthor,
@@ -9,6 +16,8 @@ import {
   ResearchFilmOutputLimitError,
   type ResearchVideoSessionSource,
   RESEARCH_NARRATION_MODELS,
+  RESEARCH_VIDEO_SCREENPLAY_PROMPT,
+  RESEARCH_VIDEO_ANIMATION_PROMPT,
   VIDEO_EXPORT_REVISIONS
 } from '@aipoch/research-film'
 import {
@@ -73,7 +82,12 @@ export async function composeResearchFilm({
     dispose: () => owner.close()
   }))
   const videoExportTools = createVideoExportTools(videoExportModels)
-  const researchVideoEngineDirectory = researchFilmResources().stageDirectory
+  const resources = researchFilmResources()
+  const researchVideoEngineDirectory = resources.stageDirectory
+  const animationInstructions =
+    RESEARCH_VIDEO_ANIMATION_PROMPT +
+    '\n\n' +
+    (await readFile(join(resources.authoringDirectory, 'KIT.md'), 'utf8'))
   const researchVideoGenerate = createResearchVideoGenerator({ temporaryRoot: tmpdir() })
   const researchVideoInference = new RestrictedInferenceRunner({
     appVersion: runtimeMetadata().version,
@@ -83,10 +97,26 @@ export async function composeResearchFilm({
     resolveTarget: (target, context) => settingsService.resolveExplicitAgentBackend(target, context)
   })
   // One frozen source belongs to one job. Corrections and parallel scene calls share its target.
-  const targets = new WeakMap<
-    ResearchVideoSessionSource,
-    ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>
-  >()
+  const capture = async (): Promise<{
+    target: Awaited<ReturnType<SettingsService['captureActiveExplicitAgentBackendTarget']>>
+    budget: number
+    count: (text: string) => number
+  }> => {
+    const target = await settingsService.captureActiveExplicitAgentBackendTarget()
+    const snapshot = await settingsService.getSettingsView()
+    const provider = snapshot.providers.find((entry) => entry.id === target.providerId)
+    if (!provider) throw new Error('The selected research film provider is unavailable.')
+    const model = target.model.kind === 'required' ? target.model.id : provider.model
+    return {
+      target,
+      budget: researchFilmInputBudget(provider, model),
+      count: researchFilmTokenCounter({
+        ...target,
+        model: model ? { kind: 'required', id: model } : target.model
+      })
+    }
+  }
+  const targets = new WeakMap<ResearchVideoSessionSource, ReturnType<typeof capture>>()
   const inferResearchVideo = async (
     source: ResearchVideoSessionSource,
     systemPrompt: string,
@@ -94,14 +124,13 @@ export async function composeResearchFilm({
     signal: AbortSignal
   ): Promise<string> => {
     signal.throwIfAborted()
-    if (!targets.has(source))
-      targets.set(source, settingsService.captureActiveExplicitAgentBackendTarget())
-    const target = await targets.get(source)!
+    if (!targets.has(source)) targets.set(source, capture())
+    const { target, budget, count } = await targets.get(source)!
     signal.throwIfAborted()
     const response = await researchVideoInference
       .run({
         target,
-        prompt: JSON.stringify(payload),
+        prompt: prepareResearchFilmPrompt(payload, systemPrompt, budget, count),
         systemPrompt,
         agentName: 'Research explanation',
         description: 'Generate a research explanation from a frozen session',
@@ -171,6 +200,22 @@ export async function composeResearchFilm({
       if (!readiness.activeProviderReady)
         throw new Error(
           'Check the selected model and credentials in Settings before generating a research film.'
+        )
+      const snapshot = await settingsService.getSettingsView()
+      const provider = snapshot.providers.find((entry) => entry.id === snapshot.activeProviderId)
+      if (!provider) throw new Error('The selected research film provider is unavailable.')
+      const model = snapshot.activeModel ?? provider.model
+      const count = researchFilmTokenCounter({
+        frameworkId: snapshot.agentFrameworkId,
+        model: model ? { kind: 'required', id: model } : { kind: 'provider-default' }
+      })
+      const budget = researchFilmInputBudget(provider, model)
+      if (
+        budget <
+        Math.max(count(RESEARCH_VIDEO_SCREENPLAY_PROMPT), count(animationInstructions)) + 512
+      )
+        throw new Error(
+          'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
         )
     },
     loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),

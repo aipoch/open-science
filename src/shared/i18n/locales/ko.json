@@ -7850,6 +7850,6 @@
     "Expand question panel": "질문 패널 펼치기",
     "Set up the selected agent runtime in Settings before generating a research film.": "연구 영상을 생성하기 전에 설정에서 선택한 에이전트의 런타임을 구성하세요.",
     "Check the selected model and credentials in Settings before generating a research film.": "연구 영상을 생성하기 전에 설정에서 선택한 모델과 자격 증명을 확인하세요.",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "이 대화는 연구 설명을 생성하기에 너무 깁니다. 더 짧은 분기를 선택하세요."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "선택한 모델의 입력 한도에 연구 영상 생성 지침을 담을 수 없습니다. 입력 한도가 더 큰 모델을 선택하세요."
   }
 }

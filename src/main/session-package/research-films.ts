@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from '@aipoch/research-film/contracts'
 import type { BigIntStats } from 'node:fs'
 import { lstat, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
@@ -84,7 +85,9 @@ export async function captureResearchFilms(
             branchId: z.string().optional()
           })
         })
-        .parse(JSON.parse(await readFileWithinLimit(sourcePath, 8 * 1024 * 1024)))
+        .parse(
+          JSON.parse(await readFileWithinLimit(sourcePath, RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES))
+        )
       const owner = source.provenance
       if (
         owner.projectId !== session.projectId ||

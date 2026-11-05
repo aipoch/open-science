@@ -8194,6 +8194,6 @@
     "Expand question panel": "Déplier le panneau des questions",
     "Set up the selected agent runtime in Settings before generating a research film.": "Configurez le moteur de l’agent sélectionné dans les paramètres avant de générer un film de recherche.",
     "Check the selected model and credentials in Settings before generating a research film.": "Vérifiez le modèle sélectionné et les identifiants dans les paramètres avant de générer un film de recherche.",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "Cette conversation est trop longue pour une explication de recherche. Sélectionnez une branche plus courte."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "La limite d’entrée du modèle sélectionné ne permet pas de contenir les instructions de génération du film de recherche. Sélectionnez un modèle avec une limite d’entrée plus élevée."
   }
 }

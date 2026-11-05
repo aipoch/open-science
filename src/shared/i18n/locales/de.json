@@ -8019,6 +8019,6 @@
     "Expand question panel": "Fragebereich ausklappen",
     "Set up the selected agent runtime in Settings before generating a research film.": "Richten Sie vor dem Erstellen eines Forschungsfilms die Laufzeit des ausgewählten Agenten in den Einstellungen ein.",
     "Check the selected model and credentials in Settings before generating a research film.": "Prüfen Sie vor dem Erstellen eines Forschungsfilms das ausgewählte Modell und die Zugangsdaten in den Einstellungen.",
-    "This conversation is too large for a research explanation. Select a shorter branch.": "Diese Konversation ist zu groß für eine Forschungserklärung. Wählen Sie einen kürzeren Zweig."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Das Eingabelimit des ausgewählten Modells reicht nicht für die Anweisungen zur Erstellung des Forschungsfilms aus. Wählen Sie ein Modell mit einem höheren Eingabelimit."
   }
 }

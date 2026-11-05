@@ -1,3 +1,4 @@
+import { RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES } from './source.js'
 import { readFile, realpath, stat, mkdir, writeFile, rm } from 'node:fs/promises'
 import { resolve, relative, isAbsolute, dirname, extname, join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -49,7 +50,7 @@ export async function readVideoSourceFile(root: string, name: string): Promise<B
   if (!rel || rel.startsWith('..') || isAbsolute(rel))
     throw new Error(`Source path escapes bundle: ${name}`)
   const info = await stat(path)
-  if (!info.isFile() || info.size > 100 * 1024 * 1024)
+  if (!info.isFile() || info.size > RESEARCH_VIDEO_SOURCE_FILE_LIMIT_BYTES)
     throw new Error(`Invalid or oversized source: ${name}`)
   return readFile(path)
 }

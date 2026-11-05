@@ -21,7 +21,9 @@
     "src/renderer/src/components/research-video-menu.tsx",
     "src/main/research-video/lifecycle.ts",
     "src/main/research-video/lifecycle.test.ts",
-    "src/main/research-video/stored-presentation.ts"
+    "src/main/research-video/stored-presentation.ts",
+    "src/main/research-video/input-context.ts",
+    "src/main/research-video/input-context.test.ts"
   ],
   "interfacePaths": [
     "src/main/research-video/export-control.ts",
@@ -30,7 +32,8 @@
     "src/main/research-video/presentation.ts",
     "src/shared/research-video-presentation.ts",
     "src/main/research-video/lifecycle.ts",
-    "src/main/research-video/stored-presentation.ts"
+    "src/main/research-video/stored-presentation.ts",
+    "src/main/research-video/input-context.ts"
   ],
   "consumerModules": [
     "desktop_composition",
@@ -49,7 +52,8 @@
       "src/main/research-video/presentation.test.ts",
       "src/renderer/src/components/research-video-button.test.tsx",
       "src/main/research-video/session-images.test.ts",
-      "src/main/research-video/lifecycle.test.ts"
+      "src/main/research-video/lifecycle.test.ts",
+      "src/main/research-video/input-context.test.ts"
     ],
     "contract": [
       "src/main/notebook/local-rpc-server.test.ts",
