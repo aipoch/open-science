@@ -73,7 +73,8 @@ import { NotebookRunRepository } from './repository'
 import {
   NotebookRuntimeService,
   type NotebookExecutionRequest,
-  type NotebookExecutionResult
+  type NotebookExecutionResult,
+  type NotebookShellResult
 } from './runtime-service'
 
 const tokenizer = new Tiktoken(cl100kBase)
@@ -1934,18 +1935,11 @@ describe('bash_execute tool', () => {
     const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     const stderr = exitCode === 0 ? '' : 'ls: input: Operation not permitted'
+    const shellResult: NotebookShellResult = { stdout: '', stderr, exitCode }
     // Reproduce the reported runtime result at the existing RPC boundary, not an OS denial.
     const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        result: {
-          kernelKind: 'bash',
-          status: exitCode === 0 ? 'completed' : 'failed',
-          exitCode,
-          stdout: '',
-          stderr
-        }
-      })
+      json: async () => ({ result: shellResult })
     } as Response)
     try {
       await server.connect(serverTransport)
