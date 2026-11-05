@@ -15,6 +15,7 @@ on:
       # ACP launch, connection cleanup and companion-service lifecycle.
       - 'src/main/acp/main-agent-process-ownership.ts'
       - 'src/main/acp/agent-process.ts'
+      - 'src/main/acp/claude-executable.ts'
       - 'src/main/acp/agent-connection-adapter.ts'
       - 'src/main/acp/connection-resource-owner.ts'
       - 'src/main/acp/backend-generation-owner.ts'
@@ -23,6 +24,8 @@ on:
       - 'src/main/agent-framework/opencode.ts'
       - 'src/main/agent-framework/codex.ts'
       - 'src/main/settings/managed-codex.ts'
+      - 'src/main/settings/shell-path.ts'
+      - 'src/main/node-process-host.ts'
       - 'src/main/delegation/process-ownership.ts'
       - 'src/main/process-tree.ts'
       - 'src/main/process-tree-windows.ts'
