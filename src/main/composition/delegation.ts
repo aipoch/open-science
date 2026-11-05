@@ -19,11 +19,7 @@ import {
 } from '../delegation/execution-port'
 import { createProductionDelegatedWorkComposition } from '../delegation/production-composition'
 import { createProductionDelegatedFrameworkRuntime } from '../delegation/production-framework-runtime'
-import {
-  createDelegationSettlementContinuationDispatch,
-  admitDelegationSettlement,
-  rollbackDelegationSettlement
-} from '../delegation/settlement-continuation-dispatch'
+import { createDelegationSettlementContinuationDispatch } from '../delegation/settlement-continuation-dispatch'
 import { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
 import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
@@ -191,68 +187,12 @@ export function composeDelegation({
     onAgentRuntimeUpdate: (update) => broadcastToRenderers('acp:agent-runtime-update', update),
     settlementContinuations: {
       dispatch: createDelegationSettlementContinuationDispatch({
-        sendAppContinuationObserved: async (request, onProviderPromptAccepted, settlement) => {
+        sendAppContinuationObserved: (request, onProviderPromptAccepted) => {
           const activeRuntime = runtimeRef.current
           if (!activeRuntime) {
             throw new DelegateMessagePreAcceptanceError('The Main Agent runtime is unavailable.')
           }
-          let validation: Promise<void> | undefined
-          let admission: ReturnType<SessionMutation['mutateRuntimeSession']> | undefined
-          let providerAccepted = false
-          try {
-            return await activeRuntime.sendAppContinuationObserved(
-              request,
-              () => {
-                providerAccepted = true
-                onProviderPromptAccepted()
-              },
-              (resumeSession) =>
-                (validation = (async () => {
-                  const session = await sessionPersistenceCoordinator.loadSessionForContinuation(
-                    settlement.projectId,
-                    settlement.sessionId
-                  )
-                  admitDelegationSettlement(session, settlement)
-                  const agentTarget = await resolveSessionAgentTarget(session)
-                  if (!activeRuntime.hasLiveSession(session.projectId, session.id) || agentTarget) {
-                    await resumeSession({
-                      sessionId: session.id,
-                      projectId: session.projectId,
-                      cwd: session.cwd,
-                      permissionProfile: session.permissionProfile,
-                      memoryEnabled: session.memoryEnabled !== false,
-                      previousFrameworkId: session.agentFrameworkId,
-                      previousBackendId: session.agentBackendId,
-                      specialistId: session.specialistId,
-                      specialistBindingPending: session.specialistBindingPending,
-                      providerSessionId: session.providerSessionId,
-                      providerContinuityToken: session.providerContinuityToken,
-                      ...(agentTarget ? { agentTarget } : {})
-                    })
-                  }
-                  admission = sessionPersistenceCoordinator.mutateRuntimeSession(
-                    settlement,
-                    (latest) => admitDelegationSettlement(latest, settlement)
-                  )
-                  await admission
-                })()),
-              (operation) =>
-                archiveCoordinator.withProjectDeletionAdmission(settlement.projectId, operation)
-            )
-          } catch (error) {
-            if (!providerAccepted && error instanceof DelegateMessagePreAcceptanceError) {
-              // Cancellation can reject dispatch while validation is still saving the run.
-              await validation?.catch(() => undefined)
-              const admitted = await admission?.catch(() => undefined)
-              if (admitted?.activeRun) {
-                const run = admitted.activeRun
-                await sessionPersistenceCoordinator.mutateRuntimeSession(settlement, (latest) =>
-                  rollbackDelegationSettlement(latest, run)
-                )
-              }
-            }
-            throw error
-          }
+          return activeRuntime.sendAppContinuationObserved(request, onProviderPromptAccepted)
         },
         onPromptEnded: (sessionId, promptId) =>
           delegatedWorkRef.current?.root.settlementPromptEnded?.(sessionId, promptId)

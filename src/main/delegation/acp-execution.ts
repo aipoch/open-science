@@ -68,10 +68,6 @@ type AcpDelegateExecutionCallbacks = Readonly<{
 }>
 
 type AcpDelegateRuntime = Readonly<{
-  withActivity<T>(
-    options: { session: { sessionId: string; cwd: string; projectId: string } },
-    work: () => Promise<T>
-  ): Promise<T>
   createSession(request: {
     cwd: string
     projectId: string
@@ -679,43 +675,30 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
               }
             : undefined)
         let response = ''
-        const delegateRuntime = runtime
-        // One Attempt owns all queued turns; idle release must wait for the queue to drain.
-        await delegateRuntime.withActivity(
-          {
-            session: {
-              sessionId: providerSessionId,
-              cwd: scope.workspace.cwd,
-              projectId: input.session.projectId
-            }
-          },
-          async () => {
-            while (!cancelRequested) {
-              await activeTurn?.begin?.()
-              currentResponse = []
-              providerPromptStarted = true
-              const outcome = await delegateRuntime.sendAppContinuation(promptRequest(nextPrompt))
-              if (activeMessage) activeMessage.acceptance.resolve('provider_prompt_completed')
-              else settleAccepted('provider_prompt_completed')
-              activeMessage = undefined
-              response = currentResponse.join('')
-              if (outcome.stopReason === 'cancelled') cancelRequested = true
-              if (cancelRequested) break
-              await activeTurn?.complete?.(
-                response,
-                currentStopEvent?.turnUsage,
-                currentStopEvent && !currentStopEvent.turnUsage ? true : undefined,
-                currentStopEvent?.modelCallUsage
-              )
-              currentStopEvent = undefined
-              const queued = queuedPrompts.shift()
-              if (queued === undefined) break
-              nextPrompt = queued.text
-              activeMessage = queued
-              activeTurn = queued.turn ?? activeTurn
-            }
-          }
-        )
+        while (!cancelRequested) {
+          await activeTurn?.begin?.()
+          currentResponse = []
+          providerPromptStarted = true
+          const outcome = await runtime.sendAppContinuation(promptRequest(nextPrompt))
+          if (activeMessage) activeMessage.acceptance.resolve('provider_prompt_completed')
+          else settleAccepted('provider_prompt_completed')
+          activeMessage = undefined
+          response = currentResponse.join('')
+          if (outcome.stopReason === 'cancelled') cancelRequested = true
+          if (cancelRequested) break
+          await activeTurn?.complete?.(
+            response,
+            currentStopEvent?.turnUsage,
+            currentStopEvent && !currentStopEvent.turnUsage ? true : undefined,
+            currentStopEvent?.modelCallUsage
+          )
+          currentStopEvent = undefined
+          const queued = queuedPrompts.shift()
+          if (queued === undefined) break
+          nextPrompt = queued.text
+          activeMessage = queued
+          activeTurn = queued.turn ?? activeTurn
+        }
 
         if (!cancelRequested && lastStopEvent) {
           publish({

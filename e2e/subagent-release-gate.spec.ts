@@ -1013,9 +1013,6 @@ test('routes reliable Main and child messages through production Host RPC and th
     'Production reliable downward message was accepted.',
     120_000
   )
-  await expect(page.getByText('Delegated settlement received.')).toBeVisible({ timeout: 120_000 })
-  // The final settlement moves the earlier Main reply into the turn's collapsed history.
-  await page.getByRole('button', { name: /^\d+ previous messages$/ }).click()
   await expect(
     page.getByText('Main replied to the reliable child question from the root continuation.')
   ).toBeVisible({

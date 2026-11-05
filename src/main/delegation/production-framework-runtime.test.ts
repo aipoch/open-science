@@ -290,8 +290,6 @@ describe('production delegated framework runtime bridge', () => {
           observed = options
           return {
             createSession: async () => ({ sessionId: 'ephemeral-child' }),
-            withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> =>
-              work(),
             sendAppContinuation: (request: { permissionPrompts?: 'none' }) => {
               expect(request.permissionPrompts).toBe('none')
               options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
@@ -464,8 +462,6 @@ describe('production delegated framework runtime bridge', () => {
         (options) =>
           ({
             createSession: async () => ({ sessionId: 'ephemeral-child' }),
-            withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> =>
-              work(),
             sendAppContinuation: async () => {
               options.runtimeCallbacks!.onProviderPromptAccepted?.('ephemeral-child')
               const copy = join(runtimeHome, 'config', 'opencode', 'skills', 'os-example')
@@ -1052,7 +1048,6 @@ it('isolates concurrent OpenCode Attempts and a continuation without releasing s
     controls.push({ backend: childBackend, finish, fail })
     return {
       createSession: async () => ({ sessionId: key }),
-      withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
       sendAppContinuation: () => {
         options.runtimeCallbacks!.onProviderPromptAccepted?.(key)
         return completion
@@ -1552,7 +1547,6 @@ it('cleans copied read-only OpenCode Skills after successful execution without c
   admitted.env.XDG_CONFIG_HOME = join(dataRoot, 'shared-config')
   const runtime = vi.spyOn(runtimeComposition, 'createAcpRuntime').mockReturnValue({
     createSession: async () => ({ sessionId: 'provider' }),
-    withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
     sendAppContinuation: async () => ({ stopReason: 'end_turn' }),
     deleteSession: async () => undefined,
     shutdownForQuit: async () => ({ reaped: true })

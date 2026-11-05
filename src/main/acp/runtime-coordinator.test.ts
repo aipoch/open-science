@@ -3502,48 +3502,6 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[0].sendPrompt).not.toHaveBeenCalled()
   })
 
-  it('holds settlement completion through its resumed provider turn and queues the next user prompt', async () => {
-    const finished = createDeferred<unknown>()
-    let created!: ReturnType<typeof createFakeRuntime>
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      created = createFakeRuntime({
-        frameworkId: 'opencode',
-        sessionIds: ['session-1'],
-        callbacks,
-        prompt: () => finished.promise
-      })
-      return created.runtime
-    })
-    const session = await coordinator.createSession({ cwd: '/workspace' })
-    const accepted = vi.fn()
-    const completed = vi.fn()
-    const settlement = coordinator
-      .sendAppContinuationObserved(
-        { sessionId: session.sessionId, text: 'settlement' },
-        accepted,
-        async (resume) => {
-          await resume({ sessionId: session.sessionId, cwd: '/workspace' })
-        }
-      )
-      .then(completed)
-    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce())
-    const prepared = vi.fn(async () => undefined)
-    const preparation = coordinator.withPromptPreparationAdmission(session.sessionId, prepared)
-    const user = preparation.then(() =>
-      coordinator.sendPrompt({ sessionId: session.sessionId, text: 'next user turn' })
-    )
-    expect(created.resumeSession).toHaveBeenCalledOnce()
-    expect(completed).not.toHaveBeenCalled()
-    expect(prepared).not.toHaveBeenCalled()
-    expect(created.sendPrompt).not.toHaveBeenCalled()
-    finished.resolve({ stopReason: 'end_turn' })
-    await settlement
-    await user
-    expect(completed).toHaveBeenCalledOnce()
-    expect(prepared).toHaveBeenCalledOnce()
-    expect(created.sendPrompt).toHaveBeenCalledOnce()
-  })
-
   it('classifies a continuation dispatch-guard rejection as proven pre-acceptance', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

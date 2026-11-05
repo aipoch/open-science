@@ -9021,7 +9021,7 @@ describe('workspace agent message sending', () => {
       activeRun: undefined,
       messages: [expect.objectContaining({ content: 'Previous prompt' })]
     })
-    await vi.waitFor(() => expect(runtime.resumeSession).toHaveBeenCalledTimes(1))
+    expect(runtime.resumeSession).toHaveBeenCalledTimes(1)
     expect(preparationChanged).toHaveBeenCalledWith('session-1', true)
 
     resumeCanFinish.resolve({ sessionId: 'session-1', cwd: '/workspace/project' })

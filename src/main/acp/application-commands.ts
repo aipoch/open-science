@@ -284,6 +284,7 @@ type AcpApplicationCommandRuntime = Pick<
   | 'getState'
   | 'connect'
   | 'disconnect'
+  | 'resetSessionContext'
   | 'compactSession'
   | 'cancelPrompt'
   | 'steerFollowUp'
@@ -363,11 +364,11 @@ const registerAcpCommands = (
               ? dependencies.archiveAvailability.withSessionAvailableById(
                   invocation.args[0].sessionId,
                   (projectId) =>
-                    dependencies.workflows.resetSessionContext(
+                    dependencies.runtime.resetSessionContext(
                       bindResumeRequestToProject(invocation.args[0], projectId)
                     )
                 )
-              : dependencies.workflows.resetSessionContext(invocation.args[0])
+              : dependencies.runtime.resetSessionContext(invocation.args[0])
           )
         ),
       'acp:compact-session': (invocation) =>

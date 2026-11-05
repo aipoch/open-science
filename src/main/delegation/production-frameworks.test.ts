@@ -171,8 +171,6 @@ describe('production delegated framework factory composition', () => {
             let promptCount = 0
             return {
               createSession: async () => ({ sessionId: providerSessionId }),
-              withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> =>
-                work(),
               sendAppContinuation: async () => {
                 promptCount += 1
                 if (promptCount <= 2) callbacks.onProviderPromptAccepted(providerSessionId)

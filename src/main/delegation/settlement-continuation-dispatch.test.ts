@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { materializeSessionConversationGraph } from '../../shared/session-persistence'
-import { synchronizeActiveConversationMessages } from '../../shared/conversation-graph'
 
 import {
   createDelegationSettlementContinuationDispatch,
-  admitDelegationSettlement,
-  rollbackDelegationSettlement,
   type SettlementContinuationDispatchOptions
 } from './settlement-continuation-dispatch'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
@@ -86,100 +82,5 @@ describe('delegation settlement continuation dispatch', () => {
 
     await expect(dispatch(request)).resolves.toBeUndefined()
     expect(onPromptEnded).toHaveBeenCalledOnce()
-  })
-})
-
-describe('settlement turn admission', () => {
-  it('re-arms an idle root turn without adding a user message and rejects changed ownership', () => {
-    const session = materializeSessionConversationGraph({
-      id: request.sessionId,
-      projectId: request.projectId,
-      title: 'Delegate',
-      cwd: '/workspace',
-      status: 'idle',
-      createdAt: 1,
-      updatedAt: 2,
-      messages: [
-        {
-          id: request.originatingPromptId,
-          role: 'user',
-          content: 'Research',
-          status: 'complete',
-          eventIds: [],
-          createdAt: 1,
-          updatedAt: 2
-        }
-      ],
-      runtimeTranscriptLastRun: { promptMessageId: request.originatingPromptId, startedAt: 10 }
-    })
-    const graph = session.conversationGraph!
-    const selected = {
-      ...request,
-      rootFrameId: graph.rootFrameId,
-      rootBranchId: graph.frames[0].activeBranchId,
-      runtimeSegmentId: graph.messages[0].runtimeSegmentId!
-    }
-    const admitted = admitDelegationSettlement(session, selected, 5)
-    expect(admitted.activeRun).toEqual({
-      promptMessageId: request.originatingPromptId,
-      startedAt: 11
-    })
-    expect(admitted.messages).toBe(session.messages)
-    expect(admitted.conversationGraph).toBe(graph)
-    const rolledBack = rollbackDelegationSettlement(admitted, admitted.activeRun!)
-    expect(rolledBack.status).toBe('idle')
-    expect(rolledBack.activeRun).toBeUndefined()
-    expect(admitDelegationSettlement(rolledBack, selected).status).toBe('running')
-    for (const activeRun of [
-      { promptMessageId: 'new-user-turn', startedAt: 11 },
-      { promptMessageId: request.originatingPromptId, startedAt: 12 }
-    ]) {
-      const newer = { ...admitted, activeRun }
-      expect(rollbackDelegationSettlement(newer, admitted.activeRun!)).toBe(newer)
-    }
-    const newerMessages = [
-      ...session.messages,
-      { ...session.messages[0], id: 'new-user-turn', createdAt: 20, updatedAt: 20 }
-    ]
-    expect(() =>
-      admitDelegationSettlement(
-        {
-          ...session,
-          messages: newerMessages,
-          conversationGraph: synchronizeActiveConversationMessages(graph, newerMessages, 20)
-        },
-        selected
-      )
-    ).toThrow('idle active root turn')
-    expect(() =>
-      admitDelegationSettlement(
-        { ...session, activeRun: { promptMessageId: 'new-user-turn', startedAt: 20 } },
-        selected
-      )
-    ).toThrow('idle active root turn')
-    expect(() =>
-      admitDelegationSettlement(
-        {
-          ...session,
-          promptPreparation: {
-            id: 'preparing',
-            sessionId: session.id,
-            projectId: session.projectId,
-            promptMessageId: 'next-user-turn',
-            mode: 'new',
-            preparedAt: 20,
-            previousState: { status: 'idle' },
-            expectedState: { status: 'idle' }
-          }
-        },
-        selected
-      )
-    ).toThrow('idle active root turn')
-    expect(() =>
-      admitDelegationSettlement(session, { ...selected, rootBranchId: 'another-branch' })
-    ).toThrow('idle active root turn')
-    expect(() =>
-      admitDelegationSettlement(session, { ...selected, runtimeSegmentId: 'another-segment' })
-    ).toThrow('idle active root turn')
   })
 })

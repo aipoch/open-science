@@ -5053,7 +5053,6 @@ describe('ACP terminal outcomes through durable delegation', () => {
           if (outcome === 'startup-unreaped') throw new Error('provider startup rejected')
           return { sessionId: 'provider-child' }
         },
-        withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> => work(),
         sendAppContinuation: async () => {
           promptStarted()
           callbacks.onProviderPromptAccepted('provider-child')

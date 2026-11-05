@@ -397,7 +397,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
   await expect(conversation.getByLabel('Message revision', { exact: true })).toHaveText(['2/2'])
 })
 
-test('keeps Memory reversible while the replacement session awaits history replay', async ({
+test('persists Memory toggles after idle provider release and restart', async ({
   app
 }, testInfo) => {
   let page = await app.completeOnboarding()
@@ -408,23 +408,8 @@ test('keeps Memory reversible while the replacement session awaits history repla
   await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   await expect
-    .poll(() =>
-      page.evaluate(async () =>
-        Boolean((await window.api.sessions.loadAll()).sessions[0].activeRun)
-      )
-    )
-    .toBe(false)
-  // Completed turns release their provider. Explicitly establish the replacement under test.
-  await page.evaluate(async () => {
-    const session = (await window.api.sessions.loadAll()).sessions[0]
-    await window.api.acp.resetSessionContext({
-      sessionId: session.id,
-      projectId: session.projectId,
-      cwd: session.cwd!,
-      agentTarget: { ...session.agentConfiguration!, frameworkId: session.agentFrameworkId! },
-      memoryEnabled: true
-    })
-  })
+    .poll(() => page.evaluate(async () => (await window.api.acp.getState()).sessionIds))
+    .toEqual([])
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
   const memory = page.getByRole('menuitem', { name: 'Memory', exact: true })
@@ -436,7 +421,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .toEqual({
       memoryEnabled: false,
       autoReviewEnabled: false,
-      pendingHistoryReplay: { kind: 'all' }
+      pendingHistoryReplay: null
     })
 
   await page.keyboard.press('Escape')
@@ -457,7 +442,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     .toEqual({
       memoryEnabled: true,
       autoReviewEnabled: false,
-      pendingHistoryReplay: { kind: 'all' }
+      pendingHistoryReplay: null
     })
   await page.screenshot({ path: testInfo.outputPath('memory-restored-after-restart.png') })
 })

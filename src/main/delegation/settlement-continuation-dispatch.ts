@@ -1,5 +1,3 @@
-import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
@@ -7,8 +5,7 @@ import { DelegateMessagePreAcceptanceError } from './execution-port'
 type SettlementContinuationDispatchOptions = Readonly<{
   sendAppContinuationObserved(
     request: AcpPromptRequest,
-    onProviderPromptAccepted: () => void,
-    settlement: DelegationSettlementDispatch
+    onProviderPromptAccepted: () => void
   ): Promise<unknown>
   onPromptEnded(sessionId: string, promptId: string): Promise<void> | void
 }>
@@ -41,8 +38,7 @@ const createDelegationSettlementContinuationDispatch =
       },
       () => {
         providerAccepted = true
-      },
-      request
+      }
     )
     try {
       await completion
@@ -54,59 +50,5 @@ const createDelegationSettlementContinuationDispatch =
     )
   }
 
-// Main re-arms the originating turn only after root dispatch admission; renderer metadata saves
-// cannot create this authority, and a newer user run or switched Branch must keep it parked.
-const admitDelegationSettlement = (
-  session: PersistedChatSession,
-  request: DelegationSettlementDispatch,
-  now = Date.now()
-): PersistedChatSession => {
-  const graph = session.conversationGraph
-  const root = graph?.frames.find(({ id }) => id === request.rootFrameId)
-  const prompt =
-    graph && resolveActiveConversationMessages(graph).findLast(({ role }) => role === 'user')
-  if (
-    session.id !== request.sessionId ||
-    session.projectId !== request.projectId ||
-    session.archivedAt !== undefined ||
-    session.activeRun ||
-    session.promptPreparation ||
-    session.status !== 'idle' ||
-    graph?.rootFrameId !== request.rootFrameId ||
-    graph.activeFrameId !== request.rootFrameId ||
-    root?.activeBranchId !== request.rootBranchId ||
-    prompt?.id !== request.originatingPromptId ||
-    prompt.runtimeSegmentId !== request.runtimeSegmentId
-  )
-    throw new DelegateMessagePreAcceptanceError(
-      'Delegation settlement no longer has an idle active root turn.'
-    )
-  const startedAt = Math.max(now, (session.runtimeTranscriptLastRun?.startedAt ?? 0) + 1)
-  return {
-    ...session,
-    status: 'running',
-    activeRun: { promptMessageId: request.originatingPromptId, startedAt },
-    updatedAt: Math.max(startedAt, session.updatedAt)
-  }
-}
-
-const rollbackDelegationSettlement = (
-  session: PersistedChatSession,
-  admittedRun: PersistedActiveRun
-): PersistedChatSession => {
-  if (
-    session.status !== 'running' ||
-    session.promptPreparation ||
-    session.activeRun?.promptMessageId !== admittedRun.promptMessageId ||
-    session.activeRun.startedAt !== admittedRun.startedAt
-  )
-    return session
-  return { ...session, status: 'idle', activeRun: undefined }
-}
-
-export {
-  createDelegationSettlementContinuationDispatch,
-  admitDelegationSettlement,
-  rollbackDelegationSettlement
-}
+export { createDelegationSettlementContinuationDispatch }
 export type { SettlementContinuationDispatchOptions }

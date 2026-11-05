@@ -47,7 +47,6 @@ type AcpHandlerWorkflowRuntime = {
   hasLiveSession(projectId: string, sessionId: string): boolean
   captureSessionBackend(sessionId: string): AcpBackendGenerationView | undefined
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
-  resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   startPrompt(request: AcpPromptRequest): Promise<void>
   getLatestUserPrompt(sessionId: string, promptMessageId: string): AcpPromptRequest | undefined
   startContinuation(request: AcpPromptRequest): Promise<void>
@@ -77,7 +76,6 @@ type SessionArchiveAvailability = {
 type AcpHandlerWorkflows = {
   createSession(request: AcpCreateSessionRequest): Promise<AcpCreateSessionResponse>
   resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
-  resetSessionContext(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse>
   continueInterruptedTurn(request: AcpContinueInterruptedTurnRequest): Promise<AcpRuntimeState>
   saveAsSkill(request: AcpSaveAsSkillRequest): Promise<AcpRuntimeState>
   sendPrompt(request: AcpPromptRequest): Promise<AcpRuntimeState>
@@ -301,18 +299,6 @@ const createAcpHandlerWorkflows = (
       }
       throw error
     }
-  },
-
-  async resetSessionContext(request): Promise<AcpCreateSessionResponse> {
-    const attached = await runtime.resetSessionContext(request)
-    if (request.projectId) {
-      await interruptedTurnSessions?.completeRuntimeAttachment?.(
-        request.projectId,
-        request.sessionId,
-        attached
-      )
-    }
-    return attached
   },
 
   async resumeSession(request): Promise<AcpCreateSessionResponse> {

@@ -552,8 +552,6 @@ const createFrameworkCompositionHarness = async (
           })
           return {
             createSession: async () => ({ sessionId: `provider-${scope.executionId}` }),
-            withActivity: async <T>(_options: unknown, work: () => Promise<T>): Promise<T> =>
-              work(),
             sendAppContinuation: async ({ text }) => {
               prompts.push(text)
               callbacks.onProviderPromptAccepted(`provider-${scope.executionId}`)

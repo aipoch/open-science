@@ -80,7 +80,7 @@ const registerAcpIpcHandlerSet = (
   ipcMainHandle('acp:reset-session-context', (_event, request: AcpResumeSessionRequest) =>
     withAgentAuthenticationRecovery(() =>
       sessionAdmission.withSessionAvailableById(request.sessionId, async (projectId) =>
-        workflows.resetSessionContext(
+        runtime.resetSessionContext(
           await withDurableMemoryPreference(
             bindResumeRequestToProject(request, projectId),
             resolveMemoryEnabled
