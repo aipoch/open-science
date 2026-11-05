@@ -4943,7 +4943,10 @@ describe('PreviewFileSurface file header actions', () => {
     ).toBeTruthy()
 
     await click(browserButton)
-    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({ path: managedHtmlItem.path })
+    expect(window.api.artifacts.openFile).toHaveBeenCalledWith({
+      path: managedHtmlItem.path,
+      suggestedName: managedHtmlItem.name
+    })
 
     await act(async () => {
       container
@@ -4955,7 +4958,10 @@ describe('PreviewFileSurface file header actions', () => {
       document.body.querySelector('[data-testid="preview-content-context-menu"]')?.textContent
     ).toContain('Open in browser')
     await clickMenuItem('Open in browser')
-    expect(window.api.artifacts.openFile).toHaveBeenLastCalledWith({ path: managedHtmlItem.path })
+    expect(window.api.artifacts.openFile).toHaveBeenLastCalledWith({
+      path: managedHtmlItem.path,
+      suggestedName: managedHtmlItem.name
+    })
   })
 
   it('leaves context-menu events outside the preview content region untouched', async () => {

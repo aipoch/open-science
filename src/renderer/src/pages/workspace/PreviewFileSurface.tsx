@@ -1152,7 +1152,10 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
           if (result) throw new Error(result)
         } else {
-          await window.api.artifacts.openFile({ path: resolvedPreviewItem.path })
+          await window.api.artifacts.openFile({
+            path: resolvedPreviewItem.path,
+            suggestedName: resolvedPreviewItem.name
+          })
         }
       } catch (error) {
         setLocalActionFailure({

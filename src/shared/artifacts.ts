@@ -144,6 +144,8 @@ export type FinalizeRunArtifactsResult =
 // Renderer request to open one managed artifact through main-process path validation.
 export type OpenArtifactFileRequest = {
   path: string
+  /** Optional display name used when the resolved storage path has no usable extension. */
+  suggestedName?: string
 }
 
 // Renderer request for a bounded text preview of one managed artifact.
