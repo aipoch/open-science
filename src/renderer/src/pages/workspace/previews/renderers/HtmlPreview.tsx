@@ -269,16 +269,22 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
         )}
     </div>
   )
+  const topContent = (
+    <>
+      {modeToggle}
+      {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
+    </>
+  )
 
   if (mode === 'source') {
-    return <HtmlSourceContent {...props} topContent={modeToggle} />
+    return <HtmlSourceContent {...props} topContent={topContent} />
   }
 
   if (resourceState.status === 'loading') return <PreviewLoadingContent />
   if (resourceState.status === 'error' || resourceState.status === 'idle' || hasFailed) {
     return (
       <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-        {modeToggle}
+        {topContent}
         <div className="min-h-0 flex-1">
           <PreviewErrorCard
             name={item.name}
@@ -292,8 +298,7 @@ const HtmlPreviewContent = (props: PreviewFileRendererProps): React.JSX.Element 
 
   return (
     <div className="flex size-full flex-col overflow-hidden bg-bg-10">
-      {modeToggle}
-      {exportError && <ErrorNotice inline tone="amber" description={exportError} />}
+      {topContent}
       <iframe
         ref={iframeRef}
         title={t('Preview of {{name}}', { name: item.name })}

@@ -503,7 +503,7 @@ describe('PreviewFileContent', () => {
     expect(button()).toBeDefined()
   })
 
-  it.each(['complete', 'cancel'] as const)(
+  it.each(['complete', 'cancel', 'fail'] as const)(
     'retains an export in source mode until %s and hides idle source export controls',
     async (outcome) => {
       vi.mocked(window.api.artifacts.readPreview).mockResolvedValue({
@@ -537,8 +537,11 @@ describe('PreviewFileContent', () => {
       let finish!: () => void
       vi.mocked(window.api.previewResources.exportResearchVideo).mockImplementationOnce(
         () =>
-          new Promise((resolve) => {
-            finish = () => resolve({ canceled: outcome === 'cancel' })
+          new Promise((resolve, reject) => {
+            finish = () =>
+              outcome === 'fail'
+                ? reject(new Error('Encoding failed'))
+                : resolve({ canceled: outcome === 'cancel' })
           })
       )
       await act(async () => button('Export MP4')!.click())
@@ -561,6 +564,7 @@ describe('PreviewFileContent', () => {
       expect(window.api.previewResources.release).toHaveBeenCalledWith(request)
       expect(button('Export MP4')).toBeUndefined()
       expect(button('Cancel')).toBeUndefined()
+      if (outcome === 'fail') expect(container.textContent).toContain('Encoding failed')
       await switchMode('Show rendered HTML')
       expect(button('Export MP4')).toBeDefined()
     }
