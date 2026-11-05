@@ -1,4 +1,5 @@
 {
+  "fullTestReason": "Session write recovery adds an owner outside the reviewed persistence boundary; retain full validation until the expanded boundary is reviewed.",
   "ownerPaths": [
     "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
     "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
