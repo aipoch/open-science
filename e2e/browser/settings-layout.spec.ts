@@ -177,9 +177,11 @@ for (const localized of localizedSettingsCases) {
       if (!(await navigation.isVisible())) {
         await settings.getByRole('button', { name: localized.openNavigation }).click()
       }
-      await navigation.getByRole('button', { name: localized.general, exact: true }).click()
+      await navigation.getByRole('button', { name: localized.appearance, exact: true }).click()
 
-      await expect(settings.getByRole('heading', { name: localized.appearance })).toBeVisible()
+      await expect(
+        settings.getByRole('region', { name: localized.appearance, exact: true })
+      ).toBeVisible()
       await expect(
         settings.getByRole('combobox', { name: localized.interfaceLanguage })
       ).toContainText(localized.pickerLabel)
