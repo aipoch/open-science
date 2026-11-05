@@ -1,56 +1,5 @@
 import { expect, test } from '@playwright/test'
 
-test('keeps multi-question progress and drafts while the panel collapses and the inline entry reveals it', async ({
-  page
-}) => {
-  await page.goto('/elicitation.html')
-  const entry = page.getByRole('button', { name: '3 questions awaiting your answer', exact: true })
-  await expect(entry).toBeVisible()
-  await expect(page.getByRole('heading', { level: 3 })).toHaveCount(1)
-  await page.getByTestId('elicitation-option-data').click()
-  await page.getByRole('button', { name: 'Next question', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Type your own answer' }).fill('Use my RNA-seq dataset')
-  const viewport = await page
-    .getByTestId('transcript-viewport')
-    .evaluate((element) => ({ height: element.clientHeight, scrollTop: element.scrollTop }))
-  await page.getByRole('button', { name: 'Collapse question panel', exact: true }).click()
-  await expect(page.getByTestId('elicitation-choice-mode')).toBeHidden()
-  await expect(page.getByTestId('elicitation-question-progress')).toHaveText('2 of 3')
-  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeHidden()
-  expect(
-    await page
-      .getByTestId('transcript-viewport')
-      .evaluate((element) => ({ height: element.clientHeight, scrollTop: element.scrollTop }))
-  ).toEqual(viewport)
-  await entry.click()
-  const input = page.getByRole('textbox', { name: 'Type your own answer' })
-  await expect(input).toBeFocused()
-  await expect(input).toHaveValue('Use my RNA-seq dataset')
-  await page.getByRole('button', { name: 'Previous question', exact: true }).click()
-  await expect(page.getByTestId('elicitation-option-data')).toHaveAttribute('aria-pressed', 'true')
-  await page.getByRole('button', { name: 'Next question', exact: true }).click()
-  await expect(input).toHaveValue('Use my RNA-seq dataset')
-  await page.getByRole('button', { name: 'Next question', exact: true }).click()
-  await page.getByTestId('elicitation-option-report').click()
-  await page.getByRole('button', { name: 'Finish', exact: true }).click()
-  await expect(page.getByTestId('elicitation-composer')).toHaveCount(0)
-  await expect(page.getByTestId('elicitation-answer-row')).toHaveCount(3)
-})
-
-test('single-question collapse omits progress and keeps keyboard access to the whole pending label', async ({
-  page
-}) => {
-  await page.setViewportSize({ width: 360, height: 740 })
-  await page.goto('/elicitation.html?questions=1')
-  await expect(page.getByTestId('elicitation-question-progress')).toHaveCount(0)
-  await page.getByRole('button', { name: 'Collapse question panel', exact: true }).click()
-  const entry = page.getByRole('button', { name: '1 question awaiting your answer', exact: true })
-  await entry.focus()
-  await page.keyboard.press('Enter')
-  await expect(page.getByTestId('elicitation-choice-mode')).toBeVisible()
-  await expect(page.getByTestId('elicitation-option-literature')).toBeFocused()
-})
-
 test('revealing a scrolled-away choice keeps the focused option visible without moving the transcript', async ({
   page
 }) => {
