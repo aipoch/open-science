@@ -70,6 +70,7 @@ describe('molecule preview handler', () => {
     expect(writeArtifactForCurrentRun).not.toHaveBeenCalled()
   })
 
+  // Large OpenChemLib round-trips need more time under CI's V8 coverage.
   it('publishes a readable V3000 artifact for a structure exceeding 999 atoms', async () => {
     const writeArtifactForCurrentRun = vi.fn().mockResolvedValue({
       id: 'large-molecule',
@@ -93,7 +94,7 @@ describe('molecule preview handler', () => {
     expect(restored.getAllAtoms()).toBe(1000)
     expect(restored.getAllBonds()).toBe(999)
     expect(restored.toSmiles()).toBe(Molecule.fromSmiles(smiles).toSmiles())
-  })
+  }, 120_000)
 
   it('publishes the intact structure when a molfile has an empty title', async () => {
     const writeArtifactForCurrentRun = vi.fn().mockResolvedValue({
