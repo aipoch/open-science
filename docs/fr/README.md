@@ -45,13 +45,11 @@
 
 > Ce document est une traduction de `README.md` en anglais. En cas de divergence, la [version anglaise](../../README.md) fait foi.
 
-AIPOCH Open-Science est un environnement de recherche assistée par IA destiné aux scientifiques et aux chercheurs, développé par [AIPOCH](https://aipoch.com/open-science) selon une approche open source, local-first et indépendante des modèles. Il permet une recherche reproductible et inspectable grâce à des agents IA scientifiques, l'exécution Python et R, des connecteurs de données scientifiques, et une prise en charge multiplateforme de macOS, Windows et Linux. Créez un projet, décrivez votre objectif de recherche en langage naturel, et laissez les agents lire des fichiers, rechercher sur le web, exécuter du code, interroger des sources de données scientifiques, et produire des rapports, des tableaux et des figures avec une provenance traçable — le tout dans un seul espace de travail.
+[AIPOCH Open-Science](https://aipoch.com/open-science) est un environnement de recherche open source qui intègre l’intelligence artificielle. Commencez par une question, un article scientifique ou un fichier de données. Décrivez avec vos propres mots ce que vous cherchez à savoir, puis travaillez avec un agent d’IA pour examiner les éléments de preuve, analyser des données ou créer un graphique.
 
-AIPOCH Open-Science prend en charge la recherche computationnelle et intensive en données dans de nombreuses disciplines, notamment l'apprentissage automatique, la statistique, les sciences de la vie, la chimie, la science des matériaux, la physique et les sciences de l'environnement. Il accompagne le processus de recherche, de la revue de littérature et de l'élaboration d'hypothèses jusqu'à l'exécution de code, l'analyse de données, la simulation, la visualisation et la production de résultats de recherche traçables.
+Pour comprendre comment un résultat a été obtenu, consultez les données d’entrée, le code et l’historique d’exécution disponibles. Pour partager votre travail, choisissez les branches de conversation, les versions de fichiers, les enregistrements du Notebook et les éléments de vérification à inclure dans un paquet `.science`, puis exportez-le.
 
-Les sessions de recherche terminées peuvent également être exportées sous forme de paquets `.science` portables pour la revue, la transmission et l’archivage, avec les branches de conversation, versions de fichiers, enregistrements Notebook et preuves de vérification sélectionnés.
-
-> 💡 **[AIPOCH Open-Science v1.0.7 publié](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en novembre 2026)_. Cette version fait de Pi le cinquième framework d’agents, permet d’ajouter des références directement depuis un DOI ou un lien arXiv et permet aux agents d’annoter les PDF liés en mode lecture. Une OCR optionnelle avec neuf packs de langue rend les PDF scannés lisibles, et la place de marché des cas de recherche propose désormais une fonction de recherche. Elle corrige aussi la préparation du terminal des Notebooks sous Windows, les plantages d’OpenCode lors de la compaction du contexte et les téléchargements avec DNS Fake-IP. Consultez les [notes de version v1.0.7](../../release-notes/1.0.7/fr.md) pour tous les détails.
+> 💡 **[AIPOCH Open-Science v1.0.8 publié](https://github.com/aipoch/open-science/releases/latest)** _(dernière mise à jour en novembre 2026)_. Cette version réorganise les paramètres en onglets dédiés, importe jusqu'à 100 références à la fois depuis des identifiants DOI, arXiv ou PubMed et ajoute des synthèses d'étude par IA à la vue détaillée de la bibliothèque. Les sessions terminées libèrent leurs processus d'agents, les requêtes eQTL Catalogue fonctionnent à nouveau et les mises à jour sur macOS et Windows sont plus fluides. Consultez les [notes de version v1.0.8](../../release-notes/1.0.8/fr.md) pour tous les détails.
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />
@@ -83,11 +81,13 @@ Ouvrez la [page officielle de téléchargement](https://aipoch.com/open-science/
 | --------------------------------------------- | ---------------------------------------- |
 | macOS 12+ — Apple Silicon (M1 ou plus récent) | Le DMG macOS pour Apple Silicon / ARM64  |
 | macOS 12+ — Intel                             | Le DMG macOS pour Intel / x64            |
-| Windows x64                                   | L'installateur Windows x64 (signé)       |
+| Windows 10/11 x64                             | L'installateur Windows x64 (signé)       |
 | Linux x64                                     | L'AppImage Linux x64 ou le paquet Debian |
 | Linux ARM64                                   | AppImage ou paquet Debian Linux ARM64    |
 
 Téléchargez depuis la [page officielle de téléchargement](https://aipoch.com/open-science/download) ; consultez la [vérification du téléchargement](../../SECURITY.md#verifying-your-download) si nécessaire.
+
+Les archives de la CLI autonome pour macOS, Linux et Windows incluent Node.js et s’utilisent sans Homebrew ni npm.
 
 Sur macOS, vous pouvez aussi installer l’application avec [Homebrew](https://brew.sh) :
 
@@ -120,6 +120,8 @@ Sous Windows, une réinstallation conserve les données de recherche. Pour tout 
 Suivez l’assistant : **Environnement → Emplacement des données → Environnement d’exécution de l’agent → Fournisseur de modèle → Environnement d’exécution Notebook**.
 
 Terminez les vérifications obligatoires de l’environnement et du runtime de l’agent, puis testez la connexion au modèle. La configuration Python/R Notebook est facultative ; Notebook et l’emplacement des données restent modifiables dans les paramètres.
+
+Les réglages d’apparence et de notifications se trouvent dans les paramètres système. La rubrique **Général** donne accès au guide d’installation et de mise à jour manuelles.
 
 <table>
   <tr>
@@ -308,13 +310,17 @@ AIPOCH Open-Science combine la gestion de projets, l'exécution d'agents multi-m
 | **Fichiers scientifiques et aperçus**         | Téléversez jusqu’à **10 GiB par fichier**, organisez les fichiers du projet et prévisualisez données scientifiques, PDF, documents Office, images, code et structures moléculaires. Cette limite de téléversement ne garantit pas qu’un modèle lise tout le fichier : contexte, analyse des pièces jointes et aperçus ont leurs propres limites. Les gros fichiers nécessitent généralement une lecture ou une analyse par blocs avec du code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | **Artefacts et provenance**                   | Conservez des versions immuables des résultats avec code producteur, entrées, historique d’exécution, environnement et preuves de revue disponibles. Importez des artefacts depuis des dossiers autorisés ; AIPOCH Open-Science copie chaque fichier importé dans le stockage d’artefacts géré. Sur le bureau, rejouez une version admissible avec une recette complète, les entrées nécessaires et un environnement opérationnel, puis comparez les sorties et exportez les vérifications. Des preuves manquantes peuvent bloquer la vérification, et le rejeu n’établit pas la validité scientifique.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
+Lors d’une recherche par coordonnées dans l’eQTL Catalogue, Open-Science vérifie que les coordonnées correspondent à l’assemblage de référence GRCh38.
+
 Importez des références, des étiquettes, des collections et des liens vers les sources depuis Zotero 10 ou une version ultérieure exécutée sur le même ordinateur. Vous pouvez choisir de copier les pièces jointes PDF locales ; l’importation est unidirectionnelle et ne modifie pas Zotero.
 
-Ajoutez des références une par une à partir d’un DOI, d’un lien DOI ou d’un lien vers le résumé ou le PDF sur arXiv, puis vérifiez et modifiez les métadonnées récupérées avant de les enregistrer. Les PDF en texte intégral peuvent être ajoutés séparément.
+Ajoutez une référence à partir d’un DOI, d’un identifiant arXiv, d’un PMID, d’un PMCID ou d’un lien d’article pris en charge, ou collez jusqu’à 100 références, une par ligne. Vérifiez et modifiez une référence individuelle avant de l’enregistrer, ou sélectionnez les références à importer par lot. Les PDF en texte intégral peuvent être ajoutés séparément.
 
 Les annotations PDF et les notes de document sont persistantes. Avec un modèle de sélection configuré, les collections intelligentes évaluent les références selon vos critères d’inclusion et d’exclusion. Les décisions de l’IA et les décisions manuelles restent distinctes pour aider la revue humaine.
 
 En mode lecture, les agents peuvent lister, localiser et créer des notes et des marques dans les PDF liés. Les annotations PDF sont liées à la version du fichier annoté et ne se synchronisent pas entre ordinateurs.
+
+Sur la fiche de l’article, le modèle principal configuré synthétise la question de recherche, la population étudiée, les méthodes, les principaux résultats et les limites. La synthèse précise si elle s’appuie sur le texte intégral ou sur le résumé de l’article.
 
 L’OCR optionnelle reconnaît les pages PDF numérisées une fois le composant et les packs de langue nécessaires téléchargés. Neuf packs de langue sont disponibles : anglais, chinois simplifié, chinois traditionnel, allemand, espagnol, français, japonais, coréen et russe. Des indicateurs de couverture par page montrent quelles pages sont encore dépourvues de texte.
 

@@ -1,6 +1,8 @@
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
+import { mapWsl2Path } from '@aipoch/notebook-network-sandbox'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { ResolvedAgentBackend } from '../agent-framework'
 import type {
@@ -56,6 +58,7 @@ type ProviderPreparationInput = Readonly<{
   }>
   codebuddy?: Readonly<{
     root?: string
+    shellRuntime?: ShellRuntimeBinding
     selectorAvailable: boolean
     selectSkills: NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     signal?: AbortSignal
@@ -75,9 +78,9 @@ type LoadedCodeBuddySkill = Readonly<{
   name: string
   path: string
   resourceRoot: string
+  shellResourceRoot?: string
   document: string
 }>
-const CODEBUDDY_SKILL_RESOURCE_ROOT = '${CODEBUDDY_CONFIG_DIR}/skill-runtime/.claude/skills'
 const codeBuddySkillRuntimeRoot = (
   options: Readonly<Record<string, unknown>> | undefined
 ): string | undefined => {
@@ -345,12 +348,15 @@ class AcpTurnSkillOwner {
                   'Follow these documents before any Notebook or Connector call. Do not call `mcp__skills__load_skill`; the documents are already loaded.',
                   'Do not use Notebook `host.skills` to load, read, list, or discover routed Skills.',
                   'Use only the `host.mcp` Connector names and methods documented below; do not guess Connector names or methods.',
-                  'Resolve every relative reference, script, or asset path in a loaded document against its `resource-root`. Keep the environment-backed root expression literal in local tool calls; do not print or resolve `CODEBUDDY_CONFIG_DIR`.',
-                  ...loadedCodeBuddySkills.flatMap(({ name, resourceRoot, document }) => [
-                    `<open_science_loaded_skill name="${name}" resource-root="${resourceRoot}">`,
-                    document,
-                    '</open_science_loaded_skill>'
-                  ])
+                  'Resolve every relative reference, script, or asset path in a loaded document against its `resource-root`.',
+                  'When `shell-resource-root` is present, use it instead of `resource-root` for Notebook shell calls, including paths in document examples. Native Read and host Notebook kernels still use `resource-root`.',
+                  ...loadedCodeBuddySkills.flatMap(
+                    ({ name, resourceRoot, shellResourceRoot, document }) => [
+                      `<open_science_loaded_skill name="${name}" resource-root="${resourceRoot}"${shellResourceRoot ? ` shell-resource-root="${shellResourceRoot}"` : ''}>`,
+                      document,
+                      '</open_science_loaded_skill>'
+                    ]
+                  )
                 ]
               : [
                   '- (none)',
@@ -392,11 +398,22 @@ class AcpTurnSkillOwner {
     try {
       return await Promise.all(
         names.map(async (name) => {
-          const resourceRoot = `${CODEBUDDY_SKILL_RESOURCE_ROOT}/${name}`
+          // Notebook tools do not inherit CodeBuddy's provider environment.
+          const resourceRoot = join(root, '.claude', 'skills', name)
+          const shellRuntime = input.codebuddy?.shellRuntime
+          const shellResourceRoot =
+            shellRuntime?.kind === 'wsl2-bash'
+              ? await mapWsl2Path(
+                  { ...shellRuntime, kind: 'wsl2' },
+                  resourceRoot,
+                  input.codebuddy?.signal
+                )
+              : undefined
           return {
             name,
-            path: join(root, '.claude', 'skills', name, 'SKILL.md'),
+            path: join(resourceRoot, 'SKILL.md'),
             resourceRoot,
+            ...(shellResourceRoot ? { shellResourceRoot } : {}),
             document: (await loadSkillDocumentContent({ root, allowedNames }, name)).replace(
               /\$\{CLAUDE_SKILL_DIR\}/g,
               resourceRoot
@@ -405,6 +422,7 @@ class AcpTurnSkillOwner {
         })
       )
     } catch {
+      if (input.codebuddy?.signal?.aborted) return []
       return this.selectionFailed('document-error', 'CodeBuddy')
     }
   }

@@ -43,13 +43,11 @@
   <a href="./docs/es/README.md"><img alt="Español README" src="https://img.shields.io/badge/Español-d9d9d9"></a>
 </p>
 
-AIPOCH Open-Science is an AI research workbench for scientists and researchers, developed by [AIPOCH](https://aipoch.com/open-science) with an open-source, local-first, model-agnostic approach. It enables reproducible, inspectable research with scientific AI agents, Python and R execution, scientific data connectors, and cross-platform support for macOS, Windows, and Linux. Create a project, describe your research goal in plain language, and let the agents read files, search the web, run code, query scientific data sources, and produce reports, tables, and figures with traceable provenance—all in one workspace.
+[AIPOCH Open-Science](https://aipoch.com/open-science) is an open-source AI research workbench. Start with a question, a paper, or a data file. Describe what you want to find out in your own words, and work with an AI agent to explore the evidence, analyze data, or create a chart.
 
-AIPOCH Open-Science supports computational and data-intensive research across disciplines, including machine learning, statistics, life sciences, chemistry, materials science, physics and environmental science. It supports the research process from literature review and hypothesis development to code execution, data analysis, simulation, visualization, and the production of traceable research outputs.
+When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
 
-Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
-
-> 💡 **[AIPOCH Open-Science v1.0.7 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated November 2026)_. This release adds Pi as a fifth agent framework, lets you add references straight from a DOI or arXiv link, and enables reading agents to annotate linked PDFs in reading mode. Scanned PDFs become readable with optional OCR and nine language packs, and the research-case marketplace is now searchable. It also fixes Windows notebook shell setup, OpenCode compaction crashes, and Fake-IP DNS downloads. See the [v1.0.7 release notes](release-notes/1.0.7/en.md) for full details.
+> 💡 **[AIPOCH Open-Science v1.0.8 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated November 2026)_. This release reorganizes Settings into focused tabs, imports references in batches of up to 100 from DOI, arXiv, or PubMed identifiers, and adds AI study snapshots to the literature detail view. Finished sessions now release their agent processes, eQTL Catalogue queries work again, and macOS and Windows updates run smoother. See the [v1.0.8 release notes](release-notes/1.0.8/en.md) for full details.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -82,7 +80,7 @@ Open the [official download page](https://aipoch.com/open-science/download) and 
 | --------------------------------------- | ------------------------------------------ |
 | macOS 12+ — Apple Silicon (M1 or newer) | The macOS DMG for Apple Silicon / ARM64    |
 | macOS 12+ — Intel                       | The macOS DMG for Intel / x64              |
-| Windows x64                             | The Windows x64 installer (code-signed)    |
+| Windows 10/11 x64                       | The Windows x64 installer (code-signed)    |
 | Linux x64                               | The Linux x64 AppImage or Debian package   |
 | Linux ARM64                             | The Linux ARM64 AppImage or Debian package |
 
@@ -93,6 +91,8 @@ On macOS, you can also install with [Homebrew](https://brew.sh):
 ```bash
 brew install --cask open-science
 ```
+
+The [release assets](https://github.com/aipoch/open-science/releases/latest) include standalone CLI archives for macOS, Linux, and Windows. They bundle Node.js, so you can run the CLI without installing Node.js, npm, or Homebrew.
 
 For the standalone CLI on macOS or Linux, use the separate [AIPOCH tap](https://github.com/aipoch/homebrew-tap):
 
@@ -119,6 +119,8 @@ Windows reinstalls preserve research data. For a full cleanup, see the [data res
 Follow the setup wizard: **Environment → Data location → Agent runtime → Model provider → Notebook runtime**.
 
 Complete the required environment and agent-runtime checks and test your model connection. Python/R Notebook setup is optional; Notebook and data-location settings can be changed later.
+
+After setup, open **System** settings to change appearance or notifications. In **General**, you can find diagnostics, command-line tools, and the guide to manual installation and updates.
 
 <table>
   <tr>
@@ -307,13 +309,17 @@ AIPOCH Open-Science combines project management, multi-model agent execution, Py
 | **Scientific files and previews**             | Upload individual files up to **10 GiB**, organize project files, and preview scientific data, PDFs, Office documents, images, code, and molecular structures. This upload limit does not guarantee that a model can read an entire file: model context, attachment parsing, and previews have separate limits. Large files usually need chunked reading or analysis with code.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | **Artifacts and provenance**                  | Keep immutable artifact versions with available producer code, inputs, execution history, environment information, and review evidence. Import artifacts from authorized folders; AIPOCH Open-Science copies each imported file into managed artifact storage. In the desktop app, replay eligible versions with a complete recipe, required inputs, and a usable runtime, then compare outputs and export verification records. Missing evidence may prevent verification, and replay checks do not establish scientific validity.                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
+When querying the eQTL Catalogue by genomic coordinates, use the GRCh38 assembly. The connector checks the assembly before looking up matches.
+
 Import references, tags, collections, and source links from Zotero 10 or later running on the same computer, with the option to copy local PDF attachments. This is a one-way import into Open-Science and does not modify Zotero.
 
-Add references one at a time using a DOI, DOI link, or arXiv abstract or PDF link, then review and edit the retrieved metadata before saving. Full-text PDFs can be added separately.
+Add a reference using a DOI, arXiv ID, PMID, PMCID, or supported article link, or paste up to 100 references with one per line. Review and edit a single reference before saving, or select which references to import in a batch. Full-text PDFs can be added separately.
 
 Persistent PDF annotations and document notes are available. With a screening model configured, smart collections evaluate references against your inclusion/exclusion criteria; AI decisions remain separate from manual decisions and support human review.
 
 In reading mode, agents can list, locate, and create notes and marks on linked PDFs. PDF annotations are tied to the annotated file version and do not sync across computers.
+
+Open a paper's detail view to generate an AI study snapshot with your configured main model. The card identifies its source (full text or abstract) and summarizes the research question, study population, methods, main findings, and limitations.
 
 Optional OCR recognizes scanned PDF pages after the component and required language packs have been downloaded. Nine language packs are available: English, Simplified Chinese, Traditional Chinese, German, Spanish, French, Japanese, Korean, and Russian. Page-level coverage indicators show which pages still lack text.
 

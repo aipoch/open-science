@@ -61,13 +61,15 @@ export function LiteratureAddMenu({
       <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuItem
           className="gap-2.5"
-          aria-label={t('Add from DOI or link')}
+          aria-label={t('Add from identifiers or links')}
           onSelect={() => onAddLink(linkTrigger.current)}
         >
           <Link className="size-4 shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex flex-col">
-            <span>{t('Add from DOI or link')}</span>
-            <span className="text-xs text-muted-foreground">{t('DOI and arXiv links')}</span>
+            <span>{t('Add from identifiers or links')}</span>
+            <span className="text-xs text-muted-foreground">
+              {t('DOI, arXiv, PMID, PMCID or links')}
+            </span>
           </span>
         </DropdownMenuItem>
         <DropdownMenuItem

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { execFileSync } from 'node:child_process'
+import * as childProcess from 'node:child_process'
+import { mapWsl2Path } from './index.js'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +12,11 @@ import {
   type Wsl2Launch
 } from '../runtime/src/platform/wsl2-isolation.js'
 import { cacheEnvironmentFixture } from '../test/cache-environment.js'
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, execFile: vi.fn(actual.execFile) }
+})
 
 const mapped = new Map([
   ['C:\\Open-Science\\Workspace 路径', '/mnt/c/Open-Science/Workspace 路径'],
@@ -23,6 +30,57 @@ const reconciled = async (): Promise<boolean> => true
 afterEach(() => vi.unstubAllEnvs())
 
 describe('WSL2 sandbox adapter', () => {
+  it('maps resource paths through the selected distro without assuming a drive mount', async () => {
+    const target = {
+      kind: 'wsl2' as const,
+      profileId: 'profile',
+      distro: 'Ubuntu',
+      user: 'researcher'
+    }
+    const signal = new AbortController().signal
+    const exec = vi.mocked(childProcess.execFile).mockImplementation(((
+      _command,
+      _args,
+      _options,
+      callback: (error: Error | null, stdout: string, stderr: string) => void
+    ) => {
+      callback(null, '/custom-drive/Skill resources\n', '')
+    }) as typeof childProcess.execFile)
+    try {
+      expect(await mapWsl2Path(target, 'E:\\Skill resources', signal)).toBe(
+        '/custom-drive/Skill resources'
+      )
+      expect(exec).toHaveBeenCalledWith(
+        expect.any(String),
+        [
+          '--distribution',
+          'Ubuntu',
+          '--user',
+          'researcher',
+          '--exec',
+          '/usr/bin/wslpath',
+          '-a',
+          '-u',
+          'E:\\Skill resources'
+        ],
+        expect.objectContaining({ signal, timeout: 5_000 }),
+        expect.any(Function)
+      )
+      exec.mockImplementation(((
+        _command,
+        _args,
+        _options,
+        callback: (error: Error | null, stdout: string, stderr: string) => void
+      ) => {
+        callback(new Error('mapping failed'), '', '')
+      }) as typeof childProcess.execFile)
+      await expect(mapWsl2Path(target, 'E:\\Skill resources')).rejects.toThrow(
+        'path mapping failed'
+      )
+    } finally {
+      exec.mockRestore()
+    }
+  })
   it.skipIf(process.platform === 'win32')(
     'resolves missing write-denied roots in the guest wrapper without interpreting command arguments',
     async () => {

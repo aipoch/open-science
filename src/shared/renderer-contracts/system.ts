@@ -155,8 +155,11 @@ export const lifecycleClaimRuntimeWriterContracts = {
 
 export const logsGetStatusContracts = {
   'logs.getStatus': callable<() => Promise<LogFileStatus>>()('logs', ['logs:get-status', LOCAL]),
-  'logs.openFile': callable<() => Promise<OpenLogFileResult>>()('logs', ['logs:open-file', LOCAL]),
-  'logs.revealInFolder': callable<() => Promise<RevealLogFileResult>>()('logs', [
+  'logs.openFile': callable<(name?: string) => Promise<OpenLogFileResult>>()('logs', [
+    'logs:open-file',
+    LOCAL
+  ]),
+  'logs.revealInFolder': callable<(name?: string) => Promise<RevealLogFileResult>>()('logs', [
     'logs:reveal-in-folder',
     LOCAL
   ])

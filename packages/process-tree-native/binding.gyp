@@ -14,7 +14,9 @@
           "OS=='win'",
           {
             "libraries": [
-              "Advapi32.lib"
+              "Advapi32.lib",
+              "Rstrtmgr.lib",
+              "Shell32.lib"
             ],
             "msvs_settings": {
               "VCCLCompilerTool": {

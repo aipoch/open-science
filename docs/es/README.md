@@ -45,13 +45,11 @@
 
 > Este documento es una traducción del `README.md` en inglés. En caso de discrepancia, prevalece la [versión en inglés](../../README.md).
 
-AIPOCH Open-Science es un entorno de investigación con IA para científicos e investigadores, desarrollado por [AIPOCH](https://aipoch.com/open-science) con un enfoque de código abierto, centrado en la ejecución local e independiente del modelo. Permite realizar investigaciones reproducibles e inspeccionables con agentes científicos de IA, ejecutar Python y R, conectarse a fuentes de datos científicos y trabajar en macOS, Windows y Linux. Cree un proyecto, describa su objetivo de investigación en lenguaje natural y permita que los agentes lean archivos, busquen en la web, ejecuten código, consulten fuentes de datos científicos y produzcan informes, tablas y figuras con procedencia rastreable, todo en un mismo espacio de trabajo.
+[AIPOCH Open-Science](https://aipoch.com/open-science) es un entorno de investigación de código abierto que incorpora inteligencia artificial. Empiece con una pregunta, un artículo científico o un archivo de datos. Describa con sus propias palabras qué quiere averiguar y trabaje con un agente de IA para examinar las pruebas, analizar datos o crear un gráfico.
 
-AIPOCH Open-Science respalda la investigación computacional y con uso intensivo de datos en todas las disciplinas, incluidos el aprendizaje automático, la estadística, las ciencias biológicas, la química, la ciencia de los materiales, la física y las ciencias ambientales. Acompaña todo el proceso de investigación, desde la revisión bibliográfica y el desarrollo de hipótesis hasta la ejecución de código, el análisis de datos, la simulación, la visualización y la producción de resultados rastreables.
+Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el código y el historial de ejecución disponibles. Para compartir su trabajo, elija las ramas de conversación, las versiones de los archivos, los registros del Notebook y las pruebas de verificación que quiera incluir y expórtelos en un paquete `.science`.
 
-Las sesiones de investigación terminadas también pueden exportarse como paquetes `.science` portátiles para revisión, traspaso y archivo, con ramas de conversación, versiones de archivos, registros de Notebook y evidencias de verificación seleccionados.
-
-> 💡 **[AIPOCH Open-Science v1.0.7 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en noviembre de 2026)_. Esta versión incorpora a Pi como quinto framework de agentes, permite añadir referencias directamente desde enlaces DOI o arXiv y permite que los agentes anoten los PDF vinculados en el modo de lectura. Los PDF escaneados se vuelven legibles con OCR opcional y nueve paquetes de idioma, y el mercado de casos de investigación ahora permite realizar búsquedas. También corrige la preparación del entorno de línea de comandos de Notebook en Windows, los cierres inesperados de OpenCode al compactar el contexto y las descargas con DNS Fake-IP. Consulte las [notas de la versión v1.0.7](../../release-notes/1.0.7/es.md) para ver todos los detalles.
+> 💡 **[AIPOCH Open-Science v1.0.8 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en noviembre de 2026)_. Esta versión reorganiza la configuración en pestañas, importa hasta 100 referencias a la vez desde identificadores DOI, arXiv o PubMed y añade resúmenes de estudio con IA a la vista de detalle de la biblioteca. Las sesiones finalizadas liberan sus procesos de agentes, las consultas de eQTL Catalogue vuelven a funcionar y las actualizaciones en macOS y Windows son más fluidas. Consulte las [notas de la versión v1.0.8](../../release-notes/1.0.8/es.md) para ver todos los detalles.
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
@@ -84,11 +82,13 @@ Abra la [página oficial de descargas](https://aipoch.com/open-science/download)
 | ----------------------------------------- | -------------------------------------------------- |
 | macOS 12+: Apple Silicon (M1 o posterior) | El DMG de macOS para Apple Silicon / ARM64         |
 | macOS 12+: Intel                          | El DMG de macOS para Intel/x64                     |
-| Windows x64                               | El instalador de Windows x64 (con firma de código) |
+| Windows 10/11 x64                         | El instalador de Windows x64 (con firma de código) |
 | Linux x64                                 | El paquete AppImage o Debian de Linux x64          |
 | Linux ARM64                               | AppImage o paquete Debian de Linux ARM64           |
 
 Descargue desde la [página oficial de descargas](https://aipoch.com/open-science/download); consulte la [verificación de descargas](../../SECURITY.md#verifying-your-download) si es necesario.
+
+Los archivos de la CLI independiente para macOS, Linux y Windows incluyen Node.js y se pueden usar sin Homebrew ni npm.
 
 En macOS, también puede instalar la aplicación con [Homebrew](https://brew.sh):
 
@@ -121,6 +121,8 @@ En Windows, reinstalar conserva los datos de investigación. Para una limpieza c
 Siga el asistente: **Entorno → Ubicación de datos → Entorno de ejecución del agente → Proveedor de modelo → Entorno de ejecución de Notebook**.
 
 Complete las comprobaciones obligatorias del entorno y del runtime del agente y pruebe la conexión al modelo. Python/R Notebook es opcional; Notebook y la ubicación de datos pueden ajustarse más adelante en Configuración.
+
+En los ajustes del sistema encontrará las opciones de apariencia y notificaciones. La sección **General** incluye la guía de instalación y actualización manuales.
 
 <table>
 <tr>
@@ -309,13 +311,17 @@ AIPOCH Open-Science combina gestión de proyectos, ejecución de agentes multimo
 | **Archivos científicos y vistas previas**           | Suba archivos de hasta **10 GiB cada uno**, organice los archivos del proyecto y previsualice datos científicos, PDF, documentos Office, imágenes, código y estructuras moleculares. El límite de subida no garantiza que un modelo lea todo el archivo: contexto, análisis de adjuntos y vistas previas tienen límites propios. Los archivos grandes suelen necesitar lectura o análisis por bloques mediante código.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | **Artefactos y procedencia**                        | Conserve versiones inmutables de resultados con código generador, entradas, historial de ejecución, entorno y evidencia de revisión disponibles. Importe artefactos desde carpetas autorizadas; AIPOCH Open-Science copia cada archivo importado al almacenamiento gestionado de artefactos. En el escritorio, reproduzca versiones aptas con una receta completa, las entradas necesarias y un entorno utilizable, compare salidas y exporte registros de verificación. La falta de evidencia puede impedir la verificación, y reproducir resultados no demuestra validez científica.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
+Al consultar el eQTL Catalogue por coordenadas, Open-Science comprueba que correspondan al ensamblaje de referencia GRCh38.
+
 Importe referencias, etiquetas, colecciones y enlaces a las fuentes desde Zotero 10 o posterior en ejecución en el mismo equipo. Puede elegir copiar los archivos PDF adjuntos locales; la importación es unidireccional y no modifica Zotero.
 
-Añada referencias de una en una mediante un DOI, un enlace DOI o un enlace al resumen o al PDF de arXiv. Revise y edite los metadatos obtenidos antes de guardar. Los PDF de texto completo se pueden añadir por separado.
+Añada una referencia mediante un DOI, un identificador de arXiv, un PMID, un PMCID o un enlace de artículo compatible, o pegue hasta 100 referencias, una por línea. Revise y edite una referencia individual antes de guardar, o seleccione las referencias que desea importar por lotes. Los PDF de texto completo se pueden añadir por separado.
 
 Dispone de anotaciones PDF persistentes y notas de documentos. Con un modelo de cribado configurado, las colecciones inteligentes evalúan referencias según sus criterios de inclusión y exclusión. Las decisiones de IA y las manuales se registran por separado para apoyar la revisión humana.
 
 En el modo de lectura, los agentes pueden enumerar, localizar y crear notas y marcas en los PDF vinculados. Las anotaciones PDF están ligadas a la versión del archivo anotado y no se sincronizan entre equipos.
+
+En la vista de detalle del artículo, el modelo principal configurado resume la pregunta de investigación, la población estudiada, los métodos, los principales hallazgos y las limitaciones. La ficha indica si se basa en el texto completo o en el resumen del artículo.
 
 El OCR opcional reconoce las páginas PDF escaneadas una vez descargados el componente y los paquetes de idioma necesarios. Hay nueve paquetes de idioma disponibles: inglés, chino simplificado, chino tradicional, alemán, español, francés, japonés, coreano y ruso. Los indicadores de cobertura por página muestran qué páginas aún carecen de texto.
 

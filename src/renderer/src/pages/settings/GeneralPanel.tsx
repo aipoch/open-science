@@ -9,7 +9,13 @@ import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
 import { useSettingsStore } from '@/stores/settings-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
@@ -75,7 +81,8 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
-  const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
+  const [selectedLog, setSelectedLog] = useState('main')
+  const [sinkStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [isCheckingLog, setIsCheckingLog] = useState(true)
   const [logStatusError, setLogStatusError] = useState<string>()
   const logStatusRequest = useRef(0)
@@ -140,6 +147,17 @@ const GeneralPanel = (): React.JSX.Element => {
     })
   }, [])
 
+  const startupFiles = sinkStatus?.startupFiles ?? []
+  const selectedStartup = startupFiles.find((file) => file.name === selectedLog)
+  const selectedName = selectedStartup?.name
+  const logStatus = selectedStartup
+    ? {
+        path: selectedStartup.path,
+        existing: true,
+        lastWriteSucceeded: null,
+        lastFailureCategory: null
+      }
+    : sinkStatus
   const logPath = logStatus?.path ?? null
   const logExists = logStatus?.existing === true
 
@@ -163,7 +181,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.openFile()
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.openFile()
+          : await window.api.logs.openFile(selectedName)
 
       if (!result.opened) {
         setMessage({ action: 'open-log', detail: result.error })
@@ -180,7 +201,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.revealInFolder()
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.revealInFolder()
+          : await window.api.logs.revealInFolder(selectedName)
 
       if (!result.revealed) {
         setMessage({ action: 'reveal-log', detail: result.error })
@@ -247,8 +271,47 @@ const GeneralPanel = (): React.JSX.Element => {
         )}
         aria-label={t('Diagnostics')}
       >
-        <SettingsRow label={t('Log file')} className="pt-0">
-          <div className="flex items-center gap-2">
+        <SettingsRow
+          label={t('Log file')}
+          className="pt-0 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4"
+          controlClassName="w-full"
+        >
+          <div className="flex w-full min-w-0 items-center gap-2">
+            <Select
+              value={selectedName ?? 'main'}
+              onValueChange={(value) => {
+                setSelectedLog(value)
+                setMessage(undefined)
+              }}
+            >
+              <SelectTrigger className="min-w-0 flex-1" aria-label={t('Log file')}>
+                <SelectValue>
+                  {selectedStartup
+                    ? `${new Date(selectedStartup.startedAt).toLocaleString()} · ${selectedStartup.name}`
+                    : 'main.log'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="w-[var(--radix-select-trigger-width)] min-w-64 max-w-[calc(100vw-2rem)]">
+                <SelectItem value="main">{'main.log'}</SelectItem>
+                {startupFiles.map((file) => (
+                  <SelectItem
+                    key={file.name}
+                    value={file.name}
+                    textValue={`${new Date(file.startedAt).toLocaleString()} ${file.name}`}
+                    className="py-2 [&>span:first-child]:min-w-0"
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[13px] font-medium">
+                        {new Date(file.startedAt).toLocaleString()}
+                      </span>{' '}
+                      <span className="truncate font-mono text-[11px] text-muted-foreground">
+                        {file.name}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="outline"
@@ -271,7 +334,7 @@ const GeneralPanel = (): React.JSX.Element => {
         </SettingsRow>
 
         <pre
-          className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+          className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
           aria-label={t('Log file path')}
           tabIndex={0}
         >
@@ -375,7 +438,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cli?.installed ? (
           <pre
-            className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+            className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
             aria-label={t('Command line tool path')}
           >
             {cli.target}

@@ -356,6 +356,209 @@ describe('Side chat restricted backend profile', () => {
 })
 
 describe('SideChatRuntimeOwner lifecycle', () => {
+  it.each([
+    { mode: 'start', gate: 'all' },
+    { mode: 'resume', gate: 'all' },
+    { mode: 'start', gate: 'project' },
+    { mode: 'start', gate: 'parent' }
+  ] as const)(
+    'retains failed $mode cleanup after user close for the $gate teardown gate',
+    async ({ mode, gate }) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-closed-startup-'))
+      const id = 'side-chat-closed-startup'
+      const startup = Promise.withResolvers<AcpCreateSessionResponse>()
+      const openSession = vi.fn(() => startup.promise)
+      const shutdown = vi
+        .fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({ reaped: true }))
+        .mockResolvedValueOnce({ reaped: false })
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: async () => target,
+        resolveTarget: async () => backend(claudeCodeFramework),
+        relay: createRelayOwner(),
+        onEvent: vi.fn(),
+        createRuntime: () =>
+          ({
+            createSession: openSession,
+            resumeSession: openSession,
+            shutdownForQuit: shutdown
+          }) as never
+      })
+      if (mode === 'resume')
+        owner.hydrate([
+          {
+            projectId: 'project',
+            parentSessionId: 'main',
+            sideChat: {
+              version: 1,
+              id,
+              lifecycle: 'open',
+              frameworkId: 'claude-code',
+              historyPreamble: '',
+              entries: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          }
+        ])
+      const operation =
+        mode === 'start'
+          ? owner.start({
+              sideSessionId: id,
+              parentSessionId: 'main',
+              projectId: 'project',
+              text: 'Question'
+            })
+          : owner.send({ sideSessionId: id, text: 'Continue' })
+      const failed = expect(operation).rejects.toThrow('Provider startup failed')
+      await vi.waitFor(() => expect(openSession).toHaveBeenCalledOnce())
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', id)
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await owner.close({ sideSessionId: id })
+        startup.reject(new Error('Provider startup failed'))
+        await failed
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        if (gate === 'project') await owner.invalidateProject('project')
+        else if (gate === 'parent') await owner.invalidateParents(['main'])
+        else await owner.suspendAll()
+        expect(shutdown).toHaveBeenCalledTimes(2)
+        await expect(access(profile)).rejects.toThrow()
+      } finally {
+        await owner.shutdown()
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('starts sibling shutdown while a user-closed runtime is still being reaped', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-close-sibling-'))
+    const cleanup = deferred<void>()
+    const siblingShutdown = vi.fn(async () => ({ reaped: true }))
+    let runtimeNumber = 0
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      captureTarget: async () => target,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      relay: createRelayOwner(),
+      onEvent: vi.fn(),
+      createRuntime: (options) => {
+        const first = ++runtimeNumber === 1
+        return {
+          createSession: async () => ({ sessionId: `provider-${runtimeNumber}` }),
+          sendPrompt: async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' }
+          },
+          deleteSession: async () => ({}),
+          shutdownForQuit: first
+            ? async () => {
+                await cleanup.promise
+                return { reaped: true }
+              }
+            : siblingShutdown
+        } as never
+      }
+    })
+    const first = await owner.start({ parentSessionId: 'main-a', projectId: 'project', text: 'A' })
+    await owner.start({ parentSessionId: 'main-b', projectId: 'project', text: 'B' })
+    await owner.close({ sideSessionId: first.sideSessionId })
+    const shutdown = owner.shutdown()
+    try {
+      await flushImmediate()
+      expect(siblingShutdown).toHaveBeenCalledOnce()
+    } finally {
+      cleanup.resolve()
+      await shutdown
+    }
+  })
+
+  it('acknowledges close before process cleanup and retries failures without restoring the chat', async () => {
+    temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-background-close-'))
+    const persistence = createPersistence()
+    const onEvent = vi.fn()
+    const paused = vi.fn()
+    const cleanup = deferred<void>()
+    const shutdownForQuit = vi.fn<SideChatRuntimePort['shutdownForQuit']>(async () => ({
+      reaped: true
+    }))
+    shutdownForQuit.mockImplementationOnce(async () => {
+      await cleanup.promise
+      return { reaped: false }
+    })
+    const owner = new SideChatRuntimeOwner({
+      appVersion: 'test',
+      configRoot: temporaryRoot,
+      captureTarget: async () => target,
+      resolveTarget: async () => backend(claudeCodeFramework),
+      relay: createRelayOwner(),
+      persistence,
+      onEvent,
+      setParentInteractionsPaused: paused,
+      createRuntime: (options) =>
+        ({
+          createSession: async () => ({ sessionId: 'provider-background-close' }),
+          sendPrompt: async (request: { sessionId: string }) => {
+            options.callbacks?.onProviderPromptAccepted?.(request.sessionId)
+            return { stopReason: 'end_turn' }
+          },
+          deleteSession: async () => ({}),
+          shutdownForQuit
+        }) as never
+    })
+    const started = await owner.start({
+      parentSessionId: 'main',
+      projectId: 'project',
+      text: 'Question'
+    })
+    const profile = join(temporaryRoot, 'runtime-support', 'side-chat', started.sideSessionId)
+    await writeFile(join(profile, 'sentinel'), 'owned')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const close = owner.close({ sideSessionId: started.sideSessionId })
+    let acknowledged = false
+    void close.then(
+      () => {
+        acknowledged = true
+      },
+      () => undefined
+    )
+    try {
+      await flushImmediate()
+      expect(acknowledged).toBe(true)
+      expect(owner.list().chats).toEqual([])
+      expect(owner.hasForParent('main')).toBe(false)
+      expect(paused).toHaveBeenLastCalledWith('main', false)
+      expect(
+        onEvent.mock.calls.filter(([envelope]) => envelope.event.kind === 'closed')
+      ).toHaveLength(1)
+      expect(persistence.clear).not.toHaveBeenCalled()
+      await owner.sweepStaleProfiles()
+      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+      cleanup.resolve()
+      await flushImmediate()
+      expect(owner.list().chats).toEqual([])
+      await vi.advanceTimersToNextTimerAsync()
+      await vi.waitFor(() => expect(persistence.clear).toHaveBeenCalledOnce())
+      await owner.shutdown()
+      expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+      expect(
+        onEvent.mock.calls.filter(([envelope]) => envelope.event.kind === 'closed')
+      ).toHaveLength(1)
+      await expect(access(profile)).rejects.toThrow()
+    } finally {
+      cleanup.resolve()
+      await close.catch(() => undefined)
+      await owner.shutdown().catch(() => undefined)
+      vi.useRealTimers()
+    }
+  })
+
   it('rejects oversized initial prompts before creating provider state', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-side-chat-input-limit-'))
     const captureTarget = vi.fn(async () => target)
@@ -649,6 +852,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       reconnectedRelay?.restore()
 
       await owner.closeForParent('main-session-1')
+      await owner.suspendAll()
 
       if (subscription) expect(unregisterHostMessageSession).not.toHaveBeenCalled()
       else expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-1')
@@ -1542,9 +1746,18 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       }
     ])
 
+    const profile = join(
+      temporaryRoot,
+      'runtime-support',
+      'side-chat',
+      'side-chat-resume-save-retry'
+    )
+    await mkdir(profile, { recursive: true })
+    await writeFile(join(profile, 'sentinel'), 'provider history')
     await expect(
       owner.send({ sideSessionId: 'side-chat-resume-save-retry', text: 'First attempt' })
     ).rejects.toThrow('Session file is busy')
+    expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('provider history')
     expect(sendPrompt).not.toHaveBeenCalled()
     expect(owner.list().chats).toContainEqual(
       expect.objectContaining({
@@ -1912,6 +2125,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     )
 
     await owner.close({ sideSessionId: started.sideSessionId })
+    await owner.suspendAll()
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('side-session-reconfigure')
     expect(unregisterHostMessageSession).toHaveBeenCalledWith('provider-session-reconfigured')
   })
@@ -2316,8 +2530,8 @@ describe('SideChatRuntimeOwner lifecycle', () => {
   )
 
   it.each([
-    { mode: 'degraded', retry: 'close' },
-    { mode: 'rejected', retry: 'close' },
+    { mode: 'degraded', retry: 'background' },
+    { mode: 'rejected', retry: 'background' },
     { mode: 'degraded', retry: 'shutdown' },
     { mode: 'rejected', retry: 'shutdown' }
   ] as const)(
@@ -2382,24 +2596,32 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       await writeFile(join(profile, 'sentinel'), 'owned')
       const close = (): Promise<void> => owner.close({ sideSessionId: started.sideSessionId })
 
-      await expect(close()).rejects.toThrow()
-      expect(persistence.clear).not.toHaveBeenCalled()
-      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
-      expect(onEvent.mock.calls.some(([event]) => event.event.kind === 'closed')).toBe(false)
-      await expect(
-        owner.send({ sideSessionId: started.sideSessionId, text: 'Too early' })
-      ).rejects.toThrow('not active')
-      await owner.sweepStaleProfiles()
-      expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
-      await expect(retry === 'close' ? close() : owner.shutdown()).resolves.toBeUndefined()
-      expect(shutdownForQuit).toHaveBeenCalledTimes(2)
-      if (retry === 'shutdown') {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await expect(close()).resolves.toBeUndefined()
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
         expect(persistence.clear).not.toHaveBeenCalled()
-        await close()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        expect(onEvent.mock.calls.some(([event]) => event.event.kind === 'closed')).toBe(true)
+        await expect(
+          owner.send({ sideSessionId: started.sideSessionId, text: 'Too early' })
+        ).rejects.toThrow('not active')
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        if (retry === 'background') {
+          await vi.advanceTimersToNextTimerAsync()
+          await vi.waitFor(() => expect(persistence.clear).toHaveBeenCalledOnce())
+        }
+        await owner.shutdown()
+        expect(shutdownForQuit).toHaveBeenCalledTimes(2)
+        expect(persistence.clear).toHaveBeenCalledOnce()
+        await expect(access(profile)).rejects.toThrow()
+        expect(owner.hasForParent('main-close-retry')).toBe(false)
+      } finally {
+        await owner.shutdown().catch(() => undefined)
+        vi.useRealTimers()
       }
-      expect(persistence.clear).toHaveBeenCalledOnce()
-      await expect(access(profile)).rejects.toThrow()
-      expect(owner.hasForParent('main-close-retry')).toBe(false)
     }
   )
 
@@ -2449,11 +2671,13 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         entry === 'session'
           ? owner.close({ sideSessionId: started.sideSessionId })
           : owner.closeForParent('main-shutdown-save-fail')
-      await expect(close()).rejects.toThrow('Side chat')
+      await expect(close()).resolves.toBeUndefined()
+      await flushImmediate()
+      expect(owner.list().chats).toEqual([])
       expect(shutdownForQuit).toHaveBeenCalledTimes(2)
       expect(persistence.clear).not.toHaveBeenCalled()
       shutdownForQuit.mockResolvedValue({ reaped: true })
-      await expect(close()).resolves.toBeUndefined()
+      await expect(owner.suspendAll()).resolves.toBeUndefined()
       expect(shutdownForQuit.mock.calls.length).toBeGreaterThanOrEqual(3)
       expect(persistence.clear).toHaveBeenCalledOnce()
       expect(owner.hasForParent('main-shutdown-save-fail')).toBe(false)
@@ -2557,16 +2781,14 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       text: 'Hello'
     })
 
-    const closeFailure = expect(
-      owner.close({ sideSessionId: started.sideSessionId })
-    ).rejects.toThrow('Session file is busy')
+    await expect(owner.close({ sideSessionId: started.sideSessionId })).resolves.toBeUndefined()
     await clearStarted.promise
     const invalidationFailure = expect(owner.invalidateProject('project-1')).rejects.toThrow(
       'Side chat Project invalidation failed: project-1'
     )
     failClear.resolve()
 
-    await Promise.all([closeFailure, invalidationFailure])
+    await invalidationFailure
     expect(deleteSession).toHaveBeenCalledOnce()
     owner.restoreProject('project-1')
     await expect(
@@ -2578,7 +2800,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
       })
     ).rejects.toThrow('already open')
 
-    await owner.close({ sideSessionId: started.sideSessionId })
+    await owner.suspendAll()
     expect(deleteSession).toHaveBeenCalledWith({ sessionId: 'provider-close-retry' })
     expect(owner.list().chats).toEqual([])
   })
@@ -2653,7 +2875,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
 
       await owner.close({ sideSessionId: first.sideSessionId })
 
-      expect(shutdowns[0]).toHaveBeenCalledOnce()
+      await vi.waitFor(() => expect(shutdowns[0]).toHaveBeenCalledOnce())
       expect(shutdowns[1]).not.toHaveBeenCalled()
       expect(owner.list().chats).toEqual([
         expect.objectContaining({
@@ -2662,6 +2884,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
         })
       ])
       await owner.close({ sideSessionId: second.sideSessionId })
+      await owner.shutdown()
     }
   )
 
@@ -2765,6 +2988,7 @@ describe('SideChatRuntimeOwner lifecycle', () => {
     ).rejects.toThrow('already open')
     finishShutdown({ reaped: true })
     await close
+    await owner.shutdown()
   })
 })
 
@@ -3533,6 +3757,68 @@ describe('Side chat without durable recovery', () => {
 })
 
 describe('Side chat profile cleanup barriers', () => {
+  it.each(['history', 'profile'] as const)(
+    'retries dormant %s cleanup without restoring a user-closed chat',
+    async (failure) => {
+      temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-dormant-close-'))
+      const id = 'side-chat-dormant-close'
+      const profile = join(temporaryRoot, 'runtime-support', 'side-chat', id)
+      await mkdir(profile, { recursive: true })
+      await writeFile(join(profile, 'sentinel'), 'owned')
+      const persistence = createPersistence()
+      if (failure === 'history')
+        persistence.clear.mockRejectedValueOnce(new Error('Session file is busy'))
+      else profileRemoval.failPath = profile
+      const onEvent = vi.fn()
+      const owner = new SideChatRuntimeOwner({
+        appVersion: 'test',
+        configRoot: temporaryRoot,
+        captureTarget: vi.fn(),
+        resolveTarget: vi.fn(),
+        relay: createRelayOwner(),
+        persistence,
+        onEvent
+      })
+      owner.hydrate([
+        {
+          projectId: 'project',
+          parentSessionId: 'main',
+          sideChat: {
+            version: 1,
+            id,
+            lifecycle: 'open',
+            frameworkId: 'claude-code',
+            historyPreamble: '',
+            entries: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        }
+      ])
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      try {
+        await Promise.all([owner.close({ sideSessionId: id }), owner.closeForParent('main')])
+        await flushImmediate()
+        expect(owner.list().chats).toEqual([])
+        expect(owner.hasForParent('main')).toBe(false)
+        expect(onEvent).toHaveBeenCalledOnce()
+        expect(onEvent.mock.calls[0][0].event).toEqual({ kind: 'closed', reason: 'closed' })
+        await owner.sweepStaleProfiles()
+        expect(await readFile(join(profile, 'sentinel'), 'utf8')).toBe('owned')
+        profileRemoval.failPath = ''
+        await vi.advanceTimersToNextTimerAsync()
+        await owner.suspendAll()
+        await expect(access(profile)).rejects.toThrow()
+        expect(owner.list().chats).toEqual([])
+        expect(onEvent).toHaveBeenCalledOnce()
+      } finally {
+        profileRemoval.failPath = ''
+        await owner.shutdown()
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('waits for an in-flight deletion before reusing a profile identity and shutting down', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'side-chat-profile-race-'))
     const profile = join(temporaryRoot, 'runtime-support', 'side-chat', 'side-chat-reused')

@@ -1,3 +1,6 @@
+import { mkdtemp, mkdir, writeFile, symlink, rm, realpath } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Hoisted so the mock factory can mutate the observed log state per test.
@@ -34,10 +37,10 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   getLogFileStatus: async () => logStatus.value
 }))
 
-const { registerLogsIpcHandlers } = await import('./logs-ipc')
+const { registerLogsIpcHandlers, createLogsCommandOwner } = await import('./logs-ipc')
 type LogsCommandOwner = import('./logs-ipc').LogsCommandOwner
 
-const invoke = (channel: string): unknown => handlers.get(channel)!(undefined, undefined)
+const invoke = (channel: string, name?: string): unknown => handlers.get(channel)!(undefined, name)
 
 describe('logs IPC handlers', () => {
   beforeEach(() => {
@@ -50,6 +53,60 @@ describe('logs IPC handlers', () => {
       existing: true,
       lastWriteSucceeded: true,
       lastFailureCategory: null
+    }
+  })
+
+  it('lists all startup logs newest first and opens/reveals the selected historical file safely', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'settings-logs-'))
+    try {
+      const logs = join(root, 'logs')
+      await mkdir(logs)
+      const older = 'desktop-backend-42-1700000000000.log'
+      const newer = 'desktop-backend-43-1700000000001.log'
+      await writeFile(join(logs, older), 'failed startup')
+      await writeFile(join(logs, newer), 'started')
+      await writeFile(join(root, 'private.log'), 'private')
+      await symlink(join(root, 'private.log'), join(logs, 'desktop-backend-44-1700000000002.log'))
+      await mkdir(join(logs, 'desktop-backend-45-1700000000003.log'))
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = createLogsCommandOwner()
+      expect((await owner.getStatus()).startupFiles?.map((file) => file.name)).toEqual([
+        newer,
+        older
+      ])
+      await expect(owner.openFile(older)).resolves.toEqual({ opened: true })
+      expect(openPath).toHaveBeenLastCalledWith(await realpath(join(logs, older)))
+      await expect(owner.revealInFolder(older)).resolves.toEqual({ revealed: true })
+      expect(showItemInFolder).toHaveBeenLastCalledWith(await realpath(join(logs, older)))
+      for (const name of [
+        '../private.log',
+        join(root, 'private.log'),
+        'desktop-backend-44-1700000000002.log'
+      ]) {
+        await expect(owner.openFile(name)).resolves.toMatchObject({ opened: false })
+      }
+      await rm(join(logs, older))
+      await expect(owner.revealInFolder(older)).resolves.toMatchObject({ revealed: false })
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps main log status and actions available when the startup log directory cannot be read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'settings-logs-unavailable-'))
+    try {
+      await writeFile(join(root, 'logs'), 'not a directory')
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      const owner = createLogsCommandOwner()
+      await expect(owner.getStatus()).resolves.toEqual({ ...logStatus.value, startupFiles: [] })
+      await expect(owner.openFile()).resolves.toEqual({ opened: true })
+      await expect(owner.revealInFolder()).resolves.toEqual({ revealed: true })
+      expect(openPath).toHaveBeenCalledWith(logStatus.value.path)
+      expect(showItemInFolder).toHaveBeenCalledWith(logStatus.value.path)
+    } finally {
+      vi.unstubAllEnvs()
+      await rm(root, { recursive: true, force: true })
     }
   })
 
@@ -68,8 +125,14 @@ describe('logs IPC handlers', () => {
 
     expect(registerLogsIpcHandlers(owner)).toBe(owner)
     await expect(invoke('logs:get-status')).resolves.toMatchObject({ path: '/injected/main.log' })
-    await expect(invoke('logs:open-file')).resolves.toEqual({ opened: true })
-    await expect(invoke('logs:reveal-in-folder')).resolves.toEqual({ revealed: true })
+    await expect(invoke('logs:open-file', 'desktop-backend-42-1700000000000.log')).resolves.toEqual(
+      { opened: true }
+    )
+    expect(owner.openFile).toHaveBeenCalledWith('desktop-backend-42-1700000000000.log')
+    await expect(
+      invoke('logs:reveal-in-folder', 'desktop-backend-42-1700000000000.log')
+    ).resolves.toEqual({ revealed: true })
+    expect(owner.revealInFolder).toHaveBeenCalledWith('desktop-backend-42-1700000000000.log')
   })
 
   it('registers the diagnostics channels', () => {
@@ -85,7 +148,7 @@ describe('logs IPC handlers', () => {
     handlers.clear()
     registerLogsIpcHandlers()
 
-    await expect(invoke('logs:get-status')).resolves.toEqual(logStatus.value)
+    await expect(invoke('logs:get-status')).resolves.toMatchObject(logStatus.value)
   })
 
   it('opens the log file (not its folder) and reports success', async () => {
