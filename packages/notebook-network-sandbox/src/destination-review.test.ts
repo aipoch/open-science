@@ -25,6 +25,21 @@ it('reviews trusted service shape without resolving DNS', async () => {
   expect(lookup).not.toHaveBeenCalled()
 })
 
+it('defaults legacy trusted service entries to HTTPS without resolving DNS', async () => {
+  await expect(
+    reviewPrivateDestination({ hostname: 'service.internal.example', port: 443 })
+  ).resolves.toEqual({
+    ok: true,
+    destination: {
+      hostname: 'service.internal.example',
+      port: 443,
+      protocol: 'https',
+      approvedAddresses: []
+    }
+  })
+  expect(lookup).not.toHaveBeenCalled()
+})
+
 it('accepts literal IPs and rejects malformed trusted service input', async () => {
   await expect(
     reviewPrivateDestination({ hostname: '127.0.0.1', port: 8443, protocol: 'https' })
