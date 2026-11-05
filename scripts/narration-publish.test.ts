@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { load } from 'js-yaml'
 import {
   readNarrationCatalog,
   publishNarrationAssets,
@@ -109,4 +110,23 @@ it('verifies served bytes rather than trusting CDN response metadata', async () 
       verifyBytes: true
     })
   ).rejects.toThrow('SHA-256')
+})
+
+it('publishes the immutable workflow revision without a separate source-ref override', async () => {
+  const workflow = load(await readFile('.github/workflows/research-narration-cdn.yml', 'utf8')) as {
+    on: { workflow_dispatch: { inputs: Record<string, { default?: unknown }> } }
+    jobs: {
+      publish: {
+        steps: { name: string; uses?: string; with?: Record<string, unknown>; if?: string }[]
+      }
+    }
+  }
+  expect(workflow.on.workflow_dispatch.inputs.ref).toBeUndefined()
+  expect(workflow.on.workflow_dispatch.inputs.dry_run.default).toBe(true)
+  const steps = workflow.jobs.publish.steps
+  const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'))!
+  expect(checkout.with).toMatchObject({ ref: '${{ github.sha }}', 'persist-credentials': false })
+  for (const name of ['Configure AWS credentials', 'Publish immutable narration assets']) {
+    expect(steps.find((step) => step.name === name)?.if).toBe('${{ !inputs.dry_run }}')
+  }
 })

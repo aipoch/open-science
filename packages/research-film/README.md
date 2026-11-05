@@ -56,7 +56,10 @@ client tries the internal CDN first without racing upstream probes, then falls b
 upstream URL on a transport or integrity failure. Every file still requires its catalog size and
 SHA-256. Existing installed revisions and receipts remain valid; this changes only transport.
 
-Use the **Publish research narration CDN assets** workflow with the reviewed catalog ref. Start with
+Use the **Publish research narration CDN assets** workflow from a reviewed repository revision.
+Like the existing runtime-bundle publisher, it uses the workflow run’s own code and catalog; checkout
+is pinned to `github.sha`, with no separate source-ref input. This remains a trusted-maintainer
+operation: run it only from reviewed code. Start with
 `dry_run: true` to download and verify all platform files and retain the bundle manifest. Then run
 with `dry_run: false` to publish them using the existing S3 secrets and CDN variables. Publication
 uses conditional create-only writes, reuses matching objects, rejects conflicting objects, and checks

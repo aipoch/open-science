@@ -3,11 +3,6 @@ name: Publish research narration CDN assets
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: Git ref containing the reviewed narration catalog
-        type: string
-        required: true
-        default: main
       dry_run:
         description: Build and verify without writing to the CDN
         type: boolean
@@ -29,10 +24,10 @@ jobs:
       CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
       S3_PREFIX: ${{ vars.S3_PREFIX }}
     steps:
-      - name: Checkout reviewed ref
+      - name: Checkout workflow revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
