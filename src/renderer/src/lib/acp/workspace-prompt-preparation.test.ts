@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from '../../../../shared/desktop-runtime-recovery'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import {
   activateConversationBranch,
@@ -23,6 +27,7 @@ import {
 } from '../../stores/session-store'
 import {
   createOrderedSessionPersistence,
+  flushSessionPersistence,
   resetSessionPersistenceWriteFailuresForTests,
   saveSessionInOrder,
   type SessionPersistenceApi
@@ -545,12 +550,58 @@ describe('workspace prompt preparation with Main rollback authority', () => {
     const failure = new Error('Rollback save unavailable')
     vi.mocked(main.api.saveSession).mockRejectedValueOnce(failure)
     await expect(rollbackWorkspacePrompt(prep)).rejects.toBe(failure)
+    const failedCommands = vi
+      .mocked(main.api.saveSession)
+      .mock.calls.at(-1)?.[1]?.conversationCommands
+    await expect(flushSessionPersistence()).rejects.toBe(failure)
+    await expect(saveSessionInOrder(current())).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
+    await expect(
+      rollbackWorkspacePrompt({ ...prep, id: `${prep.id}-other` })
+    ).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
+    await expect(rollbackWorkspacePrompt(prep, true)).rejects.toMatchObject({
+      code: 'session-save-unconfirmed'
+    })
     expect(pendingSessionConversationCommands(prep.sessionId)).toEqual([])
     expect(current().messages.some(({ id }) => id === 'new')).toBe(true)
     expect(await rollbackWorkspacePrompt(prep)).toBe(true)
     expect(current().messages.map(({ id }) => id)).toEqual(['old'])
     expect(main.read().messages.map(({ id }) => id)).toEqual(['old'])
+    expect(vi.mocked(main.api.saveSession).mock.calls.at(-1)?.[1]?.conversationCommands).toEqual(
+      failedCommands
+    )
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
+
+  it.each(['desktop-runtime-disconnected', 'desktop-runtime-not-submitted'] as const)(
+    'keeps a rollback blocked until connection recovery confirms its outcome: %s',
+    async (code) => {
+      const main = mainAdapter()
+      const prep = await prepareWorkspacePrompt(current(), 'new', 'new')
+      useSessionStore.getState().appendUserMessage({
+        sessionId: prep.sessionId,
+        messageId: 'new',
+        content: 'Rejected question',
+        preparationId: prep.id
+      })
+      await saveSessionInOrder(current())
+      vi.mocked(main.api.saveSession).mockRejectedValueOnce(
+        code === 'desktop-runtime-disconnected'
+          ? new DesktopRuntimeDisconnectedError()
+          : new DesktopRuntimeWriteNotSubmittedError()
+      )
+      await expect(rollbackWorkspacePrompt(prep)).rejects.toMatchObject({ code })
+      const calls = vi.mocked(main.api.saveSession).mock.calls.length
+      await expect(rollbackWorkspacePrompt(prep)).rejects.toMatchObject({
+        code: 'session-save-unconfirmed'
+      })
+      expect(main.api.saveSession).toHaveBeenCalledTimes(calls)
+      expect(main.read().promptPreparation?.id).toBe(prep.id)
+    }
+  )
 })
 
 describe('rollback error presentation', () => {

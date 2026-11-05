@@ -95,24 +95,30 @@ type ExistingWorkspacePromptAdmission = Readonly<{
   allowCompactionRecovery: boolean
 }>
 
-// A pending Session that was already rejected before binding may re-send its retained draft. This
-// explicit marker, not the presence of an Operation Error, is what authorizes that retry: cancelling
-// or retrying an unrelated action clears Operation Errors without invalidating the draft.
-const retryablePendingSessionIds = new Set<string>()
-
 const markPendingSessionRetryable = (sessionId: string): void => {
-  const liveIds = new Set(useSessionStore.getState().sessions.map(({ id }) => id))
-  for (const id of retryablePendingSessionIds)
-    if (!liveIds.has(id)) retryablePendingSessionIds.delete(id)
-  retryablePendingSessionIds.add(sessionId)
+  useSessionStore.setState((state) => {
+    const source = state.sessions.find(({ id }) => id === sessionId)
+    if (!source || (!source.isPending && !source.firstPromptDraft) || source.pendingRetryable)
+      return state
+    return {
+      sessions: state.sessions.map((session) =>
+        session === source ? { ...session, pendingRetryable: true } : session
+      )
+    }
+  })
 }
 
 const consumePendingSessionRetry = (sessionId: string): void => {
-  retryablePendingSessionIds.delete(sessionId)
+  useSessionStore.setState((state) => {
+    if (!state.sessions.some((session) => session.id === sessionId && session.pendingRetryable))
+      return state
+    return {
+      sessions: state.sessions.map((session) =>
+        session.id === sessionId ? { ...session, pendingRetryable: undefined } : session
+      )
+    }
+  })
 }
-
-const isPendingSessionRetryable = (sessionId: string): boolean =>
-  retryablePendingSessionIds.has(sessionId)
 
 const canPrepareExistingWorkspacePrompt = ({
   sessionId,
@@ -135,9 +141,6 @@ const canPrepareExistingWorkspacePrompt = ({
         rootPermissionPending: resolveRootPermissionPending(
           runtimeState.pendingPermissions,
           sessionId
-        ),
-        allowPendingSessionRetry: Boolean(
-          session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
         )
       }
     ).actions.startTurn.allowed)
@@ -562,7 +565,6 @@ export {
   canPrepareExistingWorkspacePrompt,
   consumePendingSessionRetry,
   getResumeFailureMessage,
-  isPendingSessionRetryable,
   isWorkspacePromptPreparationInFlight,
   markPendingSessionRetryable,
   prepareExistingWorkspacePrompt,

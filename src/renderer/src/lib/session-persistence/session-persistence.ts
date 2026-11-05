@@ -619,7 +619,8 @@ const isSessionWriteSatisfied = (
   if (authority.id !== intent.session.id || authority.projectId !== intent.session.projectId)
     return false
   const acknowledged = new Set(authority.runtimeConversationCommandIds ?? [])
-  if (intent.options?.conversationCommands?.some(({ id }) => !acknowledged.has(id))) return false
+  const commands = retainActivePreparationCommands(intent.options?.conversationCommands ?? [])
+  if (commands.some(({ id }) => !acknowledged.has(id))) return false
   return sessionIntentFields(intent).every((key) =>
     key === 'pinned'
       ? Boolean(intent.session.pinned) === Boolean(authority.pinned)
@@ -1399,9 +1400,34 @@ const saveSessionInOrder = async (
   options?: SaveSessionOptions
 ): Promise<PersistedChatSession> => {
   const target = `session:${session.id}`
-  persistence.recovery.assertSettled(target)
+  let saveOptions = withPendingConversationCommands(session, options)
+  const retained = persistence.recovery.get(target)
+  const retainedCommands = retained?.intent?.options?.conversationCommands
+  const rejectedRollback = retainedCommands?.length === 1 ? retainedCommands[0] : undefined
+  const commands = saveOptions?.conversationCommands
+  const rollback = commands?.length === 1 ? commands[0] : undefined
+  if (
+    retained?.state === 'failed' &&
+    !retained.reviewRequired &&
+    retained.intent?.session.projectId === session.projectId &&
+    retained.intent.session.runtimeTranscriptOwner === 'main' &&
+    session.runtimeTranscriptOwner === 'main' &&
+    sessionIntentFields(retained.intent).length === 0 &&
+    !saveOptions?.conflictRebaseFields?.length &&
+    !saveOptions?.runtimeWriterToken &&
+    rejectedRollback?.kind === 'rollback-prompt' &&
+    rollback?.kind === 'rollback-prompt' &&
+    rejectedRollback.preparationId === rollback.preparationId &&
+    Boolean(rejectedRollback.preserveSubmittedMessage) ===
+      Boolean(rollback.preserveSubmittedMessage)
+  ) {
+    // Retry only the rejected conditional compensation, with its original receipt identity. A
+    // fresh rollback ID would leave the old command unconfirmed even after Main releases it.
+    saveOptions = { ...saveOptions, conversationCommands: [rejectedRollback] }
+  } else {
+    persistence.recovery.assertSettled(target)
+  }
   try {
-    const saveOptions = withPendingConversationCommands(session, options)
     const durable = await persistence.saveSessionWithRecovery(
       session,
       saveOptions,
