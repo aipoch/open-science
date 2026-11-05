@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -7,12 +7,14 @@ import { ErrorNotice } from '@/components/error-notice'
 type SessionPersistenceAlertProps = {
   title: string
   message: string
-  variant?: 'error' | 'warning'
+  variant?: 'error' | 'warning' | 'info'
+  children?: ReactNode
   inline?: boolean
   className?: string
   onDismiss?: () => void
   dismissLabel?: string
   onRetry?: () => void
+  retrying?: boolean
   retryLabel?: string
   onAction?: () => void
   actionLabel?: string
@@ -27,7 +29,9 @@ const SessionPersistenceAlertContent = ({
   onDismiss,
   dismissLabel,
   onRetry,
+  retrying,
   retryLabel,
+  children,
   onAction,
   actionLabel
 }: SessionPersistenceAlertProps): React.JSX.Element | null => {
@@ -52,8 +56,9 @@ const SessionPersistenceAlertContent = ({
       )}
     >
       <ErrorNotice
-        role="alert"
-        tone={variant === 'warning' ? 'amber' : 'red'}
+        role={variant === 'info' ? 'status' : 'alert'}
+        level={variant === 'info' ? 'info' : undefined}
+        tone={variant === 'info' ? 'teal' : variant === 'warning' ? 'amber' : 'red'}
         title={title}
         description={message}
         dismissButton={
@@ -70,6 +75,7 @@ const SessionPersistenceAlertContent = ({
             ? {
                 label: retryLabel ?? t('Retry'),
                 onClick: onRetry,
+                loading: retrying,
                 testId: 'session-persistence-retry'
               }
             : undefined
@@ -79,7 +85,9 @@ const SessionPersistenceAlertContent = ({
             ? { label: actionLabel, onClick: onAction, testId: 'session-persistence-action' }
             : undefined
         }
-      />
+      >
+        {children}
+      </ErrorNotice>
     </div>
   )
 }

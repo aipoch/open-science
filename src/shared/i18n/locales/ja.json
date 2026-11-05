@@ -1198,7 +1198,6 @@
     "Teacher": "教師",
     "Telescope": "望遠鏡",
     "Terminal": "ターミナル",
-    "This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.": "この会話は別のウィンドウで変更されました。ローカルの変更は保存されていません。アプリを閉じる前に再試行して、最新バージョンを再読み込みしてください。",
     "This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.": "この会話は 256 MiB のストレージ上限を超えました。現在の実行は停止されました。作業を続けるには、新しい会話を開始してください。最後に正常に保存された後の変更は永続化されません。",
     "Conversations still bound to <name>{{name}}</name> will become <em>unavailable</em> and will <em>not</em> be switched to Main Agent automatically. For each affected conversation you'll explicitly choose a new specialist or Main Agent before it can send again.": "<name>{{name}}</name> に紐づいている会話は<em>利用できなくなり</em>、メインエージェントへ<em>自動的には切り替わりません</em>。影響を受ける各会話では、再送信する前に新しいスペシャリストまたはメインエージェントを明示的に選択する必要があります。",
     "Copied": "コピー済み",
@@ -7783,6 +7782,18 @@
     "Could not regenerate the overview. The previous result is still shown. Please try again.": "概要を再生成できませんでした。前の結果を引き続き表示しています。再試行してください。",
     "Another app is using Open-Science files": "別のアプリが Open-Science のファイルを使用しています",
     "Quit {{name}}, then recheck.": "{{name}} を終了してから再確認してください。",
-    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。"
+    "Quit the other app, then recheck.": "他のアプリを終了してから再確認してください。",
+    "Checking conversation storage…": "会話の保存状態を確認中…",
+    "The connection changed while saving. Checking which conversation changes were saved.": "保存中に接続が変化しました。会話のどの変更が保存されたか確認しています。",
+    "Affected conversations": "影響を受けた会話",
+    "Open conversation: {{title}}": "会話を開く：{{title}}",
+    "Conversation selection": "会話の選択履歴",
+    "Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.": "会話の一部の変更が保存されたことを確認できませんでした。影響を受けた会話を確認し、アプリを閉じる前に再試行してください。",
+    "Open-Science could not save the latest conversation changes. Retry before closing the app.": "Open-Science は会話の最新の変更を保存できませんでした。アプリを閉じる前に再試行してください。",
+    "This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.": "この会話は別のウィンドウで変更されました。ローカルの変更は保持されています。会話を確認してから、再試行するか保持された変更を破棄してください。",
+    "Discard retained changes for {{title}}": "{{title}} の保持された変更を破棄",
+    "Discard retained changes…": "保持された変更を破棄…",
+    "Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.": "「{{title}}」の保持された変更を破棄し、保存済みのバージョンを再読み込みしますか？この操作は元に戻せません。",
+    "Could not reload the saved conversation. Retained changes were kept. Please try again.": "保存済みの会話を再読み込みできませんでした。変更は保持されています。もう一度お試しください。"
   }
 }

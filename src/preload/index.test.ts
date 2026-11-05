@@ -1238,6 +1238,22 @@ describe('preload bridge — core renderer contract catalog', () => {
     expect(invokeMock).toHaveBeenCalledWith('sessions:save-session', { id: 'session-1' })
   })
 
+  it.each([
+    'session-size-limit',
+    'session-revision-conflict',
+    'desktop-runtime-disconnected',
+    'desktop-runtime-not-submitted'
+  ])('keeps %s in a contextBridge-safe Session rejection', async (code) => {
+    const failure = { code, message: 'Reviewed Session failure.' }
+    invokeMock.mockResolvedValueOnce({ ok: false, error: failure })
+    const rejected = await Promise.resolve(api.sessions.saveSession({ id: 'session-1' })).catch(
+      (error: unknown) => error
+    )
+    expect(rejected).not.toBeInstanceOf(Error)
+    expect(rejected).toEqual(failure)
+    expect(JSON.parse(JSON.stringify(rejected))).toEqual(failure)
+  })
+
   it('restores a details-conflict rejection from the Session edit IPC outcome', async () => {
     invokeMock.mockResolvedValueOnce({
       ok: false,

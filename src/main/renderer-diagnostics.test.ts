@@ -9,6 +9,69 @@ import {
 } from './renderer-diagnostics'
 
 describe('createRendererFailureReporter', () => {
+  it('keeps distinct Session targets and classified outcomes in diagnostics', () => {
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() } })
+    const report = (
+      sessionId: string,
+      code: 'session-size-limit' | 'desktop-runtime-disconnected'
+    ): RendererFailureReport => ({
+      source: 'handled-error',
+      surface: 'workspace',
+      context: 'session-save',
+      errorCategory: 'unknown',
+      fingerprint: '811c9dc5',
+      sessionWrite: {
+        target: 'session',
+        sessionId,
+        projectId: 'project-1',
+        code,
+        epoch: 4,
+        phase: code === 'desktop-runtime-disconnected' ? 'result-unknown' : 'rejected'
+      }
+    })
+    expect(reporter.report('renderer', report('session-1', 'session-size-limit'))).toBe('recorded')
+    expect(reporter.report('renderer', report('session-2', 'session-size-limit'))).toBe('recorded')
+    expect(reporter.report('renderer', report('session-1', 'desktop-runtime-disconnected'))).toBe(
+      'recorded'
+    )
+    expect(reporter.report('renderer', report('session-1', 'session-size-limit'))).toBe(
+      'suppressed'
+    )
+    expect(error).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([
+    { sessionId: 'D:\\private\\session.json' },
+    { projectId: 'private research title' },
+    { code: 'secret message' },
+    { epoch: -1 },
+    { phase: 'raw stack' },
+    { content: 'patient record' },
+    { cause: new Error('secret') }
+  ])('rejects unreviewed Session write metadata: %j', (extra) => {
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() } })
+    expect(
+      reporter.report('renderer', {
+        source: 'handled-error',
+        surface: 'workspace',
+        context: 'session-save',
+        errorCategory: 'unknown',
+        sessionWrite: {
+          target: 'session',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: 'unknown',
+          epoch: 1,
+          phase: 'rejected',
+          ...extra
+        }
+      })
+    ).toBe('rejected')
+    expect(error).not.toHaveBeenCalled()
+  })
+
   it.each(['workspace', 'marketplace'])(
     'records a validated %s failure without retaining extra renderer data',
     (surface) => {

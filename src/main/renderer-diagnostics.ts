@@ -24,7 +24,15 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
     const keys = Object.keys(record)
     if (
       keys.some(
-        (key) => !['source', 'surface', 'errorCategory', 'context', 'fingerprint'].includes(key)
+        (key) =>
+          ![
+            'source',
+            'surface',
+            'errorCategory',
+            'context',
+            'fingerprint',
+            'sessionWrite'
+          ].includes(key)
       )
     ) {
       return undefined
@@ -38,9 +46,26 @@ const projectRendererFailureReport = (value: unknown): RendererFailureReport | u
       surface: record.surface,
       errorCategory: record.errorCategory,
       ...(keys.includes('context') ? { context: record.context } : {}),
-      ...(keys.includes('fingerprint') ? { fingerprint: record.fingerprint } : {})
+      ...(keys.includes('fingerprint') ? { fingerprint: record.fingerprint } : {}),
+      ...(keys.includes('sessionWrite') ? { sessionWrite: record.sessionWrite } : {})
     }
-    return isRendererFailureReport(candidate) ? candidate : undefined
+    if (!isRendererFailureReport(candidate)) return undefined
+    const write = candidate.sessionWrite
+    return {
+      ...candidate,
+      ...(write
+        ? {
+            sessionWrite: {
+              target: write.target,
+              code: write.code,
+              epoch: write.epoch,
+              phase: write.phase,
+              ...(write.sessionId ? { sessionId: write.sessionId } : {}),
+              ...(write.projectId ? { projectId: write.projectId } : {})
+            }
+          }
+        : {})
+    }
   } catch {
     return undefined
   }
@@ -123,7 +148,13 @@ export const createRendererFailureReporter = (
         report.surface,
         report.errorCategory,
         report.context ?? 'none',
-        report.fingerprint ?? 'none'
+        report.fingerprint ?? 'none',
+        report.sessionWrite?.target ?? '',
+        report.sessionWrite?.sessionId ?? '',
+        report.sessionWrite?.projectId ?? '',
+        report.sessionWrite?.code ?? '',
+        report.sessionWrite?.epoch ?? '',
+        report.sessionWrite?.phase ?? ''
       ].join(':')
       if (window.fingerprints.has(fingerprint)) {
         window.suppressedCount += 1
