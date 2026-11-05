@@ -3472,6 +3472,111 @@ describe('ConversationPanel composer intake', () => {
     })
   })
 
+  it('keeps a prepared cold Ask-User answer blocked without showing recovery', async () => {
+    let stored: PersistedChatSession = materializeSessionConversationGraph({
+      id: 'session-cold-choice-flash',
+      projectId: 'project-a',
+      title: 'Cold choice',
+      cwd: '/workspace',
+      status: 'waiting-for-user',
+      runtimeTranscriptOwner: 'main',
+      messages: [
+        {
+          id: 'prompt-cold-choice',
+          role: 'user',
+          content: 'Prepare the report.',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      activities: [
+        {
+          id: 'tool-cold-choice',
+          kind: 'tool',
+          title: 'Choose an approach',
+          status: 'in_progress',
+          promptMessageId: 'prompt-cold-choice',
+          eventIds: [],
+          sortIndex: 1,
+          createdAt: 2,
+          updatedAt: 2,
+          elicitation: {
+            message: 'Choose an approach',
+            fields: [
+              {
+                id: 'question_0',
+                label: 'Approach',
+                kind: 'single-select',
+                options: [{ value: 'minimal', label: 'Minimal' }]
+              },
+              { id: 'question_0_custom', label: 'Other', kind: 'text' }
+            ],
+            state: 'pending',
+            durable: {
+              kind: 'agent-user-choice',
+              requestId: 'choice-cold',
+              promptMessageId: 'prompt-cold-choice'
+            }
+          }
+        }
+      ],
+      createdAt: 1,
+      updatedAt: 2
+    })
+    useSessionStore.setState({
+      ...createInitialSessionState(),
+      sessions: [hydrateSession(stored)]
+    })
+    useWorkspaceOperationErrors.setState({ errors: {}, diagnostics: {} })
+    const owner = new AcpDurableContinuationContextOwner({
+      loadSessionForContinuation: async () => structuredClone(stored),
+      mutateRuntimeSession: async (_scope, mutate) => {
+        stored = mutate(structuredClone(stored))
+        useSessionStore.getState().applyDurableSessionProjection({
+          source: useSessionStore.getState().sessions[0],
+          session: stored,
+          mode: 'runtime-transcript-authority'
+        })
+        return structuredClone(stored)
+      }
+    })
+    const input = {
+      projectId: stored.projectId,
+      sessionId: stored.id,
+      requestId: 'choice-cold',
+      toolCallId: 'tool-cold-choice',
+      action: 'accept' as const,
+      answers: [{ fieldId: 'question_0', value: 'minimal' }]
+    }
+    const renderCurrent = (): void =>
+      renderPanel({ view: { activeSession: useSessionStore.getState().sessions[0] } })
+    renderCurrent()
+    expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+
+    // Match Main's prepared decision while runtime attachment is still pending.
+    await owner.prepareElicitation(input)
+    renderCurrent()
+    expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+    expect(container.textContent).not.toContain('End this wait')
+    expect(
+      container.querySelector('[data-testid="ordinary-composer-form"]')?.hasAttribute('inert')
+    ).toBe(true)
+    expect(stored.activities?.[0].elicitation?.answers).toEqual(input.answers)
+
+    // The normal second response retains the exact saved answer for provider delivery.
+    await owner.prepareElicitation({ ...input, continuePrepared: true })
+    renderCurrent()
+    expect(container.querySelector('[data-testid="elicitation-recovery"]')).toBeNull()
+    expect(container.textContent).not.toContain('Could not continue the task')
+    expect(stored.activities?.[0].elicitation?.answers).toEqual(input.answers)
+    expect(stored.activities?.[0].elicitation?.continuationPending).toBe(true)
+  })
+
   it('scopes live Ask-User requests to the active session', () => {
     const fields = [
       {
