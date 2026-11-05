@@ -33,7 +33,7 @@ type AppVersionSectionProps = {
 }
 
 const resourceLinkClassName =
-  'group flex min-h-20 w-full min-w-0 items-start gap-3 overflow-hidden rounded-lg border border-border bg-card p-3 text-foreground no-underline transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
+  'group flex min-h-20 w-full min-w-0 items-start gap-3 overflow-hidden rounded-lg border border-border bg-muted/40 p-3 text-foreground no-underline transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
 
 const resourceIconClassName =
   'mt-0.5 flex size-6 shrink-0 items-center justify-center text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
