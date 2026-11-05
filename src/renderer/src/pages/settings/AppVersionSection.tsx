@@ -33,14 +33,14 @@ type AppVersionSectionProps = {
 }
 
 const resourceLinkClassName =
-  'group flex min-h-20 w-full min-w-0 items-start gap-3 rounded-xl border border-border bg-card px-3.5 py-3 text-foreground no-underline transition-[border-color,background-color,transform] duration-150 ease-out motion-reduce:transition-none hover:border-ring/60 hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
+  'group flex min-h-20 w-full min-w-0 items-start gap-3 overflow-hidden rounded-xl bg-card px-3 py-3 text-foreground no-underline ring-1 ring-foreground/10 transition-[background-color,box-shadow,transform] duration-150 ease-out motion-reduce:transition-none hover:bg-muted/60 hover:shadow-sm focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50 active:translate-y-px'
 
 const resourceIconClassName =
-  'size-5 shrink-0 text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
+  'mt-0.5 size-6 shrink-0 text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-primary group-focus-visible:text-primary group-[.is-hover]:text-primary group-[.is-focus]:text-primary'
 
 const resourceTitleClassName = 'block min-w-0 whitespace-normal break-words text-sm font-medium'
 
-const resourceDescriptionClassName = 'mt-0.5 block text-[13px] leading-5 text-muted-foreground'
+const resourceDescriptionClassName = 'mt-0.5 block text-xs text-muted-foreground'
 
 // App identity + update control in Settings→General. Reads the shared update store so it stays in
 // sync with the external capsule; the update button opens the shared dialog (version + notes +

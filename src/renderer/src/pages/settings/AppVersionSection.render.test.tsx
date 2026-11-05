@@ -95,6 +95,9 @@ describe('AppVersionSection', () => {
     expect(grid?.classList.contains('sm:grid-cols-2')).toBe(true)
     expect(cards).toHaveLength(6)
     expect(cards.every((card) => card.classList.contains('min-h-20'))).toBe(true)
+    expect(
+      cards.every((card) => card.classList.contains('bg-card') && card.classList.contains('ring-1'))
+    ).toBe(true)
   })
 
   it('links manual installation guidance to the localized AIPOCH docs page', async () => {
