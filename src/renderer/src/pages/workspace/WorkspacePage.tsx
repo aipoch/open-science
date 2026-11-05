@@ -21,6 +21,7 @@ import {
   useWorkspaceElicitation
 } from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession,
@@ -121,6 +122,8 @@ type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   persistenceBlockedSessionIds?: readonly string[]
+  persistenceWriteIssues?: readonly SessionWriteIssue[]
+  onReviewPersistence?: () => void
   onSessionSizeLimit?: (sessionId: string) => void
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
@@ -150,6 +153,8 @@ const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
   persistenceBlockedSessionIds = [],
+  persistenceWriteIssues = [],
+  onReviewPersistence,
   onSessionSizeLimit = () => undefined,
   canDeleteConversations,
   isPreviewPresentationActive = true
@@ -1839,6 +1844,9 @@ const WorkspacePage = ({
                   persistenceBlocked: persistenceBlockedSessionIds.includes(
                     activeSession?.id ?? ''
                   ),
+                  persistenceIssue: persistenceWriteIssues.find(
+                    ({ sessionId }) => sessionId === activeSession?.id
+                  ),
                   actionError: visibleActionError,
                   authenticationRecovery,
                   sideChatDisabledReason,
@@ -1938,6 +1946,7 @@ const WorkspacePage = ({
                 }}
                 sessionTools={{
                   newConversation: openNewConversation,
+                  reviewPersistence: onReviewPersistence,
                   menuBindings: createSessionActionBindings({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,

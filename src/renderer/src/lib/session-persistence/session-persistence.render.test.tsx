@@ -155,6 +155,9 @@ describe('session persistence startup', () => {
         <button type="button" data-testid="retry-writes" onClick={persistence.retryWrites}>
           Retry writes
         </button>
+        <button type="button" data-testid="review-writes" onClick={persistence.reviewWriteIssues}>
+          Review writes
+        </button>
         <button
           type="button"
           data-testid="discard-write"
@@ -1451,6 +1454,75 @@ describe('session persistence startup', () => {
       })
     )
   })
+
+  it.each(['full', 'metadata'] as const)(
+    'retries every coalesced preference after a not-submitted %s save',
+    async (mode) => {
+      let authority = createPersistedSession({
+        number: 1,
+        revision: 1,
+        runtimeTranscriptOwner: 'main',
+        title: 'Original',
+        pinned: false
+      })
+      const other = createPersistedSession({ id: 'other-session', number: 2 })
+      if (mode === 'metadata') installHistory([other, authority])
+      else loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [authority] })
+      window.api.sessions.loadOne = vi.fn(async ({ sessionId }) =>
+        structuredClone(sessionId === authority.id ? authority : other)
+      )
+      saveSession.mockImplementation(async (submitted, options) => {
+        const next = { ...authority, revision: (authority.revision ?? 0) + 1 }
+        for (const field of options?.conflictRebaseFields ?? []) {
+          Object.assign(next, { [field]: submitted[field] })
+        }
+        authority = next
+        return structuredClone(authority)
+      })
+      saveSession.mockRejectedValueOnce(new DesktopRuntimeWriteNotSubmittedError())
+      await act(async () => root.render(<Probe />))
+      const current = (): ChatSession =>
+        useSessionStore.getState().sessions.find(({ id }) => id === authority.id)!
+      expect(current().contentLoaded === false).toBe(mode === 'metadata')
+
+      await act(async () => {
+        useSessionStore.getState().togglePinned(authority.id)
+        useSessionStore.getState().renameSession(authority.id, 'Renamed')
+      })
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(saveSession.mock.calls[0][1]?.conflictRebaseFields).toEqual(['pinned', 'title'])
+      await expect(flushSessionPersistence()).rejects.toThrow()
+      expect(authority).toMatchObject({ title: 'Original', pinned: false })
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="dismiss-write-warning"]')!.click()
+      )
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      expect(container.querySelector('div')?.dataset.persistenceBlocked).toBe(authority.id)
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="review-writes"]')!.click()
+      )
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+        'could not be confirmed as saved'
+      )
+      expect(saveSession).toHaveBeenCalledOnce()
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+      )
+
+      expect(authority).toMatchObject({ title: 'Renamed', pinned: true })
+      expect(current()).toMatchObject({
+        title: 'Renamed',
+        pinned: true
+      })
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    }
+  )
 
   it('retries an independent terminal failure alongside retained local changes', async () => {
     const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })

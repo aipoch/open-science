@@ -21,7 +21,6 @@ import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecovery
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { StorageCleanupToast } from '@/components/StorageCleanupToast'
 import { WebEventRecoveryDialog } from '@/components/WebEventRecoveryDialog'
 import { useApplicationEventBindings } from '@/hooks/useApplicationEventBindings'
@@ -321,9 +320,7 @@ const ApplicationPresentationContent = ({
                       title: issue.title || issue.sessionId
                     })}
                     onClick={() =>
-                      useNavigationStore
-                        .getState()
-                        .openSession(issue.projectId!, issue.sessionId!, 'user')
+                      events.navigation.openSession(issue.projectId!, issue.sessionId!)
                     }
                   >
                     {issue.title || issue.sessionId}
@@ -409,6 +406,8 @@ const ApplicationPresentationContent = ({
                     isSessionPersistenceHydrated={sessions.isHydrated}
                     isSessionPersistenceReady={sessions.isReady}
                     persistenceBlockedSessionIds={sessions.persistenceBlockedSessionIds}
+                    persistenceWriteIssues={sessions.writeIssues}
+                    onReviewPersistence={sessions.reviewWriteIssues}
                     onSessionSizeLimit={sessions.reportSessionSizeLimit}
                     canDeleteConversations={sessions.canDeleteSessionsAndProjects}
                     isPreviewPresentationActive={isBasePresentationActive}
@@ -485,7 +484,7 @@ const ApplicationPresentationContent = ({
         </WorkspaceComposerDraftsProvider>
       </WorkspaceAgentRuntimeProvider>
       <ConfirmActionDialog
-        open={discardTarget !== undefined}
+        open={discardTarget !== undefined && isBasePresentationActive}
         title={t('Discard unsaved changes?')}
         description={t(
           'Discard retained changes for “{{title}}” and reload its saved version? This cannot be undone.',

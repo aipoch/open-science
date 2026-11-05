@@ -228,6 +228,10 @@ const setDelegationPolicyAuthority = async (
 }
 
 type LatestSessionSaveTask = (options?: SaveSessionOptions) => Promise<PersistedChatSession>
+type LatestSessionSaveRecoveryContext = {
+  base?: PersistedChatSession
+  capture: (options: SaveSessionOptions | undefined, base?: PersistedChatSession) => void
+}
 type OrderedSessionSaveRecovery = (
   error: unknown,
   submitted: PersistedChatSession,
@@ -240,7 +244,8 @@ type OrderedSessionPersistence = Pick<SessionPersistenceApi, 'saveSession' | 'sa
     target: string,
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions,
-    streaming?: boolean
+    streaming?: boolean,
+    recoveryContext?: LatestSessionSaveRecoveryContext
   ) => Promise<PersistedChatSession>
   saveSessionWithRecovery: (
     session: PersistedChatSession,
@@ -976,6 +981,7 @@ type PendingLatestSessionSave = {
   target: string
   task: LatestSessionSaveTask
   options: SaveSessionOptions | undefined
+  recoveryBase?: PersistedChatSession
   generation: number
   streaming?: boolean
   promise?: Promise<PersistedChatSession>
@@ -1210,7 +1216,8 @@ const createOrderedSessionPersistence = (
     target: string,
     task: LatestSessionSaveTask,
     options?: SaveSessionOptions,
-    streaming?: boolean
+    streaming?: boolean,
+    recoveryContext?: LatestSessionSaveRecoveryContext
   ): Promise<PersistedChatSession> => {
     const pending = pendingLatestByTarget.get(target)
     if (pending?.promise) {
@@ -1221,6 +1228,9 @@ const createOrderedSessionPersistence = (
         { ...pending.options, runtimeWriterToken: options?.runtimeWriterToken },
         options
       )
+      // Retain the same fields/commands and original base even if the queue's connection gate
+      // rejects before the latest task can serialize or load its authoritative Session.
+      recoveryContext?.capture(pending.options, pending.recoveryBase)
       if (pending.streaming && !streaming) {
         // The turn ended: flush the terminal snapshot at the normal cadence instead of waiting
         // out the relaxed streaming interval.
@@ -1234,6 +1244,7 @@ const createOrderedSessionPersistence = (
       target,
       task,
       options,
+      recoveryBase: recoveryContext?.base,
       streaming,
       generation: hydrationGeneration
     }
@@ -1762,6 +1773,7 @@ type SessionPersistenceState = {
   writeIssues: readonly SessionWriteIssue[]
   persistenceBlockedSessionIds: readonly string[]
   reportSessionSizeLimit: (sessionId: string) => void
+  reviewWriteIssues: () => void
   dismissWriteWarning: () => void
   dismissLoadWarning: () => void
   startNewConversationAfterSizeLimit: () => void
@@ -2253,13 +2265,15 @@ const createStoreSaver = (
           pinned: source.pinned,
           messages: []
         })
+        let recoveryBase = metadata(previousSession ?? session)
+        let recoveryOptions: SaveSessionOptions | undefined = saveOptions
         tasks.push({
           target,
           failureContext: { conflictRebaseFields },
           intent: () => ({
-            base: savedAuthority ?? metadata(previousSession ?? session),
+            base: savedAuthority ?? recoveryBase,
             session: submittedMetadata ?? metadata(session),
-            options: saveOptions
+            options: recoveryOptions
           }),
           run: () =>
             persistence.saveLatestSession(
@@ -2293,7 +2307,15 @@ const createStoreSaver = (
                 useSessionStore.getState().upsertPersistedSession(durable)
                 return durable
               },
-              saveOptions
+              saveOptions,
+              undefined,
+              {
+                base: recoveryBase,
+                capture: (options, base) => {
+                  recoveryOptions = options
+                  if (base) recoveryBase = base
+                }
+              }
             )
         })
         continue
@@ -2419,6 +2441,7 @@ const createStoreSaver = (
               }
             : undefined
         const sourceAuthority = acknowledgedSessions.get(session.id)
+        let recoveryOptions = saveOptions
         let submittedAuthority = sourceAuthority
         let submittedSnapshot: PersistedChatSession | undefined
         let rebasedBeforeSave = false
@@ -2531,7 +2554,7 @@ const createStoreSaver = (
           intent: () => ({
             base: submittedAuthority,
             session: submittedSnapshot ?? toPersistedSession(session, nextStreamingMessages),
-            options: saveOptions
+            options: recoveryOptions
           }),
           run: isForced
             ? async () => {
@@ -2603,7 +2626,8 @@ const createStoreSaver = (
                   saveOptions,
                   // In-flight turns flush intermediate snapshots at the relaxed streaming cadence;
                   // the terminal commit (streaming slice empty again) reverts to the normal one.
-                  streamingSessionIds.has(session.id)
+                  streamingSessionIds.has(session.id),
+                  { capture: (options) => (recoveryOptions = options) }
                 )
         })
       }
@@ -3750,6 +3774,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
       ])
     ],
     reportSessionSizeLimit,
+    reviewWriteIssues: presentOutstandingWriteFailures,
     dismissLoadWarning,
     dismissWriteWarning,
     startNewConversationAfterSizeLimit,

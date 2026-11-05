@@ -134,6 +134,7 @@ const mocks = vi.hoisted(() => {
       discardWrite: vi.fn().mockResolvedValue(undefined),
       persistenceBlockedSessionIds: [] as string[],
       reportSessionSizeLimit: vi.fn(),
+      reviewWriteIssues: vi.fn(),
       dismissLoadWarning: vi.fn(),
       dismissWriteWarning: vi.fn(),
       startNewConversationAfterSizeLimit: vi.fn(),
@@ -178,6 +179,8 @@ const mocks = vi.hoisted(() => {
         | {
             isPreviewPresentationActive?: boolean
             persistenceBlockedSessionIds?: readonly string[]
+            persistenceWriteIssues?: readonly SessionWriteIssue[]
+            onReviewPersistence?: () => void
             onSessionSizeLimit?: (sessionId: string) => void
           }
         | undefined
@@ -455,12 +458,16 @@ vi.mock('@/pages/workspace/WorkspacePage', () => ({
   WorkspacePage: ({
     isSessionPersistenceReady,
     persistenceBlockedSessionIds,
+    persistenceWriteIssues,
+    onReviewPersistence,
     onSessionSizeLimit,
     canDeleteConversations,
     isPreviewPresentationActive
   }: {
     isSessionPersistenceReady: boolean
     persistenceBlockedSessionIds?: readonly string[]
+    persistenceWriteIssues?: readonly SessionWriteIssue[]
+    onReviewPersistence?: () => void
     onSessionSizeLimit?: (sessionId: string) => void
     canDeleteConversations: boolean
     isPreviewPresentationActive?: boolean
@@ -470,6 +477,8 @@ vi.mock('@/pages/workspace/WorkspacePage', () => ({
         mocks.presentationProps.workspace = {
           isPreviewPresentationActive,
           persistenceBlockedSessionIds,
+          persistenceWriteIssues,
+          onReviewPersistence,
           onSessionSizeLimit
         }
       }}
@@ -552,6 +561,7 @@ describe('App startup routing', () => {
     mocks.sessionPersistence.isRetryingWrites = false
     mocks.sessionPersistence.writeIssues = []
     mocks.sessionPersistence.discardWrite.mockClear()
+    mocks.sessionPersistence.reviewWriteIssues.mockClear()
     mocks.openSession.mockClear()
     mocks.sessionPersistence.persistenceBlockedSessionIds = []
     mocks.sessionPersistence.reportSessionSizeLimit.mockClear()
@@ -2005,6 +2015,77 @@ describe('App startup routing', () => {
     await act(async () => confirm.click())
     expect(mocks.sessionPersistence.discardWrite).toHaveBeenCalledExactlyOnceWith('session:other')
     expect(document.querySelector('[data-testid="session-write-discard-dialog"]')).toBeNull()
+  })
+
+  it('covers and resumes retained-write discard confirmation during Compute approval', async () => {
+    mocks.settings.isLoaded = true
+    mocks.sessionPersistence.writeError =
+      'Some conversation changes could not be confirmed as saved.'
+    mocks.sessionPersistence.writeIssues = [
+      {
+        target: 'session:other',
+        sessionId: 'other',
+        projectId: 'project-1',
+        title: 'Other conversation',
+        kind: 'connection',
+        state: 'failed',
+        canDiscard: true
+      }
+    ]
+    await render()
+    await act(async () =>
+      container
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Discard retained changes for Other conversation"]'
+        )!
+        .click()
+    )
+    expect(document.querySelector('[data-testid="session-write-discard-dialog"]')).not.toBeNull()
+
+    mocks.compute.pendingApprovals = [{ id: 'compute', sessionId: 'compute-session' }]
+    await act(async () => root.render(<App />))
+    await vi.waitFor(() => expect(mocks.presentationProps.computeApproval?.active).toBe(true))
+    expect(document.querySelector('[data-testid="session-write-discard-dialog"]')).toBeNull()
+    expect(mocks.sessionPersistence.discardWrite).not.toHaveBeenCalled()
+
+    mocks.compute.pendingApprovals = []
+    await act(async () => root.render(<App />))
+    const dialog = document.querySelector('[data-testid="session-write-discard-dialog"]')!
+    expect(dialog.textContent).toContain('Other conversation')
+    await act(async () =>
+      [...dialog.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent === 'Discard changes')!
+        .click()
+    )
+    expect(mocks.sessionPersistence.discardWrite).toHaveBeenCalledExactlyOnceWith('session:other')
+  })
+
+  it('keeps the owning recovery command available in Workspace after dismissing a write warning', async () => {
+    mocks.settings.isLoaded = true
+    mocks.navigation.view = 'workspace'
+    mocks.sessionPersistence.writeError = undefined
+    mocks.sessionPersistence.persistenceBlockedSessionIds = ['session-1']
+    mocks.sessionPersistence.writeIssues = [
+      {
+        target: 'session:session-1',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        title: 'Conversation',
+        kind: 'conflict',
+        state: 'failed',
+        canDiscard: true,
+        reviewRequired: true
+      }
+    ]
+    await render()
+    expect(container.querySelector('[data-testid="session-persistence-alert"]')).toBeNull()
+    expect(mocks.presentationProps.workspace?.persistenceWriteIssues).toEqual(
+      mocks.sessionPersistence.writeIssues
+    )
+    mocks.presentationProps.workspace?.onReviewPersistence?.()
+    expect(mocks.sessionPersistence.reviewWriteIssues).toHaveBeenCalledOnce()
+    expect(mocks.sessionPersistence.retryWrites).not.toHaveBeenCalled()
+    expect(mocks.sessionPersistence.discardWrite).not.toHaveBeenCalled()
   })
 
   it('offers a new conversation instead of retrying a Session size-limit failure', async () => {

@@ -1,5 +1,4 @@
 import { useCallback } from 'react'
-import { create } from 'zustand'
 
 import type {
   AcpResumeSessionRequest,
@@ -18,12 +17,10 @@ import {
   respondToWorkspaceElicitation,
   type WorkspaceElicitationRuntime
 } from './workspace-elicitation-runtime'
-
-// A failed recovery write cannot enter durable history. Keep its disclosure scoped to
-// the saved question across responder remounts; only Main can grant retry permission.
-const useWorkspaceElicitationFailures = create<{
-  failures: Record<string, { requestId: string; error: string }>
-}>(() => ({ failures: {} }))
+import {
+  reportWorkspaceElicitationFailure,
+  useWorkspaceElicitationFailures
+} from './workspace-operation-error'
 
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
@@ -155,15 +152,11 @@ const useWorkspaceElicitation = (
           !saved.continuationRecovery &&
           (saved.state === 'answered' || saved.state === 'declined')
         ) {
-          useWorkspaceElicitationFailures.setState(({ failures }) => ({
-            failures: {
-              ...failures,
-              [sessionId]: {
-                requestId: response.requestId,
-                error: error instanceof Error ? error.message : String(error)
-              }
-            }
-          }))
+          reportWorkspaceElicitationFailure(
+            sessionId,
+            response.requestId,
+            error instanceof Error ? error.message : String(error)
+          )
         }
         if (sessionId && isSessionSizeLimitError(error)) onSessionSizeLimit?.(sessionId)
         throw error

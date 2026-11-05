@@ -25,6 +25,7 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import {
   reportWorkspaceOperationError,
   useWorkspaceOperationErrors
@@ -275,7 +276,9 @@ describe('WorkspacePage send gate while compacting', () => {
   })
 
   const renderPage = async (
-    persistenceBlockedSessionIds: readonly string[] = []
+    persistenceBlockedSessionIds: readonly string[] = [],
+    persistenceWriteIssues: readonly SessionWriteIssue[] = [],
+    onReviewPersistence?: () => void
   ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
@@ -284,6 +287,8 @@ describe('WorkspacePage send gate while compacting', () => {
           isSessionPersistenceHydrated={true}
           isSessionPersistenceReady={true}
           persistenceBlockedSessionIds={persistenceBlockedSessionIds}
+          persistenceWriteIssues={persistenceWriteIssues}
+          onReviewPersistence={onReviewPersistence}
           canDeleteConversations={true}
         />
       )
@@ -652,6 +657,31 @@ describe('WorkspacePage send gate while compacting', () => {
     await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep working')))
     expect(conversationProps.view.persistenceBlocked).toBe(false)
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('projects the active conversation write issue and its recovery action while send stays blocked', async () => {
+    runtime.nativeContextCompactionSessionIds = []
+    const issue: SessionWriteIssue = {
+      target: 'session:sess-a',
+      sessionId: 'sess-a',
+      projectId: 'proj-1',
+      kind: 'connection',
+      state: 'failed',
+      canDiscard: true,
+      reviewRequired: true
+    }
+    const review = vi.fn()
+    await renderPage(
+      ['sess-a'],
+      [{ ...issue, target: 'session:other', sessionId: 'other', kind: 'size-limit' }, issue],
+      review
+    )
+    expect(conversationProps.view.persistenceIssue).toBe(issue)
+    expect(conversationProps.view.persistenceBlocked).toBe(true)
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep my draft')))
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    conversationProps.sessionTools.reviewPersistence?.()
+    expect(review).toHaveBeenCalledOnce()
   })
 
   it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {

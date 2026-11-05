@@ -1,5 +1,7 @@
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import { ErrorNotice } from '@/components/error-notice'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
   formatNoticeDiagnostics,
@@ -329,6 +331,7 @@ type ConversationPanelView = {
   canEditLocalDraft?: boolean
   sendPreparing?: boolean
   persistenceBlocked?: boolean
+  persistenceIssue?: SessionWriteIssue
   actionError: string | null
   sideChatDisabledReason?: string
   sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
@@ -433,6 +436,7 @@ type ConversationPanelSessionTools = {
   menuBindings?: React.ComponentProps<typeof SessionHeaderMenu>['bindings']
   exportDiagnostics?: (session: ChatSession) => void
   newConversation?: () => void
+  reviewPersistence?: () => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
@@ -489,6 +493,7 @@ const ConversationPanel = ({
     canEditDraft,
     canEditLocalDraft = canEditDraft,
     persistenceBlocked,
+    persistenceIssue,
     actionError,
     sideChatDisabledReason,
     sessionImport
@@ -939,6 +944,8 @@ const ConversationPanel = ({
   const contextResetNotice = useWorkspaceOperationErrors((state) =>
     activeSession ? state.contextResets?.[activeSession.id] : false
   )
+  const persistenceSizeLimit = !persistenceIssue || persistenceIssue.kind === 'size-limit'
+  const persistenceChecking = persistenceIssue?.state === 'checking'
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -985,17 +992,6 @@ const ConversationPanel = ({
               reconfigureError.reason ||
               'The agent session could not be reconfigured.'
             : undefined
-      },
-      {
-        id: 'storage',
-        message: persistenceBlocked ? 'Conversation storage limit reached' : undefined,
-        detail: persistenceBlocked
-          ? t(
-              'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
-            )
-          : undefined,
-        origin: 'environment',
-        blocksSend: true
       }
     ]
   })
@@ -1278,7 +1274,7 @@ const ConversationPanel = ({
       }
     },
     'open-environment': {
-      run: (notice) => openSettingsToPanel(notice.operation === 'storage' ? 'storage' : 'runtimes')
+      run: () => openSettingsToPanel('runtimes')
     },
     compact: { run: () => onCompactContext(), disabled: () => !canCompactContext },
     'remove-attachments': {
@@ -1748,6 +1744,55 @@ const ConversationPanel = ({
                 />
               )}
               <div className="px-1 md:px-3">
+                {persistenceBlocked ? (
+                  <ErrorNotice
+                    inline
+                    className="mb-2"
+                    role={persistenceChecking ? 'status' : 'alert'}
+                    level={persistenceChecking ? 'info' : 'error'}
+                    title={
+                      persistenceSizeLimit
+                        ? t('Conversation storage limit reached')
+                        : persistenceChecking
+                          ? t('Checking conversation storage…')
+                          : t('Conversation storage needs attention')
+                    }
+                    description={
+                      persistenceSizeLimit
+                        ? t(
+                            'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+                          )
+                        : persistenceChecking
+                          ? t(
+                              'The connection changed while saving. Checking which conversation changes were saved.'
+                            )
+                          : persistenceIssue.kind === 'conflict'
+                            ? t(
+                                'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
+                              )
+                            : persistenceIssue.kind === 'connection'
+                              ? t(
+                                  'Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.'
+                                )
+                              : t(
+                                  'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+                                )
+                    }
+                    primaryButton={
+                      persistenceSizeLimit && sessionTools.newConversation
+                        ? {
+                            label: t('New conversation'),
+                            onClick: sessionTools.newConversation
+                          }
+                        : !persistenceChecking && sessionTools.reviewPersistence
+                          ? {
+                              label: t('Review recovery options'),
+                              onClick: sessionTools.reviewPersistence
+                            }
+                          : undefined
+                    }
+                  />
+                ) : null}
                 <ComposerNoticeSlot
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
