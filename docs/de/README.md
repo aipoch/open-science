@@ -49,7 +49,19 @@
 
 Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version ordnet die Einstellungen in übersichtliche Tabs, importiert bis zu 100 Referenzen gleichzeitig aus DOI-, arXiv- oder PubMed-Kennungen und fügt der Literaturdetailansicht KI-Studienübersichten hinzu. Beendete Sitzungen geben ihre Agenten-Prozesse frei, eQTL-Catalogue-Abfragen funktionieren wieder, und Aktualisierungen unter macOS und Windows verlaufen reibungsloser. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.8](../../release-notes/1.0.8/de.md).
+### 💡 AIPOCH Open-Science v1.0.8 — Neuerungen
+
+_4. November 2026_
+
+- **Einstellungen**: Funktionsbezogene Registerkarten ordnen App-Informationen, Diagnose und Hilfe.
+- **Literaturimport**: Bis zu **100** DOI-, arXiv- oder PubMed-Kennungen oder offizielle Artikellinks gleichzeitig importieren, normalisieren und deduplizieren.
+- **KI-Studienübersichten**: Forschungsfrage, Studienpopulation, Methoden, Hauptergebnisse und Grenzen aus Volltext oder Abstract zusammenfassen und die Textquelle anzeigen.
+- **Sitzungsressourcen**: Alle fünf Agenten-Frameworks geben Prozesse nach abgeschlossenen Sitzungen frei und reduzieren die Speicheransammlung.
+- **Modellunterstützung**: Tencent TokenHub ergänzt Hy4 und DeepSeek V4.1 Flash sowie Bildeingaben für ausgewählte Modelle.
+- **Wissenschaftliche Daten und PDF**: eQTL Catalogue mit GRCh38-Prüfung wiederherstellen sowie PDF-Lesereihenfolge und Textextraktion verbessern.
+- **Zuverlässigkeit**: R-Abhängigkeitsprüfung und Artefakt-Provenienz verbessern; Updates, Downloads, Sandbox-Netzwerk und Pi-Installation korrigieren.
+
+[Vollständige Versionshinweise v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
