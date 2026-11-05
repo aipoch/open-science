@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { materializeSessionConversationGraph } from '../../shared/session-persistence'
+import { synchronizeActiveConversationMessages } from '../../shared/conversation-graph'
 
 import {
   createDelegationSettlementContinuationDispatch,
   admitDelegationSettlement,
+  rollbackDelegationSettlement,
   type SettlementContinuationDispatchOptions
 } from './settlement-continuation-dispatch'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
@@ -124,6 +126,31 @@ describe('settlement turn admission', () => {
     })
     expect(admitted.messages).toBe(session.messages)
     expect(admitted.conversationGraph).toBe(graph)
+    const rolledBack = rollbackDelegationSettlement(admitted, admitted.activeRun!)
+    expect(rolledBack.status).toBe('idle')
+    expect(rolledBack.activeRun).toBeUndefined()
+    expect(admitDelegationSettlement(rolledBack, selected).status).toBe('running')
+    for (const activeRun of [
+      { promptMessageId: 'new-user-turn', startedAt: 11 },
+      { promptMessageId: request.originatingPromptId, startedAt: 12 }
+    ]) {
+      const newer = { ...admitted, activeRun }
+      expect(rollbackDelegationSettlement(newer, admitted.activeRun!)).toBe(newer)
+    }
+    const newerMessages = [
+      ...session.messages,
+      { ...session.messages[0], id: 'new-user-turn', createdAt: 20, updatedAt: 20 }
+    ]
+    expect(() =>
+      admitDelegationSettlement(
+        {
+          ...session,
+          messages: newerMessages,
+          conversationGraph: synchronizeActiveConversationMessages(graph, newerMessages, 20)
+        },
+        selected
+      )
+    ).toThrow('idle active root turn')
     expect(() =>
       admitDelegationSettlement(
         { ...session, activeRun: { promptMessageId: 'new-user-turn', startedAt: 20 } },

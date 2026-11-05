@@ -164,7 +164,6 @@ const CITATION_PREVIEW_PROMPT = 'Preview a cited source.'
 
 const sessionRoutes = new Map()
 const sessionCancellationResolvers = new Map()
-const reliableMessagingChildren = new Map()
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
@@ -2913,7 +2912,7 @@ if (process.argv.includes('--version')) {
           const dispatched = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)} }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
+              `globalThis.s2Pending = await host.delegate([{ task: ${JSON.stringify(DELEGATED_TERMINAL_TASK)}, name: "Bounded terminal child" }, { task: ${JSON.stringify(slowTask)}, name: "Complete the bounded fixture after a delay." }], { timeoutSeconds: 1 }); return globalThis.s2Pending`
             )
           )
           if (
@@ -2946,7 +2945,7 @@ if (process.argv.includes('--version')) {
           const terminal = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
-              `const slow = (await host.children()).find((child) => child.name === ${JSON.stringify(DELEGATED_BOUNDED_SLOW_TASK)}); return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
+              `const slow = (await host.children()).find((child) => child.name === "Complete the bounded fixture after a delay."); return await host.collect([{ frameId: slow.frameId, attemptId: slow.attemptId }], { timeoutSeconds: 30 })`
             )
           )
           if (terminal.length !== 1 || terminal[0].status !== 'completed') {
@@ -3036,7 +3035,6 @@ if (process.argv.includes('--version')) {
           if (!child?.frameId || !child?.attemptId) {
             throw new Error(`Reliable child admission failed: ${JSON.stringify(dispatched)}`)
           }
-          reliableMessagingChildren.set(context.params.sessionId, child.frameId)
           const downward = controlResultValue(
             await executeControlCode(
               context.params.sessionId,
@@ -3235,8 +3233,13 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(RELIABLE_CHILD_DIRECTIVE)) {
           reply = 'Child received the reliable Main directive.'
         } else if (prompt.includes('Child reliable question reached Main')) {
-          const childFrameId = reliableMessagingChildren.get(context.params.sessionId)
-          if (!childFrameId) throw new Error('Reliable messaging child Frame was not retained.')
+          const { frameId: childFrameId } = controlResultValue(
+            await executeControlCode(
+              context.params.sessionId,
+              'const child = (await host.children()).find((child) => child.name === "Send a reliable question to Main."); return { frameId: child?.frameId }'
+            )
+          )
+          if (!childFrameId) throw new Error('Reliable messaging child Frame was not found.')
           const answered = controlResultValue(
             await executeControlCode(
               context.params.sessionId,

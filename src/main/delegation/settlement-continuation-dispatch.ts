@@ -1,5 +1,5 @@
 import { resolveActiveConversationMessages } from '../../shared/conversation-graph'
-import type { PersistedChatSession } from '../../shared/session-persistence'
+import type { PersistedActiveRun, PersistedChatSession } from '../../shared/session-persistence'
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { DelegationSettlementDispatch } from './delegation-settlement-wake-owner'
 import { DelegateMessagePreAcceptanceError } from './execution-port'
@@ -64,8 +64,7 @@ const admitDelegationSettlement = (
   const graph = session.conversationGraph
   const root = graph?.frames.find(({ id }) => id === request.rootFrameId)
   const prompt =
-    graph &&
-    resolveActiveConversationMessages(graph).find(({ id }) => id === request.originatingPromptId)
+    graph && resolveActiveConversationMessages(graph).findLast(({ role }) => role === 'user')
   if (
     session.id !== request.sessionId ||
     session.projectId !== request.projectId ||
@@ -76,7 +75,7 @@ const admitDelegationSettlement = (
     graph?.rootFrameId !== request.rootFrameId ||
     graph.activeFrameId !== request.rootFrameId ||
     root?.activeBranchId !== request.rootBranchId ||
-    prompt?.role !== 'user' ||
+    prompt?.id !== request.originatingPromptId ||
     prompt.runtimeSegmentId !== request.runtimeSegmentId
   )
     throw new DelegateMessagePreAcceptanceError(
@@ -91,5 +90,23 @@ const admitDelegationSettlement = (
   }
 }
 
-export { createDelegationSettlementContinuationDispatch, admitDelegationSettlement }
+const rollbackDelegationSettlement = (
+  session: PersistedChatSession,
+  admittedRun: PersistedActiveRun
+): PersistedChatSession => {
+  if (
+    session.status !== 'running' ||
+    session.promptPreparation ||
+    session.activeRun?.promptMessageId !== admittedRun.promptMessageId ||
+    session.activeRun.startedAt !== admittedRun.startedAt
+  )
+    return session
+  return { ...session, status: 'idle', activeRun: undefined }
+}
+
+export {
+  createDelegationSettlementContinuationDispatch,
+  admitDelegationSettlement,
+  rollbackDelegationSettlement
+}
 export type { SettlementContinuationDispatchOptions }
