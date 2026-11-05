@@ -2075,7 +2075,7 @@ const createStoreSaver = (
     }
     const tasks: Array<{
       target: string
-      run: () => Promise<unknown>
+      run: () => Promise<PersistedChatSession | void>
       failureContext: StoreSaverFailureContext
       intent?: () => SessionWriteIntent
       manifest?: SaveSessionManifestRequest
@@ -2517,7 +2517,13 @@ const createStoreSaver = (
         return Promise.resolve()
       }
       // Invoke every task now so it takes its place in the shared persistence queue at snapshot time.
-      const scheduled = intent ? persistence.recovery.trackSession(target, intent, run) : run()
+      const scheduled = intent
+        ? persistence.recovery.trackSession(
+            target,
+            intent,
+            run as () => Promise<PersistedChatSession>
+          )
+        : run()
       return scheduled.then(
         (result) => {
           observer.onSuccess?.(target)
