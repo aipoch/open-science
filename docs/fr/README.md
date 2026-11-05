@@ -17,7 +17,9 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="Prépublication AIPOCH Open-Science sur arXiv : 2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#performances-aux-benchmarks">Résultats des benchmarks</a>
+  <a href="#performances-aux-benchmarks">
+    <img alt="AIPOCH Open-Science — Résultats des benchmarks" src="../images/readme/benchmark-comparisons.svg">
+  </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="Plateformes macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>

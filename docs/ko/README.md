@@ -17,7 +17,9 @@
   <a href="https://arxiv.org/abs/2610.17110">
     <img alt="AIPOCH Open-Science arXiv 프리프린트: 2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
-  <a href="#벤치마크-성능">벤치마크 결과</a>
+  <a href="#벤치마크-성능">
+    <img alt="AIPOCH Open-Science — 벤치마크 결과" src="../images/readme/benchmark-comparisons.svg">
+  </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="지원 플랫폼 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
   </a>
