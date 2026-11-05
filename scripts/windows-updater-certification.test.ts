@@ -172,6 +172,38 @@ describe('Windows updater certification', () => {
     }
   })
 
+  it.each([
+    { allowActiveWork: true, canForce: true, accepted: true },
+    { allowActiveWork: false, canForce: true, accepted: false },
+    { allowActiveWork: true, canForce: false, accepted: false }
+  ])('requires explicit active-work confirmation and application permission: %j', async (input) => {
+    let held = true
+    const result = certifyForeignProcessRecovery({
+      allowActiveWork: input.allowActiveWork,
+      invoke: async () =>
+        held
+          ? {
+              state: 'ready',
+              reason: 'installation-busy',
+              recovery: { detail: 'foreign-process', blockingProcesses: [{ pid: 123 }] }
+            }
+          : {
+              state: 'ready',
+              reason: 'active-work',
+              canForce: input.canForce,
+              recovery: { canRetryInstall: false }
+            },
+      acquireLock: async () => ({
+        pid: 123,
+        release: async () => {
+          held = false
+        }
+      })
+    })
+    if (input.accepted) await expect(result).resolves.toHaveLength(3)
+    else await expect(result).rejects.toThrow('Released file holder still blocks retry')
+  })
+
   it('releases its owned handle even if the application fails to identify the blocker', async () => {
     const release = vi.fn(async () => undefined)
     await expect(

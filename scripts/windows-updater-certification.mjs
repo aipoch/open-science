@@ -228,13 +228,24 @@ const observeChildExit = (child) =>
 
 const redactPackagedAppOutput = (output) => output.replace(/([?&]token=)[^\s&#]+/gi, '$1<redacted>')
 
-const summarizeUpdateStatus = ({ state, current, latest, reason, error, recovery }) => ({
+const summarizeUpdateStatus = ({
   state,
   current,
   latest,
   reason,
   error,
-  recovery
+  recovery,
+  canForce,
+  blockedBy
+}) => ({
+  state,
+  current,
+  latest,
+  reason,
+  error,
+  recovery,
+  canForce,
+  blockedBy
 })
 
 const inspectUpdaterSuccessor = async ({
@@ -499,11 +510,14 @@ const runElectronUpdater = async ({
         'Seeded a stale Notebook host receipt with a live unrelated PID; app PATH is empty.'
       )
     }
-    const invoke = async (action) => {
+    const invoke = async (action, options) => {
       phase = action
       console.log(`Updater command started: ${action}`)
       const status = await withTimeout(
-        page.evaluate((name) => window.api.update[name](), action),
+        page.evaluate(({ name, options }) => window.api.update[name](options), {
+          name: action,
+          options
+        }),
         `desktop update ${action}`
       )
       console.log(
@@ -535,7 +549,7 @@ const runElectronUpdater = async ({
         'The installed updater did not complete Authenticode verification with an empty PATH.'
       )
     await onDownloaded(ownedEvidence)
-    await beforeApply?.({ invoke, page })
+    const applyOptions = await beforeApply?.({ invoke, page })
 
     // electron-updater intentionally detaches NSIS, so the app exit is not evidence that the
     // installation handoff finished. Attach a read-only watcher before applying the update to avoid
@@ -550,7 +564,7 @@ const runElectronUpdater = async ({
     // handled immediately; the original promise is still awaited below or during failure cleanup.
     void installerExit.catch(() => undefined)
     await withTimeout(observer.ready, 'installer observer readiness', 60_000)
-    const applied = await invoke('apply')
+    const applied = await invoke('apply', applyOptions)
     if (applied.state !== 'applying') {
       throw new Error(`Unexpected updater apply result: ${JSON.stringify(applied)}`)
     }
@@ -627,7 +641,12 @@ const runElectronUpdater = async ({
   }
 }
 
-const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked }) => {
+const certifyForeignProcessRecovery = async ({
+  invoke,
+  acquireLock,
+  onBlocked,
+  allowActiveWork = false
+}) => {
   const lock = await acquireLock()
   const observations = []
   const command = async (action) => {
@@ -660,7 +679,12 @@ const certifyForeignProcessRecovery = async ({ invoke, acquireLock, onBlocked })
     await lock.release()
   }
   const cleared = await command('recheck')
-  if (cleared.state !== 'ready' || cleared.reason || !cleared.recovery?.canRetryInstall) {
+  const confirmableWork =
+    allowActiveWork && cleared.reason === 'active-work' && cleared.canForce === true
+  if (
+    cleared.state !== 'ready' ||
+    (!confirmableWork && (cleared.reason || !cleared.recovery?.canRetryInstall))
+  ) {
     throw new Error(`Released file holder still blocks retry: ${JSON.stringify(cleared)}`)
   }
   console.log(`External process recovery: ${JSON.stringify(observations)}`)
@@ -832,41 +856,59 @@ const main = async () => {
       ownedAgentFixture,
       windowsRecovery: options.windowsRecovery,
       notebook: options.notebook,
-      ...(options.foreignProcess
+      ...(options.foreignProcess || options.ownedProcesses
         ? {
             beforeApply: async ({ invoke, page }) => {
-              observation.foreignProcessRecovery = await certifyForeignProcessRecovery({
-                invoke,
-                acquireLock: async () => {
-                  const { child } = await launchUninstallerLockHolder(
-                    installDirectory,
-                    env,
-                    undefined,
-                    undefined,
-                    undefined,
-                    'Read'
-                  )
-                  return { pid: child.pid, release: () => terminateProcessTree(child) }
-                },
-                onBlocked: async () => {
-                  const dialog = page.getByTestId('runtime-update-dialog')
-                  await expect(dialog).toContainText('Another app is using Open-Science files')
-                  await expect(dialog).toContainText('Quit the other app, then recheck.')
-                  await expect(
-                    dialog.getByRole('button', { name: 'Cancel', exact: true })
-                  ).toBeEnabled()
-                  await expect(
-                    dialog.getByRole('button', { name: 'Retry', exact: true })
-                  ).toBeEnabled()
-                  await page.screenshot({ path: `${options.output}.blocked.png` })
-                }
-              })
+              if (options.foreignProcess)
+                observation.foreignProcessRecovery = await certifyForeignProcessRecovery({
+                  invoke,
+                  allowActiveWork: Boolean(options.ownedProcesses),
+                  acquireLock: async () => {
+                    const { child } = await launchUninstallerLockHolder(
+                      installDirectory,
+                      env,
+                      undefined,
+                      undefined,
+                      undefined,
+                      'Read'
+                    )
+                    return { pid: child.pid, release: () => terminateProcessTree(child) }
+                  },
+                  onBlocked: async () => {
+                    const dialog = page.getByTestId('runtime-update-dialog')
+                    await expect(dialog).toContainText('Another app is using Open-Science files')
+                    await expect(dialog).toContainText('Quit the other app, then recheck.')
+                    await expect(
+                      dialog.getByRole('button', { name: 'Cancel', exact: true })
+                    ).toBeEnabled()
+                    await expect(
+                      dialog.getByRole('button', { name: 'Retry', exact: true })
+                    ).toBeEnabled()
+                    await page.screenshot({ path: `${options.output}.blocked.png` })
+                  }
+                })
               if (observation.ownedProcessRecovery) {
+                const readiness = options.foreignProcess
+                  ? observation.foreignProcessRecovery.at(-1).status
+                  : await invoke('apply')
+                if (
+                  readiness.state !== 'ready' ||
+                  readiness.reason !== 'active-work' ||
+                  readiness.canForce !== true
+                )
+                  throw new Error(
+                    'The installed app did not offer confirmation to stop the active Agent.'
+                  )
+                observation.activeWorkRecovery = {
+                  reason: readiness.reason,
+                  canForce: readiness.canForce,
+                  blockedBy: readiness.blockedBy
+                }
                 const { leaderPid, descendantPid } = observation.ownedProcessRecovery
                 for (const pid of [leaderPid, descendantPid]) {
                   process.kill(pid, 0)
                   if (
-                    observation.foreignProcessRecovery.some((entry) =>
+                    observation.foreignProcessRecovery?.some((entry) =>
                       entry.status.recovery?.blockingProcesses?.some((item) => item.pid === pid)
                     )
                   )
@@ -874,6 +916,9 @@ const main = async () => {
                 }
               }
               await writeFile(options.output, `${JSON.stringify(observation, null, 2)}\n`)
+              // Match the production dialog's explicit "stop tasks and update" action. Foreign
+              // occupants are never forceable; the installed app must first confirm active work.
+              return observation.ownedProcessRecovery ? { force: true } : undefined
             }
           }
         : {})
