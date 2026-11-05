@@ -772,12 +772,12 @@ const HomePage = ({
                         size="icon"
                         className="size-9 rounded-lg text-text-300"
                         onClick={() => openMarketplace('user')}
-                        aria-label={t('Sharing marketplace')}
+                        aria-label={t('Marketplace')}
                       >
                         <Store className="size-4" strokeWidth={2} aria-hidden="true" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">{t('Sharing marketplace')}</TooltipContent>
+                    <TooltipContent side="bottom">{t('Marketplace')}</TooltipContent>
                   </Tooltip>
                   <NotificationBell withTooltipProvider={false} />
                   <Tooltip>
