@@ -1,3 +1,5 @@
+import type { composeResearchFilm } from './research-film'
+import type { LocalModelApi } from '../../shared/local-models'
 import { UseCaseCatalog } from '../session-package/use-case-catalog'
 import { createSessionRecoveryFolderCommand } from '../session-persistence/ipc'
 import { createCompletionHandoffCommands } from '../agents/completion-handoff-ipc'
@@ -65,6 +67,8 @@ export function composeCommandDependencies({
   managedFiles,
   sessionAuthority,
   documentReading,
+  researchFilm,
+  localModels,
   projectLifecycle,
   notebookRuntime,
   researchCatalog,
@@ -106,6 +110,8 @@ export function composeCommandDependencies({
   sessionPackages: Awaited<ReturnType<typeof composeSessionPackages>>
   managedFiles: ReturnType<typeof composeManagedFiles>
   sessionAuthority: Awaited<ReturnType<typeof composeSessionAuthority>>
+  researchFilm: Awaited<ReturnType<typeof composeResearchFilm>>
+  localModels: LocalModelApi
   documentReading: Awaited<ReturnType<typeof composeDocumentReading>>
   projectLifecycle: ReturnType<typeof composeProjectLifecycle>
   notebookRuntime: Awaited<ReturnType<typeof composeNotebookRuntime>>
@@ -341,6 +347,8 @@ export function composeCommandDependencies({
       },
       events: applicationEvents,
       managedPreview: managedFiles.managedPreviewOwners,
+      researchVideoPresentation: researchFilm.researchVideoPresentation,
+      videoExportTools: researchFilm.videoExportTools,
       preview: {
         load: (request) => sessionPackages.previewStateRepository.get(request.projectId),
         save: (request) =>
@@ -456,7 +464,7 @@ export function composeCommandDependencies({
       locale: localeOwner,
       network: createNetworkCommandOwner(),
       backgroundResults: settingsEffects.backgroundResultActivity,
-      localModels: documentReading.localModels,
+      localModels,
       pdfStructure: documentReading.pdfStructureReader,
       cli: cliCommandOwner,
       github: githubCommandOwner,

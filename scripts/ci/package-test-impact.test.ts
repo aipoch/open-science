@@ -268,6 +268,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       `export default {root: ${JSON.stringify(join(fixture, 'packages/providers'))}, test: {name:'providers',include:['src/**/*.test.ts']}}`
     )
     const literaturePackages = [
+      'research-film',
       'pdf-structure',
       'pdf-translation',
       'literature-citations',
@@ -346,7 +347,7 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
         .map((file) => join(fixture, file))
         .sort()
     )
-    expect(list('0')).toHaveLength(20)
+    expect(list('0')).toHaveLength(12 + literaturePackages.length)
     // Include roots beyond today's directory inventory: partitioning must not drop future host tests.
     for (const path of ['root.test.ts', 'future-host/nested/new.test.ts']) {
       const file = join(fixture, path)
@@ -368,8 +369,8 @@ it('applies exclusions to real Vitest discovery across inherited projects while 
       expect(new Set([...host, ...packages]).size).toBe(host.length + packages.length)
       expect([...host, ...packages].sort()).toEqual(baseline)
     }
-    expect(list('0', [], 'host')).toHaveLength(22)
-    expect(list('0', [], 'packages')).toHaveLength(22)
+    expect(list('0', [], 'host')).toHaveLength(14 + literaturePackages.length)
+    expect(list('0', [], 'packages')).toHaveLength(14 + literaturePackages.length)
   } finally {
     rmSync(fixture, { recursive: true, force: true })
   }

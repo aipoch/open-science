@@ -197,6 +197,8 @@
         "src/main/**/*powershell*.ts",
         "src/main/**/*path*.ts",
         "src/main/**/*acl*.ts",
+        "src/main/research-video/export-electron.ts",
+        "packages/research-film/src/ffmpeg.ts",
         "src/main/window-shortcuts.ts",
         "src/main/acp/agent-process.ts",
         "src/main/acp/claude-executable.ts",

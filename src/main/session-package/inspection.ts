@@ -1,3 +1,4 @@
+import { validateResearchFilms } from './research-films'
 import { validatePackageLiteratureSession } from './literature'
 import { join } from 'node:path'
 import { decodeSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
@@ -76,6 +77,7 @@ export const inspectSessionPackage = async (
   if (manifest.source.projectId !== session.projectId || manifest.source.sessionId !== session.id)
     throw new Error('Session package source identity mismatch.')
   const records = parseNativeRecords(await readPackageJson(join(directory, 'records.json')))
+  validateResearchFilms(records, manifest, session)
   validatePackageLiteratureSession(records, session)
   await validatePackageRecords(
     directory,

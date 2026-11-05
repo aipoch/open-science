@@ -1,3 +1,7 @@
+import {
+  renderResearchVideoMp4,
+  readResearchVideoExportProgress
+} from './research-video/export-electron'
 import { configureOfficePreviewHost } from './office-preview/application-commands'
 import {
   createOfficePreviewFrameProcessResolver,
@@ -39,6 +43,8 @@ export function installElectronInteraction(): void {
     notificationCtor: Notification,
     hasFocusedWindow: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
     hasWindow: () => BrowserWindow.getAllWindows().length > 0,
+    renderResearchVideo: renderResearchVideoMp4,
+    researchVideoProgress: async (request) => readResearchVideoExportProgress(request),
     printConversationPdf,
     chooseFiles: dialog.showOpenDialog.bind(dialog),
     chooseSavePath: dialog.showSaveDialog.bind(dialog),

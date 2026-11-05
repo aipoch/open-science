@@ -1166,12 +1166,13 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     </>
                   }
                   onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                  onSelect={(excludedStorageKeys, includePdfNotes) =>
+                  onSelect={(excludedStorageKeys, includePdfNotes, includeResearchFilms) =>
                     void respond({
                       action: 'select',
                       operationId: operation.id,
                       excludedStorageKeys,
-                      includePdfNotes
+                      includePdfNotes,
+                      ...(includeResearchFilms ? { includeResearchFilms: true } : {})
                     })
                   }
                 >

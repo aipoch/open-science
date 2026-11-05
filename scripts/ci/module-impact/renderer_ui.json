@@ -43,7 +43,8 @@
     "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
     "src/renderer/src/components/ui/split-button.tsx",
     "src/renderer/src/components/ui/split-button.css",
-    "src/renderer/src/components/ui/split-button.test.tsx"
+    "src/renderer/src/components/ui/split-button.test.tsx",
+    "src/renderer/src/components/ui/progress-bar.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ui/badge.tsx",

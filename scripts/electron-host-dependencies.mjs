@@ -21,6 +21,7 @@ export const backendOnlyElectronDependencies = [
   '@aipoch/literature-reading',
   '@aipoch/literature-screening',
   '@aipoch/reproducibility',
+  '@aipoch/research-film',
   'styled-exceljs',
   'tar',
   'brotli',
