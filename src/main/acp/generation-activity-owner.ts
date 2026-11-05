@@ -47,6 +47,7 @@ export class AcpGenerationActivityOwner {
   async withOperation<T>(work: () => Promise<T>): Promise<T> {
     this.operationLeaseCount += 1
     try {
+      this.options.activityChanged()
       return await work()
     } finally {
       this.operationLeaseCount -= 1
@@ -57,6 +58,7 @@ export class AcpGenerationActivityOwner {
   async withActivity<T>(work: () => Promise<T>): Promise<T> {
     this.activityLeaseCount += 1
     try {
+      this.options.activityChanged()
       return await work()
     } finally {
       this.activityLeaseCount -= 1

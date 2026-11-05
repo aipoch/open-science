@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
@@ -27,7 +27,9 @@ import { UploadRepository } from '../uploads/repository'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { initDataRoot } from '../storage-root'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+
+beforeEach(shortenIdleReleaseWindow)
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
 import {
@@ -376,6 +378,7 @@ describe('production approved Handoff outcome composition', () => {
         await request
         if (repeat) {
           await runtime.waitForPromptOwnershipRelease(context.sessionId)
+          await vi.waitFor(() => expect(runtime.getSnapshot().sessionIds).toEqual([]))
           await persistence.mutateRuntimeSession(
             { projectId: 'project-1', sessionId: context.sessionId },
             (session) =>

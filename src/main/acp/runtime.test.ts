@@ -35,11 +35,11 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import { createAcpTaskAgentPort } from './task-agent-port'
 import { createAcpDelegateExecution } from '../delegation/acp-execution'
@@ -1248,6 +1248,8 @@ afterEach(async () => {
     temporaryRoot = undefined
   }
 })
+
+beforeEach(shortenIdleReleaseWindow)
 
 describe('completed coordinator process release', () => {
   it.each(['disconnect', 'quit', 'update'] as const)(
