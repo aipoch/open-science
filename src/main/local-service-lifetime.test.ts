@@ -148,7 +148,7 @@ it('reserves the final App quit and ignores stale aborts without accepting new h
   expect(stop).not.toHaveBeenCalled()
 })
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-async function fixture(explicitStart = false) {
+async function fixture(explicitStart = false, deferFirstConnectionTimeout = false) {
   const configRoot = await mkdtemp(join(tmpdir(), 'service-lifetime-'))
   roots.push(configRoot)
   const stop = vi.fn()
@@ -156,6 +156,7 @@ async function fixture(explicitStart = false) {
     configRoot,
     generation: randomUUID(),
     explicitStart,
+    deferFirstConnectionTimeout,
     stop,
     onStoppingAdmission: vi.fn(),
     report: vi.fn(),
@@ -598,3 +599,63 @@ it('reconfirms the last App when two App-only exits precede both socket disconne
   expect((await lifetime.leave('b', 'socket-b', confirmed)).stopping).toBe(true)
   expect(stop).toHaveBeenCalledOnce()
 })
+
+it('starts the first-App deadline only after discovery is published, without extending it twice', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  const { lifetime, stop } = await fixture(false, true)
+  await vi.advanceTimersByTimeAsync(65_000)
+  expect(lifetime.snapshot().stopping).toBe(false)
+  expect(stop).not.toHaveBeenCalled()
+  lifetime.startFirstConnectionTimeout()
+  await vi.advanceTimersByTimeAsync(10)
+  lifetime.startFirstConnectionTimeout()
+  await vi.advanceTimersByTimeAsync(10)
+  expect(lifetime.snapshot().stopping).toBe(true)
+  await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce())
+})
+
+it.each(['before-publication', 'after-publication'] as const)(
+  'preserves a connection made %s and keeps its later disconnect grace',
+  async (when) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { lifetime, stop } = await fixture(false, true)
+    if (when === 'after-publication') lifetime.startFirstConnectionTimeout()
+    lifetime.connect('app', 'socket')
+    lifetime.startFirstConnectionTimeout()
+    await vi.advanceTimersByTimeAsync(65_000)
+    expect(stop).not.toHaveBeenCalled()
+    lifetime.disconnect('app', 'socket')
+    await vi.advanceTimersByTimeAsync(10)
+    lifetime.startFirstConnectionTimeout()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(lifetime.snapshot().stopping).toBe(true)
+    await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce())
+  }
+)
+
+it('retains an explicit CLI hold across discovery publication', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  const { lifetime, stop } = await fixture(true, true)
+  await vi.advanceTimersByTimeAsync(65_000)
+  lifetime.startFirstConnectionTimeout()
+  await vi.advanceTimersByTimeAsync(65_000)
+  expect(lifetime.snapshot()).toMatchObject({ explicit: true, stopping: false })
+  expect(stop).not.toHaveBeenCalled()
+  await lifetime.stop(true)
+  expect(stop).toHaveBeenCalledOnce()
+})
+
+it.each(['stop', 'close'] as const)(
+  'does not rearm a %s lifecycle on late publication',
+  async (action) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { lifetime, stop } = await fixture(false, true)
+    if (action === 'stop') await lifetime.stop(true)
+    else lifetime.close()
+    stop.mockClear()
+    lifetime.startFirstConnectionTimeout()
+    await vi.advanceTimersByTimeAsync(65_000)
+    expect(stop).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
