@@ -306,13 +306,18 @@ it.each(outcomes)(
         }
         if (outcome === 'recovered') {
           expect(mocks.run.mock.calls[2][0].systemPrompt).toContain('JavaScript animation')
-          await owner.start(request)
-          await vi.waitFor(async () =>
+          // Failed progress can arrive before file cleanup releases the active job. Retry until
+          // a second job is admitted rather than observing the first job's terminal state again.
+          await vi.waitFor(async () => {
+            await owner.start(request)
+            expect(mocks.acquire).toHaveBeenCalledTimes(2)
+          })
+          await vi.waitFor(async () => {
+            expect(
+              input.settingsService.captureActiveExplicitAgentBackendTarget
+            ).toHaveBeenCalledTimes(2)
             expect((await owner.status(request)).progress?.phase).toBe('failed')
-          )
-          expect(
-            input.settingsService.captureActiveExplicitAgentBackendTarget
-          ).toHaveBeenCalledTimes(2)
+          })
         }
         return
       }
