@@ -5,6 +5,10 @@ import { createHash } from 'node:crypto'
 import { Path2D } from '@napi-rs/canvas'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { nativeRecoveryGroupDepth } from './literature-pdf-native-figure-recovery-profile.mjs'
+import {
+  nativeRecordedGroupPaintEnvelopes,
+  bindNativeGroupPaintBudget
+} from './literature-pdf-render-bounds.mjs'
 import { nativeCompositingPaintSpan } from './literature-pdf-native-compositing-profile.mjs'
 import { nativeClosedRuleFrames } from './literature-pdf-figure-connectivity.mjs'
 
@@ -2223,6 +2227,7 @@ export function collectGraphicsBounds(renderTask, boxes) {
   const transforms = [],
     viewport = renderTask._internalRenderTask.params?.viewport
   const envelopeContext = imageEnvelopeRenderContext(renderTask._internalRenderTask, operators)
+  const groupClips = nativeRecordedGroupPaintEnvelopes(renderTask)
   let invalidGraphicsBounds = 0
   for (const [index, operation] of operators.fnArray.entries()) {
     const args = operators.argsArray[index]
@@ -2323,23 +2328,58 @@ export function collectGraphicsBounds(renderTask, boxes) {
     )
       imageMasks.add(graphic)
   }
-  return {
-    graphicsBounds: graphicsBounds.filter((graphic) => {
-      if (!imageMasks.has(graphic)) return true
-      const r = graphic.normalizedRect
-      // Thin mask strips are page decoration; near-identical image masks often
-      // repaint an existing figure and must not change its ownership.
-      if (r[2] - r[0] < 0.05 || r[3] - r[1] < 0.05) return false
-      return !graphicsBounds.some((other) => {
-        if (imageMasks.has(other)) return false
-        const b = other.normalizedRect
-        const intersection =
-          Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
-          Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
-        const union = (r[2] - r[0]) * (r[3] - r[1]) + (b[2] - b[0]) * (b[3] - b[1]) - intersection
-        return intersection / union > 0.9
+  const clipped = groupClips?.current()
+    ? graphicsBounds.flatMap((graphic) => {
+        const clip = groupClips.clips.get(graphic.operationIndex)
+        if (!clip) return [graphic]
+        const r = graphic.normalizedRect,
+          normalizedRect = [
+            Math.max(r[0], clip[0]),
+            Math.max(r[1], clip[1]),
+            Math.min(r[2], clip[2]),
+            Math.min(r[3], clip[3])
+          ]
+        if (normalizedRect[2] <= normalizedRect[0] || normalizedRect[3] <= normalizedRect[1])
+          return []
+        const value = { ...graphic, normalizedRect }
+        for (const key of ['paintedNormalizedRect', 'imageEnvelopeNormalizedRect'])
+          if (
+            value[key] &&
+            !value[key].every((v, i) => (i < 2 ? v >= normalizedRect[i] : v <= normalizedRect[i]))
+          )
+            delete value[key]
+        if (imageMasks.has(graphic)) imageMasks.add(value)
+        return [value]
       })
-    }),
+    : graphicsBounds
+  const retainGraphic = (graphic) => {
+    if (!imageMasks.has(graphic)) return true
+    const r = graphic.normalizedRect
+    // Thin mask strips are page decoration; near-identical image masks often
+    // repaint an existing figure and must not change its ownership.
+    if (r[2] - r[0] < 0.05 || r[3] - r[1] < 0.05) return false
+    return !graphicsBounds.some((other) => {
+      if (imageMasks.has(other)) return false
+      const b = other.normalizedRect
+      const intersection =
+        Math.max(0, Math.min(r[2], b[2]) - Math.max(r[0], b[0])) *
+        Math.max(0, Math.min(r[3], b[3]) - Math.max(r[1], b[1]))
+      const union = (r[2] - r[0]) * (r[3] - r[1]) + (b[2] - b[0]) * (b[3] - b[1]) - intersection
+      return intersection / union > 0.9
+    })
+  }
+  const coarse = graphicsBounds.filter(retainGraphic),
+    retainedMaskOperations = new Set(
+      coarse.filter((graphic) => imageMasks.has(graphic)).map((graphic) => graphic.operationIndex)
+    ),
+    visible = clipped.filter(
+      (graphic) =>
+        retainGraphic(graphic) &&
+        (!imageMasks.has(graphic) || retainedMaskOperations.has(graphic.operationIndex))
+    )
+  return {
+    graphicsBounds:
+      groupClips && !bindNativeGroupPaintBudget(renderTask, coarse, visible) ? coarse : visible,
     invalidGraphicsBounds
   }
 }

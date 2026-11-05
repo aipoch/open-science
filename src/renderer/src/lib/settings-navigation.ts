@@ -109,6 +109,8 @@ export type SettingsPanelId =
   | 'archived'
   | 'usage'
   | 'general'
+  | 'appearance'
+  | 'notifications'
   | 'storage'
   | 'network'
   | 'runtimes'

@@ -4,9 +4,13 @@ import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 import { readPdfFixture } from './read-fixture'
 
-const { findCaptionCandidates, applyRuledCaptionRecovery } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
-)
+const {
+  findCaptionCandidates,
+  applyRuledCaptionRecovery,
+  recoverNativeCenteredCaptionTail,
+  recoverNativeFolioCaption,
+  groupPageLines
+} = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
@@ -1733,3 +1737,885 @@ it.each([
   }
   expect(recoverCenteredSource(packet)[0].lines).toHaveLength(1)
 })
+
+function certifiedCaptionPacket(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    fnArray: number[] = [],
+    argsArray: unknown[] = [],
+    items: ReturnType<typeof JSON.parse>[] = [],
+    glyphs: ReturnType<typeof JSON.parse>[] = [],
+    lines: ReturnType<typeof JSON.parse>[] = [],
+    graphicsBounds: ReturnType<typeof JSON.parse>[] = []
+  const viewport = {
+    width,
+    height,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, height - y]
+  }
+  const add = (op: number, args: unknown = null): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const show = (text: string, y: number, x = (width - text.length * 5) / 2): void => {
+    const sourceItem = { pageNumber: 1, index: items.length, text },
+      w = text.length * 5
+    add(OPS.setFont, ['F', 10])
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - y - 10]])
+    add(OPS.showText, [
+      [
+        {
+          unicode: text,
+          fontChar: text,
+          width: 500 * text.length,
+          isInFont: true,
+          isSpace: false,
+          accent: null
+        }
+      ]
+    ])
+    items.push({
+      str: text,
+      dir: 'ltr',
+      width: w,
+      height: 10,
+      transform: [10, 0, 0, 10, x, height - y - 10],
+      fontName: 'F',
+      sourceItem,
+      hasEOL: true
+    })
+    glyphs.push({ fontChar: text, bounds: [0, -0.1, 0.5 * text.length, 0.7] })
+    lines.push({ text, x, y, width: w, height: 10, fontSize: 10 })
+  }
+  add(OPS.save)
+  add(OPS.transform, [240, 0, 0, 120, 180, 600])
+  add(OPS.paintImageXObject, ['anonymous', 240, 120])
+  add(OPS.restore)
+  add(OPS.setFillRGBColor, ['#000000'])
+  add(OPS.beginText)
+  show('Figure 1. The native observations are described by the', 220)
+  show('complete measured sample.', 237.5)
+  show('The independent discussion starts after a closed caption.', 280, 60)
+  add(OPS.endText)
+  graphicsBounds.push({ operationIndex: 2, kind: 'image', normalizedRect: [0.3, 0.1, 0.7, 0.25] })
+  const p = {
+    pageNumber: 1,
+    width,
+    height,
+    rotation: 0,
+    renderRotation: 0,
+    invalidGraphicsBounds: 0,
+    lines,
+    graphicsBounds
+  }
+  const context = {
+    pageNumber: 1,
+    sourceSha256: 'a'.repeat(64),
+    operators: { fnArray, argsArray },
+    viewport,
+    content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+    glyphBounds: [{ fontName: 'F', glyphs }],
+    graphicsBounds
+  }
+  const tokens = items.map((r) => ({
+    text: r.str,
+    sourceItem: r.sourceItem,
+    rect: [
+      r.transform[4],
+      height - r.transform[5] - r.height,
+      r.transform[4] + r.width,
+      height - r.transform[5]
+    ],
+    baseline: height - r.transform[5],
+    height: r.height,
+    horizontal: true,
+    fontAscent: 0.7,
+    fontDescent: -0.1
+  }))
+  const candidate = {
+    page: 1,
+    lines: [lines[0].text],
+    rect: [lines[0].x, 220, lines[0].x + lines[0].width, 230]
+  }
+  return { p, context, tokens, candidate, show }
+}
+it('recovers a centered wide-leading caption only from its complete native source interval', () => {
+  const f = certifiedCaptionPacket(),
+    r = recoverNativeCenteredCaptionTail(f.candidate, f.p, f.tokens, f.context)
+  expect(r?.lines).toEqual([f.p.lines[0].text, f.p.lines[1].text])
+  expect(r?.sourceItems).toEqual(
+    f.context.content.items.slice(0, 2).map((r: ReturnType<typeof JSON.parse>) => r.sourceItem)
+  )
+  expect(r.sourceItems[0]).toBe(f.context.content.items[0].sourceItem)
+})
+it.each([
+  'font',
+  'literal',
+  'source-alias',
+  'advance',
+  'center',
+  'leading',
+  'missing-graphic',
+  'unclosed',
+  'body-gap'
+])('declines a centered caption without complete native %s proof', (fault) => {
+  const f = certifiedCaptionPacket()
+  if (fault === 'font') f.context.glyphBounds = []
+  if (fault === 'literal') f.context.content.items[1].str = 'different literal'
+  if (fault === 'source-alias') f.context.content.items[1].sourceItem.index = 0
+  if (fault === 'advance') f.context.content.items[1].width++
+  if (fault === 'center') f.p.lines[1].x += 5
+  if (fault === 'leading') f.p.lines[1].y += 4
+  if (fault === 'missing-graphic') f.p.graphicsBounds = []
+  if (fault === 'unclosed') f.p.lines[1].text = 'an unfinished native continuation'
+  if (fault === 'body-gap') f.p.lines[2].y = 257
+  expect(recoverNativeCenteredCaptionTail(f.candidate, f.p, f.tokens, f.context)).toBeUndefined()
+})
+async function folioCaptionPacket(fault = ''): Promise<ReturnType<typeof JSON.parse>> {
+  const f = certifiedCaptionPacket(),
+    font = {
+      loadedName: 'F',
+      fontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+      missingFile: false,
+      isType3Font: false,
+      isInvalidPDFjsFont: false,
+      systemFontInfo: null,
+      vertical: false,
+      ascent: 0.7,
+      descent: -0.1
+    },
+    pages = new Map()
+  for (let number = 1; number <= 8; number++) {
+    const v = { ...f.context.viewport },
+      body = {
+        str: 'The independently complete ordinary paragraph has several native words.',
+        dir: 'ltr',
+        width: 340,
+        height: 10,
+        transform: [10, 0, 0, 10, 60, 500],
+        fontName: 'F'
+      },
+      folio = {
+        str: String(number),
+        dir: 'ltr',
+        width: 5,
+        height: 10,
+        transform: [10, 0, 0, 10, number % 2 ? 287.5 : 307.5, 190],
+        fontName: 'F'
+      }
+    const content = {
+        items: [body, folio],
+        styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } }
+      },
+      page = {
+        rotate: 0,
+        getViewport: () => v,
+        getTextContent: async () => content,
+        getOperatorList: async () => ({ fnArray: [], argsArray: [] }),
+        commonObjs: { has: () => true, get: () => font }
+      }
+    pages.set(number, page)
+  }
+  // Rebuild the selected packet from anonymous native instructions. The page
+  // counter is painted last into an overlapping caption baseline.
+  const q = certifiedCaptionPacket()
+  q.context.operators.fnArray.length = 0
+  q.context.operators.argsArray.length = 0
+  q.context.content.items.length = 0
+  q.context.glyphBounds[0].glyphs.length = 0
+  q.p.lines.length = 0
+  q.context.operators.fnArray.push(OPS.setFillRGBColor, OPS.beginText)
+  q.context.operators.argsArray.push(['#000000'], null)
+  q.show('Figure 1. The ordinary caption retains the observed value 1.28.', 600, 60)
+  q.show('6', 600, 307.5)
+  q.context.operators.fnArray.push(OPS.endText)
+  q.context.operators.argsArray.push(null)
+  for (let i = 0; i < q.context.content.items.length; i++) {
+    q.context.content.items[i].sourceItem.pageNumber = 6
+    q.context.content.items[i].sourceItem.index = i
+  }
+  q.p.pageNumber = 6
+  q.context.pageNumber = 6
+  q.p.graphicsBounds = []
+  q.context.graphicsBounds = []
+  q.tokens = q.context.content.items.map((r: ReturnType<typeof JSON.parse>) => ({
+    text: r.str,
+    sourceItem: r.sourceItem,
+    rect: [
+      r.transform[4],
+      800 - r.transform[5] - r.height,
+      r.transform[4] + r.width,
+      800 - r.transform[5]
+    ],
+    baseline: 800 - r.transform[5],
+    height: r.height,
+    horizontal: true,
+    fontAscent: 0.7,
+    fontDescent: -0.1
+  }))
+  const native = pages.get(6)
+  native.getTextContent = async () => q.context.content
+  const run = groupPageLines(q.p)[0]
+  q.candidate = { page: 6, lines: [run.text], rect: [run.x, run.y, run.right, run.bottom] }
+  if (fault === 'false-number') q.context.content.items[1].str = '7'
+  if (fault === 'font') font.vertical = true
+  if (fault === 'rail')
+    for (const [n, p] of pages)
+      if (n !== 6) {
+        const c = await p.getTextContent()
+        c.items[1].transform[5] += n
+      }
+  if (fault === 'no-gutter')
+    for (const [n, p] of pages)
+      if (n !== 6) {
+        const c = await p.getTextContent()
+        c.items[0].transform[5] = 190
+      }
+  if (fault === 'literal') q.tokens[1].text = '7'
+  if (fault === 'source-alias') q.context.content.items[1].sourceItem.index = 0
+  const document = {
+    numPages: 8,
+    fingerprints: ['native-fixture'],
+    getPage: async (n: number) => pages.get(n)
+  }
+  return { ...q, document, nativeFont: font }
+}
+it('removes only a calibrated native folio and retains a genuine caption decimal', async () => {
+  const f = await folioCaptionPacket(),
+    before = JSON.stringify([f.p, f.tokens, f.context]),
+    result = await recoverNativeFolioCaption({
+      candidate: f.candidate,
+      page: f.p,
+      tokens: f.tokens,
+      context: f.context,
+      document: f.document,
+      signal: new AbortController().signal
+    })
+  expect(result?.lines).toEqual(['Figure 1. The ordinary caption retains the observed value 1.28.'])
+  expect(JSON.stringify([f.p, f.tokens, f.context])).toBe(before)
+})
+it.each(['false-number', 'font', 'rail', 'no-gutter', 'literal', 'source-alias'])(
+  'retains caption metadata without complete native folio %s proof',
+  async (fault) => {
+    const f = await folioCaptionPacket(fault)
+    expect(
+      await recoverNativeFolioCaption({
+        candidate: f.candidate,
+        page: f.p,
+        tokens: f.tokens,
+        context: f.context,
+        document: f.document
+      })
+    ).toBeUndefined()
+  }
+)
+it('refuses late equal native-source replacement while reading the neighboring folio rail', async () => {
+  const f = await folioCaptionPacket(),
+    old = f.document.getPage
+  let first = true
+  f.document.getPage = async (n: number) => {
+    if (first) {
+      first = false
+      f.context.content.items[1] = { ...f.context.content.items[1] }
+    }
+    return old(n)
+  }
+  expect(
+    await recoverNativeFolioCaption({
+      candidate: f.candidate,
+      page: f.p,
+      tokens: f.tokens,
+      context: f.context,
+      document: f.document
+    })
+  ).toBeUndefined()
+})
+
+it('rejects a late changed actual native font after calibrating the folio rail', async () => {
+  const f = await folioCaptionPacket(),
+    old = f.document.getPage
+  f.document.getPage = async (n: number) => {
+    if (n === 8) f.nativeFont.vertical = true
+    return old(n)
+  }
+  expect(
+    await recoverNativeFolioCaption({
+      candidate: f.candidate,
+      page: f.p,
+      tokens: f.tokens,
+      context: f.context,
+      document: f.document
+    })
+  ).toBeUndefined()
+})
+
+async function renamedFolioEpoch(fault = ''): Promise<ReturnType<typeof JSON.parse>> {
+  const f = await folioCaptionPacket(),
+    old = f.document.getPage,
+    active = new Map()
+  f.nativeFont.loadedName = 'Active'
+  f.document.getPage = async (n: number) => {
+    const p = await old(n),
+      raw = await p.getTextContent()
+    const content = {
+      ...raw,
+      items: raw.items.map((r: ReturnType<typeof JSON.parse>) => {
+        const item = { ...r, fontName: 'Active', transform: [...r.transform] }
+        delete item.sourceItem
+        return item
+      }),
+      styles: { Active: { ...raw.styles.F } }
+    }
+    if (n === 6) {
+      if (fault === 'literal') content.items[0].str += ' changed'
+      if (fault === 'geometry') content.items[0].transform[4] += 0.1
+      if (fault === 'EOL') content.items[0].hasEOL = false
+      if (fault === 'alias-fonts') {
+        content.items[1].fontName = 'Other'
+        Object.assign(content.styles, { Other: { ...content.styles.Active } })
+      }
+      if (fault === 'style') content.styles.Active.ascent = 0.6
+    }
+    active.set(n, content)
+    if (n === 7 && active.has(6)) {
+      const current = active.get(6)
+      if (fault === 'equal-source') current.items[0] = { ...current.items[0] }
+      if (fault === 'equal-style') current.styles.Active = { ...current.styles.Active }
+      if (fault === 'equal-font-matrix') f.nativeFont.fontMatrix = [...f.nativeFont.fontMatrix]
+    }
+    if (fault === 'loaded-font') f.nativeFont.loadedName = 'Other'
+    return { ...p, getTextContent: async () => content }
+  }
+  return f
+}
+it('binds retained-render and active-producer font epochs without changing either original Source', async () => {
+  const f = await renamedFolioEpoch(),
+    before = JSON.stringify(f.context),
+    result = await recoverNativeFolioCaption({
+      candidate: f.candidate,
+      page: f.p,
+      tokens: f.tokens,
+      context: f.context,
+      document: f.document
+    })
+  expect(result?.lines).toEqual(['Figure 1. The ordinary caption retains the observed value 1.28.'])
+  expect(JSON.stringify(f.context)).toBe(before)
+  expect(
+    f.context.content.items.every((r: ReturnType<typeof JSON.parse>) => r.fontName === 'F')
+  ).toBe(true)
+})
+it.each([
+  'literal',
+  'geometry',
+  'EOL',
+  'alias-fonts',
+  'style',
+  'loaded-font',
+  'equal-source',
+  'equal-style',
+  'equal-font-matrix'
+])(
+  'declines independent font epochs without whole-page %s equality and current evidence',
+  async (fault) => {
+    const f = await renamedFolioEpoch(fault)
+    expect(
+      await recoverNativeFolioCaption({
+        candidate: f.candidate,
+        page: f.p,
+        tokens: f.tokens,
+        context: f.context,
+        document: f.document
+      })
+    ).toBeUndefined()
+  }
+)
+
+function anonymousSeparatedFigure(mode = 'raster'): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    fnArray: number[] = [],
+    argsArray: unknown[] = [],
+    items: ReturnType<typeof JSON.parse>[] = [],
+    glyphs: Record<string, ReturnType<typeof JSON.parse>[]> = { F: [], L: [] },
+    lines: ReturnType<typeof JSON.parse>[] = [],
+    graphicsBounds: ReturnType<typeof JSON.parse>[] = []
+  const viewport = {
+    width,
+    height,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, height],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, height - y]
+  }
+  const add = (op: number, args: unknown = null): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const text = (
+    str: string,
+    x: number,
+    top: number,
+    size: number,
+    fontName = 'F'
+  ): ReturnType<typeof JSON.parse> => {
+    add(OPS.setFont, [fontName, size])
+    add(OPS.beginText)
+    add(OPS.setTextMatrix, [[1, 0, 0, 1, x, height - top - size]])
+    add(OPS.showText, [
+      [
+        {
+          unicode: str,
+          fontChar: str,
+          width: str.length * 500,
+          isSpace: false,
+          isInFont: true,
+          accent: null
+        }
+      ]
+    ])
+    add(OPS.endText)
+    if (!glyphs[fontName].some((g) => g.fontChar === str))
+      glyphs[fontName].push({ fontChar: str, bounds: [0, -0.1, str.length * 0.5, 0.7] })
+    const r = {
+      str,
+      dir: 'ltr',
+      width: size * str.length * 0.5,
+      height: size,
+      transform: [size, 0, 0, size, x, height - top - size],
+      fontName,
+      hasEOL: true,
+      sourceItem: { pageNumber: 1, index: items.length, text: str }
+    }
+    items.push(r)
+    return r
+  }
+  const row = (str: string, x: number, y: number, size: number): void => {
+    lines.push({ text: str, x, y, width: str.length * size * 0.5, height: size, fontSize: size })
+  }
+  const path = (r: number[]): void => {
+    const i = fnArray.length,
+      [x0, y0, x1, y1] = r
+    add(OPS.constructPath, [
+      OPS.fill,
+      [[0, x0, height - y0, 1, x1, height - y0, 1, x1, height - y1, 1, x0, height - y1, 4]],
+      [x0, height - y1, x1, height - y0]
+    ])
+    graphicsBounds.push({
+      operationIndex: i,
+      kind: 'path',
+      normalizedRect: [x0 / width, y0 / height, x1 / width, y1 / height]
+    })
+  }
+  let captions: ReturnType<typeof JSON.parse>[] = []
+  if (mode === 'raster') {
+    const first =
+      'Notes: The complete native observations remain separate from the image and are translated normally.'
+    const right = 60 + first.length * 4
+    add(OPS.save)
+    add(OPS.transform, [right - 60, 0, 0, 200, 60, 500])
+    const i = fnArray.length
+    add(OPS.paintImageXObject, ['image', 100, 50])
+    add(OPS.restore)
+    graphicsBounds.push({
+      operationIndex: i,
+      kind: 'image',
+      normalizedRect: [60 / width, 100 / height, right / width, 300 / height],
+      imageHash: '7'.repeat(64)
+    })
+    text(first, 60, 310, 8)
+    row(first, 60, 310, 8)
+    const last = 'The full explanatory paragraph remains ordinary text.'
+    text(last, 60, 320, 8)
+    row(last, 60, 320, 8)
+    const cap = 'Fig. 1: The measured response.'
+    text(cap, 60, 340, 10)
+    row(cap, 60, 340, 10)
+    captions = [{ page: 1, lines: [cap], rect: [60, 340, 60 + cap.length * 5, 350] }]
+  } else {
+    if (mode !== 'flat-vector') add(OPS.paintFormXObjectBegin, [null, [60, 540, 440, 700]])
+    for (const r of [
+      [60, 100, 240, 260],
+      [260, 100, 440, 260],
+      [80, 150, 200, 180]
+    ])
+      path(r)
+    for (const [str, x, y] of [
+      ['(a)', 70, 110],
+      ['(b)', 270, 110],
+      ['0', 70, 245],
+      ['1', 270, 245]
+    ] as const) {
+      text(str, x, y, 6)
+      row(str, x, y, 6)
+    }
+    if (mode !== 'flat-vector') add(OPS.paintFormXObjectEnd)
+    const label = mode === 'known-vector' ? 'Figure 1:' : 'Figure 1',
+      body = 'The measured response is shown for complete native observations.'
+    const tail = 'The original labels and all external explanations remain literal.'
+    text(label, 60, 280, 10, 'L')
+    text(body, 60 + (label.length + 1) * 5, 280, 10)
+    lines.push({
+      text: label + ' ' + body,
+      x: 60,
+      y: 280,
+      width: (label.length + 1) * 5 + body.length * 5,
+      height: 10,
+      fontSize: 10
+    })
+    text(tail, 60, 294, 10)
+    row(tail, 60, 294, 10)
+    if (mode === 'known-vector')
+      captions = [
+        {
+          page: 1,
+          lines: [label + ' ' + body, tail],
+          rect: [60, 280, 60 + (label.length + 1 + body.length) * 5, 304]
+        }
+      ]
+  }
+  const context = {
+    operators: { fnArray, argsArray },
+    viewport,
+    content: {
+      items,
+      styles: {
+        F: { ascent: 0.7, descent: -0.1, vertical: false },
+        L: { ascent: 0.7, descent: -0.1, vertical: false }
+      }
+    },
+    graphicsBounds,
+    glyphBounds: Object.entries(glyphs).map(([fontName, glyphs]) => ({ fontName, glyphs })),
+    pageNumber: 1,
+    sourceSha256: 'c'.repeat(64)
+  }
+  const tokens = items.map((r) => ({
+    text: r.str,
+    rect: [
+      r.transform[4],
+      height - r.transform[5] - r.height,
+      r.transform[4] + r.width,
+      height - r.transform[5]
+    ],
+    baseline: height - r.transform[5],
+    height: r.height,
+    horizontal: true,
+    inlineSymbol: false,
+    sourceItem: r.sourceItem
+  }))
+  return {
+    page: {
+      pageNumber: 1,
+      width,
+      height,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds,
+      lines
+    },
+    captions,
+    tokens,
+    context,
+    exclusions: [],
+    figures: []
+  }
+}
+
+const {
+  recoverNativeSeparatedFigureBodies,
+  nativeSeparatedFigureRecoveryCurrent,
+  nativeSeparatedFigureRecoverySourcesCurrent
+} = await import(pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href)
+
+const separatedRun = (x: ReturnType<typeof JSON.parse>): ReturnType<typeof JSON.parse>[] =>
+  recoverNativeSeparatedFigureBodies(
+    x.page,
+    x.captions,
+    x.tokens,
+    x.context,
+    x.exclusions,
+    x.figures
+  )
+const separatedCurrent = (
+  f: ReturnType<typeof JSON.parse>,
+  x: ReturnType<typeof JSON.parse>
+): boolean =>
+  nativeSeparatedFigureRecoveryCurrent(
+    f,
+    x.page,
+    x.captions,
+    x.tokens,
+    x.context,
+    x.exclusions,
+    x.figures
+  )
+
+it.each(['raster', 'vector'])(
+  'recovers a Source-complete separated %s body without text ownership',
+  (mode) => {
+    const x = anonymousSeparatedFigure(mode),
+      before = JSON.stringify(x),
+      result = separatedRun(x)
+    expect(result).toHaveLength(1)
+    expect(separatedCurrent(result[0], x)).toBe(true)
+    expect(result[0]).not.toHaveProperty('sourceItems')
+    expect(JSON.stringify(x)).toBe(before)
+    result[0].rect = [...result[0].rect]
+    expect(separatedCurrent(result[0], x)).toBe(false)
+  }
+)
+
+const { nativePageTextPacketInventory: separatedPacket } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
+)
+function separatedOutsideText(x: ReturnType<typeof JSON.parse>, top: number): void {
+  const paragraph = [
+    'This ordinary paragraph belongs to the surrounding article.',
+    'It describes the experiment without being a panel label.',
+    'The complete figure remains separate from this paragraph.'
+  ]
+  for (const [n, str] of paragraph.entries()) {
+    const y = top + n * 10,
+      height = x.page.height,
+      size = 8,
+      left = 70
+    const { fnArray, argsArray } = x.context.operators
+    for (const [op, args] of [
+      [OPS.setFont, ['F', size]],
+      [OPS.beginText, null],
+      [OPS.setTextMatrix, [[1, 0, 0, 1, left, height - y - size]]],
+      [
+        OPS.showText,
+        [
+          [
+            {
+              unicode: str,
+              fontChar: str,
+              width: str.length * 500,
+              isSpace: false,
+              isInFont: true,
+              accent: null
+            }
+          ]
+        ]
+      ],
+      [OPS.endText, null]
+    ]) {
+      fnArray.push(op)
+      argsArray.push(args)
+    }
+    x.context.glyphBounds
+      .find((f: { fontName: string }) => f.fontName === 'F')
+      .glyphs.push({ fontChar: str, bounds: [0, -0.1, str.length * 0.5, 0.7] })
+    const sourceItem = { pageNumber: 1, index: x.context.content.items.length, text: str }
+    x.context.content.items.push({
+      str,
+      dir: 'ltr',
+      width: size * str.length * 0.5,
+      height: size,
+      transform: [size, 0, 0, size, left, height - y - size],
+      fontName: 'F',
+      hasEOL: true,
+      sourceItem
+    })
+    x.tokens.push({
+      text: str,
+      rect: [left, y, left + str.length * size * 0.5, y + size],
+      baseline: y + size,
+      height: size,
+      horizontal: true,
+      inlineSymbol: false,
+      sourceItem
+    })
+    x.page.lines.push({
+      text: str,
+      x: left,
+      y,
+      width: str.length * size * 0.5,
+      height: size,
+      fontSize: size
+    })
+  }
+}
+it('keeps a closed Form body independent of unrelated ordinary text', () => {
+  const original = anonymousSeparatedFigure('vector'),
+    expected = separatedRun(original)[0].rect
+  const x = anonymousSeparatedFigure('vector')
+  separatedOutsideText(x, 65)
+  const before = JSON.stringify(x)
+  expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+  const result = separatedRun(x)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect).toEqual(expected)
+  expect(separatedCurrent(result[0], x)).toBe(true)
+  expect(result[0]).not.toHaveProperty('sourceItems')
+  expect(JSON.stringify(x)).toBe(before)
+})
+it('declines a closed Form when unrelated external paint overlaps its body', () => {
+  const x = anonymousSeparatedFigure('vector')
+  separatedOutsideText(x, 120)
+  expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+  expect(separatedRun(x)).toHaveLength(0)
+})
+it('declines flat vector labels without a complete Form ownership scope', () => {
+  const x = anonymousSeparatedFigure('flat-vector')
+  expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+  expect(separatedRun(x)).toHaveLength(0)
+})
+
+it('recovers an already recognized literal caption from the same complete unique Form proof', () => {
+  const x = anonymousSeparatedFigure('known-vector'),
+    before = JSON.stringify(x)
+  expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+  const result = separatedRun(x)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect).toEqual([60, 100, 440, 260])
+  expect(result[0].caption).toBe(x.captions[0])
+  expect(result[0]).not.toHaveProperty('sourceItems')
+  expect(separatedCurrent(result[0], x)).toBe(true)
+  expect(JSON.stringify(x)).toBe(before)
+  x.captions[0].rect = [...x.captions[0].rect]
+  expect(separatedCurrent(result[0], x)).toBe(false)
+})
+
+it.each(['foreign-prose', 'two-captions', 'aliased-caption', 'second-form'])(
+  'declines known-caption Form recovery with %s',
+  (kind) => {
+    const x = anonymousSeparatedFigure('known-vector')
+    if (kind === 'foreign-prose') separatedOutsideText(x, 120)
+    if (kind === 'two-captions')
+      x.captions.push({
+        ...x.captions[0],
+        lines: [...x.captions[0].lines],
+        rect: [...x.captions[0].rect]
+      })
+    if (kind === 'aliased-caption') x.captions.push(x.captions[0])
+    if (kind === 'second-form') {
+      x.context.operators.fnArray.push(OPS.paintFormXObjectBegin, OPS.paintFormXObjectEnd)
+      x.context.operators.argsArray.push([null, [450, 540, 480, 700]], [])
+    }
+    expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+    expect(separatedRun(x)).toHaveLength(0)
+  }
+)
+it.each(['unknown-paint', 'ordinary-label-font'])(
+  'declines a vector recovery without complete %s evidence',
+  (kind) => {
+    const x = anonymousSeparatedFigure('vector')
+    if (kind === 'unknown-paint') {
+      x.context.operators.fnArray.push(123456)
+      x.context.operators.argsArray.push(null)
+    } else {
+      const label = x.context.content.items.find((r: { str: string }) => r.str === 'Figure 1')
+      label.fontName = 'F'
+      for (const a of x.context.operators.argsArray)
+        if (Array.isArray(a) && a[0] === 'L') a[0] = 'F'
+      x.context.glyphBounds[0].glyphs.push(...x.context.glyphBounds[1].glyphs)
+      expect(separatedPacket(x.page, x.tokens, x.context, true)).toBeDefined()
+    }
+    expect(separatedRun(x)).toHaveLength(0)
+  }
+)
+
+it.each([
+  'source-text',
+  'source-transform',
+  'source-font',
+  'source-index',
+  'font-metrics',
+  'font-ink',
+  'missing-source',
+  'caption-claim',
+  'competing-table',
+  'competing-figure',
+  'image-hash',
+  'ordinary-note',
+  'note-font',
+  'interrupted-note',
+  'second-image',
+  'accessor',
+  'proxy',
+  'budget'
+])('declines separated raster recovery with incomplete %s evidence', (kind) => {
+  const x = anonymousSeparatedFigure()
+  let reads = 0
+  if (kind === 'source-text') x.context.content.items[0].str += 'x'
+  if (kind === 'source-transform') x.context.content.items[0].transform[4] += 2
+  if (kind === 'source-font') x.context.content.items[0].fontName = 'Unknown'
+  if (kind === 'source-index') x.context.content.items[0].sourceItem.index = 99
+  if (kind === 'font-metrics') delete x.context.content.styles.F.ascent
+  if (kind === 'font-ink') delete x.context.glyphBounds[0].glyphs[0].bounds
+  if (kind === 'missing-source') x.tokens.shift()
+  if (kind === 'caption-claim')
+    x.figures.push({ caption: x.captions[0], rect: [60, 100, 460, 300] })
+  if (kind === 'competing-table') x.exclusions.push([50, 90, 500, 310])
+  if (kind === 'competing-figure') x.figures.push({ rect: [50, 90, 500, 310] })
+  if (kind === 'image-hash') delete x.context.graphicsBounds[0].imageHash
+  if (kind === 'ordinary-note')
+    x.page.lines[0].text = x.page.lines[0].text.replace('Notes:', 'Text:')
+  if (kind === 'note-font') x.page.lines[1].fontSize = 10
+  if (kind === 'interrupted-note') x.page.lines[1].y += 30
+  if (kind === 'second-image') x.context.graphicsBounds.push({ ...x.context.graphicsBounds[0] })
+  if (kind === 'accessor')
+    Object.defineProperty(x.context, 'extra', {
+      get() {
+        reads++
+        return 1
+      },
+      enumerable: true
+    })
+  if (kind === 'proxy')
+    x.context = new Proxy(x.context, {
+      get(t, k) {
+        reads++
+        return t[k]
+      }
+    })
+  if (kind === 'budget') x.context.extra = Array.from({ length: 65536 }, () => ({}))
+  expect(separatedRun(x)).toHaveLength(0)
+  expect(reads).toBe(0)
+})
+
+it.each([
+  'source-array-identity',
+  'source-literal',
+  'source-transform',
+  'font-ink',
+  'context-extra'
+])('revokes a separated figure after a late %s change', (kind) => {
+  const x = anonymousSeparatedFigure(),
+    result = separatedRun(x)[0]
+  expect(result).toBeDefined()
+  if (kind === 'source-array-identity') x.context.content.items = [...x.context.content.items]
+  if (kind === 'source-literal') x.context.content.items[0].str += 'x'
+  if (kind === 'source-transform')
+    x.context.content.items[0].transform = [...x.context.content.items[0].transform]
+  if (kind === 'font-ink') x.context.glyphBounds[0].glyphs[0].bounds[0] += 0.1
+  if (kind === 'context-extra') x.context.extra = true
+  expect(separatedCurrent(result, x)).toBe(false)
+  expect(nativeSeparatedFigureRecoverySourcesCurrent(result, x.page, x.tokens, x.context)).toBe(
+    false
+  )
+})
+
+it.each(['raster', 'vector'])(
+  're-proves restored %s metadata while retaining the original Source lifetime',
+  (mode) => {
+    const x = anonymousSeparatedFigure(mode),
+      first = separatedRun(x)[0]
+    if (mode === 'vector') x.captions.push(first.caption)
+    first.caption.rect = [...first.caption.rect]
+    expect(separatedCurrent(first, x)).toBe(false)
+    expect(nativeSeparatedFigureRecoverySourcesCurrent(first, x.page, x.tokens, x.context)).toBe(
+      true
+    )
+    const next = separatedRun(x)
+    expect(next).toHaveLength(1)
+    expect(separatedCurrent(next[0], x)).toBe(true)
+    x.context.content.items = [...x.context.content.items]
+    expect(nativeSeparatedFigureRecoverySourcesCurrent(first, x.page, x.tokens, x.context)).toBe(
+      false
+    )
+  }
+)

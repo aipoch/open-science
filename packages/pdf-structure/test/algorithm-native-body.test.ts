@@ -1560,29 +1560,43 @@ it.each([
   ).toBe(true)
 })
 
-function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
-  const rows: [string, number, number, string][] = [
-      ['Algorithm 1: Update values for a sample', 49.9, 100, 'bold'],
-      ['Input', 50, 120, 'bold'],
-      ['values', 80, 120, 'plain'],
-      ['Output', 50, 140, 'bold'],
-      ['result', 85, 140, 'plain'],
-      ['Initialize values', 50, 160, 'plain'],
-      ['for', 50, 180, 'bold'],
-      ['each value do', 70, 180, 'bold'],
-      ['Update current value', 65, 200, 'plain'],
-      ['for', 65, 220, 'bold'],
-      ['each pair do', 85, 220, 'bold'],
-      ['Store updated pair', 80, 240, 'plain'],
-      ['Record state', 65, 260, 'plain'],
-      ['Return', 50, 280, 'plain'],
-      ['result', 85, 280, 'plain'],
-      ['Independent explanation.', 50, 340, 'plain']
-    ],
+function nativeFramedLoop(numbered = false): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, string][] = numbered
+      ? [
+          ['Algorithm 1 Example: Pseudocode', 50, 100, 'bold'],
+          ['1:', 50, 125, 'plain'],
+          ['Notation: values', 70, 125, 'plain'],
+          ['2:', 50, 145, 'plain'],
+          ['Update x', 70, 145, 'plain'],
+          ['\u0338', 90, 145, 'plain'],
+          ['3:', 50, 165, 'plain'],
+          ['Store x', 70, 165, 'plain'],
+          ['4:', 50, 185, 'plain'],
+          ['Return x', 70, 185, 'plain'],
+          ['Independent explanation.', 50, 340, 'plain']
+        ]
+      : [
+          ['Algorithm 1: Update values for a sample', 49.9, 100, 'bold'],
+          ['Input', 50, 120, 'bold'],
+          ['values', 80, 120, 'plain'],
+          ['Output', 50, 140, 'bold'],
+          ['result', 85, 140, 'plain'],
+          ['Initialize values', 50, 160, 'plain'],
+          ['for', 50, 180, 'bold'],
+          ['each value do', 70, 180, 'bold'],
+          ['Update current value', 65, 200, 'plain'],
+          ['for', 65, 220, 'bold'],
+          ['each pair do', 85, 220, 'bold'],
+          ['Store updated pair', 80, 240, 'plain'],
+          ['Record state', 65, 260, 'plain'],
+          ['Return', 50, 280, 'plain'],
+          ['result', 85, 280, 'plain'],
+          ['Independent explanation.', 50, 340, 'plain']
+        ],
     items = rows.map(([str, x, y, fontName], index) => ({
       str,
       dir: 'ltr',
-      width: str.length * 4,
+      width: str === '\u0338' ? 0 : str.length * 4,
       height: 10,
       transform: [10, 0, 0, 10, x, 800 - y],
       fontName,
@@ -1592,11 +1606,15 @@ function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
     rules = [
       [50, 91, 500, 91],
       [50, 105, 500, 105],
-      [50, 295, 500, 295],
-      [55, 185, 55, 265],
-      [70, 225, 70, 245],
-      [70.25, 244.75, 75.25, 244.75],
-      [55.25, 264.75, 60.25, 264.75]
+      [50, numbered ? 220 : 295, 500, numbered ? 220 : 295],
+      ...(numbered
+        ? []
+        : [
+            [55, 185, 55, 265],
+            [70, 225, 70, 245],
+            [70.25, 244.75, 75.25, 244.75],
+            [55.25, 264.75, 60.25, 264.75]
+          ])
     ],
     add = (op: number, args: unknown = null): void => {
       operators.fnArray.push(op)
@@ -1610,7 +1628,7 @@ function nativeFramedLoop(): ReturnType<typeof JSON.parse> {
       Array.from(i.str, (c) => ({
         unicode: c,
         fontChar: c,
-        width: 400,
+        width: c === '\u0338' ? 0 : 400,
         isSpace: c === ' ',
         isInFont: true,
         accent: null
@@ -1741,4 +1759,111 @@ it.each([
   expect(findNativeAlgorithmCandidates(f.page, f.context).some((c) => !!c.scopedGlyphProof)).toBe(
     false
   )
+})
+
+it.each(['ordinary', 'exterior-zero'])(
+  'retains a complete numbered pseudocode frame with exact ink: %s',
+  (mode) => {
+    const f = nativeFramedLoop(true)
+    if (mode === 'exterior-zero') {
+      const i = f.context.content.items.at(-1)
+      i.str = i.sourceItem.text = '\u0338'
+      i.width = 0
+      f.page.lines.at(-1).text = i.str
+      f.page.lines.at(-1).width = 0
+      f.context.operators.argsArray[(f.context.content.items.length - 1) * 5 + 3] = [
+        [{ unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null }]
+      ]
+    }
+    const before = JSON.stringify(f),
+      result = findNativeAlgorithmCandidates(f.page, f.context)
+    expect(result).toHaveLength(1)
+    expect(result[0].nativeBody.sourceItems).toEqual(
+      f.context.content.items.slice(1, -1).map((i) => i.sourceItem)
+    )
+    expect(result[0].scopedGlyphProof).toBeDefined()
+    expect(JSON.stringify(f)).toBe(before)
+  }
+)
+
+it.each([
+  'missing-number',
+  'source-order',
+  'zero-advance',
+  'multiple-zero-glyphs',
+  'transparent',
+  'clip',
+  'missing-frame',
+  'foreign-paint',
+  'intruding-zero',
+  'source-text',
+  'no-pseudocode'
+])('refuses the numbered pseudocode frame when %s evidence is incomplete', (mode) => {
+  const f = nativeFramedLoop(true),
+    items = f.context.content.items,
+    o = f.context.operators,
+    change = (index: number, text: string): void => {
+      items[index].str = items[index].sourceItem.text = text
+      f.page.lines[index].text = text
+      o.argsArray[index * 5 + 3] = [
+        Array.from(text, (c) => ({
+          unicode: c,
+          fontChar: c,
+          width: c === '\u0338' ? 0 : 400,
+          isSpace: c === ' ',
+          isInFont: true,
+          accent: null
+        }))
+      ]
+    },
+    prefix = (op: number, args: unknown): void => {
+      o.fnArray.unshift(op)
+      o.argsArray.unshift(args)
+      f.page.graphicsBounds.forEach((g) => g.operationIndex++)
+    }
+  if (mode === 'missing-number') change(3, '3:')
+  if (mode === 'source-order') {
+    change(3, '3:')
+    change(6, '2:')
+  }
+  if (mode === 'zero-advance') items[5].width = 1
+  if (mode === 'multiple-zero-glyphs') change(5, '\u0338\u0338')
+  if (mode === 'transparent') prefix(OPS.setGState, [[['ca', 0.5]]])
+  if (mode === 'clip') prefix(OPS.clip, null)
+  if (mode === 'source-text') items[4].sourceItem.text += '!'
+  if (mode === 'no-pseudocode') change(0, 'Algorithm 1 Example list')
+  if (mode === 'missing-frame') {
+    const id = f.page.graphicsBounds.pop().operationIndex
+    o.fnArray[id] = OPS.dependency
+    o.argsArray[id] = []
+  }
+  if (mode === 'foreign-paint') {
+    const operationIndex = o.fnArray.length
+    o.fnArray.push(OPS.constructPath)
+    o.argsArray.push([
+      OPS.fill,
+      [[0, 80, 640, 1, 84, 640, 1, 84, 644, 1, 80, 644, 4]],
+      [80, 640, 84, 644]
+    ])
+    f.page.graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [80 / 600, 156 / 800, 84 / 600, 160 / 800]
+    })
+  }
+  if (mode === 'intruding-zero') {
+    const i = items.at(-1)
+    i.str = i.sourceItem.text = '\u0338'
+    i.width = 0
+    i.transform[4] = 501
+    i.transform[5] = 650
+    f.context.nativeGlyphContext.glyphBounds[1].glyphs.find((g) => g.fontChar === '\u0338').bounds =
+      [-0.4, -0.01, 0, 0.7]
+    o.argsArray[(items.length - 1) * 5 + 2] = [[1, 0, 0, 1, 501, 650]]
+    o.argsArray[(items.length - 1) * 5 + 3] = [
+      [{ unicode: '\u0338', fontChar: '\u0338', width: 0, isInFont: true, accent: null }]
+    ]
+  }
+  f.context.rules = collectTableRules(o, f.context.viewport)
+  expect(findNativeAlgorithmCandidates(f.page, f.context)).toHaveLength(0)
 })

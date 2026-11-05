@@ -13,9 +13,7 @@ import {
   captionKind,
   nativeConditionalFigureReferenceStarts,
   excludePdfLineNumbers,
-  joinPdfSmallCapsLine,
-  startsDetachedTableCaption,
-  startsDetachedTextColumn
+  projectPdfTextLines
 } from './literature-pdf-caption-group.mjs'
 import { collectGraphicsBounds } from './literature-pdf-graphics.mjs'
 import {
@@ -23,6 +21,7 @@ import {
   captureNativeFigureRenderContext,
   attachNativeCaptionLaneRaster,
   attachNativeDualApiEvidence,
+  nativeLigatureDualApiCaptureRequired,
   attachNativeCompositingResources
 } from './literature-pdf-render-bounds.mjs'
 import { getDocument, OPS, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -40,7 +39,7 @@ if (renderPages)
     'Supply at most five positive render page numbers.'
   )
 assert((await stat(inputPath)).size <= 50 * 1024 * 1024, 'Probe input exceeds 50 MiB.')
-const bytes = await readFile(inputPath)
+let bytes = await readFile(inputPath)
 const sourceSha256 = createHash('sha256').update(bytes).digest('hex')
 // Requested-page evidence survives only until the extractor consumes this batch.
 // The existing renderPages contract, not a second truncation, bounds the batch.
@@ -58,6 +57,7 @@ const task = getDocument({
   useSystemFonts: false,
   verbosity: 0
 })
+bytes = undefined
 const started = performance.now()
 const document = await task.promise
 const pages = []
@@ -95,70 +95,7 @@ try {
         node?.children?.forEach(visit)
       }
       visit(structure)
-      const lines = []
-      let pending = []
-      const flush = () => {
-        if (!pending.length) return
-        const text = joinPdfSmallCapsLine(pending)
-        if (text) {
-          // PDF.js synthetic spacing items can have zero height and oversized widths.
-          // Preserve their text above, but do not treat invisible whitespace as painted bounds.
-          const rects = pending
-            .filter((item) => item.str.trim())
-            .map((item) => {
-              const [a, b, c, d, x, y] = item.transform
-              const horizontal = Math.hypot(a, b)
-              const vertical = Math.hypot(c, d)
-              assert(horizontal > 0 && vertical > 0, 'Degenerate text transform.')
-              // Retain each item's orientation, including chart-axis labels. These are advance
-              // boxes, not exact glyph ink bounds; line grouping below remains stream-order based.
-              const points = [
-                [0, 0],
-                [1, 0],
-                [0, 1],
-                [1, 1]
-              ].map(([u, v]) =>
-                viewport.convertToViewportPoint(
-                  x + (u * item.width * a) / horizontal + (v * item.height * c) / vertical,
-                  y + (u * item.width * b) / horizontal + (v * item.height * d) / vertical
-                )
-              )
-              return {
-                x: Math.min(...points.map((point) => point[0])),
-                y: Math.min(...points.map((point) => point[1])),
-                right: Math.max(...points.map((point) => point[0])),
-                bottom: Math.max(...points.map((point) => point[1]))
-              }
-            })
-          const x = Math.min(...rects.map((rect) => rect.x))
-          const y = Math.min(...rects.map((rect) => rect.y))
-          lines.push({
-            text,
-            fontSize: Math.max(...pending.map((item) => item.height)),
-            x,
-            y,
-            width: Math.max(...rects.map((rect) => rect.right)) - x,
-            height: Math.max(...rects.map((rect) => rect.bottom)) - y
-          })
-        }
-        pending = []
-      }
-      for (const item of content.items) {
-        if (!('str' in item)) continue
-        if (startsDetachedTableCaption(pending, item) || startsDetachedTextColumn(pending, item))
-          flush()
-        if (
-          pending.length &&
-          Math.abs(
-            viewport.convertToViewportPoint(...pending.at(-1).transform.slice(4))[1] -
-              viewport.convertToViewportPoint(...item.transform.slice(4))[1]
-          ) > 2
-        )
-          flush()
-        pending.push(item)
-        if (item.hasEOL) flush()
-      }
-      flush()
+      const lines = projectPdfTextLines(content, viewport)
       // PDF text streams may paint the right column before the left column.
       // Normalize only pages with clear two-column evidence; ambiguous pages
       // retain their source order for downstream spatial ownership checks.
@@ -224,13 +161,15 @@ try {
           )
           if (proof) {
             let encodedCaptionBytes = 0
-            let evidence = defaultContent.items.some((item) => item.str === 'μ')
-              ? attachNativeDualApiEvidence(
-                  proof,
-                  defaultContent,
-                  await page.getTextContent({ disableNormalization: true })
-                )
-              : proof
+            let evidence =
+              defaultContent.items.some((item) => item.str === 'μ') ||
+              nativeLigatureDualApiCaptureRequired(proof)
+                ? attachNativeDualApiEvidence(
+                    proof,
+                    defaultContent,
+                    await page.getTextContent({ disableNormalization: true })
+                  )
+                : proof
             if (optionalEvidence === 'caption-raster') {
               try {
                 const png = await canvas.encode('png'),
@@ -298,6 +237,7 @@ try {
     JSON.stringify({ summary, outline, pages }, null, 2) + '\n'
   )
   console.log(JSON.stringify(summary, null, 2))
+  pages.length = 0
 } catch (error) {
   nativeFigureRenderContexts.clear()
   throw error

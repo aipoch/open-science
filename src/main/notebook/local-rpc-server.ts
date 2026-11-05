@@ -1537,7 +1537,15 @@ class NotebookLocalRpcServer {
       } as Parameters<NotebookLocalRpcCapability['shutdown']>[0] & {
         delegatedWorkAttemptId: string
       })
-      revokePromise = Promise.all([drained, shutdown]).then(() => undefined)
+      revokePromise = Promise.all([drained, shutdown]).then(
+        () => undefined,
+        (error) => {
+          // Admission stays revoked; only the failed lane teardown is retryable. Keeping a
+          // rejected promise here would prevent delegated cleanup recovery from reaping it.
+          revokePromise = undefined
+          throw error
+        }
+      )
       return revokePromise
     }
     return {

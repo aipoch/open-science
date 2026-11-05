@@ -384,7 +384,9 @@ export class AgentBackendResolver {
         : undefined
     const opencodeVersion =
       framework.id === 'opencode'
-        ? await this.runtime.probeOpencodeVersion(executablePath)
+        ? await this.runtime.probeOpencodeVersion(executablePath).catch((cause: unknown) => {
+            throw new Error('OpenCode CLI version check failed.', { cause })
+          })
         : undefined
     const opencodeMajorVersion = opencodeVersion?.startsWith('2.') ? 2 : 1
     if (framework.id === 'opencode' && !/^[12]\.\d+\./.test(opencodeVersion ?? '')) {

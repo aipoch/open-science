@@ -2,9 +2,16 @@
 // The supervisor event loop never performs PDF/WASM work. A job has exactly one Worker thread,
 // no child process tree; parent pipe closure still works while inference occupies the Worker.
 import { Worker } from 'node:worker_threads'
+import { createRequire } from 'node:module'
 import { dirname } from 'node:path'
 import { unlink, rmdir } from 'node:fs/promises'
 import { inspectScratch } from './scratch.mjs'
+
+// Retain the Windows native binding without initializing the Canvas font wrapper.
+if (process.platform === 'win32') {
+  const require = createRequire(import.meta.url)
+  createRequire(require.resolve('@napi-rs/canvas'))('./js-binding')
+}
 
 let worker, request, interval, deadline
 let stopping

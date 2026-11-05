@@ -51,7 +51,7 @@ AIPOCH Open-Science는 머신러닝, 통계학, 생명과학, 화학, 재료과�
 
 완료된 연구 세션은 선택한 대화 분기, 파일 버전, Notebook 기록 및 검증 증거를 포함하는 이동 가능한 `.science` 패키지로 내보내 검토, 인계 및 보관에 사용할 수도 있습니다.
 
-> 💡 **[AIPOCH Open-Science v1.0.7 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 11월 최종 업데이트)_. 이번 업데이트는 Pi를 다섯 번째 에이전트 프레임워크로 추가하고, DOI 또는 arXiv 링크에서 참고 문헌을 바로 추가할 수 있게 하며, 읽기 모드에서 에이전트가 연결된 PDF에 주석을 작성할 수 있게 합니다. 또한 스캔 PDF를 위해 9개 언어 팩의 선택적 OCR을 제공합니다. 연구 사례 마켓플레이스에서 검색도 할 수 있습니다. Windows의 Notebook 셸 설정, OpenCode의 컨텍스트 압축 중 충돌, Fake-IP DNS 환경에서의 다운로드 문제도 수정했습니다. 자세한 내용은 [v1.0.7 릴리스 노트](../../release-notes/1.0.7/ko.md)를 참조하세요.
+> 💡 **[AIPOCH Open-Science v1.0.8 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 11월 최종 업데이트)_. 이번 업데이트는 설정을 탭으로 재구성하고, DOI·arXiv·PubMed 식별자에서 한 번에 최대 100개의 참조 문헌을 가져오며, 문헌 라이브러리 상세 보기에 AI 연구 요약을 추가합니다. 종료된 세션은 에이전트 프로세스를 해제하고, eQTL Catalogue 쿼리가 복구되며, macOS와 Windows 업데이트가 더 원활해집니다. 자세한 내용은 [v1.0.8 릴리스 노트](../../release-notes/1.0.8/ko.md)를 참조하세요.
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
