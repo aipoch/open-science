@@ -290,6 +290,7 @@ it('keeps the saved player available while regenerating and after a failed repla
   const owner = createResearchVideoPresentationOwner(f.options)
   await owner.start(request)
   await vi.waitFor(async () => expect((await owner.status(request)).result).toBeDefined())
+  await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce())
   const saved = (await owner.status(request)).result
   let fail: (error: Error) => void = () => {}
   f.options.writeScreenplay.mockImplementation(

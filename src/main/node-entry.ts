@@ -295,6 +295,7 @@ async function main(): Promise<void> {
     configRoot,
     generation,
     explicitStart: !process.argv.includes('--desktop'),
+    deferFirstConnectionTimeout: true,
     onStoppingAdmission: () => runtime?.applicationCommands.beginStopping(),
     stop: (_reason, deadlineAt) => {
       // Cancellation must be visible before an already-resolving startup await resumes.
@@ -665,6 +666,8 @@ async function main(): Promise<void> {
       }
     )
     abortStartupIfStopping()
+    // The first-App deadline begins only once Desktop can discover and attach to this runtime.
+    lifetime.startFirstConnectionTimeout()
     startupReporter.phase('database')
     const state = await databaseStartup.start()
     abortStartupIfStopping()

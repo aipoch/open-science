@@ -146,11 +146,7 @@
       "src/main/composition/session-packages.test.ts"
     ]
   },
-  "capabilityOverlays": [
-    "e2e_regressions",
-    "e2e_delegation",
-    "windows_sensitive"
-  ],
+  "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
   "fallbackCapability": "main_runtime",
   "fullTestReason": "Catalog persistence and verified remote archive downloads expand the package import boundary; retain full CI validation until these sources and runtime consumers are reviewed."
 }

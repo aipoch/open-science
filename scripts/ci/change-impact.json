@@ -290,6 +290,7 @@
         "src/main/runtime-ownership.ts",
         "src/main/remote-access/remoteit.ts",
         "src/main/session-diagnostics/environment.ts",
+        "src/main/session-diagnostics/projection.ts",
         "src/main/settings/agent-runtime-manager.ts",
         "src/main/settings/application-commands.ts",
         "src/main/settings/claude-cli-process.ts",

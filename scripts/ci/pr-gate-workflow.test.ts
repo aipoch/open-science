@@ -2445,6 +2445,20 @@ describe('E2E throughput contracts', () => {
     }
   })
 
+  it('installs the headless browser before macOS browser journeys and presentation tests', () => {
+    const steps = workflow.jobs.macos_e2e.steps!
+    const browser = steps.findIndex(({ name }) => name === 'Install headless Chromium')
+    expect(browser).toBeGreaterThan(steps.findIndex(({ id }) => id === 'setup'))
+    // Electron-only smoke/workspace lanes do not need Playwright's browser fixture.
+    expect(steps[browser].if).toBe(
+      "${{ matrix.group == 'presentation' || (matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos')) }}"
+    )
+    expect(steps[browser]['continue-on-error']).not.toBe(true)
+    for (const id of ['e2e_functional_macos', 'e2e_workspace_macos', 'renderer_layout'])
+      expect(browser).toBeLessThan(steps.findIndex((step) => step.id === id))
+    expect(steps[browser].run).toBe('npx playwright install chromium --only-shell')
+  })
+
   it('partitions macOS groups while preserving the stable aggregate gate', () => {
     const job = workflow.jobs.macos_e2e
     expect(typeof job.strategy?.matrix === 'object' ? job.strategy.matrix.group : undefined).toBe(
