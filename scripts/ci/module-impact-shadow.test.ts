@@ -70,42 +70,12 @@ describe('module impact shadow', () => {
         'src/main/session-persistence/deletion-owner.ts'
       ]
     ]
-  ])('keeps the complete %s diff selective with lifecycle consumers', (_name, paths) => {
+  ])('requires complete validation for the %s lifecycle boundary', (_name, paths) => {
     const report = reportFor(paths.map((path) => ({ path, status: 'modified' })))
 
-    expect(report.resolved.mode).toBe('selective')
-    expect(report.shadow.modules).toContain('project_lifecycle')
-    expect(report.shadow.testFiles).toEqual(
-      expect.arrayContaining([
-        ...paths.filter((path) => path.endsWith('.test.ts')),
-        'src/main/projects/project-runtime-quiescence-owner.test.ts',
-        'src/main/session-persistence/deletion-integration.test.ts',
-        'src/main/data-content-application-commands.test.ts',
-        'src/main/application-command-wiring.test.ts',
-        'src/main/compute/job-deletion-runtime-isolation.test.ts',
-        'src/main/permission-grants/registry.test.ts',
-        'src/renderer/src/stores/project-store.test.ts',
-        'src/renderer/src/pages/home/HomePage.persistence.test.tsx'
-      ])
-    )
-    expect(report.resolved.lanes).toEqual(
-      expect.arrayContaining([
-        'unit_macos',
-        'interface_contracts',
-        'typecheck_node',
-        'typecheck_web',
-        'build',
-        'windows_runtime',
-        'windows_path',
-        'e2e_functional_macos',
-        'e2e_workspace_macos',
-        'e2e_functional_windows',
-        'e2e_workspace_windows'
-      ])
-    )
-    expect(report.resolved.lanes).not.toContain('linux_runtime')
-    expect(report.resolved.lanes).not.toContain('e2e_visual_macos')
-    expect(report.resolved.lanes).not.toContain('e2e_accessibility_macos')
+    expect(report.resolved.mode).toBe('full')
+    expect(report.shadow).toMatchObject({ mode: 'full', modules: [], testFiles: [] })
+    expect(report.resolved.lanes).toEqual(changeImpactManifest.laneOrder)
   })
 
   it('expands the session deletion interface to its injected project lifecycle caller', () => {
@@ -121,7 +91,7 @@ describe('module impact shadow', () => {
   })
 
   it('keeps documentation in its own lane when accompanying an owned code change', () => {
-    const source = { path: 'src/main/projects/deletion-coordinator.ts', status: 'modified' }
+    const source = { path: 'src/main/artifacts/repository.ts', status: 'modified' }
     const codeOnly = reportFor([source])
     const report = reportFor([source, { path: 'docs/PRD.md', status: 'modified' }])
 

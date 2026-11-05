@@ -2601,3 +2601,65 @@ it('blocks direct, queued, branch, resume and side-chat admission while credenti
   expect(input.sideChat!.start).not.toHaveBeenCalled()
   expect(input.composer.lifecycle.captureSend).not.toHaveBeenCalled()
 })
+
+describe('draft acceptance notifications', () => {
+  it.each(['validation', 'preparation'] as const)(
+    'does not accept a draft rejected during %s',
+    async (phase) => {
+      const input = options()
+      if (phase === 'validation') input.agentConfigurationReady = false
+      else
+        input.runtime.sendMessage = vi.fn(async (request) => {
+          request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+          request.onPreparationRejected?.('Preparation failed', 'session-a')
+          return undefined
+        })
+      const hook = renderController(input)
+      mounted.push(hook)
+      const onAccepted = vi.fn()
+      await act(async () =>
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [], onAccepted })
+      )
+      expect(onAccepted).not.toHaveBeenCalled()
+    }
+  )
+  it('notifies once at Main admission, not optimistic append or preparation completion', async () => {
+    const input = options()
+    let append!: () => void
+    let admit!: () => void
+    let finish!: (result: { sessionId: string; messageId: string }) => void
+    input.runtime.sendMessage = vi.fn<
+      WorkspaceConversationControllerOptions['runtime']['sendMessage']
+    >((request) => {
+      admit = () => request.onPromptAccepted?.()
+      append = () => request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+      return new Promise((resolve) => {
+        finish = resolve
+      })
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const onAccepted = vi.fn()
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], onAccepted }))
+    expect(onAccepted).not.toHaveBeenCalled()
+    act(() => append())
+    expect(onAccepted).not.toHaveBeenCalled()
+    await act(async () => finish({ sessionId: 'session-a', messageId: 'message-a' }))
+    expect(onAccepted).not.toHaveBeenCalled()
+    act(() => {
+      admit()
+      admit()
+    })
+    expect(onAccepted).toHaveBeenCalledOnce()
+  })
+  it('notifies only when the draft enters the queue', () => {
+    const activeSession = runningSession()
+    const input = options({ activeSession, promptInFlightSessionIds: [activeSession.id] })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const onAccepted = vi.fn()
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [], onAccepted }))
+    expect(hook.result.current.queue.items).toHaveLength(1)
+    expect(onAccepted).toHaveBeenCalledOnce()
+  })
+})

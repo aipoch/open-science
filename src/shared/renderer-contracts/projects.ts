@@ -1,3 +1,9 @@
+import type {
+  CancelPromptOptimizationRequest,
+  OptimizePromptRequest,
+  OptimizePromptResult,
+  OptimizationEvent
+} from '../prompt-optimization'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { ProjectDeletedEvent } from '../lifecycle-events'
 
@@ -43,6 +49,22 @@ import {
 } from './definition'
 
 export const projectsCreateContracts = {
+  'projects.optimizePrompt': callable<
+    (request: OptimizePromptRequest) => Promise<OptimizePromptResult>
+  >()('projects', ['projects:optimize-prompt', WEB, undefined, undefined, RUNTIME_VALIDATED]),
+  'projects.cancelPromptOptimization': callable<
+    (request: CancelPromptOptimizationRequest) => Promise<void>
+  >()('projects', [
+    'projects:cancel-prompt-optimization',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
+  'projects.recordOptimizationEvent': callable<(event: OptimizationEvent) => Promise<void>>()(
+    'projects',
+    ['projects:record-optimization-event', WEB, undefined, undefined, RUNTIME_VALIDATED]
+  ),
   'projects.create': callable<(request: CreateProjectRequest) => Promise<Project>>()('projects', [
     'projects:create',
     WEB,

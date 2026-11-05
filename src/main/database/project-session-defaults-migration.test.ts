@@ -91,10 +91,12 @@ describe('Project Session defaults migration', () => {
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
-        '0054_slurm_job_reliability'
+        '0054_slurm_job_reliability',
+        '0055_project_optimization_prompt',
+        '0056_project_optimization_prompt_scope'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0054_slurm_job_reliability'
+      to: '0056_project_optimization_prompt_scope'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

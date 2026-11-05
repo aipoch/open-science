@@ -37,6 +37,7 @@ import type {
   CodexInfo,
   OpencodeInfo,
   ProjectFilesFilterPreference,
+  PromptOptimizationModelConfiguration,
   ProviderType,
   ProviderView,
   ReviewerModelConfiguration,
@@ -141,6 +142,8 @@ type SettingsStoreData = RuntimeSetupState &
     // Reasoning-effort preference applied to agent requests; 'default' leaves the agent's own default.
     reasoningEffort: ReasoningEffort
     reviewerModel: ReviewerModelConfiguration
+    promptOptimizationModel: PromptOptimizationModelConfiguration
+    promptOptimizationModelPending: boolean
     reviewerModelPending: boolean
     sessionDetailsModel: SessionDetailsModelConfiguration
     sessionDetailsModelPending: boolean
@@ -214,6 +217,8 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   notebookNetwork: DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: DEFAULT_REASONING_EFFORT,
   reviewerModel: { mode: 'inherit' },
+  promptOptimizationModel: { mode: 'inherit' },
+  promptOptimizationModelPending: false,
   reviewerModelPending: false,
   sessionDetailsModel: DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   sessionDetailsModelPending: false,
@@ -245,6 +250,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   notebookNetwork: snapshot.notebookNetwork ?? DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
   reasoningEffort: snapshot.reasoningEffort,
   reviewerModel: snapshot.reviewerModel ?? { mode: 'inherit' },
+  promptOptimizationModel: snapshot.promptOptimizationModel ?? { mode: 'inherit' },
   sessionDetailsModel: snapshot.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   subagentModel: snapshot.subagentModel ?? { mode: 'inherit' },
   visionModel: snapshot.visionModel,

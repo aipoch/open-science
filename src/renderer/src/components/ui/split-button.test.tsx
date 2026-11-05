@@ -6,12 +6,42 @@ import {
   SplitButton,
   SplitButtonGroup,
   SplitButtonPrimary,
+  SplitButtonSecondary,
   SplitButtonTrigger,
   SplitButtonContent
 } from './split-button'
 import { DropdownMenuItem } from './dropdown-menu'
 
 afterEach(cleanup)
+
+it('supports an independently actionable secondary segment and a cancellable primary', () => {
+  const cancel = vi.fn()
+  const undo = vi.fn()
+  const { rerender } = render(
+    <SplitButton kind="actions" busy>
+      <SplitButtonGroup>
+        <SplitButtonPrimary allowWhileBusy onClick={cancel}>
+          Cancel
+        </SplitButtonPrimary>
+        <SplitButtonSecondary onClick={undo}>Undo</SplitButtonSecondary>
+      </SplitButtonGroup>
+    </SplitButton>
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+  expect(cancel).toHaveBeenCalledOnce()
+  expect(undo).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('aria-haspopup')).toBe(false)
+  rerender(
+    <SplitButton kind="actions" hideMenu>
+      <SplitButtonGroup>
+        <SplitButtonPrimary>Optimize</SplitButtonPrimary>
+        <SplitButtonSecondary onClick={undo}>Undo</SplitButtonSecondary>
+      </SplitButtonGroup>
+    </SplitButton>
+  )
+  expect(screen.queryByRole('button', { name: 'Undo' })).toBeNull()
+})
 
 it('honors React callback-ref cleanup on the group and trigger', () => {
   const groupCleanup = vi.fn()

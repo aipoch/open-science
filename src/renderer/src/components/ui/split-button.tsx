@@ -16,7 +16,7 @@ import { Popover, PopoverAnchor, PopoverTrigger, PopoverContent } from './popove
 import { cn } from '@/lib/utils'
 import './split-button.css'
 
-type Kind = 'menu' | 'popover'
+type Kind = 'menu' | 'popover' | 'actions'
 type SplitContext = {
   kind: Kind
   open: boolean
@@ -71,9 +71,13 @@ export const SplitButton = ({
     <Context.Provider
       value={{ kind, open, disabled, busy, hideMenu, group, setGroup, trigger, setTrigger }}
     >
-      <Root open={open} onOpenChange={change} modal={modal}>
-        {children}
-      </Root>
+      {kind === 'actions' ? (
+        children
+      ) : (
+        <Root open={open} onOpenChange={change} modal={modal}>
+          {children}
+        </Root>
+      )}
     </Context.Provider>
   )
 }
@@ -115,6 +119,7 @@ export const SplitButtonGroup = ({
       role={props.role ?? 'group'}
       aria-busy={busy || undefined}
       data-split-group=""
+      data-kind={kind}
       data-open={open}
       data-single={hideMenu}
       className={cn('split-button-group', className)}
@@ -125,6 +130,25 @@ export const SplitButtonGroup = ({
 
 export const SplitButtonPrimary = ({
   disabled,
+  allowWhileBusy = false,
+  ...props
+}: ComponentProps<typeof Button> & { allowWhileBusy?: boolean }): React.JSX.Element => {
+  const context = useSplit()
+  return (
+    <Button
+      type="button"
+      {...props}
+      data-split-primary=""
+      disabled={disabled || context.disabled || (context.busy && !allowWhileBusy)}
+    />
+  )
+}
+
+// A secondary action has no menu semantics. Keep it mounted for the reveal transition,
+// but remove it from navigation and the accessibility tree while collapsed.
+export const SplitButtonSecondary = ({
+  disabled,
+  tabIndex,
   ...props
 }: ComponentProps<typeof Button>): React.JSX.Element => {
   const context = useSplit()
@@ -132,8 +156,10 @@ export const SplitButtonPrimary = ({
     <Button
       type="button"
       {...props}
-      data-split-primary=""
-      disabled={disabled || context.disabled || context.busy}
+      data-split-secondary=""
+      aria-hidden={context.hideMenu || undefined}
+      tabIndex={context.hideMenu ? -1 : tabIndex}
+      disabled={disabled || context.disabled || context.busy || context.hideMenu}
     />
   )
 }

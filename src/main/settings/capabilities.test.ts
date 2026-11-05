@@ -39,6 +39,7 @@ describe('Settings capabilities', () => {
       packageMirror: { pypiIndex: 'https://pypi.example/simple' },
       subagentModel: { mode: 'inherit' },
       reviewerModel: { mode: 'inherit' },
+      promptOptimizationModel: { mode: 'inherit' },
       sessionDetailsModel: { mode: 'inherit', reasoningEffort: 'low' }
     })
   })

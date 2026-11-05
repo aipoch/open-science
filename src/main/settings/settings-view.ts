@@ -75,6 +75,7 @@ export const buildSettingsSnapshot = (
     reasoningEffort: preferences.reasoningEffort,
     subagentModel: settings.subagentModel ?? { mode: 'inherit' },
     reviewerModel: settings.reviewerModel ?? { mode: 'inherit' },
+    promptOptimizationModel: settings.promptOptimizationModel ?? { mode: 'inherit' },
     sessionDetailsModel:
       settings.sessionDetailsModel ?? DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
     visionModel: settings.visionModel,

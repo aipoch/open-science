@@ -157,7 +157,9 @@ describe('application database (integration)', () => {
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
-        '0054_slurm_job_reliability'
+        '0054_slurm_job_reliability',
+        '0055_project_optimization_prompt',
+        '0056_project_optimization_prompt_scope'
       ]
     })
 
@@ -1186,7 +1188,9 @@ describe('application database (integration)', () => {
         '0051_literature_reading_status',
         '0052_literature_personal_note_search',
         '0053_literature_doi_identity',
-        '0054_slurm_job_reliability'
+        '0054_slurm_job_reliability',
+        '0055_project_optimization_prompt',
+        '0056_project_optimization_prompt_scope'
       ]
     })
 

@@ -112,6 +112,7 @@ export const RENDERER_API_CONTRACT = composeRendererApiContract(
   settingsConnectors.settingsSetOpenAlexCredentialContracts,
   settingsPreferences.settingsSetNetworkProxyContracts,
   settingsModels.settingsSetReviewerModelContracts,
+  settingsModels.settingsSetPromptOptimizationModelContracts,
   settingsSkills.settingsSetSkillEnabledContracts,
   settingsModels.settingsSetSubagentModelContracts,
   settingsConnectors.settingsSetToolPermissionContracts,

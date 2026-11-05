@@ -1,3 +1,10 @@
+import type {
+  CancelPromptOptimizationRequest,
+  OptimizePromptRequest,
+  OptimizePromptResult,
+  OptimizationEvent
+} from '../../shared/prompt-optimization'
+import type { PromptOptimizationService } from './prompt-optimization'
 import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
@@ -21,6 +28,9 @@ import { ProjectRepository } from './repository'
 import { resolveConfigRoot } from '../storage-root'
 
 type ProjectHandlers = {
+  optimizePrompt: (request: OptimizePromptRequest) => Promise<OptimizePromptResult>
+  cancelPromptOptimization: (request: CancelPromptOptimizationRequest) => Promise<void>
+  recordOptimizationEvent: (event: OptimizationEvent) => Promise<void>
   list: () => Promise<Project[]>
   get: (id: string) => Promise<Project | null>
   create: (request: CreateProjectRequest) => Promise<Project>
@@ -47,6 +57,7 @@ type ProjectDeleteHandler = Pick<
 type ProjectCrudRepository = Pick<ProjectRepository, 'list' | 'get' | 'create' | 'update'> &
   Partial<Pick<ProjectRepository, 'updateArchive'>>
 type ProjectHandlerEffects = Pick<ProjectHandlers, 'updateArchive'> & {
+  promptOptimization?: PromptOptimizationService
   onAgentContextChanged?: (projectId: string) => void
 }
 
@@ -62,6 +73,18 @@ const createProjectHandlers = (
     }
   }
 ): ProjectHandlers => ({
+  optimizePrompt: async (request) => {
+    if (!effects.promptOptimization) throw new Error('Prompt optimization is unavailable.')
+    return effects.promptOptimization.optimize(request, () =>
+      deletionCoordinator.waitForProjectOperations([request.projectId])
+    )
+  },
+  cancelPromptOptimization: async (request) => {
+    effects.promptOptimization?.cancel(request)
+  },
+  recordOptimizationEvent: async (event) => {
+    effects.promptOptimization?.recordEvent(event)
+  },
   list: async () => {
     return repository.list()
   },
