@@ -358,7 +358,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
                   applicationPath: resolve(dirname(app.getPath('exe')), '../..'),
                   profilePath: app.getPath('userData'),
                   targetVersion: recovery.version,
-                  startupOptions
+                  // The shared service can belong to another Desktop profile. Preserve its
+                  // data/runtime configuration, but resume the Desktop that authorized this update.
+                  startupOptions: { ...startupOptions, profilePath: app.getPath('userData') }
                 },
                 { installerSha512 }
               )
