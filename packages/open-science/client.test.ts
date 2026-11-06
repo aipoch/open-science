@@ -132,6 +132,13 @@ describe('OpenScienceClient', () => {
         'listCitationStyles',
         'formatReferences',
         'getReferenceMetadata',
+        'importLiterature',
+        'createLiteratureItem',
+        'setProjectLiterature',
+        'createLiteratureCollection',
+        'setCollectionLiterature',
+        'setLiteratureReadingStatus',
+        'setLiteratureLifecycle',
         'events',
         'request',
         'throwResponseError'

@@ -1217,6 +1217,44 @@ describe('task CLI', () => {
     )
   })
 
+  it('previews literature imports unless committed and maps trash to the lifecycle state', async () => {
+    const client = {
+      importLiterature: vi.fn().mockResolvedValue({
+        entries: [{ index: 0, status: 'ready', title: 'Atlas' }],
+        errors: [],
+        truncated: false
+      }),
+      setLiteratureLifecycle: vi.fn().mockResolvedValue({ itemIds: ['i1'], state: 'deleted' })
+    }
+    const log = vi.fn()
+    const deps = {
+      connect: vi.fn().mockResolvedValue(client),
+      log,
+      readStdin: vi.fn().mockResolvedValue('@article{a}')
+    }
+
+    await runTaskCommand(parseCliArgs(['literature', 'import', '-']), deps)
+    await runTaskCommand(parseCliArgs(['literature', 'trash', 'i1', '--json']), deps)
+
+    expect(client.importLiterature).toHaveBeenCalledWith({
+      mode: 'preview',
+      content: '@article{a}'
+    })
+    expect(log).toHaveBeenCalledWith(
+      'Preview only; nothing was saved. Re-run with --commit to import.'
+    )
+    expect(client.setLiteratureLifecycle).toHaveBeenCalledWith(['i1'], 'deleted')
+    expect(() => parseCliArgs(['literature', 'import', 'refs.bib', '--project', 'p1'])).toThrow(
+      '--project requires literature import --commit.'
+    )
+    expect(() =>
+      parseCliArgs(['literature', 'import', 'refs.bib', '--duplicates', 'reuse'])
+    ).toThrow('--duplicates and --collection require literature import --commit.')
+    expect(() => parseCliArgs(['literature', 'search', '--commit'])).toThrow(
+      '--commit requires literature import.'
+    )
+  })
+
   it('preserves an existing artifact output when the download stream fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-download-'))
     const output = join(directory, 'report.md')
