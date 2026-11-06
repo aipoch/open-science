@@ -8,6 +8,7 @@ const id = (description) => z.string().trim().min(1).describe(description)
 const sessionId = id('Session ID returned by list_sessions or start_run.')
 const projectId = id('Project ID returned by list_projects or create_project.')
 const runId = id('Run ID returned by start_run.')
+const literatureItemId = id('Literature item ID returned by search_literature.')
 const expectedRevision = z
   .number()
   .int()
@@ -60,6 +61,7 @@ const toolError = (error) => {
     project_not_found: 'Project not found. Refresh list_projects.',
     session_not_found: 'Session not found. Refresh list_sessions.',
     run_not_found: 'Run not found. Check the ID returned by start_run.',
+    literature_item_not_found: 'Literature item not found. Refresh search_literature.',
     invalid_request: 'Invalid request. Check the tool arguments and service configuration.',
     request_timeout:
       'Request timed out. A write may already have succeeded; check its state before retrying.'
@@ -275,6 +277,52 @@ export const createResearchMcpServer = ({
     { sessionId },
     read,
     (client, args, options) => client.listArtifacts(args.sessionId, options)
+  )
+  register(
+    'search_literature',
+    'Search Literature library records by title, author, abstract or identifier; omit query to browse. Optionally limit results to one project. Returns at most 20 records per page; pass nextOffset as offset to continue. Does not search external providers or read PDF full text.',
+    {
+      query: z.string().trim().min(1).max(2000).optional(),
+      projectId: projectId.optional(),
+      offset: z.number().int().nonnegative().optional(),
+      limit: z.number().int().min(1).max(20).optional()
+    },
+    read,
+    (client, { limit = 20, ...request }, options) =>
+      client.searchLiterature({ ...request, limit }, options)
+  )
+  register(
+    'get_literature_item',
+    'Read one Literature library record, including bibliographic metadata, attachments and project links.',
+    { itemId: literatureItemId },
+    read,
+    (client, args, options) => client.getLiteratureItem(args.itemId, options)
+  )
+  register(
+    'list_citation_styles',
+    'List the built-in and imported citation styles available to format_references.',
+    {},
+    read,
+    (client, _args, options) => client.listCitationStyles(options)
+  )
+  register(
+    'format_references',
+    'Format Literature library records as bibliography entries and in-text citations in one citation style, with BibTeX and RIS exports. Does not modify records or write files.',
+    {
+      itemIds: z.array(literatureItemId).min(1).max(200),
+      styleId: id('Citation style ID returned by list_citation_styles.'),
+      locale: z.enum(['en-US', 'zh-CN']).optional()
+    },
+    read,
+    (client, { locale = 'en-US', ...request }, options) =>
+      client.formatReferences({ ...request, locale }, options)
+  )
+  register(
+    'get_reference_metadata',
+    'Resolve bibliographic metadata for a DOI (10.x/...), pmid:<n>, pmcid:PMC<n> or arxiv:<id> through external registries. Does not add the record to the library.',
+    { identifier: id('DOI, pmid:, pmcid: or arxiv: identifier.').max(2048) },
+    { ...read, openWorldHint: true },
+    (client, args, options) => client.getReferenceMetadata(args.identifier, options)
   )
 
   const onclose = server.server.onclose

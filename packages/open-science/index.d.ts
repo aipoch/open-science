@@ -492,6 +492,30 @@ export type Artifact = {
   sha256?: string
 }
 
+/** Service-owned Literature records; the schema follows the running service version. */
+export type LiteratureItem = { id: string; item: Record<string, unknown> } & Record<string, unknown>
+
+export type LiteratureSearchPage = {
+  entries: LiteratureItem[]
+  totalCount?: number
+  nextOffset?: number
+}
+
+export type CitationStyle = {
+  id: string
+  title: string
+  source: 'built-in' | 'custom'
+  summary?: string
+  rights?: string
+}
+
+export type CitationLocale = 'en-US' | 'zh-CN'
+
+export type FormattedReferences = {
+  references: Array<{ itemId: string; reference: string; inText: string }>
+  exports: { bibtex: string; ris: string }
+}
+
 export class OpenScienceApiError extends Error {
   code: string
   status?: number
@@ -661,6 +685,22 @@ export class OpenScienceClient {
     }
   ): Promise<Run>
   listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
+  /** Searches the global Literature library, optionally limited to one Project. */
+  searchLiterature(
+    request?: { query?: string; projectId?: string; offset?: number; limit?: number },
+    options?: RequestOptions
+  ): Promise<LiteratureSearchPage>
+  getLiteratureItem(itemId: string, options?: RequestOptions): Promise<LiteratureItem>
+  listCitationStyles(options?: RequestOptions): Promise<CitationStyle[]>
+  formatReferences(
+    request: { itemIds: string[]; styleId: string; locale: CitationLocale },
+    options?: RequestOptions
+  ): Promise<FormattedReferences>
+  /** Resolves a DOI, pmid:, pmcid: or arxiv: identifier through the service without saving it. */
+  getReferenceMetadata(
+    identifier: string,
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>>
   downloadArtifact(artifactId: string, options?: RequestOptions): Promise<Response>
   events(options?: {
     idleTimeoutMs?: number

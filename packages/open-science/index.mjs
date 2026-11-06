@@ -138,6 +138,21 @@ const sleepWithSignal = async (sleep, milliseconds, signal) => {
   })
 }
 
+// Read-only Literature commands use Web RPC; map a missing channel on older services.
+const callLiteratureRpc = async (client, channel, args, options) => {
+  try {
+    return await client.callRpc(channel, args, options)
+  } catch (error) {
+    if (error instanceof OpenScienceApiError && error.code === 'method_not_found') {
+      throw new OpenScienceApiError(
+        'This Open-Science service does not support Literature commands. Update the service.',
+        { code: 'unsupported_capability', status: error.status }
+      )
+    }
+    throw error
+  }
+}
+
 export class OpenScienceClient {
   constructor({
     baseUrl,
@@ -455,6 +470,57 @@ export class OpenScienceClient {
 
   listArtifacts(sessionId, options) {
     return this.request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`, options)
+  }
+
+  searchLiterature({ query, projectId, offset, limit } = {}, options) {
+    return callLiteratureRpc(
+      this,
+      'literature:search',
+      [
+        {
+          scope: 'library',
+          ...(query === undefined ? {} : { query }),
+          ...(projectId === undefined ? {} : { projectId }),
+          ...(offset === undefined ? {} : { offset }),
+          ...(limit === undefined ? {} : { limit })
+        }
+      ],
+      options
+    )
+  }
+
+  async getLiteratureItem(itemId, options) {
+    const item = await callLiteratureRpc(this, 'literature:get', [itemId], options)
+    if (!item) {
+      throw new OpenScienceApiError(`Literature item not found: ${itemId}`, {
+        code: 'literature_item_not_found',
+        status: 404
+      })
+    }
+    return item
+  }
+
+  async listCitationStyles(options) {
+    const result = await callLiteratureRpc(
+      this,
+      'literature:citation-styles',
+      [{ kind: 'list' }],
+      options
+    )
+    return result.styles
+  }
+
+  formatReferences({ itemIds, styleId, locale }, options) {
+    return callLiteratureRpc(
+      this,
+      'literature:format-references',
+      [{ itemIds, styleId, locale }],
+      options
+    )
+  }
+
+  getReferenceMetadata(identifier, options) {
+    return callLiteratureRpc(this, 'literature:lookup-metadata', [identifier], options)
   }
 
   async downloadArtifact(artifactId, { signal, timeoutMs } = {}) {

@@ -101,13 +101,31 @@ const cases = [
   ['list_artifacts', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1/artifacts', 'GET', undefined]
 ] as const
 
+const rpcCases = [
+  [
+    'search_literature',
+    { query: 'atlas', projectId: 'p1' },
+    'literature:search',
+    [{ scope: 'library', query: 'atlas', projectId: 'p1', limit: 20 }]
+  ],
+  ['get_literature_item', { itemId: 'i1' }, 'literature:get', ['i1']],
+  ['list_citation_styles', {}, 'literature:citation-styles', [{ kind: 'list' }]],
+  [
+    'format_references',
+    { itemIds: ['i1'], styleId: 'apa' },
+    'literature:format-references',
+    [{ itemIds: ['i1'], styleId: 'apa', locale: 'en-US' }]
+  ],
+  ['get_reference_metadata', { identifier: 'pmid:123' }, 'literature:lookup-metadata', ['pmid:123']]
+] as const
+
 describe('research MCP tools', () => {
   it('discovers descriptive snake_case tools without contacting the service', async () => {
     const connect = vi.fn()
     const { client } = await harness(connect)
     const { tools } = await client.listTools()
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      [...new Set(cases.map(([name]) => name))].sort()
+      [...new Set([...cases, ...rpcCases].map(([name]) => name))].sort()
     )
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z]+(?:_[a-z]+)*$/)
@@ -153,6 +171,40 @@ describe('research MCP tools', () => {
     )
   })
 
+  it.each(rpcCases)('%s is a read-only Web RPC call', async (name, args, channel, rpcArgs) => {
+    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      Response.json({ ok: true, result: { styles: [], id: 'i1' } })
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const { tools } = await client.listTools()
+    expect(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true)
+    const response = await client.callTool({ name, arguments: args })
+    expect(response.isError).not.toBe(true)
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:44100/rpc/${encodeURIComponent(channel)}`)
+    expect(JSON.parse(fetch.mock.calls[0][1].body as string)).toEqual({
+      protocolVersion: 1,
+      args: rpcArgs
+    })
+  })
+
+  it('reports older services without Literature commands as unsupported', async () => {
+    const sdk = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 't',
+      fetch: async () =>
+        Response.json(
+          { ok: false, error: { code: 'method_not_found', message: 'SECRET' } },
+          { status: 404 }
+        )
+    })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({ name: 'list_citation_styles', arguments: {} })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response)).toContain('unsupported_capability')
+    expect(JSON.stringify(response)).not.toContain('SECRET')
+  })
+
   it.each([
     ['get_session', {}],
     ['get_session', { sessionId: 's1', arbitrary: true }],
@@ -172,6 +224,8 @@ describe('research MCP tools', () => {
     ],
     ['start_run', { projectId: 'p1', prompt: ' ' }],
     ['start_run', { projectId: 'p1', prompt: 'Go', permissionProfile: 'unknown' }],
+    ['search_literature', { limit: 21 }],
+    ['format_references', { itemIds: [], styleId: 'apa' }],
     ['execute', { command: 'stop' }]
   ])('rejects invalid %s requests before connecting', async (name, args) => {
     const connect = vi.fn()
