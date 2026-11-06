@@ -630,8 +630,11 @@ const sessionPreferenceValuesEqual = (
   key: SessionConflictRebaseField,
   left: unknown,
   right: unknown
-): boolean =>
-  key === 'pinned' ? Boolean(left) === Boolean(right) : sessionFieldValuesEqual(key, left, right)
+): boolean => {
+  if (key === 'pinned') return Boolean(left) === Boolean(right)
+  if (key === 'memoryEnabled') return (left !== false) === (right !== false)
+  return sessionFieldValuesEqual(key, left, right)
+}
 
 const captureSessionFieldWrite = (
   base: PersistedChatSession | undefined,

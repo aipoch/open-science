@@ -6,6 +6,7 @@ import {
 } from '../../../../shared/desktop-runtime-recovery'
 import {
   materializeSessionConversationGraph,
+  sanitizeSession,
   type PersistedChatSession
 } from '../../../../shared/session-persistence'
 import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
@@ -145,7 +146,16 @@ describe('unconfirmed Session writes', () => {
     rejectSave(new DesktopRuntimeDisconnectedError())
     await failure
     await h.persistence.recovery.reconcile(
-      async () => ({ ...h.base, memoryEnabled: undefined }),
+      async () => sanitizeSession(h.base),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toMatchObject([{ state: 'failed' }])
+
+    const authority = sanitizeSession({ ...h.base, memoryEnabled: undefined })
+    expect(authority?.memoryEnabled).toBe(true)
+    await h.persistence.recovery.reconcile(
+      async () => authority,
       {},
       () => true
     )
