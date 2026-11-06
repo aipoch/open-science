@@ -783,8 +783,9 @@ prints JSON. It queries external registries through the service and does not sav
 
 These commands do not import, edit, or delete records, styles, or attachments, and do not read
 PDF full text. Record objects mirror the running service's Literature schema; only `id`, `item`,
-`entries`, `nextOffset`, `references`, and `exports` are stable fields. Older services without
-these commands return `unsupported_capability`.
+`entries`, `nextOffset`, `references`, and `exports` are stable fields. A missing or stale item ID
+returns `literature_item_not_found` (exit code `4`) for both `show` and `format`. Older services
+without these commands return `unsupported_capability`.
 
 ## Current scope
 

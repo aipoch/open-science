@@ -188,6 +188,26 @@ describe('research MCP tools', () => {
     })
   })
 
+  it('identifies a missing item after a redacted formatter failure', async () => {
+    const fetch = vi.fn<(url: string) => Promise<Response>>(async (url) =>
+      url.endsWith(encodeURIComponent('literature:format-references'))
+        ? Response.json(
+            { ok: false, error: { code: 'command-failed', message: 'Internal' } },
+            { status: 500 }
+          )
+        : Response.json({ ok: true })
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({
+      name: 'format_references',
+      arguments: { itemIds: ['gone', 'gone'], styleId: 'apa' }
+    })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response)).toContain('literature_item_not_found')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
   it('reports older services without Literature commands as unsupported', async () => {
     const sdk = new OpenScienceClient({
       baseUrl: 'http://127.0.0.1:44100',

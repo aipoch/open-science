@@ -510,13 +510,20 @@ export class OpenScienceClient {
     return result.styles
   }
 
-  formatReferences({ itemIds, styleId, locale }, options) {
-    return callLiteratureRpc(
-      this,
-      'literature:format-references',
-      [{ itemIds, styleId, locale }],
-      options
-    )
+  async formatReferences({ itemIds, styleId, locale }, options) {
+    try {
+      return await callLiteratureRpc(
+        this,
+        'literature:format-references',
+        [{ itemIds, styleId, locale }],
+        options
+      )
+    } catch (error) {
+      // The service redacts formatter failures, so identify a missing item only after a failure.
+      if (!(error instanceof OpenScienceApiError) || error.code !== 'command-failed') throw error
+      for (const itemId of new Set(itemIds)) await this.getLiteratureItem(itemId, options)
+      throw error
+    }
   }
 
   getReferenceMetadata(identifier, options) {
