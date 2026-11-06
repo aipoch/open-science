@@ -2027,6 +2027,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                             onOverviewSaved={onOverviewSaved}
                             onActiveRequestsChange={setActiveOverviewRequests}
                             onOpenOverview={openSelectedItemDetail}
+                            returnFocusRef={libraryEntryRef}
                           >
                             {(overviewActions, generateOverviews) => (
                               <div

@@ -61,8 +61,14 @@ it('notifies each saved reference while its sibling runs and deduplicates repeat
   })
   expect(onOverviewSaved.mock.calls).toEqual([[job.rows[0].request], [job.rows[1].request]])
   expect(onActiveRequestsChange).toHaveBeenLastCalledWith([])
+  fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+  await act(async () => {})
+  expect(screen.queryByRole('button', { name: 'Batch overviews' })).toBeNull()
   view.unmount()
   expect(onActiveRequestsChange).toHaveBeenLastCalledWith([])
+  render(<LiteratureOverviewBatch hasSelection={false} resolveSelection={async () => []} />)
+  await act(async () => {})
+  expect(screen.queryByRole('button', { name: 'Batch overviews' })).toBeNull()
 })
 
 it('starts selected references with their own current source identities', async () => {
@@ -390,9 +396,30 @@ it('shows five independent results with controlled per-reference failure reasons
     )
   }
   const overviewBatch = vi.fn().mockResolvedValue(job)
+  const studySnapshot = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Read failed'))
+    .mockResolvedValue({
+      sourceKey: 'key-4',
+      coverage: 'abstract',
+      model: 'test-model',
+      sections: {
+        question: 'Does it work?',
+        population: null,
+        methods: null,
+        results: 'Saved findings',
+        limitations: null
+      }
+    })
   Object.defineProperty(window, 'api', {
     configurable: true,
-    value: { literature: { overviewBatch, get: vi.fn(async (id) => ({ item: { title: id } })) } }
+    value: {
+      literature: {
+        overviewBatch,
+        studySnapshot,
+        get: vi.fn(async (id) => ({ item: { title: id } }))
+      }
+    }
   })
   const onOpenOverview = vi.fn()
   render(
@@ -418,9 +445,21 @@ it('shows five independent results with controlled per-reference failure reasons
     expect(within(rows[index]).getByText('Overview failed')).toBeTruthy()
     expect(within(rows[index]).getByText(reason)).toBeTruthy()
   })
-  expect(within(rows[4]).getByText('Overview saved')).toBeTruthy()
+  expect(within(rows[4]).getByRole('button', { name: 'View details' })).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Retry failed overviews' })).toBeTruthy()
-  fireEvent.click(within(rows[4]).getByRole('button', { name: 'study-4' }))
+  const expand = within(rows[4]).getByRole('button', { name: 'study-4' })
+  fireEvent.click(expand)
+  await screen.findByText('Could not load the overview. Try again.')
+  expect(expand.getAttribute('aria-expanded')).toBe('true')
+  fireEvent.click(within(rows[4]).getByRole('button', { name: 'Retry' }))
+  await screen.findByText('Saved findings')
+  expect(studySnapshot.mock.calls).toEqual([
+    [{ ...job.rows[4].request, mode: 'read' }],
+    [{ ...job.rows[4].request, mode: 'read' }]
+  ])
+  fireEvent.click(expand)
+  expect(screen.queryByText('Saved findings')).toBeNull()
+  fireEvent.click(within(rows[4]).getByRole('button', { name: 'View details' }))
   await waitFor(() =>
     expect(onOpenOverview).toHaveBeenCalledWith(
       { item: { title: 'study-4' } },

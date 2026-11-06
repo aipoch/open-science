@@ -7861,6 +7861,7 @@
     "Generate overviews": "概要を生成",
     "Continue remaining": "残りを続行",
     "{{done}} of {{total}} finished": "{{total}} 件中 {{done}} 件を処理済み",
-    "{{count}} failed overviews_other": "{{count}} 件の概要の生成に失敗"
+    "{{count}} failed overviews_other": "{{count}} 件の概要の生成に失敗",
+    "Could not load the overview. Try again.": "概要を読み込めませんでした。もう一度お試しください。"
   }
 }

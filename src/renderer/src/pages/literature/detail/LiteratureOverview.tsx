@@ -155,15 +155,6 @@ function OverviewContent({
         )
       : t('Could not generate the overview. Please try again.')
   }
-  const rows = result
-    ? [
-        [t('Research question'), result.sections.question],
-        [t('Study population'), result.sections.population],
-        [t('Research methods'), result.sections.methods],
-        [t('Main findings'), result.sections.results],
-        [t('Study limitations'), result.sections.limitations]
-      ]
-    : []
   const generating = pending || Boolean(batchGenerating)
   return (
     <section className="py-4" aria-label={t('Paper overview')} aria-busy={generating}>
@@ -224,30 +215,43 @@ function OverviewContent({
             description={failureDescriptions[failure]}
           />
         ) : null}
-        {result ? (
-          <>
-            <dl className="mt-3 divide-y divide-primary/10 text-sm">
-              {rows.map(([label, value]) => (
-                <div
-                  key={label}
-                  className="grid gap-1 py-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3"
-                >
-                  <dt className="font-medium">{label}</dt>
-                  <dd className="whitespace-pre-wrap break-words text-muted-foreground">
-                    {value ?? t('Not reported in the available source')}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {t('Model')}: {result.model}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {t('AI-generated. Verify against the original paper.')}
-            </p>
-          </>
-        ) : null}
+        {result ? <LiteratureOverviewDetails overview={result} /> : null}
       </div>
     </section>
+  )
+}
+
+export function LiteratureOverviewDetails({
+  overview
+}: {
+  overview: LiteratureOverviewData
+}): React.JSX.Element {
+  const { t } = useTranslation()
+  const rows = [
+    [t('Research question'), overview.sections.question],
+    [t('Study population'), overview.sections.population],
+    [t('Research methods'), overview.sections.methods],
+    [t('Main findings'), overview.sections.results],
+    [t('Study limitations'), overview.sections.limitations]
+  ]
+  return (
+    <>
+      <dl className="mt-3 divide-y divide-primary/10 text-sm">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid gap-1 py-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-3">
+            <dt className="font-medium">{label}</dt>
+            <dd className="whitespace-pre-wrap break-words text-muted-foreground">
+              {value ?? t('Not reported in the available source')}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-2 text-xs text-muted-foreground">
+        {t('Model')}: {overview.model}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {t('AI-generated. Verify against the original paper.')}
+      </p>
+    </>
   )
 }

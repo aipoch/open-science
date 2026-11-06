@@ -762,6 +762,7 @@ describe('LiteratureLibraryPage', () => {
     search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
       request.scope === 'library' ? { entries: records } : { entries: [] }
     )
+    get.mockImplementation(async (id) => records.find((item) => item.id === id))
     vi.mocked(window.api.literature.overviewBatch).mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000000',
       paused: true,
@@ -778,7 +779,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
     const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
     expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
-    expect(within(batch).getAllByText('Overview saved')).toHaveLength(4)
+    expect(within(batch).getAllByRole('button', { name: 'View details' })).toHaveLength(4)
     expect(
       within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
     ).toBeTruthy()
@@ -4418,7 +4419,7 @@ describe('LiteratureLibraryPage', () => {
     })
     expect(await screen.findByRole('dialog', { name: 'Import PDF' })).not.toBeNull()
     expect(stageLocalFile).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.drop(zone, {
       dataTransfer: {

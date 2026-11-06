@@ -7861,6 +7861,7 @@
     "Generate overviews": "生成速览",
     "Continue remaining": "继续剩余项",
     "{{done}} of {{total}} finished": "已处理 {{done}} / {{total}} 篇",
-    "{{count}} failed overviews_other": "{{count}} 篇速览生成失败"
+    "{{count}} failed overviews_other": "{{count}} 篇速览生成失败",
+    "Could not load the overview. Try again.": "无法加载速览，请重试。"
   }
 }

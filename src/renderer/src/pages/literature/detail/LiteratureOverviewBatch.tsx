@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ProgressBar } from '@/components/ui/progress-bar'
@@ -12,10 +12,12 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
+import { LiteratureOverviewDetails } from './LiteratureOverview'
 import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureHost } from '../renderer-host'
 import {
   literatureOverviewSource,
+  type LiteratureOverview as LiteratureOverviewData,
   type LiteratureOverviewRequest
 } from '../../../../../shared/literature-overview'
 import {
@@ -31,6 +33,7 @@ export function LiteratureOverviewBatch({
   onOverviewSaved,
   onActiveRequestsChange,
   onOpenOverview,
+  returnFocusRef,
   children
 }: {
   resolveSelection(): Promise<string[]>
@@ -38,15 +41,25 @@ export function LiteratureOverviewBatch({
   onOverviewSaved?(request: LiteratureOverviewRequest): void
   onActiveRequestsChange?(requests: LiteratureOverviewRequest[]): void
   onOpenOverview?(item: LiteratureItemView, initiator: HTMLElement): void
+  returnFocusRef?: React.RefObject<HTMLElement | null>
   children?(progress: React.ReactNode, generate: React.ReactNode): React.ReactNode
 }): React.JSX.Element {
   const { api } = useLiteratureHost()
   const { t, i18n } = useTranslation()
   const [open, setOpen] = useState(false)
+  const detailsId = useId()
+  const [expandedItems, setExpandedItems] = useState<string[]>([])
   const [pausing, setPausing] = useState(false)
   const [selectionError, setSelectionError] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const openingOverview = useRef<LiteratureItemView | null>(null)
+  const progressRef = useRef<HTMLDivElement>(null)
+  const rowsRef = useRef<HTMLOListElement>(null)
+  const [retryHeights, setRetryHeights] = useState<{
+    jobId: string
+    progress: number
+    rows: number[]
+  } | null>(null)
+  const openingOverview = useRef<{ item: LiteratureItemView; initiator: HTMLElement } | null>(null)
   const [job, setJob] = useState<OverviewBatch | null>(null)
   const [references, setReferences] = useState<Record<string, LiteratureItemView | undefined>>({})
   const [busy, setBusy] = useState(false)
@@ -209,6 +222,8 @@ export function LiteratureOverviewBatch({
     stop.current = false
     setPausing(false)
     setSelectionError(false)
+    setExpandedItems([])
+    setRetryHeights(null)
     setOpen(true)
     generation.current++
     locked.current = true
@@ -271,6 +286,7 @@ export function LiteratureOverviewBatch({
   const completed = succeeded + failed
   const total = job?.rows.length ?? 0
   const working = busy || (hasRunningRows && !error)
+  const complete = Boolean(job && !working && !unfinished && !failed)
   const status = pausing
     ? t('Pausing…')
     : working
@@ -288,7 +304,7 @@ export function LiteratureOverviewBatch({
   ) : null
   const actions = (
     <>
-      {(job || busy || error || selectionError) && (
+      {((job && (!complete || open)) || busy || error || selectionError) && (
         <Dialog.Trigger asChild>
           <Button
             ref={triggerRef}
@@ -328,7 +344,16 @@ export function LiteratureOverviewBatch({
     </>
   )
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(value) => {
+        setOpen(value)
+        if (!value) {
+          setRetryHeights(null)
+          setExpandedItems([])
+        }
+      }}
+    >
       {children ? (
         children(actions, generateAction)
       ) : (
@@ -342,11 +367,15 @@ export function LiteratureOverviewBatch({
         <Dialog.Content
           aria-describedby={undefined}
           onCloseAutoFocus={(event) => {
-            const item = openingOverview.current
+            const opening = openingOverview.current
             openingOverview.current = null
-            if (!item || !triggerRef.current || !onOpenOverview) return
-            event.preventDefault()
-            onOpenOverview(item, triggerRef.current)
+            if (opening && onOpenOverview) {
+              event.preventDefault()
+              onOpenOverview(opening.item, opening.initiator)
+            } else if (complete && returnFocusRef?.current) {
+              event.preventDefault()
+              returnFocusRef.current.focus()
+            }
           }}
           className={dialogPanelClassName(
             'flex max-h-[85vh] w-[min(40rem,calc(100vw-2rem))] flex-col overflow-hidden p-0'
@@ -400,7 +429,15 @@ export function LiteratureOverviewBatch({
               </div>
             ) : null}
             {!selectionError && (job || busy) && (
-              <div className="space-y-3 px-5 py-4" role="status" aria-live="polite">
+              <div
+                ref={progressRef}
+                className="space-y-3 px-5 py-4"
+                style={{
+                  minHeight: retryHeights?.jobId === job?.id ? retryHeights?.progress : undefined
+                }}
+                role="status"
+                aria-live="polite"
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                   <span>{status}</span>
                   {job && (
@@ -426,11 +463,12 @@ export function LiteratureOverviewBatch({
               </div>
             )}
             {job && !selectionError && (
-              <ol className="divide-y divide-border border-t border-border">
-                {job.rows.map((row) => {
+              <ol ref={rowsRef} className="divide-y divide-border border-t border-border">
+                {job.rows.map((row, index) => {
                   const item = references[row.request.itemId]
                   const title = item?.item.title ?? row.request.itemId
                   const active = activeRows.includes(row)
+                  const expanded = expandedItems.includes(row.request.itemId)
                   const Icon =
                     row.status === 'succeeded'
                       ? Check
@@ -440,40 +478,79 @@ export function LiteratureOverviewBatch({
                           ? Loader2
                           : Circle
                   return (
-                    <li key={row.request.itemId} className="space-y-2 px-5 py-4">
+                    <li
+                      key={row.request.itemId}
+                      className="space-y-2 px-5 py-4"
+                      style={{
+                        minHeight:
+                          retryHeights?.jobId === job.id ? retryHeights.rows[index] : undefined
+                      }}
+                    >
                       <div className="flex items-start gap-3">
                         <Icon
                           aria-hidden="true"
                           className={`mt-0.5 size-4 shrink-0 ${active ? 'animate-spin motion-reduce:animate-none' : ''} ${row.status === 'failed' ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : row.status === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-muted-foreground'}`}
                         />
                         <div className="min-w-0 flex-1">
-                          {row.status === 'succeeded' && item && onOpenOverview ? (
+                          {row.status === 'succeeded' ? (
                             <button
                               type="button"
-                              className="text-left text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-ring [overflow-wrap:anywhere]"
-                              onClick={() => {
-                                const initiator = triggerRef.current
-                                if (!initiator) return
-                                openingOverview.current = item
-                                setOpen(false)
-                              }}
+                              className="flex w-full items-start gap-2 text-left text-sm font-medium focus-visible:outline-ring [overflow-wrap:anywhere]"
+                              aria-expanded={expanded}
+                              aria-controls={`${detailsId}-${index}`}
+                              onClick={() =>
+                                setExpandedItems((ids) =>
+                                  expanded
+                                    ? ids.filter((id) => id !== row.request.itemId)
+                                    : [...ids, row.request.itemId]
+                                )
+                              }
                             >
-                              {title}
+                              <span className="min-w-0 flex-1">{title}</span>
+                              <ChevronRight
+                                aria-hidden="true"
+                                className={`mt-0.5 size-4 shrink-0 ${expanded ? 'rotate-90' : ''}`}
+                              />
                             </button>
                           ) : (
                             <p className="text-sm font-medium [overflow-wrap:anywhere]">{title}</p>
                           )}
                         </div>
-                        <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
-                          {row.status === 'succeeded'
-                            ? t('Overview saved')
-                            : row.status === 'failed'
-                              ? t('Overview failed')
-                              : active
-                                ? t('Generating overview…')
-                                : t('Pending')}
-                        </span>
+                        {row.status === 'succeeded' && item && onOpenOverview ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="-mt-1.5 shrink-0"
+                            onClick={() => {
+                              const initiator =
+                                (complete ? returnFocusRef?.current : triggerRef.current) ??
+                                triggerRef.current
+                              if (!initiator) return
+                              openingOverview.current = { item, initiator }
+                              setOpen(false)
+                              setRetryHeights(null)
+                              setExpandedItems([])
+                            }}
+                          >
+                            {t('View details')}
+                          </Button>
+                        ) : (
+                          <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
+                            {row.status === 'succeeded'
+                              ? t('Overview saved')
+                              : row.status === 'failed'
+                                ? t('Overview failed')
+                                : active
+                                  ? t('Generating overview…')
+                                  : t('Pending')}
+                          </span>
+                        )}
                       </div>
+                      {row.status === 'succeeded' && expanded && (
+                        <div id={`${detailsId}-${index}`} className="pl-7">
+                          <SavedOverview key={JSON.stringify(row.request)} request={row.request} />
+                        </div>
+                      )}
                       {row.status === 'failed' && (
                         <div className="pl-7">
                           <ErrorNotice
@@ -523,7 +600,18 @@ export function LiteratureOverviewBatch({
                   <Button
                     size="sm"
                     disabled={hasRunningRows && !error}
-                    onClick={() => void execute({ action: 'retry', jobId: job.id })}
+                    onClick={() => {
+                      // Keep the current rows steady while retry clears and replaces error details.
+                      setRetryHeights({
+                        jobId: job.id,
+                        progress: progressRef.current?.getBoundingClientRect().height ?? 0,
+                        rows: Array.from(
+                          rowsRef.current?.children ?? [],
+                          (row) => row.getBoundingClientRect().height
+                        )
+                      })
+                      void execute({ action: 'retry', jobId: job.id })
+                    }}
                   >
                     {t('Retry failed overviews')}
                   </Button>
@@ -534,5 +622,64 @@ export function LiteratureOverviewBatch({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  )
+}
+
+function SavedOverview({ request }: { request: LiteratureOverviewRequest }): React.JSX.Element {
+  const { api } = useLiteratureHost()
+  const { t } = useTranslation()
+  const [overview, setOverview] = useState<LiteratureOverviewData>()
+  const [failed, setFailed] = useState(false)
+  const [revision, setRevision] = useState(0)
+  const { itemId, expectedSourceKey, language } = request
+  useEffect(() => {
+    let current = true
+    void api.literature
+      .studySnapshot({ itemId, expectedSourceKey, language, mode: 'read' })
+      .then((value) => {
+        if (!current) return
+        if ('issue' in value || value.sourceKey !== expectedSourceKey) setFailed(true)
+        else setOverview(value)
+      })
+      .catch(() => {
+        if (current) setFailed(true)
+      })
+    return () => {
+      current = false
+    }
+  }, [api, itemId, expectedSourceKey, language, revision])
+  if (failed)
+    return (
+      <ErrorNotice
+        inline
+        tone="amber"
+        description={t('Could not load the overview. Try again.')}
+        primaryButton={{
+          label: t('Retry'),
+          onClick: () => {
+            setFailed(false)
+            setOverview(undefined)
+            setRevision((value) => value + 1)
+          }
+        }}
+      />
+    )
+  if (!overview)
+    return (
+      <p role="status" className="py-2 text-sm text-muted-foreground">
+        {t('Loading…')}
+      </p>
+    )
+  return (
+    <>
+      <p className="text-xs text-muted-foreground">
+        {overview.coverage === 'abstract'
+          ? t('Based on abstract')
+          : overview.coverage === 'full-text'
+            ? t('Based on full text')
+            : t('Based on selected passages')}
+      </p>
+      <LiteratureOverviewDetails overview={overview} />
+    </>
   )
 }

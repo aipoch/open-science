@@ -8205,6 +8205,7 @@
     "{{done}} of {{total}} finished": "{{done}} sur {{total}} traités",
     "{{count}} failed overviews_one": "{{count}} aperçu en échec",
     "{{count}} failed overviews_many": "{{count}} aperçus en échec",
-    "{{count}} failed overviews_other": "{{count}} aperçus en échec"
+    "{{count}} failed overviews_other": "{{count}} aperçus en échec",
+    "Could not load the overview. Try again.": "Impossible de charger la synthèse. Réessayez."
   }
 }
