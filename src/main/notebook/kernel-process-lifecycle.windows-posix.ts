@@ -19,7 +19,7 @@ import {
   terminateOwnedPosixProcessGroupById,
   type ProcessTreeKillResult
 } from '../process-tree'
-import { windowsProcessCommandLine } from '../windows-process-query'
+import { windowsProcessCommandLine, windowsProcessIsAlive } from '../windows-process-query'
 import {
   readProcessStartToken,
   bootTokenProvesReboot,
@@ -209,6 +209,14 @@ const defaultController = (
     if (platform !== 'win32') {
       const bootToken = currentBootToken()
       if (bootTokenProvesReboot(record.bootToken, bootToken)) return 'dead'
+    }
+    if (platform === 'win32') {
+      try {
+        if (!windowsProcessIsAlive(record.pid)) return 'dead'
+      } catch {
+        // Fall back to the portable PID probe. An unreadable native query must not authorize
+        // clearing or killing a receipt that may still refer to a live process.
+      }
     }
     const alive = pidIsAlive(record.pid)
     if (platform !== 'win32') {

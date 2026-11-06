@@ -11,6 +11,14 @@ import {
 } from './kernel-process-lifecycle.windows-posix'
 import { readProcessStartToken } from '@aipoch/environment'
 
+const windowsProcessIsAlive = vi.hoisted(() => vi.fn<(pid: number) => boolean>(() => true))
+
+vi.mock('../windows-process-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../windows-process-query')>()
+  windowsProcessIsAlive.mockImplementation(actual.windowsProcessIsAlive)
+  return { ...actual, windowsProcessIsAlive }
+})
+
 const processIsAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0)
@@ -435,6 +443,28 @@ describe('KernelProcessLifecycleOwner', () => {
     ).resolves.toBe('dead')
 
     expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
+  })
+
+  it('drops a Windows receipt when the native process handle proves it exited', async () => {
+    windowsProcessIsAlive.mockReturnValueOnce(false)
+    const kill = vi.spyOn(process, 'kill')
+
+    await expect(
+      defaultController('win32').probe({
+        version: 1,
+        receiptId: 'receipt-windows-exited',
+        ownerInstanceId: 'owner-a',
+        ownerToken: 'owner-token-a',
+        platform: 'win32',
+        spawnedAt: 1,
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a',
+        pid: 4242
+      })
+    ).resolves.toBe('dead')
+
+    expect(kill).not.toHaveBeenCalled()
   })
 
   it('treats a missing macOS process group as dead without a boot token', async () => {
