@@ -1,3 +1,9 @@
+import {
+  requiresNetworkException,
+  normalizeNetworkHostname,
+  formatNetworkHostname
+} from './notebook-network-settings'
+import type { NetworkBlockEvidence } from './network-destination-grants'
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import {
   resolveActiveConversationMessages,
@@ -9,18 +15,28 @@ export type SandboxNetworkApproval = Readonly<{
   version: 1
   kind: 'sandbox-network'
   state: 'pending' | 'continuing'
-  decision?: 'always-allow'
+  decision?: 'always-allow' | 'project-allow' | 'deny'
+  evidence?: NetworkBlockEvidence
   requestId: string
   sessionId: string
   executionId: string
   commandFingerprint: string
   hostname: string
   port: number
-  runtime: 'bash'
+  protocol?: 'http' | 'https'
+  runtime: 'bash' | 'python' | 'r' | 'repl'
   originatingPromptMessageId: string
   agentFrameId: string
   messageBranchId: string
   createdAt: number
+}>
+
+export type NetworkApprovalRecordStatus = Readonly<{
+  status: 'pending' | 'approved' | 'denied'
+  hostname: string
+  port: number
+  protocol: 'http' | 'https'
+  scope: 'once' | 'project' | 'global'
 }>
 
 export const sandboxNetworkApprovalRequest = (
@@ -33,20 +49,44 @@ export const sandboxNetworkApprovalRequest = (
   appOwned: true,
   durable: true,
   providerToolName: 'Open-Science',
-  title: `Connect to ${approval.hostname}?`,
+  title: `Connect to ${formatNetworkHostname(approval.hostname)}?`,
   rawInput: {
     notebookNetworkApproval: {
       hostname: approval.hostname,
+      ...(approval.protocol ? { protocol: approval.protocol } : {}),
+      ...(approval.evidence ? { ...approval.evidence } : {}),
       port: approval.port,
       runtime: approval.runtime,
       ...(restored ? { retryRequired: true } : {})
     }
   },
-  options: [
-    { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
-    { optionId: 'always-allow', name: 'Global', kind: 'allow_always', scope: 'global' },
-    { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
-  ]
+  options: approval.evidence
+    ? [
+        {
+          optionId: `allow-once@${approval.evidence.revision}`,
+          name: 'Allow once',
+          kind: 'allow_once',
+          scope: 'once'
+        },
+        {
+          optionId: `project-allow@${approval.evidence.revision}`,
+          name: 'Project',
+          kind: 'allow_always',
+          scope: 'project'
+        },
+        {
+          optionId: `always-allow@${approval.evidence.revision}`,
+          name: 'Global',
+          kind: 'allow_always',
+          scope: 'global'
+        },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ]
+    : [
+        { optionId: 'allow-once', name: 'Allow once', kind: 'allow_once', scope: 'once' },
+        { optionId: 'always-allow', name: 'Global', kind: 'allow_always', scope: 'global' },
+        { optionId: 'deny', name: 'Deny', kind: 'reject_once' }
+      ]
 })
 
 type NetworkApprovalSession = Readonly<{
@@ -64,6 +104,10 @@ export const activeSandboxNetworkApprovals = (
   const messages = resolveActiveConversationMessages(graph)
   return (session.runtimeContext?.networkApprovals ?? []).filter(
     (approval) =>
+      requiresNetworkException(
+        normalizeNetworkHostname(approval.hostname) ?? approval.hostname,
+        approval.protocol
+      ) &&
       approval.sessionId === session.id &&
       approval.agentFrameId === frame.id &&
       approval.messageBranchId === frame.activeBranchId &&

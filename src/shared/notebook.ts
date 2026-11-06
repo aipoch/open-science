@@ -52,7 +52,10 @@ export type NotebookRunSource = 'agent' | 'user'
 export type NotebookExecutionRpcMethod = 'execute' | 'executeControl' | 'executeShell'
 
 export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
+  recordId?: string
   hostname: string
+  port?: number
+  protocol?: 'http' | 'https'
   reason: string
   runtime?: 'python' | 'r' | 'repl' | 'bash'
   command?: string
@@ -60,7 +63,17 @@ export type RequestNotebookNetworkAccessRequest = NotebookSessionRequest & {
 
 export type RequestNotebookNetworkAccessResult = Readonly<{
   hostname: string
-  status: 'alreadyAllowed' | 'allowedOnce' | 'alwaysAllowed' | 'denied' | 'blocked' | 'unavailable'
+  port?: number
+  protocol?: 'http' | 'https'
+  scope?: 'once' | 'project' | 'global'
+  status:
+    | 'alreadyAllowed'
+    | 'allowedOnce'
+    | 'projectAllowed'
+    | 'alwaysAllowed'
+    | 'denied'
+    | 'blocked'
+    | 'unavailable'
   decisionSource?:
     'missing-command-context' | 'aborted' | 'user-decision' | 'approval-surface-unavailable'
   message?: string

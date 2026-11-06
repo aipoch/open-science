@@ -291,6 +291,7 @@ describe('notebook runtime service', () => {
       service.requestNetworkAccess({
         sessionId: 'session-1',
         workspaceCwd: root,
+        recordId: 'record-1',
         hostname: 'data.example.org',
         reason: 'Download data.'
       })

@@ -2167,9 +2167,15 @@ class NotebookRuntimeService {
     request: RequestNotebookNetworkAccessRequest,
     signal?: AbortSignal
   ): Promise<RequestNotebookNetworkAccessResult> {
+    if (!request.recordId)
+      return {
+        hostname: '',
+        status: 'blocked',
+        message: 'A trusted sandbox block record ID is required. No access was granted.'
+      }
     if (!this.options.processSandbox?.requestNetworkAccess) {
       return {
-        hostname: request.hostname,
+        hostname: request.hostname ?? '',
         status: 'unavailable',
         message:
           'Network access approval is unavailable for the current Notebook runtime. No user decision was requested and no access was granted.'
@@ -2178,7 +2184,8 @@ class NotebookRuntimeService {
     return this.options.processSandbox.requestNetworkAccess({
       sessionId: request.sessionId,
       projectId: resolveProjectId(request),
-      hostname: request.hostname,
+      hostname: request.hostname ?? '',
+      ...(request.recordId ? { recordId: request.recordId } : {}),
       reason: request.reason,
       ...(request.runtime ? { runtime: request.runtime } : {}),
       ...(request.command ? { command: request.command } : {}),

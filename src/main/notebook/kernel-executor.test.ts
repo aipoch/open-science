@@ -869,6 +869,22 @@ gate('NotebookKernelExecutor (fake loop)', () => {
       expect(sandboxInvocation.filesystem.deniedWriteRoots).toContain(request.inputRoot)
       expect(sandboxInvocation.filesystem.deniedWriteRoots).not.toContain(request.runtimeRoot)
       expect(beginExecution).toHaveBeenCalledTimes(2)
+      expect(beginExecution).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          commandText: 'wrapped',
+          executionReference: expect.any(String),
+          signal: requestController.signal,
+          onNetworkWaitChange: expect.any(Function)
+        })
+      )
+      expect(beginExecution).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          commandText: 'wrapped again',
+          executionReference: expect.any(String)
+        })
+      )
       expect(endExecution).toHaveBeenCalledTimes(2)
       expect(annotateStderr).toHaveBeenCalled()
     } finally {
@@ -5552,6 +5568,8 @@ describe('NotebookKernelExecutor repl kind (real repl_loop.js)', () => {
       await mkdir(inputRoot, { recursive: true })
       await writeFile(inputPath, 'verified input')
       await writeFile(replLoopPath, await readFile(REPL_LOOP))
+      // Keep the fixture's module scope local even when isolated temporary files live in a repo.
+      await writeFile(join(inputRoot, 'package.json'), JSON.stringify({ type: 'commonjs' }))
       const owner = new NotebookNetworkSandboxOwner({
         resourceRoot: resolve(
           import.meta.dirname,

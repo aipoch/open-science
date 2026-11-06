@@ -1,3 +1,4 @@
+import { requiresNetworkException } from '../../shared/notebook-network-settings'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { netFetchStandard } from '../network-fetch'
@@ -80,10 +81,7 @@ describe('pickFastestMirror', () => {
     )
 
     expect(
-      automaticMirrorHosts.filter(
-        (hostname) =>
-          !policy.allowedDomains.some((pattern) => domainPatternMatches(pattern, hostname))
-      )
+      automaticMirrorHosts.filter((hostname) => requiresNetworkException(hostname, 'https'))
     ).toEqual([])
     expect(
       MIRROR_CANDIDATES.every((candidate) => candidate.probeUrl.endsWith('current_repodata.json'))

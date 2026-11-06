@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./src/index.ts"
+    },
+    "./network-address": {
+      "types": "./src/network-address.ts",
+      "default": "./src/network-address.ts"
     }
   },
   "scripts": {

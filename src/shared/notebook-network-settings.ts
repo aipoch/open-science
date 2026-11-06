@@ -18,15 +18,24 @@ export type OpenScienceDomainGroup = Readonly<{
 export type TrustedPrivateDestination = Readonly<{
   hostname: string
   port: number
+  protocol?: 'http' | 'https'
   approvedAddresses: readonly string[]
+  /** Present only for rules derived by the trusted backend from a global grant. */
+  managedGrantId?: string
+  source?: 'global-destination-grant'
 }>
 
-export type PrivateDestinationRequest = Readonly<{ hostname: string; port: number }>
+export type PrivateDestinationRequest = Readonly<{
+  hostname: string
+  port: number
+  protocol?: 'http' | 'https'
+}>
 export type PrivateDestinationReview =
   | Readonly<{ ok: true; destination: TrustedPrivateDestination }>
   | Readonly<{ ok: false; reason: 'invalid' | 'ineligible' | 'dns' }>
 
 export type NotebookNetworkSettings = Readonly<{
+  destinationGrants?: readonly import('./network-destination-grants').NetworkDestinationGrant[]
   trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   disabledOpenScienceDomainGroups: readonly OpenScienceDomainGroupId[]
@@ -40,3 +49,10 @@ export type NotebookNetworkPolicy = Readonly<{
   deniedDomains: readonly string[]
   deniedDomainReasons: Readonly<Record<string, string>>
 }>
+
+export {
+  normalizeNetworkHostname,
+  formatNetworkHostname,
+  isNetworkIpLiteral,
+  requiresNetworkException
+} from '@aipoch/notebook-network-sandbox/network-address'

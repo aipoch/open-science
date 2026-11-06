@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   closeSync,
   constants,
@@ -294,6 +295,7 @@ export const sandboxedPackageSpawn =
       env: projectedEnv,
       cwd,
       commandText: JSON.stringify([command, ...args]),
+      executionReference: randomUUID(),
       sessionId: request.sessionId ?? 'notebook-package-manager',
       projectId: request.projectId ?? 'notebook-package-manager',
       runtime: request.language,
@@ -356,6 +358,7 @@ export const sandboxedPackageSpawn =
         platform,
         sandboxed.confirmProcessTreeTermination
       )
+      await sandboxed.waitForNetworkApprovals?.()
       endExecution?.()
       ended = true
       processesTerminated = result.processesTerminated ?? true

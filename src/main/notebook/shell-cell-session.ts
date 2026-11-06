@@ -24,6 +24,7 @@ type Launch = (
     onNetworkWaitChange: (waiting: boolean) => void
   ) => () => void | Promise<boolean | void>
   retryCleanup?: () => Promise<boolean>
+  annotateStderr?: (stderr: string, stdout?: string) => string
 }>
 
 type Cell = {
@@ -59,6 +60,7 @@ export class ShellCellSession {
   private retryCleanup?: () => Promise<boolean>
   private lifetime = new AbortController()
   private beginExecution?: Awaited<ReturnType<Launch>>['beginExecution']
+  private annotateStderr?: Awaited<ReturnType<Launch>>['annotateStderr']
   private cell?: Cell
   private closed = false
   private cwd?: string
@@ -294,6 +296,7 @@ export class ShellCellSession {
           this.nativeControl ? control?.name : undefined
         )
         this.beginExecution = launched.beginExecution
+        this.annotateStderr = launched.annotateStderr
         this.retryCleanup = launched.retryCleanup
         this.completion = launched.completion.then((exit) => {
           this.closeControl()
@@ -341,6 +344,8 @@ export class ShellCellSession {
       timer?.cancel()
       const retryRequired = await endExecution?.()
       endExecution = undefined
+      completed.stderr =
+        this.annotateStderr?.(completed.stderr, completed.stdout) ?? completed.stderr
       if (request.signal?.aborted || this.closed)
         return { ...completed, cancelled: true, exitCode: null }
       if (retryRequired && !completed.stderr.includes('NETWORK_APPROVAL_RETRY_REQUIRED'))

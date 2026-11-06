@@ -63,6 +63,10 @@ export type NotebookSandboxProcessOutcome = Readonly<{
 }>
 
 export type NotebookNetworkAccessRequest = Readonly<{
+  protocol?: 'http' | 'https'
+  addresses?: readonly string[]
+  reason?: string
+  policyAllowed?: boolean
   host: string
   port?: number
   purpose?: 'probe' | 'block'

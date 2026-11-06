@@ -139,12 +139,12 @@ const notebookLocalRpcRequestSchemas = {
     timeoutMs: positiveTimeoutSchema.optional(),
     shellRuntime: shellRuntimeBindingSchema.optional()
   }),
-  requestNetworkAccess: notebookSessionRequestSchema.extend({
-    hostname: z.string().trim().min(1).max(253),
-    reason: z.string().trim().min(1).max(1_000),
-    runtime: z.enum(['python', 'r', 'repl', 'bash']).optional(),
-    command: z.string().min(1).optional()
-  }),
+  requestNetworkAccess: notebookSessionRequestSchema
+    .extend({
+      recordId: z.string().min(1).max(256),
+      reason: z.string().trim().min(1).max(1_000)
+    })
+    .transform((request) => ({ ...request, hostname: '' })),
   state: notebookSessionRequestSchema,
   restart: z.union([
     notebookSessionRequestSchema,
@@ -208,7 +208,9 @@ const parseNotebookLocalRpcRequest = <Method extends keyof NotebookLocalRpcReque
       `Invalid notebook RPC params for ${method}: ${path}: ${issue?.message ?? 'invalid value'}`
     )
   }
-  // These schemas validate without coercion or defaults. Keep the established request identity so
+  if (method === 'requestNetworkAccess')
+    return parsed.data as z.output<NotebookLocalRpcRequestSchemas[Method]>
+  // The remaining schemas validate without coercion or defaults. Keep the established request identity so
   // runtime consumers and tests observe the same object the authenticated bridge enriched.
   return request as z.output<NotebookLocalRpcRequestSchemas[Method]>
 }

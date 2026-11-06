@@ -1,4 +1,5 @@
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_UPSTREAM_FAILED } from './recovery-context.js'
+import { normalizeRequestedHost } from './address-policy.js'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { connect as connectTcp, createServer as createTcpServer, isIP, type Socket } from 'node:net'
@@ -24,6 +25,43 @@ const proxyRequestTarget = (request: IncomingMessage): { target: URL; path: stri
   if (!target.hostname || target.username || target.password || target.pathname !== '/')
     throw new Error('Invalid authority')
   return { target, path }
+}
+
+const isTlsClientHello = (value: Buffer): boolean =>
+  value.length >= 3 &&
+  value[0] === 0x16 &&
+  value[1] === 0x03 &&
+  value[2]! >= 0x01 &&
+  value[2]! <= 0x04
+
+const bridgeTlsTunnel = (client: Socket, upstream: Socket, initial: Buffer): void => {
+  let prefix = Buffer.alloc(0)
+  const reject = (): void => {
+    client.destroy()
+    upstream.destroy()
+  }
+  const inspect = (chunk: Buffer): void => {
+    prefix = Buffer.concat([prefix, chunk])
+    if (prefix.length < 3) {
+      client.once('data', inspect)
+      client.resume()
+      return
+    }
+    client.pause()
+    if (!isTlsClientHello(prefix)) {
+      reject()
+      return
+    }
+    const forward = (): void => {
+      if (!client.destroyed && !upstream.destroyed) client.pipe(upstream)
+    }
+    if (upstream.write(prefix)) forward()
+    else upstream.once('drain', forward)
+  }
+  upstream.once('error', reject)
+  client.once('end', () => upstream.end())
+  upstream.pipe(client)
+  inspect(initial)
 }
 
 const forwardResponse = (
@@ -94,7 +132,8 @@ type CommandGatewayOptions = Readonly<{
     host: string,
     port: number,
     purpose?: 'probe' | 'block',
-    canResume?: () => boolean
+    canResume?: () => boolean,
+    protocol?: 'http' | 'https'
   ) => Promise<GatewayDecision>
   inspection?: Readonly<{
     certificate: (host: string) => Promise<SecureContext>
@@ -145,13 +184,14 @@ const withSharedIngressLock = async <T>(operation: () => Promise<T>): Promise<T>
   }
 }
 
-const socketReader = (client: Socket, initial: Buffer): SocketReader => {
+const socketReader = (client: Socket, initial: Buffer, pauseOnReceive = false): SocketReader => {
   let buffered = initial
   return {
     receive: async (needed) => {
       while (buffered.length < needed) {
         const chunk = await new Promise<Buffer>((resolve, reject) => {
           const onData = (value: Buffer): void => {
+            if (pauseOnReceive) client.pause()
             cleanup()
             resolve(value)
           }
@@ -171,6 +211,7 @@ const socketReader = (client: Socket, initial: Buffer): SocketReader => {
           client.once('data', onData)
           client.once('error', onError)
           client.once('close', onClose)
+          client.resume()
         })
         buffered = Buffer.concat([buffered, chunk])
       }
@@ -498,19 +539,21 @@ const tunnelThroughProxy = async (
   return socket
 }
 
-const directSocket = (address: string, port: number): Promise<Socket> =>
-  waitForTcpConnection(connectTcp({ host: address, port }))
+const directSocket = (address: string, port: number, signal?: AbortSignal): Promise<Socket> =>
+  waitForTcpConnection(connectTcp({ host: address, port, signal }))
 
 const destinationSocket = (
   parent: ParentProxy | undefined,
   host: string,
   address: string,
-  port: number
+  port: number,
+  protocol: 'http' | 'https',
+  signal?: AbortSignal
 ): Promise<Socket> => {
-  const proxyUrl = selectProxy(parent, host, port, true)
+  const proxyUrl = selectProxy(parent, host, port, protocol === 'https')
   return proxyUrl
-    ? tunnelThroughProxy(proxyUrl, address, port, parent?.ca)
-    : directSocket(address, port)
+    ? tunnelThroughProxy(proxyUrl, address, port, parent?.ca, signal)
+    : directSocket(address, port, signal)
 }
 
 const rejectHttp = (response: ServerResponse, message: string): void => {
@@ -554,7 +597,9 @@ const parseAuthority = (
   const url = new URL(`https://${authority}`)
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash)
     throw new Error('Malformed authority')
-  return { host: url.hostname, port: Number(url.port || fallbackPort) }
+  const host = normalizeRequestedHost(url.hostname)
+  if (!host) throw new Error('Malformed authority')
+  return { host, port: Number(url.port || fallbackPort) }
 }
 
 const LOCAL_RPC_BROKER_HOST = 'open-science-notebook-rpc.invalid'
@@ -806,18 +851,130 @@ class CommandGateway {
     port: number,
     generation: number,
     purpose: 'probe' | 'block' = 'block',
-    connectionAlive: () => boolean = () => true
+    connectionAlive: () => boolean = () => true,
+    protocol: 'http' | 'https' = 'https'
   ): Promise<GatewayDecision> {
     const canResume = (): boolean =>
       this.#active && generation === this.#connectionGeneration && connectionAlive()
     try {
-      const decision = await this.#options.decide(host, port, purpose, canResume)
+      const decision = await this.#options.decide(host, port, purpose, canResume, protocol)
       if (!canResume()) {
         return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
       }
       return decision
     } catch {
       return { allowed: false, message: 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED' }
+    }
+  }
+
+  async #bridgeClassifiedTunnel(
+    client: Socket,
+    host: string,
+    port: number,
+    initial: Buffer,
+    generation: number,
+    responseSent: boolean,
+    response: 'connect' | 'socks'
+  ): Promise<void> {
+    // CONNECT and SOCKS carry no scheme. Classify the actual application bytes; never infer
+    // protocol from the destination port.
+    const reader = socketReader(client, initial, true)
+    client.setTimeout(10_000, () => client.destroy())
+    try {
+      const prefix = await reader.receive(3)
+      const protocol: 'http' | 'https' | undefined = isTlsClientHello(prefix)
+        ? 'https'
+        : /^[A-Z]{3}$/.test(prefix.toString('ascii'))
+          ? 'http'
+          : undefined
+      if (!protocol) {
+        client.destroy()
+        return
+      }
+      let buffered: Buffer
+      if (protocol === 'http') {
+        let line = prefix
+        while (!line.includes('\r\n') && line.length < 8192)
+          line = Buffer.concat([line, await reader.receive(1)])
+        if (!/^[A-Z]+ [^\r\n ]+ HTTP\/1\.[01]\r\n$/.test(line.toString('latin1'))) {
+          client.destroy()
+          return
+        }
+        buffered = Buffer.concat([line, reader.remainder()])
+      } else buffered = Buffer.concat([prefix, reader.remainder()])
+
+      client.pause()
+      client.setTimeout(0)
+      let decision = await this.#authorize(
+        host,
+        port,
+        generation,
+        protocol === 'https' && this.#options.inspection ? 'probe' : 'block',
+        () => !client.destroyed,
+        protocol
+      )
+      if (!decision.allowed) {
+        if (
+          protocol === 'https' &&
+          port === 443 &&
+          !isIP(host) &&
+          decision.source === 'unknown' &&
+          this.#options.inspection
+        ) {
+          await this.#inspectConnect(host, client, buffered, generation, responseSent)
+          return
+        }
+        if (protocol === 'https' && this.#options.inspection) {
+          decision = await this.#authorize(
+            host,
+            port,
+            generation,
+            'block',
+            () => !client.destroyed,
+            protocol
+          )
+        }
+        if (!decision.allowed) {
+          client.destroy()
+          return
+        }
+      }
+      const lifetime = new AbortController()
+      client.once('close', () => lifetime.abort())
+      const upstream = await destinationSocket(
+        this.#parent,
+        host,
+        decision.address,
+        port,
+        protocol,
+        lifetime.signal
+      )
+      client.once('close', () => upstream.destroy())
+      upstream.once('close', () => client.destroy())
+      if (
+        !this.#active ||
+        generation !== this.#connectionGeneration ||
+        client.destroyed ||
+        !this.#trackConnection(upstream)
+      ) {
+        upstream.destroy()
+        client.destroy()
+        return
+      }
+      client.setTimeout(0)
+      if (!responseSent) {
+        client.write(
+          response === 'connect'
+            ? 'HTTP/1.1 200 Connection Established\r\n\r\n'
+            : Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+        )
+      }
+      if (protocol === 'http') {
+        if (buffered.length) upstream.write(buffered)
+        client.pipe(upstream).pipe(client)
+      } else bridgeTlsTunnel(client, upstream, buffered)
+    } catch {
+      client.destroy()
     }
   }
 
@@ -868,7 +1025,8 @@ class CommandGateway {
       port,
       generation,
       'block',
-      () => !response.destroyed && !request.socket.destroyed
+      () => !response.destroyed && !request.socket.destroyed,
+      target.protocol === 'https:' ? 'https' : 'http'
     )
     if (!decision.allowed) {
       rejectHttp(response, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
@@ -991,62 +1149,20 @@ class CommandGateway {
       rejectSocket(client, 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED: malformed CONNECT target')
       return
     }
-    destination.host = domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
-    let decision = await this.#authorize(
+    destination.host = isIP(destination.host)
+      ? destination.host
+      : domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
+    // This acknowledges only the proxy handshake; no upstream is opened before classification.
+    client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+    await this.#bridgeClassifiedTunnel(
+      client,
       destination.host,
       destination.port,
+      head,
       generation,
-      'probe',
-      () => !client.destroyed
+      true,
+      'connect'
     )
-    if (
-      !decision.allowed &&
-      decision.source === 'unknown' &&
-      destination.port === 443 &&
-      !isIP(destination.host) &&
-      this.#options.inspection
-    ) {
-      await this.#inspectConnect(destination.host, client, head, generation)
-      return
-    }
-    if (!decision.allowed) {
-      decision = await this.#authorize(
-        destination.host,
-        destination.port,
-        generation,
-        'block',
-        () => !client.destroyed
-      )
-      if (!decision.allowed) {
-        rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
-        return
-      }
-    }
-    try {
-      const upstream = await destinationSocket(
-        this.#parent,
-        destination.host,
-        decision.address,
-        destination.port
-      )
-      if (!this.#active || generation !== this.#connectionGeneration) {
-        upstream.destroy()
-        client.destroy()
-        return
-      }
-      if (!this.#trackConnection(upstream)) {
-        client.destroy()
-        return
-      }
-      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-      if (head.length) upstream.write(head)
-      client.pipe(upstream).pipe(client)
-    } catch (error) {
-      rejectSocket(
-        client,
-        `Policy gateway could not open the tunnel: ${error instanceof Error ? error.message : String(error)}`
-      )
-    }
   }
 
   #inspectionActive(generation: number, client: Socket): boolean {
@@ -1062,7 +1178,8 @@ class CommandGateway {
     host: string,
     client: Socket,
     head: Buffer,
-    generation: number
+    generation: number,
+    responseSent = false
   ): Promise<void> {
     const inspection = this.#options.inspection!
     if (!this.#inspectionActive(generation, client)) {
@@ -1122,7 +1239,7 @@ class CommandGateway {
         client.destroy()
         return
       }
-      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (!responseSent) client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
       if (head.length) client.unshift(head)
       tls = new TLSSocket(client, {
         isServer: true,
@@ -1448,25 +1565,18 @@ class CommandGateway {
       throw new Error('Unsupported SOCKS address type.')
     }
     const port = (await reader.receive(2)).readUInt16BE(0)
-    const decision = await this.#authorize(host, port, generation, 'block', () => !client.destroyed)
-    if (!decision.allowed) {
-      client.end(Buffer.from([5, 2, 0, 1, 0, 0, 0, 0, 0, 0]))
-      return
-    }
-    const upstream = await destinationSocket(this.#parent, host, decision.address, port)
-    if (!this.#active || generation !== this.#connectionGeneration) {
-      upstream.destroy()
-      client.destroy()
-      return
-    }
-    if (!this.#trackConnection(upstream)) {
-      client.destroy()
-      return
-    }
+    // SOCKS clients wait for this response before sending application bytes. Classification
+    // therefore happens after the handshake, using the actual bytes that follow it.
     client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
-    const buffered = reader.remainder()
-    if (buffered.length) upstream.write(buffered)
-    client.pipe(upstream).pipe(client)
+    await this.#bridgeClassifiedTunnel(
+      client,
+      normalizeRequestedHost(host) ?? host,
+      port,
+      reader.remainder(),
+      generation,
+      true,
+      'socks'
+    )
   }
 }
 

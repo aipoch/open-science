@@ -2677,6 +2677,7 @@ describe('host-owned Shell destination approval contract', () => {
               executionId: 'run-fixture',
               commandFingerprint: 'a'.repeat(64),
               hostname: 'service.example.test',
+              protocol: 'http',
               port: 443,
               runtime: 'bash'
             }

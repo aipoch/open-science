@@ -4004,7 +4004,7 @@ describe('SettingsPage layout', () => {
 
     expect(document.body.querySelector('[aria-label="Back to network"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Notebook network access')
-    expect(document.body.querySelector('[aria-label="Custom public domains"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Trusted unsafe networks')
   })
 
   it('hides local-only Notebook network settings from remote Web', async () => {
@@ -6914,12 +6914,13 @@ describe('Settings Compute completion navigation', () => {
 
 describe('Network editor leave protection', () => {
   it.each(['keep editing', 'discard before success', 'discard before failure'])(
-    'handles closing Settings during a pending DNS review: %s',
+    'handles closing Settings during a pending network rule review: %s',
     async (choice) => {
       const rule = {
         hostname: 'lab.internal.example',
         port: 8443,
-        approvedAddresses: ['10.32.0.7']
+        protocol: 'http' as const,
+        approvedAddresses: []
       }
       let resolve!: (value: { ok: true; destination: typeof rule }) => void
       let reject!: (reason: Error) => void
@@ -6973,8 +6974,8 @@ describe('Network editor leave protection', () => {
         expect(document.querySelector<HTMLInputElement>('#private-port')!.value).toBe('8443')
         expect(document.body.textContent).not.toContain('Your network rules have not been saved.')
         await act(async () => resolve({ ok: true, destination: rule }))
-        expect(document.body.textContent).toContain('10.32.0.7')
-        expect(document.body.textContent).toContain('Add to trusted services')
+        expect(document.body.textContent).toContain('HTTP://lab.internal.example:8443')
+        expect(document.body.textContent).toContain('Add network exception')
         expect(onClose).not.toHaveBeenCalled()
       } else {
         await click('Discard changes')
@@ -6997,7 +6998,7 @@ describe('Network editor leave protection', () => {
           'new.internal.example'
         )
         expect(document.body.textContent).not.toContain('10.32.0.7')
-        expect(document.body.textContent).not.toContain('Add to trusted services')
+        expect(document.body.textContent).not.toContain('Add network exception')
         expect(document.body.textContent).not.toContain('Could not review the service. Try again.')
       }
       expect(save).not.toHaveBeenCalled()
@@ -7009,6 +7010,7 @@ describe('Network editor leave protection', () => {
   it.each(['breadcrumb', 'panel', 'Close settings'])(
     'keeps the network draft until discard through %s',
     async (route) => {
+      window.api.settings.reviewNotebookPrivateDestination = vi.fn()
       const onClose = vi.fn()
       useSettingsStore.setState({
         pendingSettingsIntent: {
@@ -7017,7 +7019,12 @@ describe('Network editor leave protection', () => {
         }
       })
       await act(async () => root.render(<SettingsPage open onClose={onClose} />))
-      const input = document.body.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
+      await act(async () => {
+        ;[...document.body.querySelectorAll<HTMLButtonElement>('button')]
+          .find((button) => button.textContent?.trim() === 'Add service')!
+          .click()
+      })
+      const input = document.body.querySelector<HTMLInputElement>('#private-hostname')!
       expect(input).not.toBeNull()
       act(() => fireEvent.change(input, { target: { value: 'unsaved.example' } }))
       const leave = async (): Promise<void> => {
@@ -7046,7 +7053,7 @@ describe('Network editor leave protection', () => {
       await leave()
       await click('Discard changes')
       if (route === 'Close settings') expect(onClose).toHaveBeenCalledOnce()
-      else expect(document.body.querySelector('[aria-label="Domain hostname"]')).toBeNull()
+      else expect(document.body.querySelector('#private-hostname')).toBeNull()
     }
   )
 })
@@ -7086,7 +7093,7 @@ it('dismisses a network leave request when the pending save succeeds', async () 
   await act(async () => finish(saved))
   expect(document.body.textContent).not.toContain('Your network rules have not been saved.')
   expect(onClose).not.toHaveBeenCalled()
-  expect(document.body.querySelector('[aria-label="Domain hostname"]')).not.toBeNull()
+  expect(document.body.textContent).toContain('Trusted unsafe networks')
 })
 
 describe('Connection editor shared leave protection', () => {

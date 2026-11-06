@@ -58,6 +58,10 @@ type NetworkRuntimeConfig = Readonly<{
 }>
 
 type NetworkAskCallback = (request: {
+  protocol?: 'http' | 'https'
+  addresses?: readonly string[]
+  reason?: string
+  policyAllowed?: boolean
   host: string
   port: number
   commandId?: string
@@ -183,7 +187,8 @@ const decide = async (
   host: string,
   port: number,
   purpose: 'probe' | 'block' = 'block',
-  connectionAlive?: () => boolean
+  connectionAlive?: () => boolean,
+  protocol: 'http' | 'https' = 'https'
 ): Promise<GatewayDecision> => {
   const context = commandContexts.get(commandId)
   const epoch = context?.epoch
@@ -199,9 +204,10 @@ const decide = async (
     violations.record(commandId, `deny network-outbound ${host}:${port} (policy unavailable)`)
     return { allowed: false, message: NETWORK_POLICY_BLOCKED }
   }
-  const verdict = await policy.inspect(host, port)
+  const verdict = await policy.inspect(host, port, protocol)
   if (!current()) return expired
-  if (verdict.kind === 'allow') return { allowed: true, address: verdict.address }
+  if (verdict.kind === 'allow' && !verdict.addresses)
+    return { allowed: true, address: verdict.address }
   if (verdict.kind === 'deny') {
     violations.record(commandId, `deny network-outbound ${host}:${port} (${verdict.reason})`)
     return {
@@ -213,7 +219,15 @@ const decide = async (
   try {
     allowed =
       (await approval?.({
-        host: verdict.host,
+        protocol,
+        host: verdict.host ?? host,
+        ...(verdict.addresses
+          ? {
+              addresses: verdict.addresses,
+              policyAllowed: verdict.kind === 'allow',
+              reason: verdict.kind === 'ask' ? verdict.reason : undefined
+            }
+          : {}),
         port,
         commandId,
         purpose,
@@ -225,8 +239,12 @@ const decide = async (
   if (!current()) return expired
   if (allowed) return { allowed: true, address: verdict.address }
   if (purpose === 'probe')
-    return { allowed: false, source: verdict.source, address: verdict.address }
-  violations.record(commandId, `deny network-outbound ${verdict.host}:${port} (not approved)`)
+    return {
+      allowed: false,
+      source: verdict.kind === 'ask' ? verdict.source : 'explicit',
+      address: verdict.address
+    }
+  violations.record(commandId, `deny network-outbound ${host}:${port} (not approved)`)
   return {
     allowed: false,
     message: NETWORK_APPROVAL_REQUIRED
@@ -296,8 +314,8 @@ const wrap = async (
       throw new Error('Notebook WSL2 sandbox target requires a Windows host.')
     }
     const gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       credentials,
       ...(request.localRpcSocketPath ? { localRpcSocketPath: request.localRpcSocketPath } : {}),
       parentProxy: parentSettings(config)
@@ -437,8 +455,8 @@ const wrap = async (
       }
     }
     gateway = await CommandGateway.open({
-      decide: (host, port, purpose, canResume) =>
-        decide(request.commandId, host, port, purpose, canResume),
+      decide: (host, port, purpose, canResume, protocol) =>
+        decide(request.commandId, host, port, purpose, canResume, protocol),
       ...(certificateAuthority
         ? {
             inspection: {

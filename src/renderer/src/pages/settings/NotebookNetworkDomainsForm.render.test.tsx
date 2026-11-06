@@ -53,182 +53,35 @@ afterEach(() => {
 })
 
 describe('NotebookNetworkDomainsForm', () => {
-  it('applies a deferred grant when pending hostname text is cleared', async () => {
+  it('shows one exception list and removes Notebook public-domain controls', async () => {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
-    await typeInput(input, 'unfinished')
-    act(() =>
-      useSettingsStore.setState({
-        notebookNetwork: {
-          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-          allowedDomains: ['approved.example.org']
-        }
-      })
-    )
-    expect(container.textContent).not.toContain('approved.example.org')
-    await typeInput(input, '')
-    expect(container.textContent).toContain('approved.example.org')
-    expect(container.textContent).toContain('No unsaved changes')
+    expect(container.textContent).toContain('Trusted unsafe networks')
+    expect(container.textContent).toContain('HTTPS domains are allowed without approval')
+    expect(container.textContent).not.toContain('Custom public domains')
+    expect(container.textContent).not.toContain('Approved network destinations')
+    expect(container.querySelector('[aria-label="Domain hostname"]')).toBeNull()
+    expect(container.textContent).not.toContain('Approved addresses')
   })
 
-  it('refreshes a clean editor after settings hydrate and uses the new save baseline', async () => {
+  it('preserves independent link-preview permissions when saving exceptions', async () => {
+    const next = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      allowedDomains: ['preview.example'],
+      disabledOpenScienceDomainGroups: ['literature' as const],
+      trustedPrivateDestinations: [
+        { hostname: '::1', port: 8080, protocol: 'http' as const, approvedAddresses: [] }
+      ]
+    }
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    const next = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['approved.example.org'] }
     act(() => useSettingsStore.setState({ notebookNetwork: next }))
-    expect(container.textContent).toContain('approved.example.org')
-    expect(container.textContent).toContain('No unsaved changes')
+    expect(container.textContent).toContain('HTTP://[::1]:8080')
+    expect(container.textContent).not.toContain('preview.example')
     await act(async () => button('Save changes').click())
     expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
       next,
       next.allowedDomains,
-      []
+      next.trustedPrivateDestinations
     )
-  })
-
-  it('preserves pending domain text and the original baseline on an external grant', async () => {
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
-    await typeInput(input, 'draft.example.org')
-    act(() =>
-      useSettingsStore.setState({
-        notebookNetwork: {
-          ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-          allowedDomains: ['approved.example.org']
-        }
-      })
-    )
-    expect(input.value).toBe('draft.example.org')
-    await act(async () => button('Add to list').click())
-    await act(async () => button('Save changes').click())
-    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
-      { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['draft.example.org'] },
-      [],
-      []
-    )
-  })
-
-  it('does not discard domain edits when a pending save completes', async () => {
-    let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
-    const save = vi.fn(
-      () =>
-        new Promise<typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS>((resolve) => {
-          finish = resolve
-        })
-    )
-    useSettingsStore.setState({ setNotebookNetwork: save })
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await act(async () => button('Save changes').click())
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
-    if (!input.disabled) {
-      await typeInput(input, 'during-save.example.org')
-      await act(async () => button('Add').click())
-    }
-    const before = container.querySelector('[aria-label="Custom public domains"]')!.textContent
-    await act(async () => finish(DEFAULT_NOTEBOOK_NETWORK_SETTINGS))
-    expect(container.querySelector('[aria-label="Custom public domains"]')!.textContent).toBe(
-      before
-    )
-    expect(input.disabled).toBe(false)
-  })
-
-  it('disables every domain editor while saving and clears success after another edit', async () => {
-    let finish!: (value: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => void
-    const saved = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['existing.example.org'] }
-    useSettingsStore.setState({
-      notebookNetwork: saved,
-      setNotebookNetwork: vi.fn(
-        () =>
-          new Promise<typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS>((resolve) => {
-            finish = resolve
-          })
-      )
-    })
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await typeInput(container.querySelector('input')!, 'next.example.org')
-    await act(async () => button('Add to list').click())
-    await act(async () => button('Save changes').click())
-    const controls = container.querySelectorAll<HTMLInputElement | HTMLButtonElement>(
-      '[aria-label="Built-in services"] button, [aria-label="Custom public domains"] button, input'
-    )
-    expect
-      .soft(
-        [...controls]
-          .filter((control) => !control.disabled)
-          .map((control) => control.getAttribute('aria-label') ?? control.textContent)
-      )
-      .toEqual([])
-    await act(async () => finish(saved))
-    expect(container.querySelector('[role="status"]')).not.toBeNull()
-    await typeInput(container.querySelector('input')!, 'another.example.org')
-    await act(async () => button('Add to list').click())
-    expect(container.textContent).not.toContain('Network rules saved.')
-  })
-  it('locks package registries and validates, adds, removes, and saves custom domains', async () => {
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await flush()
-
-    const packageGroup = container.querySelector(
-      '[aria-label="Automatic access for Package registries and source code"]'
-    ) as HTMLButtonElement
-    expect(packageGroup.disabled).toBe(true)
-    expect(
-      (container.querySelector('[aria-label="Automatic access for pypi.org"]') as HTMLButtonElement)
-        .disabled
-    ).toBe(true)
-
-    const input = container.querySelector('[aria-label="Domain hostname"]') as HTMLInputElement
-    await typeInput(input, 'api.*.example.org')
-    await act(async () => button('Add').click())
-    expect(container.textContent).toContain(
-      'Enter a hostname, an HTTP(S) URL, or a wildcard such as *.example.com. IP addresses and local hostnames are not supported.'
-    )
-
-    await typeInput(input, 'https://data.example.org:8443/path?q=1#part')
-    await act(async () => button('Add').click())
-    expect(container.textContent).toContain('data.example.org')
-
-    await act(async () => button('Save changes').click())
-    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedDomains: ['data.example.org'] }),
-      [],
-      []
-    )
-  })
-
-  it('normalizes wildcard input, detects duplicates, and saves only domain rules', async () => {
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    const input = container.querySelector<HTMLInputElement>('[aria-label="Domain hostname"]')!
-    await typeInput(input, ' https://*.EXAMPLE.org:8443/path?q=1#part ')
-    await act(async () => button('Add to list').click())
-    expect(input.value).toBe('')
-    expect(container.querySelector('[aria-label="Custom public domains"]')!.textContent).toContain(
-      '*.example.org'
-    )
-    await typeInput(input, '*.example.org')
-    await act(async () => button('Add to list').click())
-    expect(container.textContent).toContain('This hostname is already in the list.')
-    await typeInput(input, '')
-    await act(async () => button('Save changes').click())
-    expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedDomains: ['*.example.org'] }),
-      [],
-      []
-    )
-  })
-
-  it('keeps a domain approved while the settings form was open', async () => {
-    const save = vi.fn(async (settings: typeof DEFAULT_NOTEBOOK_NETWORK_SETTINGS) => ({
-      ...settings,
-      allowedDomains: ['approved.example.org']
-    }))
-    useSettingsStore.setState({ setNotebookNetwork: save })
-    await act(async () => root.render(<NotebookNetworkDomainsForm />))
-    await flush()
-
-    await act(async () => button('Save changes').click())
-
-    expect(save).toHaveBeenCalledWith(DEFAULT_NOTEBOOK_NETWORK_SETTINGS, [], [])
-    expect(container.textContent).toContain('approved.example.org')
   })
 
   it('shows localized status codes and applies successful Windows setup status', async () => {
@@ -369,7 +222,7 @@ describe('NotebookNetworkDomainsForm', () => {
     await flush()
     await act(async () => button('Save changes').click())
     expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save network rules. Reopen this page if another window changed them, or review changed private addresses again.'
+      'Could not save network rules. Reopen this page and try again.'
     )
     expect(container.textContent).not.toContain('backend.txt')
   })
@@ -533,28 +386,33 @@ it('does not replace completed setup with a late preparation status response', a
 })
 
 describe('private service draft review', () => {
-  const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+  const rule = {
+    hostname: 'lab.internal.example',
+    port: 8443,
+    protocol: 'http' as const,
+    approvedAddresses: ['10.32.0.7']
+  }
   const start = async (): Promise<void> => {
     await act(async () => root.render(<NotebookNetworkDomainsForm />))
     await act(async () => button('Add service').click())
     await typeInput(container.querySelector('#private-hostname')!, rule.hostname)
     await typeInput(container.querySelector('#private-port')!, String(rule.port))
   }
-  it('requires reviewed addresses, invalidates review after edits, and only saves after confirmation', async () => {
+  it('reviews the exact tuple, invalidates review after edits, and saves after confirmation', async () => {
     window.api.settings.reviewNotebookPrivateDestination = vi
       .fn()
       .mockResolvedValue({ ok: true, destination: rule })
     await start()
     expect(button('Save changes').disabled).toBe(true)
     await act(async () => button('Review service').click())
-    expect(container.textContent).toContain('10.32.0.7')
-    expect(container.textContent).toContain('across all projects')
+    expect(container.textContent).not.toContain('Approved addresses')
+    expect(container.textContent).toContain('The rule takes effect after you save changes.')
     expect(useSettingsStore.getState().setNotebookNetwork).not.toHaveBeenCalled()
     await typeInput(container.querySelector('#private-port')!, '443')
-    expect(button('Add to trusted services')).toBeUndefined()
+    expect(button('Add network exception')).toBeUndefined()
     await typeInput(container.querySelector('#private-port')!, '8443')
     await act(async () => button('Review service').click())
-    await act(async () => button('Add to trusted services').click())
+    await act(async () => button('Add network exception').click())
     expect(button('Save changes').disabled).toBe(false)
     await act(async () => button('Save changes').click())
     expect(useSettingsStore.getState().setNotebookNetwork).toHaveBeenCalledWith(
@@ -575,7 +433,7 @@ describe('private service draft review', () => {
     await act(async () => button('Review service').click())
     await typeInput(container.querySelector('#private-hostname')!, 'other.internal.example')
     await act(async () => resolve({ ok: true, destination: rule }))
-    expect(button('Add to trusted services')).toBeUndefined()
+    expect(button('Add network exception')).toBeUndefined()
     await act(async () => button('Review service').click())
     await act(async () => button('Cancel').click())
     await act(async () => resolve({ ok: true, destination: rule }))
@@ -622,10 +480,11 @@ describe('private service draft review', () => {
     )
     expect(window.api.settings.reviewNotebookPrivateDestination).toHaveBeenCalledExactlyOnceWith({
       hostname: rule.hostname,
-      port: rule.port
+      port: rule.port,
+      protocol: 'http'
     })
     expect(save).not.toHaveBeenCalled()
-    await act(async () => button('Add to trusted services').click())
+    await act(async () => button('Add network exception').click())
     // A concurrent public-domain grant must not replace the editor's original baseline.
     act(() =>
       useSettingsStore.setState({
@@ -641,7 +500,9 @@ describe('private service draft review', () => {
     )
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>(`[aria-label="Remove ${rule.hostname}:${rule.port}"]`)!
+        .querySelector<HTMLButtonElement>(
+          `[aria-label="Remove http://${rule.hostname}:${rule.port}"]`
+        )!
         .click()
     )
     await act(async () => button('Save changes').click())
@@ -655,11 +516,50 @@ describe('private service draft review', () => {
     expect(container.textContent).not.toContain(`${rule.hostname}:${rule.port}`)
     expect(container.textContent).toContain('No unsaved changes')
   })
+  it('unifies manual and persistent approval exceptions, and revokes with a current baseline', async () => {
+    const grant = {
+      id: 'grant-global',
+      hostname: '::1',
+      protocol: 'https' as const,
+      port: 80,
+      approvedAddresses: [],
+      scope: 'project' as const,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      recordId: 'record-1',
+      createdAt: 1
+    }
+    const original = {
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [rule],
+      destinationGrants: [grant]
+    }
+    const save = vi.fn().mockResolvedValue(original)
+    useSettingsStore.setState({ notebookNetwork: original, setNotebookNetwork: save })
+    await act(async () => root.render(<NotebookNetworkDomainsForm />))
+    expect(container.textContent).toContain('HTTP://lab.internal.example:8443')
+    expect(container.textContent).toContain('HTTPS://[::1]:80')
+    expect(container.textContent).toContain('Project: project-1')
+    expect(container.textContent).toContain('All projects')
+    expect(container.textContent).not.toContain('Approved addresses')
+    expect(container.textContent).not.toContain('Approved network destinations')
+    expect(container.textContent).not.toContain('No trusted unsafe networks.')
+    await act(async () => button('Revoke').click())
+    expect(save).toHaveBeenCalledWith(
+      original,
+      original.allowedDomains,
+      original.trustedPrivateDestinations,
+      [grant.id]
+    )
+  })
   it('enrolls pending text, private reviews and saves in the shared leave guard', async () => {
     const change = vi.fn()
     await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
     expect(change).toHaveBeenLastCalledWith({ dirty: false, busy: false })
-    await typeInput(container.querySelector('input')!, 'pending.example')
+    window.api.settings.reviewNotebookPrivateDestination = vi.fn()
+    await act(async () => root.render(<NotebookNetworkDomainsForm onLeaveStateChange={change} />))
+    await act(async () => button('Add service').click())
+    await typeInput(container.querySelector('#private-hostname')!, 'pending.example')
     expect(change).toHaveBeenLastCalledWith({ dirty: true, busy: false })
     await act(async () => button('Cancel').click())
     expect(change).toHaveBeenLastCalledWith({ dirty: false, busy: false })

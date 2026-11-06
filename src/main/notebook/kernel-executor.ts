@@ -304,7 +304,10 @@ type ProcState = {
   child: ChildProcessWithoutNullStreams
   readline: Interface
   pending?: PendingRequest
-  beginSandboxExecution: () => () => void
+  beginSandboxExecution: NonNullable<
+    import('./process-sandbox').NotebookSandboxedSpawn['beginExecution']
+  >
+  waitForNetworkApprovals?: () => Promise<void>
   stderrTail: string
   annotateStderr: (stderr: string) => string
   teardownProcess: () => Promise<ProcessTreeKillResult>
@@ -612,7 +615,17 @@ class NotebookKernelExecutor implements NotebookExecutor {
 
       const proc = await this.ensureProc(key, kind, env, request)
       if (proc.pending) throw new Error('Notebook execution is already running.')
-      endSandboxExecution = proc.beginSandboxExecution()
+      endSandboxExecution = proc.beginSandboxExecution({
+        commandText: request.code,
+        executionReference: request.runId ?? randomUUID(),
+        signal: request.signal,
+        onNetworkWaitChange: (waiting) => {
+          const pending = proc.pending
+          if (!pending?.timeout || pending.timeout.timedOut) return
+          pending.timeout.disarm()
+          if (!waiting && pending.timeoutMs !== undefined) pending.timeout.arm(pending.timeoutMs)
+        }
+      })
       if (kind !== 'repl') {
         cwdBefore = proc.cwd
         request = { ...request, cwd: cwdBefore }
@@ -690,6 +703,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
         },
         replBindings
       )
+      await proc.waitForNetworkApprovals?.()
       const status = cancelled
         ? 'cancelled'
         : timedOut
@@ -943,6 +957,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       child,
       readline,
       beginSandboxExecution: spawned.beginSandboxExecution,
+      waitForNetworkApprovals: spawned.waitForNetworkApprovals,
       stderrTail: '',
       annotateStderr: spawned.annotateStderr,
       teardownProcess: spawned.teardownProcess,
@@ -1076,7 +1091,10 @@ class NotebookKernelExecutor implements NotebookExecutor {
   ): Promise<{
     child: ChildProcessWithoutNullStreams
     cwd: string
-    beginSandboxExecution: () => () => void
+    beginSandboxExecution: NonNullable<
+      import('./process-sandbox').NotebookSandboxedSpawn['beginExecution']
+    >
+    waitForNetworkApprovals?: () => Promise<void>
     annotateStderr: (stderr: string) => string
     teardownProcess: () => Promise<ProcessTreeKillResult>
     cleanupSandbox: (
@@ -1553,6 +1571,7 @@ class NotebookKernelExecutor implements NotebookExecutor {
       child,
       cwd: spawnCwd ?? process.cwd(),
       beginSandboxExecution: sandboxed?.beginExecution ?? (() => () => undefined),
+      waitForNetworkApprovals: sandboxed?.waitForNetworkApprovals,
       annotateStderr: sandboxed?.annotateStderr ?? ((stderr) => stderr),
       teardownProcess,
       cleanupSandbox

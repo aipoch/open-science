@@ -234,7 +234,7 @@ describe('public-read runtime decision lifecycle', () => {
             complete = resolve
           })
       )
-      const decision = gateway.decide('unknown.example', 443, 'block')
+      const decision = gateway.decide('unknown.example', 443, 'block', undefined, 'http')
       expect(mocks.lookup).toHaveBeenCalledWith('unknown.example', { all: true, verbatim: true })
       if (transition === 'endExecution') runtime.setCommandExecutionActive(commandId, false)
       else if (transition === 'updateConfig') runtime.updateConfig(config)
@@ -259,7 +259,7 @@ describe('public-read runtime decision lifecycle', () => {
           complete = resolve
         })
     )
-    const old = gateway.decide('unknown.example', 443, 'block')
+    const old = gateway.decide('unknown.example', 443, 'block', undefined, 'http')
     runtime.setCommandExecutionActive(commandId, false)
     runtime.setCommandExecutionActive(commandId, true)
     complete([{ address: '8.8.8.8', family: 4 }])
@@ -274,25 +274,37 @@ describe('public-read runtime decision lifecycle', () => {
 
   it('queries unknown permission without recording a failed command until actually blocked', async () => {
     await wrap()
-    await expect(gateway.decide('unknown.example', 443, 'probe')).resolves.toEqual({
+    await expect(
+      gateway.decide('unknown.example', 443, 'probe', undefined, 'http')
+    ).resolves.toEqual({
       allowed: false,
-      source: 'unknown',
+      source: 'explicit',
       address: '8.8.8.8'
     })
     expect(approval).toHaveBeenLastCalledWith({
       host: 'unknown.example',
+      protocol: 'http',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),
       purpose: 'probe'
     })
     expect(runtime.annotateStderr(commandId, '')).toBe('')
-    await expect(gateway.decide('unknown.example', 443, 'block')).resolves.toMatchObject({
+    await expect(
+      gateway.decide('unknown.example', 443, 'block', undefined, 'http')
+    ).resolves.toMatchObject({
       allowed: false,
       message: expect.stringContaining('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
     })
     expect(approval).toHaveBeenLastCalledWith({
       host: 'unknown.example',
+      protocol: 'http',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),
@@ -322,7 +334,7 @@ describe('public-read runtime decision lifecycle', () => {
           complete = resolve
         })
     )
-    const pending = gateway.decide('unknown.example', 443, 'block')
+    const pending = gateway.decide('unknown.example', 443, 'block', undefined, 'http')
     await vi.waitFor(() => expect(approval).toHaveBeenCalledTimes(1))
     runtime.setCommandExecutionActive(commandId, false)
     complete(true)
@@ -343,12 +355,18 @@ describe('public-read runtime decision lifecycle', () => {
       address: '8.8.8.8'
     })
     expect(approval).not.toHaveBeenCalled()
-    await expect(gateway.decide('unknown.example', 443, 'block')).resolves.toMatchObject({
+    await expect(
+      gateway.decide('unknown.example', 443, 'block', undefined, 'http')
+    ).resolves.toMatchObject({
       allowed: false,
       message: expect.stringContaining('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
     })
     expect(approval).toHaveBeenCalledWith({
       host: 'unknown.example',
+      protocol: 'http',
+      addresses: ['8.8.8.8'],
+      policyAllowed: false,
+      reason: undefined,
       port: 443,
       commandId,
       canResume: expect.any(Function),
@@ -356,7 +374,9 @@ describe('public-read runtime decision lifecycle', () => {
     })
     expect(runtime.annotateStderr(commandId, '')).toContain('OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED')
     approval.mockResolvedValueOnce(true)
-    await expect(gateway.decide('unknown.example', 443, 'block')).resolves.toEqual({
+    await expect(
+      gateway.decide('unknown.example', 443, 'block', undefined, 'http')
+    ).resolves.toEqual({
       allowed: true,
       address: '8.8.8.8'
     })

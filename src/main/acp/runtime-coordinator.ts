@@ -1,3 +1,4 @@
+import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import {
   trackLifecycleSettlement,
   hasPendingLifecycleSettlement,
@@ -2044,6 +2045,18 @@ class AcpRuntimeCoordinator {
 
   // Keeps an app-owned approval on the runtime that owns the conversation, so the existing ACP
   // broker/card can be used across framework generations without a parallel responder path.
+  networkApprovalRecordStatus(
+    projectId: string,
+    sessionId: string,
+    recordId: string
+  ): Promise<NetworkApprovalRecordStatus | undefined> {
+    return this.runtimeForSession(sessionId).networkApprovalRecordStatus(
+      projectId,
+      sessionId,
+      recordId
+    )
+  }
+
   async requestAppApproval(input: {
     sessionId: string
     title: string

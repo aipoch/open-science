@@ -45,7 +45,7 @@ describe('describePermissionRequest', () => {
         request({ appOwned: true, providerToolName: 'Open-Science', rawInput })
       )
     ).toMatchObject({
-      actionTitle: 'Connect to data.example.org?',
+      actionTitle: 'Network access required',
       categoryLabel: 'Network access',
       hideToolIdentity: true
     })
