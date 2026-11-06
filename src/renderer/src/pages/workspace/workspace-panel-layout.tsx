@@ -27,7 +27,16 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 // Match the visible divider and its hit area to the resize library's hover/drag region.
 const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
-  'z-20 after:w-5 before:top-0 before:h-full before:translate-y-0 before:bg-text-200 hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=hover]:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+  'group/workspace-resize z-20 cursor-grab data-[separator=active]:cursor-grabbing after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+// Keep pointer movement out of React state so hovering does not re-render the workspace.
+const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
+  const handle = event.currentTarget
+  handle.style.setProperty(
+    '--resize-handle-y',
+    `${event.clientY - handle.getBoundingClientRect().top}px`
+  )
+}
+
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 
@@ -594,6 +603,7 @@ const WorkspacePanelLayout = ({
         ) : null}
         <ResizablePanelGroup
           orientation="horizontal"
+          disableCursor
           resizeTargetMinimumSize={{ coarse: 20, fine: 20 }}
           aria-hidden={isMobile && mobileSidebar.isOpen ? true : undefined}
           inert={isMobile && mobileSidebar.isOpen ? true : undefined}
@@ -620,13 +630,23 @@ const WorkspacePanelLayout = ({
 
               <ResizableHandle
                 elementRef={sidebar.separatorRef}
+                onPointerMove={trackResizeHandle}
+                onPointerDown={trackResizeHandle}
+                onPointerLeave={(event) =>
+                  event.currentTarget.style.removeProperty('--resize-handle-y')
+                }
                 aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
                 aria-hidden={sidebar.state === 'collapsed'}
                 className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} ${
                   sidebar.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
-              />
+              >
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-text-200 opacity-0 group-hover/workspace-resize:opacity-100 group-focus-visible/workspace-resize:opacity-100 group-data-[separator=active]/workspace-resize:opacity-100"
+                />
+              </ResizableHandle>
             </>
           ) : null}
 
@@ -640,13 +660,23 @@ const WorkspacePanelLayout = ({
             <>
               <ResizableHandle
                 elementRef={preview.separatorRef}
+                onPointerMove={trackResizeHandle}
+                onPointerDown={trackResizeHandle}
+                onPointerLeave={(event) =>
+                  event.currentTarget.style.removeProperty('--resize-handle-y')
+                }
                 aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
                 aria-hidden={preview.state === 'collapsed'}
                 className={`${WORKSPACE_RESIZE_HANDLE_CLASS_NAME} bg-border shadow-[1px_0_3px_rgba(30,28,24,0.08)] ${
                   preview.state === 'collapsed' ? 'pointer-events-none opacity-0' : 'opacity-100'
                 }`}
-              />
+              >
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-text-200 opacity-0 group-hover/workspace-resize:opacity-100 group-focus-visible/workspace-resize:opacity-100 group-data-[separator=active]/workspace-resize:opacity-100"
+                />
+              </ResizableHandle>
             </>
           ) : null}
           <PreviewPanel

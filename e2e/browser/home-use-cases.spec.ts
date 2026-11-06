@@ -1677,3 +1677,69 @@ test('keeps workspace panels inside the viewport through wide content and tab sw
     }
   }
 })
+
+test('workspace resize grips follow nearby pointers and preserve drag and keyboard resizing', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable')
+  await page.getByRole('button', { name: 'Resource center', exact: true }).click()
+  for (const side of ['left', 'right']) {
+    const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+    await expect(handle).toBeVisible()
+    const grip = (): Promise<{ opacity: string; top: number; height: number; color: string }> =>
+      handle.evaluate((element) => {
+        const style = getComputedStyle(element, '::before')
+        return {
+          opacity: style.opacity,
+          top: parseFloat(style.top),
+          height: parseFloat(style.height),
+          color: style.backgroundColor
+        }
+      })
+    await page.mouse.move(1000, 590)
+    await expect.poll(async () => (await grip()).opacity).toBe('0')
+    await expect(handle.locator('span')).toHaveCSS('opacity', '0')
+    const box = (await handle.boundingBox())!
+    for (const offset of [-8, 8]) {
+      await page.mouse.move(box.x + offset, box.y + 100)
+      await expect.poll(async () => (await grip()).opacity).toBe('1')
+      await expect.poll(async () => (await grip()).top).toBeCloseTo(100, 0)
+      await expect(handle).toHaveCSS('cursor', 'grab')
+      await expect(handle.locator('span')).toHaveCSS('opacity', '1')
+      await expect(handle.locator('span')).toHaveCSS('height', `${box.height}px`)
+    }
+    await page.mouse.move(box.x, box.y + 200)
+    await expect.poll(async () => (await grip()).top).toBeCloseTo(200, 0)
+    const primary = await handle.evaluate((element) => {
+      const probe = document.createElement('span')
+      probe.style.backgroundColor = 'var(--primary)'
+      element.append(probe)
+      const color = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return color
+    })
+    expect((await grip()).color).toBe(primary)
+    await page.mouse.move(box.x, box.y + 2)
+    expect((await grip()).top).toBeGreaterThanOrEqual((await grip()).height / 2)
+    await page.mouse.move(box.x, box.y + 200)
+    await page.mouse.down()
+    await page.mouse.move(box.x + 60, box.y + 230, { steps: 10 })
+    await expect(handle).toHaveAttribute('data-separator', 'active')
+    await expect(handle).toHaveCSS('cursor', 'grabbing')
+    await expect.poll(async () => (await handle.boundingBox())!.x).toBeGreaterThan(box.x + 40)
+    await expect.poll(async () => (await grip()).top).toBeCloseTo(230, 0)
+    await page.mouse.up()
+    await page.mouse.move(1000, 590)
+    await expect.poll(async () => (await grip()).opacity).toBe('0')
+    await expect(handle.locator('span')).toHaveCSS('opacity', '0')
+    await handle.focus()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(handle).toBeFocused()
+    await page.keyboard.press('ArrowLeft')
+    await expect.poll(async () => (await grip()).opacity).toBe('1')
+    await expect.poll(async () => (await handle.boundingBox())!.x).toBeLessThan(box.x + 55)
+    await page.getByRole('textbox', { name: 'Conversation draft' }).focus()
+  }
+})
