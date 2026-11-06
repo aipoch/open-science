@@ -1,4 +1,4 @@
-import { normalizeNetworkHostname } from './notebook-network-settings'
+import { normalizeNetworkHostname } from '@aipoch/notebook-network-sandbox/network-address'
 
 export type NetworkDestination = Readonly<{
   hostname: string

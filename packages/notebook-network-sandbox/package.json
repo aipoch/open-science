@@ -10,7 +10,7 @@
     },
     "./network-address": {
       "types": "./src/network-address.ts",
-      "import": "./src/network-address.ts"
+      "default": "./src/network-address.ts"
     }
   },
   "scripts": {

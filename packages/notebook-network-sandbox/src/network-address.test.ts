@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   normalizeNetworkHostname,
@@ -7,6 +9,12 @@ import {
 import { normalizeRequestedHost } from '../runtime/src/gateway/address-policy.js'
 
 describe('shared network address normalization', () => {
+  it('resolves the shared helper for CommonJS consumers such as Playwright', () => {
+    expect(
+      createRequire(import.meta.url).resolve('@aipoch/notebook-network-sandbox/network-address')
+    ).toBe(fileURLToPath(new URL('./network-address.ts', import.meta.url)))
+  })
+
   it.each([
     ['LOCALHOST.', 'localhost'],
     ['127.1', '127.0.0.1'],
