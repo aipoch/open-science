@@ -718,10 +718,7 @@ const createProcessTreeTerminationProof = (
     return requesting
   }
   const release = async (): Promise<void> => {
-    await Promise.all([
-      rm(path, { force: true }).catch(() => undefined),
-      rm(requestPath, { force: true }).catch(() => undefined)
-    ])
+    await Promise.all([rm(path, { force: true }), rm(requestPath, { force: true })])
   }
   return {
     path,

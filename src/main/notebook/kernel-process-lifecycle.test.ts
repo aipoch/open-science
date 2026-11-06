@@ -651,6 +651,36 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
   })
 
+  it('cleans proof files when recovery cancels a stale pending receipt', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-proof-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await first.ensureReady()
+    first.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    await writeFile(proof.path, 'proof')
+    await writeFile(proof.requestPath, proof.token)
+
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await restarted.ensureReady()
+
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(proof.requestPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('prevents a delayed process host from activating after recovery cancels its intent', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-cancelled-host-'))
     const first = new KernelProcessLifecycleOwner({

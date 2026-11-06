@@ -613,11 +613,12 @@ const closeContext = async (
         }
   const processState =
     platformCleanup.processState ??
+    processOutcome.processState ??
     (context.platformOwnsProcesses && platformCleanup.processesTerminated
-      ? (processOutcome.processState ?? 'started-and-reaped')
+      ? 'started-and-reaped'
       : context.releaseProcessTreeProof && processOutcome.processesTerminated
         ? 'started-and-reaped'
-        : processOutcome.processState)
+        : undefined)
   const [processTreeProof] = await Promise.allSettled([
     processState !== 'termination-unknown' ? context.releaseProcessTreeProof?.() : undefined
   ])
