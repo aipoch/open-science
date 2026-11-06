@@ -15,7 +15,11 @@
     "src/main/remote-access/service.test.ts",
     "src/main/remote-access/service.ts",
     "src/main/remote-access/open-science-logo.svg",
-    "src/main/remote-access/command-port.ts"
+    "src/main/remote-access/command-port.ts",
+    "src/main/remote-access/lan.ts",
+    "src/main/remote-access/pair-token.ts",
+    "src/main/remote-access/pinggy.test.ts",
+    "src/main/remote-access/pinggy.ts"
   ],
   "interfacePaths": [
     "src/main/remote-access/index.ts",
@@ -28,6 +32,7 @@
       "src/main/remote-access/ipc.test.ts",
       "src/main/remote-access/pairing-page.test.ts",
       "src/main/remote-access/pairing.test.ts",
+      "src/main/remote-access/pinggy.test.ts",
       "src/main/remote-access/remoteit.test.ts",
       "src/main/remote-access/repository.test.ts",
       "src/main/remote-access/service.test.ts"

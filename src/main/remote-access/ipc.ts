@@ -46,6 +46,26 @@ export const registerRemoteAccessIpcHandlers = (service: RemoteAccessService): v
     requireDesktopCaller(callerContextForEvent(event))
     return service.setMode(request.mode)
   })
+  ipcMainHandle('remote-access:refresh-offer', (event, ...args) => {
+    remoteAccessApplicationCommandContracts.refreshOffer.args.parse(args)
+    requireDesktopCaller(callerContextForEvent(event))
+    return service.refreshOffer()
+  })
+  ipcMainHandle('remote-access:select-lan-address', (event, ...args) => {
+    const [request] = remoteAccessApplicationCommandContracts.selectLanAddress.args.parse(args)
+    requireDesktopCaller(callerContextForEvent(event))
+    return service.selectLanAddress(request.address)
+  })
+  ipcMainHandle('remote-access:set-pinggy-token', (event, ...args) => {
+    const [request] = remoteAccessApplicationCommandContracts.setPinggyToken.args.parse(args)
+    requireDesktopCaller(callerContextForEvent(event))
+    return service.setPinggyToken(request.token)
+  })
+  ipcMainHandle('remote-access:set-pinggy-region', (event, ...args) => {
+    const [request] = remoteAccessApplicationCommandContracts.setPinggyRegion.args.parse(args)
+    requireDesktopCaller(callerContextForEvent(event))
+    return service.setPinggyRegion(request.region)
+  })
   ipcMainHandle('remote-access:disable', async (event, ...args) => {
     remoteAccessApplicationCommandContracts.disable.args.parse(args)
     requireDesktopCaller(callerContextForEvent(event))

@@ -41,6 +41,8 @@ export type WebServiceController = {
   isRunning: () => boolean
   // The live port when serving, else undefined (used to build the tray's "Open Web" URL).
   runningPort: () => number | undefined
+  listenExternal?: (host: string, port: number) => Promise<number>
+  stopExternal?: () => Promise<void>
 }
 
 // The I/O the controller depends on, injectable so the idempotency/attached logic is unit-testable
@@ -135,6 +137,8 @@ const createWebServiceController = (
     | {
         close: () => Promise<void>
         closeExternalConnections: (principalId?: string) => void
+        listenExternal?: (host: string, port: number) => Promise<number>
+        stopExternal?: () => Promise<void>
         port: number
         configRoot: string
       }
@@ -218,6 +222,8 @@ const createWebServiceController = (
       port: server.port,
       configRoot,
       closeExternalConnections: server.closeExternalConnections,
+      listenExternal: server.listenExternal,
+      stopExternal: server.stopExternal,
       close: async () => {
         try {
           await server.close()
@@ -282,7 +288,14 @@ const createWebServiceController = (
       return () => stoppedListeners.delete(listener)
     },
     isRunning: () => running !== undefined,
-    runningPort: () => running?.port
+    runningPort: () => running?.port,
+    listenExternal: (host, port) => {
+      if (!running?.listenExternal) throw new Error('Web service is not running.')
+      return running.listenExternal(host, port)
+    },
+    stopExternal: async () => {
+      await running?.stopExternal?.()
+    }
   }
 }
 

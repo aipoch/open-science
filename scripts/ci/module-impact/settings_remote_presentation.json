@@ -1,11 +1,14 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.test.tsx",
+    "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.tsx",
     "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
     "src/renderer/src/pages/settings/RemoteControlPanel.tsx",
     "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx",
     "src/renderer/src/pages/settings/RepairFrameworkDialog.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.tsx",
     "src/renderer/src/pages/settings/RemoteControlPanel.tsx",
     "src/renderer/src/pages/settings/RepairFrameworkDialog.tsx",
     "src/renderer/src/pages/settings/file-browser-remote-error.ts"
@@ -13,6 +16,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.test.tsx",
       "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
       "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx"
     ],

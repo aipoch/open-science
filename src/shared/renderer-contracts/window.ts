@@ -25,6 +25,10 @@ import {
 } from './definition'
 
 export const contracts = {
+  'window.openConnectMobile': callable<() => Promise<void>>()('window', [
+    'window:open-connect-mobile',
+    ELECTRON
+  ]),
   'window.announceWindowFindAppearance': callable<(appearance: WindowFindAppearance) => void>()(
     'window',
     ['window:find-appearance-changed', SEND],

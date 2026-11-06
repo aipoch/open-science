@@ -50,7 +50,10 @@ import type {
   RemotePairingRequestId,
   RevokeRemoteBrowserRequest,
   RevokeRemoteBrowsersRequest,
-  SetRemoteAccessModeRequest
+  SetRemoteAccessModeRequest,
+  SelectLanAddressRequest,
+  SetPinggyTokenRequest,
+  SetPinggyRegionRequest
 } from '../shared/remote-access'
 import { remoteAccessApplicationCommandContracts } from '../shared/remote-access'
 import type {
@@ -275,7 +278,27 @@ const remoteAccessCommands = Object.freeze({
     'remote-access:set-mode',
     readonly [request: SetRemoteAccessModeRequest],
     RemoteAccessSnapshot
-  >('remote-access:set-mode', remoteAccessApplicationCommandContracts.setMode)
+  >('remote-access:set-mode', remoteAccessApplicationCommandContracts.setMode),
+  refreshOffer: defineApplicationCommand<
+    'remote-access:refresh-offer',
+    readonly [],
+    RemoteAccessSnapshot
+  >('remote-access:refresh-offer', remoteAccessApplicationCommandContracts.refreshOffer),
+  selectLanAddress: defineApplicationCommand<
+    'remote-access:select-lan-address',
+    readonly [request: SelectLanAddressRequest],
+    RemoteAccessSnapshot
+  >('remote-access:select-lan-address', remoteAccessApplicationCommandContracts.selectLanAddress),
+  setPinggyToken: defineApplicationCommand<
+    'remote-access:set-pinggy-token',
+    readonly [request: SetPinggyTokenRequest],
+    RemoteAccessSnapshot
+  >('remote-access:set-pinggy-token', remoteAccessApplicationCommandContracts.setPinggyToken),
+  setPinggyRegion: defineApplicationCommand<
+    'remote-access:set-pinggy-region',
+    readonly [request: SetPinggyRegionRequest],
+    RemoteAccessSnapshot
+  >('remote-access:set-pinggy-region', remoteAccessApplicationCommandContracts.setPinggyRegion)
 })
 
 const reviewerCommands = Object.freeze({
@@ -601,6 +624,10 @@ type HostApplicationCommandDependencies = Readonly<{
     | 'reject'
     | 'revoke'
     | 'revokeBrowsers'
+    | 'refreshOffer'
+    | 'selectLanAddress'
+    | 'setPinggyToken'
+    | 'setPinggyRegion'
   >
   reviewer: Pick<
     ReviewerCommandOwner,
@@ -796,6 +823,22 @@ const registerHostApplicationCommands = (
       'remote-access:set-mode': ({ args, callerContext }) => {
         requireDesktopCaller(callerContext)
         return dependencies.remoteAccess.setMode(args[0].mode)
+      },
+      'remote-access:refresh-offer': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.refreshOffer()
+      },
+      'remote-access:select-lan-address': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.selectLanAddress(args[0].address)
+      },
+      'remote-access:set-pinggy-token': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.setPinggyToken(args[0].token)
+      },
+      'remote-access:set-pinggy-region': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.remoteAccess.setPinggyRegion(args[0].region)
       }
     })
     scope.registerGroup(hostApplicationCommandGroups[6], {
