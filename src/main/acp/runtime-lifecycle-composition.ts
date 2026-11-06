@@ -45,7 +45,12 @@ type AcpRuntimeLifecycleHost = Readonly<{
 const composeAcpRuntimeLifecycleOwners = (
   options: Pick<
     AcpRuntimeOptions,
-    'appVersion' | 'defaultCwd' | 'hasReplayableImageHistory' | 'runtimeSessions' | 'callbacks'
+    | 'appVersion'
+    | 'defaultCwd'
+    | 'hasReplayableImageHistory'
+    | 'runtimeSessions'
+    | 'callbacks'
+    | 'separateProviderNotices'
   >,
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
@@ -196,6 +201,7 @@ const composeAcpRuntimeLifecycleOwners = (
 
   const connectionLifecycle = new AcpConnectionLifecycleWorkflow({
     appVersion: options.appVersion,
+    separateProviderNotices: options.separateProviderNotices,
     defaultCwd: options.defaultCwd,
     currentConnection,
     currentStatus: () => base.snapshotOwner.status,
