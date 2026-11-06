@@ -14,6 +14,8 @@ import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import { AcpPromptPreparationOwner, type PreparedPromptHandle } from './prompt-preparation-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+import { AcpTurnSkillOwner } from './turn-skill-owner'
+import * as sandbox from '@aipoch/notebook-network-sandbox'
 
 type Mock = ReturnType<typeof vi.fn>
 type TestContextTurn = ContextWindowTurnHandle & {
@@ -823,8 +825,63 @@ describe('AcpPromptPreparationOwner', () => {
     expect(handle.promptPrefix).not.toContain('ssh:cedar-gpu')
   })
 
+  it('cancels preparation when WSL resource mapping is aborted', async () => {
+    const controller = new AbortController()
+    const started = Promise.withResolvers<void>()
+    const mapping = vi.spyOn(sandbox, 'mapWsl2Path').mockImplementation(
+      (_target, _path, signal) =>
+        new Promise((_resolve, reject) => {
+          signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+          started.resolve()
+        })
+    )
+    const fixture = setup(undefined, undefined, undefined, {
+      shellRuntimeBindingFor: () => ({
+        kind: 'wsl2-bash',
+        profileId: 'profile',
+        distro: 'Ubuntu',
+        user: 'researcher'
+      })
+    })
+    const skills = new AcpTurnSkillOwner({
+      skills: { needForceLoad: async () => [], namesForIds: async () => ['paper-review'] },
+      requestSkillsReload: vi.fn()
+    })
+    try {
+      const preparing = fixture.prepare({
+        signal: controller.signal,
+        turnSkill: await skills.authorize({ selectedSkillIds: ['paper-review'] }),
+        backend: {
+          framework: codeBuddyFramework,
+          session: {
+            modelRequired: false,
+            options: { [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: { root: 'C:\\skills' } }
+          },
+          prompt: { systemPromptAppends: [] },
+          context: { supportsImageInput: false },
+          adapter: { nativeMcpEnabled: true, bridgeMcpAliasesEnabled: false }
+        }
+      })
+      await started.promise
+      controller.abort(new DOMException('Stopped by user', 'AbortError'))
+      await expect(preparing).resolves.toMatchObject({ status: 'cancelled' })
+      expect(fixture.promptContent.prepare).not.toHaveBeenCalled()
+      expect(fixture.contextUsage.beginTurn).not.toHaveBeenCalled()
+    } finally {
+      controller.abort()
+      mapping.mockRestore()
+    }
+  })
+
   it('carries preloaded CodeBuddy Skill activity without attaching Codex-only metadata', async () => {
-    const fixture = setup()
+    const shellRuntime = {
+      kind: 'wsl2-bash' as const,
+      profileId: 'profile',
+      distro: 'Ubuntu',
+      user: 'researcher'
+    }
+    const shellRuntimeBindingFor = vi.fn(() => shellRuntime)
+    const fixture = setup(undefined, undefined, undefined, { shellRuntimeBindingFor })
     fixture.turnSkill.prepareProvider.mockImplementationOnce(async (input) => {
       input.codebuddy?.observeUsage?.({
         sourceInvocationId: 'selector-call-1',
@@ -872,6 +929,7 @@ describe('AcpPromptPreparationOwner', () => {
         frameworkId: 'codebuddy',
         codebuddy: {
           root: '/app-data/codebuddy/skill-runtime',
+          shellRuntime,
           selectorAvailable: true,
           selectSkills: expect.any(Function),
           signal: expect.any(AbortSignal),
@@ -879,6 +937,7 @@ describe('AcpPromptPreparationOwner', () => {
         }
       })
     )
+    expect(shellRuntimeBindingFor).toHaveBeenCalledWith('session-1')
     expect(handle).toMatchObject({
       status: 'ready',
       skillRuntimeAllowlist: [],

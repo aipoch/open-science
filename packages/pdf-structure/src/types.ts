@@ -6,6 +6,11 @@ export type PdfStructureProcessRuntime = {
   spawn(entry: string): ChildProcessWithoutNullStreams
   stop(child: ChildProcessWithoutNullStreams): Promise<void>
 }
+export type PdfStructureOcr = Readonly<{
+  enginePath: string
+  languages: readonly string[]
+  languageAssets: Readonly<Record<string, string>>
+}>
 export type PdfStructureEngineOptions = {
   /** Full, immutable recipe: all fields participate in the cache fingerprint. */
   modelRecipe: Readonly<{ revision: string }>
@@ -20,6 +25,7 @@ export type PdfStructureEngine = {
       revision: string
       assets: readonly Readonly<{ file: string; path: string; size: number; sha256: string }>[]
     }>
+    ocr?: PdfStructureOcr
     identity: PdfStructureIdentity
     signal: AbortSignal
     onProgress: (progress: { phase: string; processedPages: number[] }) => void

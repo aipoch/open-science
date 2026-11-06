@@ -185,6 +185,8 @@ const composeAcpRuntimePromptOwners = (
   }
 
   const promptPreparation = new AcpPromptPreparationOwner({
+    shellRuntimeBindingFor: (sessionId) =>
+      base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,
@@ -482,7 +484,9 @@ const composeAcpRuntimePromptOwners = (
             )
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
-            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId),
+          waitForRuntimeSessionTerminalWrites: (sessionId: string, signal: AbortSignal) =>
+            options.runtimeSessions!.waitForTerminalWrites(sessionId, signal)
         }
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {

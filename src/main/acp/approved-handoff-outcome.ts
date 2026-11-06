@@ -12,6 +12,7 @@ export const withApprovedHandoffOutcome = (
     string,
     {
       key: string
+      generation?: number
       report?: () => Promise<void>
       release?: () => void
       process: ReturnType<AcpRuntimeCoordinator['captureHandoffProcess']>
@@ -26,6 +27,13 @@ export const withApprovedHandoffOutcome = (
     context: Parameters<CompletionGateRuntime['reconfigure']>[1]
   ): Promise<void> => {
     const captured = failures.get(context.sessionId)
+    if (
+      captured?.key === completionContextKey(context) &&
+      captured.generation !== undefined &&
+      'generation' in handoff &&
+      captured.generation !== handoff.generation
+    )
+      throw new Error('The approved handoff attempt was superseded.')
     if (captured?.key !== completionContextKey(context) || captured.release || !captured.process)
       return
     captured.release = captured.process.hold()
@@ -45,7 +53,7 @@ export const withApprovedHandoffOutcome = (
     ...(adapter.canCapture
       ? { canCapture: (context) => ownsInvocation(context) || adapter.canCapture!(context) }
       : {}),
-    stopOldPrompt: async (context) => {
+    stopOldPrompt: async (context, generation) => {
       const process = runtime.captureHandoffProcess(context.sessionId)
       const report = runtime.captureApprovedHandoffFailure(context.sessionId)
       const release = process?.hold()
@@ -53,11 +61,19 @@ export const withApprovedHandoffOutcome = (
       if (previous) releaseProcess(previous)
       failures.set(context.sessionId, {
         key: completionContextKey(context),
+        generation,
         report,
         release,
         process
       })
       await adapter.stopOldPrompt(context)
+    },
+    releaseSupersededHandoff: (context, generation) => {
+      const captured = failures.get(context.sessionId)
+      if (captured?.key !== completionContextKey(context) || captured.generation !== generation)
+        return
+      failures.delete(context.sessionId)
+      releaseProcess(captured)
     },
     waitForOwnershipRelease: (context) => adapter.waitForOwnershipRelease(context),
     cleanupCancelledHandoff: async (context) => {
@@ -78,16 +94,26 @@ export const withApprovedHandoffOutcome = (
       await adapter.reconfigure(handoff, context, isCurrentAttempt)
     },
     continueAsApproved: async (handoff, context, continuationContext) => {
+      const captured = failures.get(context.sessionId)
       await restoreProcess(handoff, context)
       await adapter.continueAsApproved(handoff, context, continuationContext)
-      if (failures.get(context.sessionId)?.key === completionContextKey(context)) {
-        releaseProcess(failures.get(context.sessionId)!)
+      if (
+        captured?.key === completionContextKey(context) &&
+        failures.get(context.sessionId) === captured
+      ) {
+        releaseProcess(captured)
         failures.delete(context.sessionId)
       }
     },
     reportHandoffFailure: async (error, handoff, context) => {
       const key = completionContextKey(context)
       const captured = failures.get(context.sessionId)
+      if (
+        captured?.key === key &&
+        captured.generation !== undefined &&
+        captured.generation !== handoff.generation
+      )
+        return
       const report = captured?.key === key ? captured.report : undefined
       if (captured?.key === key) captured.report = undefined
       try {

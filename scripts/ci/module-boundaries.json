@@ -5748,6 +5748,7 @@
         "src/renderer/src/pages/settings/AppIconSection.tsx",
         "src/renderer/src/pages/settings/AppVersionSection.preview.tsx",
         "src/renderer/src/pages/settings/AppVersionSection.tsx",
+        "src/renderer/src/pages/settings/AppearancePanel.tsx",
         "src/renderer/src/pages/settings/ArchivedPanel.tsx",
         "src/renderer/src/pages/settings/ClaudeIsolatedSignInModal.tsx",
         "src/renderer/src/pages/settings/ComputeAddForm.tsx",
@@ -5769,6 +5770,7 @@
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.preview.tsx",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.tsx",
         "src/renderer/src/pages/settings/NotebookRecoveryNotice.tsx",
+        "src/renderer/src/pages/settings/NotificationsPanel.tsx",
         "src/renderer/src/pages/settings/PdfParsingCacheAction.tsx",
         "src/renderer/src/pages/settings/PermissionsPanel.tsx",
         "src/renderer/src/pages/settings/RestoreDefaultPermissionsButton.preview.tsx",
@@ -5806,6 +5808,7 @@
         "src/renderer/src/pages/settings/AppIconSection.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/AppVersionSection.preview.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/AppVersionSection.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/AppearancePanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ArchivedPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ClaudeIsolatedSignInModal.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ComputeAddForm.tsx": "presentation-adapter",
@@ -5827,6 +5830,7 @@
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.preview.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NotebookNetworkProtectionBanner.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/NotebookRecoveryNotice.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/NotificationsPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/PdfParsingCacheAction.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/PermissionsPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/RestoreDefaultPermissionsButton.preview.tsx": "presentation-adapter",
@@ -7569,6 +7573,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts",
+        "src/renderer/src/lib/acp/workspace-runtime-session-cleanup-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts",
@@ -7588,6 +7593,7 @@
         "src/renderer/src/lib/acp/workspace-runtime-event-owner.ts": "presentation-adapter",
         "src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts": "presentation-adapter",
         "src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts": "presentation-adapter",
+        "src/renderer/src/lib/acp/workspace-runtime-session-cleanup-owner.ts": "presentation-adapter",
         "src/renderer/src/lib/acp/workspace-runtime-attachment-owner.ts": "presentation-adapter",
         "src/renderer/src/lib/acp/workspace-runtime-command-owner.ts": "presentation-adapter",
         "src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts": "presentation-adapter",
@@ -7617,6 +7623,8 @@
         "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
         "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
         "src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts",
+        "src/renderer/src/lib/acp/workspace-first-prompt-preparation.test.ts",
+        "src/renderer/src/pages/workspace/WorkspacePage.send-gate.test.tsx",
         "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
         "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
         "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx",
@@ -9084,6 +9092,7 @@
     "renderer_session_persistence": {
       "sources": [
         "src/renderer/src/lib/session-persistence/session-persistence.ts",
+        "src/renderer/src/lib/session-persistence/session-write-recovery.ts",
         "src/renderer/src/lib/acp/runtime-writer-client.ts"
       ],
       "layer": "presentation-runtime",
@@ -9092,6 +9101,7 @@
       "requiredTests": [
         "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
         "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+        "src/renderer/src/lib/session-persistence/session-write-recovery.test.ts",
         "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],

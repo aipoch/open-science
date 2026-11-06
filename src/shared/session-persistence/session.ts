@@ -330,6 +330,8 @@ export type SessionConflictRebaseField =
   | 'pinned'
 
 export type SaveSessionOptions = {
+  // Recovery retries must not overwrite an authority that changed after the user's review.
+  expectedRevision?: number
   runtimeWriterToken?: string
   conflictRebaseFields?: SessionConflictRebaseField[]
   conversationCommands?: import('../conversation-command-contract').SessionConversationCommand[]

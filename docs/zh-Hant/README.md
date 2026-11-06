@@ -18,7 +18,7 @@
     <img alt="AIPOCH Open-Science arXiv 預印本：2610.17110" src="../images/readme/arxiv-preprint.svg">
   </a>
   <a href="#基準測試表現">
-    <img alt="AIPOCH Open-Science — 已報告基準比較中的最高分" src="../../docs/images/readme/benchmark-comparisons.svg">
+    <img alt="AIPOCH Open-Science — 基準測試結果" src="../images/readme/benchmark-comparisons.svg">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="支援平台 macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
@@ -45,13 +45,23 @@
 
 > 本文件是英文 `README.md` 的翻譯。若內容有差異，請以[英文原文](../../README.md)為準。
 
-AIPOCH Open-Science 是面向科學家與研究人員的 AI 研究工作台，由 [AIPOCH](https://aipoch.com/open-science) 開發，採用開源、本機優先、模型無關的設計。它透過科學 AI 智能體、Python 與 R 執行、科學資料連接器，以及對 macOS、Windows 和 Linux 的跨平台支援，實現可重現、可檢視的研究。在同一個工作區中新增專案，以自然語言描述研究目標，讓智能體讀取檔案、搜尋網頁、執行程式碼、查詢科學資料來源，並產生具可追溯來源的報告、表格與圖表。
+[AIPOCH Open-Science](https://aipoch.com/open-science) 是一款開源 AI 研究工作台。你可以從一個問題、一篇論文或一個資料檔開始。用自己的話說明你想釐清什麼，再和 AI 智能體一起檢視證據、分析資料或繪製圖表。
 
-AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材料科學、物理學及環境科學等領域的運算密集與資料密集研究。它涵蓋從文獻回顧、假設建立，到程式碼執行、資料分析、模擬、視覺化，以及產出可追溯研究成果的完整研究流程。
+想瞭解某個結果是如何得出的，可以查看已有的輸入、程式碼和執行紀錄。要與他人分享這項工作，可以選擇要包含的對話分支、檔案版本、Notebook 記錄和驗證證據，將它們匯出為 `.science` 包。
 
-已完成的研究會話也可以匯出為可攜式 `.science` 包，用於審閱、交接與封存，並攜帶所選的對話分支、檔案版本、Notebook 記錄與驗證證據。
+### 💡 AIPOCH Open-Science v1.0.8 更新
 
-> 💡 **[AIPOCH Open-Science v1.0.7 已發佈](https://github.com/aipoch/open-science/releases/latest)** _（最後更新於 2026 年 11 月）_。這個版本新增 Pi 作為第五個智能體框架，支援從 DOI 或 arXiv 連結直接新增參考文獻，閱讀模式下智能體可為關聯的 PDF 加入註記。掃描 PDF 可透過選用的 OCR 與九種語言套件取得可讀文字，研究案例市集現已支援搜尋。本版也修正了 Windows Notebook 命令列環境初始化、OpenCode 上下文壓縮崩潰，以及 Fake-IP DNS 環境下的下載問題。詳情請參閱 [v1.0.7 發行說明](../../release-notes/1.0.7/zh-Hant.md)。
+_2026 年 11 月 4 日_
+
+- **設定重組**：依功能劃分分頁，集中顯示應用程式資訊、診斷與說明入口。
+- **批次匯入文獻**：一次支援最多 **100 筆** DOI、arXiv、PubMed 識別碼或官方文章連結，自動標準化並去除重複項目。
+- **AI 研究快照**：從全文或摘要整理研究問題、研究族群、方法、主要發現及限制，並標示文字來源。
+- **會話資源管理**：五種智能體框架在會話完成後釋放相關程序，減少記憶體累積。
+- **模型支援更新**：騰訊 TokenHub 新增 Hy4、DeepSeek V4.1 Flash 路由，並為部分模型加入圖像輸入。
+- **科學資料與 PDF**：恢復 eQTL Catalogue 查詢，加入 GRCh38 座標驗證，改善 PDF 閱讀順序與文字擷取。
+- **可靠性修正**：完善 R 分析相依性驗證與產物溯源，修正跨平台更新、下載、沙箱網路及 Pi 安裝等問題。
+
+[查看 v1.0.8 完整版本說明](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏橫幅：Science, Open to All——開源、模型無關、可自行託管的科學 AI 研究工作台" src="../images/readme/open-science-banner.png" />
@@ -60,10 +70,9 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 ## 目錄
 
 - [快速開始](#-快速開始)
-- [產品導覽](#產品導覽)
 - [AIPOCH Open-Science `.science` 包](#aipoch-open-science-science-包)
 - [AIPOCH Open-Science 論文與引用](#aipoch-open-science-論文與引用)
-- [基準測試表現](#基準測試表現)
+- [基準測試結果](#基準測試表現)
 - [核心能力](#核心能力)
 - [模型服務商](#模型服務商)
 - [資料、權限與信任](#資料權限與信任)
@@ -83,11 +92,11 @@ AIPOCH Open-Science 支援機器學習、統計學、生命科學、化學、材
 | --------------------------------------- | ----------------------------------------- |
 | macOS 12+ — Apple 晶片（M1 或更新型號） | 適用於 Apple Silicon / ARM64 的 macOS DMG |
 | macOS 12+ — Intel                       | 適用於 Intel / x64 的 macOS DMG           |
-| Windows x64                             | Windows x64 安裝程式（已程式碼簽署）      |
+| Windows 10/11 x64                       | Windows x64 安裝程式（已程式碼簽署）      |
 | Linux x64                               | Linux x64 AppImage 或 Debian 套件         |
 | Linux ARM64                             | Linux ARM64 AppImage 或 Debian 套件       |
 
-從[官方應用程式下載頁面](https://aipoch.com/open-science/download)下載安裝套件；如需驗證，請參閱[驗證下載](../../SECURITY.md#verifying-your-download)。
+安裝前的驗證方法見[驗證下載](../../SECURITY.md#verifying-your-download)。
 
 macOS 使用者也可以透過 [Homebrew](https://brew.sh) 安裝：
 
@@ -102,6 +111,8 @@ brew install aipoch/tap/open-science
 ```
 
 此 Formula 內含 Node，無需啟動桌面應用程式；其版本可能與桌面 Cask 不同。前提條件與升級方式見[獨立執行環境指南](../standalone-runtime.md)。
+
+也可從 [GitHub Release 的 Assets](https://github.com/aipoch/open-science/releases/latest) 下載內含 Node.js 的獨立 CLI 壓縮檔，適用於 macOS 和 Linux（ARM64 或 x64）及 Windows x64。
 
 如需獨立 CLI 與 Web 介面，可使用 **Node.js 22.13.0 或更新版本**安裝已發布的 [npm 套件](https://www.npmjs.com/package/@aipoch/open-science)：
 
@@ -120,6 +131,8 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 依引導順序完成：**環境 → 資料位置 → 智能體執行環境 → 模型服務商 → Notebook 執行環境**。
 
 完成必要的環境與智能體執行環境檢查，並測試模型連線。Python/R Notebook 設定為選用；Notebook 與資料位置皆可稍後在設定中調整。
+
+完成首次設定後，可在系統設定中調整外觀與通知。一般設定提供應用程式資訊、診斷、命令列工具，以及手動安裝與更新指南的連結。
 
 <table>
   <tr>
@@ -140,44 +153,6 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 
 > 本 README 中的螢幕擷取畫面用於說明工作流程。標籤、目錄及其他介面細節可能與你安裝的版本不同。
 
-## 產品導覽
-
-### 從研究請求到可追溯結果
-
-以一項具代表性的生物資訊學任務為例：重現已發表的差異表達分析、將重新生成的結果與論文比較，並交付審閱所需的報告、表格與圖像。以下截圖來自已有記錄的 AIPOCH Open-Science 工作流程，用於展示各個階段，並非同一次連續會話。
-
-#### 1. 明確研究任務與證據
-
-說明研究問題、來源論文與資料集、必要的方法或閾值、預期輸出及驗收標準。上傳支援檔案，或使用 `@` 引用現有專案產物，讓智能體從明確輸入開始，而不是依賴隱藏的上下文。
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science 論文重現任務，在同一工作區顯示研究結論、生成產物與來源比較" width="900">
-</p>
-
-#### 2. 使用可檢查的科學工具執行
-
-智能體可在共享 Notebook 中組合科學技能、受權限控制的研究連接器、搜尋、檔案操作，以及 Python 或 R 程式碼。生成圖像可與研究摘要並排審閱，產物記錄則提供已擷取的生成程式碼及執行證據供檢查。
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science 生物資訊學分析，並排顯示研究摘要、生成圖像與已擷取的生成程式碼" width="900">
-</p>
-
-#### 3. 就地審閱報告、表格與圖像
-
-最終回答會概述哪些結果成功重現、哪些存在差異，以及需要注意的限制。生成的 Markdown 報告、CSV 表格、圖像與其他研究產物會繼續附屬於會話，並彙整到專案檔案庫，可在對話旁預覽，也可於後續工作中重複使用。
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science 重現結果，在智能體說明旁預覽差異表達圖像與生成檔案" width="900">
-</p>
-
-#### 4. 將每個產物追溯至證據
-
-每個生成產物都以不可變且含總和檢查碼的版本儲存。其 **Provenance** 檢視可顯示生成程式碼與執行歷史、引用的輸入、觀測到的環境清單、產生該產物的對話分支，以及限定於該版本的 Reviewer 結果。無法驗證的證據會標記為無法使用，而不會被推論補全。
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science 研究產物預覽，其中包含用於追溯生成結果的 Provenance 入口" width="900">
-</p>
-
 ## AIPOCH Open-Science `.science` 包
 
 將已完成的研究會話匯出為可攜式 `.science` 包，用於審閱、交接與封存。選擇要納入的對話分支、檔案版本、Notebook 記錄與驗證證據，然後將包匯入其他專案或電腦。
@@ -190,7 +165,7 @@ Windows 重新安裝會保留研究資料；如需徹底清理，請參閱[資�
 2. 將 `.science` 檔案傳遞給協作者，或轉移到另一台電腦。
 3. 將它匯入專案。右側的 **Research replay** 顯示記錄過程，左側對話可針對記錄提問並引用固定步驟。
 
-匯入記錄保持唯讀；瀏覽回放不會執行程式碼、呼叫模型或還原憑證。首次提問會建立關聯的可寫討論；使用 **Create a copy to continue research** 建立副本後可繼續研究。重新執行結果仍需要完整配方、必要輸入與可用執行環境。
+匯入記錄保持唯讀；瀏覽回放不會執行程式碼、呼叫模型或還原憑證。首次提問會建立關聯的可寫討論；使用 **Fork to continue** 建立副本後可繼續研究。重新執行結果仍需要完整配方、必要輸入與可用執行環境。
 
 Side Chat 對話、私人閱讀書籤與憑證不隨包匯出，所含檔案取決於匯出選擇。收到的驗證記錄描述傳送方執行過的檢查，不代表接收電腦已重新執行。詳見 [`.science` 包指南](https://aipoch.com/docs/guides/research-packages/)。
 
@@ -221,75 +196,83 @@ arXiv 預印本 · [v1](https://arxiv.org/abs/2610.17110v1) · 提交於 2026 �
 
 </details>
 
-## 基準測試表現
+<a id="基準測試表現"></a>
 
-AstaBench、ASI-Bench 與 BiomniBench-DA 是三套相互獨立的基準，任務、資料集與評分方式不同，結果分別報告，不能直接橫向比較。
+## 基準測試結果
 
-### 🏆 AstaBench：LitQA2 Test 並列最高展示分數，90.67% Recall@30
+AIPOCH 對 AIPOCH Open-Science 進行了評測，任務涵蓋尋找論文、回答論文內容相關問題和執行研究計畫。以下結果來自 AIPOCH 自行進行的測試，每項成績對應特定任務與評測設定。
 
-AIPOCH Open-Science 使用 **gpt-6-astra**，在官方75題 LitQA2-FullText-Search Test 題集的本機評測中取得 **90.67% Recall@30（68/75）**。在10月26日報告快照收錄的27筆結果中，這項本機 Test 成績與 Asta Paper Finder 和 Asta v0 **並列最高**，三者均為90.67%。該成績來自官方 Test 題集的本機評測，尚未作為官方榜單結果提交，也不代表取得官方榜單名次。
+| 任務             | AIPOCH Open-Science 的結果                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 找到目標論文     | 在 LitQA2-FullText-Search 的 **75 道測試題中，有 68 道的目標論文出現在前 30 筆結果中**（**Recall@30 為 90.67%**，gpt-6-astra）。            |
+| 根據文獻回答問題 | 在獨立的 LitQA2-FullText 測試中，Open-Science **答對 75 題中的 70 題**（**準確率 93.33%**，deepseek-flash，Max 推理）。                     |
+| 綜合附引用的答案 | 使用 deepseek-v4-flash，在 ScholarQA-CS2 的 100 道驗證題上獲得 **0.9289/1 的綜合品質分數**。官方測試參考結果使用不同的題目。                |
+| 執行研究流程     | 在使用相同模型的本機 ASI-Bench 測試中，Open-Science 的 B4 得分為 **59.46**，Codex 為 **55.45**。B2 得分幾乎相同（**56.11** 與 **56.09**）。 |
+| 分析生物醫學資料 | 在 BiomniBench-DA Public 50 上，兩個評審模型的評分分別為 **81.04** 和 **77.06**，等權平均為 **79.05**。                                     |
 
-**ScholarQA-CS2：** AIPOCH Open-Science 使用 **deepseek-v4-flash**，在 **100題 Validation 題集**上取得 **0.9289/1的綜合得分**。報告所列的官方 Test 最高參考分數為 **0.9192**，來自不同題集，因此兩項結果不構成直接排名。
-
-![AIPOCH Open-Science 的 AstaBench 概覽：LitQA2 Test 題集 Recall@30 為90.67%，ScholarQA-CS2 Validation 綜合得分為0.9289；本機結果與官方參考記錄分開呈現](../images/readme/astabench-literature-research-overview.jpg)
+### AstaBench — 文獻任務
 
 <details>
-<summary><strong>LitQA2-FullText-Search 結果對照</strong></summary>
+<summary><strong>論文檢索 — 為 75 道題中的 68 道找到目標論文</strong></summary>
 
-![AIPOCH Open-Science 在75題 LitQA2 Test 題集上取得90.67% Recall@30，與報告快照中的最高展示分數並列；該結果並非官方榜單提交](../images/readme/astabench-litqa2-test.jpg)
+AIPOCH 在本機執行了官方 LitQA2-FullText-Search 的 75 題 Test 集。其 Recall@30 與 2026 年 10 月 26 日比較快照中的最高值相同。這次本機測試未提交至官方榜單，也不代表官方排名。
 
-該本機測試於2026年10月23日執行。圖中包含1筆 AIPOCH Open-Science 本機 Test 結果及26筆官方參考記錄。同分結果使用等長長條，列序不區分同分名次。AIPOCH 的本機成本未統一核算，因此該圖無法支持成本效率比較。
+![AIPOCH Open-Science LitQA2 檢索比較：官方 Test 集上的本機 Recall@30 為 90.67%](../images/readme/astabench-litqa2-test.jpg)
 
-先前使用 **DeepSeek v4-flash (max)** 的本機評測在另一組10題 Validation 題集上取得 **100% Recall@30（10/10）**，報告記錄了該結果的3次本機重複測試。Test 與 Validation 使用不同題目，分別報告。
+Recall@30 在目標論文出現在前 30 筆結果中時計為命中，不衡量答案準確率。各次測試的成本計算未統一。
 
 </details>
 
 <details>
-<summary><strong>ScholarQA-CS2 Validation 結果與 Test 參考</strong></summary>
+<summary><strong>全文問答 — 75 題中答對 70 題</strong></summary>
 
-![AIPOCH Open-Science 在100題 ScholarQA-CS2 Validation 題集上取得0.9289的綜合得分；官方 Test 參考記錄使用不同題目，不構成直接比較排名](../images/readme/astabench-scholarqa-cs2.jpg)
+AIPOCH 執行了 AstaBench v0.5.4 中 LitQA2-FullText 的 75 題 Test 集。圖表依分數排列本機結果與歷史參考記錄，其中的「#1」指這組比較的排序。
 
-圖中將1筆本機 Validation 結果與41筆官方 Test 參考記錄分開呈現。報告正文另提及 `gpt-5.6-sol` 的一項 Validation 得分0.7905，但原始表格未列出該筆資料，也未說明題數。
+![AIPOCH Open-Science LitQA2 全文問答比較：本機準確率 93.33%](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+
+準確率衡量回答正確的比例。此處 93.33% 是本機問答準確率，90.67% 是歷史參考問答準確率，與上方檢索圖的指標不同。參考記錄擷取於 2026 年 10 月 28 日，最高參考分數於 11 月 2 日再次核對。
 
 </details>
-
-Recall@30 衡量目標論文是否出現在提交結果的前30篇中，不是科學問答正確率。ScholarQA-CS2 得分衡量回答的綜合品質，不是全部答對的問題所占比例。
-
-#### AstaBench LitQA2-FullText：科學文獻問答正確率 93.33%
-
-在 AIPOCH 對 AstaBench v0.5.4 的 LitQA2-FullText Test 劃分（75 題）進行的評測中，AIPOCH Open-Science 使用 `deepseek-flash`、Max 推理強度答對 70 題，正確率為 93.33%。該測試考察科學文獻問答：檢索並閱讀論文、辨別實驗條件、提取報告結果，再從選項中選擇答案。它與上文 LitQA2-FullText-Search 的檢索 Recall@30 屬於不同指標。
-
-截至 2026 年 11 月 2 日，[官方 LitQA2-FullText Test 排行榜](https://allenai-asta-bench-leaderboard.hf.space/literature-understanding)顯示的最高紀錄為 90.67%（68/75）。在這一數值對照中，AIPOCH Open-Science 的成績高出 2.67 個百分點。
 
 <details>
+<summary><strong>引用答案品質 — 本機驗證結果與官方測試參考</strong></summary>
 
-<summary><strong>AstaBench LitQA2-FullText 成績對照</strong></summary>
+本機 ScholarQA-CS2 結果衡量 100 道 Validation 題上的引用答案品質。參考成績來自 Test 集，因此這些分數不能構成直接對決排名。
 
-![AIPOCH Open-Science 在 AstaBench LitQA2-FullText 科學文獻問答測試中取得 93.33%，與 10 月 28 日官方紀錄對照](../images/readme/astabench-litqa2-fulltext-local-comparison.png)
+![AIPOCH Open-Science ScholarQA-CS2 比較：本機 Validation 綜合得分 0.9289，與官方 Test 參考結果分開呈現](../images/readme/astabench-scholarqa-cs2.jpg)
 
-圖中採用 10 月 28 日的官方紀錄快照；11 月 2 日再次核對了排行榜顯示的最高成績。
+綜合分數的範圍為 0–1，並非完全答對題目的百分比。
 
 </details>
 
-### 🏆 ASI-Bench B1–B4：報告所列四項對照均為最高展示分數
+### ASI-Bench — 執行計畫與選擇方法
 
-AIPOCH Open-Science 使用 **GPT-6（gpt-6-astra / xhigh）**，結合領域專家與技能，在 ASI-Bench B1、B2、B3、B4 四項測試中分別取得 **79.35、56.11、59.67和59.46分**，均為報告所列對照中的最高展示分數。四種評測條件依次考察**執行完整科研方案、組織研究流程、自主選擇方法，以及在干擾資訊下完成自主研究**，涵蓋從方法實作到自主科研執行的不同任務條件。
+四種條件分別要求代理執行指定計畫（B1）、組織工作流程（B2）、選擇研究方法（B3），以及在干擾資訊下進行研究（B4）。圖表前兩列比較使用相同 GPT-6 Astra 模型的本機測試。
 
-同模型、同名推理強度的本機 Codex 對照分別為74.78、56.09、58.12和55.45分，我方數值分別高 **4.57、0.02、1.55和4.01分**。B1、B2報告完成3次本機重複測試；B3、B4均為每輪60題、3次本機測試的平均值。
+![AIPOCH Open-Science ASI-Bench B1–B4 結果與本機 Codex 測試及已發表參考結果](../images/readme/asi-bench-b1-b4.jpg)
 
-![AIPOCH Open-Science 的 ASI-Bench B1–B4 成績分別為79.35、56.11、59.67和59.46分，圖中區分本機結果與公開參照](../images/readme/asi-bench-b1-b4.jpg)
+Open-Science 在 B1–B4 上分別獲得 **79.35、56.11、59.67 和 59.46**；本機 Codex 參考成績為 **74.78、56.09、58.12 和 55.45**。B2 得分幾乎相同。其他已發表測試在任務實例、設定或評判方式上存在差異。
 
-本機測試採用seed31415；B1有效計分59項，1項因報告所述評分器異常排除。B3/B4採用v0.32.0及替代裁判。公開參照的任務實例、設定和裁判條件不同；B2的0.02分僅為數值差異。
+本機 B1 因評分器問題排除一項任務後，計入 59 項任務。B1/B2 報告了三次本機重複測試。B3/B4 使用 Open-Science v0.32.0 和替代評審模型，各項得分為三次、每次 60 項任務的平均值。
 
-### 🏆 BiomniBench-DA Public 50：所彙總對照中的最高展示分數，79.05分
+### BiomniBench-DA — 生物醫學資料分析
 
-AIPOCH Open-Science 使用 **gpt-5.6-sol（xhigh）**，在標記為 BiomniBench-DA Public 50 的50項生物醫學資料分析任務內部評測中取得 **79.05分**，為所彙整對照中的最高展示分數。成績由 Gemini 3.1 Pro 裁判的 **81.04分**與 DeepSeek v4-pro 裁判的 **77.06分**等權平均得到，反映該設定在生物醫學資料分析過程中的綜合表現。詳見[評測報告](https://aipoch.com/blog/open-science-biomnibench-da)。
+在 Public 50 任務集上，Gemini 3.1 Pro 評審模型對輸出評分 **81.04**，DeepSeek v4-pro 評審模型評分 **77.06**。AIPOCH 報告了 gpt-5.6-sol（xhigh）設定的等權平均分 **79.05**。
 
-![AIPOCH Open-Science 的 BiomniBench-DA Public 50 內部評測取得79.05雙裁判平均分，兩位裁判分數分別為77.06與81.04](../images/readme/biomnibench-public50-leaderboard.png)
+<details>
+<summary><strong>評審分數與歷史參考 — 評審涵蓋範圍不同</strong></summary>
 
-該對照混合了不同裁判涵蓋範圍的記錄，不能視為統一裁判條件下的正式排名。
+圖表彙集了評審涵蓋範圍不同的記錄，其中的「#1」描述這組記錄的排序。要在統一評判流程下排名，需要對所有記錄採用可比較的評分方式。
 
-**評測說明：**以上為 AIPOCH Open-Science 於2026年8—11月自行報告的本機或內部評測結果，使用所註明的資料集及劃分，未針對目前發佈版本重新執行。在官方 Test 題集上進行本機測試，不代表已提交官方榜單或取得榜單名次。參考數值來自歷史報告快照，並非即時排名；Validation 與 Test 結果不能直接比較。任務實例、模型設定、裁判涵蓋範圍與成本核算方式的差異，限制了跨系統比較。數值持平或存在差距，不代表具有統計顯著性的提升。
+![AIPOCH Open-Science BiomniBench-DA Public 50 比較，呈現兩個評審模型的分數及平均值](../images/readme/biomnibench-public50-leaderboard.png)
+
+79.05 是這次內部評測的平均評審分數。
+
+</details>
+
+**評測範圍：** 報告涵蓋 2026 年 8 月至 11 月、使用所列模型與資料劃分進行的本機或內部測試，並未針對目前版本重新執行。參考成績是歷史快照，並非即時排名。不同基準系列的分數不能直接比較，數值差距不代表統計顯著性。
+
+評測詳情見 [AstaBench 與 ASI-Bench 報告](https://aipoch.com/benchmark/open-science)及 [BiomniBench-DA 報告](https://aipoch.com/blog/open-science-biomnibench-da)。
 
 ## 核心能力
 
@@ -308,13 +291,17 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 | **科學檔案與預覽**             | 單一上傳檔案最大 **10 GiB**，支援專案檔案管理及科學資料、PDF、Office 文件、圖片、程式碼和分子結構預覽。這是上傳大小限制，不代表模型可讀取全部內容；模型上下文、附件解析和預覽各有限制。大型檔案通常需要透過程式碼分塊讀取或分析。                                                                                                                                                                                                                                                                                                                                                |
 | **產物與溯源**                 | 保留不可變的產物版本及可用的產生程式碼、輸入、執行歷史、環境資訊與審閱證據。可從已授權資料夾匯入產物；AIPOCH Open-Science 會將每個匯入檔案複製到受管理的產物儲存空間。在桌面端，可使用完整執行配方、必要輸入及可用執行環境重播符合條件的版本，比較輸出並匯出驗證記錄。證據缺失可能阻止驗證，重播檢查不證明科學結論有效。                                                                                                                                                                                                                                                         |
 
+使用座標查詢 eQTL Catalogue 時，請輸入 GRCh38 參考基因組座標。連接器會檢查使用的參考基因組。
+
 可從同一部電腦上執行的 Zotero 10 或更新版本匯入文獻記錄、標籤、合集和來源連結，也可選擇複製本機 PDF 附件。匯入僅為單向，不會修改 Zotero。
 
-透過 DOI、DOI 連結或 arXiv 摘要頁／PDF 連結逐筆新增文獻，核對並編輯取得的中繼資料後儲存；全文 PDF 可另行新增。
+可透過 DOI、arXiv ID、PMID、PMCID 或支援的文章連結新增文獻，也可一次貼上最多 100 筆，每行一筆。單篇文獻可核對並編輯中繼資料後儲存；批次匯入可選取要匯入的文獻。全文 PDF 可另行新增。
 
 支援持久化 PDF 註記與文件筆記。設定篩選模型後，智慧合集可依納入／排除標準評估文獻；AI 判斷與人工判斷分開記錄，用於輔助人工審閱。
 
 在閱讀模式下，智能體可列出、定位並建立關聯 PDF 的筆記與標記。PDF 註記綁定至被註記的檔案版本，不會跨電腦同步。
+
+文獻詳細檢視中的 AI 研究快照會使用已設定的主要模型，歸納研究問題、研究族群、方法、主要發現與限制，並標明依據的是全文或摘要。
 
 下載選用的 OCR 元件及所需語言套件後，即可辨識掃描 PDF 頁面中的文字。共有九種語言套件：英語、簡體中文、繁體中文、德語、西班牙語、法語、日語、韓語和俄語。逐頁涵蓋狀態會標示哪些頁面仍缺少文字。
 
@@ -322,7 +309,7 @@ AIPOCH Open-Science 在一個本機工作區中整合專案管理、多模型智
 
 桌面端也可將產物溯源匯出為 RO-Crate 1.1。與版本綁定的環境包只有在擷取內容完整且相容於目標平台時，才能用於建立受管理環境；這不等於完整電腦備份。
 
-從首頁或對話工作區進入 Sharing 研究案例市集，依類別篩選、依關鍵字搜尋，並從案例詳情下載套件。在市集與專案之間切換時，篩選條件和捲動位置會保留。
+從首頁或對話工作區進入 Sharing 研究案例市集，依類別篩選、依關鍵字搜尋，並從案例詳情下載套件。
 
 ## 模型服務商
 
@@ -415,19 +402,37 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 ## 常見問題
 
-### 為什麼模型連線測試失敗？
+<a id="為什麼模型連線測試失敗"></a>
+
+<details>
+<summary>為什麼模型連線測試失敗？</summary>
 
 答：檢查 API Key 是否遺漏字元或含空格，驗證 Base URL 與地區，使用服務商確切的模型 ID，並確認網路存取和帳戶餘額。對於 Claude 訂閱，請依所選模式重新嘗試共用瀏覽器登入，或重新整理隔離的 `claude setup-token` 憑證。
 
-### 為什麼設定期間無法使用 `Continue`？
+</details>
+
+<a id="為什麼設定期間無法使用-continue"></a>
+
+<details>
+<summary>為什麼設定期間無法使用 <code>Continue</code>？</summary>
 
 答：目前步驟尚未符合必要條件。請依作用中步驟，修正標示為 `Action needed` 的環境列，安裝或修復所選智能體執行環境，或驗證模型服務商。Notebook 設定為選用，僅影響 Notebook 執行。
 
-### 如何在遠端 HPC 叢集執行工作？
+</details>
+
+<a id="如何在遠端-hpc-叢集執行工作"></a>
+
+<details>
+<summary>如何在遠端 HPC 叢集執行工作？</summary>
 
 答：**Remote Compute (SSH)** 一律保持啟用，無須在 Settings 中手動啟用。先在 **Settings → Compute** 中註冊 SSH 運算主機並讓目前會話可用，然後透過自然語言或 `/remote-compute-ssh` 使用遠端運算。你需要可連線的 SSH 主機、有效驗證、所需目錄的存取權，以及工作所需的軟體、相依項目和運算資源。Direct SSH 不要求排程器；Slurm 模式需要可用的 Slurm 環境及工作提交權限。「一律保持啟用」僅指此 Skill，不代表所有已註冊主機隨時可用。
 
-### 是否提供命令列介面？
+</details>
+
+<a id="是否提供命令列介面"></a>
+
+<details>
+<summary>是否提供命令列介面？</summary>
 
 答：支援。安裝獨立 CLI，或使用 **設定 → 一般 → 命令列工具 → 安裝命令** 控制已在執行的桌面實例。透過 npm 安裝需要 Node.js；Homebrew 與內附執行階段的獨立發行套件已包含 Node.js。初始化本機設定後，即可在不開啟瀏覽器的情況下控制服務並提交科研任務：
 
@@ -451,13 +456,25 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 完整指令參考、JSON/JSONL 輸出格式、結束代碼及無介面服務選項請參閱 [CLI 指南](../../packages/open-science/CLI.md)。
 
-### 如何檢視生成結果的來源？
+</details>
+
+<a id="如何檢視生成結果的來源"></a>
+
+<details>
+<summary>如何檢視生成結果的來源？</summary>
 
 答：開啟生成產物並選取 **Provenance**。選取版本以檢視內容識別，以及可用的生成程式碼、執行歷史、輸入、環境清單、生成對話上下文及審查證據。AIPOCH Open-Science 無法驗證的證據會標示為無法使用。
 
-### 能否修改較早的請求而不失去後續對話？
+</details>
+
+<a id="能否修改較早的請求而不失去後續對話"></a>
+
+<details>
+<summary>能否修改較早的請求而不失去後續對話？</summary>
 
 答：可以。編輯已完成的使用者訊息並重新傳送，從該位置新增分支。原有後續輪次仍可使用，訊息旁的修訂箭頭可在不同路徑間切換。
+
+</details>
 
 ## 貢獻者
 
@@ -469,7 +486,7 @@ open-science artifacts download <artifact-id> --output ./report.md
 
 ## 參與專案
 
-AIPOCH Open-Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回報、功能提案、設計討論、社群問題與專案貢獻。請選擇最符合目標的管道，並在公開分享專案詳情前查看相關貢獻指南與公開發佈安全提醒。
+透過回報問題、建議功能、提問或貢獻內容，一起改進 AIPOCH Open-Science。選擇下方適合的管道開始參與。
 
 | 管道                                                                     | 用途                                 |
 | ------------------------------------------------------------------------ | ------------------------------------ |
@@ -481,7 +498,7 @@ AIPOCH Open-Science 透過 GitHub、Discord、X 與 AIPOCH 網站接收錯誤回
 
 提交公開問題前，請從記錄檔與螢幕擷取畫面移除 API Key、存取權杖、私人檔案路徑、未公開資料、病患識別資訊及其他敏感內容。開發工作流程請參閱[貢獻指南](../../CONTRIBUTING.md)。
 
-> ⭐ **Star 程式碼庫：** 如果本專案對你有幫助，歡迎在 GitHub 上 Star。Star 程式碼庫能鼓勵專案持續開發，只需片刻，卻會帶來實質影響。
+> 如果 AIPOCH Open-Science 對你有幫助，歡迎在 GitHub 上為程式碼庫 Star。
 
 已交付、部分實作及規劃能力請參閱[能力地圖](../ROADMAP.md#capability-map)。
 

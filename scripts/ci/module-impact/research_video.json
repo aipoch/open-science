@@ -1,0 +1,82 @@
+{
+  "ownerPaths": [
+    "src/main/research-video/export-control.test.ts",
+    "src/main/research-video/export-control.ts",
+    "src/main/research-video/export-electron.ts",
+    "src/main/research-video/mcp-contract.test.ts",
+    "src/renderer/src/components/local-narration-control.test.tsx",
+    "src/renderer/src/components/local-narration-control.tsx",
+    "src/main/research-video/runtime.test.ts",
+    "src/shared/research-video-progress.ts",
+    "src/renderer/src/components/research-video-progress.tsx",
+    "src/main/research-video/presentation.ts",
+    "src/main/research-video/presentation.test.ts",
+    "src/main/research-video/session-source.ts",
+    "src/shared/research-video-presentation.ts",
+    "src/shared/research-video-presentation.test.ts",
+    "src/renderer/src/components/research-video-button.tsx",
+    "src/renderer/src/components/research-video-button.test.tsx",
+    "src/main/research-video/session-images.ts",
+    "src/main/research-video/session-images.test.ts",
+    "src/renderer/src/components/research-video-menu.tsx",
+    "src/main/research-video/lifecycle.ts",
+    "src/main/research-video/lifecycle.test.ts",
+    "src/main/research-video/stored-presentation.ts",
+    "src/main/research-video/input-context.ts",
+    "src/main/research-video/input-context.test.ts"
+  ],
+  "interfacePaths": [
+    "src/main/research-video/export-control.ts",
+    "src/main/research-video/export-electron.ts",
+    "src/renderer/src/components/local-narration-control.tsx",
+    "src/main/research-video/presentation.ts",
+    "src/shared/research-video-presentation.ts",
+    "src/main/research-video/lifecycle.ts",
+    "src/main/research-video/stored-presentation.ts",
+    "src/main/research-video/input-context.ts"
+  ],
+  "consumerModules": [
+    "desktop_composition",
+    "host_runtime_ports",
+    "host_rpc_transport",
+    "settings_model_presentation",
+    "workspace_previews",
+    "session_replay"
+  ],
+  "testFiles": {
+    "owner": [
+      "src/main/research-video/export-control.test.ts",
+      "src/renderer/src/components/local-narration-control.test.tsx",
+      "src/shared/research-video-presentation.test.ts",
+      "src/main/research-video/runtime.test.ts",
+      "src/main/research-video/presentation.test.ts",
+      "src/renderer/src/components/research-video-button.test.tsx",
+      "src/main/research-video/session-images.test.ts",
+      "src/main/research-video/lifecycle.test.ts",
+      "src/main/research-video/input-context.test.ts"
+    ],
+    "contract": [
+      "src/main/notebook/local-rpc-server.test.ts",
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/research-video/mcp-contract.test.ts"
+    ],
+    "consumer": [
+      "src/main/application-command-composition.test.ts",
+      "src/main/data-content-application-commands.test.ts",
+      "src/main/artifacts/mcp-server.test.ts",
+      "src/main/settings/codex-bridge-tools.test.ts",
+      "src/main/acp/artifact-turn-owner.test.ts",
+      "src/renderer/src/pages/settings/ModelPanel.render.test.tsx",
+      "src/renderer/src/pages/workspace/previews/PreviewFileContent.test.tsx",
+      "src/main/storage/data-migration.test.ts",
+      "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
+      "src/renderer/src/pages/workspace/SessionHeaderMenu.test.tsx",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx",
+      "src/main/acp/restricted-inference-runner.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/session-persistence/coordinator.test.ts"
+    ]
+  },
+  "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
+  "fallbackCapability": "main_runtime"
+}

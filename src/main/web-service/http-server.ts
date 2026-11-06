@@ -487,6 +487,12 @@ const json = (
   value: unknown,
   maxBytes = Number.POSITIVE_INFINITY
 ): void => {
+  // Cleanup can fail after a streamed response. Never replace bytes already sent to the client.
+  if (response.writableEnded || response.destroyed) return
+  if (response.headersSent) {
+    response.destroy()
+    return
+  }
   const content = stringifyRpcJson(value)
   const contentBytes = Buffer.byteLength(content)
   if (contentBytes > maxBytes) throw new WebRpcResponseBudgetExceededError()

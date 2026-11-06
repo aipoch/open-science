@@ -572,6 +572,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const riskId = useId()
   const {
     operation: sourceOperation,
+    useCaseSlug,
     browserReceipt,
     open,
     receive,
@@ -579,6 +580,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
     dismiss: dismissLocal
   } = usePackageOperationStore()
   const awayFromHome = useNavigationStore((state) => state.view !== 'home')
+  const currentProjectId = useNavigationStore((state) => state.activeProjectId)
   const operation = packageOperationPresentation(
     sourceOperation,
     browserReceipt,
@@ -1136,6 +1138,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 <PackageImportSelection
                   key={`${operation.id}:${operation.progress.phase}`}
                   operation={operation}
+                  currentProjectId={useCaseSlug && awayFromHome ? currentProjectId : undefined}
                   notice={notices}
                   error={error}
                   onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
@@ -1166,12 +1169,13 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                     </>
                   }
                   onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                  onSelect={(excludedStorageKeys, includePdfNotes) =>
+                  onSelect={(excludedStorageKeys, includePdfNotes, includeResearchFilms) =>
                     void respond({
                       action: 'select',
                       operationId: operation.id,
                       excludedStorageKeys,
-                      includePdfNotes
+                      includePdfNotes,
+                      ...(includeResearchFilms ? { includeResearchFilms: true } : {})
                     })
                   }
                 >

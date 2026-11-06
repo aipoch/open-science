@@ -711,49 +711,59 @@ describe('ProviderRuntimeProjectionOwner', () => {
     expect(owner.toProviderView(provider).supportsImageInput).toBe(false)
   })
 
-  it('projects regional Tencent Hy4 across every supported framework', () => {
-    const owner = new ProviderRuntimeProjectionOwner()
-    const provider: StoredProvider = {
-      id: 'tencent-tokenhub',
-      type: 'official',
-      vendorId: 'tencent',
-      region: 'international',
-      name: 'Tencent TokenHub'
-    }
+  it.each([
+    ['hy4', true],
+    ['glm-5.3-flash', true],
+    ['deepseek/deepseek-flash', true],
+    ['deepseek-v4.1-flash', true],
+    ['minimax-m3', true],
+    ['hy4-preview', false]
+  ] as const)(
+    'projects regional Tencent %s across every supported framework',
+    (model, supportsImageInput) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: 'tencent-tokenhub',
+        type: 'official',
+        vendorId: 'tencent',
+        region: 'international',
+        name: 'Tencent TokenHub'
+      }
 
-    for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+      for (const frameworkId of ['claude-code', 'opencode', 'codex', 'codebuddy'] as const) {
+        expect(
+          owner.resolveRuntimeTarget(
+            provider,
+            { kind: 'required', model },
+            getAgentFramework(frameworkId)
+          )
+        ).toMatchObject({
+          effectiveModel: model,
+          apiEndpoints: ['messages', 'chat-completions', 'responses'],
+          frameworkCompatible: true,
+          provider: {
+            vendorId: 'tencent',
+            baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
+            chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
+            model,
+            contextWindow: 1_000_000,
+            supportsImageInput
+          }
+        })
+      }
+
       expect(
         owner.resolveRuntimeTarget(
           provider,
-          { kind: 'required', model: 'hy4-preview' },
-          getAgentFramework(frameworkId)
+          { kind: 'required', model },
+          getAgentFramework('codex')
         )
       ).toMatchObject({
-        effectiveModel: 'hy4-preview',
-        apiEndpoints: ['messages', 'chat-completions', 'responses'],
-        frameworkCompatible: true,
-        provider: {
-          vendorId: 'tencent',
-          baseUrl: 'https://tokenhub-intl.tencentcloudmaas.com',
-          chatCompletionsBaseUrl: 'https://tokenhub-intl.tencentcloudmaas.com/v1',
-          model: 'hy4-preview',
-          contextWindow: 1_000_000,
-          supportsImageInput: false
-        }
+        needsChatResponsesToChatCompletionsBridge: false,
+        needsNativeResponsesCompatibility: true
       })
     }
-
-    expect(
-      owner.resolveRuntimeTarget(
-        provider,
-        { kind: 'required', model: 'hy4-preview' },
-        getAgentFramework('codex')
-      )
-    ).toMatchObject({
-      needsChatResponsesToChatCompletionsBridge: false,
-      needsNativeResponsesCompatibility: true
-    })
-  })
+  )
 
   it.each([
     {

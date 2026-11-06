@@ -13,6 +13,8 @@ describe('SettingsPage loading boundaries', () => {
     for (const panel of [
       'AgentPanel',
       'GeneralPanel',
+      'AppearancePanel',
+      'NotificationsPanel',
       'NetworkPanel',
       'StoragePanel',
       'RuntimesPanel',

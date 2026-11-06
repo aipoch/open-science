@@ -25,6 +25,7 @@ import {
   type ChatSession
 } from '@/stores/session-store'
 import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import {
   reportWorkspaceOperationError,
   useWorkspaceOperationErrors
@@ -44,6 +45,10 @@ let conversationProps: Parameters<(typeof import('./ConversationPanel'))['Conver
 
 const runtime = vi.hoisted(() => ({
   actionError: null as string | null,
+  sessionCleanups: {} as ReturnType<
+    (typeof import('@/lib/acp/useWorkspaceAgentRuntime'))['useWorkspaceAgentRuntime']
+  >['sessionCleanups'],
+  retrySessionCleanup: vi.fn().mockResolvedValue(undefined),
   promptInFlightSessionIds: [] as string[],
   sendPreparationInFlightSessionIds: [] as string[],
   nativeContextCompactionSessionIds: ['sess-a'] as string[],
@@ -69,6 +74,8 @@ vi.mock('@/components/ui/resizable', () => ({
 
 vi.mock('@/lib/acp/useWorkspaceAgentRuntime', () => ({
   useWorkspaceAgentRuntime: () => ({
+    sessionCleanups: runtime.sessionCleanups,
+    retrySessionCleanup: runtime.retrySessionCleanup,
     actionError: runtime.actionError,
     pendingPermissions: [],
     promptInFlightSessionIds: runtime.promptInFlightSessionIds,
@@ -213,6 +220,7 @@ describe('WorkspacePage send gate while compacting', () => {
     })
     vi.clearAllMocks()
     runtime.actionError = null
+    runtime.sessionCleanups = {}
     useWorkspaceOperationErrors.setState({
       errors: {},
       providerValidations: {},
@@ -268,7 +276,9 @@ describe('WorkspacePage send gate while compacting', () => {
   })
 
   const renderPage = async (
-    persistenceBlockedSessionIds: readonly string[] = []
+    persistenceBlockedSessionIds: readonly string[] = [],
+    persistenceWriteIssues: readonly SessionWriteIssue[] = [],
+    onReviewPersistence?: () => void
   ): Promise<void> => {
     root = createRoot(container)
     await act(async () => {
@@ -277,11 +287,71 @@ describe('WorkspacePage send gate while compacting', () => {
           isSessionPersistenceHydrated={true}
           isSessionPersistenceReady={true}
           persistenceBlockedSessionIds={persistenceBlockedSessionIds}
+          persistenceWriteIssues={persistenceWriteIssues}
+          onReviewPersistence={onReviewPersistence}
           canDeleteConversations={true}
         />
       )
     })
   }
+
+  it('keeps cleanup recovery available without a Session row and scopes it to the Project', async () => {
+    useSessionStore.setState({ sessions: [], selectedSessionId: undefined })
+    const cleanup = {
+      projectId: 'proj-1',
+      sessionId: 'late-real-session',
+      result: { status: 'failed', reason: 'runtime', runtimeDetached: false } as const,
+      retrying: false
+    }
+    runtime.sessionCleanups = {
+      current: cleanup,
+      other: { ...cleanup, projectId: 'proj-2', sessionId: 'other-project-cleanup' }
+    }
+    await renderPage()
+    expect(container.textContent).toContain('Session cleanup needs attention')
+    expect(container.textContent).toContain('late-real-session')
+    expect(container.textContent).not.toContain('other-project-cleanup')
+    const retryButton = (): HTMLButtonElement =>
+      Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent === 'Retry cleanup'
+      )!
+    await act(async () => retryButton().click())
+    expect(runtime.retrySessionCleanup).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'proj-1',
+      sessionId: 'late-real-session'
+    })
+    const present = async (ready = true): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspacePage
+            isSessionPersistenceHydrated={true}
+            isSessionPersistenceReady={ready}
+            canDeleteConversations={ready}
+          />
+        )
+      })
+    }
+    runtime.sessionCleanups = { current: { ...cleanup, retrying: true } }
+    await present()
+    expect(retryButton().disabled).toBe(true)
+    expect(retryButton().getAttribute('aria-busy')).toBe('true')
+    runtime.sessionCleanups = {
+      current: {
+        ...cleanup,
+        result: { status: 'deleted', runtimeDetached: true, cleanupPending: true }
+      }
+    }
+    await present(false)
+    expect(container.textContent).toContain(
+      'The Session was deleted, but some cleanup could not be completed.'
+    )
+    expect(retryButton().disabled).toBe(true)
+    await present()
+    expect(retryButton().disabled).toBe(false)
+    runtime.sessionCleanups = {}
+    await present()
+    expect(container.textContent).not.toContain('Session cleanup needs attention')
+  })
 
   it('binds header pin actions to the existing Session owner and disables mutations before persistence is ready', async () => {
     const togglePinned = vi
@@ -587,6 +657,31 @@ describe('WorkspacePage send gate while compacting', () => {
     await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep working')))
     expect(conversationProps.view.persistenceBlocked).toBe(false)
     expect(conversationProps.conversation.availability.submit).toBe(true)
+  })
+
+  it('projects the active conversation write issue and its recovery action while send stays blocked', async () => {
+    runtime.nativeContextCompactionSessionIds = []
+    const issue: SessionWriteIssue = {
+      target: 'session:sess-a',
+      sessionId: 'sess-a',
+      projectId: 'proj-1',
+      kind: 'connection',
+      state: 'failed',
+      canDiscard: true,
+      reviewRequired: true
+    }
+    const review = vi.fn()
+    await renderPage(
+      ['sess-a'],
+      [{ ...issue, target: 'session:other', sessionId: 'other', kind: 'size-limit' }, issue],
+      review
+    )
+    expect(conversationProps.view.persistenceIssue).toBe(issue)
+    expect(conversationProps.view.persistenceBlocked).toBe(true)
+    await act(async () => conversationProps.composer.actions.changeDoc(textDoc('Keep my draft')))
+    expect(conversationProps.conversation.availability.submit).toBe(false)
+    conversationProps.sessionTools.reviewPersistence?.()
+    expect(review).toHaveBeenCalledOnce()
   })
 
   it('defaults Memory off and explains the global gate when Memory is off in Settings', async () => {
@@ -1467,7 +1562,12 @@ describe('WorkspacePage send gate while compacting', () => {
   it('allows repair and sending after initial connection failure without clearing the error', async () => {
     useSessionStore.setState({
       sessions: [
-        createSession({ status: 'error', isPending: true, error: 'Agent startup failed' })
+        createSession({
+          status: 'error',
+          isPending: true,
+          pendingRetryable: true,
+          error: 'Agent startup failed'
+        })
       ],
       selectedSessionId: 'sess-a'
     })

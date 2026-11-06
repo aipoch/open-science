@@ -1,3 +1,6 @@
+export const ACP_IDLE_RELEASE_DELAY_MS = 60_000
+const MAX_IDLE_CONNECTIONS = 2
+
 export type AcpConnectionTransitionBlockers = Readonly<{
   reconnect: boolean
   retirement: boolean
@@ -7,6 +10,7 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
   blockers: () => AcpConnectionTransitionBlockers
   connectionGeneration: () => number
   disconnect: (emitClosedStatus: boolean) => Promise<unknown>
+  cleanupConfirmed: () => boolean
   onRetired: () => void
   publishIdle: () => void
   recoverFailedDeferredDisconnect: (
@@ -20,11 +24,15 @@ type AcpConnectionTransitionOwnerOptions = Readonly<{
 // startup. Prompt/Reviewer/startup/activity leases remain with Runtime and are observed as one narrow
 // blocker snapshot; physical resources remain exclusively owned by AcpConnectionResourceOwner.
 export class AcpConnectionTransitionOwner {
+  // Process-wide reuse budget; active and cleanup-owned resources are never cache entries.
+  private static readonly idleConnections = new Map<AcpConnectionTransitionOwner, () => void>()
   private providerIntent = false
   private skillsIntent = false
   private idleReleaseIntent = false
+  private idleReleaseTimer: ReturnType<typeof setTimeout> | undefined
   private retirementIntent = false
-  private retirementStarted = false
+  private retirementCompleted = false
+  private retirementInFlight: Promise<void> | undefined
   private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
@@ -41,6 +49,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestProviderReconnect(): Promise<void> {
+    this.cancelIdleReleaseTimer()
     if (this.plannedDisconnect) return this.plannedDisconnect
     if (this.options.blockers().reconnect) {
       this.providerIntent = true
@@ -53,6 +62,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   requestSkillsReload(): void {
+    this.cancelIdleReleaseTimer()
     this.skillsIntent = true
     this.activityChanged()
   }
@@ -63,7 +73,9 @@ export class AcpConnectionTransitionOwner {
   }
 
   async requestRetirement(): Promise<void> {
-    if (this.retirementStarted) return
+    if (this.retirementCompleted) return
+    if (this.retirementInFlight) return this.retirementInFlight
+    this.cancelIdleReleaseTimer()
     this.retirementIntent = true
     if (this.options.blockers().retirement) return
     await this.startRetirement()
@@ -77,9 +89,35 @@ export class AcpConnectionTransitionOwner {
     }
 
     if (this.plannedDisconnect) return
-    if (this.options.blockers().reconnect) return
+    if (this.options.blockers().reconnect) {
+      this.cancelIdleReleaseTimer()
+      return
+    }
     if (!this.providerIntent && !this.skillsIntent) {
-      if (!this.idleReleaseIntent || this.options.blockers().retirement) return
+      if (!this.idleReleaseIntent || this.options.blockers().retirement) {
+        this.cancelIdleReleaseTimer()
+        return
+      }
+      if (!this.idleReleaseTimer) {
+        const generation = this.options.connectionGeneration()
+        const releaseIdleConnection = (): void => {
+          this.cancelIdleReleaseTimer()
+          if (generation !== this.options.connectionGeneration()) {
+            this.idleReleaseIntent = false
+            return
+          }
+          if (this.options.blockers().retirement || this.options.blockers().reconnect) return
+          this.idleReleaseIntent = false
+          void this.disconnectDeferred()
+        }
+        this.idleReleaseTimer = setTimeout(releaseIdleConnection, ACP_IDLE_RELEASE_DELAY_MS)
+        this.idleReleaseTimer.unref?.()
+        AcpConnectionTransitionOwner.idleConnections.set(this, releaseIdleConnection)
+        while (AcpConnectionTransitionOwner.idleConnections.size > MAX_IDLE_CONNECTIONS) {
+          AcpConnectionTransitionOwner.idleConnections.values().next().value!()
+        }
+      }
+      return
     }
 
     this.providerIntent = false
@@ -89,6 +127,7 @@ export class AcpConnectionTransitionOwner {
   }
 
   async settleTeardown<T>(teardown: () => Promise<T>): Promise<T> {
+    this.cancelIdleReleaseTimer()
     const expectedBarrierGeneration = this.barrierGeneration
     try {
       return await teardown()
@@ -140,25 +179,42 @@ export class AcpConnectionTransitionOwner {
     if (teardownGeneration === this.options.connectionGeneration()) this.options.publishIdle()
   }
 
-  private async startRetirement(): Promise<void> {
-    if (this.retirementStarted) return
-    this.retirementStarted = true
-    this.retirementIntent = false
+  private startRetirement(): Promise<void> {
+    if (this.retirementInFlight) return this.retirementInFlight
+    if (this.retirementCompleted) return Promise.resolve()
+    const completion = Promise.withResolvers<void>()
+    this.retirementInFlight = completion.promise
+    const clear = (): void => {
+      this.retirementInFlight = undefined
+    }
+    void completion.promise.then(clear, clear)
+    void this.performRetirement().then(completion.resolve, completion.reject)
+    return completion.promise
+  }
+
+  private async performRetirement(): Promise<void> {
     this.providerIntent = false
     this.skillsIntent = false
     this.idleReleaseIntent = false
 
     try {
       await (this.plannedDisconnect ?? this.options.disconnect(false))
+      // Ordinary disconnect also resolves when a process cannot be reaped. Retirement must keep
+      // ownership in that case, including when it joined an already planned disconnect.
+      if (!this.options.cleanupConfirmed()) throw new Error('ACP runtime cleanup is not confirmed.')
+      this.retirementCompleted = true
+      this.retirementIntent = false
     } catch (error) {
       this.reportFailure('retired runtime disconnect failed', error)
+      // Retry only on a later request or activity notification, never recursively from settlement.
     } finally {
       this.completeReconnect()
-      try {
-        this.options.onRetired()
-      } catch (error) {
-        this.reportFailure('retired runtime callback failed', error)
-      }
+    }
+    if (!this.retirementCompleted) return
+    try {
+      this.options.onRetired()
+    } catch (error) {
+      this.reportFailure('retired runtime callback failed', error)
     }
   }
 
@@ -177,6 +233,7 @@ export class AcpConnectionTransitionOwner {
     ) {
       return
     }
+    this.cancelIdleReleaseTimer()
     this.providerIntent = false
     this.skillsIntent = false
     const resolve = this.resolveBarrier
@@ -184,6 +241,12 @@ export class AcpConnectionTransitionOwner {
     this.barrierPromise = undefined
     this.resolveBarrier = undefined
     resolve?.()
+  }
+
+  private cancelIdleReleaseTimer(): void {
+    AcpConnectionTransitionOwner.idleConnections.delete(this)
+    if (this.idleReleaseTimer) clearTimeout(this.idleReleaseTimer)
+    this.idleReleaseTimer = undefined
   }
 
   private reportFailure(message: string, error: unknown): void {

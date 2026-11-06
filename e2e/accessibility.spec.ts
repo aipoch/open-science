@@ -156,7 +156,7 @@ test('reports accessibility violations in core dialog and workspace surfaces', a
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
   await scanAccessibility(page, 'Workspace')
 
-  const settings = await openSettingsPage(page, 'General')
+  const settings = await openSettingsPage(page, 'Appearance')
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   await scanAccessibility(page, 'Settings')
 })

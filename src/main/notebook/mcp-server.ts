@@ -1227,10 +1227,16 @@ const registerNotebookRpcTool = (
         )
         const rejected =
           definition.method === 'memoryRemember' && asRecord(raw)?.status === 'rejected'
+        const exitCode = asRecord(raw)?.exitCode
+        const shellFailed =
+          rpcMethod === 'executeShell' &&
+          asRecord(input)?.background !== true &&
+          typeof exitCode === 'number' &&
+          exitCode !== 0
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
-          ...(rejected ? { isError: true } : {})
+          ...(rejected || shellFailed ? { isError: true } : {})
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat)

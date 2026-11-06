@@ -12,6 +12,7 @@ export type MainSessionConflictRebaseField =
   SessionConflictRebaseField | 'specialistId' | 'specialistBindingPending'
 
 export type MainSaveSessionOptions = {
+  expectedRevision?: number
   conflictRebaseFields?: MainSessionConflictRebaseField[]
   conversationCommands?: import('../../shared/session-conversation-command').SessionConversationCommand[]
 }

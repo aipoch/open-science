@@ -115,7 +115,11 @@
     "packages/pdf-structure/resources/literature-pdf-native-stacked-uncertainty.mjs",
     "packages/pdf-structure/resources/literature-pdf-native-table-ambiguity.mjs",
     "packages/pdf-structure/resources/literature-pdf-native-table-boundary-ink.mjs",
+    "packages/pdf-structure/resources/literature-pdf-native-table-bottom-strip.mjs",
     "packages/pdf-structure/resources/literature-pdf-native-table-candidates.mjs",
+    "packages/pdf-structure/resources/literature-pdf-native-table-caption-strip.mjs",
+    "packages/pdf-structure/resources/literature-pdf-native-table-crop-witness.mjs",
+    "packages/pdf-structure/resources/literature-pdf-native-table-font-role.mjs",
     "packages/pdf-structure/resources/literature-pdf-native-table-panel-crop.mjs",
     "packages/pdf-structure/resources/literature-pdf-native-text-record-grid.mjs",
     "packages/pdf-structure/resources/literature-pdf-note-blocks.mjs",
@@ -1947,7 +1951,11 @@
     "packages/pdf-structure/resources/literature-pdf-native-compositing-profile.mjs",
     "packages/pdf-structure/resources/literature-pdf-figure-native-compositing-scope.mjs",
     "packages/pdf-structure/test/native-compositing-scope.test.ts",
-    "packages/pdf-structure/test/fixtures/native-compositing-scope.mjs"
+    "packages/pdf-structure/test/fixtures/native-compositing-scope.mjs",
+    "packages/pdf-structure/resources/literature-pdf-scanned-page.mjs",
+    "packages/pdf-structure/resources/literature-pdf-scan-ocr.mjs",
+    "packages/pdf-structure/test/scanned-page.test.ts",
+    "packages/pdf-structure/test/scan-ocr.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2558,7 +2566,9 @@
       "packages/pdf-structure/test/native-running-folio-conflict.test.ts",
       "packages/pdf-structure/test/native-missing-group-header.test.ts",
       "packages/pdf-structure/test/figure-isolated-raster-scope.test.ts",
-      "packages/pdf-structure/test/native-compositing-scope.test.ts"
+      "packages/pdf-structure/test/native-compositing-scope.test.ts",
+      "packages/pdf-structure/test/scanned-page.test.ts",
+      "packages/pdf-structure/test/scan-ocr.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [

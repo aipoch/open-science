@@ -551,6 +551,10 @@ class AcpRuntime {
     return this.connectionResources.connection
   }
 
+  get cleanupConfirmed(): boolean {
+    return this.connectionResources.cleanupConfirmed
+  }
+
   private get reconnectBarrier(): Promise<void> | undefined {
     return this.connectionTransitions.barrier
   }
@@ -1302,8 +1306,8 @@ class AcpRuntime {
     await this.connectionClose.requestRetirement()
   }
 
-  // Release physical resources after completed work, retaining events for subscribers and using
-  // the ordinary Session resume path on the next turn. Active workflows defer this transition.
+  // Retain a bounded idle connection briefly; expiry releases physical resources.
+  // Active workflows defer release; subsequent cold turns use ordinary Session resume.
   requestIdleRelease(): void {
     if (this.snapshotOwner.status === 'connected') this.connectionTransitions.requestIdleRelease()
   }
@@ -1321,7 +1325,13 @@ class AcpRuntime {
     _options: AcpRuntimeActivityOptions,
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
-    return this.generationActivity.withActivity(() => work(this))
+    return this.generationActivity.withActivity(async () => {
+      try {
+        return await work(this)
+      } finally {
+        this.requestIdleRelease()
+      }
+    })
   }
 
   // Coordinator admission precedes Runtime prompt startup. Protect that gap from idle release
@@ -1387,24 +1397,11 @@ class AcpRuntime {
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
       reportCleanupFailure: (stage, error, framework, epoch) => {
-        if (stage === 'bridge-lease') {
-          safeLogError('responses bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'anthropic-bridge-lease') {
-          safeLogError('Anthropic bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'provider-transport-lease') {
-          safeLogError('provider transport lease release failed', errorLogFields(error))
-          return
-        }
         safeLogError(`unattached ACP ${stage} cleanup failed`, {
           ...diagnosticErrorFields(error),
           ...this.diagnosticContext(framework, epoch)
         })
-      },
-      reportProcessTreeError: (message, error) => log.error(message, error)
+      }
     }
 
     return this.connectionAdapter.open(
@@ -1437,6 +1434,8 @@ class AcpRuntime {
         prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
         isCurrent: () => identity.epoch === this.connectionGeneration,
         isShuttingDown: () => this.connectionResources.isShuttingDown,
+        cleanupUnattached: (resource, onFailure) =>
+          this.connectionResources.cleanupUnattached(resource, onFailure),
         ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {}),
         ...(this.options.spawnProcess ? { spawnProcess: this.options.spawnProcess } : {}),
         ...(this.options.registerOpenCodeStoreRelease
@@ -1491,6 +1490,7 @@ class AcpRuntime {
         ? {
             codebuddy: {
               root: codeBuddySkillRuntimeRoot(this.backendGeneration.current.session.options),
+              shellRuntime: this.sessionCapabilities.shellRuntimeBindingFor(request.sessionId),
               selectorAvailable: this.connectionResources.bridgeSkillsAvailable,
               selectSkills: async (text, catalog, signal, observeUsage) =>
                 (await this.connectionResources.selectBridgeSkills(
@@ -2118,11 +2118,9 @@ class AcpRuntime {
         answers: response.answers,
         retryContinuation: response.retryContinuation,
         continuePrepared: !response.prepareContinuation && continuePrepared,
-        recovery: {
-          error:
-            response.continuationFailure?.slice(0, 4_000) ??
-            'The task could not continue. Your response is saved.'
-        }
+        ...(response.continuationFailure !== undefined
+          ? { recovery: { error: response.continuationFailure.slice(0, 4_000) } }
+          : {})
       })
       return this.getSnapshot()
     }
@@ -2136,7 +2134,7 @@ class AcpRuntime {
         .some(({ requestId }) => requestId === response.requestId)
     ) {
       const request = response.request
-      if (this.sessionInteractions.current(request.sessionId)) {
+      if (this.sessionInteractions.has(request.sessionId)) {
         throw new Error('Wait for the current Agent run to finish before ending this wait.')
       }
       const projectId =
@@ -2793,6 +2791,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       if (continuation.onUnaccepted) {
+        let recoveryPhase = 'preflight'
         try {
           const code =
             continuationError &&
@@ -2806,8 +2805,21 @@ class AcpRuntime {
             !providerDispatched &&
             typeof code === 'string' &&
             ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          if (!providerDispatched) {
+            await this.options.runtimeSessions?.assertAdmissionAvailable(sessionId)
+          }
+          recoveryPhase = 'rearm'
           await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
+          try {
+            log.warn('App continuation recovery failed', {
+              sessionId,
+              phase: recoveryPhase,
+              ...diagnosticErrorFields(error)
+            })
+          } catch (loggingError) {
+            void loggingError
+          }
           this.pushEvent({
             kind: 'error',
             level: 'error',

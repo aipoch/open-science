@@ -13,6 +13,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowRight,
+  Bell,
   Bot,
   Brain,
   BrainCircuit,
@@ -26,6 +27,7 @@ import {
   MessageSquare,
   Minimize2,
   MonitorSmartphone,
+  Palette,
   ScrollText,
   Settings2,
   TerminalSquare,
@@ -121,6 +123,12 @@ import type { SettingsWriteErrorCode } from '../../../../shared/settings'
 
 const AgentPanel = lazy(async () => ({ default: (await import('./AgentPanel')).AgentPanel }))
 const GeneralPanel = lazy(async () => ({ default: (await import('./GeneralPanel')).GeneralPanel }))
+const AppearancePanel = lazy(async () => ({
+  default: (await import('./AppearancePanel')).AppearancePanel
+}))
+const NotificationsPanel = lazy(async () => ({
+  default: (await import('./NotificationsPanel')).NotificationsPanel
+}))
 const NetworkPanel = lazy(async () => ({ default: (await import('./NetworkPanel')).NetworkPanel }))
 const StoragePanel = lazy(async () => {
   const panelModule = await loadSettingsPanel(
@@ -330,7 +338,11 @@ type SettingsGroup = {
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
     labelKey: 'System',
-    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
+    panels: [
+      { id: 'general', labelKey: 'General', Icon: Settings2 },
+      { id: 'appearance', labelKey: 'Appearance', Icon: Palette },
+      { id: 'notifications', labelKey: 'Notifications', Icon: Bell }
+    ]
   },
   {
     labelKey: 'Intelligence',
@@ -348,7 +360,8 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'connectors', labelKey: 'Connectors', Icon: ConnectorsNavIcon },
       { id: 'network', labelKey: 'Network', Icon: Globe },
       { id: 'remote-control', labelKey: 'Remote', Icon: MonitorSmartphone },
-      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound }
+      { id: 'credentials', labelKey: 'Credentials', Icon: KeyRound },
+      { id: 'compute', labelKey: 'Compute', Icon: Zap }
     ]
   },
   {
@@ -358,7 +371,6 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'permissions', labelKey: 'Permissions', Icon: LockKeyhole },
       { id: 'runtimes', labelKey: 'Runtimes', Icon: TerminalSquare },
       { id: 'storage', labelKey: 'Storage', Icon: Cloud },
-      { id: 'compute', labelKey: 'Compute', Icon: Zap },
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
@@ -2194,6 +2206,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       <TokenUsagePanel sessions={sessions} projects={projects} />
                     ) : activePanel === 'general' ? (
                       <GeneralPanel />
+                    ) : activePanel === 'appearance' ? (
+                      <AppearancePanel />
+                    ) : activePanel === 'notifications' ? (
+                      <NotificationsPanel />
                     ) : activePanel === 'remote-control' ? (
                       <RemoteControlPanel />
                     ) : activePanel === 'agent' ? (

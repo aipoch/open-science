@@ -24,6 +24,7 @@ type TestProjector = Readonly<{
   beginGeneration: (root?: string) => void
   clearGeneration: () => void
   clearSession: (sessionId: string) => void
+  finishAssistantOutput: (sessionId: string) => readonly RecordedEffect[]
   dispose: () => void
   route: (notification: SessionNotification, routing: TestRouting) => readonly RecordedEffect[]
 }>
@@ -41,7 +42,8 @@ const createProjector = (
     notification: SessionNotification,
     context: Readonly<{ sessionId: string }>,
     providerToolCallId: string
-  ) => string = (_notification, _context, providerToolCallId) => providerToolCallId
+  ) => string = (_notification, _context, providerToolCallId) => providerToolCallId,
+  separateProviderNotices?: boolean
 ): TestProjector => {
   let routing: TestRouting = {
     eventId: 'event-route',
@@ -55,6 +57,7 @@ const createProjector = (
     effects.push(Object.freeze(effect))
   }
   const owner = new AcpSessionUpdateProjector({
+    separateProviderNotices,
     registry: {
       lookup: (sessionId) =>
         ({
@@ -114,6 +117,11 @@ const createProjector = (
     beginGeneration: (root?: string) => owner.beginGeneration(root),
     clearGeneration: () => owner.clearGeneration(),
     clearSession: (sessionId: string) => owner.clearSession(sessionId),
+    finishAssistantOutput: (sessionId: string) => {
+      effects = []
+      owner.finishAssistantOutput(sessionId)
+      return Object.freeze([...effects])
+    },
     dispose: () => owner.dispose(),
     route: (notification: SessionNotification, nextRouting: TestRouting) => {
       routing = nextRouting
@@ -128,6 +136,107 @@ const createProjector = (
 }
 
 describe('AcpSessionUpdateProjector', () => {
+  it.each([undefined, false])(
+    'keeps normal chat hook notices visible before and after terminal flushing (opt-in: %s)',
+    (separateProviderNotices) => {
+      const projector = createProjector(undefined, true, undefined, separateProviderNotices)
+      const routing: TestRouting = {
+        framework: 'claude-code',
+        eventId: 'hook-notice',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const hookNotice = (text: string): SessionNotification => ({
+        sessionId: 'session-chat',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: { type: 'text', text },
+          _meta: { 'open-science/provider-notice': { version: 1, level: 'info' } }
+        }
+      })
+      const before = projector.route(hookNotice('Hook blocked continuation'), routing)
+      expect(before.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook blocked continuation' } }
+      ])
+      // The prompt composition invokes this same flush for stop/error events.
+      expect(projector.finishAssistantOutput('session-chat')).toEqual([])
+      const after = projector.route(hookNotice('Hook detail after end_turn'), {
+        ...routing,
+        eventId: 'late-hook-notice'
+      })
+      expect(after.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook detail after end_turn' } }
+      ])
+      projector.clearSession('session-chat')
+      const next = projector.route(hookNotice('Hook detail in next turn'), {
+        ...routing,
+        eventId: 'next-hook-notice'
+      })
+      expect(next.filter((effect) => effect.kind === 'visible-event')).toMatchObject([
+        { event: { kind: 'message', role: 'assistant', text: 'Hook detail in next turn' } }
+      ])
+    }
+  )
+
+  it.each(['codex', 'claude-code'] as const)(
+    'publishes %s provider notices without observing them as assistant context when opted in',
+    (framework) => {
+      const projector = createProjector(undefined, true, undefined, true)
+      const routing: TestRouting = {
+        framework,
+        eventId: 'notice-event',
+        visible: true,
+        reconnectPending: false,
+        mcpServerNames: []
+      }
+      const notice: SessionNotification = {
+        sessionId: 'session-notice',
+        update: {
+          sessionUpdate: 'agent_message_chunk',
+          content: {
+            type: 'text',
+            text:
+              framework === 'codex'
+                ? 'Warning: Falling back from WebSockets to HTTPS transport. request timed out\n\n'
+                : 'Adapter information'
+          },
+          ...(framework === 'claude-code'
+            ? { _meta: { 'open-science/provider-notice': { version: 1, level: 'warning' } } }
+            : {})
+        }
+      }
+
+      const effects = projector.route(notice, routing)
+
+      expect(effects.some((effect) => effect.kind === 'context-observation')).toBe(false)
+      const published = effects.filter((effect) => effect.kind === 'visible-event')
+      expect(published).toHaveLength(1)
+      expect(published[0]?.event).toMatchObject({
+        kind: 'system',
+        level: 'warning',
+        status: 'provider-notice'
+      })
+      expect(published[0]?.event).not.toHaveProperty('role')
+      expect(published[0]?.event).not.toHaveProperty('raw')
+      const model = projector.route(
+        {
+          sessionId: 'session-notice',
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: '{"question":null}' }
+          }
+        },
+        { ...routing, eventId: 'model-event' }
+      )
+      expect(model).toMatchObject([
+        { kind: 'context-observation' },
+        { kind: 'context-refresh' },
+        { kind: 'visible-event', event: { kind: 'message', text: '{"question":null}' } }
+      ])
+    }
+  )
+
   it.each(['opencode', 'codebuddy'] as const)(
     'publishes pending %s text before hiding an app-owned user-choice tool',
     (framework) => {

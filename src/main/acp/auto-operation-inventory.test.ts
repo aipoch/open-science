@@ -170,11 +170,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
-        // Reviewed: Windows Bioconductor installer guidance, plus non-blank patterns on required
-        // ask_user_question strings that only narrow accepted inputs; handlers and Auto operation
-        // dispositions are unchanged.
+        // Reviewed: foreground Shell nonzero exits now set the MCP error flag after execution.
+        // Input schemas, RPC dispatch, authorization and Auto operation dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '1bf1a40a68e0bf5fe1fbc8eaf5e06891a0caaf7f710a89e801f8b9df1c2ee63a',
+          '1743f9b94d61ae3905f80bfadfca9e49f4e003323d2a915cfc372ca85cd79998',
         // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
         // call, its result and the Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

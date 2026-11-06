@@ -377,19 +377,24 @@ jobs:
             const { fixtureTestPatterns } = await import(pathToFileURL(
               join(process.env.TRUSTED_CLASSIFIER_DIR, 'classify-pr-changes.mjs')
             ).href)
-            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-            const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
-            const paths = [
-              ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
-              ...git('diff', '--name-only', '--no-renames', '-z', process.env.HEAD_SHA, 'HEAD').split('\0')
-            ].filter(Boolean)
             const plan = packageTestPlanFromRevisions(
               process.env.BASE_SHA, process.env.HEAD_SHA, process.env.TRUSTED_BASE_SHA
             )
-            // Dedicated packages and registered fixture readers also live in the package scope.
-            packages = plan.selected.length > 0 || paths.some(path =>
-              path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
-            )
+            packages = plan.selected.length > 0
+            // Preserve the selector's all-packages fallback before inspecting extra package lanes.
+            if (!packages) {
+              const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+              const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
+              const checkoutBase = git('merge-base', process.env.TRUSTED_BASE_SHA, 'HEAD').trim()
+              const paths = [
+                ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
+                ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD').split('\0')
+              ].filter(Boolean)
+              // Dedicated packages and registered fixture readers also live in the package scope.
+              packages = paths.some(path =>
+                path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
+              )
+            }
             reason = packages ? 'affected package sources, shared inputs or fixture readers' : 'no affected packages: skip package runners'
           }
           const include = [
@@ -1453,6 +1458,9 @@ jobs:
         if: ${{ !(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) }}
         id: setup
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
+      - name: Install headless Chromium
+        if: ${{ matrix.group == 'presentation' || (matrix.group == 'journeys' && steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_macos')) }}
+        run: npx playwright install chromium --only-shell
       - name: Test macOS-native behavior
         id: unit_macos_native
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}
@@ -1530,9 +1538,6 @@ jobs:
             test-results/
           retention-days: 5
           if-no-files-found: warn
-      - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' }}
-        run: npx playwright install chromium --only-shell
       - name: Run supplemental regressions
         id: e2e_regressions_macos
         if: ${{ matrix.group == 'regressions' && steps.setup.outcome == 'success' }}

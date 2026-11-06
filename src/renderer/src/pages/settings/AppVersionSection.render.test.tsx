@@ -68,15 +68,39 @@ describe('AppVersionSection', () => {
     })
 
     const links = Array.from(container.querySelectorAll('a'))
-    expect(links).toHaveLength(5)
+    expect(links).toHaveLength(6)
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       'https://aipoch.com/open-science/download',
+      'https://www.aipoch.com/docs/guides/installation/#manual-update',
       'https://www.aipoch.com/docs/',
       'https://github.com/aipoch/open-science/releases',
       'https://github.com/aipoch/open-science/blob/main/LICENSE',
       'https://github.com/aipoch/open-science/blob/main/SECURITY.md'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
+    expect(container.querySelector('[data-testid="manual-update-links"] a')).toBeNull()
+    expect(container.querySelector('[data-settings-anchor="general.download"]')).not.toBeNull()
+  })
+
+  it('links manual installation guidance to the localized AIPOCH docs page', async () => {
+    await act(async () => {
+      root.render(<AppVersionSection />)
+    })
+    const link = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.manual-install"]'
+    )
+    expect(link?.href).toBe('https://www.aipoch.com/docs/guides/installation/#manual-update')
+    expect(link?.textContent).toContain('Manual install or update')
+    expect(link?.textContent).toContain('If an update runs into a problem')
+
+    await act(async () => {
+      useLocaleStore.getState().setPreference('zh-Hans')
+    })
+    expect(link?.href).toBe(
+      'https://www.aipoch.com/docs/zh-Hans/guides/installation/#manual-update'
+    )
+    expect(link?.textContent).toContain('手动安装或更新')
+    expect(link?.textContent).toContain('更新遇到问题')
   })
 
   it.each([
@@ -143,9 +167,9 @@ describe('AppVersionSection', () => {
       container.querySelectorAll('[data-slot="about-resource-description"]')
     )
 
-    expect(links).toHaveLength(4)
+    expect(links).toHaveLength(6)
     expect(links.every((link) => link.classList.contains('group'))).toBe(true)
-    expect(icons).toHaveLength(4)
+    expect(icons).toHaveLength(6)
     expect(
       icons.every(
         (icon) =>
@@ -153,7 +177,7 @@ describe('AppVersionSection', () => {
           icon.classList.contains('group-focus-visible:text-primary')
       )
     ).toBe(true)
-    expect(titles).toHaveLength(4)
+    expect(titles).toHaveLength(6)
     expect(titles.every((title) => !title.classList.contains('translate-y-2.5'))).toBe(true)
     expect(
       titles.every(
@@ -168,7 +192,7 @@ describe('AppVersionSection', () => {
           title.classList.contains('[@media(any-pointer:coarse)]:!translate-y-0')
       )
     ).toBe(true)
-    expect(descriptions).toHaveLength(4)
+    expect(descriptions).toHaveLength(6)
     expect(descriptions.every((description) => !description.classList.contains('opacity-0'))).toBe(
       true
     )
@@ -302,31 +326,24 @@ it('shows a rejected update action while preserving the ready installer action',
 })
 
 it.each(['idle', 'checking', 'up-to-date', 'error'] as const)(
-  'keeps official download and instructions available while %s',
+  'keeps official download and manual update guidance available while %s',
   (state) => {
     const check = vi.fn(async () => {})
     const download = vi.fn(async () => {})
     const apply = vi.fn(async () => {})
     useUpdateStore.setState({ check, download, apply, status: { state, current: '0.2.0' } })
     act(() => root.render(<AppVersionSection />))
-    const resources = container.querySelector('[data-testid="manual-update-links"]')!
-    expect(resources.querySelector('a')?.getAttribute('href')).toBe(
-      'https://aipoch.com/open-science/download'
-    )
-    const instructions = resources.querySelector<HTMLButtonElement>('button')!
-    expect(instructions.disabled).toBe(false)
-    act(() => instructions.click())
-    const back = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Back to settings"]'
+    const websiteLink = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.download"]'
     )!
-    expect(document.activeElement).toBe(back)
-    act(() =>
-      back.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-      )
+    expect(websiteLink.getAttribute('href')).toBe('https://aipoch.com/open-science/download')
+    const manualLink = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.manual-install"]'
     )
-    expect(document.activeElement).toBe(instructions)
-    expect(container.querySelector('[data-manual-update-guide]')).toBeNull()
+    expect(manualLink?.getAttribute('href')).toBe(
+      'https://www.aipoch.com/docs/guides/installation/#manual-update'
+    )
+    expect(manualLink?.textContent).toContain('Manual install or update')
     expect(check).not.toHaveBeenCalled()
     expect(download).not.toHaveBeenCalled()
     expect(apply).not.toHaveBeenCalled()

@@ -176,6 +176,15 @@ const commaDefinitions = (text) => {
     pairs.filter((p) => (p[1].match(/[A-Z]/g) ?? []).length >= 2).length >= 2
   )
 }
+// A complete p-threshold legend can continue an explicit Notes paragraph.
+// The actual original text and all usual column/font/gap checks stay intact.
+const significanceLegend = (text) =>
+  /^(?:∗{1,3}\s*p\s*[<≤=]\s*(?:0?\.\d+|1(?:\.0+)?)\s*(?:[,;]\s*)?)+\.?$/iu.test(text.trim())
+const substantiveStarNote = (text) =>
+  /^∗/u.test(text.trim()) &&
+  !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(text.trim().replace(/^∗+\s*/u, '')) &&
+  (significanceLegend(text) || (text.match(/\p{L}{2,}/gu) ?? []).length >= 2)
+
 const startsNote = (text) =>
   /^Notes?(?:\s*[—–]\s*\p{L}|\.\s*\([a-z]\)\s*\p{L})/iu.test(text.trim()) ||
   /^Notes?\.\s*[+–−-]{1,3}\s*=\s*\p{L}/iu.test(text.trim()) ||
@@ -192,6 +201,7 @@ const startsNote = (text) =>
   /^Data are mean \(SD\) or n \(%\), unless otherwise specified\./i.test(text.trim()) ||
   abbreviationLabel(text) ||
   commaDefinitions(text) ||
+  substantiveStarNote(text) ||
   /^(?:[*⁎†‡§¶‖＊＃#]|(?:Footnotes?|Notes?|Annotations?|Sources?)\s*[:：]|注\s*[:：]|註\s*[:：])/i.test(
     text.trim()
   ) ||
@@ -201,7 +211,7 @@ const startsNote = (text) =>
   /^Data from (?:the )?(?:two|both) groups were pooled before analysis\.$/i.test(text.trim()) ||
   /^\+\s*Standard deviation(?:[;,.]|$)/i.test(text.trim()) ||
   /^Notes?\.$/i.test(text.trim()) ||
-  /^(?:Notes?|NOTES?)\.?\s+(?:[＊*†‡＃#]\s*)?\p{Lu}/u.test(text.trim()) ||
+  /^(?:Notes?|NOTES?)\.?\s+(?:[＊*∗†‡＃#]\s*)?\p{Lu}/u.test(text.trim()) ||
   /^Notes?\.\s*[—–-]\s*\p{L}/iu.test(text.trim()) ||
   // Named bibliographic sources can omit the usual Note: prefix.
   /^Modified from\s+\p{Lu}.*\b(?:18|19|20)\d{2}\b/u.test(text.trim()) ||
@@ -264,7 +274,7 @@ function continuedSymbolNotes(table, page, nextPage, cells) {
     )
   )
   const prior = (table.notes ?? []).filter(
-    (note) => (!note.page || note.page === page.pageNumber) && /^[*†‡§¶‖#]+\s/.test(note.text)
+    (note) => (!note.page || note.page === page.pageNumber) && /^[*∗†‡§¶‖#]+\s/.test(note.text)
   )
   if (
     prior.length < 2 ||
@@ -492,7 +502,7 @@ function continuedGlossaryNotes(table, page, nextPage, cells) {
   )
     return []
   const words = new Set(cells.flatMap((c) => c.text.split(/[^A-Za-z0-9-]+/)))
-  const formula = /^[*†‡]?\s*([A-Z])x,\s*percent volume receiving\s*[≥>]\s*x\s*Gy\.$/i.exec(
+  const formula = /^[*∗†‡]?\s*([A-Z])x,\s*percent volume receiving\s*[≥>]\s*x\s*Gy\.$/i.exec(
     first.text
   )
   if (
@@ -508,7 +518,7 @@ function continuedGlossaryNotes(table, page, nextPage, cells) {
     return [{ text: first.text, rect: lineRect(first), page: nextPage.pageNumber }]
   }
   if (!abbreviationLabel(first.text)) return []
-  const start = lines.findIndex((l, n) => n && /^[*†‡]/.test(l.text))
+  const start = lines.findIndex((l, n) => n && /^[*∗†‡]/.test(l.text))
   const definitions = start < 0 ? lines : lines.slice(0, start)
   const text = joinCaptionLines(definitions.map((l) => l.text))
   const keys = [...text.matchAll(/(?:^|[:;]\s*)([A-Z][A-Za-z0-9-]{1,11}),\s*\p{L}/gu)].map(
@@ -1207,7 +1217,7 @@ function completeCenteredReferencedTotals(page, tables, rules, lines, notes) {
   for (const [index, { rect }] of tables.entries()) {
     if (!rect.every(Number.isFinite)) continue
     for (const note of notes[index]) {
-      const key = /^([*†‡])\s+\p{L}/u.exec(note.text)?.[1],
+      const key = /^([*∗†‡])\s+\p{L}/u.exec(note.text)?.[1],
         first = lines.find((l) => l.text === note.text && Math.abs(l.y - note.rect[1]) < 1e-8)
       if (!key || !first || !/[.!?]$/.test(first.text)) continue
       const h = first.fontSize,
@@ -1479,7 +1489,7 @@ export function associateTableNotes(page, tables, rules = []) {
   // baseline. Join only a unique tightly adjoining definition below a table,
   // using the full-size prose baseline for note-block spacing.
   for (const marker of [...lines]) {
-    if (!/^(?:[*†‡]{1,3}|[a-z]\))$/.test(marker.text) || !lines.includes(marker)) continue
+    if (!/^(?:[*∗†‡]{1,3}|[a-z]\))$/.test(marker.text) || !lines.includes(marker)) continue
     const bodies = lines.filter(
       (l) =>
         l !== marker &&
@@ -1512,7 +1522,7 @@ export function associateTableNotes(page, tables, rules = []) {
     const next = lines.find(
       (l) =>
         l !== first &&
-        /^(?:[a-z]\)|[*†‡]{1,3})\s/.test(l.text) &&
+        /^(?:[a-z]\)|[*∗†‡]{1,3})\s/.test(l.text) &&
         Math.abs(l.bottom - first.bottom) < 0.1 &&
         Math.abs(l.fontSize - first.fontSize) < 0.1 &&
         l.x >= first.right &&
@@ -1598,7 +1608,7 @@ export function associateTableNotes(page, tables, rules = []) {
     ) &&
     lines.some(
       (next) =>
-        /^[*⁎†‡]/.test(next.text) &&
+        /^[*∗⁎†‡]/.test(next.text) &&
         next.y > start.y &&
         next.y - start.y < start.fontSize * 1.8 &&
         Math.abs(next.x - start.x) < 2 &&
@@ -1811,7 +1821,7 @@ export function associateTableNotes(page, tables, rules = []) {
         line.bottom - part.bottom <= line.fontSize * 0.8
     )
   const citedSymbol = (line, rect) => {
-    const marker = /^[*†‡§¶‖#∆Δ]/.exec(line.text)?.[0]
+    const marker = /^[*∗†‡§¶‖#∆Δ]/.exec(line.text)?.[0]
     return (
       marker &&
       page.lines.some(
@@ -2143,7 +2153,7 @@ export function associateTableNotes(page, tables, rules = []) {
   // caption alignment and table-height bounds.
   const sideNoteRect = (start, rect) => {
     const marker =
-      /^[#*†‡＊＃]\s*\p{L}/u.exec(start.text)?.[0]?.[0] ??
+      /^[#*∗†‡＊＃]\s*\p{L}/u.exec(start.text)?.[0]?.[0] ??
       (raisedMarker(start) ? start.text[0] : undefined)
     if (
       (!marker && !/^[A-Z]{2,8}[,:]?\s+\p{L}/u.test(start.text)) ||
@@ -2302,7 +2312,7 @@ export function associateTableNotes(page, tables, rules = []) {
       }
       continue
     }
-    const parenthesizedMarker = /^\(([*†‡])\)\s+\p{L}/u.exec(start.text)?.[1],
+    const parenthesizedMarker = /^\(([*∗†‡])\)\s+\p{L}/u.exec(start.text)?.[1],
       parenthesizedOwners = tables.map(({ rect }) =>
         Boolean(
           parenthesizedMarker &&
@@ -2490,7 +2500,7 @@ export function associateTableNotes(page, tables, rules = []) {
           (gap >= 0 ||
             (notes[index].length &&
               (raisedMarker(start) ||
-                (/^[*⁎†‡]/.test(start.text) &&
+                (/^[*∗⁎†‡]/.test(start.text) &&
                   Math.abs(start.x - notes[index].at(-1).rect[0]) < 2)) &&
               gap > -start.fontSize * 0.2) ||
             touchesRuledBottom(start, rect)) &&
@@ -2635,7 +2645,7 @@ export function associateTableNotes(page, tables, rules = []) {
     // increasing the gap allowance for all notes and nearby body paragraphs.
     const tail = lines.filter((line) => line.y > start.y + 2).slice(0, 2)
     let doubleSpacedTail =
-      /^[*†‡]/.test(start.text) &&
+      /^[*∗†‡]/.test(start.text) &&
       start.text.length >= 60 &&
       !/[.;:]$/.test(start.text) &&
       tail.length === 2 &&
@@ -2800,8 +2810,11 @@ export function associateTableNotes(page, tables, rules = []) {
             line.right <= candidates[0].rect[2] + 1 &&
             line.text.split(/[^A-Za-z0-9-]+/).includes(equationKey)
         )
+      const significanceContinuation =
+        /^Notes?\s*[.:：]/iu.test(start.text.trim()) && significanceLegend(next.text)
       if (
         (startsNote(next.text) &&
+          !significanceContinuation &&
           !definitionList(next.text) &&
           !(
             commaDefinitions(next.text) &&
@@ -2818,7 +2831,7 @@ export function associateTableNotes(page, tables, rules = []) {
         next.x <
           (outdented
             ? outdented.x - 1
-            : raisedMarker(start) || /^[*⁎†‡§¶‖∆Δ]/.test(start.text)
+            : raisedMarker(start) || /^[*∗⁎†‡§¶‖∆Δ]/.test(start.text)
               ? // An accepted note may start outside an inset table crop. Its own
                 // left edge remains a valid continuation boundary.
                 Math.min(
@@ -3037,4 +3050,20 @@ export function recoverRepeatedRecordFooterNotes(page, proof, rules) {
   )
     return
   return [note]
+}
+
+// A newly recognized symbolic note proves footer ownership, not the body's
+// logical rows. Keep the existing conservative mapping barrier when metadata
+// re-refinement would otherwise remove its last structural warning.
+export function retainUncertifiedSymbolicNoteGrid(previous, refined, notes) {
+  if (
+    !Array.isArray(previous?.issues) ||
+    !previous.issues.length ||
+    !Array.isArray(refined?.issues) ||
+    refined.issues.length ||
+    !Array.isArray(notes) ||
+    !notes.some((note) => typeof note?.text === 'string' && /^∗(?:\s|[.:])/u.test(note.text))
+  )
+    return refined
+  return { ...refined, issues: ['native-table-structure-ambiguous'] }
 }

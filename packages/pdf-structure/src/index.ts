@@ -8,5 +8,6 @@ export { readWorkerResult } from './worker-result.js'
 export type {
   PdfStructureEngine,
   PdfStructureEngineOptions,
+  PdfStructureOcr,
   PdfStructureProcessRuntime
 } from './types.js'

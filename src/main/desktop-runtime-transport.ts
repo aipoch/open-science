@@ -307,15 +307,17 @@ export async function startDesktopRuntimeTransport(options: {
               signal?.addEventListener('abort', abort, { once: true })
               timer = setTimeout(
                 abort,
-                request.operation === 'conversation-pdf'
-                  ? request.timeoutMs + 1000
-                  : request.operation === 'reviewer-render'
-                    ? 121_000
-                    : request.operation.startsWith('notification-') ||
-                        request.operation === 'office-frame' ||
-                        request.operation === 'process-memory'
-                      ? 5_000
-                      : 300_000
+                request.operation === 'research-video-mp4'
+                  ? 3_601_000
+                  : request.operation === 'conversation-pdf'
+                    ? request.timeoutMs + 1000
+                    : request.operation === 'reviewer-render'
+                      ? 121_000
+                      : request.operation.startsWith('notification-') ||
+                          request.operation === 'office-frame' ||
+                          request.operation === 'process-memory'
+                        ? 5_000
+                        : 300_000
               )
               send(socket, stringifyRpcJson({ kind: 'native-request', id, clientId, request }))
             })

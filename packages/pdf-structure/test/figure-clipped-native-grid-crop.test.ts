@@ -116,13 +116,41 @@ function fixture({ numeric = true, count = 9, opacity = 1, foreign = false } = {
 const crop = (f: ReturnType<typeof fixture>) =>
   nativeClippedGridCrop(f.page, f.figure, f.captions, [], f.tokens, f.context)
 
-it('completes a leading chart row from whole Form ownership without widening ordinary text state', () => {
+it('completes a leading chart row from whole Form ownership with neutral native text state', () => {
   const f = fixture(),
     before = JSON.stringify(f),
     result = crop(f)
-  expect(
-    nativePlotPacketInventory(f.page, f.figure, f.captions, [], [], f.tokens, f.context)
-  ).toBeUndefined()
+  // A canonical opaque text-state reset is now supported by the ordinary
+  // packet too; every original literal, font, whole advance and Source stays exact.
+  const ordinary = nativePlotPacketInventory(
+    f.page,
+    f.figure,
+    f.captions,
+    [],
+    [],
+    f.tokens,
+    f.context
+  )
+  expect(ordinary.records.map((r: ReturnType<typeof JSON.parse>) => r.r.str)).toEqual(
+    f.context.content.items.map((r) => r.str)
+  )
+  for (const record of ordinary.records) {
+    expect(record.r).toBe(f.context.content.items[record.index])
+    expect(record.r.sourceItem).toBe(f.tokens[record.index].sourceItem)
+    expect(
+      record.part.every(
+        (z: ReturnType<typeof JSON.parse>) =>
+          z.g.fontName === record.r.fontName && z.g.textPaint.fillAlpha === 1
+      )
+    ).toBe(true)
+    const advances = record.part.map((z: ReturnType<typeof JSON.parse>) => z.g.advance)
+    expect([
+      Math.min(...advances.map((r: number[]) => r[0])),
+      Math.min(...advances.map((r: number[]) => r[1])),
+      Math.max(...advances.map((r: number[]) => r[2])),
+      Math.max(...advances.map((r: number[]) => r[3]))
+    ]).toEqual(record.rect)
+  }
   expect(result.rect).toEqual([40, 40, 560, 490])
   expect(JSON.stringify(f)).toBe(before)
 })

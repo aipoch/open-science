@@ -322,6 +322,14 @@ const diagnosticStringFields = [
   'result'
 ] as const
 
+const notebookLogStates: Record<string, readonly string[]> = {
+  runtime: ['python', 'r', 'repl', 'bash', 'powershell', 'native-posix', 'wsl2-bash'],
+  stage: ['sandbox-prepare', 'execution'],
+  terminationReason: ['cleanup-incomplete', 'cancel', 'timeout', 'exit'],
+  cleanupState: ['complete', 'incomplete'],
+  processState: ['never-started', 'started-and-reaped', 'termination-unknown']
+}
+
 // Permission traces carry fixed product classifications and hashed correlation identities only.
 const permissionLogStates: Record<string, readonly string[]> = {
   stage: ['request', 'decision', 'settlement', 'context', 'profile'],
@@ -386,6 +394,27 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'notebook:runtime' || source.scope === 'notebook:network-sandbox') {
+    for (const [key, allowed] of Object.entries(notebookLogStates))
+      if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]
+    for (const key of ['executionReference', 'parentOperationId'])
+      if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
+    for (const key of ['processesTerminated', 'networkClosed', 'temporaryResourcesRemoved'])
+      if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
+    if (
+      Number.isInteger(data.incompleteStageCount) &&
+      Number(data.incompleteStageCount) >= 0 &&
+      Number(data.incompleteStageCount) <= 3
+    )
+      diagnostic.incompleteStageCount = data.incompleteStageCount
+    if (
+      typeof data.temporaryCleanupErrorCode === 'string' &&
+      /^(?:E[A-Z0-9_]{1,40}|unknown)$/.test(data.temporaryCleanupErrorCode)
+    )
+      diagnostic.temporaryCleanupErrorCode = data.temporaryCleanupErrorCode
+    // No ordinary exit is different from a zero exit or an older log with no exit evidence.
+    if (data.exitCode === null) diagnostic.exitCode = null
+  }
   if (source.scope === 'desktop-runtime-recovery') {
     const credential = credentialDiagnosticSchema.safeParse(data.credentialDiagnostic)
     if (credential.success && credential.data.code !== 'inventory-failed')

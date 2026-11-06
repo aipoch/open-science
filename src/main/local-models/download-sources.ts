@@ -34,6 +34,26 @@ const alternatives: Readonly<Record<string, readonly string[]>> = {
   ]
 }
 
+export const researchNarrationCdnUrl = (
+  asset: Pick<LocalModelRevision['assets'][number], 'file' | 'sha256'>
+): string => {
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(asset.file) || !/^[a-f0-9]{64}$/.test(asset.sha256))
+    throw new Error('Invalid narration CDN asset.')
+  return `https://statics.aipoch.com/open-science/research-narration/${asset.sha256}/${asset.file}`
+}
+
+// This exact package revision is verified on npmmirror; other revisions retain the internal CDN.
+export const researchNarrationMirrorUrl = (asset: { url: string }): string | undefined => {
+  const upstream = 'https://unpkg.com/onnxruntime-node@1.21.0/'
+  return asset.url.startsWith(upstream)
+    ? `https://registry.npmmirror.com/onnxruntime-node/1.21.0/files/${asset.url.slice(upstream.length)}`
+    : undefined
+}
+
 export const localModelDownloadSources = (
-  asset: LocalModelRevision['assets'][number]
-): readonly string[] => [asset.url, ...(alternatives[asset.url] ?? [])]
+  asset: LocalModelRevision['assets'][number],
+  namespace?: string
+): readonly string[] =>
+  namespace === 'research-narration'
+    ? [researchNarrationMirrorUrl(asset) ?? researchNarrationCdnUrl(asset), asset.url]
+    : [asset.url, ...(alternatives[asset.url] ?? [])]
