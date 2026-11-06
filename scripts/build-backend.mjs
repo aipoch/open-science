@@ -61,6 +61,14 @@ export async function createBackendBuilder({
               plugin.onResolve({ filter: /^@aipoch\/notebook-network-sandbox$/ }, () => ({
                 path: join(root, 'packages/notebook-network-sandbox/src/index.ts')
               }))
+              // Subpath consumers must stay inlined too: stage-backend deliberately never ships
+              // this package, so any runtime require of it fails in packaged CLI and desktop apps.
+              plugin.onResolve(
+                { filter: /^@aipoch\/notebook-network-sandbox\/network-address$/ },
+                () => ({
+                  path: join(root, 'packages/notebook-network-sandbox/src/network-address.ts')
+                })
+              )
               plugin.onResolve({ filter: /\?nodeWorker$/ }, ({ path, resolveDir }) => ({
                 path: resolve(resolveDir, path.slice(0, -11) + '.ts'),
                 namespace: 'node-worker'
