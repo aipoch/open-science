@@ -1,4 +1,4 @@
-import { applyCachedPdfTableSources } from './table-source.js'
+import { applyCachedPdfTableSources, isCurrentPdfTableSources } from './table-source.js'
 import { applyCachedPdfFigureSources } from './figure-source.js'
 import { createPdfTranslationSource } from './source.js'
 import { structureRegionContains } from './structure-regions.js'
@@ -25,7 +25,8 @@ export async function applyCachedPdfStructureSources(
   args.signal.throwIfAborted()
   if (
     original.source.fingerprint !== args.document.fingerprints[0] ||
-    original.source.pages.length !== args.document.numPages
+    original.source.pages.length !== args.document.numPages ||
+    !isCurrentPdfTableSources(tables)
   )
     return { extraction: original, retainedUnitIds: [] }
   // Preparation keeps cell replacements, whole-region retention and their diagnostics.

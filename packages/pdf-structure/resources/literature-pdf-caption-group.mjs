@@ -22,6 +22,7 @@ import {
   nativeFigurePaintCertificateData
 } from './literature-pdf-figure-native-plot-labels.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { nativeWholeSourceGlyphObservations } from './literature-pdf-symbol-text.mjs'
 import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
 import { nativeConditionalFigureReference } from './literature-pdf-native-conditional-figure-reference.mjs'
 
@@ -4862,6 +4863,223 @@ function proveNativeRuledOutdentedTail(caption, page, rules, fonts, context) {
   return { lines: [head.text, tail.text], rect: [tail.x, head.y, caption.rect[2], tailRect[3]] }
 }
 
+// Withdraw a generic continuation only when the native stream shows a closed
+// small-type caption between two parts of the same independently typed body.
+// Font envelopes alone are insufficient: bind every selected carrier to its
+// original occurrence and measured glyph baseline before comparing cadence.
+function nativeClosedCaptionBodyBoundary(candidate, page, fonts, context) {
+  try {
+    const own = nativeRecoveryOwnValues(context)
+    if (
+      !own ||
+      candidate.page !== page.pageNumber ||
+      candidate.regions ||
+      candidate.lines.length < 3 ||
+      !/^Figure\s+[A-Z]?\d+:\s/u.test(candidate.lines[0]) ||
+      !/[.!?]$/u.test(candidate.lines[0].trim()) ||
+      page.renderRotation !== 0 ||
+      page.invalidGraphicsBounds !== 0 ||
+      own.pageNumber !== page.pageNumber ||
+      own.viewport?.width !== page.width ||
+      own.viewport?.height !== page.height ||
+      JSON.stringify(own.viewport.transform) !== JSON.stringify([1, 0, 0, -1, 0, page.height])
+    )
+      return
+    const current = retainNativeRecoveryInputs([candidate, page, fonts, context], own.viewport)
+    if (!current) return
+    const observed = nativeWholeSourceGlyphObservations(own.content, own.operators)
+    if (!observed) return
+    const counts = (value, result = new Map()) => {
+      if (!value || typeof value !== 'object') return result
+      if (Number.isSafeInteger(value.pageNumber) && Number.isSafeInteger(value.index)) {
+        const key = value.pageNumber + ':' + value.index
+        result.set(key, (result.get(key) ?? 0) + 1)
+      }
+      for (const part of Object.values(value)) counts(part, result)
+      return result
+    }
+    const rawCounts = counts(own.content),
+      tokenCounts = counts(fonts),
+      records = []
+    for (const observedRecord of observed.records) {
+      const { source: raw, index } = observedRecord
+      if (!raw.str.trim()) continue
+      const source = raw.sourceItem,
+        key = page.pageNumber + ':' + index,
+        carriers = fonts.filter((f) => f.sourceItem?.index === index),
+        projected = tableTextToken(raw, own.viewport, 0),
+        // The extraction seam measures at 1.5 before returning page units.
+        // Compare that exact projection too; no tolerance substitutes for the
+        // independently checked original Source occurrence below.
+        scaled = tableTextToken(
+          raw,
+          {
+            transform: [1.5, 0, 0, -1.5, 0, page.height * 1.5],
+            convertToViewportPoint: (x, y) => [x * 1.5, page.height * 1.5 - y * 1.5]
+          },
+          0
+        ).rect.map((v) => v / 1.5)
+      if (
+        source?.pageNumber !== page.pageNumber ||
+        source.index !== index ||
+        source.text !== raw.str ||
+        rawCounts.get(key) !== 1 ||
+        tokenCounts.get(key) !== 1 ||
+        carriers.length !== 1 ||
+        carriers[0].sourceItem.pageNumber !== page.pageNumber ||
+        carriers[0].sourceItem.text !== raw.str ||
+        carriers[0].text !== raw.str ||
+        (JSON.stringify(carriers[0].rect) !== JSON.stringify(projected.rect) &&
+          JSON.stringify(carriers[0].rect) !== JSON.stringify(scaled))
+      )
+        return
+      records.push({ ...observedRecord, ...projected, raw })
+    }
+    if (records.length !== fonts.length) return
+    const runs = groupPageLines(page),
+      compact = (s) => s.replace(/\s/gu, ''),
+      heads = runs.filter(
+        (r) => r.text === candidate.lines[0] && Math.abs(r.y - candidate.rect[1]) < 0.02
+      )
+    if (heads.length !== 1) return
+    const head = heads[0],
+      em = head.fontSize
+    const members = (row) => {
+      const selected = records.filter(
+        (r) =>
+          r.horizontal &&
+          Math.abs(r.baseline - row.bottom) < 0.02 &&
+          r.rect[0] >= row.x - 0.02 &&
+          r.rect[2] <= row.right + 0.02
+      )
+      if (
+        !selected.length ||
+        compact(selected.map((r) => r.raw.str).join('')) !== compact(row.text)
+      )
+        return
+      for (const r of selected) {
+        const t = r.raw.transform,
+          style = own.content.styles?.[r.raw.fontName],
+          firstGlyph = r.glyphs[0],
+          lastGlyph = r.glyphs.at(-1),
+          x = (g, point) => g.transform[0] * point[0] + g.transform[2] * point[1] + g.transform[4]
+        if (
+          t[1] !== 0 ||
+          t[2] !== 0 ||
+          t[0] !== r.height ||
+          t[3] !== r.height ||
+          !style ||
+          style.vertical !== false ||
+          !Number.isFinite(style.ascent) ||
+          !Number.isFinite(style.descent) ||
+          !r.glyphs.length ||
+          Math.abs(x(firstGlyph, firstGlyph.start) - t[4]) > 0.02 ||
+          Math.abs(x(lastGlyph, lastGlyph.end) - t[4] - r.raw.width) > 0.02 ||
+          r.glyphs.some((g) => {
+            const m = g.transform,
+              baseline = m[1] * g.start[0] + m[3] * g.start[1] + m[5]
+            return (
+              m[1] !== 0 ||
+              m[2] !== 0 ||
+              Math.abs(baseline - t[5]) > 0.02 ||
+              Math.abs(g.size * m[3] - r.height) > 0.02 ||
+              g.glyph.isInFont !== true ||
+              g.glyph.accent !== null
+            )
+          })
+        )
+          return
+      }
+      return selected
+    }
+    const first = members(head),
+      label = first?.[0],
+      description = first?.slice(1),
+      prefix = /^Figure\s+[A-Z]?\d+:/u.exec(head.text)?.[0]
+    if (
+      !label ||
+      label.raw.str.trim() !== prefix ||
+      !description.length ||
+      Math.abs(label.height - em) > 0.02 ||
+      description.some(
+        (r) =>
+          r.raw.fontName === label.raw.fontName ||
+          r.height < em * 0.75 ||
+          r.height > em * 0.85 ||
+          r.raw.fontName !== description[0].raw.fontName ||
+          Math.abs(r.height - description[0].height) > 0.02
+      )
+    )
+      return
+    const images = page.graphicsBounds
+      .filter((g) => g.kind === 'image')
+      .map((g) =>
+        (g.paintedNormalizedRect ?? g.normalizedRect).map(
+          (n, i) => n * (i % 2 ? page.height : page.width)
+        )
+      )
+      .filter(
+        (r) =>
+          r.every(Number.isFinite) &&
+          r[0] >= head.x - em &&
+          r[2] <= head.right + em &&
+          r[2] - r[0] > (head.right - head.x) * 0.75 &&
+          r[3] <= head.y + 0.02 &&
+          head.y - r[3] < em
+      )
+    if (images.length !== 1) return
+    const image = images[0],
+      before = runs
+        .filter((r) => r.bottom < image[1] && r.right > head.x && r.x < head.right)
+        .sort((a, b) => a.y - b.y)
+        .slice(-2),
+      after = runs
+        .filter((r) => r.y > head.y && r.x < head.right && r.right > head.x)
+        .sort((a, b) => a.y - b.y)
+        .slice(0, 2)
+    if (
+      before.length !== 2 ||
+      after.length !== 2 ||
+      before.some((r) => captionKind(r.text)) ||
+      /[.!?]$/u.test(before[1].text.trim()) ||
+      !/^\p{Ll}/u.test(after[0].text.trim()) ||
+      image[1] - before[1].bottom > em * 2 ||
+      after.some((r, i) => r.text !== candidate.lines[i + 1]) ||
+      [...before, ...after].some(
+        (r) => Math.abs(r.fontSize - em) > 0.02 || Math.abs(r.x - after[0].x) > 0.02
+      )
+    )
+      return
+    const body = [...before, ...after].map(members)
+    if (
+      body.some(
+        (rows) =>
+          !rows ||
+          !rows.some((r) => r.raw.fontName === label.raw.fontName) ||
+          rows.some(
+            (r) => Math.abs(r.height - em) > 0.02 || r.raw.fontName === description[0].raw.fontName
+          )
+      )
+    )
+      return
+    const priorPitch = before[1].bottom - before[0].bottom,
+      nextPitch = after[1].bottom - after[0].bottom,
+      boundaryPitch = after[0].bottom - head.bottom
+    if (
+      priorPitch < em * 1.1 ||
+      priorPitch > em * 1.4 ||
+      Math.abs(nextPitch - priorPitch) > 0.02 ||
+      boundaryPitch < description[0].height * 0.95 ||
+      boundaryPitch >= em * 0.95 ||
+      !current()
+    )
+      return
+    return { lines: [head.text], rect: [head.x, head.y, head.right, head.bottom] }
+  } catch {
+    // A partial native stream cannot withdraw an existing caption continuation.
+  }
+}
+
 export function applyRuledCaptionRecovery(
   captions,
   ruledCaptions,
@@ -4949,6 +5167,9 @@ export function applyRuledCaptionRecovery(
             captions.splice(captions.indexOf(interior), 1)
         }
       }
+      const boundary =
+        kind === 'figure' && nativeClosedCaptionBodyBoundary(candidate, page, fonts, context)
+      if (boundary) Object.assign(candidate, boundary)
     }
   }
 }
@@ -6860,12 +7081,16 @@ function findNativeMixedLabelCaptionParagraph(start, runs, page) {
 }
 
 // A colon title may legitimately open with a sentence connector. Re-admit
-// only a closed three-row caption behind independent native plots, with no
+// only a closed caption paragraph behind independent native plots, with no
 // prose or graphic crossing its isolated paragraph. Pure classification stays
 // conservative for the same sentence in a body paragraph.
 function isNativeIsolatedColonCaption(start, runs, page) {
+  const authorLed =
+    /^Figure\s+[A-Z]?\d+:\s+(?:We|Our)\s+(?:show|present|compare|evaluate|report|describe|visuali[sz]e|plot)\b/u.test(
+      start.text
+    )
   if (
-    !/^Figure\s+[A-Z]?\d+:\s+(?:As|For|In)\b/u.test(start.text) ||
+    (!authorLed && !/^Figure\s+[A-Z]?\d+:\s+(?:As|For|In)\b/u.test(start.text)) ||
     page.invalidGraphicsBounds !== 0 ||
     start.right - start.x < page.width * 0.5
   )
@@ -6892,12 +7117,38 @@ function isNativeIsolatedColonCaption(start, runs, page) {
   }
   const last = tail.at(-1)
   if (
-    tail.length !== 2 ||
+    (authorLed ? tail.length < 1 || tail.length > 4 : tail.length !== 2) ||
     !/[.!?]$/u.test(last.text.trim()) ||
     !provesFragmentedCaptionGraphic(start, runs, page, last, 0.98)
   )
     return false
   const band = [start, ...tail]
+  if (authorLed) {
+    const native = page.lines.filter(
+      (line) =>
+        line.text?.trim() &&
+        line.x < start.right &&
+        line.x + line.width > start.x &&
+        line.y < last.bottom &&
+        line.y + line.height > start.y
+    )
+    if (
+      native.length !== band.length ||
+      band.some(
+        (row) =>
+          native.filter(
+            (line) =>
+              line.text === row.text &&
+              line.x === row.x &&
+              line.y === row.y &&
+              line.x + line.width === row.right &&
+              line.y + line.height === row.bottom &&
+              line.fontSize === row.fontSize
+          ).length !== 1
+      )
+    )
+      return false
+  }
   return (
     !runs.some(
       (l) =>
@@ -8750,13 +9001,21 @@ export function findCaptionCandidates(pages, rulesByPage = new Map()) {
           line.y > start.y &&
           /^(?:Fig\.?|Figure|Tab\.?|Table)\s+[A-Z]?\d+(?:\.\d+)*[.:]/iu.test(line.text)
       )
+      // A later independent caption cannot make its intervening body rules
+      // invalidate an already closed local paragraph. An actual interior
+      // reference keeps its own complete boundary and all previous guards.
+      const referenceBoundary =
+        referenceRow?.bottom ??
+        (nativeParagraph?.length && /[.!?]$/u.test(nativeParagraph.at(-1).text.trim())
+          ? Math.max(start.bottom, ...nativeParagraph.map((line) => line.bottom))
+          : (anyNumberedReferenceRow?.bottom ?? start.bottom))
       const referenceRulesBroken = (rulesByPage.get(page.pageNumber) ?? []).some(
         (rule) =>
           !Array.isArray(rule) ||
           rule.length !== 4 ||
           !rule.every(Number.isFinite) ||
           (rule[1] >= start.y &&
-            rule[1] <= (referenceRow?.bottom ?? anyNumberedReferenceRow?.bottom ?? start.bottom) &&
+            rule[1] <= referenceBoundary &&
             rule[0] < start.right &&
             rule[2] > start.x)
       )

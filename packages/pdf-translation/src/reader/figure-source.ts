@@ -13,6 +13,11 @@ import {
 import { restoreReferenceFigureCaptions } from './reference-figure-caption.js'
 import { carryNativeCaptionEligibility } from './caption-eligibility.js'
 import { restoreNativeOrdinaryAppendixProse } from './wrapped-section-prose.js'
+import { retainNativeFigurePanels, isCurrentNativeFigurePanels } from './figure-panels.js'
+import {
+  retainNativeFigureVariableKeys,
+  isCurrentNativeFigureVariableKeys
+} from './figure-variable-keys.js'
 
 type Rect = PdfTranslationFragment['rect']
 type Matrix = readonly number[]
@@ -563,7 +568,28 @@ export async function applyCachedPdfFigureSources({
     })
     current()
     if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
-    return ordinary
+    const keys = await retainNativeFigureVariableKeys({
+      extraction: ordinary,
+      document,
+      results,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    const panels = await retainNativeFigurePanels({
+      extraction: keys,
+      document,
+      sourceIdentity: identity,
+      nativeDocumentFactory,
+      signal
+    })
+    current()
+    if (!isCurrentCaptionedMathBodyRetention(retained)) return extraction
+    return isCurrentNativeFigureVariableKeys(keys) && isCurrentNativeFigurePanels(panels)
+      ? panels
+      : extraction
   } catch {
     signal.throwIfAborted()
     return extraction

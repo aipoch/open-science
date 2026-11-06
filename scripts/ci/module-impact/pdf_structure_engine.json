@@ -1955,7 +1955,8 @@
     "packages/pdf-structure/resources/literature-pdf-scanned-page.mjs",
     "packages/pdf-structure/resources/literature-pdf-scan-ocr.mjs",
     "packages/pdf-structure/test/scanned-page.test.ts",
-    "packages/pdf-structure/test/scan-ocr.test.ts"
+    "packages/pdf-structure/test/scan-ocr.test.ts",
+    "packages/pdf-structure/test/native-table-crop-witness.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2568,7 +2569,8 @@
       "packages/pdf-structure/test/figure-isolated-raster-scope.test.ts",
       "packages/pdf-structure/test/native-compositing-scope.test.ts",
       "packages/pdf-structure/test/scanned-page.test.ts",
-      "packages/pdf-structure/test/scan-ocr.test.ts"
+      "packages/pdf-structure/test/scan-ocr.test.ts",
+      "packages/pdf-structure/test/native-table-crop-witness.test.ts"
     ],
     "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [

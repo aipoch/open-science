@@ -1,6 +1,9 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
+import { readFileSync } from 'node:fs'
+import { compileFunction } from 'node:vm'
+import ts from 'typescript'
 
 const { findAlgorithmCandidates, associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
@@ -84,4 +87,46 @@ it('keeps algorithm rules out of the preceding figure association', () => {
     exclusions
   )
   expect(figure.rect.map(Math.round)).toEqual([50, 60, 300, 140])
+})
+
+it('compares inference table crops and native algorithms in the same coordinate space', () => {
+  // Execute the extractor's actual admission statement, not a copied predicate.
+  const source = readFileSync(resolve('resources/literature-pdf-extract.mjs'), 'utf8'),
+    ast = ts.createSourceFile(
+      'extract.mjs',
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS
+    ),
+    statements: string[] = []
+  const visit = (node: import('typescript').Node): void => {
+    if (
+      ts.isExpressionStatement(node) &&
+      ts.isBinaryExpression(node.expression) &&
+      node.expression.left.getText(ast) === 'pageInference.tables' &&
+      node.expression.right.getText(ast).includes('pageAlgorithms.some')
+    )
+      statements.push(node.getText(ast))
+    ts.forEachChild(node, visit)
+  }
+  visit(ast)
+  expect(statements).toHaveLength(1)
+  const filter = compileFunction(statements[0], ['pageInference', 'pageAlgorithms']),
+    candidates = [
+      { id: 'ordinary-table-above', rect: [70, 130, 220, 150] },
+      { id: 'algorithm-left', rect: [50, 200, 300, 284] },
+      { id: 'algorithm-right', rect: [320, 220, 570, 304] },
+      { id: 'ordinary-table-below', rect: [480, 350, 560, 410] }
+    ].map(({ id, rect }) => ({ id, cropRect: rect.map((x) => x * 1.5) })),
+    pageInference = { tables: candidates },
+    algorithms = findAlgorithmCandidates(sample)
+  filter(pageInference, algorithms)
+  expect(pageInference.tables.map((t) => t.id)).toEqual([
+    'ordinary-table-above',
+    'ordinary-table-below'
+  ])
+  const noAlgorithms = { tables: candidates }
+  filter(noAlgorithms, [])
+  expect(noAlgorithms.tables).toEqual(candidates)
 })

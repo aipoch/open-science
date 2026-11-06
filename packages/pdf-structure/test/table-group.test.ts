@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 
-const { groupTableParts } = await import(
+const { groupTableParts, matchesGroupedTableCropPng } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-group.mjs')).href
 )
 const line = (
@@ -57,6 +59,137 @@ const parts = [
     captionIssue: 'unmatched-caption'
   }
 ]
+
+it('keeps complete native note descenders and refuses a foreign glyph in their raster strip', async () => {
+  const { createCanvas, loadImage } = await import('@napi-rs/canvas')
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const {
+    captureNativeFigureRenderContext,
+    matchNativeFigureRenderContext,
+    recordPaintedOperationBounds
+  } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+  const { collectGraphicsBounds } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+  )
+  const { tableTextToken } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+  )
+  const { renderPdfCrop } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+  )
+  const pdfjsRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
+  for (const foreign of [false, true]) {
+    const stream =
+      'BT /F1 10 Tf 10 185 Td (Shared typography) Tj ET\n' +
+      (foreign ? 'BT /F1 1 Tf 150 183.5 Td (x) Tj ET' : '')
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 400] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+    ]
+    let pdf = '%PDF-1.4\n'
+    const offsets = objects.map((object, i) => {
+      const offset = pdf.length
+      pdf += `${i + 1} 0 obj\n${object}\nendobj\n`
+      return offset
+    })
+    const xref = pdf.length
+    pdf +=
+      'xref\n0 6\n0000000000 65535 f \n' +
+      offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+    pdf += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+    const task = getDocument({
+      data: new Uint8Array(Buffer.from(pdf)),
+      isEvalSupported: false,
+      fontExtraProperties: true,
+      useSystemFonts: false,
+      standardFontDataUrl: join(pdfjsRoot, 'standard_fonts') + '/'
+    })
+    try {
+      const doc = await task.promise,
+        nativePage = await doc.getPage(1),
+        viewport = nativePage.getViewport({ scale: 1 }),
+        scaled = nativePage.getViewport({ scale: 1.5 }),
+        canvas = createCanvas(scaled.width, scaled.height)
+      const rendering = nativePage.render({
+        canvas,
+        canvasContext: canvas.getContext('2d'),
+        viewport: scaled,
+        recordOperations: true
+      })
+      recordPaintedOperationBounds(rendering)
+      await rendering.promise
+      const content = await nativePage.getTextContent(),
+        graphics = collectGraphicsBounds(rendering, nativePage.recordedBBoxes),
+        hash = '0'.repeat(64)
+      const snapshot = captureNativeFigureRenderContext(
+        rendering,
+        1,
+        content,
+        viewport,
+        graphics.graphicsBounds,
+        hash,
+        nativePage.commonObjs
+      )
+      const context = {
+        ...matchNativeFigureRenderContext(
+          snapshot,
+          1,
+          content,
+          viewport,
+          graphics.graphicsBounds,
+          hash
+        ),
+        pageNumber: 1,
+        sourceSha256: hash
+      }
+      const tokens = context.content.items.flatMap((item: ReturnType<typeof JSON.parse>) =>
+        item.str.trim()
+          ? [{ ...tableTextToken(item, viewport, 0), sourceItem: item.sourceItem }]
+          : []
+      )
+      const native = { ...page, pageNumber: 1, width: 200, height: 400, rotation: 0, ...graphics }
+      const members = [
+        parts[0],
+        { ...parts[1], notes: [{ text: 'Shared typography', rect: [0, 205, 200, 215] }] }
+      ]
+      const before = JSON.stringify(members)
+      expect(groupTableParts(members, native, tokens)).toHaveLength(2)
+      const grouped = groupTableParts(members, native, tokens, context)
+      if (foreign) expect(grouped).toHaveLength(2)
+      else {
+        expect(grouped).toHaveLength(1)
+        const rect = grouped[0].cropRect.map((v: number) => v / 1.5)
+        expect(rect[3]).toBeGreaterThan(217)
+        expect(rect[3]).toBeLessThan(218)
+        expect(grouped[0].parts.map((part: { cropRects: number[][] }) => part.cropRects)).toEqual(
+          members.map((member) => [member.cropRect])
+        )
+        const png = await renderPdfCrop(nativePage, rect, 0)
+        expect(matchesGroupedTableCropPng(grouped[0], png)).toBe(true)
+        const image = await loadImage(png),
+          cropCanvas = createCanvas(image.width, image.height),
+          ctx = cropCanvas.getContext('2d')
+        ctx.drawImage(image, 0, 0)
+        const last = ctx.getImageData(0, image.height - 1, image.width, 1).data
+        expect([...last].every((v) => v === 255)).toBe(true)
+        const reduced = createCanvas(Math.floor(image.width * 0.8), Math.floor(image.height * 0.8))
+        reduced.getContext('2d').drawImage(image, 0, 0, reduced.width, reduced.height)
+        expect(matchesGroupedTableCropPng(grouped[0], await reduced.encode('png'))).toBe(false)
+        const wrong = [
+          members[0],
+          { ...members[1], notes: [{ ...members[1].notes[0], text: 'Different note' }] }
+        ]
+        expect(groupTableParts(wrong, native, tokens, context)).toHaveLength(2)
+      }
+      expect(JSON.stringify(members)).toBe(before)
+    } finally {
+      await task.destroy()
+    }
+  }
+})
 it('groups consecutive labelled parts under one caption without flattening their columns', () => {
   const groups = groupTableParts(parts, page)
   expect(groups).toHaveLength(1)
@@ -65,10 +198,36 @@ it('groups consecutive labelled parts under one caption without flattening their
     'B. Dewa data'
   ])
   expect(groups[0].parts.map((p: { grid: string[][] }) => p.grid[0].length)).toEqual([5, 7])
+  expect(groups[0].parts.map((p: { cropRects: number[][] }) => p.cropRects)).toEqual(
+    parts.map((part) => [part.cropRect])
+  )
   expect(groups[0].notes).toEqual(parts[1].notes)
   expect(groups[0].parts.every((p: { notes: unknown[] }) => !p.notes.length)).toBe(true)
   expect(groups[0].cropRect).toEqual([0, 0, 300, 322.5])
   expect(groups[0].captionIssue).toBeUndefined()
+})
+it('groups consecutive parenthesized parts without borrowing a different heading convention', () => {
+  const first = line('(a) Error rates', 15),
+    second = line('(b) Power', 110)
+  const origins = [{ pageNumber: 1, index: 7, text: 'x' }]
+  const [joined] = groupTableParts(
+    [{ ...parts[0], unreliableMathSourceItems: origins }, parts[1]],
+    { lines: [page.lines[0], first, second] }
+  )
+  expect(joined.parts[0].unreliableMathSourceItems).toEqual(origins)
+  expect(joined.parts[1].unreliableMathSourceItems).toBeUndefined()
+  expect(joined.parts.map((part: { title: string }) => part.title)).toEqual([
+    first.text,
+    second.text
+  ])
+  expect(joined.parts.map((part: { grid: string[][] }) => part.grid[0].length)).toEqual([5, 7])
+  expect(joined.parts.map((part: { cropRects: number[][] }) => part.cropRects)).toEqual(
+    parts.map((part) => [part.cropRect])
+  )
+  expect(groupTableParts(parts, { lines: [page.lines[0], first, page.lines[2]] })).toHaveLength(2)
+  expect(
+    groupTableParts(parts, { lines: [page.lines[0], first, line('(c) Power', 110)] })
+  ).toHaveLength(2)
 })
 it('keeps independent, unlabelled, interrupted and nonconsecutive tables separate', () => {
   expect(groupTableParts([{ ...parts[0], caption: undefined }, parts[1]], page)).toHaveLength(2)

@@ -18,6 +18,91 @@ const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
 
+function wrappedNumberedCaption(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, number][] = [
+    ['Algorithm 1 Collect samples for bounded estimates. Prepare values', 299.65, 76, 10],
+    ['for a single independent group.', 300, 88, 10],
+    ['Require: a sequence', 300, 105, 10],
+    ['Ensure: a normalized total', 300, 117, 10],
+    ['1: initialize total', 305, 129, 10],
+    ['2: for each value do', 305, 141, 10],
+    ['3: add the value', 305, 153, 10],
+    ['4: end for', 305, 165, 10],
+    ['5: total ← 1', 305, 177, 10],
+    ['z', 346, 180, 7],
+    ['6: return total', 305, 189, 10],
+    ['The following paragraph remains ordinary prose.', 300, 226, 10]
+  ]
+  const items = rows.map(([str, x, baseline, height], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * height * 0.36,
+      height,
+      transform: [height, 0, 0, height, x, 800 - baseline],
+      fontName: 'native',
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    rails = [67, 93, 206],
+    operators = {
+      fnArray: rails.map(() => OPS.constructPath),
+      argsArray: rails.map((y) => [
+        OPS.stroke,
+        [[0, 300, 800 - y, 1, 535, 800 - y]],
+        [300, 800 - y, 535, 800 - y]
+      ])
+    },
+    viewport = { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: rows.map(([text, x, baseline, height], i) => ({
+        text,
+        x,
+        y: baseline - height,
+        width: items[i].width,
+        height,
+        fontSize: height
+      })),
+      graphicsBounds: rails.map((y, operationIndex) => ({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: [299 / 600, (y - 1) / 800, 536 / 600, (y + 1) / 800]
+      }))
+    },
+    content = { items, styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } } }
+  return {
+    page,
+    context: { content, viewport, operators, rules: collectTableRules(operators, viewport) }
+  }
+}
+
+it('retains the final numbered return under a complete wrapped native algorithm caption', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  expect(legacy.caption.lines).toHaveLength(1)
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate.rect).toEqual(legacy.rect)
+  expect(candidate.caption.lines).toEqual(
+    page.lines.slice(0, 2).map((line: { text: string }) => line.text)
+  )
+  expect(candidate.nativeBody?.sourceItems).toEqual(
+    context.content.items.slice(2, -1).map((item: { sourceItem: unknown }) => item.sourceItem)
+  )
+})
+
+it('keeps a wrapped algorithm caption unchanged if the divider only exists in page geometry', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  context.operators.fnArray[1] = OPS.dependency
+  context.operators.argsArray[1] = []
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate).toEqual(legacy)
+  expect(candidate.nativeBody).toBeUndefined()
+})
+
 // Three actual native strokes close nested scopes; the two caption fragments
 // have disjoint used ink although their font-wide boxes overlap Output.
 function verticalScopeProgram(mode = '', dotted = false): ReturnType<typeof JSON.parse> {
@@ -1867,3 +1952,138 @@ it.each([
   f.context.rules = collectTableRules(o, f.context.viewport)
   expect(findNativeAlgorithmCandidates(f.page, f.context)).toHaveLength(0)
 })
+function outdentedConditionalFrame(fault = ''): ReturnType<typeof JSON.parse> {
+  const raw: [string, number, number, number][] = [
+    ['Algorithm 1: Conditional routine', 80, 65, 10],
+    ['Input:', 80, 90, 10],
+    ['values', 120, 90, 10],
+    ['Output:', 80, 104, 10],
+    ['result', 125, 104, 10],
+    ['1', 65, 120, 8],
+    ['if ready then', 80, 120, 10],
+    ['2', 65, 133, 8],
+    ['return value', 95, 133, 10],
+    ['3', 65, 150, 8],
+    ['prepare values', 80, 150, 10],
+    ['4', 65, 166, 8],
+    ['if complete then', 80, 166, 10],
+    ['5', 65, 179, 8],
+    ['return result', 95, 179, 10],
+    ['6', 65, 200, 8],
+    ['finalize values', 80, 200, 10],
+    ['Figure 1: Independent drawing.', 80, 260, 10]
+  ]
+  if (fault === 'missing-ordinal') raw.splice(9, 1)
+  if (fault === 'cross-closing') {
+    raw[15][2] = 220
+    raw[16][2] = 220
+  }
+  if (fault === 'empty-input') raw.splice(2, 1)
+  if (fault === 'empty-output') raw.splice(4, 1)
+  if (fault === 'duplicate-ordinal') raw[11][0] = '3'
+  if (fault === 'input') raw[1][0] = 'Summary:'
+  if (fault === 'foreign-prose') raw.splice(9, 0, ['A separate prose paragraph.', 80, 142, 10])
+  if (fault === 'outdented-body') raw[8][1] = 79
+  const content = {
+    items: raw.map(([str, x, y, height], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * height * 0.4,
+      height,
+      transform: [height, 0, 0, height, x, 800 - y],
+      fontName: 'native',
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    styles: { native: { ascent: 1, descent: 0, vertical: false } }
+  }
+  if (fault === 'source') content.items[6].sourceItem.text = 'changed'
+  const rails = [
+    [80, 50, 530, 50],
+    [80, 74, 530, 74],
+    [80, 215, 530, 215],
+    [85, 124, 85, 137],
+    [85.2, 136.8, 90, 136.8],
+    [85, 170, 85, 183],
+    [85.2, 182.8, 90, 182.8]
+  ]
+  if (fault === 'missing-scope') rails.splice(3, 1)
+  if (fault === 'missing-cap') rails.splice(4, 1)
+  if (fault === 'foreign-rule') rails.push([300, 110, 350, 110])
+  const operators = {
+    fnArray: rails.map(() => OPS.constructPath),
+    argsArray: rails.map(([x, y, r, b]) => [
+      OPS.stroke,
+      [new Float32Array([0, x, 800 - y, 1, r, 800 - b])],
+      new Float32Array([x, 800 - Math.max(y, b), r, 800 - Math.min(y, b)])
+    ])
+  }
+  const viewport = {
+    width: 600,
+    height: 800,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 800]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    rotation: 0,
+    invalidGraphicsBounds: 0,
+    lines: content.items.map((r) => ({
+      text: r.str,
+      x: r.transform[4],
+      y: 800 - r.transform[5] - r.height,
+      width: r.width,
+      height: r.height,
+      fontSize: r.height
+    })),
+    graphicsBounds: rails.map((r, operationIndex) => ({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [
+        r[0] - 0.5,
+        Math.min(r[1], r[3]) - 0.5,
+        r[2] + 0.5,
+        Math.max(r[1], r[3]) + 0.5
+      ].map((v, i) => v / (i % 2 ? 800 : 600))
+    }))
+  }
+  return {
+    page,
+    context: { content, viewport, operators, rules: collectTableRules(operators, viewport) }
+  }
+}
+it('retains complete outdented conditional ordinals without borrowing the following figure', () => {
+  const f = outdentedConditionalFrame(),
+    before = structuredClone(f),
+    result = findNativeAlgorithmCandidates(f.page, f.context)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect[0]).toBe(65)
+  expect(result[0].rect[3]).toBeLessThan(220)
+  expect(result[0].nativeBody.sourceItems).toEqual(
+    f.context.content.items.slice(1, -1).map((r: { sourceItem: unknown }) => r.sourceItem)
+  )
+  expect(f).toEqual(before)
+})
+it.each([
+  'missing-ordinal',
+  'duplicate-ordinal',
+  'input',
+  'foreign-prose',
+  'outdented-body',
+  'source',
+  'missing-scope',
+  'missing-cap',
+  'foreign-rule'
+])('rejects incomplete outdented conditional proof: %s', (fault) => {
+  const f = outdentedConditionalFrame(fault)
+  expect(findNativeAlgorithmCandidates(f.page, f.context)).toEqual([])
+})
+it.each(['cross-closing', 'empty-input', 'empty-output'])(
+  'rejects a broken closed I/O frame: %s',
+  (fault) => {
+    const f = outdentedConditionalFrame(fault)
+    expect(findNativeAlgorithmCandidates(f.page, f.context)).toEqual([])
+  }
+)

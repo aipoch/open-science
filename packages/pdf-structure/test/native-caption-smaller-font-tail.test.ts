@@ -6,6 +6,43 @@ const { findCaptionCandidates } = await import(
   pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
 )
 
+it('does not let a rule before a later caption cancel a closed smaller-font paragraph', () => {
+  const row = (
+    text: string,
+    y: number,
+    width = 400,
+    fontSize = 10
+  ): { text: string; x: number; y: number; width: number; height: number; fontSize: number } => ({
+    text,
+    x: 50,
+    y,
+    width,
+    height: fontSize,
+    fontSize
+  })
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    graphicsBounds: [{ kind: 'image', normalizedRect: [50 / 600, 40 / 800, 450 / 600, 180 / 800] }],
+    lines: [
+      row('Figure 1: Comparison of the measured values in the', 200),
+      row('independent groups with the common reference under', 211.5, 400, 8),
+      row('the repeated settings and across all observed groups.', 221, 300, 8),
+      row('Figure 2: A separate complete description.', 400)
+    ]
+  }
+  const before = structuredClone(page)
+  expect(findCaptionCandidates([page], new Map([[1, [[50, 350, 450, 350]]]]))[0].lines).toEqual(
+    page.lines.slice(0, 3).map((l) => l.text)
+  )
+  expect(findCaptionCandidates([page], new Map([[1, [[50, 220, 450, 220]]]]))[0].lines).toEqual([
+    page.lines[0].text
+  ])
+  expect(page).toEqual(before)
+})
+
 it('keeps a closed figure caption when its explanatory rows use a smaller font', () => {
   const page = {
     pageNumber: 1,

@@ -282,9 +282,10 @@ export async function nativeAlgorithmInkRegions(
   content: Awaited<ReturnType<PDFPageProxy['getTextContent']>>,
   viewport: ReturnType<PDFPageProxy['getViewport']>,
   pageNumber: number,
-  selected: ReadonlySet<number>
+  selected: ReadonlySet<number>,
+  operatorSnapshot?: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>
 ): Promise<Map<number, NonNullable<ReturnType<typeof nativeLabelRegion>>> | undefined> {
-  return readNativeInkRegions(page, content, viewport, pageNumber, selected)
+  return readNativeInkRegions(page, content, viewport, pageNumber, selected, operatorSnapshot)
 }
 
 /** A separate text proof; a clip is harmless to text only when its entire

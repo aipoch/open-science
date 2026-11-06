@@ -7009,6 +7009,7 @@
     "Unsupported text direction": "未対応の文字方向",
     "Text outside page bounds": "ページ範囲外のテキスト",
     "Invalid text geometry": "テキストの位置情報が無効",
+    "Text hidden beneath other page content": "ページ内の他の内容に隠れているテキスト",
     "Full-text preparation cancelled.": "全文の準備をキャンセルしました。",
     "Prepare full text": "全文を準備",
     "Located separately": "個別に位置を特定した断片",

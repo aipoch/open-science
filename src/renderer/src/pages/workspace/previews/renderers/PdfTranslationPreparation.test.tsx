@@ -310,3 +310,49 @@ it.each([2, 120])('keeps original-layout navigation compact for %i pages', (page
   expect(props.onNavigate).toHaveBeenCalledWith(pages)
   expect(screen.queryByRole('option')).toBeNull()
 })
+
+it('identifies occluded text exclusions and retains navigation to their original page', () => {
+  const onNavigate = vi.fn()
+  const state: PdfPreparationState = {
+    status: 'ready',
+    extraction: {
+      source: { units: [] } as never,
+      coverage: {
+        pageCount: 2,
+        textItemCount: 3,
+        includedItemCount: 1,
+        excludedItemCount: 2,
+        pagesWithoutText: [],
+        warnings: [],
+        exclusions: [
+          {
+            reason: 'occluded-native-text',
+            items: [
+              { pageNumber: 2, index: 7, text: 'Covered label' },
+              { pageNumber: 2, index: 9, text: 'Covered note' }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  const before = JSON.stringify(state)
+  render(
+    <PdfTranslationPreparation
+      state={state}
+      pageCount={2}
+      onStart={vi.fn()}
+      onCancel={vi.fn()}
+      onNavigate={onNavigate}
+    />
+  )
+  fireEvent.click(screen.getByText('Full-text preparation').closest('button')!)
+  fireEvent.click(screen.getByText('Excluded text'))
+  const reason = screen.getByText('Text hidden beneath other page content')
+  expect(reason.parentElement?.textContent).toBe('Text hidden beneath other page content2')
+  expect(screen.queryByText('Invalid text geometry')).toBeNull()
+  expect(screen.queryByText('Text outside page bounds')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Page 2' }))
+  expect(onNavigate).toHaveBeenCalledExactlyOnceWith(2)
+  expect(JSON.stringify(state)).toBe(before)
+})

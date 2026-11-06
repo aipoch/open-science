@@ -93,6 +93,8 @@ function closedFrame(table, items, captions, rules) {
 // distinguish records from wrapped mathematical descriptions. Only the last
 // field may continue; every original token must keep a unique logical owner.
 export function recoverNativeWrappedMathRecords(table, items, captions, rules) {
+  const terminal = recoverNativeTerminalFieldContinuationGrid(table, items, captions, rules)
+  if (terminal) return terminal
   const p = closedFrame(table, items, captions, rules)
   if (!p || !p.captionCount) return
   const { em, opening, divider, closing, source, header, body } = p,
@@ -155,6 +157,211 @@ export function recoverNativeWrappedMathRecords(table, items, captions, rules) {
     cropRect: [cuts[0], opening[1], cuts.at(-1), closing[1]],
     rows: ys.slice(1).map((y, n) => [cuts[0], ys[n], cuts.at(-1), y]),
     columns: cuts.slice(1).map((x, n) => [cuts[n], opening[1], x, closing[1]]),
+    spans: [],
+    headerRows: [0],
+    completeSpans: true,
+    preservePhysicalRows: true,
+    ownedTokens: new Set(source),
+    repair: 'native-body-records-recovered'
+  }
+}
+
+// A blank stub alone never joins records. Here two independent fields both
+// continue: an unfinished native assignment list and a grammatical prose tail.
+// Complete three-lane ink projections, repeated anchor baselines and the native
+// closing rule bind the whole terminal record without using the stub's label.
+export function recoverNativeTerminalFieldContinuationGrid(table, items, captions, rules) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[0] < r[2] && r[1] < r[3]
+  if (
+    items.some(
+      (i) =>
+        i.text?.trim() &&
+        (!valid(i.rect) ||
+          !Number.isFinite(i.height) ||
+          i.height <= 0 ||
+          !Number.isFinite(i.baseline))
+    ) ||
+    rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite))
+  )
+    return
+  const p = closedFrame(table, items, captions, rules)
+  if (!p || p.captionCount !== 1) return
+  const { em, opening, divider, closing, source, header, body } = p,
+    origins = new Set(),
+    frame = [opening[0], opening[1], opening[2], closing[1]]
+  if (
+    source.some(
+      (i) =>
+        !i.sourceItem ||
+        !Number.isSafeInteger(i.sourceItem.index) ||
+        i.sourceItem.index < 0 ||
+        !Number.isSafeInteger(i.sourceItem.pageNumber) ||
+        i.sourceItem.pageNumber < 1 ||
+        i.sourceItem.text !== i.text ||
+        origins.has(i.sourceItem.index) ||
+        !origins.add(i.sourceItem.index) ||
+        i.rect.some((v, n) => (n < 2 ? v < frame[n] - 1e-6 : v > frame[n] + 1e-6))
+    ) ||
+    source.some((i) => i.sourceItem.pageNumber !== source[0].sourceItem.pageNumber) ||
+    table.structure.objects.filter((o) => o.label === 'table column').length !== 3
+  )
+    return
+  if (
+    rules.some(
+      (r) =>
+        r[0] < frame[2] &&
+        r[2] > frame[0] &&
+        r[1] > frame[1] &&
+        r[1] < frame[3] &&
+        !(
+          r[1] === r[3] &&
+          Math.abs(r[1] - divider[1]) < em * 0.002 &&
+          Math.abs(r[0] - frame[0]) < em * 0.002 &&
+          Math.abs(r[2] - frame[2]) < em * 0.002
+        )
+    )
+  )
+    return
+  if (
+    rules.some(
+      (r) =>
+        r[0] === r[2] && r[0] > frame[0] && r[0] < frame[2] && r[1] < frame[3] && r[3] > frame[1]
+    )
+  )
+    return
+  const projections = []
+  for (const i of [...source].sort((a, b) => a.rect[0] - b.rect[0])) {
+    const last = projections.at(-1)
+    if (last && i.rect[0] - last[1] < em * 0.65) last[1] = Math.max(last[1], i.rect[2])
+    else projections.push([i.rect[0], i.rect[2]])
+  }
+  if (projections.length !== 3) return
+  const cuts = [
+      frame[0],
+      ...projections.slice(1).map((r, n) => (projections[n][1] + r[0]) / 2),
+      frame[2]
+    ],
+    physical = groupSourceRowsWithScripts(
+      [...body].sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+      em,
+      0.1
+    ),
+    heads = groupSourceRowsWithScripts(
+      [...header].sort((a, b) => a.baseline - b.baseline),
+      em,
+      0.05
+    )
+  if (
+    heads?.length !== 1 ||
+    !readSourceRow(header, cuts)?.every((t) => /\p{L}/u.test(t)) ||
+    !physical ||
+    physical.length < 5 ||
+    physical.length > 20
+  )
+    return
+  const values = physical.map((row) => readSourceRow(row, cuts)),
+    bounds = physical.map((row) => [
+      Math.min(...row.map((i) => i.rect[1])),
+      Math.max(...row.map((i) => i.rect[3]))
+    ]),
+    baselines = physical.map((row) =>
+      row.filter((i) => i.height >= em * 0.8).map((i) => i.baseline)
+    ),
+    tail = physical.at(-1),
+    head = physical.at(-2),
+    tailValues = values.at(-1),
+    headValues = values.at(-2)
+  if (
+    values.some((v) => !v) ||
+    values.slice(0, -1).some((v) => v.some((t) => !t)) ||
+    tailValues[0] ||
+    !tailValues[1] ||
+    !tailValues[2] ||
+    physical.some((row) =>
+      row.some((i) => !cuts.slice(1).some((x, n) => i.rect[0] >= cuts[n] && i.rect[2] <= x))
+    ) ||
+    baselines.some((b) => !b.length || b.some((y) => Math.abs(y - b[0]) > em * 0.1)) ||
+    bounds.some(
+      (r, n) =>
+        n &&
+        (r[0] <= bounds[n - 1][1] ||
+          baselines[n][0] - baselines[n - 1][0] < em * 0.9 ||
+          baselines[n][0] - baselines[n - 1][0] > em * 1.8)
+    )
+  )
+    return
+  const lane = (row, c) => row.filter((i) => i.rect[0] >= cuts[c] && i.rect[2] <= cuts[c + 1]),
+    first = physical.slice(0, -1).map((row) => lane(row, 0))
+  if (
+    first.some((row) => !row.length || row.some((i) => Math.abs(i.height - em) > em * 0.02)) ||
+    first.some(
+      (row) =>
+        Math.abs(
+          Math.min(...row.map((i) => i.rect[0])) - Math.min(...first[0].map((i) => i.rect[0]))
+        ) >
+        em * 0.05
+    )
+  )
+    return
+  for (const c of [1, 2]) {
+    const a = lane(head, c),
+      b = lane(tail, c)
+    if (
+      !a.length ||
+      !b.length ||
+      Math.abs(Math.min(...a.map((i) => i.rect[0])) - Math.min(...b.map((i) => i.rect[0]))) >
+        em * 0.05
+    )
+      return
+  }
+  // Split only top-level commas. Commas within distributions/functions are
+  // part of their unchanged original mathematical field, not record evidence.
+  const assignments = (text, unfinished) => {
+    const compact = text.replace(/\s/gu, ''),
+      stack = [],
+      parts = []
+    let start = 0
+    for (let n = 0; n < compact.length; n++) {
+      const c = compact[n]
+      if (c === '(' || c === '[') stack.push(c)
+      else if (c === ')' || c === ']') {
+        if (stack.pop() !== (c === ')' ? '(' : '[')) return false
+      } else if (c === ',' && !stack.length) {
+        parts.push(compact.slice(start, n))
+        start = n + 1
+      }
+    }
+    if (stack.length || compact.endsWith(',') !== unfinished) return false
+    if (start < compact.length) parts.push(compact.slice(start))
+    return parts.length >= 2 && parts.every((t) => /^\p{L}[\p{L}\p{N}]*[=∼].+$/u.test(t))
+  }
+  const proseHead = lane(head, 2),
+    proseTail = lane(tail, 2)
+  if (
+    proseHead.length !== 1 ||
+    proseTail.length !== 1 ||
+    !assignments(headValues[1], true) ||
+    !assignments(tailValues[1], false) ||
+    !/\b(?:over|under|with|without|for|of|in|on|by|through|between|and|or)\s*$/u.test(
+      proseHead[0].text
+    ) ||
+    !/^[a-z]{2,}\b/u.test(proseTail[0].text) ||
+    proseTail[0].text.trim().split(/\s+/u).length < 2 ||
+    closing[1] - bounds.at(-1)[1] >= em ||
+    !hasUniqueRecordTokens(source, [header, ...physical])
+  )
+    return
+  const edges = [
+    frame[1],
+    divider[1],
+    ...bounds.slice(1, -1).map((r, n) => (bounds[n][1] + r[0]) / 2),
+    frame[3]
+  ]
+  return {
+    cropRect: frame,
+    rows: edges.slice(1).map((y, n) => [frame[0], edges[n], frame[2], y]),
+    columns: cuts.slice(1).map((x, n) => [cuts[n], frame[1], x, frame[3]]),
     spans: [],
     headerRows: [0],
     completeSpans: true,

@@ -4073,6 +4073,112 @@ export function populateTableCellText({
       splitWideRuns.push({ original: item, parts, repair: 'native-measured-header-run-split' })
       continue
     }
+    const whitespaceBoundaries = new Set()
+    let nonspace = 0
+    for (const word of item.text.trim().split(/\s+/u).slice(0, -1)) {
+      nonspace += Array.from(word).length
+      whitespaceBoundaries.add(nonspace)
+    }
+    // A large native TJ gap can separate cells while ordinary spaces stay
+    // inside one value. Measure complete leaves before the legacy word path;
+    // character proportions cannot distinguish a unit from the next column.
+    const observed = measuredRuns.filter(
+      (run) =>
+        run.text === item.text &&
+        Array.isArray(run.rect) &&
+        run.rect.length === 4 &&
+        run.rect.every((n, axis) => Number.isFinite(n) && n === item.rect[axis])
+    )
+    const run = observed.length === 1 ? observed[0] : undefined,
+      source = item.sourceItem,
+      boundaries = new Set()
+    let glyphCount = 0
+    for (const literal of Array.isArray(run?.literalGlyphs) ? run.literalGlyphs : []) {
+      glyphCount += typeof literal === 'string' ? Array.from(literal).length : 0
+      boundaries.add(glyphCount)
+    }
+    const validRun =
+        run &&
+        Array.isArray(run.gaps) &&
+        Array.isArray(run.glyphRuns) &&
+        run.glyphRuns.every((n) => Number.isInteger(n) && n >= 0) &&
+        Array.isArray(run.literalGlyphs) &&
+        run.literalGlyphs.every((s) => typeof s === 'string' && s) &&
+        run.gaps.every(
+          (gap, index) =>
+            gap &&
+            Number.isInteger(gap.index) &&
+            boundaries.has(gap.index) &&
+            whitespaceBoundaries.has(gap.index) &&
+            gap.index > 0 &&
+            gap.index < run.glyphRuns.length &&
+            Number.isFinite(gap.left) &&
+            Number.isFinite(gap.right) &&
+            gap.left < gap.right &&
+            gap.left >= item.rect[0] &&
+            gap.right <= item.rect[2] &&
+            (!index ||
+              (gap.index > run.gaps[index - 1].index && gap.left > run.gaps[index - 1].right))
+        ),
+      measured = validRun && splitNativeMeasuredFields(item, [run], item.height)
+    if (
+      validRun &&
+      source &&
+      source.text === item.text &&
+      Number.isSafeInteger(source.pageNumber) &&
+      source.pageNumber > 0 &&
+      Number.isSafeInteger(source.index) &&
+      source.index >= 0 &&
+      !item.sourceSegment &&
+      !item.sourceToken &&
+      !item.sourceItems &&
+      !item.sourceSegments &&
+      pageItems.filter(
+        (t) =>
+          t.sourceItem?.pageNumber === source.pageNumber && t.sourceItem?.index === source.index
+      ).length === 1 &&
+      run?.baseline === item.baseline &&
+      run.height === item.height &&
+      run.rect.length === 4 &&
+      run.horizontal !== false &&
+      measured?.length >= 2 &&
+      measured.length === slots.length
+    ) {
+      const parts = measured.map((part) => {
+        const owners = cells.filter((cell) =>
+          part.rect.every((n, axis) => (axis < 2 ? n >= cell.rect[axis] : n <= cell.rect[axis]))
+        )
+        return { item: part, owner: owners.length === 1 ? owners[0] : undefined }
+      })
+      if (
+        parts.every(
+          ({ item: part, owner }, index) =>
+            owner &&
+            owner === slots[index] &&
+            owner.row === slots[0].row &&
+            part.rect.every(Number.isFinite) &&
+            (!index ||
+              (owner.column === slots[index - 1].column + 1 &&
+                Math.abs(owner.rect[0] - slots[index - 1].rect[2]) < 1e-6)) &&
+            !pageItems.some(
+              (other) =>
+                other !== item &&
+                intersect(other.rect, owner.rect) > 1e-6 &&
+                (other.horizontal !== true ||
+                  !Number.isFinite(other.height) ||
+                  !Number.isFinite(other.baseline) ||
+                  Math.abs(other.height - item.height) > 0.02 ||
+                  (other.rect[1] < item.rect[3] &&
+                    other.rect[3] > item.rect[1] &&
+                    Math.abs(other.baseline - item.baseline) > 0.02))
+            ) &&
+            !pageItems.some((other) => other !== item && intersect(other.rect, part.rect) > 1e-6)
+        )
+      ) {
+        splitWideRuns.push({ original: item, parts, repair: 'native-measured-body-run-split' })
+        continue
+      }
+    }
     if (
       slots.length < 2 ||
       slots.some((cell, index) => index && cell.column !== slots[index - 1].column + 1)

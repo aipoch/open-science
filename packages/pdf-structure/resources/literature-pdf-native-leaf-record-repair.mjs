@@ -20416,6 +20416,46 @@ const taggedVisibleNear = (a, b) =>
   Math.abs(a - b) <= Math.max(1, Math.abs(a), Math.abs(b)) * 2 ** -23 * 16
 const taggedVisibleFinite = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite)
 const taggedVisibleChars = (s) => [...s].filter((c) => c.trim())
+// Existing source owners may need the marked-content identity of each actual
+// text-show occurrence without granting any new visible/crop ownership. Reuse
+// the same complete operator/text matcher; its visible-packet caller below
+// retains all of its outline, clipping, overpaint and graphics checks.
+export function nativeTextShowSourceMarkers(content, operators, viewport, fonts, marked) {
+  try {
+    if (!Array.isArray(marked?.fonts) || marked.fonts.length > 64) return
+    const loaded = new Map()
+    for (const font of marked.fonts) {
+      if (
+        !font ||
+        typeof font.id !== 'string' ||
+        loaded.has(font.id) ||
+        ['missingFile', 'isType3Font', 'vertical', 'remeasure'].some((k) => font[k] !== false) ||
+        !content.styles?.[font.id]
+      )
+        return
+      loaded.set(font.id, font)
+    }
+    if (loaded.size !== Object.keys(content.styles).length) return
+    const packet = taggedOwnerVisiblePacket(
+      content,
+      operators,
+      viewport,
+      fonts,
+      [],
+      [0, 0, 0, 0],
+      loaded,
+      new Map(),
+      new Map(),
+      true
+    )
+    return packet.qualified
+      ? packet.owned.map(({ sourceItem, mcid }) => ({ sourceItem: { ...sourceItem }, mcid }))
+      : undefined
+  } catch {
+    return
+  }
+}
+
 function taggedOwnerVisiblePacket(
   content,
   operators,
@@ -20425,7 +20465,8 @@ function taggedOwnerVisiblePacket(
   target,
   loadedFonts,
   glyphPaths,
-  parentDomains
+  parentDomains,
+  sourceMarkersOnly = false
 ) {
   const normalizedHulls = new Map(),
     closedOutlines = new Map(),
@@ -20801,6 +20842,7 @@ function taggedOwnerVisiblePacket(
     )
       return fail('carrier-state', { sourceItem: raw.sourceItem })
     if (
+      !sourceMarkersOnly &&
       f[0].rect.some((v, k) => (k < 2 ? v < clip[k] : v > clip[k])) &&
       !gs.every((g) => inkInsideRect(g, clip))
     )
@@ -20824,6 +20866,7 @@ function taggedOwnerVisiblePacket(
     offset += literal.length
   }
   if (offset !== painted.length) return fail('glyph-remainder', { offset, total: painted.length })
+  if (sourceMarkersOnly) return { qualified: true, owned }
   const overlaps = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1],
     laterInk = (glyph, rect, n) => {
       if (glyph.n <= n || !overlaps(glyph.clip, rect)) return false

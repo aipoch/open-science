@@ -1,6 +1,8 @@
 import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
+import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
 import { readPdfFixture } from './read-fixture'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 
@@ -227,6 +229,7 @@ const {
   nativeCaptionedWorkflowPanel,
   nativeCaptionedVectorDiagram,
   nativeCaptionedConnectedNodes,
+  nativeCaptionedCircularDags,
   nativeCaptionedVectorGrid,
   nativeCaptionedVectorTableGrid,
   nativeCaptionedVectorBarChart,
@@ -1107,6 +1110,70 @@ it('rejects a side-by-side plate when a third image shares the caption band', ()
   }
   expect(nativeCaptionedRasterSideBySide(page, caption, [caption], [])).toBeUndefined()
 })
+
+function bareKeyedRasterPair(): ReturnType<typeof JSON.parse> {
+  const caption = { page: 1, lines: ['Figure 1: Paired photographs.'], rect: [80, 350, 520, 360] }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: '(a) (b)', x: 178, y: 320, width: 244, height: 10, fontSize: 10 },
+      { text: caption.lines[0], x: 80, y: 350, width: 440, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      [80, 180, 290, 320],
+      [310, 180, 520, 320]
+    ].map((rect) => ({
+      kind: 'image',
+      normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+    }))
+  }
+  const tokens = [178, 408].map((x, index) => ({
+    text: `(${index ? 'b' : 'a'})`,
+    horizontal: true,
+    rect: [x, 320, x + 14, 330],
+    nativeLabelRect: [x - 0.2, 320, x + 14.2, 332],
+    baseline: 330,
+    height: 10,
+    fontDescent: -0.2,
+    sourceItem: { pageNumber: 1, index, text: `(${index ? 'b' : 'a'})` }
+  }))
+  return { page, caption, tokens }
+}
+
+it('includes the full native ink of bare panel keys below a proven raster pair', () => {
+  const { page, caption, tokens } = bareKeyedRasterPair(),
+    before = structuredClone(tokens)
+  expect(associateFigures(page, [caption], [], [], [], tokens)[0].rect).toEqual([80, 180, 520, 332])
+  expect(tokens).toEqual(before)
+})
+
+it.each(['foreign-text', 'duplicate-source', 'foreign-ink', 'foreign-paint', 'table'])(
+  'does not extend a raster pair through bare keys with %s',
+  (failure) => {
+    const { page, caption, tokens } = bareKeyedRasterPair(),
+      tables: number[][] = []
+    if (failure === 'foreign-text')
+      tokens.push({
+        ...tokens[0],
+        text: 'Independent prose',
+        rect: [300, 332, 350, 342],
+        sourceItem: { pageNumber: 1, index: 2, text: 'Independent prose' }
+      })
+    if (failure === 'duplicate-source') tokens[1].sourceItem.index = tokens[0].sourceItem.index
+    if (failure === 'foreign-ink') tokens[1].nativeLabelRect[2] = 550
+    if (failure === 'foreign-paint')
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [300 / 600, 331 / 800, 350 / 600, 340 / 800]
+      })
+    if (failure === 'table') tables.push([80, 321, 520, 340])
+    const rect = associateFigures(page, [caption], tables, [], [], tokens)[0].rect
+    expect(rect?.[3] ?? 0).toBeLessThanOrEqual(320)
+  }
+)
 
 it('separates a lower raster grid after an intervening figure caption', () => {
   const upperCaption = {
@@ -3566,4 +3633,258 @@ it.each(refusedOpenCycles)('refuses open-cycle recovery with %s', (_name, mutate
   const before = JSON.stringify(p.args)
   expect(associateFigures(...p.args).every((f: { rect?: number[] }) => !f.rect)).toBe(true)
   expect(JSON.stringify(p.args)).toBe(before)
+})
+
+// Only the native circle/shaft/head topology and caption gap are retained.
+function circularDiagramPdf(extra: 'none' | 'prose' | 'no-head' | 'paired'): Uint8Array {
+  const height = 620
+  const point = ([x, y]: number[]): string => `${x.toFixed(4)} ${(height - y).toFixed(4)}`
+  const text = (value: string, x: number, y: number, size = 10): string =>
+    `BT /F1 ${size} Tf ${point([x, y])} Td (${value}) Tj ET`
+  const nodes =
+    extra === 'paired'
+      ? [
+          [160, 180],
+          [160, 230],
+          [230, 180],
+          [230, 230]
+        ]
+      : [
+          [160, 160],
+          [160, 238],
+          [290, 195],
+          [220, 290],
+          [270, 315]
+        ]
+  const circle = ([x, y]: number[]): string => {
+    const r = 10
+    const k = r * 0.55228475
+    const coordinates = [
+      [x + r, y],
+      [x + r, y - k],
+      [x + k, y - r],
+      [x, y - r],
+      [x - k, y - r],
+      [x - r, y - k],
+      [x - r, y],
+      [x - r, y + k],
+      [x - k, y + r],
+      [x, y + r],
+      [x + k, y + r],
+      [x + r, y + k],
+      [x + r, y]
+    ]
+    return [
+      'q 1 g 0 G 0.75 w',
+      point(coordinates[0]) + ' m',
+      ...[1, 4, 7, 10].map(
+        (i) =>
+          coordinates
+            .slice(i, i + 3)
+            .map(point)
+            .join(' ') + ' c'
+      ),
+      'h ' + point([x, y]) + ' m B Q'
+    ].join(' ')
+  }
+  const arrow = (from: number, to: number, omit: boolean): string => {
+    const a = nodes[from]
+    const b = nodes[to]
+    const d = [b[0] - a[0], b[1] - a[1]]
+    const len = Math.hypot(...d)
+    const [dx, dy] = d.map((n) => n / len)
+    const start = [a[0] + 11.5 * dx, a[1] + 11.5 * dy]
+    const tip = [b[0] - 12.5 * dx, b[1] - 12.5 * dy]
+    const end = [tip[0] - 2.5 * dx, tip[1] - 2.5 * dy]
+    const wing = (side: number): number[] => [end[0] - dx + side * dy, end[1] - dy - side * dx]
+    return [
+      '0 G 0 g 0.85 w',
+      `${point(start)} m ${point(end)} l S`,
+      ...(omit
+        ? []
+        : [`${point(tip)} m ${point(wing(-1))} l ${point(end)} l ${point(wing(1))} l h B`])
+    ].join(' ')
+  }
+  const drawing = [
+    ...nodes.flatMap(([x, y], i) => [circle([x, y]), text('ACFKR'[i], x - 3, y + 3.5)]),
+    ...(extra === 'paired'
+      ? [
+          [0, 2],
+          [1, 3],
+          [0, 1],
+          [2, 3]
+        ]
+      : [
+          [0, 2],
+          [1, 2],
+          [4, 2],
+          [1, 3]
+        ]
+    ).map(([a, b], i) => arrow(a, b, i === 0 && extra === 'no-head'))
+  ].join('\n')
+  const stream = [
+    'q',
+    drawing,
+    'Q',
+    ...(extra === 'paired'
+      ? [
+          'q 1 0 0 1 150 0 cm',
+          drawing,
+          'Q',
+          text('Left Panel: A', 160, 160),
+          text('Right Panel: B', 310, 160)
+        ]
+      : []),
+    text(
+      extra === 'prose' ? 'This sentence is independent.' : 'A: experimental group',
+      149,
+      extra === 'paired' ? 260 : 342
+    ),
+    text('C: recorded condition', 149, extra === 'paired' ? 271 : 353),
+    text('Figure 1: Relation between measured variables.', 135, extra === 'paired' ? 290 : 372)
+  ].join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${extra === 'paired' ? 750 : 500} ${height}] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets = objects.map((object, i) => {
+    const offset = pdf.length
+    pdf += `${i + 1} 0 obj\n${object}\nendobj\n`
+    return offset
+  })
+  const xref = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  pdf += offsets.map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')
+  return new Uint8Array(
+    Buffer.from(pdf + `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`)
+  )
+}
+
+it('recovers only complete captioned circular graph paint and leaves the detached key outside', async () => {
+  const { createCanvas } = await import('@napi-rs/canvas')
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const {
+    captureNativeFigureRenderContext,
+    matchNativeFigureRenderContext,
+    recordPaintedOperationBounds
+  } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+  const { collectGraphicsBounds } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-graphics.mjs')).href
+  )
+  const { projectPdfTextLines } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-caption-group.mjs')).href
+  )
+  const { tableTextToken } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
+  )
+  const { renderPdfCrop } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-crop.mjs')).href
+  )
+  const { nativeCompleteFormCropPngSafe } = await import(
+    pathToFileURL(resolve('resources/literature-pdf-figure-native-complete-form.mjs')).href
+  )
+  const pdfjsRoot = dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json'))
+  for (const extra of ['none', 'prose', 'no-head', 'paired'] as const) {
+    const task = getDocument({
+      data: circularDiagramPdf(extra),
+      isEvalSupported: false,
+      fontExtraProperties: true,
+      useSystemFonts: false,
+      standardFontDataUrl: join(pdfjsRoot, 'standard_fonts') + '/'
+    })
+    try {
+      const doc = await task.promise
+      const nativePage = await doc.getPage(1)
+      const viewport = nativePage.getViewport({ scale: 1 })
+      const scaled = nativePage.getViewport({ scale: 1.5 })
+      const canvas = createCanvas(scaled.width, scaled.height)
+      const rendering = nativePage.render({
+        canvas,
+        canvasContext: canvas.getContext('2d'),
+        viewport: scaled,
+        recordOperations: true
+      })
+      recordPaintedOperationBounds(rendering)
+      await rendering.promise
+      const content = await nativePage.getTextContent()
+      const graphics = collectGraphicsBounds(rendering, nativePage.recordedBBoxes)
+      const lines = projectPdfTextLines(content, viewport)
+      const title = lines.find((line: { text: string }) => line.text.startsWith('Figure 1:'))
+      const caption = {
+        page: 1,
+        lines: [title.text],
+        rect: [title.x, title.y, title.x + title.width, title.y + title.height]
+      }
+      const page = {
+        pageNumber: 1,
+        width: viewport.width,
+        height: viewport.height,
+        rotation: 0,
+        renderRotation: 0,
+        lines,
+        ...graphics
+      }
+      const hash = '0'.repeat(64)
+      const snapshot = captureNativeFigureRenderContext(
+        rendering,
+        1,
+        content,
+        viewport,
+        graphics.graphicsBounds,
+        hash,
+        nativePage.commonObjs
+      )
+      const context = {
+        ...matchNativeFigureRenderContext(
+          snapshot,
+          1,
+          content,
+          viewport,
+          graphics.graphicsBounds,
+          hash
+        ),
+        pageNumber: 1,
+        sourceSha256: hash
+      }
+      const tokens = context.content.items.flatMap((item: ReturnType<typeof JSON.parse>) =>
+        item.str.trim()
+          ? [{ ...tableTextToken(item, context.viewport, 0), sourceItem: item.sourceItem }]
+          : []
+      )
+      const result = nativeCaptionedCircularDags(page, { caption }, [caption], [], tokens, context)
+      if (extra === 'none' || extra === 'paired') {
+        expect(result.formCropRaster).toBeDefined()
+        expect(result.graphicsCount).toBe(extra === 'paired' ? 24 : 13)
+        expect(result.sourceItems).toBeUndefined()
+        expect(result.rect[3]).toBeLessThan(336)
+        const png = await renderPdfCrop(nativePage, result.rect, 0)
+        expect(nativeCompleteFormCropPngSafe(png, result.rect, page, result)).toBe(true)
+        if (extra === 'paired') {
+          expect(result.rect[0]).toBeLessThan(150)
+          expect(result.rect[1]).toBeLessThan(153)
+          expect(result.rect[2]).toBeGreaterThan(390)
+          expect(result.rect[3]).toBeLessThan(254)
+          expect(result.formCropRaster.ownedRects).toHaveLength(34)
+        }
+        expect(
+          nativeCaptionedCircularDags(
+            page,
+            { caption, rect: [151, 151, 299, 324] },
+            [caption],
+            [],
+            tokens,
+            context
+          )
+        ).toBeUndefined()
+      } else {
+        expect(result?.formCropRaster).toBeUndefined()
+      }
+    } finally {
+      await task.destroy()
+    }
+  }
 })

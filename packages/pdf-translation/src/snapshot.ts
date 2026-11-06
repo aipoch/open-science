@@ -107,7 +107,12 @@ export const pdfTranslationLayoutSnapshotSchema = z
             z
               .object({
                 unitId: z.string().max(256).optional(),
-                reason: z.enum(['invalid-geometry', 'unsupported-orientation', 'outside-page']),
+                reason: z.enum([
+                  'invalid-geometry',
+                  'unsupported-orientation',
+                  'outside-page',
+                  'occluded-native-text'
+                ]),
                 items: z.array(item.extend({ pageNumber })).max(100000)
               })
               .strict()

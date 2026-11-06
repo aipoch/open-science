@@ -7477,6 +7477,7 @@
     "Unsupported text direction": "Неподдерживаемое направление текста",
     "Text outside page bounds": "Текст за пределами страницы",
     "Invalid text geometry": "Некорректная геометрия текста",
+    "Text hidden beneath other page content": "Текст, скрытый другим содержимым страницы",
     "Full-text preparation cancelled.": "Подготовка полного текста отменена.",
     "Prepare full text": "Подготовить полный текст",
     "Located separately": "Расположены отдельно",

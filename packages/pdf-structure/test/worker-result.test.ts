@@ -99,6 +99,57 @@ describe('worker result boundary', () => {
       detail: 'TABLE 1 Unbounded scan'
     })
   })
+  it.each(['bounded', 'legacy', 'outside-viewport'] as const)(
+    'decodes independent table-part crops without deriving them from cells: %s',
+    async (mode) => {
+      const parts = [0, 1].map((index) => {
+        const data = rawTable(),
+          scale = index + 1
+        data.sourceViewport = { width: 600 * scale, height: 800 * scale }
+        for (const cell of data.cells) {
+          cell.sourceRects = cell.sourceRects.map((rect) =>
+            rect.map((value, n) => (value + (n % 2 ? index * 240 : 0)) * scale)
+          )
+          for (const source of cell.sourceItems) source.index += index * 100
+        }
+        return {
+          ...data,
+          title: `${index + 1}. Group`,
+          ...(mode === 'legacy'
+            ? {}
+            : {
+                cropRects: [
+                  [60, 80 + index * 240, 300, 240 + index * 160].map((value) => value * scale)
+                ]
+              })
+        }
+      })
+      if (mode === 'outside-viewport') parts[0].cropRects![0][0] = -1
+      const value = raw(),
+        candidate = (value.figures as Record<string, unknown>[])[0]
+      const payload = { ...value, figures: [], tables: [{ ...candidate, parts }] }
+      await writeFile(join(root, 'structure.json'), serializeWorkerResult(payload))
+      if (mode === 'outside-viewport') {
+        await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow('part boundary')
+        return
+      }
+      const result = await readWorkerResult(root, identity, new Map())
+      expect(result.elements[0].tableParts!.map((part) => part.regions)).toEqual(
+        mode === 'legacy'
+          ? [undefined, undefined]
+          : [
+              [{ page: 1, x: 0.1, y: 0.1, width: 0.4, height: expect.closeTo(0.2) }],
+              [{ page: 1, x: 0.1, y: 0.4, width: 0.4, height: expect.closeTo(0.1) }]
+            ]
+      )
+      expect(
+        result.elements[0].tableParts!.map((part) =>
+          part.table.cells.flatMap((cell) => cell.sourceItems ?? [])
+        )
+      ).toEqual(parts.map((part) => part.cells.flatMap((cell) => cell.sourceItems)))
+      expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    }
+  )
 
   it('retains bounded unreliable mathematical origins on their own table', async () => {
     const table = rawTable(),
@@ -616,7 +667,13 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
   })
-  it.each(['algorithm', 'graphical-table', 'open-rule-table', 'native-ordinary-three-line'])(
+  it.each([
+    'table',
+    'algorithm',
+    'graphical-table',
+    'open-rule-table',
+    'native-ordinary-three-line'
+  ])(
     'accounts for and cleans %s thumbnails while retaining unexpected scratch files',
     async (kind) => {
       const originalBytes = await inspectScratch(root)
@@ -944,6 +1001,7 @@ it.each(['bottom-strip', 'native-marker'])(
     for (const name of [
       `p1-figure-0.png.${suffix}.pending`,
       `p1-algorithm-0.png.${suffix}.pending`,
+      `p1-table-0.png.${suffix}.pending`,
       `page-1-table-0.png.other.pending`,
       'page-1-table-0.png.pending',
       pending + '.extra'
