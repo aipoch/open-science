@@ -527,6 +527,17 @@ class KernelProcessLifecycleOwner {
       }
       const probe = await this.controller.probe(record)
       if (probe === 'dead' || probe === 'reused') {
+        if (
+          probe === 'reused' &&
+          record.platform === 'win32' &&
+          record.windowsProcessTreeProof &&
+          !(await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
+        ) {
+          if (!options.allowUnverifiedReceipts) {
+            blocked.push(`${record.laneKey}:${record.processKey}`)
+          }
+          continue
+        }
         if (this.removeIfOwned(path, record.receiptId)) {
           removeWindowsProcessTreeProof(record.windowsProcessTreeProof)
         }
