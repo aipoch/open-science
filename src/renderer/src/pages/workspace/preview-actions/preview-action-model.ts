@@ -5,6 +5,7 @@ import {
   Download,
   Eye,
   ExternalLink,
+  FolderOpen,
   Link,
   GitBranch,
   Maximize2,
@@ -24,6 +25,8 @@ export type PreviewCapabilityId =
   | 'pdf-context'
   | 'pdf-add-to-literature'
   | 'copy-path'
+  | 'open-in-browser'
+  | 'reveal-in-folder'
   | 'save-as-artifact'
   | 'provenance'
   | 'view-in-context'
@@ -43,6 +46,8 @@ export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuD
   'pdf-context': { labelKey: 'Read with agent', icon: BookOpen },
   'pdf-add-to-literature': { labelKey: 'Add to Literature', icon: BookOpenText },
   'copy-path': { labelKey: 'Copy path', icon: ClipboardCopy },
+  'open-in-browser': { labelKey: 'Open in browser', icon: ExternalLink },
+  'reveal-in-folder': { labelKey: 'Reveal in folder', icon: FolderOpen },
   'save-as-artifact': { labelKey: 'Save as artifact', icon: PackagePlus },
   provenance: { labelKey: 'Provenance', icon: GitBranch },
   'view-in-context': { labelKey: 'View in context', icon: Eye },
@@ -53,6 +58,8 @@ export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuD
 
 export const LOCAL_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'copy-path' },
+  { kind: 'action', action: 'open-in-browser' },
+  { kind: 'action', action: 'reveal-in-folder' },
   { kind: 'action', action: 'save-as-artifact' },
   { kind: 'separator' },
   { kind: 'action', action: 'provenance' },
@@ -66,6 +73,7 @@ export const MANAGED_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'provenance' },
   { kind: 'action', action: 'view-in-context' },
   { kind: 'action', action: 'open-fullscreen' },
+  { kind: 'action', action: 'open-in-browser' },
   { kind: 'action', action: 'download' },
   { kind: 'action', action: 'close' }
 ]

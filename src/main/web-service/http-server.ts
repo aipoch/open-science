@@ -948,6 +948,39 @@ const streamPreviewResource = async (
   }
 }
 
+const isHtmlArtifact = (artifact: { name: string; mimeType?: string }): boolean => {
+  const extension = artifact.name.slice(artifact.name.lastIndexOf('.')).toLowerCase()
+  const mimeType = artifact.mimeType?.split(';', 1)[0]?.trim().toLowerCase()
+  return extension === '.html' || extension === '.htm' || mimeType === 'text/html'
+}
+
+const artifactContentResponseOverrides = (
+  artifact: { name: string; mimeType?: string },
+  disposition: string | null
+): Record<string, string> => {
+  if (disposition === 'inline') {
+    if (!isHtmlArtifact(artifact)) {
+      throw new TaskApiError(
+        'invalid_request',
+        'Inline artifact display is only supported for HTML files.'
+      )
+    }
+    return {
+      'content-disposition': 'inline',
+      'content-type': 'text/html; charset=utf-8'
+    }
+  }
+  if (disposition !== null && disposition !== 'attachment') {
+    throw new TaskApiError(
+      'invalid_request',
+      'Artifact disposition must be either attachment or inline.'
+    )
+  }
+  return {
+    'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
+  }
+}
+
 const handleTaskApiRequest = async (
   request: IncomingMessage,
   response: ServerResponse,
@@ -1273,9 +1306,13 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
         try {
-          await streamPreviewResource(request, response, fetchPreview, artifact.url, {
-            'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
-          })
+          await streamPreviewResource(
+            request,
+            response,
+            fetchPreview,
+            artifact.url,
+            artifactContentResponseOverrides(artifact, url.searchParams.get('disposition'))
+          )
         } finally {
           await tasks.releaseArtifact(artifact.resourceId)
         }

@@ -312,6 +312,7 @@ describe('preload bridge — public surface inventory', () => {
       'artifacts.listReproducibilityReceipts',
       'artifacts.onReproducibilityCheckChanged',
       'artifacts.openFile',
+      'artifacts.openInBrowser',
       'artifacts.readPreview',
       'artifacts.readReproducibilityOutput',
       'artifacts.reconcilePendingArtifacts',

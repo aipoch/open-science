@@ -8035,6 +8035,7 @@
     "{{done}} of {{total}} finished": "{{done}} von {{total}} verarbeitet",
     "{{count}} failed overviews_one": "{{count}} fehlgeschlagene Übersicht",
     "{{count}} failed overviews_other": "{{count}} fehlgeschlagene Übersichten",
-    "Could not load the overview. Try again.": "Die Übersicht konnte nicht geladen werden. Versuchen Sie es erneut."
+    "Could not load the overview. Try again.": "Die Übersicht konnte nicht geladen werden. Versuchen Sie es erneut.",
+    "Open in browser": "Im Browser öffnen"
   }
 }

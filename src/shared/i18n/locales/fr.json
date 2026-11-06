@@ -8211,6 +8211,7 @@
     "{{count}} failed overviews_one": "{{count}} aperçu en échec",
     "{{count}} failed overviews_many": "{{count}} aperçus en échec",
     "{{count}} failed overviews_other": "{{count}} aperçus en échec",
-    "Could not load the overview. Try again.": "Impossible de charger la synthèse. Réessayez."
+    "Could not load the overview. Try again.": "Impossible de charger la synthèse. Réessayez.",
+    "Open in browser": "Ouvrir dans le navigateur"
   }
 }
