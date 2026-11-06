@@ -57,7 +57,7 @@ export function LiteratureOverviewBatch({
   const [retryHeights, setRetryHeights] = useState<{
     jobId: string
     progress: number
-    rows: number[]
+    rows: (number | undefined)[]
   } | null>(null)
   const openingOverview = useRef<{ item: LiteratureItemView; initiator: HTMLElement } | null>(null)
   const [job, setJob] = useState<OverviewBatch | null>(null)
@@ -480,75 +480,102 @@ export function LiteratureOverviewBatch({
                   return (
                     <li
                       key={row.request.itemId}
-                      className="space-y-2 px-5 py-4"
+                      className={row.status === 'succeeded' ? undefined : 'space-y-2 px-5 py-4'}
                       style={{
                         minHeight:
                           retryHeights?.jobId === job.id ? retryHeights.rows[index] : undefined
                       }}
                     >
-                      <div className="flex items-start gap-3">
-                        <Icon
-                          aria-hidden="true"
-                          className={`mt-0.5 size-4 shrink-0 ${active ? 'animate-spin motion-reduce:animate-none' : ''} ${row.status === 'failed' ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : row.status === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-muted-foreground'}`}
-                        />
-                        <div className="min-w-0 flex-1">
-                          {row.status === 'succeeded' ? (
-                            <button
-                              type="button"
-                              className="flex w-full items-start gap-2 text-left text-sm font-medium focus-visible:outline-ring [overflow-wrap:anywhere]"
-                              aria-expanded={expanded}
-                              aria-controls={`${detailsId}-${index}`}
-                              onClick={() =>
-                                setExpandedItems((ids) =>
-                                  expanded
-                                    ? ids.filter((id) => id !== row.request.itemId)
-                                    : [...ids, row.request.itemId]
-                                )
-                              }
-                            >
-                              <span className="min-w-0 flex-1">{title}</span>
-                              <ChevronRight
-                                aria-hidden="true"
-                                className={`mt-0.5 size-4 shrink-0 ${expanded ? 'rotate-90' : ''}`}
-                              />
-                            </button>
-                          ) : (
-                            <p className="text-sm font-medium [overflow-wrap:anywhere]">{title}</p>
-                          )}
-                        </div>
-                        {row.status === 'succeeded' && item && onOpenOverview ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="-mt-1.5 shrink-0"
-                            onClick={() => {
-                              const initiator =
-                                (complete ? returnFocusRef?.current : triggerRef.current) ??
-                                triggerRef.current
-                              if (!initiator) return
-                              openingOverview.current = { item, initiator }
-                              setOpen(false)
-                              setRetryHeights(null)
-                              setExpandedItems([])
-                            }}
-                          >
-                            {t('View details')}
-                          </Button>
-                        ) : (
-                          <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
-                            {row.status === 'succeeded'
-                              ? t('Overview saved')
-                              : row.status === 'failed'
-                                ? t('Overview failed')
-                                : active
-                                  ? t('Generating overview…')
-                                  : t('Pending')}
+                      {row.status === 'succeeded' ? (
+                        <button
+                          type="button"
+                          className="flex w-full items-start gap-3 px-5 py-4 text-left hover:bg-accent focus-visible:keyboard-focus focus-visible:-outline-offset-2"
+                          style={{
+                            minHeight:
+                              !expanded && retryHeights?.jobId === job.id
+                                ? retryHeights.rows[index]
+                                : undefined
+                          }}
+                          aria-label={title}
+                          aria-expanded={expanded}
+                          aria-controls={`${detailsId}-${index}`}
+                          onClick={() => {
+                            setExpandedItems((ids) =>
+                              expanded
+                                ? ids.filter((id) => id !== row.request.itemId)
+                                : [...ids, row.request.itemId]
+                            )
+                            if (expanded)
+                              setRetryHeights((heights) =>
+                                heights?.jobId === job.id
+                                  ? {
+                                      ...heights,
+                                      rows: heights.rows.map((height, rowIndex) =>
+                                        rowIndex === index ? undefined : height
+                                      )
+                                    }
+                                  : heights
+                              )
+                          }}
+                        >
+                          <Icon
+                            aria-hidden="true"
+                            className="mt-0.5 size-4 shrink-0 text-status-success-foreground dark:text-status-success-dark-foreground"
+                          />
+                          <span className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]">
+                            {title}
                           </span>
-                        )}
-                      </div>
+                          {(!item || !onOpenOverview) && (
+                            <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
+                              {t('Overview saved')}
+                            </span>
+                          )}
+                          <ChevronRight
+                            aria-hidden="true"
+                            className={`mt-0.5 size-4 shrink-0 ${expanded ? 'rotate-90' : ''}`}
+                          />
+                        </button>
+                      ) : (
+                        <div className="flex items-start gap-3">
+                          <Icon
+                            aria-hidden="true"
+                            className={`mt-0.5 size-4 shrink-0 ${active ? 'animate-spin motion-reduce:animate-none' : ''} ${row.status === 'failed' ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-muted-foreground'}`}
+                          />
+                          <p className="min-w-0 flex-1 text-sm font-medium [overflow-wrap:anywhere]">
+                            {title}
+                          </p>
+                          <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
+                            {row.status === 'failed'
+                              ? t('Overview failed')
+                              : active
+                                ? t('Generating overview…')
+                                : t('Pending')}
+                          </span>
+                        </div>
+                      )}
                       {row.status === 'succeeded' && expanded && (
-                        <div id={`${detailsId}-${index}`} className="pl-7">
+                        <div id={`${detailsId}-${index}`} className="space-y-3 pr-5 pb-4 pl-12">
                           <SavedOverview key={JSON.stringify(row.request)} request={row.request} />
+                          {item && onOpenOverview && (
+                            <div className="flex justify-end">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  const initiator =
+                                    (complete ? returnFocusRef?.current : triggerRef.current) ??
+                                    triggerRef.current
+                                  if (!initiator) return
+                                  openingOverview.current = { item, initiator }
+                                  setOpen(false)
+                                  setRetryHeights(null)
+                                  setExpandedItems([])
+                                }}
+                              >
+                                {t('View details')}
+                              </Button>
+                            </div>
+                          )}
                         </div>
                       )}
                       {row.status === 'failed' && (
