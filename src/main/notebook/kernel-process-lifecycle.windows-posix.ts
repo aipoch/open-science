@@ -218,7 +218,7 @@ const proofFileConfirmsWindowsProcessTreeReaped = (proof: WindowsProcessTreeProo
     if (
       value.version !== 1 ||
       value.token !== proof.token ||
-      value.processState !== 'started-and-reaped'
+      (value.processState !== 'never-started' && value.processState !== 'started-and-reaped')
     )
       return false
     return true
