@@ -4,7 +4,6 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fetch, EnvHttpProxyAgent } from 'undici'
 
 export const root = resolve(import.meta.dirname, '..')
 export const spec = JSON.parse(await readFile(join(root, 'build/native-components.json'), 'utf8'))
@@ -118,13 +117,15 @@ export async function stageNativeComponents({
   directory = root,
   target = `${process.platform}-${process.arch}`,
   catalog,
-  fetchImpl = fetch
+  fetchImpl
 } = {}) {
   nativeFiles(target)
   catalog ??= JSON.parse(
     await readFile(join(directory, 'build/native-components-lock.json'), 'utf8')
   )
   const release = validateNativeRelease(catalog[target], target, await sourceFingerprint(directory))
+  const { fetch: nativeFetch, EnvHttpProxyAgent } = await import('undici')
+  fetchImpl ??= nativeFetch
   const cache = join(directory, 'node_modules/.cache/native-components')
   await mkdir(cache, { recursive: true })
   const dispatcher = new EnvHttpProxyAgent()
@@ -179,6 +180,17 @@ async function atomicWrite(path, bytes, mode) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await stageNativeComponents()
-  console.log('Verified and staged pinned native components.')
+  if (process.argv.includes('--check-catalog')) {
+    // Read-only and dependency-free: reject stale reviewed pins before postinstall can stage
+    // executable bytes. Publication remains owned by the native-component producer workflow.
+    const target = `${process.platform}-${process.arch}`
+    const catalog = JSON.parse(
+      await readFile(join(root, 'build/native-components-lock.json'), 'utf8')
+    )
+    validateNativeRelease(catalog[target], target, await sourceFingerprint())
+    console.log(`Reviewed native catalog matches source for ${target}.`)
+  } else {
+    await stageNativeComponents()
+    console.log('Verified and staged pinned native components.')
+  }
 }

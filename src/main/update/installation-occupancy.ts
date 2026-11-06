@@ -3,6 +3,10 @@ import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
+import {
+  queryWindowsInstallationDirect,
+  WindowsInstallationQueryError
+} from './windows-installation-processes'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
   listWindowsProcesses,
@@ -12,6 +16,83 @@ import {
 } from '../windows-process-query'
 
 const requireNative = createRequire(__filename)
+
+function queryDiagnostic(
+  cause: unknown,
+  root: string
+): { stage: string; code?: string; exitCode?: number | null; stderr: string } {
+  const error = cause as {
+    code?: string
+    exitCode?: number | null
+    stderr?: string
+    message?: string
+  }
+  let stderr = String(error?.stderr ?? '').slice(0, 4096)
+  for (const path of [
+    root,
+    Buffer.from(root, 'utf8').toString('base64'),
+    process.env.USERPROFILE,
+    process.env.HOME
+  ])
+    if (path) stderr = stderr.split(path).join('<path>')
+  stderr = stderr.replace(
+    /(bearer\s+|(?:token|password|secret|authorization)\s*[:=]\s*)[^\s,;]+/gi,
+    '$1<redacted>'
+  )
+  const stage =
+    cause instanceof SyntaxError
+      ? 'parse'
+      : ['MODULE_NOT_FOUND', 'ERR_DLOPEN_FAILED'].includes(error?.code ?? '')
+        ? 'native-loading'
+        : error?.code === 'ETIMEDOUT' || error?.message?.includes('time limit')
+          ? 'timeout'
+          : error?.code === 'ENOBUFS' || error?.message?.includes('output exceeded')
+            ? 'output-limit'
+            : error?.exitCode !== undefined
+              ? 'query-exit'
+              : error?.code === 'ENOENT' || error?.code === 'EACCES'
+                ? 'spawn'
+                : 'query'
+  return { stage, code: error?.code, exitCode: error?.exitCode, stderr: stderr.slice(0, 2048) }
+}
+
+function logQueryFailure(cause: unknown, root: string): void {
+  createLogger('update').warn(
+    'Windows installation occupancy query failed; trying independent Win32 inspection',
+    queryDiagnostic(cause, root)
+  )
+}
+
+function parseWindowsInstallationQuery(stdout: string, root: string): number[] {
+  const data: unknown = JSON.parse(stdout)
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    !('resourcePids' in data) ||
+    !Array.isArray(data.resourcePids) ||
+    !('processes' in data) ||
+    !Array.isArray(data.processes)
+  )
+    throw new Error('Incomplete installation resource inspection.')
+  const pids = new Set<number>()
+  for (const pid of data.resourcePids) {
+    if (!Number.isSafeInteger(pid) || pid <= 0)
+      throw new Error('Invalid installation resource PID.')
+    pids.add(pid)
+  }
+  root = root.toLowerCase().replace(/[\\/]+$/, '')
+  for (const row of data.processes) {
+    if (!row || typeof row !== 'object') throw new Error('Invalid installation process row.')
+    const path = typeof row.ExecutablePath === 'string' ? row.ExecutablePath.toLowerCase() : ''
+    if (path === root || path.startsWith(root + '\\') || path.startsWith(root + '/')) {
+      const pid = Number(row.ProcessId)
+      if (!Number.isSafeInteger(pid) || pid <= 0)
+        throw new Error('Invalid installation executable PID.')
+      pids.add(pid)
+    }
+  }
+  return [...pids]
+}
 
 function windowsInstallationOccupants(resourcePids: readonly number[], root: string): number[] {
   const pids = new Set<number>()
@@ -186,6 +267,8 @@ export async function inspectInstallationProcessesAsync(
 ): Promise<number[]> {
   signal?.throwIfAborted()
   const { runVerificationProcess } = await import('./verification-process')
+  if (process.platform === 'darwin')
+    return inspectDarwinInstallationProcessesAsync(installationRoot, signal)
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
@@ -194,7 +277,7 @@ export async function inspectInstallationProcessesAsync(
     // https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
     // A cold Restart Manager scan can take 70 seconds. Keep enumeration and the native call in
     // an owned process: abort/timeout must reap the scan, not just abandon a libuv work item.
-    const started = Date.now()
+    let resourcePids: number[] = []
     try {
       // Load the unpacked Node-API binary directly: plain Node cannot resolve an ASAR archive.
       const nativePath = requireNative
@@ -234,14 +317,37 @@ export async function inspectInstallationProcessesAsync(
         !Array.isArray(result.pids)
       )
         throw new Error('Invalid installation resource scan result.')
+      resourcePids = result.pids.filter(
+        (pid: unknown) => typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0
+      )
       return windowsInstallationOccupants(result.pids, result.root)
     } catch (cause) {
-      if (signal?.aborted) throw cause
-      createLogger('update').warn('Windows installation occupancy inspection failed', {
-        durationMs: Date.now() - started,
-        message: cause instanceof Error ? cause.message : 'Unknown inspection error'
-      })
-      throw windowsInspectionFailure(cause)
+      signal?.throwIfAborted()
+      const { VerificationProcessUnsettledError } = await import('./verification-process')
+      if (cause instanceof VerificationProcessUnsettledError) throw cause
+      // The scanner's deadline is a stop boundary, not permission to start another scan.
+      if (queryDiagnostic(cause, installationRoot).stage === 'timeout')
+        throw windowsInspectionFailure(cause)
+      logQueryFailure(cause, installationRoot)
+      try {
+        const fallback = parseWindowsInstallationQuery(
+          await queryWindowsInstallationDirect(installationRoot, signal),
+          installationRoot
+        )
+        signal?.throwIfAborted()
+        return [...new Set([...resourcePids, ...fallback])]
+      } catch (fallback) {
+        signal?.throwIfAborted()
+        createLogger('update').warn(
+          'Independent Windows installation inspection failed',
+          fallback instanceof WindowsInstallationQueryError
+            ? { stage: fallback.stage, ...fallback.diagnostic }
+            : queryDiagnostic(fallback, installationRoot)
+        )
+        throw windowsInspectionFailure(
+          new AggregateError([cause, fallback], 'Both Windows installation inspections failed.')
+        )
+      }
     }
   }
   try {
@@ -263,11 +369,110 @@ export async function inspectInstallationProcessesAsync(
     )
       pids.add(Number(match[1]))
   }
-  if (process.platform === 'darwin') {
-    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'])
-    for (const pid of parseDarwinLsofMappings(maps.stdout, installationRoot)) pids.add(pid)
-  }
   return [...pids]
+}
+
+async function inspectDarwinInstallationProcessesAsync(
+  root: string,
+  signal?: AbortSignal
+): Promise<number[]> {
+  const { runVerificationProcess, VerificationProcessUnsettledError } =
+    await import('./verification-process')
+  try {
+    root = realpathSync(root) || root
+  } catch {
+    // The installation may already have moved; preserve the original identity for diagnostics.
+  }
+  const pids = new Set<number>()
+  const failures: unknown[] = []
+  // Two attempts, then an independent libproc inspection. Never convert query failure into idle,
+  // and never run a replacement scanner while a timed-out owned scanner remains unsettled.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    signal?.throwIfAborted()
+    try {
+      const { stdout } = await runVerificationProcess('/bin/ps', ['-axo', 'pid=,command='], {
+        signal,
+        timeoutMs: 5_000
+      })
+      let rows = 0
+      for (const line of stdout.split('\n')) {
+        const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+        if (match) {
+          const pid = Number(match[1])
+          if (!Number.isSafeInteger(pid) || pid <= 0)
+            throw new Error('Invalid Mac process inspection PID.')
+          rows++
+        }
+        if (
+          match &&
+          (match[2] === root ||
+            match[2].includes(root + '/') ||
+            match[2].endsWith(' ' + root) ||
+            match[2].includes(' ' + root + ' '))
+        )
+          pids.add(Number(match[1]))
+      }
+      if (!rows) throw new Error('Incomplete Mac process inspection.')
+      const mappings = await runVerificationProcess('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'], {
+        signal,
+        timeoutMs: 5_000
+      })
+      if (!/^p[1-9]\d*$/m.test(mappings.stdout))
+        throw new Error('Incomplete Mac mapping inspection.')
+      for (const pid of parseDarwinLsofMappings(mappings.stdout, root)) pids.add(pid)
+      signal?.throwIfAborted()
+      return [...pids]
+    } catch (cause) {
+      signal?.throwIfAborted()
+      if (cause instanceof VerificationProcessUnsettledError) throw cause
+      failures.push(cause)
+      createLogger('update').warn('Mac installation occupancy inspection failed', {
+        attempt,
+        ...queryDiagnostic(cause, root)
+      })
+    }
+  }
+  try {
+    const nativePath = requireNative
+      .resolve('@aipoch/process-tree-native/build/Release/process_tree_native.node')
+      .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+    const { stdout } = await runVerificationProcess(
+      process.execPath,
+      [
+        '-e',
+        'const native = require(process.argv[1]); process.stdout.write(JSON.stringify(native.listDarwinInstallationMappings(process.argv[2])))',
+        nativePath,
+        root
+      ],
+      { signal, timeoutMs: 10_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+    )
+    signal?.throwIfAborted()
+    const result: unknown = JSON.parse(stdout)
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !('complete' in result) ||
+      result.complete !== true ||
+      !('pids' in result) ||
+      !Array.isArray(result.pids) ||
+      !result.pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)
+    )
+      throw new Error('Incomplete native Mac installation inspection.')
+    for (const pid of result.pids) pids.add(pid)
+    return [...pids]
+  } catch (cause) {
+    signal?.throwIfAborted()
+    if (cause instanceof VerificationProcessUnsettledError) throw cause
+    createLogger('update').warn('Independent Mac installation inspection failed', {
+      ...queryDiagnostic(cause, root)
+    })
+    throw new UpdateLifecycleError(
+      'installation-busy',
+      'Installation process occupancy could not be inspected.',
+      undefined,
+      { cause: new AggregateError([...failures, cause], 'Mac installation inspections failed.') }
+    )
+  }
 }
 
 // macOS `ps -o comm=` prints the full executable path; show the executable name only.

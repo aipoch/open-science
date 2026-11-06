@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   readdir: vi.fn(),
   arguments: vi.fn(),
   warn: vi.fn(),
+  direct: vi.fn(),
   stat: vi.fn(),
   resolveNative: vi.fn(),
   windows: {
@@ -49,9 +50,17 @@ vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   spawnSync: mocks.spawnSync
 }))
-vi.mock('./verification-process', () => ({ runVerificationProcess: mocks.run }))
+vi.mock('./verification-process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./verification-process')>()),
+  runVerificationProcess: mocks.run
+}))
+vi.mock('./windows-installation-processes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./windows-installation-processes')>()),
+  queryWindowsInstallationDirect: mocks.direct
+}))
 beforeEach(() => {
   vi.resetAllMocks()
+  mocks.direct.mockRejectedValue(new Error('Independent inspection unavailable'))
   mocks.resolveNative.mockReturnValue('/native/process_tree_native.node')
   mocks.readdir.mockReturnValue([])
   mocks.readFile.mockReturnValue('')
@@ -69,6 +78,58 @@ describe('cold Windows resource scans', () => {
   beforeEach(() => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     mocks.windows.listWindowsProcesses.mockReturnValue([])
+  })
+
+  it('uses the independent helper when the native component cannot load', async () => {
+    const root = 'C:/Apps/Science'
+    mocks.resolveNative.mockImplementation(() => {
+      throw Object.assign(new Error('Missing native binding'), { code: 'MODULE_NOT_FOUND' })
+    })
+    mocks.direct.mockResolvedValue(
+      JSON.stringify({
+        resourcePids: [42],
+        processes: [
+          { ProcessId: 43, ExecutablePath: root + '/science.exe' },
+          { ProcessId: 44, ExecutablePath: root + '-other/science.exe' }
+        ]
+      })
+    )
+    const signal = new AbortController().signal
+    await expect(inspectInstallationProcessesAsync(root, signal)).resolves.toEqual([42, 43])
+    expect(mocks.direct).toHaveBeenCalledWith(root, signal)
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('retains native resource users when the process snapshot needs independent fallback', async () => {
+    const root = 'C:/Apps/Science'
+    mocks.run.mockResolvedValue({ stdout: JSON.stringify({ root, pids: [42] }) })
+    mocks.windows.listWindowsProcesses.mockImplementation(() => {
+      throw new Error('Snapshot failed')
+    })
+    mocks.direct.mockResolvedValue(JSON.stringify({ resourcePids: [43], processes: [] }))
+    await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([42, 43])
+  })
+
+  it('never replaces an unsettled scanner with a successful fallback', async () => {
+    const { VerificationProcessUnsettledError } = await import('./verification-process')
+    const failure = new VerificationProcessUnsettledError()
+    mocks.run.mockRejectedValue(failure)
+    mocks.direct.mockResolvedValue(JSON.stringify({ resourcePids: [], processes: [] }))
+    await expect(inspectInstallationProcessesAsync('C:/Apps/Science')).rejects.toBe(failure)
+    expect(mocks.direct).not.toHaveBeenCalled()
+  })
+
+  it('preserves cancellation during the independent query', async () => {
+    const controller = new AbortController()
+    const reason = new Error('Fallback cancelled')
+    mocks.run.mockRejectedValue(new Error('Native query failed'))
+    mocks.direct.mockImplementation(async () => {
+      controller.abort(reason)
+      return JSON.stringify({ resourcePids: [], processes: [] })
+    })
+    await expect(
+      inspectInstallationProcessesAsync('C:/Apps/Science', controller.signal)
+    ).rejects.toBe(reason)
   })
 
   it('allows a 70-second cold scan within a bounded, cancellable subprocess', async () => {
@@ -127,6 +188,7 @@ describe('cold Windows resource scans', () => {
       reason: 'installation-busy',
       cause: failure
     })
+    expect(mocks.direct).not.toHaveBeenCalled()
   })
 
   it.each(['', '[]', '{"root":42,"pids":[]}', '{"root":"C:/Apps/Science","pids":null}'])(
@@ -150,6 +212,84 @@ describe('cold Windows resource scans', () => {
       'C:/Apps/Science/resources/app.asar.unpacked/node_modules/@aipoch/process-tree-native/build/Release/process_tree_native.node',
       root
     ])
+  })
+})
+
+describe('bounded Mac inspection recovery', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    mocks.realpath.mockImplementation((path: string) => path)
+  })
+
+  it('automatically retries a transient query failure and preserves already seen occupants', async () => {
+    mocks.run
+      .mockResolvedValueOnce({ stdout: '42 /fixture/Science.app/node\n' })
+      .mockRejectedValueOnce(new Error('first mapping query failed'))
+      .mockResolvedValueOnce({ stdout: '43 /fixture/Science.app/node\n' })
+      .mockResolvedValueOnce({ stdout: 'p44\nftxt\nn/fixture/Science.app/Contents/app.asar\n' })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).resolves.toEqual([
+      42, 43, 44
+    ])
+    expect(mocks.run).toHaveBeenCalledTimes(4)
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'Mac installation occupancy inspection failed',
+      expect.objectContaining({ attempt: 1 })
+    )
+  })
+
+  it('uses an independent native scan after settled timeout and repeated primary failure', async () => {
+    mocks.run
+      .mockRejectedValueOnce(new Error('Installation verification exceeded its time limit.'))
+      .mockRejectedValueOnce(new Error('ps unavailable'))
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ complete: true, pids: [52] }) })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).resolves.toEqual([52])
+    expect(mocks.run).toHaveBeenLastCalledWith(
+      process.execPath,
+      expect.arrayContaining(['/native/process_tree_native.node', '/fixture/Science.app']),
+      expect.objectContaining({
+        timeoutMs: 10000,
+        env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' })
+      })
+    )
+  })
+
+  it.each([
+    'null',
+    '{"complete":false,"pids":[]}',
+    '{"complete":true,"pids":[0]}',
+    '{"complete":true,"pids":["52"]}',
+    'not-json'
+  ])('keeps unknown occupancy after malformed or incomplete fallback %s', async (stdout) => {
+    mocks.run
+      .mockRejectedValueOnce(new Error('primary failed'))
+      .mockRejectedValueOnce(new Error('retry failed'))
+      .mockResolvedValueOnce({ stdout })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: expect.objectContaining({ errors: expect.any(Array) })
+    })
+    expect(mocks.run).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not start another scan when timeout cleanup is unsettled', async () => {
+    const { VerificationProcessUnsettledError } = await import('./verification-process')
+    const failure = new VerificationProcessUnsettledError()
+    mocks.run.mockRejectedValue(failure)
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).rejects.toBe(failure)
+    expect(mocks.run).toHaveBeenCalledOnce()
+  })
+
+  it('preserves cancellation without starting a retry', async () => {
+    const controller = new AbortController()
+    const failure = new Error('cancelled')
+    mocks.run.mockImplementation(() => {
+      controller.abort(failure)
+      throw failure
+    })
+    await expect(
+      inspectInstallationProcessesAsync('/fixture/Science.app', controller.signal)
+    ).rejects.toBe(failure)
+    expect(mocks.run).toHaveBeenCalledOnce()
   })
 })
 
@@ -396,7 +536,11 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       windows([0])
       await expect(inspect('C:\\Science')).rejects.toMatchObject({
         reason: 'installation-busy',
-        cause: expect.objectContaining({ message: 'Invalid installation resource PID.' })
+        cause: expect.objectContaining({
+          errors: expect.arrayContaining([
+            expect.objectContaining({ message: 'Invalid installation resource PID.' })
+          ])
+        })
       })
     }
   )
@@ -414,15 +558,15 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
         })
         await expect(inspect('C:\\installed\\app')).rejects.toMatchObject({
           reason: 'installation-busy',
-          cause: failure
+          cause: expect.objectContaining({ errors: expect.arrayContaining([failure]) })
         })
         return
       }
       if (platform === 'darwin') output('')
       mocks.spawnSync.mockReturnValueOnce({ status: 1, stdout: '' })
-      mocks.run.mockRejectedValueOnce(new Error('inspection failed'))
+      mocks.run.mockRejectedValue(new Error('inspection failed'))
       await expect(inspect('/installed/app')).rejects.toThrow(
-        mode === 'sync' ? 'could not be inspected' : 'inspection failed'
+        mode === 'sync' || platform === 'darwin' ? 'could not be inspected' : 'inspection failed'
       )
     }
   )

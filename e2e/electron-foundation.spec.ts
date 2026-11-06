@@ -174,7 +174,10 @@ test('creates a project through the desktop stack and reloads it after relaunch 
 
   // Seed only the external-provider-dependent prerequisite. The journey remains visible UI backed
   // by the production preload bridge, main process, and project database.
-  let page = await app.completeOnboarding()
+  await app.completeOnboarding()
+  // A first-run profile must retain its encrypted provider through ordinary relaunch. A theme
+  // or project alone has no ciphertext and cannot catch an OSCrypt bootstrap ordering failure.
+  let page = await app.configureFakeAgent()
 
   await createProject(page, PROJECT_NAME)
   await expect(page.getByRole('button', { name: 'All projects' })).toBeVisible()
@@ -182,6 +185,11 @@ test('creates a project through the desktop stack and reloads it after relaunch 
   page = await app.restart()
   const mainLog = await app.captureMainLog('startup-diagnostics.log')
   expect(await readFile(mainLog, 'utf8')).toContain('"operation":"application-startup"')
+  expect(
+    (await page.evaluate(() => window.api.settings.getSettings())).providers.some(
+      (provider) => provider.name === 'Electron E2E provider'
+    )
+  ).toBe(true)
 
   const projects = page.getByRole('region', { name: 'Projects' })
   await expect(projects.getByRole('button', { name: PROJECT_NAME, exact: true })).toBeVisible()

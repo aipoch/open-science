@@ -143,7 +143,7 @@ jobs:
       - name: Extract packaged application
         run: |
           set -euo pipefail
-          zip=$(find package -maxdepth 1 -type f -name '*-mac-arm64.zip' -print -quit)
+          zip=$(find package -maxdepth 1 -type f -name '*-mac-arm64-runtime.zip' -print -quit)
           test -n "$zip"
           mkdir -p extracted
           ditto -x -k "$zip" extracted

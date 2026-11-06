@@ -6,6 +6,14 @@ import type { ActiveSessionInfo } from '../shared/storage'
 import type { ShutdownStepOutcome } from './lifecycle-shutdown'
 import { LOCAL_SERVICE_STOP_ESCALATION_MS, serviceStopDeadline } from './local-service-lifetime'
 
+// Installation update authority is deliberately separate from the exclusive lifecycle controller.
+export const installationUpdateRequestSchema = z
+  .object({
+    operationId: z.string().uuid(),
+    shutdownDeadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+  })
+  .strict()
+
 // Process-local quit coordination. This token describes observed work, not persisted ownership;
 // only the desktop holding the actual started child requests preparation or shutdown.
 export const desktopLifecycleRequestSchema = z.discriminatedUnion('operation', [

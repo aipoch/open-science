@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -17,6 +18,9 @@ import {
   assertPackagedResources,
   findAppBundle,
   findArtifact,
+  findRuntimePid,
+  readWrapperConfiguration,
+  readSmokeService,
   installDmgApp,
   packagedLaunchArguments,
   launchAndProbe,
@@ -33,6 +37,70 @@ afterEach(async () => {
 })
 
 describe('macOS package smoke', () => {
+  it('selects ordinary and runtime ZIPs independently instead of treating two archives as ambiguous', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mac-role-selection-'))
+    roots.push(root)
+    const ordinary = join(root, 'aipoch-open-science-1.2.3-mac-arm64.zip')
+    const runtime = join(root, 'aipoch-open-science-1.2.3-mac-arm64-runtime.zip')
+    await Promise.all([writeFile(ordinary, 'wrapper'), writeFile(runtime, 'runtime')])
+    await expect(findArtifact(root, 'zip')).resolves.toBe(ordinary)
+    await expect(findArtifact(root, 'zip', 'runtime')).resolves.toBe(runtime)
+    expect(artifactVersion(runtime)).toBe('1.2.3')
+  })
+  it('validates signed wrapper layout and immutable seed without requiring runtime resources in the entry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mac-wrapper-layout-'))
+    roots.push(root)
+    const app = join(root, 'Open-Science.app')
+    const resources = join(app, 'Contents/Resources')
+    const seed = Buffer.from('immutable runtime archive fixture')
+    const config = {
+      schema: 1,
+      runtimeBundleIdentifier: 'com.aipoch.open-science',
+      seedVersion: '1.2.3',
+      runtimeRequirement: 'identifier fixture',
+      seedSha512: createHash('sha512').update(seed).digest('base64')
+    }
+    for (const file of [
+      'mac-recovery-control.cjs',
+      'icon.icns',
+      'Assets.car',
+      'node_modules/@aipoch/process-tree-native/package.json',
+      'node_modules/@aipoch/process-tree-native/index.cjs'
+    ]) {
+      await mkdir(join(resources, file, '..'), { recursive: true })
+      await writeFile(join(resources, file), '')
+    }
+    await writeFile(join(resources, 'mac-recovery-entry.json'), JSON.stringify(config))
+    await writeFile(join(resources, 'runtime-seed.zip'), seed)
+    await expect(readWrapperConfiguration(app)).resolves.toEqual(config)
+    await rm(join(resources, 'mac-recovery-control.cjs'))
+    await expect(readWrapperConfiguration(app)).rejects.toThrow()
+    await writeFile(join(resources, 'mac-recovery-control.cjs'), '')
+    await writeFile(join(resources, 'runtime-seed.zip'), 'damaged')
+    await expect(readWrapperConfiguration(app)).rejects.toThrow(/runtime seed/)
+  })
+  it('reads the actual live service state when a wrapper owns runtime stdout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mac-wrapper-service-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'web-service.json'),
+      JSON.stringify({ pid: process.pid, port: 31234 })
+    )
+    const token = 's'.repeat(40)
+    await writeFile(join(root, 'web-token'), token)
+    await expect(readSmokeService('', root)).resolves.toEqual({
+      endpoint: 'http://127.0.0.1:31234',
+      auth: `token=${token}`
+    })
+  })
+  it('uses the actual runtime PID for per-desktop database certification instead of wrapper PID', async () => {
+    const path = '/isolated/runtimes/key/Open-Science.app/Contents/MacOS/Open-Science'
+    const stdout = `100 /wrapper/Open-Science.app/Contents/MacOS/Open-Science\n200 ${path}\n`
+    const run = vi.fn().mockResolvedValue({ stdout })
+    await expect(findRuntimePid(path, run)).resolves.toBe(200)
+    run.mockResolvedValue({ stdout: `200 ${path}\n201 ${path}\n` })
+    await expect(findRuntimePid(path, run)).rejects.toThrow(/found 2/)
+  })
   it('copies the complete DMG app and detaches before returning the installed launch path', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dmg-install-'))
     roots.push(root)

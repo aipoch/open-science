@@ -76,8 +76,9 @@ export type AppLifecycleDeps = {
   flushSessionPersistence: (
     timeoutMs?: number
   ) => Promise<RendererSessionPersistenceFlushOutcome | void>
-  // Update preparation saved while the renderer/backend were alive, before native window closure.
-  rendererPersistencePreparedForUpdate?: () => boolean
+  // Actual outcome of the update's final save attempt, made before native window closure. Failure
+  // remains failure in diagnostics; update consent still permits the already verified stop.
+  rendererPersistenceOutcomeForUpdate?: () => RendererSessionPersistenceFlushOutcome | undefined
   // Local structured diagnostics remain optional for the dependency-injected lifecycle tests.
   log?: Logger
   // Drains the logger's serialized write queue after the shutdown terminal record.
@@ -514,9 +515,12 @@ export const installAppLifecycle = (
         outcome: RendererSessionPersistenceFlushOutcome
         result: ShutdownStepOutcome
       }> => {
-        if (trigger === 'update' && deps.rendererPersistencePreparedForUpdate?.()) {
-          diagnostics?.phase(phase, { result: 'completed', preparedBeforeQuit: true })
-          return { outcome: 'completed', result: 'completed' }
+        const updateOutcome =
+          trigger === 'update' ? deps.rendererPersistenceOutcomeForUpdate?.() : undefined
+        if (updateOutcome) {
+          const result = rendererStepOutcome(updateOutcome)
+          diagnostics?.phase(phase, { result, preparedBeforeQuit: true })
+          return { outcome: updateOutcome, result }
         }
         diagnostics?.phase(phase)
         try {

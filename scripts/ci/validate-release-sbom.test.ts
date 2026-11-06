@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { renameSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -39,6 +39,14 @@ afterEach(() => {
 })
 
 describe('release SBOM coverage validator', () => {
+  it('accepts the runtime payload archive used by scanners after the ordinary ZIP becomes a wrapper', async () => {
+    const files = fixture(['Open-Science', '@prisma/client', 'sharp', 'zod'])
+    const runtime = files.artifactPath.replace(/\.zip$/, '-runtime.zip')
+    renameSync(files.artifactPath, runtime)
+    const result = await validateReleaseSbom({ ...files, artifactPath: runtime, tag: 'v1.2.3' })
+    expect(result.complete).toBe(true)
+    expect(result.artifact).toBe('aipoch-open-science-1.2.3-mac-arm64-runtime.zip')
+  })
   it('accepts representative components from the final stable-release archive', async () => {
     const files = fixture(['Open-Science', '@prisma/client', 'sharp', 'zod'])
     const result = await validateReleaseSbom({ ...files, tag: 'v1.2.3' })

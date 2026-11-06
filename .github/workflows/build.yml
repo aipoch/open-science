@@ -46,6 +46,20 @@ on:
         description: Sign the stable Windows package with Azure Artifact Signing.
         type: boolean
         default: false
+      diagnostic_version:
+        description: Internal test version for manual non-publishing upgrade acceptance only
+        type: string
+        default: ''
+      diagnostic_mac_feed_url:
+        description: Fixed loopback feed embedded before signing for Mac Update Acceptance only
+        type: string
+        default: ''
+
+    secrets:
+      MAC_CSC_LINK:
+        required: false
+      MAC_CSC_KEY_PASSWORD:
+        required: false
 
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
@@ -340,6 +354,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install --yes --no-install-recommends libsecret-1-dev libdbus-1-dev
 
+      - name: Require reviewed native components for Mac acceptance
+        if: ${{ inputs.diagnostic_mac_feed_url != '' && matrix.platform == 'mac' }}
+        # Source changes require the established native producer + reviewed catalog first.
+        # Never relabel old binaries or compile an unpublished fallback during package builds.
+        run: node scripts/native-components.mjs --check-catalog
+
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -605,8 +625,43 @@ jobs:
           # The previous Node 22 x64 build on macos-26-intel defaulted to ~2 GB old-space. The renderer graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
+          DIAGNOSTIC_VERSION: ${{ inputs.diagnostic_version }}
+          DIAGNOSTIC_MAC_FEED_URL: ${{ inputs.diagnostic_mac_feed_url }}
         run: |
           eb_ver=()
+          if [ -n "$DIAGNOSTIC_VERSION" ]; then
+            if { [ "$GITHUB_WORKFLOW" != 'Windows Upgrade Smoke' ] && [ "$GITHUB_WORKFLOW" != 'Mac Update Acceptance' ]; } ||
+               [ "$GITHUB_EVENT_NAME" != 'workflow_dispatch' ] ||
+               [ "${{ inputs.nightly }}" = 'true' ] ||
+               ! [[ "$DIAGNOSTIC_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo 'Diagnostic versions are restricted to the manual, non-publishing reliability workflow.' >&2
+              exit 1
+            fi
+            npm version --no-git-tag-version --allow-same-version "$DIAGNOSTIC_VERSION"
+            eb_ver=(-c.extraMetadata.version="$DIAGNOSTIC_VERSION")
+          fi
+          mac_feed_args=()
+          if [ -n "${DIAGNOSTIC_MAC_FEED_URL:-}" ]; then
+            if [ "$GITHUB_WORKFLOW" != 'Mac Update Acceptance' ] ||
+               [ "$GITHUB_EVENT_NAME" != 'workflow_dispatch' ] ||
+               [ -z "$DIAGNOSTIC_VERSION" ] ||
+               [ "${{ matrix.platform }}" != 'mac' ] ||
+               [ "${{ inputs.nightly }}" = 'true' ] ||
+               [ "$DIAGNOSTIC_MAC_FEED_URL" != 'http://127.0.0.1:18761/' ]; then
+              echo 'Diagnostic Mac feed is restricted to the fixed isolated acceptance endpoint.' >&2
+              exit 1
+            fi
+            # Write feed configuration before electron-builder signs the bundle. Never edit a
+            # signed app-update.yml, skip trust checks, or point internal builds at stable CDN.
+            mac_feed_args=("-c.publish.url=$DIAGNOSTIC_MAC_FEED_URL")
+            if [ "${{ steps.mac_signing.outputs.enabled }}" != 'true' ]; then
+              echo 'Mac acceptance requires the existing Developer ID signing capability.' >&2
+              exit 1
+            fi
+          elif [ "$GITHUB_WORKFLOW" = 'Mac Update Acceptance' ]; then
+            echo 'Mac acceptance builds require the isolated feed.' >&2
+            exit 1
+          fi
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
             # Prefix the SHA so npm cannot normalize a numeric identifier (0189093 -> 189093).
@@ -647,7 +702,7 @@ jobs:
             # (electron-updater's MacUpdater picks the right one by arch at download time). This avoids
             # the per-arch `${arch}-mac.yml` scheme, which shipped an app-update.yml the mac updater
             # never matched against the published feed names.
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" --publish never \
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${mac_feed_args[@]}" --publish never \
               -c.mac.notarize=false
           else
             # No prepared cert, or a nightly build (ad-hoc on purpose): skip electron-builder's own
@@ -671,6 +726,14 @@ jobs:
         env:
           AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
         run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked
+
+      - name: Record internal diagnostic build identity
+        if: ${{ inputs.diagnostic_version != '' }}
+        shell: bash
+        env:
+          DIAGNOSTIC_VERSION: ${{ inputs.diagnostic_version }}
+        run: |
+          node -e 'require("fs").writeFileSync("dist/diagnostic-build.json", JSON.stringify({internalTestBuild:true, commit:process.env.GITHUB_SHA, version:process.env.DIAGNOSTIC_VERSION, runId:process.env.GITHUB_RUN_ID}, null, 2))'
 
       # Keep each native feed unique even when notarization is skipped. The installed app still
       # polls latest-mac.yml; only the publication job combines the two architecture artifacts.
@@ -724,4 +787,5 @@ jobs:
             dist/*.blockmap
             dist/latest*.yml
             dist/*-mac.yml
+            dist/diagnostic-build.json
           if-no-files-found: error

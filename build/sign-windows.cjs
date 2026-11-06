@@ -57,6 +57,7 @@ exports.default = async function signWindows(context) {
       ),
       `darwin-${arch}`
     )
+    await require('./mac-recovery-package.cjs').afterSign(context)
     return
   }
   if (context.electronPlatformName !== 'win32') return

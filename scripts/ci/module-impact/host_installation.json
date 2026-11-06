@@ -1,5 +1,10 @@
 {
-  "ownerPaths": ["src/main/mac-installation.test.ts", "src/main/mac-installation.ts"],
+  "ownerPaths": [
+    "src/main/mac-installation.test.ts",
+    "src/main/mac-installation.ts",
+    "src/main/mac-ordinary-entry.ts",
+    "src/main/mac-ordinary-entry.test.ts"
+  ],
   "interfacePaths": [
     "build/node-runtime.json",
     "scripts/stage-node-runtime.mjs",
@@ -56,10 +61,11 @@
     "src/main/window-ipc.ts",
     "test/runtime-host.ts",
     "test/runtime-metadata.ts",
-    "src/main/websocket-frame-sender.ts"
+    "src/main/websocket-frame-sender.ts",
+    "src/main/mac-ordinary-entry.ts"
   ],
   "testFiles": {
-    "owner": ["src/main/mac-installation.test.ts"],
+    "owner": ["src/main/mac-installation.test.ts", "src/main/mac-ordinary-entry.test.ts"],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
@@ -982,5 +988,6 @@
   },
   "consumerModules": ["main_web_service"],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Signed ordinary-entry association verification expands the Mac installation source boundary; retain full validation until its publisher, path and startup-order contracts are reviewed and reclassified."
 }

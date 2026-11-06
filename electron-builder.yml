@@ -13,6 +13,7 @@ directories:
 beforePack: build/prepare-desktop.cjs
 afterPack: build/adhoc-sign.cjs
 afterSign: build/sign-windows.cjs
+afterAllArtifactBuild: build/mac-recovery-artifacts.cjs
 files:
   # Runtime code and resources are compiled/staged separately; repository tooling is not app data.
   - '!{scripts,test,e2e,docs,release-notes,patches,prisma}{,/**/*}'
@@ -174,6 +175,9 @@ mac:
     - '/node_modules/@aipoch/(credential-identity-probe-native|process-tree-native|safe-file-publisher-native)/build/Release/'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
+    # The stable signed native entry owns the ordinary Dock icon. The separately replaceable
+    # Electron runtime keeps its existing menus/windows while avoiding a pinnable runtime path.
+    LSUIElement: true
     # Electron locates its Helper bundles using this internal name. Keep it aligned with productName.
     CFBundleName: Open-Science
     CFBundleDisplayName: Open-Science
@@ -213,6 +217,10 @@ dmg:
   # and notarization ticket. Nightly and certificate-free builds override this to false in build.yml.
   sign: true
   artifactName: aipoch-${name}-${version}-mac-${arch}.${ext}
+# This is the updater's signed payload. The after-all hook additionally emits the traditional
+# user ZIP filename containing the same stable ordinary application entry as the DMG.
+zip:
+  artifactName: aipoch-${name}-${version}-mac-${arch}-runtime.${ext}
 linux:
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:

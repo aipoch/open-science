@@ -112,7 +112,10 @@ function protectInstallationStartup(entryPath, configRoot, stateRoot) {
   let identity
   try {
     coordinator.exec('PRAGMA busy_timeout = 1500; PRAGMA journal_mode = MEMORY; BEGIN EXCLUSIVE')
-    if (existsSync(join(directory, 'update-in-progress.json')))
+    if (
+      existsSync(join(directory, 'update-in-progress.json')) ||
+      existsSync(join(directory, 'windows-update-in-progress.json'))
+    )
       throw new Error('Installation update requires recovery before starting Open-Science.')
     reapStaleRegistrations(directory, DatabaseSync)
     let owner

@@ -1,13 +1,13 @@
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { mkdtemp, readFile, rm, rename } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, rename, writeFile } from 'node:fs/promises'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
+import { registerOwnedPosixProcessGroup } from '../process-tree'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import { windowsProcessCommandLine } from '../windows-process-query'
 import type { ChildProcess } from 'node:child_process'
@@ -154,10 +154,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         platform: 'win32',
         hosted: true
       }).host!
+      const release = join(root, 'release-fixture')
       const command = [
         process.execPath,
         '-e',
-        'console.log(process.pid); setInterval(() => {}, 1000)'
+        `console.log(process.pid); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(release)})) process.exit(0) }, 20)`
       ]
       const child =
         identity === 'owned'
@@ -211,6 +212,8 @@ describe('Shell process ownership receipt lifecycle', () => {
           expect(() => process.kill(child.pid!, 0)).not.toThrow()
           expect(restarted.hasReceipts()).toBe(false)
         }
+        await restarted.recover()
+        expect(restarted.hasReceipts()).toBe(false)
       } catch (error) {
         console.error(
           'Windows host identity query results',
@@ -225,7 +228,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         throw error
       } finally {
         vi.unstubAllEnvs()
-        await terminateProcessTree(child)
+        if (child.exitCode === null && child.signalCode === null) {
+          const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+          await writeFile(release, 'release')
+          await closed
+        }
       }
     },
     20_000

@@ -10,6 +10,7 @@ import { WSL2_BASH_PREVIEW_MANIFEST } from '../src/shared/wsl2-preview-manifest'
 
 import {
   assertPackagedResources,
+  assertIsolatedWindowsAccount,
   assertDatabaseDowngradeBlocked,
   authenticatePackagedAppEndpoint,
   assertUpgradeProfilePreserved,
@@ -115,25 +116,41 @@ describe('Windows installer smoke plan', () => {
     }
   )
 
-  it.skipIf(process.platform !== 'win32')(
-    'passes the exact cleanup directory through actual PowerShell parsing',
-    async () => {
-      let result: Awaited<ReturnType<typeof runProcess>> | undefined
-      const directory = "D:\\installed app's files\\"
-      await terminateDirectoryProcesses(directory, async (executable, args, options) => {
-        // Keep the real argument binding, but replace process enumeration/termination with a
-        // read-only probe. This must never inspect or stop processes on the test host.
-        const script = args[3].replace(/Get-CimInstance[\s\S]*$/, '[Console]::Write($root)')
-        result = await runProcess(executable, [...args.slice(0, 3), script, ...args.slice(4)], {
-          ...options,
-          allowNonZero: true
-        })
-        return result
-      })
-      expect(result?.code, result?.stderr).toBe(0)
-      expect(result?.stdout).toBe(directory)
-    }
-  )
+  it('passes cleanup paths as arguments to the object-bound helper', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: '', stderr: '' })
+    await terminateDirectoryProcesses('D:\\installed app 程序\\', run)
+
+    expect(run).toHaveBeenCalledWith(
+      'powershell.exe',
+      expect.arrayContaining([
+        '-NoProfile',
+        '-NonInteractive',
+        '-File',
+        expect.stringContaining('windows-certification-processes.ps1'),
+        '-Mode',
+        'Terminate',
+        '-Root',
+        'D:\\installed app 程序\\'
+      ]),
+      { timeoutMs: 30_000 }
+    )
+  })
+
+  it('refuses to install over another Windows account registration before any mutation', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 0, stdout: 'existing installation', stderr: '' })
+    await expect(assertIsolatedWindowsAccount({ run, environment: {} })).rejects.toThrow(
+      /isolated Windows account/
+    )
+    expect(run).toHaveBeenCalledOnce()
+    expect(run.mock.calls[0][1][0]).toBe('query')
+  })
+
+  it('treats registry access errors as unknown isolation, never a clean account', async () => {
+    const run = vi.fn().mockResolvedValue({ code: 1, stdout: '', stderr: 'Access is denied.' })
+    await expect(assertIsolatedWindowsAccount({ run, environment: {} })).rejects.toThrow(
+      /Cannot verify registry isolation/
+    )
+  })
 
   it('derives the packaged version from stable and nightly installer names', () => {
     expect(installerVersion('aipoch-open-science-0.8.0-win-x64-setup.exe')).toBe('0.8.0')
@@ -712,26 +729,13 @@ Open-Science Web: http://127.0.0.1:52378/?token=iUFHGSACwBz2k1kSJfPixHbclDywVg0C
     vi.useRealTimers()
   })
 
-  it('settles process-tree termination when taskkill never exits', async () => {
-    vi.useFakeTimers()
-    const terminator = Object.assign(new EventEmitter(), {
-      kill: vi.fn(),
-      unref: vi.fn()
-    })
-    const spawnProcess = vi.fn(() => terminator)
-    const child = { pid: 4242, kill: vi.fn() }
-
-    const termination = terminateProcessTree(child, 10, spawnProcess)
-    const assertion = expect(termination).resolves.toBeUndefined()
-
-    await vi.advanceTimersByTimeAsync(9)
-    expect(terminator.kill).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(1)
-    await assertion
-    expect(terminator.kill).toHaveBeenCalledOnce()
-    expect(terminator.unref).toHaveBeenCalledOnce()
+  it('terminates the retained child handle and never reopens an exited process PID', async () => {
+    const child = { pid: 4242, kill: vi.fn(), exitCode: null as number | null }
+    await terminateProcessTree(child)
     expect(child.kill).toHaveBeenCalledOnce()
-    vi.useRealTimers()
+    child.exitCode = 0
+    await terminateProcessTree(child)
+    expect(child.kill).toHaveBeenCalledOnce()
   })
 
   it('rejects a timed-out process even when non-zero exits are otherwise allowed', async () => {

@@ -2,6 +2,17 @@ import { describe, expect, it } from 'vitest'
 import { runVerificationProcess } from './verification-process'
 
 describe('bounded verification subprocess', () => {
+  it('retains bounded stderr and exit code for occupancy failure diagnostics', async () => {
+    try {
+      await runVerificationProcess(process.execPath, [
+        '-e',
+        "process.stderr.write('query-provider-unavailable');process.exit(7)"
+      ])
+      expect.fail('must preserve failure')
+    } catch (error) {
+      expect(error).toMatchObject({ exitCode: 7, stderr: 'query-provider-unavailable' })
+    }
+  })
   it('cancels a running process and waits for its exit', async () => {
     const controller = new AbortController()
     const pending = runVerificationProcess(

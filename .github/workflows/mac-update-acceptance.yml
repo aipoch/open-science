@@ -1,0 +1,145 @@
+name: Mac Update Acceptance
+
+# No release or CDN writes. Build source and target in two dispatches at the same reviewed SHA,
+# then consume their immutable artifacts in accept mode. Fork preflight has no signing secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        default: preflight
+        options: [preflight, build, accept]
+      platform_name:
+        type: choice
+        default: macos-arm64
+        options: [macos-arm64, macos-x64]
+      scenario:
+        description: Fixed acceptance scenario (accept mode only)
+        type: choice
+        default: M01
+        options: [M01, M02, M03, M04, M05, M06, M07, M08, M09, M10, M11, M12, M13, M14]
+      diagnostic_version:
+        description: Plain semver for build mode; run twice at the same SHA with increasing versions
+        type: string
+        default: ''
+      previous_run_id:
+        description: Successful source build run at this exact SHA
+        type: string
+        default: ''
+      current_run_id:
+        description: Successful target build run at this exact SHA
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: mac-update-${{ inputs.mode }}-${{ inputs.platform_name }}-${{ inputs.diagnostic_version || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate operation and signing trust boundary
+        env:
+          MODE: ${{ inputs.mode }}
+          VERSION: ${{ inputs.diagnostic_version }}
+          PREVIOUS: ${{ inputs.previous_run_id }}
+          CURRENT: ${{ inputs.current_run_id }}
+          TRUSTED_SHA: ${{ vars.MAC_UPDATE_TRUSTED_SHA }}
+        run: |
+          set -euo pipefail
+          case "$MODE" in
+            preflight) [[ -z "$VERSION$PREVIOUS$CURRENT" ]] ;;
+            build)
+              # Maintainer sets this exact reviewed commit; no arbitrary fork ref receives secrets.
+              [[ "$GITHUB_REPOSITORY" == 'aipoch/open-science' && "$TRUSTED_SHA" == "$GITHUB_SHA" ]]
+              [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z "$PREVIOUS$CURRENT" ]]
+              ;;
+            accept) [[ -z "$VERSION" && "$PREVIOUS" =~ ^[0-9]+$ && "$CURRENT" =~ ^[0-9]+$ && "$PREVIOUS" != "$CURRENT" ]] ;;
+            *) exit 1 ;;
+          esac
+  diagnostic-build:
+    needs: inputs
+    if: inputs.mode == 'build'
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      id-token: write
+    secrets:
+      MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+    with:
+      platform_name: ${{ inputs.platform_name }}
+      diagnostic_version: ${{ inputs.diagnostic_version }}
+      diagnostic_mac_feed_url: http://127.0.0.1:18761/
+  verify:
+    needs: inputs
+    if: inputs.mode != 'build'
+    runs-on: ${{ inputs.platform_name == 'macos-x64' && 'macos-26-intel' || 'macos-26' }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout fixed acceptance revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Run acceptance counterexamples
+        run: >-
+          node --test scripts/mac-update-acceptance.test.mjs
+          scripts/mac-update-fault-scenarios.test.mjs
+          scripts/mac-update-target-observation.test.mjs
+          scripts/mac-update-stale-startup-scenario.test.mjs
+          scripts/mac-update-interruption-scenarios.test.mjs
+      - name: Probe native GUI, isolated Keychain and loopback feed
+        run: node scripts/mac-update-preflight.mjs test-results/mac-update
+      - name: Verify immutable package source runs
+        if: inputs.mode == 'accept'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS: ${{ inputs.previous_run_id }}
+          CURRENT: ${{ inputs.current_run_id }}
+          PLATFORM: ${{ inputs.platform_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p packages/previous packages/current test-results/mac-update/provenance
+          for side in previous current; do
+            if [[ "$side" == previous ]]; then run_id="$PREVIOUS"; else run_id="$CURRENT"; fi
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "test-results/mac-update/provenance/$side.json"
+            jq -e --arg sha "$GITHUB_SHA" --arg repo "$GITHUB_REPOSITORY" '
+              .head_sha == $sha and .head_repository.full_name == $repo and
+              .event == "workflow_dispatch" and .name == "Mac Update Acceptance" and
+              .conclusion == "success"' "test-results/mac-update/provenance/$side.json"
+            gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n "$PLATFORM" -D "packages/$side"
+          done
+      - name: Install acceptance dependencies
+        if: inputs.mode == 'accept'
+        run: node scripts/ci/npm-ci.mjs
+      - name: Verify native fault drivers before package scenarios
+        if: inputs.mode == 'accept'
+        env:
+          MAC_UPDATE_NATIVE_FIXTURES: '1'
+        run: >-
+          node --test scripts/mac-update-fault-scenarios.test.mjs
+          scripts/mac-update-interruption-scenarios.test.mjs
+          scripts/mac-update-process-scenarios.test.mjs
+
+      - name: Certify real UI update and automatic target readiness
+        if: inputs.mode == 'accept'
+        env:
+          UPDATE_SCENARIO: ${{ inputs.scenario }}
+        run: node scripts/mac-update-acceptance.mjs --previous-dir packages/previous --current-dir packages/current --output test-results/mac-update --scenario "$UPDATE_SCENARIO"
+      - name: Upload all evidence including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: mac-update-${{ inputs.platform_name }}-${{ github.run_id }}
+          path: test-results/mac-update/
+          retention-days: 14
+          if-no-files-found: error

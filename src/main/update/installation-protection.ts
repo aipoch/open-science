@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { createHash, randomUUID } from 'node:crypto'
 import { installationFs } from './installation-filesystem'
 import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
   inspectInstallationProcesses,
@@ -12,6 +12,7 @@ import {
   inspectProcessNames
 } from './installation-occupancy'
 import { UpdateLifecycleError, type UpdateRecoveryStatus } from '../../shared/update'
+import { UPDATE_CLOSE_BUDGET_MS } from './shutdown'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
 
 const {
@@ -41,6 +42,23 @@ export type InstallationRuntime = {
   owner?: { pid: number; generation: string; configRoot: string }
 }
 export type InstallationManifest = { version: string; files: Record<string, string> }
+const nativeInstallationUpdateSchema = z
+  .object({
+    schema: z.literal(1),
+    channel: z.enum(['windows-nsis', 'mac-electron-updater']).optional(),
+    operationId: z.string().uuid(),
+    installationRoot: z.string().refine(isAbsolute),
+    handoffDirectory: z.string().refine(isAbsolute),
+    targetVersion: z.string().min(1),
+    installerSha512: z.string().regex(/^[A-Za-z0-9+/]{86}==$/),
+    requestSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    shutdownDeadlineAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    phase: z.enum(['preparing', 'handoff'])
+  })
+  .strict()
+export type NativeInstallationUpdateRecord = z.infer<typeof nativeInstallationUpdateSchema>
+const NATIVE_UPDATE_RECORD = 'windows-update-in-progress.json'
+const nativeOwners = new Map<string, { operationId: string; release: () => void }>()
 export type InstallationUpdateRecord = {
   schema: 1
   operationId: string
@@ -66,6 +84,13 @@ const installationStartupTicketSchema = z
   .object({
     schema: z.literal(1),
     intent: z.enum(['cancel', 'complete']),
+    nativeHandoff: z
+      .object({
+        directory: z.string().refine(isAbsolute),
+        requestSha256: z.string().regex(/^[0-9a-f]{64}$/)
+      })
+      .strict()
+      .optional(),
     operationId: z.string().min(1),
     installationRoot: z.string().refine(isAbsolute),
     startupOptions: runtimeStartupOptionsSchema,
@@ -89,6 +114,21 @@ function readStartupTicket(directory: string): InstallationStartupTicket | undef
     )
   }
 }
+/** Select credentials/profile before yielding; full file verification still gates backend launch. */
+export function readInstallationStartupOptions(
+  location: InstallationLocation
+): RuntimeStartupOptions | undefined {
+  return coordinated(location, (directory) => {
+    const ticket = readStartupTicket(directory)
+    if (ticket && ticket.installationRoot !== canonicalInstallationRoot(location))
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The startup installation identity has changed.'
+      )
+    return ticket?.startupOptions
+  })
+}
+
 /** Configuration survives marker removal and a crash before the first successful data read. */
 export function inspectInstallationStartup(
   location: InstallationLocation
@@ -107,6 +147,44 @@ export function inspectInstallationStartup(
     return ticket
   })
 }
+function cleanupNativeStartupHandoff(ticket: InstallationStartupTicket): void {
+  const handoff = ticket.nativeHandoff
+  if (!handoff) return
+  const requestPath = join(handoff.directory, 'request.json')
+  if (existsSync(requestPath)) {
+    const bytes = readFileSync(requestPath)
+    if (createHash('sha256').update(bytes).digest('hex') !== handoff.requestSha256)
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The retained update cleanup identity has changed.'
+      )
+    const request = JSON.parse(bytes.toString('utf8'))
+    if (
+      request.operationId !== ticket.operationId ||
+      request.applicationPath !== ticket.installationRoot ||
+      request.installerPath !== join(handoff.directory, 'update.zip')
+    )
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The retained update cleanup location has changed.'
+      )
+    // Interrupted downloads leave owned temporary files. Match only our exact generated names;
+    // never recursively remove an externally changed directory.
+    for (const name of readdirSync(handoff.directory)) {
+      if (/^update\.zip\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.download$/.test(name))
+        rmSync(join(handoff.directory, name), { force: true })
+    }
+    rmSync(request.installerPath, { force: true })
+    rmSync(requestPath)
+  }
+  try {
+    installationFs.rmdirSync(handoff.directory)
+  } catch (error) {
+    // Unknown additions are not ours to remove and must not hold completed startup hostage.
+    if (!['ENOENT', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
+}
+
 export function completeInstallationStartup(
   location: InstallationLocation,
   operationId: string
@@ -123,6 +201,7 @@ export function completeInstallationStartup(
         'install-failed',
         'The verified startup installation has changed.'
       )
+    cleanupNativeStartupHandoff(ticket)
     rmSync(join(directory, 'verified-startup.json'))
   })
 }
@@ -130,7 +209,7 @@ export function completeInstallationStartup(
 // This location is shared across config roots and is deliberately outside replacement resources.
 export { installationRootForEntry } from '../../../packages/open-science/installation-startup.cjs'
 import { reapStaleRegistrations } from '../../../packages/open-science/installation-startup.cjs'
-export function installationStateDirectory(location: InstallationLocation): string {
+function canonicalInstallationRoot(location: InstallationLocation): string {
   // Resolve existing parents too: recovery must find the record when resources are missing.
   let root = resolve(location.installationRoot)
   let suffix = ''
@@ -138,7 +217,10 @@ export function installationStateDirectory(location: InstallationLocation): stri
     suffix = join(root.slice(dirname(root).length + 1), suffix)
     root = dirname(root)
   }
-  const canonical = resolve(realpathSync(root), suffix)
+  return resolve(realpathSync(root), suffix)
+}
+export function installationStateDirectory(location: InstallationLocation): string {
+  const canonical = canonicalInstallationRoot(location)
   const key = createHash('sha256')
     .update(process.platform === 'win32' ? canonical.toLowerCase() : canonical)
     .digest('hex')
@@ -204,6 +286,324 @@ function atomicWrite(path: string, value: unknown): void {
     }
   }
 }
+function readNativeRecord(directory: string): NativeInstallationUpdateRecord | undefined {
+  const path = join(directory, NATIVE_UPDATE_RECORD)
+  if (!existsSync(path)) return undefined
+  try {
+    return nativeInstallationUpdateSchema.parse(JSON.parse(readFileSync(path, 'utf8')))
+  } catch (cause) {
+    throw new UpdateLifecycleError(
+      'install-failed',
+      'The native update operation cannot be read.',
+      undefined,
+      { cause }
+    )
+  }
+}
+function sameInstallationPath(left: string, right: string): boolean {
+  return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+}
+function readBoundNativeRecord(
+  location: InstallationLocation,
+  directory: string
+): NativeInstallationUpdateRecord | undefined {
+  const record = readNativeRecord(directory)
+  if (record && !sameInstallationPath(record.installationRoot, canonicalInstallationRoot(location)))
+    throw new UpdateLifecycleError(
+      'install-failed',
+      'The native update installation identity has changed.'
+    )
+  return record
+}
+function holdNativeOwner(directory: string, operationId: string): () => void {
+  const unlock = acquireLock(join(directory, 'native-update-owner.sqlite'))
+  const release = (): void => {
+    if (nativeOwners.get(directory)?.release === release) nativeOwners.delete(directory)
+    unlock()
+  }
+  nativeOwners.set(directory, { operationId, release })
+  return release
+}
+/** Durable admission, separate from supervised manifests: NSIS remains the installation writer. */
+export function acquireNativeInstallationUpdate(
+  location: InstallationLocation,
+  input: Pick<
+    NativeInstallationUpdateRecord,
+    | 'operationId'
+    | 'handoffDirectory'
+    | 'targetVersion'
+    | 'installerSha512'
+    | 'requestSha256'
+    | 'channel'
+  >
+): NativeInstallationUpdateRecord {
+  return coordinated(location, (directory) => {
+    if (readRecord(directory) || readStartupTicket(directory) || readNativeRecord(directory))
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'An installation update already requires recovery.'
+      )
+    const installationRoot = canonicalInstallationRoot(location)
+    const handoffDirectory = realpathSync(input.handoffDirectory)
+    const offset = relative(installationRoot, handoffDirectory)
+    if (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`))
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'Native update state must be outside the installation.'
+      )
+    const record = nativeInstallationUpdateSchema.parse({
+      ...input,
+      schema: 1,
+      installationRoot,
+      handoffDirectory,
+      phase: 'preparing'
+    })
+    const release = holdNativeOwner(directory, record.operationId)
+    try {
+      atomicWrite(join(directory, NATIVE_UPDATE_RECORD), record)
+    } catch (error) {
+      release()
+      throw error
+    }
+    return record
+  })
+}
+export function readNativeInstallationUpdate(
+  location: InstallationLocation
+): NativeInstallationUpdateRecord | undefined {
+  return coordinated(location, (directory) => readBoundNativeRecord(location, directory))
+}
+export function assertNativeInstallationUpdateOwned(
+  location: InstallationLocation,
+  operationId: string
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.operationId !== operationId ||
+      record.phase !== 'preparing' ||
+      nativeOwners.get(directory)?.operationId !== operationId
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native update close authority is no longer held.'
+      )
+  })
+}
+export function isNativeInstallationUpdateOwner(
+  location: InstallationLocation,
+  operationId: string
+): boolean {
+  return coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    return (
+      !!record &&
+      record.operationId === operationId &&
+      record.phase === 'preparing' &&
+      nativeOwners.get(directory)?.operationId === operationId
+    )
+  })
+}
+/** Publish the one close deadline before any Desktop starts saving or stopping. */
+export function beginNativeInstallationShutdown(
+  location: InstallationLocation,
+  operationId: string,
+  deadlineAt: number
+): NativeInstallationUpdateRecord {
+  if (!Number.isSafeInteger(deadlineAt) || deadlineAt <= 0)
+    throw new Error('Invalid update close deadline.')
+  return coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.operationId !== operationId ||
+      record.phase !== 'preparing' ||
+      nativeOwners.get(directory)?.operationId !== operationId
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native update close authority is no longer held.'
+      )
+    const next = {
+      ...record,
+      shutdownDeadlineAt: Math.min(
+        record.shutdownDeadlineAt ?? Infinity,
+        deadlineAt,
+        Date.now() + UPDATE_CLOSE_BUDGET_MS
+      )
+    }
+    atomicWrite(join(directory, NATIVE_UPDATE_RECORD), next)
+    return next
+  })
+}
+/** A Runtime can accept only this installation's live update capability, never general control. */
+export function assertNativeInstallationUpdateAuthorized(
+  location: InstallationLocation,
+  operationId: string
+): number {
+  return coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (!record || record.operationId !== operationId || record.phase !== 'preparing')
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native update close operation does not match.'
+      )
+    if (record.shutdownDeadlineAt === undefined)
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native update close phase has not started.'
+      )
+    let release: (() => void) | undefined
+    try {
+      release = acquireLock(join(directory, 'native-update-owner.sqlite'))
+    } catch (error) {
+      const cause = error instanceof UpdateLifecycleError ? error.cause : undefined
+      if (
+        cause &&
+        typeof cause === 'object' &&
+        'errcode' in cause &&
+        (cause.errcode === 5 || cause.errcode === 6)
+      )
+        return record.shutdownDeadlineAt
+      throw error
+    } finally {
+      release?.()
+    }
+    throw new UpdateLifecycleError('installation-busy', 'The native update close owner has exited.')
+  })
+}
+/** A recovery owner gets one fresh bounded close phase before re-submitting the same target. */
+export function restartMacInstallationShutdown(
+  location: InstallationLocation,
+  operationId: string,
+  deadlineAt: number
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.channel !== 'mac-electron-updater' ||
+      record.operationId !== operationId ||
+      nativeOwners.get(directory)?.operationId !== operationId ||
+      !Number.isSafeInteger(deadlineAt) ||
+      deadlineAt <= Date.now()
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The Mac recovery close authority has changed.'
+      )
+    atomicWrite(join(directory, NATIVE_UPDATE_RECORD), {
+      ...record,
+      phase: 'preparing',
+      shutdownDeadlineAt: Math.min(deadlineAt, Date.now() + UPDATE_CLOSE_BUDGET_MS)
+    })
+  })
+}
+
+/** Startup may resume a durable operation only after its original owner has actually exited. */
+export function claimNativeInstallationUpdateRecovery(
+  location: InstallationLocation,
+  operationId: string
+): (() => void) | undefined {
+  return coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (!record || record.operationId !== operationId)
+      throw new UpdateLifecycleError('install-failed', 'The native update operation has changed.')
+    try {
+      return holdNativeOwner(directory, operationId)
+    } catch (error) {
+      const cause = error instanceof UpdateLifecycleError ? error.cause : undefined
+      if (
+        cause &&
+        typeof cause === 'object' &&
+        'errcode' in cause &&
+        (cause.errcode === 5 || cause.errcode === 6)
+      )
+        return undefined
+      throw error
+    }
+  })
+}
+export function advanceNativeInstallationUpdate(
+  location: InstallationLocation,
+  operationId: string
+): NativeInstallationUpdateRecord {
+  return coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (!record || record.operationId !== operationId)
+      throw new UpdateLifecycleError('install-failed', 'The native update operation has changed.')
+    if (nativeOwners.get(directory)?.operationId !== operationId)
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'This process does not own the native update operation.'
+      )
+    const next = { ...record, phase: 'handoff' as const }
+    atomicWrite(join(directory, NATIVE_UPDATE_RECORD), next)
+    return next
+  })
+}
+/** The native handoff owner verifies target completion before using the installed intent. */
+export function releaseNativeInstallationUpdate(
+  location: InstallationLocation,
+  operationId: string,
+  intent: 'cancel' | 'installed' = 'cancel'
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (!record || record.operationId !== operationId)
+      throw new UpdateLifecycleError('install-failed', 'The native update operation has changed.')
+    if (intent === 'cancel' && record.phase === 'handoff')
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The native installer handoff requires recovery.'
+      )
+    const held = nativeOwners.get(directory)
+    const release =
+      held?.operationId === operationId ? held.release : holdNativeOwner(directory, operationId)
+    try {
+      rmSync(join(directory, NATIVE_UPDATE_RECORD))
+    } finally {
+      release()
+    }
+  })
+}
+/** Preserve the verified target/profile until readiness while reopening backend admission.
+ * The native owner must verify the installed manifest before requesting this transition. */
+export function settleNativeInstallationUpdateStartup(
+  location: InstallationLocation,
+  operationId: string,
+  input: { startupOptions: RuntimeStartupOptions; manifest: InstallationManifest }
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.channel !== 'mac-electron-updater' ||
+      record.operationId !== operationId ||
+      record.targetVersion !== input.manifest.version ||
+      nativeOwners.get(directory)?.operationId !== operationId
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The verified native update owner has changed.'
+      )
+    const ticket = installationStartupTicketSchema.parse({
+      schema: 1,
+      intent: 'complete',
+      operationId,
+      installationRoot: record.installationRoot,
+      startupOptions: input.startupOptions,
+      manifest: input.manifest,
+      nativeHandoff: { directory: record.handoffDirectory, requestSha256: record.requestSha256 }
+    })
+    // Write first: interruption between these writes retains both records, never loses context.
+    atomicWrite(join(directory, 'verified-startup.json'), ticket)
+    rmSync(join(directory, NATIVE_UPDATE_RECORD))
+    nativeOwners.get(directory)?.release()
+  })
+}
+
 function readRecord(directory: string): InstallationUpdateRecord | undefined {
   const path = join(directory, 'update-in-progress.json')
   if (!existsSync(path)) return undefined
@@ -284,7 +684,7 @@ export function assertInstallationStartupAllowed(
   stateRoot?: string
 ): void {
   coordinated({ installationRoot, stateRoot }, (directory) => {
-    if (readRecord(directory))
+    if (readRecord(directory) || readBoundNativeRecord({ installationRoot, stateRoot }, directory))
       throw new UpdateLifecycleError(
         'installation-busy',
         'An installation update requires recovery before starting a service.'
@@ -297,7 +697,7 @@ export function registerInstallationRuntime(
   options: InstallationLocation & Omit<InstallationRuntime, 'pid'> & { pid?: number }
 ): { release(): void } {
   return coordinated(options, (directory) => {
-    if (readRecord(directory))
+    if (readRecord(directory) || readBoundNativeRecord(options, directory))
       throw new UpdateLifecycleError('installation-busy', 'An installation update is in progress.')
     reapStaleRegistrations(directory)
     const id = randomUUID()
@@ -463,7 +863,7 @@ export function beginInstallationUpdate(
   }
 ): InstallationUpdateRecord {
   return coordinated(options, (directory) => {
-    if (readRecord(directory) || readStartupTicket(directory))
+    if (readRecord(directory) || readStartupTicket(directory) || readNativeRecord(directory))
       throw new UpdateLifecycleError(
         'installation-busy',
         'An installation update already requires recovery.'
@@ -766,6 +1166,7 @@ export async function completeInstallationStartupAsync(
     throw new UpdateLifecycleError('install-failed', 'The verified startup operation has changed.')
   coordinated(location, (directory) => {
     unchangedSnapshot(readStartupTicket(directory), ticket)
+    cleanupNativeStartupHandoff(ticket)
     rmSync(join(directory, 'verified-startup.json'))
   })
 }

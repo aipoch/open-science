@@ -27,7 +27,7 @@ export async function validateReleaseSbom({ artifactPath, sbomPath, tag }) {
 
   const version = tag.slice(1)
   const artifact = basename(artifactPath)
-  if (!artifact.endsWith('-mac-arm64.zip') || !artifact.includes(`-${version}-`)) {
+  if (!/-mac-arm64(?:-runtime)?\.zip$/.test(artifact) || !artifact.includes(`-${version}-`)) {
     throw new Error(`Artifact ${artifact} does not match stable release ${tag}`)
   }
 

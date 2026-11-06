@@ -129,8 +129,9 @@ describe('runtime update operation boundaries', () => {
       }
     })
     render()
-    const dialog = document.querySelector('[role="dialog"]')!
-    expect(dialog.querySelectorAll('button')).toHaveLength(4)
+    expect(buttons('Cancel')).toHaveLength(1)
+    expect(buttons('Update')).toHaveLength(1)
+    expect(buttons('Copy diagnostics')).toHaveLength(1)
     await act(async () =>
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     )
@@ -310,6 +311,57 @@ it('reports a real store recheck rejection, redacts diagnostics, and clears stal
     )?.open
   ).toBe(false)
 })
+
+it.each([false, true])(
+  'copies only displayed redacted update diagnostics and handles clipboard denial (denied=%s)',
+  async (denied) => {
+    const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const writeText = vi.fn(async () => {})
+    if (denied) writeText.mockRejectedValueOnce(new Error('clipboard permission denied'))
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText }
+    })
+    try {
+      const status: UpdateStatus = {
+        state: 'ready',
+        current: '1',
+        latest: '2',
+        reason: 'installation-busy',
+        recovery: r({ detail: 'occupancy-unknown' }),
+        diagnostics: 'verified-close failed; password=fixture-secret; target=2'
+      }
+      useUpdateStore.setState({ status })
+      render()
+      const diagnostics = document.querySelector('pre')!.textContent!
+      expect(diagnostics).toContain('verified-close failed')
+      expect(diagnostics).toContain('target=2')
+      expect(diagnostics).not.toContain('fixture-secret')
+      expect(buttons('Save diagnostics')).toHaveLength(1)
+      await act(async () => buttons('Copy diagnostics')[0].click())
+      expect(writeText).toHaveBeenCalledExactlyOnceWith(diagnostics)
+      if (denied) {
+        expect(buttons('Copied')).toHaveLength(0)
+        expect(document.querySelector('[role="status"]')?.textContent).toContain(
+          'Could not copy diagnostics. Select and copy the text above.'
+        )
+        expect(document.querySelector('pre')?.textContent).toBe(diagnostics)
+        await act(async () => buttons('Copy diagnostics')[0].click())
+        expect(writeText).toHaveBeenLastCalledWith(diagnostics)
+        expect(document.body.textContent).not.toContain('Could not copy diagnostics.')
+      }
+      expect(buttons('Copied')).toHaveLength(1)
+      expect(useUpdateStore.getState().status).toEqual(status)
+      // A changed diagnostic payload must require a new copy rather than retain old feedback.
+      act(() => useUpdateStore.setState({ status: { ...status, diagnostics: 'next probe' } }))
+      expect(buttons('Copied')).toHaveLength(0)
+      expect(buttons('Copy diagnostics')).toHaveLength(1)
+    } finally {
+      if (previous) Object.defineProperty(navigator, 'clipboard', previous)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  }
+)
 
 it('presents a second completed cancellation after reopening and starting another apply', async () => {
   const completed: UpdateStatus = {

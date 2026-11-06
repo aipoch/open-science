@@ -28,7 +28,7 @@ type Job = {
   permissions?: Record<string, string>
   'runs-on'?: string
   steps?: Step[]
-  strategy?: { matrix?: { shard?: number[] } }
+  strategy?: { matrix?: { shard?: number[]; scenario?: string[] } }
   'timeout-minutes'?: number | string
   uses?: string
   with?: Record<string, unknown>
@@ -51,6 +51,125 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('maps only the required Mac signing secrets into reviewed acceptance builds', () => {
+    const acceptance = workflow('mac-update-acceptance.yml')
+    const caller = acceptance.jobs['diagnostic-build'] as Job & { secrets: unknown }
+    expect(caller.secrets).toEqual({
+      MAC_CSC_LINK: '${{ secrets.MAC_CSC_LINK }}',
+      MAC_CSC_KEY_PASSWORD: '${{ secrets.MAC_CSC_KEY_PASSWORD }}'
+    })
+    expect(
+      step(acceptance.jobs.verify, 'Certify real UI update and automatic target readiness').env
+        ?.UPDATE_SCENARIO
+    ).toBe('${{ inputs.scenario }}')
+    const counterexamples = step(acceptance.jobs.verify, 'Run acceptance counterexamples').run!
+    expect(counterexamples).toContain('mac-update-fault-scenarios.test.mjs')
+    expect(counterexamples).toContain('mac-update-target-observation.test.mjs')
+  })
+  it('rejects stale Mac acceptance native pins before installing dependencies', () => {
+    const build = workflow('build.yml').jobs.build
+    const gate = step(build, 'Require reviewed native components for Mac acceptance')
+    expect(gate.run).toBe('node scripts/native-components.mjs --check-catalog')
+    expect(gate.if).toContain("inputs.diagnostic_mac_feed_url != ''")
+    expect(gate.if).toContain("matrix.platform == 'mac'")
+    expect(build.steps!.indexOf(gate)).toBeLessThan(
+      build.steps!.indexOf(step(build, 'Install dependencies'))
+    )
+  })
+  it.each([
+    ['http://127.0.0.1:18761/', 'Mac Update Acceptance', 'mac', true],
+    ['https://statics.aipoch.com/open-science/app/stable', 'Mac Update Acceptance', 'mac', false],
+    ['http://127.0.0.1:18761/', 'Windows Upgrade Smoke', 'mac', false],
+    ['http://127.0.0.1:18761/', 'Mac Update Acceptance', 'win', false],
+    ['http://127.0.0.1:18761/; echo unsafe', 'Mac Update Acceptance', 'mac', false]
+  ])('bounds signed Mac feed injection: %s %s %s', (feed, caller, platform, allowed) => {
+    const root = mkdtempSync(join(tmpdir(), 'diagnostic-mac-feed-'))
+    try {
+      writeFileSync(
+        join(root, 'package.json'),
+        JSON.stringify({ name: 'fixture', version: '1.0.5', private: true })
+      )
+      const script = step(workflow('build.yml').jobs.build, 'Build & package')
+        .run!.split('npm run build:e2e')[0]
+        .replaceAll('${{ inputs.nightly }}', 'false')
+        .replaceAll('${{ matrix.platform }}', platform)
+        .replaceAll('${{ steps.mac_signing.outputs.enabled }}', 'true')
+      const execute = (): void => {
+        execFileSync('bash', ['-e', '-c', script], {
+          cwd: root,
+          stdio: 'pipe',
+          env: {
+            ...process.env,
+            GITHUB_WORKFLOW: caller,
+            GITHUB_EVENT_NAME: 'workflow_dispatch',
+            DIAGNOSTIC_VERSION: '1.0.6',
+            DIAGNOSTIC_MAC_FEED_URL: feed
+          }
+        })
+      }
+      if (allowed) expect(execute).not.toThrow()
+      else expect(execute).toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('runs both renderer save failure phases against immutable Windows packages', () => {
+    const job = workflow('windows-upgrade-smoke.yml').jobs['artifact-upgrade']
+    expect(job.strategy?.matrix?.scenario).toEqual(
+      expect.arrayContaining(['renderer-preflight-failure', 'renderer-final-flush-failure'])
+    )
+    expect(step(job, 'Certify production Windows update and automatic readiness').run).toContain(
+      '--scenario $env:UPDATE_SCENARIO'
+    )
+  })
+  it.each([
+    { workflowName: 'Windows Upgrade Smoke', version: '1.0.6', allowed: true },
+    { workflowName: 'Release', version: '1.0.6', allowed: false },
+    {
+      workflowName: 'Windows Upgrade Smoke',
+      version: '1.0.6; echo unsafe',
+      allowed: false
+    }
+  ])(
+    'bounds internal version overrides to the non-publishing caller: $workflowName $version',
+    ({ workflowName, version, allowed }) => {
+      const root = mkdtempSync(join(tmpdir(), 'diagnostic-version-'))
+      try {
+        writeFileSync(
+          join(root, 'package.json'),
+          JSON.stringify({ name: 'internal-update-fixture', version: '1.0.5', private: true })
+        )
+        const build = step(workflow('build.yml').jobs.build, 'Build & package').run!
+        const preparation = build
+          .slice(0, build.indexOf('npm run build:e2e'))
+          .replaceAll('${{ inputs.nightly }}', 'false')
+        const run = (): void => {
+          execFileSync('bash', ['-e', '-c', preparation], {
+            cwd: root,
+            encoding: 'utf8',
+            stdio: 'pipe',
+            env: {
+              ...process.env,
+              DIAGNOSTIC_VERSION: version,
+              GITHUB_WORKFLOW: workflowName,
+              GITHUB_EVENT_NAME: 'workflow_dispatch'
+            }
+          })
+        }
+        if (allowed) {
+          expect(run).not.toThrow()
+          expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe(version)
+        } else {
+          expect(run).toThrow()
+          expect(JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version).toBe('1.0.5')
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      }
+    }
+  )
+
   it.each(['0189093', '0000000', '1234567', 'abc1234', null])(
     'keeps backend and installer versions identical for commit %s (null is stable)',
     (shortSha) => {
@@ -114,12 +233,14 @@ describe('release and scheduled workflow topology', () => {
       }
     }
     expect(callers.sort()).toEqual([
+      'mac-update-acceptance.yml:diagnostic-build',
       'nightly.yml:build',
       'notarize-dryrun.yml:build',
       'performance-package-dryrun.yml:build',
       'release.yml:build',
       'runtime-resource-soak.yml:packaged_performance',
-      'signpath-test.yml:build'
+      'signpath-test.yml:build',
+      'windows-upgrade-smoke.yml:diagnostic-build'
     ])
     for (const name of [
       'nightly.yml',
@@ -895,7 +1016,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'gh release list --exclude-drafts --exclude-pre-releases'
     )
     expect(step(job, 'Download final macOS arm64 archive').run).toContain(
-      "--pattern '*-mac-arm64.zip'"
+      "--pattern '*-mac-arm64-runtime.zip'"
     )
     const materialize = step(job, 'Materialize packaged application for scanning')
     expect(materialize.run).toContain('npm ci --ignore-scripts --omit=optional')

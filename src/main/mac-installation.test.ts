@@ -96,6 +96,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
 }))
 
 import {
+  setVerifiedMacOrdinaryBundle,
   createMacInstallationGuard,
   inspectInstallationLocation,
   installMacApplication,
@@ -110,6 +111,10 @@ beforeEach(() => {
   native.checkAccess.mockReset()
   native.showItemInFolder.mockReset()
   native.app.isPackaged = true
+  native.app.getPath.mockReturnValue(
+    '/Volumes/Installer/Open Science.app/Contents/MacOS/Open Science'
+  )
+  setVerifiedMacOrdinaryBundle('/unused/runtime.app', '/unused/wrapper.app')
   vi.stubGlobal(
     'process',
     Object.defineProperty(Object.create(process), 'platform', { value: 'darwin' })
@@ -123,6 +128,19 @@ afterEach(() => {
 })
 
 describe('mac installation location', () => {
+  it('checks a verified read-only ordinary entry even when its runtime is writable', () => {
+    const runtime = '/Users/test/runtime/Open Science.app'
+    const wrapper = '/Volumes/Installer/Open Science.app'
+    native.app.getPath.mockReturnValue(`${runtime}/Contents/MacOS/Open Science`)
+    setVerifiedMacOrdinaryBundle(runtime, wrapper)
+    native.checkAccess.mockImplementation((path: string) => {
+      if (path === wrapper) throw { code: 'EROFS' }
+    })
+    expect(isReadOnlyMacInstallation()).toBe(true)
+    setVerifiedMacOrdinaryBundle('/another/runtime.app', wrapper)
+    expect(isReadOnlyMacInstallation()).toBe(false)
+  })
+
   it('distinguishes read-only, writable, and unknown locations without path guessing', () => {
     expect(
       inspectInstallationLocation('/private/translocated/App.app', () => {

@@ -640,7 +640,7 @@ describe('KernelProcessLifecycleOwner', () => {
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {
-    it('verifies a real command identity and taskkills its complete process tree', async () => {
+    it('retains a legacy Windows receipt without a process handle and clears it after exit', async () => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-recovery-'))
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
@@ -657,15 +657,10 @@ describe('KernelProcessLifecycleOwner', () => {
         },
         ownerToken
       )
-      const child = spawn(
-        process.execPath,
-        [
-          '-e',
-          "require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)']); setInterval(()=>{},1000)",
-          marker
-        ],
-        { windowsHide: true, env: { ...process.env, ...first.environment(ownerToken) } }
-      )
+      const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)', marker], {
+        windowsHide: true,
+        env: { ...process.env, ...first.environment(ownerToken) }
+      })
       await new Promise<void>((resolve, reject) => {
         child.once('spawn', resolve)
         child.once('error', reject)
@@ -677,9 +672,16 @@ describe('KernelProcessLifecycleOwner', () => {
         storageRoot: root,
         ownerInstanceId: 'owner-b'
       })
-      await restarted.ensureReady()
-
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
+      try {
+        await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+        expect(processIsAlive(pid)).toBe(true)
+        expect(await readdir(join(root, 'runtime', 'kernel-processes'))).not.toEqual([])
+      } finally {
+        const closed = new Promise<void>((resolve) => child.once('close', () => resolve()))
+        child.kill()
+        await closed
+      }
+      await restarted.recover()
       expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
     }, 20_000)
   })

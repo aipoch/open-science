@@ -558,6 +558,7 @@ it.skipIf(process.platform === 'win32')(
     mkdirSync(join(cwd, 'scripts'))
     for (const name of [
       'generate-version-manifest.mjs',
+      'mac-artifact-contract.mjs',
       'release-artifact-validation.mjs',
       'publish-update-channel.mjs',
       'publish-release-assets.mjs'
@@ -621,6 +622,7 @@ it.skipIf(process.platform === 'win32')(
     mkdirSync(join(cwd, 'scripts'))
     for (const name of [
       'generate-version-manifest.mjs',
+      'mac-artifact-contract.mjs',
       'release-artifact-validation.mjs',
       'inject-feed-notes.mjs',
       'publish-release-assets.mjs',
@@ -688,9 +690,10 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `aipoch-open-science_${version}_arm64.deb`
     ]
     const macZips = [
-      `aipoch-open-science-${version}-mac-arm64.zip`,
-      `aipoch-open-science-${version}-mac-x64.zip`
+      `aipoch-open-science-${version}-mac-arm64-runtime.zip`,
+      `aipoch-open-science-${version}-mac-x64-runtime.zip`
     ]
+    const ordinaryMacZips = macZips.map((name) => name.replace('-runtime.zip', '.zip'))
     const cliPackages = [
       `open-science-cli_${version}_amd64.deb`,
       `open-science-cli_${version}_arm64.deb`,
@@ -706,7 +709,7 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       `open-science-cli-${version}-win32-x64.zip`
     ]
     const sums: string[] = []
-    for (const name of [...desktopInstallers, ...macZips, ...cliPackages]) {
+    for (const name of [...desktopInstallers, ...macZips, ...ordinaryMacZips, ...cliPackages]) {
       writeFileSync(join(dir, name), 'synthetic installer')
       sums.push(`${sha256('synthetic installer')}  ${name}`)
     }
@@ -778,6 +781,10 @@ fs.mkdirSync(path.dirname(target), {recursive:true}); fs.copyFileSync(source, ta
       const result = run(step)
       expect(result.status, `${step}: ${result.stderr}`).toBe(0)
     }
+    const mergedMac = load(readFileSync(join(dir, 'latest-mac.yml'), 'utf8')) as {
+      files: { url: string }[]
+    }
+    expect(mergedMac.files.every((entry) => entry.url.endsWith('-runtime.zip'))).toBe(true)
     const published = run('Sync installers to versioned path')
     expect(published.status, published.stderr).toBe(0)
     const manifest = JSON.parse(readFileSync(join(channel, 'version.json'), 'utf8'))

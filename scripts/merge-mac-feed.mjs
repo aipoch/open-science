@@ -11,6 +11,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { dump, load } from 'js-yaml'
+import { selectMacFeedEntry } from './mac-artifact-contract.mjs'
 import { validateUpdateFeed } from './release-artifact-validation.mjs'
 
 const dir = process.argv[2] ?? '.'
@@ -26,10 +27,7 @@ const feeds = names.map((name) => load(readFileSync(join(dir, name), 'utf8')))
 const version = feeds[0].version
 const files = feeds.map((feed, index) => {
   validateUpdateFeed(feed, dir, version, process.argv.includes('--metadata-only'))
-  const suffix = index === 0 ? '-mac-arm64.zip' : '-mac-x64.zip'
-  const entries = feed.files.filter((file) => file.url.endsWith(suffix))
-  if (entries.length !== 1) throw new Error(`Expected one ${suffix} update artifact`)
-  return entries[0]
+  return selectMacFeedEntry(feed, dir, index === 0 ? 'arm64' : 'x64')
 })
 const releaseDate = feeds
   .map((feed) => feed.releaseDate)

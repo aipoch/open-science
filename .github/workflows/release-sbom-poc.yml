@@ -82,8 +82,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir release-asset
-          gh release download "$RELEASE_TAG" --dir release-asset --pattern '*-mac-arm64.zip'
-          mapfile -t archives < <(find release-asset -maxdepth 1 -type f -name '*-mac-arm64.zip')
+          gh release download "$RELEASE_TAG" --dir release-asset --pattern '*-mac-arm64-runtime.zip'
+          mapfile -t archives < <(find release-asset -maxdepth 1 -type f -name '*-mac-arm64-runtime.zip')
           if [[ ${#archives[@]} -ne 1 ]]; then
             echo "Expected one macOS arm64 ZIP for $RELEASE_TAG, found ${#archives[@]}" >&2
             exit 1

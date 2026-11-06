@@ -38,7 +38,9 @@ function loadStage(cache: string): {
         ? { getBinFromCustomLoc: download }
         : id === './compile-windows-install-publication.cjs'
           ? compile
-          : require(id)
+          : id === './compile-windows-installation-processes.cjs'
+            ? (destination: string) => writeFileSync(destination, 'compiled process helper')
+            : require(id)
   })
   return { stage: module.exports, download, compile }
 }
@@ -86,6 +88,11 @@ describe('verified Windows installer extractor', () => {
       const { stage, compile } = loadStage(toolDirectory!)
       const destination = join(root, 'out/windows-installer/x64/7za.exe')
       const signIf = vi.fn(async (file: string) => {
+        if (file.endsWith('windows-installation-processes.exe')) {
+          expect(readFileSync(file, 'utf8')).toBe('compiled process helper')
+          writeFileSync(file, 'signed process helper')
+          return
+        }
         if (file.endsWith('.dll')) {
           expect(readFileSync(file, 'utf8')).toBe('compiled helper')
           return
@@ -102,7 +109,7 @@ describe('verified Windows installer extractor', () => {
       }
       await stage(context)
       await stage(context)
-      expect(signIf).toHaveBeenCalledTimes(4)
+      expect(signIf).toHaveBeenCalledTimes(6)
       expect(compile).toHaveBeenCalledWith(
         resolve('build/windows-install-publication.cs'),
         join(root, 'out/windows-installer/x64/windows-install-publication.dll')
@@ -115,6 +122,9 @@ describe('verified Windows installer extractor', () => {
         '15d4c788c148e3677e2fc1c4a01f191fb6669eba4f6acf8a465f0f1a6f1e1260'
       )
       expect(existsSync(join(root, 'app/resources/7za.exe'))).toBe(false)
+      expect(
+        readFileSync(join(root, 'app/resources/windows-installation-processes.exe'), 'utf8')
+      ).toBe('signed process helper')
     }
   )
 })

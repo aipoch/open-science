@@ -20,6 +20,7 @@ import { EventEmitter } from 'node:events'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
 import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
+import { recoverLegacyWindowsProcess } from './windows-process-recovery'
 
 type ShellProcessOwnershipRecord = Readonly<{
   version: 1
@@ -51,6 +52,7 @@ type HostedShellRecord = Omit<ShellProcessLaunchIntent, 'version' | 'state' | 'b
   receiptId: string
   pid?: number
   commandIdentityMarker?: string
+  jobName?: string
 }
 
 type ShellProcessLaunchOwnership = {
@@ -415,7 +417,17 @@ class ShellProcessOwnershipRegistry {
       throw new Error(`Corrupt Shell process ownership record: ${entry}`)
     }
     const exists = this.options.processExists ?? processExists
-    if (exists(pid)) {
+    if (record.jobName !== undefined) {
+      if (record.jobName !== `Local\\OpenScience.Delegation.${record.receiptId}`)
+        throw new Error(`Corrupt Shell process ownership record: ${entry}`)
+      const result = recoverLegacyWindowsProcess({
+        pid,
+        receiptId: record.receiptId,
+        jobName: record.jobName,
+        pendingPath: join(this.directory, `${record.runId}.pending.${record.receiptId}.json`)
+      })
+      if (!result.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
+    } else if (exists(pid)) {
       let commandLine: string | undefined
       let queryError: unknown
       try {
@@ -433,8 +445,9 @@ class ShellProcessOwnershipRegistry {
           })
         }
       } else if (commandLine.includes(record.receiptId)) {
-        const stopped = await terminateProcessTree(recoveryHandle({ pid, platform: 'win32' }))
-        if (!stopped.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
+        // This historical receipt cannot account for descendants whose parent already exited.
+        // A matching argv only proves the host, never complete historical tree containment.
+        throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       // A readable identity without this host's launch marker proves the recorded PID now names
       // another process. Retire only the stale receipt, as with version-1 start-identity mismatch;
@@ -537,7 +550,9 @@ class ShellProcessOwnershipRegistry {
       if (treeExists) {
         const result = this.options.terminateOwnedTree
           ? await this.options.terminateOwnedTree(record)
-          : await terminateProcessTree(recoveryHandle(record))
+          : record.platform === 'win32'
+            ? { reaped: false }
+            : await terminateProcessTree(recoveryHandle(record))
         if (!result.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
       }
       await unlink(path)

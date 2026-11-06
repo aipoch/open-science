@@ -264,3 +264,4 @@ index c9a579e..3324424 100644
 -    return winVersion.startsWith("6.") && !winVersion.startsWith("6.3");
 -}
  //# sourceMappingURL=windowsExecutableCodeSignatureVerifier.js.map
+\ No newline at end of file

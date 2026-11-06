@@ -13,6 +13,7 @@ import { installNodeFatalErrors } from './node-fatal-errors'
 import { withRuntimeShutdownLifetime } from './runtime-shutdown-lifetime'
 import {
   installationRootForEntry,
+  assertNativeInstallationUpdateAuthorized,
   registerInstallationRuntime
 } from './update/installation-protection'
 import { randomUUID } from 'node:crypto'
@@ -535,6 +536,8 @@ async function main(): Promise<void> {
       hostCommands: {
         commandNames: () => [
           'desktop:update-gate',
+          'desktop:update-installation-gate',
+          'desktop:update-installation-stop',
           'desktop:update-inspect',
           'desktop:update-owned-processes',
           'desktop:update-abort',
@@ -556,6 +559,15 @@ async function main(): Promise<void> {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
           if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
+          if (channel === 'desktop:update-installation-gate') {
+            const { installationUpdateRequestSchema } = await import('./desktop-runtime-lifecycle')
+            const request = installationUpdateRequestSchema.parse(invocation.args[0])
+            assertNativeInstallationUpdateAuthorized(
+              { installationRoot: installationRootForEntry(mainEntryPath) },
+              request.operationId
+            )
+            return runtime.prepareDesktopUpdate({ shutdownDeadlineAt: request.shutdownDeadlineAt })
+          }
           if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
@@ -563,6 +575,7 @@ async function main(): Promise<void> {
                 .object({
                   force: z.boolean().optional(),
                   relaunch: z.boolean().optional(),
+                  shutdownDeadlineAt: z.number().finite().nonnegative().optional(),
                   legacyShellRecoveryToken: z.string().min(1).max(512).optional()
                 })
                 .strict()
@@ -649,7 +662,12 @@ async function main(): Promise<void> {
           errorLogFields(error)
         ),
       isStopping: () => stopRequested,
-      requestShutdown: requestStop
+      requestShutdown: requestStop,
+      authorizeInstallationUpdate: (operationId) =>
+        assertNativeInstallationUpdateAuthorized(
+          { installationRoot: installationRootForEntry(mainEntryPath) },
+          operationId
+        )
     })
     abortStartupIfStopping()
     control = await startRuntimeControl(

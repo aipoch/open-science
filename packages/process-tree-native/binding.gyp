@@ -4,6 +4,7 @@
       "target_name": "process_tree_native",
       "sources": [
         "src/process_tree_native.cc",
+        "src/darwin_installation_processes.cc",
         "src/windows_owned_process.cc"
       ],
       "defines": [
