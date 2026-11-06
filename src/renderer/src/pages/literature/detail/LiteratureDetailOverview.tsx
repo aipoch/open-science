@@ -32,8 +32,8 @@ export function LiteratureDetailOverview({
   smartView,
   items,
   selectedItem,
-  snapshotRevision,
-  snapshotBatchGenerating,
+  overviewRevision,
+  overviewBatchGenerating,
   completedReevaluation,
   collectionId,
   singleReevaluation,
@@ -65,8 +65,8 @@ export function LiteratureDetailOverview({
   smartView: SmartCollectionView | undefined
   items: LiteratureItemView[]
   selectedItem: LiteratureItemView
-  snapshotRevision?: number
-  snapshotBatchGenerating?: boolean
+  overviewRevision?: number
+  overviewBatchGenerating?: boolean
   completedReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['completedReevaluation']
   collectionId: string | undefined
   singleReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['singleReevaluation']
@@ -153,8 +153,8 @@ export function LiteratureDetailOverview({
       )}
       <LiteratureBibliographicDetails
         selectedItem={selectedItem}
-        snapshotRevision={snapshotRevision}
-        snapshotBatchGenerating={snapshotBatchGenerating}
+        overviewRevision={overviewRevision}
+        overviewBatchGenerating={overviewBatchGenerating}
       />
       <section className="flex flex-wrap items-center justify-between gap-3 py-4">
         <h3 className="font-medium">{t('Citation discovery')}</h3>

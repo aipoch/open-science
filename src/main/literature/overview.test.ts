@@ -1,18 +1,18 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beginMigration, endMigration } from '../storage/migration-state'
 import { describe, expect, it, vi } from 'vitest'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { LiteratureStudySnapshot, LiteratureSnapshotStore } from './study-snapshot'
+import { LiteratureOverviewService, LiteratureOverviewStore } from './overview'
 import {
-  literatureSnapshotRequestSchema,
-  literatureSnapshotResultSchema,
-  literatureSnapshotSource,
-  literatureSnapshotSectionsSchema,
-  type LiteratureSnapshot
-} from '../../shared/literature-snapshot'
+  literatureOverviewRequestSchema,
+  literatureOverviewResultSchema,
+  literatureOverviewSource,
+  literatureOverviewSectionsSchema,
+  type LiteratureOverview
+} from '../../shared/literature-overview'
 
 const { failureLog } = vi.hoisted(() => ({ failureLog: vi.fn() }))
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
@@ -20,7 +20,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
   return {
     ...actual,
     createLogger: (scope: string) =>
-      scope === 'literature-study-snapshot'
+      scope === 'literature-overview'
         ? { ...actual.createLogger(scope), warn: failureLog }
         : actual.createLogger(scope)
   }
@@ -54,7 +54,7 @@ function fixture(item = paper()): {
   get: ReturnType<typeof vi.fn>
   reader: { classificationEvidence: ReturnType<typeof vi.fn> }
   infer: ReturnType<typeof vi.fn>
-  owner: LiteratureStudySnapshot
+  owner: LiteratureOverviewService
 } {
   const get = vi.fn(async () => structuredClone(item))
   const reader = {
@@ -66,11 +66,11 @@ function fixture(item = paper()): {
   const infer = vi.fn().mockResolvedValue({ text: JSON.stringify(sections), model: 'test-model' })
   return {
     item,
-    request: { ...request, expectedSourceKey: literatureSnapshotSource(item).key },
+    request: { ...request, expectedSourceKey: literatureOverviewSource(item).key },
     get,
     reader,
     infer,
-    owner: new LiteratureStudySnapshot({ catalog: { get }, reader, infer })
+    owner: new LiteratureOverviewService({ catalog: { get }, reader, infer })
   }
 }
 function withPdf(item = paper()): LiteratureItemView {
@@ -98,7 +98,7 @@ function withPdf(item = paper()): LiteratureItemView {
   return item
 }
 
-describe('single-paper study snapshot', () => {
+describe('single-paper study overview', () => {
   it('summarizes the abstract using the interface language and preserves missing fields', async () => {
     const f = fixture()
     expect(await f.owner.run(f.request)).toMatchObject({
@@ -158,7 +158,7 @@ describe('single-paper study snapshot', () => {
       f.reader.classificationEvidence.mockResolvedValue({ coverage, passages })
       const result = await f.owner.run(f.request)
       expect(result).toMatchObject({ coverage: 'abstract' })
-      if ('issue' in result) throw new Error('Expected an abstract snapshot.')
+      if ('issue' in result) throw new Error('Expected an abstract overview.')
       expect(result.attachmentVersionId).toBeUndefined()
       expect(JSON.parse(f.infer.mock.calls[0][0].prompt)).toMatchObject({
         abstract: f.item.item.abstract,
@@ -224,7 +224,7 @@ describe('single-paper study snapshot', () => {
     const f = fixture()
     f.infer.mockResolvedValueOnce({ text, model: 'PRIVATE_MODEL_VALUE' })
     await expect(f.owner.run(f.request)).rejects.toThrow()
-    expect(failureLog).toHaveBeenCalledExactlyOnceWith('Study snapshot generation failed', {
+    expect(failureLog).toHaveBeenCalledExactlyOnceWith('Paper overview generation failed', {
       stage,
       category,
       responseBytes: Buffer.byteLength(text.trim(), 'utf8')
@@ -368,7 +368,7 @@ describe('single-paper study snapshot', () => {
       const write = vi.fn(async () => {
         if (stage === 'persist') await wait()
       })
-      const owner = new LiteratureStudySnapshot({
+      const owner = new LiteratureOverviewService({
         catalog: {
           get: async () => {
             reads++
@@ -431,7 +431,7 @@ describe('single-paper study snapshot', () => {
         second = f.owner.run({
           ...f.request,
           itemId: f.item.id,
-          expectedSourceKey: literatureSnapshotSource(f.item).key,
+          expectedSourceKey: literatureOverviewSource(f.item).key,
           language: identity === 'language' ? 'ja' : f.request.language
         })
         await vi.waitFor(() => expect(f.infer).toHaveBeenCalledTimes(2))
@@ -538,11 +538,11 @@ describe('single-paper study snapshot', () => {
     'validates a source-bound business outcome: %s',
     (issue) => {
       expect(
-        literatureSnapshotResultSchema.safeParse({ sourceKey: 'source-key', issue }).success
+        literatureOverviewResultSchema.safeParse({ sourceKey: 'source-key', issue }).success
       ).toBe(true)
-      expect(literatureSnapshotResultSchema.safeParse({ sourceKey: '', issue }).success).toBe(false)
+      expect(literatureOverviewResultSchema.safeParse({ sourceKey: '', issue }).success).toBe(false)
       expect(
-        literatureSnapshotResultSchema.safeParse({
+        literatureOverviewResultSchema.safeParse({
           sourceKey: 'source-key',
           issue,
           coverage: 'abstract',
@@ -554,7 +554,7 @@ describe('single-paper study snapshot', () => {
   )
   it('rejects unknown issue codes at the result boundary', () => {
     expect(
-      literatureSnapshotResultSchema.safeParse({
+      literatureOverviewResultSchema.safeParse({
         sourceKey: 'source-key',
         issue: 'unexpected-issue'
       }).success
@@ -566,24 +566,24 @@ describe('single-paper study snapshot', () => {
     await expect(f.owner.run(f.request)).rejects.toThrow()
   })
   it('validates request boundaries and requires all five output fields', () => {
-    expect(literatureSnapshotRequestSchema.safeParse({ ...request, itemId: '' }).success).toBe(
+    expect(literatureOverviewRequestSchema.safeParse({ ...request, itemId: '' }).success).toBe(
       false
     )
     expect(
-      literatureSnapshotRequestSchema.safeParse({ ...request, language: 'x'.repeat(65) }).success
+      literatureOverviewRequestSchema.safeParse({ ...request, language: 'x'.repeat(65) }).success
     ).toBe(false)
     expect(
-      literatureSnapshotRequestSchema.safeParse({ ...request, prompt: 'override' }).success
+      literatureOverviewRequestSchema.safeParse({ ...request, prompt: 'override' }).success
     ).toBe(false)
-    expect(literatureSnapshotSectionsSchema.safeParse({ question: 'Only question' }).success).toBe(
+    expect(literatureOverviewSectionsSchema.safeParse({ question: 'Only question' }).success).toBe(
       false
     )
   })
 })
 
-describe('saved study snapshots', () => {
+describe('saved study overviews', () => {
   it('restores across owners without PDF or model work, invalidates source/language, and preserves the last success on failure', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'study-snapshots-'))
+    const root = await mkdtemp(join(tmpdir(), 'study-overviews-'))
     try {
       const f = fixture()
       const infer = vi.fn(async () => ({ text: JSON.stringify(sections), model: 'test' }))
@@ -594,14 +594,19 @@ describe('saved study snapshots', () => {
         }))
       }
       const options = { catalog: { get: async () => f.item }, reader, infer }
-      const owner = new LiteratureStudySnapshot({
+      const owner = new LiteratureOverviewService({
         ...options,
-        store: new LiteratureSnapshotStore(() => root)
+        store: new LiteratureOverviewStore(() => root)
       })
       const generated = await owner.run(f.request)
-      const restored = new LiteratureStudySnapshot({
+      const [savedFile] = await readdir(root)
+      expect(JSON.parse(await readFile(join(root, savedFile), 'utf8'))).toEqual({
+        version: 1,
+        snapshot: generated
+      })
+      const restored = new LiteratureOverviewService({
         ...options,
-        store: new LiteratureSnapshotStore(() => root)
+        store: new LiteratureOverviewStore(() => root)
       })
       infer.mockClear()
       expect(await restored.run({ ...f.request, mode: 'read' })).toEqual(generated)
@@ -620,7 +625,7 @@ describe('saved study snapshots', () => {
       expect(
         await restored.run({
           ...f.request,
-          expectedSourceKey: literatureSnapshotSource(f.item).key,
+          expectedSourceKey: literatureOverviewSource(f.item).key,
           mode: 'read'
         })
       ).toMatchObject({ issue: 'not-generated' })
@@ -628,10 +633,10 @@ describe('saved study snapshots', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
-  it('does not overwrite a newer saved snapshot when the source changes during inference', async () => {
+  it('does not overwrite a newer saved overview when the source changes during inference', async () => {
     const f = fixture()
-    let saved: LiteratureSnapshot | undefined
-    const owner = new LiteratureStudySnapshot({
+    let saved: LiteratureOverview | undefined
+    const owner = new LiteratureOverviewService({
       catalog: { get: async () => structuredClone(f.item) },
       reader: {
         classificationEvidence: async () => {
@@ -642,7 +647,7 @@ describe('saved study snapshots', () => {
         f.item.metadataRevision++
         // A second generation for the edited reference has already saved its result.
         saved = {
-          sourceKey: literatureSnapshotSource(f.item).key,
+          sourceKey: literatureOverviewSource(f.item).key,
           coverage: 'abstract',
           model: 'newer-model',
           sections
@@ -652,8 +657,8 @@ describe('saved study snapshots', () => {
       store: {
         read: async (request) =>
           saved?.sourceKey === request.expectedSourceKey ? saved : undefined,
-        write: async (_request, snapshot) => {
-          saved = snapshot
+        write: async (_request, overview) => {
+          saved = overview
         }
       }
     })
@@ -661,7 +666,7 @@ describe('saved study snapshots', () => {
     expect(
       await owner.run({
         ...f.request,
-        expectedSourceKey: literatureSnapshotSource(f.item).key,
+        expectedSourceKey: literatureOverviewSource(f.item).key,
         mode: 'read'
       })
     ).toMatchObject({ model: 'newer-model' })
@@ -670,7 +675,7 @@ describe('saved study snapshots', () => {
     'rejects results when %s changes during persistence',
     async (change) => {
       const f = fixture(withPdf())
-      const owner = new LiteratureStudySnapshot({
+      const owner = new LiteratureOverviewService({
         catalog: { get: async () => structuredClone(f.item) },
         reader: {
           classificationEvidence: async () => ({
@@ -704,7 +709,7 @@ describe('saved study snapshots', () => {
       model: 'saved-model',
       sections
     }
-    const owner = new LiteratureStudySnapshot({
+    const owner = new LiteratureOverviewService({
       catalog: { get: async () => structuredClone(f.item) },
       reader: {
         classificationEvidence: async () => {
@@ -733,10 +738,10 @@ describe('saved study snapshots', () => {
       await Promise.all([...running, fifth])
     }
   })
-  it('reports save failures, keeps the previous snapshot, and releases all generation slots', async () => {
+  it('reports save failures, keeps the previous overview, and releases all generation slots', async () => {
     const f = fixture()
     let fail = true
-    let saved: LiteratureSnapshot = {
+    let saved: LiteratureOverview = {
       sourceKey: f.request.expectedSourceKey,
       coverage: 'abstract',
       model: 'previous-model',
@@ -744,7 +749,7 @@ describe('saved study snapshots', () => {
     }
     const persistenceError = new Error('PRIVATE_STORAGE_ERROR')
     failureLog.mockClear()
-    const owner = new LiteratureStudySnapshot({
+    const owner = new LiteratureOverviewService({
       catalog: { get: async () => structuredClone(f.item) },
       reader: {
         classificationEvidence: async () => {
@@ -754,9 +759,9 @@ describe('saved study snapshots', () => {
       infer: async () => ({ text: JSON.stringify(sections), model: 'fresh-model' }),
       store: {
         read: async () => saved,
-        write: async (_request, snapshot) => {
+        write: async (_request, overview) => {
           if (fail) throw persistenceError
-          saved = snapshot
+          saved = overview
         }
       }
     })
@@ -767,7 +772,7 @@ describe('saved study snapshots', () => {
         (attempt) => attempt.status === 'rejected' && attempt.reason === persistenceError
       )
     ).toBe(true)
-    expect(failureLog).toHaveBeenCalledWith('Study snapshot generation failed', {
+    expect(failureLog).toHaveBeenCalledWith('Paper overview generation failed', {
       stage: 'persist',
       category: 'operation-failed',
       responseBytes: Buffer.byteLength(JSON.stringify(sections), 'utf8')
@@ -786,7 +791,7 @@ describe('saved study snapshots', () => {
       const f = fixture()
       const controller = new AbortController()
       let reads = 0
-      const owner = new LiteratureStudySnapshot({
+      const owner = new LiteratureOverviewService({
         catalog: {
           get: async () => {
             reads++
@@ -813,17 +818,17 @@ describe('saved study snapshots', () => {
     }
   )
   it.each(['metadata', 'deleted', 'pdf'])(
-    'rejects a saved snapshot if %s changes while restoring it',
+    'rejects a saved overview if %s changes while restoring it',
     async (change) => {
       const f = fixture(withPdf())
-      const saved: LiteratureSnapshot = {
+      const saved: LiteratureOverview = {
         sourceKey: f.request.expectedSourceKey,
         coverage: 'full-text',
         model: 'saved-model',
         sections
       }
       const infer = vi.fn(async () => ({ text: JSON.stringify(sections), model: 'test' }))
-      const owner = new LiteratureStudySnapshot({
+      const owner = new LiteratureOverviewService({
         catalog: { get: async () => structuredClone(f.item) },
         reader: {
           classificationEvidence: async () => {
@@ -848,7 +853,7 @@ describe('saved study snapshots', () => {
     }
   )
   it('guards saved-result reads and writes during data migration', async () => {
-    const store = new LiteratureSnapshotStore(() => {
+    const store = new LiteratureOverviewStore(() => {
       throw new Error('Must not resolve a migrating root')
     })
     beginMigration()

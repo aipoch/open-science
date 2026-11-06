@@ -29,10 +29,10 @@ import {
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 import {
-  literatureSnapshotSource,
-  type LiteratureSnapshot
-} from '../../../../shared/literature-snapshot'
-import type { SnapshotBatch } from '../../../../shared/literature-snapshot-batch'
+  literatureOverviewSource,
+  type LiteratureOverview
+} from '../../../../shared/literature-overview'
+import type { OverviewBatch } from '../../../../shared/literature-overview-batch'
 import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
@@ -442,7 +442,7 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
-          snapshotBatch: vi.fn().mockResolvedValue(null),
+          overviewBatch: vi.fn().mockResolvedValue(null),
           studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
             sourceKey: request.expectedSourceKey,
             issue: 'not-generated' as const
@@ -612,9 +612,9 @@ describe('LiteratureLibraryPage', () => {
         request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
       )
       get.mockResolvedValue(libraryItem)
-      const sourceKey = literatureSnapshotSource(libraryItem).key
+      const sourceKey = literatureOverviewSource(libraryItem).key
       const wave = Promise.withResolvers<void>()
-      const job: SnapshotBatch = {
+      const job: OverviewBatch = {
         id: '00000000-0000-4000-8000-000000000000',
         paused: true,
         rows: [
@@ -628,7 +628,7 @@ describe('LiteratureLibraryPage', () => {
           }
         ]
       }
-      const saved: LiteratureSnapshot = {
+      const saved: LiteratureOverview = {
         sourceKey: otherSource ?? sourceKey,
         model: 'test',
         coverage: 'abstract',
@@ -640,8 +640,8 @@ describe('LiteratureLibraryPage', () => {
           limitations: null
         }
       }
-      let stored: LiteratureSnapshot | undefined
-      const snapshot = vi.fn<typeof window.api.literature.studySnapshot>(async (request) =>
+      let stored: LiteratureOverview | undefined
+      const overviewRequest = vi.fn<typeof window.api.literature.studySnapshot>(async (request) =>
         request.mode === 'read'
           ? stored &&
             request.language === language &&
@@ -650,8 +650,8 @@ describe('LiteratureLibraryPage', () => {
             : { sourceKey: request.expectedSourceKey, issue: 'not-generated' }
           : saved
       )
-      window.api.literature.studySnapshot = snapshot
-      vi.mocked(window.api.literature.snapshotBatch).mockImplementation(async (request) => {
+      window.api.literature.studySnapshot = overviewRequest
+      vi.mocked(window.api.literature.overviewBatch).mockImplementation(async (request) => {
         if (request.action === 'resume') job.paused = false
         if (request.action === 'advance') {
           await wave.promise
@@ -663,25 +663,25 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       const row = await screen.findByRole('button', { name: libraryItem.item.title })
-      fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
-      const batch = screen.getByRole('dialog', { name: 'Batch snapshots' })
+      fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
+      const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
       fireEvent.click(within(batch).getByRole('button', { name: 'Continue remaining' }))
       await waitFor(() =>
-        expect(window.api.literature.snapshotBatch).toHaveBeenCalledWith({
+        expect(window.api.literature.overviewBatch).toHaveBeenCalledWith({
           action: 'advance',
           jobId: job.id
         })
       )
       fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
       fireEvent.click(row)
-      const overview = await screen.findByRole('region', { name: 'Study overview' })
-      await waitFor(() => expect(snapshot).toHaveBeenCalledTimes(1))
+      const overview = await screen.findByRole('region', { name: 'Paper overview' })
+      await waitFor(() => expect(overviewRequest).toHaveBeenCalledTimes(1))
       if (shouldRefresh) {
         const generating = within(overview).getByRole('button', { name: 'Generating overview…' })
         expect(generating).toHaveProperty('disabled', true)
         expect(overview.getAttribute('aria-busy')).toBe('true')
         fireEvent.click(generating)
-        expect(snapshot.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+        expect(overviewRequest.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
       } else {
         expect(within(overview).getByRole('button', { name: 'Generate overview' })).toBeTruthy()
         expect(overview.getAttribute('aria-busy')).toBe('false')
@@ -692,25 +692,25 @@ describe('LiteratureLibraryPage', () => {
         await wave.promise
       })
       await waitFor(() =>
-        expect(window.api.literature.snapshotBatch).toHaveBeenCalledWith({
+        expect(window.api.literature.overviewBatch).toHaveBeenCalledWith({
           action: 'advance',
           jobId: job.id
         })
       )
 
-      expect(screen.getByRole('region', { name: 'Study overview' })).toBe(overview)
+      expect(screen.getByRole('region', { name: 'Paper overview' })).toBe(overview)
       if (shouldRefresh) {
         await within(overview).findByText('Saved by the batch without another inference')
-        expect(snapshot).toHaveBeenCalledTimes(2)
+        expect(overviewRequest).toHaveBeenCalledTimes(2)
         expect(within(overview).getByRole('button', { name: 'Regenerate' })).toBeTruthy()
         expect(overview.getAttribute('aria-busy')).toBe('false')
       } else {
         expect(
           within(overview).queryByText('Saved by the batch without another inference')
         ).toBeNull()
-        expect(snapshot).toHaveBeenCalledTimes(1)
+        expect(overviewRequest).toHaveBeenCalledTimes(1)
       }
-      expect(snapshot.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+      expect(overviewRequest.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
     }
   )
 
@@ -721,27 +721,27 @@ describe('LiteratureLibraryPage', () => {
         request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
       )
       get.mockResolvedValue(libraryItem)
-      const job: SnapshotBatch = {
+      const job: OverviewBatch = {
         id: '00000000-0000-4000-8000-000000000000',
         paused: true,
         rows: [
           {
             request: {
               itemId: libraryItem.id,
-              expectedSourceKey: literatureSnapshotSource(libraryItem).key,
+              expectedSourceKey: literatureOverviewSource(libraryItem).key,
               language: 'en'
             },
             status: 'running'
           }
         ]
       }
-      vi.mocked(window.api.literature.snapshotBatch).mockImplementation(async () =>
+      vi.mocked(window.api.literature.overviewBatch).mockImplementation(async () =>
         structuredClone(job)
       )
       render(<LiteratureLibraryPage />)
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       fireEvent.click(await screen.findByRole('button', { name: libraryItem.item.title }))
-      const overview = await screen.findByRole('region', { name: 'Study overview' })
+      const overview = await screen.findByRole('region', { name: 'Paper overview' })
       expect(
         await within(overview).findByRole('button', { name: 'Generating overview…' })
       ).toHaveProperty('disabled', true)
@@ -762,7 +762,7 @@ describe('LiteratureLibraryPage', () => {
     search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
       request.scope === 'library' ? { entries: records } : { entries: [] }
     )
-    vi.mocked(window.api.literature.snapshotBatch).mockResolvedValue({
+    vi.mocked(window.api.literature.overviewBatch).mockResolvedValue({
       id: '00000000-0000-4000-8000-000000000000',
       paused: true,
       rows: records.map((item, index) => ({
@@ -774,32 +774,32 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await screen.findByRole('button', { name: records[0].item.title })
-    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
-    fireEvent.click(await screen.findByRole('button', { name: 'Batch snapshots' }))
-    const batch = screen.getByRole('dialog', { name: 'Batch snapshots' })
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
+    const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
     expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
-    expect(within(batch).getAllByText('Snapshot saved')).toHaveLength(4)
+    expect(within(batch).getAllByText('Overview saved')).toHaveLength(4)
     expect(
       within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
     ).toBeTruthy()
     expect(batch.closest('[data-slot="literature-action-rail"]')).toBeNull()
     fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
     fireEvent.click(screen.getByLabelText(`Select ${records[0].item.title}`))
-    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
     const toolbar = screen
       .getByRole('button', { name: 'Clear selection' })
       .closest('[data-slot="literature-selection-toolbar"]') as HTMLElement
     fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }))
-    const generate = await screen.findByRole('button', { name: 'Generate snapshots' })
+    const generate = await screen.findByRole('button', { name: 'Generate overviews' })
     expect(generate).toHaveProperty('disabled', false)
     expect(generate.closest('[data-slot="literature-selection-toolbar"]')).toBeNull()
     fireEvent.click(generate)
-    await screen.findByRole('dialog', { name: 'Batch snapshots' })
-    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
+    await screen.findByRole('dialog', { name: 'Batch overviews' })
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
     fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
     fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
-    expect(screen.queryByRole('button', { name: 'Generate snapshots' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Batch snapshots' }))
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Batch overviews' }))
     expect(within(screen.getByRole('dialog')).getAllByRole('listitem')).toHaveLength(5)
   })
 

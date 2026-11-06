@@ -101,7 +101,7 @@ const chunkOperations = [
 // Exercise the installed public API: only HTTP completion and event liveness are controlled.
 const longRunningOperations = [
   {
-    channel: 'literature:snapshot-batch',
+    channel: 'literature:overview-batch',
     result: {
       id: '00000000-0000-4000-8000-000000000000',
       paused: false,
@@ -113,7 +113,7 @@ const longRunningOperations = [
       ]
     },
     invoke: (api: WebApi) =>
-      api.literature.snapshotBatch({
+      api.literature.overviewBatch({
         action: 'advance',
         jobId: '00000000-0000-4000-8000-000000000000'
       })

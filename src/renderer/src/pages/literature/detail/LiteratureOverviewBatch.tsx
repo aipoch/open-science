@@ -15,29 +15,29 @@ import {
 import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureHost } from '../renderer-host'
 import {
-  literatureSnapshotSource,
-  type LiteratureSnapshotRequest
-} from '../../../../../shared/literature-snapshot'
+  literatureOverviewSource,
+  type LiteratureOverviewRequest
+} from '../../../../../shared/literature-overview'
 import {
-  SNAPSHOT_BATCH_CONCURRENCY,
-  SNAPSHOT_BATCH_LIMIT,
-  type SnapshotBatch,
-  type SnapshotBatchRequest
-} from '../../../../../shared/literature-snapshot-batch'
+  OVERVIEW_BATCH_CONCURRENCY,
+  OVERVIEW_BATCH_LIMIT,
+  type OverviewBatch,
+  type OverviewBatchRequest
+} from '../../../../../shared/literature-overview-batch'
 
-export function LiteratureSnapshotBatch({
+export function LiteratureOverviewBatch({
   resolveSelection,
   hasSelection,
-  onSnapshotSaved,
+  onOverviewSaved,
   onActiveRequestsChange,
-  onOpenSnapshot,
+  onOpenOverview,
   children
 }: {
   resolveSelection(): Promise<string[]>
   hasSelection: boolean
-  onSnapshotSaved?(request: LiteratureSnapshotRequest): void
-  onActiveRequestsChange?(requests: LiteratureSnapshotRequest[]): void
-  onOpenSnapshot?(item: LiteratureItemView, initiator: HTMLElement): void
+  onOverviewSaved?(request: LiteratureOverviewRequest): void
+  onActiveRequestsChange?(requests: LiteratureOverviewRequest[]): void
+  onOpenOverview?(item: LiteratureItemView, initiator: HTMLElement): void
   children?(progress: React.ReactNode, generate: React.ReactNode): React.ReactNode
 }): React.JSX.Element {
   const { api } = useLiteratureHost()
@@ -46,8 +46,8 @@ export function LiteratureSnapshotBatch({
   const [pausing, setPausing] = useState(false)
   const [selectionError, setSelectionError] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const openingSnapshot = useRef<LiteratureItemView | null>(null)
-  const [job, setJob] = useState<SnapshotBatch | null>(null)
+  const openingOverview = useRef<LiteratureItemView | null>(null)
+  const [job, setJob] = useState<OverviewBatch | null>(null)
   const [references, setReferences] = useState<Record<string, LiteratureItemView | undefined>>({})
   const [busy, setBusy] = useState(false)
   const [activeItemIds, setActiveItemIds] = useState<string[]>([])
@@ -73,7 +73,7 @@ export function LiteratureSnapshotBatch({
   }, [job, busy, error, activeItemIds, onActiveRequestsChange])
   useEffect(() => () => onActiveRequestsChange?.([]), [onActiveRequestsChange])
   useEffect(() => {
-    if (!job || !onSnapshotSaved) return
+    if (!job || !onOverviewSaved) return
     if (notified.current?.jobId !== job.id)
       notified.current = { jobId: job.id, requests: new Set() }
     for (const row of job.rows) {
@@ -85,15 +85,15 @@ export function LiteratureSnapshotBatch({
       ])
       if (notified.current.requests.has(key)) continue
       notified.current.requests.add(key)
-      onSnapshotSaved(row.request)
+      onOverviewSaved(row.request)
     }
-  }, [job, onSnapshotSaved])
+  }, [job, onOverviewSaved])
   useEffect(() => {
     const controller = new AbortController()
     lifetime.current = controller
     const initialGeneration = generation.current
     void api.literature
-      .snapshotBatch({ action: 'read' })
+      .overviewBatch({ action: 'read' })
       .then((value) => {
         if (!controller.signal.aborted && generation.current === initialGeneration) setJob(value)
       })
@@ -135,7 +135,7 @@ export function LiteratureSnapshotBatch({
       reading = true
       const readGeneration = generation.current
       void api.literature
-        .snapshotBatch({ action: 'read' })
+        .overviewBatch({ action: 'read' })
         .then((progress) => {
           // A request's final response wins over any earlier progress observation.
           if (current && generation.current === readGeneration && progress?.id === jobId)
@@ -152,7 +152,7 @@ export function LiteratureSnapshotBatch({
     }
   }, [api, jobId, observing])
   const execute = async (
-    request: SnapshotBatchRequest,
+    request: OverviewBatchRequest,
     signal = lifetime.current.signal
   ): Promise<void> => {
     if (locked.current || signal.aborted) return
@@ -166,7 +166,7 @@ export function LiteratureSnapshotBatch({
     setBusy(true)
     setError(false)
     try {
-      let value = await api.literature.snapshotBatch(request)
+      let value = await api.literature.overviewBatch(request)
       generation.current++
       if (!signal.aborted) setJob(value)
       while (
@@ -179,15 +179,15 @@ export function LiteratureSnapshotBatch({
         setActiveItemIds(
           value.rows
             .filter((row) => row.status === 'pending')
-            .slice(0, SNAPSHOT_BATCH_CONCURRENCY)
+            .slice(0, OVERVIEW_BATCH_CONCURRENCY)
             .map((row) => row.request.itemId)
         )
-        value = await api.literature.snapshotBatch({ action: 'advance', jobId: value.id })
+        value = await api.literature.overviewBatch({ action: 'advance', jobId: value.id })
         generation.current++
         if (!signal.aborted) setJob(value)
       }
       if (!signal.aborted && stop.current && value) {
-        value = await api.literature.snapshotBatch({ action: 'pause', jobId: value.id })
+        value = await api.literature.overviewBatch({ action: 'pause', jobId: value.id })
         generation.current++
         if (!signal.aborted) setJob(value)
       }
@@ -217,7 +217,7 @@ export function LiteratureSnapshotBatch({
     try {
       const ids = await resolveSelection()
       signal.throwIfAborted()
-      if (!ids.length || ids.length > SNAPSHOT_BATCH_LIMIT) {
+      if (!ids.length || ids.length > OVERVIEW_BATCH_LIMIT) {
         setSelectionError(true)
         setBusy(false)
         setPausing(false)
@@ -229,7 +229,7 @@ export function LiteratureSnapshotBatch({
         ids.map(async (itemId) => {
           const item = await api.literature.get(itemId)
           if (!item) throw new Error('Reference unavailable.')
-          return { itemId, language, expectedSourceKey: literatureSnapshotSource(item).key }
+          return { itemId, language, expectedSourceKey: literatureOverviewSource(item).key }
         })
       )
       signal.throwIfAborted()
@@ -283,7 +283,7 @@ export function LiteratureSnapshotBatch({
   const generateAction = hasSelection ? (
     <Button size="sm" variant="ghost" disabled={working || unfinished} onClick={() => void start()}>
       <Sparkles className="size-3.5" aria-hidden="true" />
-      {t('Generate snapshots')}
+      {t('Generate overviews')}
     </Button>
   ) : null
   const actions = (
@@ -294,7 +294,7 @@ export function LiteratureSnapshotBatch({
             ref={triggerRef}
             size="sm"
             variant="ghost"
-            aria-label={t('Batch snapshots')}
+            aria-label={t('Batch overviews')}
             className="shrink-0 gap-2"
           >
             {working ? (
@@ -315,7 +315,7 @@ export function LiteratureSnapshotBatch({
                 aria-hidden="true"
               />
             )}
-            {t('Batch snapshots')}
+            {t('Batch overviews')}
             {job && (
               <span className="text-muted-foreground tabular-nums">
                 {completed}/{total}
@@ -342,18 +342,18 @@ export function LiteratureSnapshotBatch({
         <Dialog.Content
           aria-describedby={undefined}
           onCloseAutoFocus={(event) => {
-            const item = openingSnapshot.current
-            openingSnapshot.current = null
-            if (!item || !triggerRef.current || !onOpenSnapshot) return
+            const item = openingOverview.current
+            openingOverview.current = null
+            if (!item || !triggerRef.current || !onOpenOverview) return
             event.preventDefault()
-            onOpenSnapshot(item, triggerRef.current)
+            onOpenOverview(item, triggerRef.current)
           }}
           className={dialogPanelClassName(
             'flex max-h-[85vh] w-[min(40rem,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
         >
           <div className={dialogHeaderClassName}>
-            <Dialog.Title className={dialogTitleClassName}>{t('Batch snapshots')}</Dialog.Title>
+            <Dialog.Title className={dialogTitleClassName}>{t('Batch overviews')}</Dialog.Title>
             <Dialog.Close asChild>
               <Button size="icon-sm" variant="ghost" aria-label={t('Close')}>
                 <X className="size-4" aria-hidden="true" />
@@ -367,7 +367,7 @@ export function LiteratureSnapshotBatch({
                   inline
                   tone="amber"
                   description={t('Select up to {{limit}} references.', {
-                    limit: SNAPSHOT_BATCH_LIMIT
+                    limit: OVERVIEW_BATCH_LIMIT
                   })}
                 />
               </div>
@@ -378,7 +378,7 @@ export function LiteratureSnapshotBatch({
                   inline
                   tone="amber"
                   description={t(
-                    'Could not generate batch snapshots. Check the selection and try again.'
+                    'Could not generate batch overviews. Check the selection and try again.'
                   )}
                   primaryButton={{
                     label: t('Retry'),
@@ -386,7 +386,7 @@ export function LiteratureSnapshotBatch({
                       const signal = lifetime.current.signal
                       const currentGeneration = generation.current
                       void api.literature
-                        .snapshotBatch({ action: 'read' })
+                        .overviewBatch({ action: 'read' })
                         .then((value) => {
                           if (!signal.aborted && generation.current === currentGeneration) {
                             setJob(value)
@@ -411,15 +411,15 @@ export function LiteratureSnapshotBatch({
                 </div>
                 {job && (
                   <ProgressBar
-                    label={t('Batch snapshots')}
+                    label={t('Batch overviews')}
                     value={total > 0 ? (completed / total) * 100 : 0}
                   />
                 )}
                 {failed > 0 && (
                   <p className="text-sm text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                    {t('{{count}} failed snapshots', {
+                    {t('{{count}} failed overviews', {
                       count: failed,
-                      defaultValue_one: '{{count}} failed snapshot'
+                      defaultValue_one: '{{count}} failed overview'
                     })}
                   </p>
                 )}
@@ -447,14 +447,14 @@ export function LiteratureSnapshotBatch({
                           className={`mt-0.5 size-4 shrink-0 ${active ? 'animate-spin motion-reduce:animate-none' : ''} ${row.status === 'failed' ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : row.status === 'succeeded' ? 'text-status-success-foreground dark:text-status-success-dark-foreground' : 'text-muted-foreground'}`}
                         />
                         <div className="min-w-0 flex-1">
-                          {row.status === 'succeeded' && item && onOpenSnapshot ? (
+                          {row.status === 'succeeded' && item && onOpenOverview ? (
                             <button
                               type="button"
                               className="text-left text-sm font-medium underline-offset-4 hover:underline focus-visible:outline-ring [overflow-wrap:anywhere]"
                               onClick={() => {
                                 const initiator = triggerRef.current
                                 if (!initiator) return
-                                openingSnapshot.current = item
+                                openingOverview.current = item
                                 setOpen(false)
                               }}
                             >
@@ -466,9 +466,9 @@ export function LiteratureSnapshotBatch({
                         </div>
                         <span className="max-w-[40%] shrink-0 text-right text-xs leading-5 text-muted-foreground">
                           {row.status === 'succeeded'
-                            ? t('Snapshot saved')
+                            ? t('Overview saved')
                             : row.status === 'failed'
-                              ? t('Snapshot failed')
+                              ? t('Overview failed')
                               : active
                                 ? t('Generating overview…')
                                 : t('Pending')}
@@ -525,7 +525,7 @@ export function LiteratureSnapshotBatch({
                     disabled={hasRunningRows && !error}
                     onClick={() => void execute({ action: 'retry', jobId: job.id })}
                   >
-                    {t('Retry failed snapshots')}
+                    {t('Retry failed overviews')}
                   </Button>
                 )}
               </>

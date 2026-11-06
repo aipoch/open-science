@@ -1,14 +1,14 @@
 import { z } from 'zod'
-import { literatureSnapshotRequestSchema } from './literature-snapshot'
+import { literatureOverviewRequestSchema } from './literature-overview'
 
 // Conservative preview limit; increase only after latency and usage measurements.
-export const SNAPSHOT_BATCH_LIMIT = 5
-export const SNAPSHOT_BATCH_CONCURRENCY = 2
-export const snapshotBatchRequestSchema = z.discriminatedUnion('action', [
+export const OVERVIEW_BATCH_LIMIT = 5
+export const OVERVIEW_BATCH_CONCURRENCY = 2
+export const overviewBatchRequestSchema = z.discriminatedUnion('action', [
   z
     .object({
       action: z.literal('start'),
-      entries: z.array(literatureSnapshotRequestSchema).min(1).max(SNAPSHOT_BATCH_LIMIT)
+      entries: z.array(literatureOverviewRequestSchema).min(1).max(OVERVIEW_BATCH_LIMIT)
     })
     .strict(),
   z.object({ action: z.literal('read') }).strict(),
@@ -16,7 +16,7 @@ export const snapshotBatchRequestSchema = z.discriminatedUnion('action', [
     .object({ action: z.enum(['advance', 'resume', 'retry', 'pause']), jobId: z.string().uuid() })
     .strict()
 ])
-export const snapshotBatchSchema = z
+export const overviewBatchSchema = z
   .object({
     id: z.string().uuid(),
     paused: z.boolean(),
@@ -24,16 +24,16 @@ export const snapshotBatchSchema = z
       .array(
         z
           .object({
-            request: literatureSnapshotRequestSchema,
+            request: literatureOverviewRequestSchema,
             status: z.enum(['pending', 'running', 'succeeded', 'failed']),
             issue: z.string().optional()
           })
           .strict()
       )
       .min(1)
-      .max(SNAPSHOT_BATCH_LIMIT)
+      .max(OVERVIEW_BATCH_LIMIT)
   })
   .strict()
-export const snapshotBatchResultSchema = snapshotBatchSchema.nullable()
-export type SnapshotBatchRequest = z.infer<typeof snapshotBatchRequestSchema>
-export type SnapshotBatch = z.infer<typeof snapshotBatchSchema>
+export const overviewBatchResultSchema = overviewBatchSchema.nullable()
+export type OverviewBatchRequest = z.infer<typeof overviewBatchRequestSchema>
+export type OverviewBatch = z.infer<typeof overviewBatchSchema>

@@ -11,8 +11,8 @@
     "src/shared/literature-collector.test.ts",
     "src/shared/literature-link.ts",
     "src/shared/literature-link.test.ts",
-    "src/shared/literature-snapshot.ts",
-    "src/shared/literature-snapshot-batch.ts"
+    "src/shared/literature-overview.ts",
+    "src/shared/literature-overview-batch.ts"
   ],
   "interfacePaths": [
     "src/shared/literature.ts",
@@ -22,8 +22,8 @@
     "src/shared/journal-attributes.ts",
     "src/shared/literature-collector.ts",
     "src/shared/literature-link.ts",
-    "src/shared/literature-snapshot.ts",
-    "src/shared/literature-snapshot-batch.ts"
+    "src/shared/literature-overview.ts",
+    "src/shared/literature-overview-batch.ts"
   ],
   "consumerModules": [
     "host_command_runtime",

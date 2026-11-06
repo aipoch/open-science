@@ -39,8 +39,8 @@ import type { LiteratureSelectionStore } from './literature-selection'
 const LITERATURE_BATCH_COMMAND_SIZE = 200
 
 export function LiteratureSelectionToolbar({
-  snapshotActions,
-  snapshotMenuAction,
+  overviewActions,
+  overviewMenuAction,
   selectedItemCount,
   selection,
   allLoadedItemsSelected,
@@ -79,8 +79,8 @@ export function LiteratureSelectionToolbar({
   runLifecycleAction,
   requestPermanentDeletion
 }: {
-  snapshotActions?: React.ReactNode
-  snapshotMenuAction?: React.ReactNode
+  overviewActions?: React.ReactNode
+  overviewMenuAction?: React.ReactNode
   selectedItemCount: number
   selection: ReturnType<LiteratureSelectionStore['getSnapshot']>
   allLoadedItemsSelected: boolean
@@ -163,7 +163,7 @@ export function LiteratureSelectionToolbar({
         >
           <X className="size-3.5" aria-hidden="true" />
         </Button>
-        {snapshotActions}
+        {overviewActions}
         {smartDecisionBatch.progress &&
         smartDecisionBatch.progress.collectionId === collectionId ? (
           <>
@@ -252,7 +252,7 @@ export function LiteratureSelectionToolbar({
           >
             <LiteratureHoverMenuGroup>
               <div className="flex flex-col">
-                {snapshotMenuAction && <PopoverClose asChild>{snapshotMenuAction}</PopoverClose>}
+                {overviewMenuAction && <PopoverClose asChild>{overviewMenuAction}</PopoverClose>}
                 {section === 'library' ? (
                   <Button
                     type="button"

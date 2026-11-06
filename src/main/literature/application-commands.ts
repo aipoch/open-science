@@ -1,8 +1,8 @@
-import type { SnapshotBatchRequest, SnapshotBatch } from '../../shared/literature-snapshot-batch'
+import type { OverviewBatchRequest, OverviewBatch } from '../../shared/literature-overview-batch'
 import type {
-  LiteratureSnapshotRequest,
-  LiteratureSnapshotResult
-} from '../../shared/literature-snapshot'
+  LiteratureOverviewRequest,
+  LiteratureOverviewResult
+} from '../../shared/literature-overview'
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
   type LiteraturePublicationCheckRequest,
@@ -71,11 +71,11 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
-  snapshotBatch(request: SnapshotBatchRequest, signal?: AbortSignal): Promise<SnapshotBatch | null>
+  overviewBatch(request: OverviewBatchRequest, signal?: AbortSignal): Promise<OverviewBatch | null>
   studySnapshot(
-    request: LiteratureSnapshotRequest,
+    request: LiteratureOverviewRequest,
     signal?: AbortSignal
-  ): Promise<LiteratureSnapshotResult>
+  ): Promise<LiteratureOverviewResult>
   getCandidateStates(
     request: LiteratureCandidateStatesRequest
   ): Promise<LiteratureCandidateStatesResult>
@@ -194,15 +194,15 @@ const literatureApplicationCommands = Object.freeze({
     readonly [string],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
-  snapshotBatch: defineApplicationCommand<
-    'literature:snapshot-batch',
-    readonly [SnapshotBatchRequest],
-    SnapshotBatch | null
-  >('literature:snapshot-batch', literatureApplicationCommandContracts.snapshotBatch),
+  overviewBatch: defineApplicationCommand<
+    'literature:overview-batch',
+    readonly [OverviewBatchRequest],
+    OverviewBatch | null
+  >('literature:overview-batch', literatureApplicationCommandContracts.overviewBatch),
   studySnapshot: defineApplicationCommand<
     'literature:study-snapshot',
-    readonly [LiteratureSnapshotRequest],
-    LiteratureSnapshotResult
+    readonly [LiteratureOverviewRequest],
+    LiteratureOverviewResult
   >('literature:study-snapshot', literatureApplicationCommandContracts.studySnapshot),
   completeMetadata: defineApplicationCommand<
     'literature:complete-metadata',
@@ -276,7 +276,7 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
   literatureApplicationCommands.studySnapshot,
-  literatureApplicationCommands.snapshotBatch,
+  literatureApplicationCommands.overviewBatch,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
@@ -357,10 +357,10 @@ const registerLiteratureApplicationCommands = (
             owner.studySnapshot(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
           false
         ),
-      'literature:snapshot-batch': ({ args, callerLease }) =>
+      'literature:overview-batch': ({ args, callerLease }) =>
         run(
           () =>
-            owner.snapshotBatch(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+            owner.overviewBatch(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
           false
         ),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),

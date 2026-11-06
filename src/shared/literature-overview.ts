@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 const sourceKeySchema = z.string().min(1).max(4096)
 
-export const literatureSnapshotRequestSchema = z
+export const literatureOverviewRequestSchema = z
   .object({
     mode: z.enum(['read', 'generate']).optional(),
     itemId: z.string().trim().min(1).max(256),
@@ -13,7 +13,7 @@ export const literatureSnapshotRequestSchema = z
   .strict()
 
 // Null is the model's indication that a field is not reported; schema validity is not factual verification.
-export const literatureSnapshotSectionsSchema = z
+export const literatureOverviewSectionsSchema = z
   .object({
     question: z.string().trim().min(1).max(2400).nullable(),
     population: z.string().trim().min(1).max(2400).nullable(),
@@ -23,17 +23,17 @@ export const literatureSnapshotSectionsSchema = z
   })
   .strict()
 
-export const literatureSnapshotReadySchema = z
+export const literatureOverviewReadySchema = z
   .object({
     sourceKey: sourceKeySchema,
     coverage: z.enum(['abstract', 'full-text', 'passages']),
     attachmentVersionId: z.string().optional(),
     model: z.string().min(1),
-    sections: literatureSnapshotSectionsSchema
+    sections: literatureOverviewSectionsSchema
   })
   .strict()
 
-export const literatureSnapshotIssueSchema = z
+export const literatureOverviewIssueSchema = z
   .object({
     sourceKey: sourceKeySchema,
     issue: z.enum([
@@ -46,21 +46,21 @@ export const literatureSnapshotIssueSchema = z
   })
   .strict()
 
-export const literatureSnapshotResultSchema = z.union([
-  literatureSnapshotReadySchema,
-  literatureSnapshotIssueSchema
+export const literatureOverviewResultSchema = z.union([
+  literatureOverviewReadySchema,
+  literatureOverviewIssueSchema
 ])
 
-export type LiteratureSnapshot = z.infer<typeof literatureSnapshotReadySchema>
-export type LiteratureSnapshotIssue = z.infer<typeof literatureSnapshotIssueSchema>['issue']
+export type LiteratureOverview = z.infer<typeof literatureOverviewReadySchema>
+export type LiteratureOverviewIssue = z.infer<typeof literatureOverviewIssueSchema>['issue']
 
-export type LiteratureSnapshotRequest = z.infer<typeof literatureSnapshotRequestSchema>
-export type LiteratureSnapshotResult = z.infer<typeof literatureSnapshotResultSchema>
+export type LiteratureOverviewRequest = z.infer<typeof literatureOverviewRequestSchema>
+export type LiteratureOverviewResult = z.infer<typeof literatureOverviewResultSchema>
 
 /** The same current document and freshness rule is used by the UI and command owner.
  * Availability is only a hint; the reader still authorizes and verifies the immutable bytes.
  */
-export function literatureSnapshotSource(
+export function literatureOverviewSource(
   item: Pick<
     LiteratureItemView,
     'id' | 'metadataRevision' | 'attachments' | 'deletedAt' | 'mergedIntoItemId'

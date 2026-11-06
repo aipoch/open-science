@@ -5,14 +5,14 @@ import { StrictMode } from 'react'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
-  literatureSnapshotSource,
-  type LiteratureSnapshotResult
-} from '../../../../../shared/literature-snapshot'
+  literatureOverviewSource,
+  type LiteratureOverviewResult
+} from '../../../../../shared/literature-overview'
 import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
-import { LiteratureStudySnapshot } from './LiteratureStudySnapshot'
+import { LiteratureOverview } from './LiteratureOverview'
 
 const studySnapshot = vi.fn()
-const readSnapshot = vi.fn()
+const readOverview = vi.fn()
 const { render } = createLiteratureTestRenderer({
   get api() {
     return window.api
@@ -58,8 +58,8 @@ const pdfOnly: LiteratureItemView = {
   ]
 }
 
-const result: LiteratureSnapshotResult = {
-  sourceKey: literatureSnapshotSource(item).key,
+const result: LiteratureOverviewResult = {
+  sourceKey: literatureOverviewSource(item).key,
   model: 'test-model',
   coverage: 'abstract',
   sections: {
@@ -70,15 +70,15 @@ const result: LiteratureSnapshotResult = {
     limitations: null
   }
 }
-const pdfResult: LiteratureSnapshotResult = {
+const pdfResult: LiteratureOverviewResult = {
   ...result,
-  sourceKey: literatureSnapshotSource(pdfOnly).key,
+  sourceKey: literatureOverviewSource(pdfOnly).key,
   coverage: 'full-text'
 }
 
 beforeEach(() => {
   studySnapshot.mockReset().mockResolvedValue(result)
-  readSnapshot
+  readOverview
     .mockReset()
     .mockResolvedValue({ sourceKey: result.sourceKey, issue: 'not-generated' })
   Object.defineProperty(window, 'api', {
@@ -86,7 +86,7 @@ beforeEach(() => {
     value: {
       literature: {
         studySnapshot: (request: { mode?: string }) =>
-          request.mode === 'read' ? readSnapshot(request) : studySnapshot(request)
+          request.mode === 'read' ? readOverview(request) : studySnapshot(request)
       }
     }
   })
@@ -96,13 +96,13 @@ const clickGenerate = (): void => {
   fireEvent.click(screen.getByRole('button', { name: 'Generate overview' }))
 }
 
-describe('Study overview in reference details', () => {
+describe('Paper overview in reference details', () => {
   it.each(['Generate overview', 'Regenerate', 'Retry'])(
     'blocks the %s action during batch generation and restores it afterwards',
     async (action) => {
-      if (action === 'Regenerate') readSnapshot.mockResolvedValue(result)
-      const view = render(<LiteratureStudySnapshot item={item} />)
-      await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
+      if (action === 'Regenerate') readOverview.mockResolvedValue(result)
+      const view = render(<LiteratureOverview item={item} />)
+      await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
       if (action === 'Retry') {
         studySnapshot.mockRejectedValueOnce(new Error('Failed generation'))
         clickGenerate()
@@ -110,17 +110,17 @@ describe('Study overview in reference details', () => {
       }
       await screen.findByRole('button', { name: action })
       const calls = studySnapshot.mock.calls.length
-      view.rerender(<LiteratureStudySnapshot item={item} batchGenerating />)
+      view.rerender(<LiteratureOverview item={item} batchGenerating />)
       const generating = screen.getByRole('button', { name: 'Generating overview…' })
       expect(generating).toHaveProperty('disabled', true)
-      expect(screen.getByRole('region', { name: 'Study overview' }).getAttribute('aria-busy')).toBe(
+      expect(screen.getByRole('region', { name: 'Paper overview' }).getAttribute('aria-busy')).toBe(
         'true'
       )
       fireEvent.click(generating)
       expect(studySnapshot).toHaveBeenCalledTimes(calls)
-      view.rerender(<LiteratureStudySnapshot item={item} batchGenerating={false} />)
+      view.rerender(<LiteratureOverview item={item} batchGenerating={false} />)
       expect(screen.getByRole('button', { name: action })).toHaveProperty('disabled', false)
-      expect(screen.getByRole('region', { name: 'Study overview' }).getAttribute('aria-busy')).toBe(
+      expect(screen.getByRole('region', { name: 'Paper overview' }).getAttribute('aria-busy')).toBe(
         'false'
       )
       fireEvent.click(screen.getByRole('button', { name: action }))
@@ -131,7 +131,7 @@ describe('Study overview in reference details', () => {
   it('generates only on click and shows structured source-aware results', async () => {
     render(
       <StrictMode>
-        <LiteratureStudySnapshot item={item} />
+        <LiteratureOverview item={item} />
       </StrictMode>
     )
     expect(studySnapshot).not.toHaveBeenCalled()
@@ -143,39 +143,39 @@ describe('Study overview in reference details', () => {
     expect(screen.getByText('AI-generated. Verify against the original paper.')).toBeTruthy()
     expect(studySnapshot).toHaveBeenCalledWith({
       itemId: 'paper',
-      expectedSourceKey: literatureSnapshotSource(item).key,
+      expectedSourceKey: literatureOverviewSource(item).key,
       language: 'en'
     })
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
     await waitFor(() => expect(studySnapshot).toHaveBeenCalledTimes(2))
   })
   it('restores a saved result on mount without generating again', async () => {
-    readSnapshot.mockResolvedValueOnce(result)
-    const first = render(<LiteratureStudySnapshot item={item} />)
+    readOverview.mockResolvedValueOnce(result)
+    const first = render(<LiteratureOverview item={item} />)
     await screen.findByText('Does it work?')
     expect(studySnapshot).not.toHaveBeenCalled()
     first.unmount()
-    readSnapshot.mockResolvedValueOnce(result)
-    render(<LiteratureStudySnapshot item={item} />)
+    readOverview.mockResolvedValueOnce(result)
+    render(<LiteratureOverview item={item} />)
     await screen.findByText('Does it work?')
     expect(studySnapshot).not.toHaveBeenCalled()
   })
   it.each(['while generation is pending', 'after generation completes'] as const)(
     'keeps a late batch refresh subordinate to manual generation: %s',
     async (completionOrder) => {
-      const view = render(<LiteratureStudySnapshot item={item} snapshotRevision={0} />)
-      await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
-      const refresh = Promise.withResolvers<LiteratureSnapshotResult>()
-      const manual = Promise.withResolvers<LiteratureSnapshotResult>()
-      readSnapshot.mockReturnValueOnce(refresh.promise)
+      const view = render(<LiteratureOverview item={item} overviewRevision={0} />)
+      await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
+      const refresh = Promise.withResolvers<LiteratureOverviewResult>()
+      const manual = Promise.withResolvers<LiteratureOverviewResult>()
+      readOverview.mockReturnValueOnce(refresh.promise)
       studySnapshot.mockReturnValueOnce(manual.promise)
-      const overview = screen.getByRole('region', { name: 'Study overview' })
-      view.rerender(<LiteratureStudySnapshot item={item} snapshotRevision={1} />)
-      await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(2))
+      const overview = screen.getByRole('region', { name: 'Paper overview' })
+      view.rerender(<LiteratureOverview item={item} overviewRevision={1} />)
+      await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(2))
       clickGenerate()
-      expect(screen.getByRole('region', { name: 'Study overview' })).toBe(overview)
+      expect(screen.getByRole('region', { name: 'Paper overview' })).toBe(overview)
       expect(overview.getAttribute('aria-busy')).toBe('true')
-      expect(readSnapshot).toHaveBeenCalledTimes(2)
+      expect(readOverview).toHaveBeenCalledTimes(2)
       const stale = { ...result, sections: { ...result.sections, question: 'Old batch result' } }
       const fresh = { ...result, sections: { ...result.sections, question: 'New manual result' } }
       if (completionOrder === 'while generation is pending') {
@@ -191,9 +191,9 @@ describe('Study overview in reference details', () => {
         )
         // Check this only after settling the first read, so effect cleanup cannot mask a missing
         // generation guard in the race assertions above or below.
-        view.rerender(<LiteratureStudySnapshot item={item} snapshotRevision={2} />)
-        expect(readSnapshot).toHaveBeenCalledTimes(2)
-        expect(screen.getByRole('region', { name: 'Study overview' })).toBe(overview)
+        view.rerender(<LiteratureOverview item={item} overviewRevision={2} />)
+        expect(readOverview).toHaveBeenCalledTimes(2)
+        expect(screen.getByRole('region', { name: 'Paper overview' })).toBe(overview)
         expect(overview.getAttribute('aria-busy')).toBe('true')
       }
       await act(async () => {
@@ -209,22 +209,22 @@ describe('Study overview in reference details', () => {
       expect(screen.queryByText('Old batch result')).toBeNull()
       expect(screen.getByText('New manual result')).toBeTruthy()
       expect(studySnapshot).toHaveBeenCalledTimes(1)
-      expect(readSnapshot).toHaveBeenCalledTimes(2)
+      expect(readOverview).toHaveBeenCalledTimes(2)
       expect(overview.getAttribute('aria-busy')).toBe('false')
     }
   )
 
   it('recovers a batch save when a pending refresh is invalidated by failed manual generation', async () => {
-    const view = render(<LiteratureStudySnapshot item={item} snapshotRevision={0} />)
-    await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
-    const refresh = Promise.withResolvers<LiteratureSnapshotResult>()
-    const manual = Promise.withResolvers<LiteratureSnapshotResult>()
-    readSnapshot.mockReturnValueOnce(refresh.promise).mockResolvedValueOnce({
+    const view = render(<LiteratureOverview item={item} overviewRevision={0} />)
+    await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
+    const refresh = Promise.withResolvers<LiteratureOverviewResult>()
+    const manual = Promise.withResolvers<LiteratureOverviewResult>()
+    readOverview.mockReturnValueOnce(refresh.promise).mockResolvedValueOnce({
       ...result,
       sections: { ...result.sections, question: 'Fresh persisted batch result' }
     })
-    view.rerender(<LiteratureStudySnapshot item={item} snapshotRevision={1} />)
-    await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(2))
+    view.rerender(<LiteratureOverview item={item} overviewRevision={1} />)
+    await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(2))
     studySnapshot.mockReturnValueOnce(manual.promise)
     clickGenerate()
 
@@ -241,7 +241,7 @@ describe('Study overview in reference details', () => {
 
     await screen.findByText('Fresh persisted batch result')
     expect(screen.queryByText('Earlier pending read')).toBeNull()
-    expect(readSnapshot).toHaveBeenCalledTimes(3)
+    expect(readOverview).toHaveBeenCalledTimes(3)
     expect(studySnapshot).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert').textContent).toContain(
       'Could not regenerate the overview. The previous result is still shown. Please try again.'
@@ -249,18 +249,18 @@ describe('Study overview in reference details', () => {
   })
 
   it('reads a deferred batch save after overlapping manual generation fails', async () => {
-    const view = render(<LiteratureStudySnapshot item={item} snapshotRevision={0} />)
-    await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
-    const manual = Promise.withResolvers<LiteratureSnapshotResult>()
+    const view = render(<LiteratureOverview item={item} overviewRevision={0} />)
+    await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
+    const manual = Promise.withResolvers<LiteratureOverviewResult>()
     studySnapshot.mockReturnValueOnce(manual.promise)
     clickGenerate()
-    readSnapshot.mockResolvedValueOnce({
+    readOverview.mockResolvedValueOnce({
       ...result,
       sections: { ...result.sections, question: 'Saved while manual generation failed' }
     })
-    view.rerender(<LiteratureStudySnapshot item={item} snapshotRevision={1} />)
-    expect(readSnapshot).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('region', { name: 'Study overview' }).getAttribute('aria-busy')).toBe(
+    view.rerender(<LiteratureOverview item={item} overviewRevision={1} />)
+    expect(readOverview).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('region', { name: 'Paper overview' }).getAttribute('aria-busy')).toBe(
       'true'
     )
 
@@ -269,12 +269,12 @@ describe('Study overview in reference details', () => {
     })
 
     await screen.findByText('Saved while manual generation failed')
-    expect(readSnapshot).toHaveBeenCalledTimes(2)
+    expect(readOverview).toHaveBeenCalledTimes(2)
     expect(studySnapshot).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert').textContent).toContain(
       'Could not regenerate the overview. The previous result is still shown. Please try again.'
     )
-    expect(screen.getByRole('region', { name: 'Study overview' }).getAttribute('aria-busy')).toBe(
+    expect(screen.getByRole('region', { name: 'Paper overview' }).getAttribute('aria-busy')).toBe(
       'false'
     )
   })
@@ -282,15 +282,15 @@ describe('Study overview in reference details', () => {
   it.each(['source-changed', 'source-unavailable'] as const)(
     'does not revive invalid source cache after %s until a manual Retry succeeds',
     async (issue) => {
-      const initial = Promise.withResolvers<LiteratureSnapshotResult>()
+      const initial = Promise.withResolvers<LiteratureOverviewResult>()
       const old = {
         ...pdfResult,
         sections: { ...result.sections, question: 'Invalidated cached answer' }
       }
-      readSnapshot.mockReturnValueOnce(initial.promise).mockResolvedValue(old)
+      readOverview.mockReturnValueOnce(initial.promise).mockResolvedValue(old)
       studySnapshot.mockResolvedValueOnce({ sourceKey: pdfResult.sourceKey, issue })
-      const view = render(<LiteratureStudySnapshot item={pdfOnly} snapshotRevision={0} />)
-      await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
+      const view = render(<LiteratureOverview item={pdfOnly} overviewRevision={0} />)
+      await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
 
       clickGenerate()
 
@@ -300,12 +300,12 @@ describe('Study overview in reference details', () => {
         await initial.promise
       })
       expect(screen.queryByText('Invalidated cached answer')).toBeNull()
-      expect(readSnapshot).toHaveBeenCalledTimes(1)
+      expect(readOverview).toHaveBeenCalledTimes(1)
       // A later completion notification carries no authority to make an invalid source readable.
-      view.rerender(<LiteratureStudySnapshot item={pdfOnly} snapshotRevision={1} />)
+      view.rerender(<LiteratureOverview item={pdfOnly} overviewRevision={1} />)
       await act(async () => {})
       expect(screen.queryByText('Invalidated cached answer')).toBeNull()
-      expect(readSnapshot).toHaveBeenCalledTimes(1)
+      expect(readOverview).toHaveBeenCalledTimes(1)
       expect(screen.getByRole('alert').textContent).toContain(
         issue === 'source-changed'
           ? 'This reference has changed. Reopen its details and try again.'
@@ -321,31 +321,31 @@ describe('Study overview in reference details', () => {
       await screen.findByText('Valid manual Retry answer')
       expect(screen.getByText('Based on full text')).toBeTruthy()
       expect(screen.queryByRole('alert')).toBeNull()
-      readSnapshot.mockResolvedValueOnce({
+      readOverview.mockResolvedValueOnce({
         ...pdfResult,
         sections: { ...result.sections, question: 'Saved after source recovery' }
       })
-      view.rerender(<LiteratureStudySnapshot item={pdfOnly} snapshotRevision={2} />)
+      view.rerender(<LiteratureOverview item={pdfOnly} overviewRevision={2} />)
       await screen.findByText('Saved after source recovery')
-      expect(readSnapshot).toHaveBeenCalledTimes(2)
+      expect(readOverview).toHaveBeenCalledTimes(2)
       expect(studySnapshot).toHaveBeenCalledTimes(2)
     }
   )
 
   it('does not run a deferred batch read after manual generation invalidates its source', async () => {
-    readSnapshot.mockResolvedValueOnce(pdfResult)
-    const view = render(<LiteratureStudySnapshot item={pdfOnly} snapshotRevision={0} />)
+    readOverview.mockResolvedValueOnce(pdfResult)
+    const view = render(<LiteratureOverview item={pdfOnly} overviewRevision={0} />)
     await screen.findByText('Does it work?')
     expect(screen.getByText('Based on full text')).toBeTruthy()
-    const manual = Promise.withResolvers<LiteratureSnapshotResult>()
+    const manual = Promise.withResolvers<LiteratureOverviewResult>()
     studySnapshot.mockReturnValueOnce(manual.promise)
-    readSnapshot.mockResolvedValue({
+    readOverview.mockResolvedValue({
       ...pdfResult,
       sections: { ...result.sections, question: 'Invalidated deferred cache' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate' }))
-    view.rerender(<LiteratureStudySnapshot item={pdfOnly} snapshotRevision={1} />)
-    expect(readSnapshot).toHaveBeenCalledTimes(1)
+    view.rerender(<LiteratureOverview item={pdfOnly} overviewRevision={1} />)
+    expect(readOverview).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       manual.resolve({ sourceKey: pdfResult.sourceKey, issue: 'source-unavailable' })
@@ -354,23 +354,23 @@ describe('Study overview in reference details', () => {
 
     expect(screen.queryByText('Does it work?')).toBeNull()
     expect(screen.queryByText('Invalidated deferred cache')).toBeNull()
-    expect(readSnapshot).toHaveBeenCalledTimes(1)
+    expect(readOverview).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('alert').textContent).toContain(
       'Add an abstract or readable full-text PDF to generate an overview.'
     )
   })
 
   it('preserves a failed manual request after restoring old initial cache until Retry succeeds', async () => {
-    const initial = Promise.withResolvers<LiteratureSnapshotResult>()
-    readSnapshot.mockReturnValueOnce(initial.promise).mockResolvedValueOnce(result)
+    const initial = Promise.withResolvers<LiteratureOverviewResult>()
+    readOverview.mockReturnValueOnce(initial.promise).mockResolvedValueOnce(result)
     studySnapshot.mockRejectedValueOnce(new Error('Manual transport failed'))
-    render(<LiteratureStudySnapshot item={item} />)
-    await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(1))
+    render(<LiteratureOverview item={item} />)
+    await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(1))
 
     clickGenerate()
 
     await screen.findByText('Does it work?')
-    await waitFor(() => expect(readSnapshot).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(readOverview).toHaveBeenCalledTimes(2))
     await act(async () => {
       initial.resolve(result)
       await initial.promise
@@ -390,18 +390,18 @@ describe('Study overview in reference details', () => {
     await screen.findByText('New result from successful Retry')
     expect(screen.queryByRole('alert')).toBeNull()
     expect(studySnapshot).toHaveBeenCalledTimes(2)
-    expect(readSnapshot).toHaveBeenCalledTimes(2)
+    expect(readOverview).toHaveBeenCalledTimes(2)
   })
 
   it('does not overwrite a regenerated result with a late saved result', async () => {
-    let finish!: (value: LiteratureSnapshotResult) => void
-    readSnapshot.mockImplementationOnce(
+    let finish!: (value: LiteratureOverviewResult) => void
+    readOverview.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve
         })
     )
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     await act(async () =>
@@ -411,7 +411,7 @@ describe('Study overview in reference details', () => {
     expect(screen.getByText('Does it work?')).toBeTruthy()
   })
   it('disables generation when the source is absent', () => {
-    render(<LiteratureStudySnapshot item={{ ...item, item: { ...item.item, abstract: '' } }} />)
+    render(<LiteratureOverview item={{ ...item, item: { ...item.item, abstract: '' } }} />)
     expect(
       (screen.getByRole('button', { name: 'Generate overview' }) as HTMLButtonElement).disabled
     ).toBe(true)
@@ -420,14 +420,14 @@ describe('Study overview in reference details', () => {
     ).toBeTruthy()
   })
   it('prevents duplicate clicks while generation is pending', async () => {
-    let finish!: (value: LiteratureSnapshotResult) => void
+    let finish!: (value: LiteratureOverviewResult) => void
     studySnapshot.mockImplementation(
       () =>
         new Promise((resolve) => {
           finish = resolve
         })
     )
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     fireEvent.click(screen.getByRole('button', { name: 'Generating overview…' }))
     expect(studySnapshot).toHaveBeenCalledTimes(1)
@@ -436,7 +436,7 @@ describe('Study overview in reference details', () => {
   })
   it('shows a retry action after failure without exposing raw model errors', async () => {
     studySnapshot.mockRejectedValueOnce(new Error('Private transport details'))
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Could not generate the overview. Please try again.'
@@ -448,7 +448,7 @@ describe('Study overview in reference details', () => {
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeTruthy()
   })
   it('removes an obsolete result and explains that the reference must be reopened', async () => {
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     studySnapshot.mockResolvedValueOnce({ sourceKey: result.sourceKey, issue: 'source-changed' })
@@ -461,14 +461,14 @@ describe('Study overview in reference details', () => {
   })
   it('explains busy admission without blaming model settings', async () => {
     studySnapshot.mockResolvedValueOnce({ sourceKey: result.sourceKey, issue: 'busy' })
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Too many overviews are being generated. Try again shortly.'
     )
   })
   it('preserves a valid earlier result after a transient inference failure', async () => {
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     studySnapshot.mockRejectedValueOnce(new Error('Transport failed'))
@@ -481,8 +481,8 @@ describe('Study overview in reference details', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
     expect(screen.getByRole('button', { name: 'Regenerate' })).toBeTruthy()
   })
-  it('preserves a valid result when another snapshot occupies admission', async () => {
-    render(<LiteratureStudySnapshot item={item} />)
+  it('preserves a valid result when another overview occupies admission', async () => {
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     studySnapshot.mockResolvedValueOnce({ sourceKey: result.sourceKey, issue: 'busy' })
@@ -491,7 +491,7 @@ describe('Study overview in reference details', () => {
     expect(screen.getByText('Does it work?')).toBeTruthy()
   })
   it('does not let an issue for another source invalidate the current result', async () => {
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     studySnapshot.mockResolvedValueOnce({ sourceKey: 'another-source', issue: 'source-changed' })
@@ -509,19 +509,19 @@ describe('Study overview in reference details', () => {
       item: { ...item.item, abstract: 'x'.repeat(60_001) }
     }
     studySnapshot.mockResolvedValueOnce({
-      sourceKey: literatureSnapshotSource(oversized).key,
+      sourceKey: literatureOverviewSource(oversized).key,
       issue: 'input-too-large'
     })
-    render(<LiteratureStudySnapshot item={oversized} />)
+    render(<LiteratureOverview item={oversized} />)
     clickGenerate()
     expect((await screen.findByRole('alert')).textContent).toContain(
       'The available source exceeds the overview input limit.'
     )
   })
   it('removes an old result if its only readable source becomes unavailable', async () => {
-    const key = literatureSnapshotSource(pdfOnly).key
+    const key = literatureOverviewSource(pdfOnly).key
     studySnapshot.mockResolvedValueOnce({ ...result, sourceKey: key, coverage: 'full-text' })
-    const view = render(<LiteratureStudySnapshot item={pdfOnly} />)
+    const view = render(<LiteratureOverview item={pdfOnly} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     studySnapshot.mockResolvedValueOnce({ sourceKey: key, issue: 'source-unavailable' })
@@ -534,33 +534,33 @@ describe('Study overview in reference details', () => {
     view.unmount()
   })
   it('discards late responses after switching papers', async () => {
-    let finish!: (value: LiteratureSnapshotResult) => void
+    let finish!: (value: LiteratureOverviewResult) => void
     studySnapshot.mockImplementation(
       () =>
         new Promise((resolve) => {
           finish = resolve
         })
     )
-    const view = render(<LiteratureStudySnapshot item={item} />)
+    const view = render(<LiteratureOverview item={item} />)
     clickGenerate()
-    view.rerender(<LiteratureStudySnapshot item={{ ...item, id: 'other' }} />)
+    view.rerender(<LiteratureOverview item={{ ...item, id: 'other' }} />)
     await act(async () => finish(result))
     expect(screen.queryByText('Does it work?')).toBeNull()
     expect(screen.getByRole('button', { name: 'Generate overview' })).toBeTruthy()
   })
   it('invalidates results when metadata changes', async () => {
-    const view = render(<LiteratureStudySnapshot item={item} />)
+    const view = render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
-    view.rerender(<LiteratureStudySnapshot item={{ ...item, metadataRevision: 2 }} />)
+    view.rerender(<LiteratureOverview item={{ ...item, metadataRevision: 2 }} />)
     expect(screen.queryByText('Does it work?')).toBeNull()
   })
   it('keeps the displayed result when unrelated attachments change', async () => {
-    const view = render(<LiteratureStudySnapshot item={item} />)
+    const view = render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByText('Does it work?')
     view.rerender(
-      <LiteratureStudySnapshot
+      <LiteratureOverview
         item={{
           ...item,
           attachments: [
@@ -603,14 +603,14 @@ describe('Study overview in reference details', () => {
         }
       ]
     }
-    let finish!: (value: LiteratureSnapshotResult) => void
+    let finish!: (value: LiteratureOverviewResult) => void
     studySnapshot.mockImplementation(
       () =>
         new Promise((resolve) => {
           finish = resolve
         })
     )
-    const view = render(<LiteratureStudySnapshot item={withPdf} />)
+    const view = render(<LiteratureOverview item={withPdf} />)
     clickGenerate()
     const replacement = {
       ...withPdf,
@@ -618,18 +618,18 @@ describe('Study overview in reference details', () => {
         { ...withPdf.attachments[0], versions: [{ ...version, id: 'v2', versionNumber: 2 }] }
       ]
     }
-    view.rerender(<LiteratureStudySnapshot item={replacement} />)
-    await act(async () => finish({ ...result, sourceKey: literatureSnapshotSource(withPdf).key }))
+    view.rerender(<LiteratureOverview item={replacement} />)
+    await act(async () => finish({ ...result, sourceKey: literatureOverviewSource(withPdf).key }))
     expect(screen.queryByText('Does it work?')).toBeNull()
     expect(screen.getByRole('button', { name: 'Generate overview' })).toBeTruthy()
   })
   it.each([{ deletedAt: 0 }, { deletedAt: 1 }, { mergedIntoItemId: 'survivor' }])(
     'clears results and disables generation when the reference becomes inactive: %j',
     async (inactive) => {
-      const view = render(<LiteratureStudySnapshot item={item} />)
+      const view = render(<LiteratureOverview item={item} />)
       clickGenerate()
       await screen.findByText('Does it work?')
-      view.rerender(<LiteratureStudySnapshot item={{ ...item, ...inactive }} />)
+      view.rerender(<LiteratureOverview item={{ ...item, ...inactive }} />)
       expect(screen.queryByText('Does it work?')).toBeNull()
       expect(
         (screen.getByRole('button', { name: 'Generate overview' }) as HTMLButtonElement).disabled
@@ -639,20 +639,20 @@ describe('Study overview in reference details', () => {
   )
   it('rejects a response belonging to a different source', async () => {
     studySnapshot.mockResolvedValue({ ...result, sourceKey: 'other-source' })
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     await screen.findByRole('alert')
     expect(screen.queryByText('Does it work?')).toBeNull()
   })
   it('blocks duplicate native clicks before the pending state is committed', async () => {
-    let finish!: (value: LiteratureSnapshotResult) => void
+    let finish!: (value: LiteratureOverviewResult) => void
     studySnapshot.mockImplementation(
       () =>
         new Promise((resolve) => {
           finish = resolve
         })
     )
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     const button = screen.getByRole('button', { name: 'Generate overview' })
     act(() => {
       button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -672,7 +672,7 @@ describe('Study overview in reference details', () => {
       createdAt: 1
     }
     render(
-      <LiteratureStudySnapshot
+      <LiteratureOverview
         item={{
           ...item,
           item: { ...item.item, abstract: '' },
@@ -699,7 +699,7 @@ describe('Study overview in reference details', () => {
   })
   it.each(['full-text', 'passages'] as const)('labels %s evidence accurately', async (coverage) => {
     studySnapshot.mockResolvedValue({ ...result, coverage })
-    render(<LiteratureStudySnapshot item={item} />)
+    render(<LiteratureOverview item={item} />)
     clickGenerate()
     expect(
       await screen.findByText(

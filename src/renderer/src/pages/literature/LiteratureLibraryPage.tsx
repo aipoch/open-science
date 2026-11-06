@@ -1,4 +1,4 @@
-import { LiteratureSnapshotBatch } from './detail/LiteratureSnapshotBatch'
+import { LiteratureOverviewBatch } from './detail/LiteratureOverviewBatch'
 import { FileDropZone } from '@/components/FileDropZone'
 import { ErrorNotice } from '@/components/error-notice'
 import type { LiteraturePreviewItem } from './renderer-host'
@@ -7,9 +7,9 @@ import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { LITERATURE_JOB_MAX_ITEMS } from '@aipoch/literature-discovery/jobs'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import {
-  literatureSnapshotSource,
-  type LiteratureSnapshotRequest
-} from '../../../../shared/literature-snapshot'
+  literatureOverviewSource,
+  type LiteratureOverviewRequest
+} from '../../../../shared/literature-overview'
 
 import { LiteratureCollectionDeleteDialog } from './collections/LiteratureCollectionDeleteDialog'
 import { setSmartReevaluationConfirmation } from './collections/smart-collection-preferences'
@@ -317,20 +317,20 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     createLiteratureDetailController((id) => hostApi.literature.get(id))
   )
   const selectedItem = detailController.getSnapshot().item
-  const [studySnapshotRevision, setStudySnapshotRevision] = useState(0)
-  const [activeSnapshotRequests, setActiveSnapshotRequests] = useState<LiteratureSnapshotRequest[]>(
+  const [overviewRevision, setOverviewRevision] = useState(0)
+  const [activeOverviewRequests, setActiveOverviewRequests] = useState<LiteratureOverviewRequest[]>(
     []
   )
-  const onSnapshotSaved = useCallback(
-    (request: LiteratureSnapshotRequest): void => {
+  const onOverviewSaved = useCallback(
+    (request: LiteratureOverviewRequest): void => {
       const detail = detailController.getSnapshot()
       if (
         detail.open &&
         detail.item?.id === request.itemId &&
-        literatureSnapshotSource(detail.item).key === request.expectedSourceKey &&
+        literatureOverviewSource(detail.item).key === request.expectedSourceKey &&
         (i18n.resolvedLanguage ?? i18n.language) === request.language
       )
-        setStudySnapshotRevision((revision) => revision + 1)
+        setOverviewRevision((revision) => revision + 1)
     },
     [detailController, i18n.resolvedLanguage, i18n.language]
   )
@@ -2021,14 +2021,14 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                           items.length > 0 &&
                           items.every((item) => isLiteratureItemSelected(selection, item.id))
                         return (
-                          <LiteratureSnapshotBatch
+                          <LiteratureOverviewBatch
                             hasSelection={section !== 'inbox' && hasSelection}
                             resolveSelection={resolveSelectedItemIds}
-                            onSnapshotSaved={onSnapshotSaved}
-                            onActiveRequestsChange={setActiveSnapshotRequests}
-                            onOpenSnapshot={openSelectedItemDetail}
+                            onOverviewSaved={onOverviewSaved}
+                            onActiveRequestsChange={setActiveOverviewRequests}
+                            onOpenOverview={openSelectedItemDetail}
                           >
-                            {(snapshotActions, generateSnapshots) => (
+                            {(overviewActions, generateOverviews) => (
                               <div
                                 className={cn('flex h-12 min-w-0 items-center justify-end gap-2')}
                               >
@@ -2097,7 +2097,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     </Tabs.Root>
                                   </>
                                 )}
-                                {!hasSelection && section !== 'inbox' && snapshotActions}
+                                {!hasSelection && section !== 'inbox' && overviewActions}
                                 <LiteratureBackgroundTasks
                                   hidden={hasSelection || section === 'inbox'}
                                   onOpen={(job) =>
@@ -2147,8 +2147,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                     )}
                                     {hasSelection && (
                                       <LiteratureSelectionToolbar
-                                        snapshotActions={snapshotActions}
-                                        snapshotMenuAction={generateSnapshots}
+                                        overviewActions={overviewActions}
+                                        overviewMenuAction={generateOverviews}
                                         selectedItemCount={selectedItemCount}
                                         selection={selection}
                                         allLoadedItemsSelected={allLoadedItemsSelected}
@@ -2192,7 +2192,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
                                 )}
                               </div>
                             )}
-                          </LiteratureSnapshotBatch>
+                          </LiteratureOverviewBatch>
                         )
                       }}
                     </LiteratureSelectionBoundary>
@@ -2726,11 +2726,11 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           relatedDirection={relatedDirection}
           renderOverview={(selectedItem) => (
             <LiteratureDetailOverview
-              snapshotRevision={studySnapshotRevision}
-              snapshotBatchGenerating={activeSnapshotRequests.some(
+              overviewRevision={overviewRevision}
+              overviewBatchGenerating={activeOverviewRequests.some(
                 (request) =>
                   request.itemId === selectedItem.id &&
-                  request.expectedSourceKey === literatureSnapshotSource(selectedItem).key &&
+                  request.expectedSourceKey === literatureOverviewSource(selectedItem).key &&
                   request.language === (i18n.resolvedLanguage ?? i18n.language)
               )}
               onRelated={(direction) => {

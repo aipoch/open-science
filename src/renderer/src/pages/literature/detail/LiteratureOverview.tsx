@@ -3,59 +3,59 @@ import { useTranslation } from 'react-i18next'
 import { LoaderCircle, RefreshCw, Sparkles } from 'lucide-react'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
-  literatureSnapshotSource,
-  type LiteratureSnapshot,
-  type LiteratureSnapshotIssue
-} from '../../../../../shared/literature-snapshot'
+  literatureOverviewSource,
+  type LiteratureOverview as LiteratureOverviewData,
+  type LiteratureOverviewIssue
+} from '../../../../../shared/literature-overview'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { useLiteratureHost } from '../renderer-host'
 
-type SnapshotFailure = LiteratureSnapshotIssue | 'generation-failed'
+type OverviewFailure = LiteratureOverviewIssue | 'generation-failed'
 
-type SnapshotProps = {
+type OverviewProps = {
   item: LiteratureItemView
-  snapshotRevision?: number
+  overviewRevision?: number
   batchGenerating?: boolean
 }
 
-export function LiteratureStudySnapshot({
+export function LiteratureOverview({
   item,
-  snapshotRevision,
+  overviewRevision,
   batchGenerating
-}: SnapshotProps): React.JSX.Element {
+}: OverviewProps): React.JSX.Element {
   const { i18n } = useTranslation()
   // A source/language owns its own state. Late responses cannot update another keyed instance.
   return (
-    <SnapshotContent
+    <OverviewContent
       key={JSON.stringify([
-        literatureSnapshotSource(item).key,
+        literatureOverviewSource(item).key,
         i18n.resolvedLanguage ?? i18n.language
       ])}
       item={item}
-      snapshotRevision={snapshotRevision}
+      overviewRevision={overviewRevision}
       batchGenerating={batchGenerating}
     />
   )
 }
 
-function SnapshotContent({
+function OverviewContent({
   item,
-  snapshotRevision,
+  overviewRevision,
   batchGenerating
-}: SnapshotProps): React.JSX.Element {
+}: OverviewProps): React.JSX.Element {
   const { t, i18n } = useTranslation()
   const { api } = useLiteratureHost()
-  const [result, setResult] = useState<LiteratureSnapshot>()
+  const [result, setResult] = useState<LiteratureOverviewData>()
   const [pending, setPending] = useState(false)
-  const [failure, setFailure] = useState<SnapshotFailure>()
+  const [failure, setFailure] = useState<OverviewFailure>()
   const [readRevision, setReadRevision] = useState(0)
   const busy = useRef(false)
   const deferredRead = useRef(false)
   const readInFlight = useRef(false)
   const sourceInvalidated = useRef(false)
   const generation = useRef(0)
-  const source = literatureSnapshotSource(item)
+  const source = literatureOverviewSource(item)
   const available = source.active && Boolean(item.item.abstract?.trim() || source.document)
   useEffect(() => {
     // A cached result cannot establish that a source rejected by generation is usable again.
@@ -102,7 +102,7 @@ function SnapshotContent({
     source.key,
     i18n.resolvedLanguage,
     i18n.language,
-    snapshotRevision,
+    overviewRevision,
     readRevision
   ])
   const generate = async (): Promise<void> => {
@@ -114,15 +114,15 @@ function SnapshotContent({
     setFailure(undefined)
     let generated = false
     try {
-      const snapshot = await api.literature.studySnapshot({
+      const overview = await api.literature.studySnapshot({
         itemId: item.id,
         expectedSourceKey: source.key,
         language: i18n.resolvedLanguage ?? i18n.language
       })
-      if (snapshot.sourceKey !== source.key) throw new Error('Stale study snapshot response.')
-      if ('issue' in snapshot) {
-        setFailure(snapshot.issue)
-        if (snapshot.issue === 'source-changed' || snapshot.issue === 'source-unavailable') {
+      if (overview.sourceKey !== source.key) throw new Error('Stale study overview response.')
+      if ('issue' in overview) {
+        setFailure(overview.issue)
+        if (overview.issue === 'source-changed' || overview.issue === 'source-unavailable') {
           sourceInvalidated.current = true
           deferredRead.current = false
           setResult(undefined)
@@ -130,7 +130,7 @@ function SnapshotContent({
         return
       }
       sourceInvalidated.current = false
-      setResult(snapshot)
+      setResult(overview)
       generated = true
     } catch {
       setFailure('generation-failed')
@@ -143,7 +143,7 @@ function SnapshotContent({
       }
     }
   }
-  const failureDescriptions: Record<SnapshotFailure, string> = {
+  const failureDescriptions: Record<OverviewFailure, string> = {
     'not-generated': t('Generate overview'),
     busy: t('Too many overviews are being generated. Try again shortly.'),
     'source-changed': t('This reference has changed. Reopen its details and try again.'),
@@ -166,12 +166,12 @@ function SnapshotContent({
     : []
   const generating = pending || Boolean(batchGenerating)
   return (
-    <section className="py-4" aria-label={t('Study overview')} aria-busy={generating}>
+    <section className="py-4" aria-label={t('Paper overview')} aria-busy={generating}>
       <div className="rounded-lg border border-primary/25 bg-primary/5 p-3">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="flex items-center gap-1.5 font-medium">
             <Sparkles className="size-4 text-primary" aria-hidden="true" />
-            {t('Study overview')}
+            {t('Paper overview')}
           </h3>
           {result ? (
             <span className="rounded bg-background px-1.5 py-0.5 text-xs text-muted-foreground">

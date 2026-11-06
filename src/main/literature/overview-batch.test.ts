@@ -1,12 +1,12 @@
 import * as durableFiles from '@aipoch/durable-files'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { LiteratureStudySnapshot, LiteratureSnapshotStore } from './study-snapshot'
-import { literatureSnapshotSource } from '../../shared/literature-snapshot'
+import { LiteratureOverviewService, LiteratureOverviewStore } from './overview'
+import { literatureOverviewSource } from '../../shared/literature-overview'
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi, type Mock } from 'vitest'
-import { LiteratureSnapshotBatch } from './study-snapshot-batch'
+import { LiteratureOverviewBatch } from './overview-batch'
 import { createApplicationCommandRouter } from '../application-command-router'
 import { createWebCallerContext } from '../caller-context'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
@@ -17,21 +17,21 @@ import {
 } from './application-commands'
 import { createLiteratureCommandOwner } from './command-owner'
 import {
-  snapshotBatchSchema,
-  type SnapshotBatch,
-  type SnapshotBatchRequest
-} from '../../shared/literature-snapshot-batch'
+  overviewBatchSchema,
+  type OverviewBatch,
+  type OverviewBatchRequest
+} from '../../shared/literature-overview-batch'
 import type {
-  LiteratureSnapshotRequest,
-  LiteratureSnapshotResult
-} from '../../shared/literature-snapshot'
+  LiteratureOverviewRequest,
+  LiteratureOverviewResult
+} from '../../shared/literature-overview'
 
 const roots: string[] = []
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 const entries = ['a', 'b'].map((itemId) => ({ itemId, expectedSourceKey: itemId, language: 'en' }))
-const ready = (sourceKey: string): LiteratureSnapshotResult => ({
+const ready = (sourceKey: string): LiteratureOverviewResult => ({
   sourceKey,
   model: 'test',
   coverage: 'abstract',
@@ -39,37 +39,37 @@ const ready = (sourceKey: string): LiteratureSnapshotResult => ({
 })
 async function setup(): Promise<{
   path: string
-  run: Mock<(request: LiteratureSnapshotRequest) => Promise<LiteratureSnapshotResult>>
-  batch: LiteratureSnapshotBatch
+  run: Mock<(request: LiteratureOverviewRequest) => Promise<LiteratureOverviewResult>>
+  batch: LiteratureOverviewBatch
 }> {
-  const root = await mkdtemp(join(tmpdir(), 'snapshot-batch-'))
+  const root = await mkdtemp(join(tmpdir(), 'overview-batch-'))
   roots.push(root)
   const path = join(root, 'task.json')
   const run = vi.fn(
-    async (request: LiteratureSnapshotRequest): Promise<LiteratureSnapshotResult> =>
+    async (request: LiteratureOverviewRequest): Promise<LiteratureOverviewResult> =>
       request.mode === 'read'
         ? { sourceKey: request.expectedSourceKey, issue: 'not-generated' }
         : ready(request.expectedSourceKey)
   )
-  return { path, run, batch: new LiteratureSnapshotBatch(() => path, { run }) }
+  return { path, run, batch: new LiteratureOverviewBatch(() => path, { run }) }
 }
-async function readDisk(path: string): Promise<SnapshotBatch> {
-  return snapshotBatchSchema.parse(JSON.parse(await readFile(path, 'utf8')))
+async function readDisk(path: string): Promise<OverviewBatch> {
+  return overviewBatchSchema.parse(JSON.parse(await readFile(path, 'utf8')))
 }
-function deferredSnapshots(run: Awaited<ReturnType<typeof setup>>['run']): {
-  gates: Map<string, ReturnType<typeof Promise.withResolvers<LiteratureSnapshotResult>>>
+function deferredOverviews(run: Awaited<ReturnType<typeof setup>>['run']): {
+  gates: Map<string, ReturnType<typeof Promise.withResolvers<LiteratureOverviewResult>>>
   generated: string[]
 } {
   const gates = new Map<
     string,
-    ReturnType<typeof Promise.withResolvers<LiteratureSnapshotResult>>
+    ReturnType<typeof Promise.withResolvers<LiteratureOverviewResult>>
   >()
   const generated: string[] = []
   run.mockImplementation(async (request) => {
     if (request.mode === 'read')
       return { sourceKey: request.expectedSourceKey, issue: 'not-generated' }
     generated.push(request.itemId)
-    const gate = Promise.withResolvers<LiteratureSnapshotResult>()
+    const gate = Promise.withResolvers<LiteratureOverviewResult>()
     gates.set(request.itemId, gate)
     return gate.promise
   })
@@ -79,7 +79,7 @@ const threeEntries = [...entries, { itemId: 'c', expectedSourceKey: 'c', languag
 
 it('admits exactly two papers per advance and durably saves each without filling its slot', async () => {
   const { batch, path, run } = await setup()
-  const { gates, generated } = deferredSnapshots(run)
+  const { gates, generated } = deferredOverviews(run)
   const job = (await batch.run({ action: 'start', entries: threeEntries }))!
   const wave = batch.run({ action: 'advance', jobId: job.id })
   try {
@@ -123,7 +123,7 @@ it.each(['throw', 'issue'] as const)(
   'pauses on %s failure, lets its admitted companion save, and retries with pending papers',
   async (failure) => {
     const { batch, path, run } = await setup()
-    const { gates, generated } = deferredSnapshots(run)
+    const { gates, generated } = deferredOverviews(run)
     const job = (await batch.run({ action: 'start', entries: threeEntries }))!
     const wave = batch.run({ action: 'advance', jobId: job.id })
     try {
@@ -177,7 +177,7 @@ it('recovers both interrupted papers as pending and stays paused until resume', 
   job.rows[0].status = 'running'
   job.rows[1].status = 'running'
   await writeFile(path, JSON.stringify(job))
-  const reopened = new LiteratureSnapshotBatch(() => path, { run })
+  const reopened = new LiteratureOverviewBatch(() => path, { run })
   const recovered = (await reopened.run({ action: 'read' }))!
   expect(recovered.paused).toBe(true)
   expect(recovered.rows.map((row) => row.status)).toEqual(['pending', 'pending', 'pending'])
@@ -191,7 +191,7 @@ it('recovers both interrupted papers as pending and stays paused until resume', 
 
 it('pauses after abort and retains a companion already completed in that wave', async () => {
   const { batch, run } = await setup()
-  const { gates, generated } = deferredSnapshots(run)
+  const { gates, generated } = deferredOverviews(run)
   const job = (await batch.run({ action: 'start', entries }))!
   const controller = new AbortController()
   const wave = batch.run({ action: 'advance', jobId: job.id }, controller.signal)
@@ -234,7 +234,7 @@ it('rejects duplicates, oversize batches and stale job commands', async () => {
 })
 it('allows read-only observation while rejecting every mutation during an active wave', async () => {
   const { batch, path, run } = await setup()
-  const { gates, generated } = deferredSnapshots(run)
+  const { gates, generated } = deferredOverviews(run)
   const job = (await batch.run({ action: 'start', entries: threeEntries }))!
   const wave = batch.run({ action: 'advance', jobId: job.id })
   try {
@@ -253,12 +253,12 @@ it('allows read-only observation while rejecting every mutation during an active
     await wave
   }
 })
-async function setupDurableSnapshot(itemIds = ['a']): Promise<{
+async function setupDurableOverview(itemIds = ['a']): Promise<{
   path: string
-  request: LiteratureSnapshotRequest
-  requests: LiteratureSnapshotRequest[]
-  infer: Mock<ConstructorParameters<typeof LiteratureStudySnapshot>[0]['infer']>
-  single(): LiteratureStudySnapshot
+  request: LiteratureOverviewRequest
+  requests: LiteratureOverviewRequest[]
+  infer: Mock<ConstructorParameters<typeof LiteratureOverviewService>[0]['infer']>
+  single(): LiteratureOverviewService
 }> {
   const { path } = await setup()
   const items = itemIds.map((id) => ({
@@ -277,12 +277,12 @@ async function setupDurableSnapshot(itemIds = ['a']): Promise<{
   }))
   const requests = items.map((item) => ({
     itemId: item.id,
-    expectedSourceKey: literatureSnapshotSource(item).key,
+    expectedSourceKey: literatureOverviewSource(item).key,
     language: 'en'
   }))
   const request = requests[0]
   const infer = vi
-    .fn<ConstructorParameters<typeof LiteratureStudySnapshot>[0]['infer']>()
+    .fn<ConstructorParameters<typeof LiteratureOverviewService>[0]['infer']>()
     .mockResolvedValue({
       model: 'test',
       text: JSON.stringify({
@@ -293,9 +293,9 @@ async function setupDurableSnapshot(itemIds = ['a']): Promise<{
         limitations: null
       })
     })
-  const single = (): LiteratureStudySnapshot =>
-    new LiteratureStudySnapshot({
-      store: new LiteratureSnapshotStore(() => path + '.results'),
+  const single = (): LiteratureOverviewService =>
+    new LiteratureOverviewService({
+      store: new LiteratureOverviewStore(() => path + '.results'),
       catalog: { get: async (id) => items.find((item) => item.id === id) },
       reader: { classificationEvidence: vi.fn() },
       infer
@@ -303,15 +303,15 @@ async function setupDurableSnapshot(itemIds = ['a']): Promise<{
   return { path, request, requests, infer, single }
 }
 it('invariant: actual single-paper storage survives lost batch completion without another inference', async () => {
-  const { path, request, infer, single } = await setupDurableSnapshot()
-  const batch = new LiteratureSnapshotBatch(() => path, single())
+  const { path, request, infer, single } = await setupDurableOverview()
+  const batch = new LiteratureOverviewBatch(() => path, single())
   const job = (await batch.run({ action: 'start', entries: [request] }))!
   const intent = await readFile(path, 'utf8')
   await batch.run({ action: 'advance', jobId: job.id })
   expect(infer).toHaveBeenCalledTimes(1)
   await writeFile(path, intent)
   infer.mockClear().mockRejectedValue(new Error('Must reuse persisted result'))
-  const result = await new LiteratureSnapshotBatch(() => path, single()).run({
+  const result = await new LiteratureOverviewBatch(() => path, single()).run({
     action: 'advance',
     jobId: job.id
   })
@@ -320,7 +320,7 @@ it('invariant: actual single-paper storage survives lost batch completion withou
 })
 
 it('recovers both real single-paper saves after losing the wave checkpoint without another inference', async () => {
-  const { path, requests, infer, single } = await setupDurableSnapshot(['a', 'b'])
+  const { path, requests, infer, single } = await setupDurableOverview(['a', 'b'])
   const gates = new Map<
     string,
     ReturnType<typeof Promise.withResolvers<{ model: string; text: string }>>
@@ -331,7 +331,7 @@ it('recovers both real single-paper saves after losing the wave checkpoint witho
     gates.set(title, gate)
     return gate.promise
   })
-  const batch = new LiteratureSnapshotBatch(() => path, single())
+  const batch = new LiteratureOverviewBatch(() => path, single())
   const job = (await batch.run({ action: 'start', entries: requests }))!
   const wave = batch.run({ action: 'advance', jobId: job.id })
   const answer = {
@@ -356,7 +356,7 @@ it('recovers both real single-paper saves after losing the wave checkpoint witho
     expect((await wave)?.rows.map((row) => row.status)).toEqual(['succeeded', 'succeeded'])
     await writeFile(path, interrupted)
     infer.mockClear().mockRejectedValue(new Error('Must reuse both saved results'))
-    const reopened = new LiteratureSnapshotBatch(() => path, single())
+    const reopened = new LiteratureOverviewBatch(() => path, single())
     const recovered = (await reopened.run({ action: 'read' }))!
     expect(recovered.paused).toBe(true)
     expect(recovered.rows.map((row) => row.status)).toEqual(['pending', 'pending'])
@@ -372,8 +372,8 @@ it('recovers both real single-paper saves after losing the wave checkpoint witho
 })
 
 it('invariant: a real checkpoint write failure preserves the result and recovers without inference', async () => {
-  const { path, request, infer, single } = await setupDurableSnapshot()
-  const batch = new LiteratureSnapshotBatch(() => path, single())
+  const { path, request, infer, single } = await setupDurableOverview()
+  const batch = new LiteratureOverviewBatch(() => path, single())
   const job = (await batch.run({ action: 'start', entries: [request] }))!
   const write = durableFiles.writeDurableJsonFile
   const fault = vi.spyOn(durableFiles, 'writeDurableJsonFile').mockImplementation((...args) => {
@@ -391,7 +391,7 @@ it('invariant: a real checkpoint write failure preserves the result and recovers
   expect(infer).toHaveBeenCalledTimes(1)
   expect((await readDisk(path)).rows[0].status).toBe('running')
   infer.mockClear().mockRejectedValue(new Error('Must reuse persisted result'))
-  const reopened = new LiteratureSnapshotBatch(() => path, single())
+  const reopened = new LiteratureOverviewBatch(() => path, single())
   await reopened.run({ action: 'resume', jobId: job.id })
   const result = await reopened.run({ action: 'advance', jobId: job.id })
   expect(result?.rows[0].status).toBe('succeeded')
@@ -424,7 +424,7 @@ it('reads maximum escaped requests after durable writes, restart and mixed compl
   expect(Buffer.byteLength(initial)).toBeGreaterThan(100_000)
   expect(job.rows.map((row) => row.request)).toEqual(maximumEntries)
   expect(await batch.run({ action: 'read' })).toEqual(job)
-  const reopened = new LiteratureSnapshotBatch(() => path, { run })
+  const reopened = new LiteratureOverviewBatch(() => path, { run })
   expect(await reopened.run({ action: 'read' })).toEqual(job)
   run.mockImplementation(async (request) => {
     if (request.mode === 'read')
@@ -457,7 +457,7 @@ it('reads maximum escaped requests after durable writes, restart and mixed compl
     Buffer.byteLength(initial)
   )
   expect(await reopened.run({ action: 'read' })).toEqual(completed)
-  const finishedOwner = new LiteratureSnapshotBatch(() => path, { run })
+  const finishedOwner = new LiteratureOverviewBatch(() => path, { run })
   expect(await finishedOwner.run({ action: 'read' })).toEqual(completed)
   const next = (await finishedOwner.run({ action: 'start', entries }))!
   expect(next.id).not.toBe(job.id)
@@ -469,7 +469,7 @@ it('rejects checkpoints over 200000 bytes without replacement and releases its g
   const { batch, path } = await setup()
   const job = (await batch.run({ action: 'start', entries }))!
   const intent = await readFile(path, 'utf8')
-  const enlarged: SnapshotBatch = JSON.parse(intent)
+  const enlarged: OverviewBatch = JSON.parse(intent)
   // The checkpoint schema permits issue strings; a valid object still has a byte budget.
   enlarged.rows[0].status = 'failed'
   enlarged.rows[0].issue = 'x'.repeat(200_000)
@@ -485,18 +485,18 @@ it('rejects checkpoints over 200000 bytes without replacement and releases its g
 })
 
 it('revokes a registered caller during real inference, drains writers and resumes only the unfinished paper', async () => {
-  const { path, requests, infer, single } = await setupDurableSnapshot(['a', 'b', 'c'])
-  const batch = new LiteratureSnapshotBatch(() => path, single())
+  const { path, requests, infer, single } = await setupDurableOverview(['a', 'b', 'c'])
+  const batch = new LiteratureOverviewBatch(() => path, single())
   const owner = createLiteratureCommandOwner({
-    literatureSnapshotBatch: batch
+    literatureOverviewBatch: batch
   } as unknown as Parameters<typeof createLiteratureCommandOwner>[0])
   const router = createApplicationCommandRouter()
   const installation = registerLiteratureApplicationCommands(router.registrar, owner)
   const leases = new ApplicationCallerLeaseRegistry()
-  const callerContext = createWebCallerContext('snapshot-worker')
+  const callerContext = createWebCallerContext('overview-worker')
   const caller = leases.acquire(callerContext)
-  const invoke = (request: SnapshotBatchRequest): Promise<SnapshotBatch | null> =>
-    router.dispatcher.invoke(literatureApplicationCommands.snapshotBatch, {
+  const invoke = (request: OverviewBatchRequest): Promise<OverviewBatch | null> =>
+    router.dispatcher.invoke(literatureApplicationCommands.overviewBatch, {
       args: [request],
       callerContext,
       callerLease: caller.lease
@@ -551,7 +551,7 @@ it('revokes a registered caller during real inference, drains writers and resume
     })
     // The original batch guard is released, and a fresh owner can recover from disk.
     expect((await batch.run({ action: 'read' }))?.id).toBe(job.id)
-    const resumed = new LiteratureSnapshotBatch(() => path, single())
+    const resumed = new LiteratureOverviewBatch(() => path, single())
     await resumed.run({ action: 'resume', jobId: job.id })
     const finished = (await resumed.run({ action: 'advance', jobId: job.id }))!
     expect(finished.rows.map((row) => row.status)).toEqual(['succeeded', 'succeeded', 'succeeded'])

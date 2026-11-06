@@ -7761,7 +7761,7 @@
     "Pasted references": "貼り付けた参考文献",
     "References could not be prepared for import.": "参考文献をインポートする準備ができませんでした。",
     "Lookup failed": "検索に失敗しました",
-    "Study overview": "研究の概要",
+    "Paper overview": "論文の概要",
     "Generate overview": "概要を生成",
     "Generating overview…": "概要を生成中…",
     "Based on abstract": "要旨に基づく",
@@ -7852,15 +7852,15 @@
     "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
     "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。",
-    "Batch snapshots": "一括概要",
+    "Batch overviews": "一括概要",
     "Select up to {{limit}} references.": "文献は {{limit}} 件まで選択できます。",
-    "Retry failed snapshots": "失敗した概要を再試行",
-    "Could not generate batch snapshots. Check the selection and try again.": "概要を一括処理できませんでした。選択内容を確認して再試行してください。",
-    "Snapshot saved": "概要を保存しました",
-    "Snapshot failed": "概要の生成に失敗",
-    "Generate snapshots": "概要を生成",
+    "Retry failed overviews": "失敗した概要を再試行",
+    "Could not generate batch overviews. Check the selection and try again.": "概要を一括処理できませんでした。選択内容を確認して再試行してください。",
+    "Overview saved": "概要を保存しました",
+    "Overview failed": "概要の生成に失敗",
+    "Generate overviews": "概要を生成",
     "Continue remaining": "残りを続行",
     "{{done}} of {{total}} finished": "{{total}} 件中 {{done}} 件を処理済み",
-    "{{count}} failed snapshots_other": "{{count}} 件の概要の生成に失敗"
+    "{{count}} failed overviews_other": "{{count}} 件の概要の生成に失敗"
   }
 }

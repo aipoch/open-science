@@ -1,4 +1,4 @@
-import { LiteratureStudySnapshot } from './LiteratureStudySnapshot'
+import { LiteratureOverview } from './LiteratureOverview'
 import { useTranslation } from 'react-i18next'
 import { JournalAttributes } from '../JournalAttributes'
 import { LiteratureSources } from '../LiteratureSources'
@@ -20,12 +20,12 @@ import { CollapsibleAbstract, CollapsibleAuthors } from './LiteratureDetailText'
 
 export function LiteratureBibliographicDetails({
   selectedItem,
-  snapshotRevision,
-  snapshotBatchGenerating
+  overviewRevision,
+  overviewBatchGenerating
 }: {
   selectedItem: LiteratureItemView
-  snapshotRevision?: number
-  snapshotBatchGenerating?: boolean
+  overviewRevision?: number
+  overviewBatchGenerating?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const selectedItemExternalUrl = getExternalLiteratureUrl(selectedItem.item.url)
@@ -53,10 +53,10 @@ export function LiteratureBibliographicDetails({
           <CollapsibleAbstract text={selectedItem.item.abstract} />
         </section>
       ) : null}
-      <LiteratureStudySnapshot
+      <LiteratureOverview
         item={selectedItem}
-        snapshotRevision={snapshotRevision}
-        batchGenerating={snapshotBatchGenerating}
+        overviewRevision={overviewRevision}
+        batchGenerating={overviewBatchGenerating}
       />
       <JournalAttributes item={selectedItem.item} itemId={selectedItem.id} detail />
       {hasFields || selectedItem.item.identifiers.length > 0 ? (
