@@ -117,6 +117,14 @@ export class AcpConnectionResourceOwner {
     return this.currentResource()?.connection
   }
 
+  get transition(): Promise<unknown> | undefined {
+    const active = [...this.pendingCleanup].flatMap((cleanup) =>
+      cleanup.inFlight ? [cleanup.inFlight] : []
+    )
+    if (this.connectInFlight) active.push(this.connectInFlight.then(() => undefined))
+    return active.length ? Promise.all(active) : undefined
+  }
+
   get capabilities(): AcpConnectionCapabilities {
     return this.currentResource()?.capabilities ?? EMPTY_CAPABILITIES
   }

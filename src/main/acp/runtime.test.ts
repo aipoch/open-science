@@ -32409,3 +32409,113 @@ it('protects disposable OpenCode homes at the ACP read boundary while allowing w
 })
 
 configureTestRuntimeMetadata()
+
+describe('Session deletion with an unanswered native selector', () => {
+  it.each([
+    { sibling: false, coordinated: false },
+    { sibling: true, coordinated: false },
+    { sibling: false, coordinated: true },
+    { sibling: true, coordinated: true }
+  ])(
+    'deletes through pending reconnect: sibling=$sibling coordinated=$coordinated',
+    async ({ sibling, coordinated }) => {
+      const process = new FakeAgentProcess()
+      let closeStarted = false
+      const releaseClose = createDeferred()
+      const fakeAgent = startFakeAgent(process, ['selector-asked', 'selector-idle'], {
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'selector-delete',
+          message: 'Choose a dataset',
+          requestedSchema: {
+            type: 'object',
+            properties: { question_0: { type: 'string', enum: ['Alpha', 'Beta'] } },
+            required: ['question_0']
+          }
+        }),
+        onClose: async () => {
+          closeStarted = true
+          await releaseClose.promise
+        }
+      })
+      const runtime = coordinated
+        ? new AcpRuntimeCoordinator(
+            (callbacks) =>
+              new AcpRuntime({
+                appVersion: '0.1.0',
+                defaultCwd: '/workspace',
+                callbacks,
+                spawnAgent: () => asAgentProcess(process)
+              })
+          )
+        : new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            spawnAgent: () => asAgentProcess(process)
+          })
+      let prompt: Promise<unknown> | undefined
+      let deleting: Promise<unknown> | undefined
+      try {
+        const asked = await runtime.createSession({ cwd: '/workspace' })
+        const idle = await runtime.createSession({ cwd: '/workspace' })
+        prompt = runtime
+          .sendPrompt({ sessionId: asked.sessionId, text: 'Ask first' })
+          .catch(() => undefined)
+        await vi.waitFor(() => expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1))
+        await runtime.requestProviderReconnect()
+
+        const target = sibling ? idle : asked
+        deleting = runtime.deleteSession({ sessionId: target.sessionId })
+        await vi.waitFor(() => expect(closeStarted).toBe(true))
+        // Cancelling the target question must not let reconnect reap the provider during close.
+        expect(process.killed).toBe(false)
+        if (sibling) {
+          expect(runtime.getSnapshot().pendingElicitations).toHaveLength(1)
+          expect(fakeAgent.elicitationResponses).toEqual([])
+          expect(fakeAgent.cancelledSessions).toEqual([])
+        }
+        releaseClose.resolve()
+        await deleting
+        expect(fakeAgent.closedSessions).toEqual([target.sessionId])
+        expect(infoLogSpy).toHaveBeenCalledWith(
+          'session deletion phase',
+          expect.objectContaining({
+            sessionId: target.sessionId,
+            phase: 'completed',
+            operationId: expect.any(String)
+          })
+        )
+        expect(runtime.getSnapshot().sessionIds).not.toContain(target.sessionId)
+
+        if (sibling) {
+          expect(process.killed).toBe(false)
+          const question = runtime.getSnapshot().pendingElicitations?.[0]
+          expect(question).toBeDefined()
+          runtime.respondToElicitation({
+            requestId: question!.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Alpha' }]
+          })
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Alpha' } }
+          ])
+        } else {
+          await prompt
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+        await vi.waitFor(() => expect(process.killed).toBe(true))
+      } finally {
+        releaseClose.resolve()
+        await (
+          runtime instanceof AcpRuntimeCoordinator
+            ? runtime.shutdownForQuit()
+            : runtime.disconnect()
+        ).catch(() => undefined)
+        await prompt?.catch(() => undefined)
+        await deleting?.catch(() => undefined)
+      }
+    }
+  )
+})
