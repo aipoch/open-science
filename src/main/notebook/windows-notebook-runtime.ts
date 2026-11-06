@@ -64,20 +64,24 @@ const resolvePackagedWindowsNotebookNodeRuntime = (
   }
   const relative = `out/node-runtime/win32-${architecture}`
   const vendorRelative = `packages/notebook-network-sandbox/vendor/windows-runtime/${architecture}/node`
+  const hostResourcesPath = process.env.OPEN_SCIENCE_RESOURCES_PATH
+  const resourcePaths = [...new Set([resourcesPath, hostResourcesPath].filter(Boolean))] as string[]
   const packagedRoot = resourcesPath && join(resourcesPath, 'node-runtime')
-  const candidates =
-    resourcesPath && existsSync(join(resourcesPath, 'app.asar'))
-      ? [packagedRoot!]
-      : [
-          packagedRoot,
-          join(moduleDirectory, '../..', relative),
-          join(moduleDirectory, '../../..', relative),
-          // Source-only fixtures are produced by the Windows runtime preparation workflow. They
-          // keep clean Windows shell tests runnable without making packaged standard mode depend
-          // on the protected runtime tree.
-          join(moduleDirectory, '../..', vendorRelative),
-          join(moduleDirectory, '../../..', vendorRelative)
-        ]
+  const hostPackagedRoot = hostResourcesPath && join(hostResourcesPath, 'node-runtime')
+  const packagedResourcePath = resourcePaths.find((path) => existsSync(join(path, 'app.asar')))
+  const candidates = packagedResourcePath
+    ? [join(packagedResourcePath, 'node-runtime')]
+    : [
+        packagedRoot,
+        hostPackagedRoot,
+        join(moduleDirectory, '../..', relative),
+        join(moduleDirectory, '../../..', relative),
+        // Source-only fixtures are produced by the Windows runtime preparation workflow. They
+        // keep clean Windows shell tests runnable without making packaged standard mode depend
+        // on the protected runtime tree.
+        join(moduleDirectory, '../..', vendorRelative),
+        join(moduleDirectory, '../../..', vendorRelative)
+      ]
   for (const root of candidates) {
     if (!root) continue
     const files = ['node.exe', 'npm.cmd', 'npx.cmd', 'node_modules/npm/package.json']

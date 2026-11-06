@@ -87,6 +87,26 @@ describe('bundled Windows Notebook runtime', () => {
       node: join(nodeRoot, 'node.exe')
     })
   })
+  it('resolves the packaged Node runtime from the inherited host resources path', () => {
+    const { root, resources } = fixture()
+    const nodeRoot = join(resources, 'node-runtime')
+    installNodeRuntime(nodeRoot)
+    writeFileSync(join(resources, 'app.asar'), '')
+    const previous = process.env.OPEN_SCIENCE_RESOURCES_PATH
+    process.env.OPEN_SCIENCE_RESOURCES_PATH = resources
+    try {
+      expect(
+        resolveWindowsNotebookNodeRuntime(
+          join(root, 'resources/backend/resources'),
+          join(root, 'resources/backend/out/backend'),
+          'x64'
+        )
+      ).toEqual({ root: nodeRoot, node: join(nodeRoot, 'node.exe') })
+    } finally {
+      if (previous === undefined) delete process.env.OPEN_SCIENCE_RESOURCES_PATH
+      else process.env.OPEN_SCIENCE_RESOURCES_PATH = previous
+    }
+  })
   it('resolves the prepared source fixture when the standalone development runtime is absent', () => {
     const { root, resources } = fixture()
     const nodeRoot = join(root, 'packages/notebook-network-sandbox/vendor/windows-runtime/x64/node')
