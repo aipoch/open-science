@@ -191,15 +191,19 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
 
 let connectMobileWindow: BrowserWindow | undefined
 let quitting = false
-app.once('before-quit', () => {
-  quitting = true
-})
+let quitListenerInstalled = false
 
 const openConnectMobileWindow = (): void => {
   if (connectMobileWindow && !connectMobileWindow.isDestroyed()) {
     connectMobileWindow.show()
     connectMobileWindow.focus()
     return
+  }
+  if (!quitListenerInstalled) {
+    quitListenerInstalled = true
+    app.once('before-quit', () => {
+      quitting = true
+    })
   }
   const window = createAppWindow({
     width: 440,

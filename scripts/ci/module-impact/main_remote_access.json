@@ -79,5 +79,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "WiFi and Pinggy pairing add LAN discovery, pair tokens and a tunnel process beyond the reviewed remote-access sources; retain full CI validation until the expanded boundary is reviewed and reclassified."
 }
