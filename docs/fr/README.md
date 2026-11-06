@@ -51,11 +51,11 @@ Pour comprendre comment un résultat a été obtenu, consultez les données d’
 
 ### 💡 AIPOCH Open-Science v1.1.0 — Nouveautés
 
-_5 novembre 2026_
+_6 novembre 2026_
 
-- **Films de recherche**: Exportez toute session sous forme de film de recherche portable et narré, avec relecture du terminal et narration vocale.
-- **Appairage mobile**: Connectez un téléphone ou une tablette en scannant un code QR, via le WiFi local ou un tunnel Pinggy.
-- **Literature dans le CLI et MCP**: Recherche et gestion des références depuis la ligne de commande et les clients MCP, avec navigation en lecture seule et outils d'écriture.
+- **Films de recherche**: Exportez les sessions terminées en films portables avec relecture du terminal et narration. La narration nécessite un modèle vocal installé localement.
+- **Appairage mobile**: Ouvrez l’espace de travail actuel sur un téléphone ou une tablette par QR code, via le WiFi local ou un tunnel Pinggy ; le trafic Internet transite par les serveurs de Pinggy.
+- **Bibliothèque bibliographique dans le CLI et MCP**: Recherche et gestion des références depuis la ligne de commande et les clients MCP, avec navigation en lecture seule et outils d'écriture.
 - **Synthèses reprises sur interruption**: Les synthèses par lots de papiers reprennent après une interruption sans régénérer les résultats déjà achevés.
 - **Centre de ressources**: Un centre de ressources renommé avec une disposition de la bibliothèque de cas adaptée, des liens externes plus compacts et les paramètres de calcul sous les connexions.
 - **Diagnostics**: Les exports préservent les preuves d'exécution du Notebook, permettent de sélectionner des journaux backend historiques et peuvent inclure des enregistrements de ressources en opt-in (Windows).
@@ -309,7 +309,7 @@ Les PDF traduits peuvent, en option, redistribuer le corps du texte et les lége
 
 Dans l’application de bureau, la provenance des artefacts peut aussi être exportée en RO-Crate 1.1. Un paquet d’environnement lié à une version ne peut créer un environnement géré que si la capture est complète et compatible avec la plateforme cible ; ce n’est pas une sauvegarde intégrale de l’ordinateur.
 
-Parcourez les cas de recherche sur la place de marché Sharing depuis l’accueil ou l’espace de conversation, filtrez par catégorie, recherchez par mot-clé et téléchargez les paquets depuis les fiches détaillées des cas.
+Parcourez les cas de recherche dans le centre de ressources, filtrez par catégorie, recherchez par mot-clé et téléchargez les paquets depuis les fiches détaillées des cas.
 
 ## Fournisseurs de modèles
 
@@ -387,12 +387,7 @@ L’application de bureau et le navigateur partagent le même service. Les appli
 
 ### Accès distant mobile
 
-La même UI web localhost peut être atteinte depuis un téléphone ou une tablette via l'appariement Remote.It. Appariez
-un navigateur avec un code AIPOCH Open-Science à six chiffres, approuvez-le une fois sur le bureau, et l'espace de travail
-reste joignable sans exposer directement le serveur en boucle locale. La confiance du navigateur est révocable, et
-les changements de mode ou l'arrêt du service invalident immédiatement les sessions distantes actives.
-
-L’ordinateur hôte doit rester allumé et connecté, avec AIPOCH Open-Science et l’agent Remote.It en cours d’exécution, et être ajouté à un compte Remote.It connecté. L’autorisation du navigateur expire et peut être révoquée ; voir le [guide du contrôle à distance](../remote-control.md).
+Scannez un QR code pour ouvrir l’espace de travail actuel sur un téléphone ou une tablette via le WiFi local ou un tunnel Pinggy. L’appairage WiFi reste sur le réseau local ; les tunnels Internet font transiter le trafic par les serveurs de Pinggy, comme l’indique la boîte de dialogue de connexion.
 
 ### CLI et SDK headless
 
@@ -431,7 +426,7 @@ R : L'étape courante n'a pas satisfait sa condition requise. Corrigez toute lig
 <details>
 <summary>Comment exécuter des travaux sur un cluster HPC distant ?</summary>
 
-R : **Remote Compute (SSH)** est toujours activé et ne doit pas être activé dans les paramètres. Enregistrez un hôte de calcul SSH sous **Paramètres → Calcul**, rendez-le disponible pour la session courante, puis utilisez le langage naturel ou `/remote-compute-ssh`. Il faut un hôte SSH accessible, une authentification valide, les droits sur les répertoires nécessaires, ainsi que les logiciels, dépendances et ressources de calcul requis. Direct SSH ne nécessite pas d’ordonnanceur ; le mode Slurm exige un environnement Slurm opérationnel et le droit de soumettre des tâches. « Toujours activé » concerne la compétence, pas la disponibilité permanente de chaque hôte enregistré.
+R : **Remote Compute (SSH)** est toujours activé et ne doit pas être activé dans les paramètres. Enregistrez un hôte de calcul SSH sous **Paramètres → Connexions → Calcul**, rendez-le disponible pour la session courante, puis utilisez le langage naturel ou `/remote-compute-ssh`. Il faut un hôte SSH accessible, une authentification valide, les droits sur les répertoires nécessaires, ainsi que les logiciels, dépendances et ressources de calcul requis. Direct SSH ne nécessite pas d’ordonnanceur ; le mode Slurm exige un environnement Slurm opérationnel et le droit de soumettre des tâches. « Toujours activé » concerne la compétence, pas la disponibilité permanente de chaque hôte enregistré.
 
 </details>
 

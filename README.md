@@ -49,10 +49,10 @@ When you want to see how a result was produced, inspect the available inputs, co
 
 ### 💡 AIPOCH Open-Science v1.1.0 updates
 
-_November 5, 2026_
+_November 6, 2026_
 
-- **Research films**: Export any session as a portable, narrated research film with terminal playback and voice narration.
-- **Mobile pairing**: Connect a phone or tablet by scanning a QR code, over local WiFi or a Pinggy tunnel.
+- **Research films**: Export completed sessions as portable narrated films with terminal playback. Voice narration requires a locally installed voice model.
+- **Mobile pairing**: Scan a QR code to open the current workspace on a phone or tablet over local WiFi or a Pinggy tunnel; internet traffic passes through Pinggy’s servers.
 - **Literature in CLI and MCP**: Search and manage references from the command line and MCP clients, with read-only browsing plus write tools.
 - **Resumable overviews**: Batch paper overviews resume after interruptions without regenerating completed results.
 - **Resource center**: A renamed resource center with an adapted case library layout, more compact external links, and compute settings under connections.
@@ -60,8 +60,6 @@ _November 5, 2026_
 - **Reliability fixes**: Recover conversations after interruptions, restore PDF figures and tables from searchable scans, and improve startup, Windows update checks, and memory use.
 
 [View the full v1.1.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
-
-[View the full v1.0.8 release notes](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -310,7 +308,7 @@ Translated PDFs can optionally reflow body text and captions into a single-colum
 
 In the desktop app, artifact provenance can also be exported as RO-Crate 1.1. A version-bound environment bundle can create a managed environment only when the captured bundle is complete and compatible with the target platform; this is separate from a full machine backup.
 
-Browse research cases in the Marketplace from Home or the conversation workspace, filter by category, search by keyword, and download packages from case details.
+Browse research cases in the resource center, filter by category, search by keyword, and download packages from case details.
 
 ## Model Providers
 
@@ -389,12 +387,7 @@ The desktop app and browser share the same service. App connections and an expli
 
 ### Mobile remote access
 
-The same localhost web UI can be reached from a phone or tablet through Remote.It pairing. Pair
-a browser with a six-digit AIPOCH Open-Science code, approve it once on the desktop, and the workspace
-stays reachable without exposing the loopback server directly. Browser trust is revocable, and
-mode changes or service shutdown immediately invalidate active remote sessions.
-
-Remote access requires the host to stay on and online, with AIPOCH Open-Science and the Remote.It agent running, and the host added to a signed-in Remote.It account. Browser approval has an expiry and can be revoked; see the [Remote control guide](docs/remote-control.md).
+Scan a QR code to open the current workspace on a phone or tablet over local WiFi or a Pinggy tunnel. Local WiFi pairing stays on your network; internet tunnels route traffic through Pinggy’s servers, as disclosed in the connection dialog.
 
 ### Headless CLI and SDK
 
@@ -433,7 +426,7 @@ A: The current step has not met its required condition. Fix any environment row 
 <details>
 <summary>How do I run jobs on a remote HPC cluster?</summary>
 
-A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in Settings. Register an SSH compute host under **Settings → Compute**, make it available to the current session, and then use natural language or `/remote-compute-ssh`. You need a reachable SSH host, valid authentication, permission for the required directories, and the software, dependencies, and compute resources required by the workload. Direct SSH does not require a scheduler; Slurm mode requires a working Slurm environment and permission to submit jobs. “Always enabled” refers to the skill, not to the availability of every registered host.
+A: **Remote Compute (SSH)** is always enabled and does not need to be enabled in Settings. Register an SSH compute host under **Settings → Connections → Compute**, make it available to the current session, and then use natural language or `/remote-compute-ssh`. You need a reachable SSH host, valid authentication, permission for the required directories, and the software, dependencies, and compute resources required by the workload. Direct SSH does not require a scheduler; Slurm mode requires a working Slurm environment and permission to submit jobs. “Always enabled” refers to the skill, not to the availability of every registered host.
 
 </details>
 
