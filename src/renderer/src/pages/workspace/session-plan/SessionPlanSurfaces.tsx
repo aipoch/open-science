@@ -573,6 +573,7 @@ const PlanPreviewSurface = ({
   const planDocument = validatedPreviewDocument(projection.document)
   const decisionInFlightRef = useRef(false)
   const [decisionBusy, setDecisionBusy] = useState(false)
+  const [downloadError, setDownloadError] = useState(false)
   const projectionKey = `${projection.artifactVersionId}:${projection.revision}`
   const [resolvedProjectionKey, setResolvedProjectionKey] = useState<string>()
 
@@ -605,6 +606,17 @@ const PlanPreviewSurface = ({
       })
     })
 
+  const runDownload = async (): Promise<void> => {
+    setDownloadError(false)
+    try {
+      await download()
+    } catch (error) {
+      // Keep native save-dialog and file-publisher failures handled so the app remains open.
+      console.error('[session-plan-download] save failed:', error)
+      setDownloadError(true)
+    }
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg-10 text-foreground" aria-busy={decisionBusy}>
       {/* Mirrors the artifact preview header: the real artifact filename as selectable text,
@@ -623,7 +635,7 @@ const PlanPreviewSurface = ({
             type="button"
             aria-label={t('Download Plan')}
             variant="ghost"
-            onClick={() => void download()}
+            onClick={() => void runDownload()}
           >
             <Download className="size-4" aria-hidden="true" />
             {t('Download')}
@@ -681,6 +693,15 @@ const PlanPreviewSurface = ({
         <PlanNoticeBanner>
           {t('⚠ This plan has been replaced by another plan and is no longer current.')}
         </PlanNoticeBanner>
+      ) : null}
+      {downloadError ? (
+        <ErrorNotice
+          role="alert"
+          tone="red"
+          className="mx-4 mt-3"
+          description={t('Could not download this file.')}
+          primaryButton={{ label: t('Try again'), onClick: () => void runDownload() }}
+        />
       ) : null}
       {planDocument ? (
         <PlanDocumentBody projection={projection} compactSummary />

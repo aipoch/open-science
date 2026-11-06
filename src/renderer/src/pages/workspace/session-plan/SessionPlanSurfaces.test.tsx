@@ -438,6 +438,26 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
   })
 
+  it('shows a retryable error when the native Plan download rejects', async () => {
+    const error = new Error('save failed')
+    const onDownload = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      render(<PlanPreviewSurface projection={projection} onDownload={onDownload} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Download Plan' }))
+
+      await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+      expect(screen.getByText('Could not download this file.')).toBeTruthy()
+      expect(consoleError).toHaveBeenCalledWith('[session-plan-download] save failed:', error)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+      await waitFor(() => expect(onDownload).toHaveBeenCalledTimes(2))
+      await waitFor(() => expect(screen.queryByText('Could not download this file.')).toBeNull())
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('submits only the first Preview decision while its response is pending', () => {
     const onRespond = vi.fn(() => new Promise<void>(() => undefined))
     render(<PlanPreviewSurface projection={projection} onRespond={onRespond} />)
