@@ -8192,6 +8192,9 @@
     "Collapse question panel": "Contraer el panel de preguntas",
     "Expand question panel": "Expandir el panel de preguntas",
     "Set up the selected agent runtime in Settings before generating a research film.": "Configure el entorno de ejecución del agente seleccionado en Ajustes antes de generar una película de investigación.",
+    "Select a model in Settings before generating a research film.": "Seleccione un modelo en Configuración antes de generar un vídeo de investigación.",
+    "The selected provider credentials are unavailable. Check them in Settings.": "Las credenciales del proveedor seleccionado no están disponibles. Revíselas en Configuración.",
+    "The selected model is unavailable. Select another model in Settings.": "El modelo seleccionado no está disponible. Seleccione otro modelo en Configuración.",
     "Check the selected model and credentials in Settings before generating a research film.": "Revise el modelo seleccionado y las credenciales en Ajustes antes de generar una película de investigación.",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "El límite de entrada del modelo seleccionado no permite incluir las instrucciones para generar la película de investigación. Seleccione un modelo con un límite de entrada mayor."
   }

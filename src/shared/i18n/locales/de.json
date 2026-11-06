@@ -8017,6 +8017,9 @@
     "Collapse question panel": "Fragebereich einklappen",
     "Expand question panel": "Fragebereich ausklappen",
     "Set up the selected agent runtime in Settings before generating a research film.": "Richten Sie vor dem Erstellen eines Forschungsfilms die Laufzeit des ausgewählten Agenten in den Einstellungen ein.",
+    "Select a model in Settings before generating a research film.": "Wählen Sie vor dem Erstellen eines Forschungsfilms ein Modell in den Einstellungen aus.",
+    "The selected provider credentials are unavailable. Check them in Settings.": "Die Zugangsdaten des ausgewählten Anbieters sind nicht verfügbar. Prüfen Sie sie in den Einstellungen.",
+    "The selected model is unavailable. Select another model in Settings.": "Das ausgewählte Modell ist nicht verfügbar. Wählen Sie in den Einstellungen ein anderes Modell aus.",
     "Check the selected model and credentials in Settings before generating a research film.": "Prüfen Sie vor dem Erstellen eines Forschungsfilms das ausgewählte Modell und die Zugangsdaten in den Einstellungen.",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Das Eingabelimit des ausgewählten Modells reicht nicht für die Anweisungen zur Erstellung des Forschungsfilms aus. Wählen Sie ein Modell mit einem höheren Eingabelimit."
   }

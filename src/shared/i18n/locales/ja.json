@@ -7850,6 +7850,9 @@
     "Collapse question panel": "質問パネルを折りたたむ",
     "Expand question panel": "質問パネルを展開",
     "Set up the selected agent runtime in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したエージェントのランタイムを設定してください。",
+    "Select a model in Settings before generating a research film.": "研究動画を生成する前に、設定でモデルを選択してください。",
+    "The selected provider credentials are unavailable. Check them in Settings.": "選択したプロバイダーの認証情報を利用できません。設定で確認してください。",
+    "The selected model is unavailable. Select another model in Settings.": "選択したモデルを利用できません。設定で別のモデルを選択してください。",
     "Check the selected model and credentials in Settings before generating a research film.": "研究フィルムを生成する前に、設定で選択したモデルと認証情報を確認してください。",
     "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "選択したモデルの入力上限では研究フィルムの生成指示を収められません。入力上限が大きいモデルを選択してください。"
   }
