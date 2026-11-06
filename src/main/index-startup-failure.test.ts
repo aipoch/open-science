@@ -214,6 +214,10 @@ vi.mock('./session-persistence/renderer-flush', () => ({
   rendererSessionPersistenceFlushBlocksShutdown: vi.fn()
 }))
 vi.mock('./system-lifecycle-adapters', () => ({
+  installResourceActivityRelay: () => ({
+    state: () => ({ foreground: false, suspended: false }),
+    dispose: vi.fn()
+  }),
   installSystemLifecycleAdapters: () => ({
     installPowerMonitorListeners: vi.fn(),
     bindWindow: vi.fn()

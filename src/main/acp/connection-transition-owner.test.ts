@@ -72,15 +72,18 @@ describe('AcpConnectionTransitionOwner', () => {
       const reconnect = planned ? owner.requestProviderReconnect() : undefined
       const first = owner.requestRetirement()
       const concurrent = owner.requestRetirement()
+      expect(owner.diagnosticSnapshot().retirementPending).toBe(true)
       gate.resolve()
       await Promise.all([reconnect, first, concurrent])
       expect(onRetired).not.toHaveBeenCalled()
+      expect(owner.diagnosticSnapshot().retirementPending).toBe(true)
       expect(disconnect).toHaveBeenCalledOnce()
       await owner.requestRetirement()
       expect(disconnect).toHaveBeenCalledTimes(2)
       expect(onRetired).toHaveBeenCalledOnce()
       await owner.requestRetirement()
       expect(onRetired).toHaveBeenCalledOnce()
+      expect(owner.diagnosticSnapshot().retirementPending).toBe(false)
     }
   )
 

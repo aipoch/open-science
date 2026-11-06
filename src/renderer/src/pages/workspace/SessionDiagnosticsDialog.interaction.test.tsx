@@ -64,6 +64,38 @@ const button = (name: string): HTMLButtonElement =>
   [...document.querySelectorAll('button')].find((item) => item.textContent === name)!
 const checkbox = (name: string): HTMLButtonElement =>
   document.querySelector<HTMLButtonElement>(`[role="checkbox"][aria-label^="${name}"]`)!
+it('requires explicit resource consent and reuses the dialog for application-only export', async () => {
+  inspectDiagnostics.mockResolvedValue({
+    items: [
+      {
+        id: 'resource-logs',
+        name: 'logs/resources',
+        kind: 'resource-log',
+        available: true,
+        sizeBytes: 1234
+      }
+    ]
+  })
+  await act(async () =>
+    root.render(<SessionDiagnosticsDialog identity={{ scope: 'application' }} onClose={onClose} />)
+  )
+  expect(inspectDiagnostics.mock.calls[0][0]).toEqual({
+    scope: 'application',
+    operationId: expect.any(String)
+  })
+  const resource = checkbox('Resource diagnostics')
+  expect(resource.getAttribute('aria-checked')).toBe('false')
+  expect(document.body.textContent).toContain('Originals remain on this device')
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.calls[0][0].selectedItems).toEqual([])
+  await act(async () => fireEvent.click(resource))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.calls[1][0]).toEqual({
+    scope: 'application',
+    operationId: expect.any(String),
+    selectedItems: ['resource-logs']
+  })
+})
 it('exports only selected available items, opts into historical logs and reports partial success', async () => {
   await render()
   const revealInFolder = vi.fn().mockResolvedValue(undefined)

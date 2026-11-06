@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
+import { resourceActivity } from '../resource-diagnostics/activity'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { EnvironmentLeaseManager } from '@aipoch/environment'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
@@ -4098,6 +4099,7 @@ describe('notebook runtime service', () => {
       }
 
       const receipt = await service.executeShellBackground(request)
+      expect(resourceActivity.state.sampling).toBe(true)
       expect(receipt).toMatchObject({
         executionType: 'shell-command',
         sessionId: request.sessionId,
@@ -4115,6 +4117,7 @@ describe('notebook runtime service', () => {
 
       releaseExecution.resolve()
       await service.waitForBackgroundRun(receipt.runId)
+      expect(resourceActivity.state.sampling).toBe(false)
       await expect(
         service.getBackgroundRun({ ...request, submissionIdentity: request.executionInvocationId })
       ).resolves.toMatchObject({

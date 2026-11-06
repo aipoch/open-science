@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
+import { ResourceActivity } from '../resource-diagnostics/activity'
 
 const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve!: () => void
@@ -11,6 +12,28 @@ const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('AcpGenerationActivityOwner', () => {
+  it('observes real operation and activity lifetimes without changing reconnect blockers', async () => {
+    const activity = new ResourceActivity()
+    const owner = new AcpGenerationActivityOwner({
+      activityChanged: vi.fn(),
+      hasActivePrompts: () => false,
+      hasActiveReviewerSessions: () => false,
+      observeWork: () => activity.begin()
+    })
+    const pending = createDeferred()
+    const work = owner.withOperation(() => pending.promise)
+    expect(activity.state.sampling).toBe(true)
+    expect(owner.blockers()).toEqual({ reconnect: false, retirement: true })
+    await expect(
+      owner.withActivity(async () => {
+        throw new Error('cancelled')
+      })
+    ).rejects.toThrow('cancelled')
+    expect(activity.state.sampling).toBe(true)
+    pending.resolve()
+    await work
+    expect(activity.state.sampling).toBe(false)
+  })
   it('holds immutable reconnect and retirement blockers for a balanced activity scope', async () => {
     const activityChanged = vi.fn()
     const owner = new AcpGenerationActivityOwner({

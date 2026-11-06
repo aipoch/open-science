@@ -1,6 +1,10 @@
 import { allowedDuringServiceStop } from './service-command-admission'
 import { ApplicationCommandError } from '../shared/application-command-contract'
 import {
+  resourceRecordingCommandGroup,
+  registerResourceRecordingCommands
+} from './ipc-surfaces/resource-recording'
+import {
   ELECTRON_APPLICATION_COMMAND_CHANNELS,
   RENDERER_CONTRACT_CATALOG
 } from '../shared/renderer-contract-catalog'
@@ -164,6 +168,9 @@ type ApplicationCommandCompositionDependencies = Readonly<{
 }>
 
 const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
+  'resource-recording:get-state',
+  'resource-recording:start',
+  'resource-recording:stop',
   'research-video:start',
   'research-video:status',
   'research-video:remove',
@@ -400,6 +407,9 @@ const createApplicationCommandModules = (
     ),
     defineApplicationCommandModule(dataContentApplicationCommandGroups, (registrar) =>
       registerDataContentApplicationCommands(registrar, dependencies.dataContent)
+    ),
+    defineApplicationCommandModule([resourceRecordingCommandGroup], (registrar) =>
+      registerResourceRecordingCommands(registrar)
     ),
     defineApplicationCommandModule(hostApplicationCommandGroups, (registrar) =>
       registerHostApplicationCommands(registrar, { ...dependencies.host, remoteAccess })

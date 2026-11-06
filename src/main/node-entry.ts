@@ -1,3 +1,7 @@
+import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
+import { ResourceLogStore } from './resource-diagnostics/store'
+import { resourceActivity } from './resource-diagnostics/activity'
+import { ResourceRecording, installResourceRecording } from './resource-diagnostics/recording'
 import {
   configureMainAgentProcessOwnership,
   closeMainAgentProcessOwnership
@@ -145,6 +149,37 @@ async function main(): Promise<void> {
     logDir: join(configRoot, 'logs'),
     consoleFormat: process.stdout.isTTY ? 'text' : 'json'
   })
+  const resourceRecording = new ResourceRecording(
+    process.platform === 'win32'
+      ? async () => {
+          const store = new ResourceLogStore({
+            directory: join(configRoot, 'logs', 'resources'),
+            rootDirectory: configRoot,
+            preserveLive: true,
+            onFailure: () => {
+              createLogger('resource-diagnostics').warn('resource journal unavailable')
+              resourceRecording.fail()
+            }
+          })
+          await store.flush()
+          if (store.status.failed) {
+            await store.close(false)
+            throw new Error('Resource journal unavailable')
+          }
+          const recorder = new ResourceRecorder({ runId: randomUUID(), store })
+          installResourceRecorder(recorder)
+          return {
+            settled: () => recorder.settled(),
+            close: async (clean: boolean) => {
+              installResourceRecorder(undefined)
+              await recorder.close(clean)
+            }
+          }
+        }
+      : undefined,
+    (state) => broadcastToRenderers('resource-recording:changed', state)
+  )
+  installResourceRecording(resourceRecording)
   try {
     await configureMainAgentProcessOwnership(
       new DelegatedProcessOwnership(configRoot, 'main-agent-process-ownership')
@@ -255,6 +290,11 @@ async function main(): Promise<void> {
         failed = true
       }
       // A failed child-process drain must not release ownership while this process remains alive.
+      await resourceRecording
+        .close(!failed && !credentialFailure && !startupExitCode)
+        .catch(() => undefined)
+      installResourceRecording(undefined)
+      installResourceRecorder(undefined)
       if (!failed) {
         try {
           await ownership.close()
@@ -486,6 +526,7 @@ async function main(): Promise<void> {
       ...(passwordStore ? { passwordStore } : {})
     }
     desktop = await startDesktopRuntimeTransport({
+      onResourceActivity: (state) => resourceActivity.setDesktop(state),
       lifetime,
       version: metadata.version,
       generation,
@@ -634,7 +675,10 @@ async function main(): Promise<void> {
         notificationDelivery?.disconnect()
         runtime?.notificationInbox.configureDesktop()
       },
-      onControllerDisconnect: () => runtime?.abortDesktopUpdate(),
+      onControllerDisconnect: () => {
+        void resourceRecording.stop().catch(() => undefined)
+        runtime?.abortDesktopUpdate()
+      },
       onNotificationView: async (state) => {
         if (state.reason === 'view')
           await runtime?.notificationInbox.syncViewState({

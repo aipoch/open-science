@@ -177,6 +177,7 @@ const RENDERER_CAPABILITY_ORDER = Object.freeze([
   'literature',
   'memory',
   'logs',
+  'resource-recording',
   'managed-file-versions',
   'network',
   'notebook',

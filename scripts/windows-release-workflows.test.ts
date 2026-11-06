@@ -323,7 +323,14 @@ describe('post-merge Windows validation', () => {
     expect(workflow.on?.schedule).toEqual([{ cron: '47 16 * * *' }])
     expect(dispatch?.inputs?.mode).toMatchObject({
       default: 'full',
-      options: ['full', 'notebook-sandbox', 'notebook-mutation', 'regressions', 'scheduled-fixes']
+      options: [
+        'full',
+        'portable',
+        'notebook-sandbox',
+        'notebook-mutation',
+        'regressions',
+        'scheduled-fixes'
+      ]
     })
     expect(workflow.on).not.toHaveProperty('workflow_call')
     expect(findStep(plan, 'Check for untested main changes')).toMatchObject({
@@ -332,7 +339,7 @@ describe('post-merge Windows validation', () => {
     })
     expect(job).toMatchObject({
       needs: ['plan', 'windows_dependencies'],
-      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
+      if: "${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'portable' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}",
       env: { VITEST_WINDOWS_FULL_TEST: '1' },
       'runs-on': 'windows-latest',
       'timeout-minutes': 60
@@ -371,7 +378,7 @@ describe('post-merge Windows validation', () => {
       'npm test -- --shard=${{ matrix.shard }}/8 --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000 --reporter=default --reporter=github-actions'
     )
     expect(findStep(job, 'Test complete suite shard').if).toBe(
-      "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}"
+      "${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' }}"
     )
     const regressions = findStep(job, 'Test recent Windows regressions')
     expect(regressions.if).toBe(

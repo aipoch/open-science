@@ -713,9 +713,12 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     )
 
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
-    await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
-      status: 'submitted',
-      last_poll_error: 'dispatch_may_have_started: timeout'
+    // Probe invocation precedes its rejection and the subsequent durable error update.
+    await vi.waitFor(async () => {
+      await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
+        status: 'submitted',
+        last_poll_error: 'dispatch_may_have_started: timeout'
+      })
     })
     const restartedPoller = createComputeExecution().createPoller({
       connectionBroker: serviceBroker(run),

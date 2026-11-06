@@ -1,4 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
+import { recordResourceEvent } from '../resource-diagnostics/recorder'
 import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -83,6 +84,11 @@ const composeAcpRuntimePromptOwners = (
   const endPromptTurn = (sessionId: string, turnToken: string): void => {
     if (startedPromptTurns.get(turnToken) !== sessionId) return
     startedPromptTurns.delete(turnToken)
+    recordResourceEvent('prompt-ended', {
+      runtimeId: base.resourceRuntimeId,
+      sessionId,
+      turnId: turnToken
+    })
     for (const cleanup of [
       () => session.sessionUpdateProjector.clearAssistantOutput(sessionId),
       () => host.onPromptEnded?.(sessionId, turnToken),
@@ -491,6 +497,16 @@ const composeAcpRuntimePromptOwners = (
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
       startedPromptTurns.set(turnToken, sessionId)
+      const scope = base.sessionInteractions.current(sessionId)
+      const provenance = scope?.kind === 'prompt' ? scope.provenanceContext : undefined
+      recordResourceEvent('prompt-started', {
+        runtimeId: base.resourceRuntimeId,
+        epoch: base.connectionResources.epoch,
+        sessionId,
+        turnId: turnToken,
+        frameId: provenance?.agentFrameId ?? provenance?.rootFrameId,
+        activeBranchId: provenance?.messageBranchId
+      })
       callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
     },
     emitState

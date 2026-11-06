@@ -2656,12 +2656,12 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelectorAll('[data-slot="settings-section"]')).toHaveLength(3)
     expect(document.body.querySelector('[data-slot="settings-row"]')).not.toBeNull()
 
-    // The Diagnostics panel surfaces the log file path plus Open and Reveal controls.
+    // The Diagnostics panel surfaces the log file path plus Open and Show in folder controls.
     expect(document.body.textContent).toContain('main.log')
     const buttons = Array.from(document.body.querySelectorAll('button'))
     const openButton = buttons.find((button) => /^open$/i.test((button.textContent ?? '').trim()))
     const revealButton = buttons.find((button) =>
-      /^reveal$/i.test((button.textContent ?? '').trim())
+      /^show in folder$/i.test((button.textContent ?? '').trim())
     )
     expect(openButton).not.toBeUndefined()
     expect(revealButton).not.toBeUndefined()
@@ -2711,7 +2711,7 @@ describe('SettingsPage layout', () => {
     const buttons = Array.from(document.body.querySelectorAll('button'))
     const openButton = buttons.find((button) => /^open$/i.test((button.textContent ?? '').trim()))
     const revealButton = buttons.find((button) =>
-      /^reveal$/i.test((button.textContent ?? '').trim())
+      /^show in folder$/i.test((button.textContent ?? '').trim())
     )
     expect(openButton?.disabled).toBe(true)
     expect(revealButton?.disabled).toBe(true)

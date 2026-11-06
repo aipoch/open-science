@@ -1061,7 +1061,15 @@ describe('working-file evidence', () => {
     })
   })
 
-  it.each(['cross-project', 'missing', 'replaced', 'corrupt', 'symlink', 'working-file'] as const)(
+  it.each([
+    'cross-project',
+    'missing',
+    'replaced',
+    'corrupt',
+    'symlink',
+    'working-file',
+    'working-file-unsafe-identity'
+  ] as const)(
     'freezes an isolated input when immutable sharing is unsafe: %s',
     async (condition) => {
       const { sessionRoot, dataRoot } = await createRoots()
@@ -1129,16 +1137,17 @@ describe('working-file evidence', () => {
                 await rename(originalPath, `${originalPath}.old`)
                 await symlink(workingPath, originalPath)
               }
-              if (
-                condition === 'working-file' &&
-                Number.isSafeInteger(working.dev) &&
-                Number.isSafeInteger(working.ino)
-              )
-                item.immutableSource = {
-                  physicalPath: workingPath,
-                  dev: working.dev,
-                  ino: working.ino
-                }
+              if (condition === 'working-file' || condition === 'working-file-unsafe-identity') {
+                const identity =
+                  condition === 'working-file-unsafe-identity'
+                    ? { dev: working.dev, ino: Number.MAX_SAFE_INTEGER + 1 }
+                    : working
+                // Unsafe working-file IDs must remove the original valid sharing candidate too.
+                item.immutableSource =
+                  Number.isSafeInteger(identity.dev) && Number.isSafeInteger(identity.ino)
+                    ? { physicalPath: workingPath, dev: identity.dev, ino: identity.ino }
+                    : undefined
+              }
             }
             return runEvidenceWorker(root, request, signal)
           }

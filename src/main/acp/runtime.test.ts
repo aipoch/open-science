@@ -1,4 +1,6 @@
 import { AuthorizedDirectoryNotices } from '../local-fs/authorized-directories'
+import { ResourceRecorder, installResourceRecorder } from '../resource-diagnostics/recorder'
+import { ResourceLogStore } from '../resource-diagnostics/store'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import {
   RuntimeSessionOwner,
@@ -7268,6 +7270,98 @@ describe('ACP runtime session management', () => {
     await runtime.resumeSession({ sessionId: 'session-a', cwd: '/workspace' })
 
     expect(runtime.getSnapshot().sessionIds).toEqual(['session-b', 'session-a'])
+  })
+
+  it('correlates process, session, branch and prompt events through real runtime owners', async () => {
+    const root = await createTemporaryRoot()
+    const directory = join(root, 'resources')
+    const store = new ResourceLogStore({ directory })
+    const recorder = new ResourceRecorder({
+      runId: 'correlation-test',
+      store,
+      timers: false,
+      native: {
+        readWindowsResourceBirth: () => '134382258633725281',
+        sampleWindowsResources: async () => ({
+          supported: true,
+          complete: true,
+          startedAt: 1,
+          endedAt: 2,
+          processes: []
+        })
+      }
+    })
+    installResourceRecorder(recorder)
+    const process = new FakeAgentProcess()
+    process.pid = 4242
+    startFakeAgent(process, ['session-resource'])
+    const runtime = new AcpRuntime({
+      appVersion: '0.2.0',
+      defaultCwd: '/workspace',
+      spawnAgent: () => asAgentProcess(process)
+    })
+    try {
+      const session = await runtime.createSession({ cwd: '/workspace' })
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'PRIVATE PROMPT',
+        provenanceContext: {
+          promptMessageId: 'message-resource',
+          agentFrameId: 'frame-resource',
+          messageBranchId: 'branch-resource'
+        }
+      })
+      expect(runtime.resourceDiagnosticSnapshot()).toMatchObject({
+        activePrompts: false,
+        sessions: [expect.objectContaining({ sessionId: 'session-resource' })]
+      })
+      await runtime.disconnect()
+      await recorder.close(true)
+      const names = await readdir(directory)
+      expect(names.some((name) => name.startsWith('incident-'))).toBe(false)
+      const text = (
+        await Promise.all(
+          names
+            .filter((name) => name.endsWith('.jsonl'))
+            .map((name) => readFile(join(directory, name), 'utf8'))
+        )
+      ).join('')
+      const records = text
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      const born = records.find((record) => record.event === 'process-born').data
+      expect(born).toMatchObject({
+        pid: 4242,
+        birth: '134382258633725281',
+        framework: 'claude-code',
+        role: 'acp'
+      })
+      expect(records.find((record) => record.event === 'session-attached').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        epoch: born.epoch,
+        sessionId: 'session-resource'
+      })
+      expect(records.find((record) => record.event === 'prompt-started').data).toMatchObject({
+        runtimeId: born.runtimeId,
+        frameId: 'frame-resource',
+        activeBranchId: 'branch-resource'
+      })
+      expect(records.find((record) => record.event === 'process-exited').data.expected).toBe(true)
+      expect(records.some((record) => record.event === 'prompt-ended')).toBe(true)
+      expect(records.some((record) => record.event === 'session-detached')).toBe(true)
+      const detached = records.find((record) => record.event === 'session-detached').data
+      expect(detached.generation).toBe(
+        records.find((record) => record.event === 'session-attached').data.generation
+      )
+      expect(detached.epoch).toBeUndefined()
+      expect(text).not.toContain('PRIVATE PROMPT')
+      expect(text).not.toContain('/workspace')
+    } finally {
+      installResourceRecorder(undefined)
+      await runtime.disconnect()
+      await recorder.close(false)
+    }
   })
 
   it('moves a context-reset session to its new attachment order', async () => {

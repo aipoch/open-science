@@ -1,13 +1,41 @@
 import { EventEmitter } from 'node:events'
 
-import type { BrowserWindow, PowerMonitor } from 'electron'
+import type { App, BrowserWindow, PowerMonitor } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  installResourceActivityRelay,
   installSystemLifecycleAdapters,
   type ShutdownSignalSource,
   type SystemLifecycleWindow
 } from './system-lifecycle-adapters'
+
+it('relays foreground and suspend events without polling, preventing sleep or waking the computer', () => {
+  const app = new EventEmitter()
+  const power = new EventEmitter()
+  let focused = false
+  const send = vi.fn()
+  const relay = installResourceActivityRelay({
+    app: app as unknown as Pick<App, 'on' | 'removeListener'>,
+    powerMonitor: power as unknown as Pick<PowerMonitor, 'on' | 'removeListener'>,
+    hasFocusedWindow: () => focused,
+    send
+  })
+  expect(relay.state()).toEqual({ foreground: false, suspended: false })
+  focused = true
+  app.emit('browser-window-focus')
+  expect(send).toHaveBeenLastCalledWith({ foreground: true, suspended: false })
+  power.emit('suspend')
+  expect(send).toHaveBeenLastCalledWith({ foreground: true, suspended: true })
+  focused = false
+  app.emit('browser-window-blur')
+  expect(send).toHaveBeenLastCalledWith({ foreground: false, suspended: true })
+  power.emit('resume')
+  expect(send).toHaveBeenLastCalledWith({ foreground: false, suspended: false })
+  relay.dispose()
+  expect(app.eventNames()).toEqual([])
+  expect(power.eventNames()).toEqual([])
+})
 
 const setup = (
   options: { platform?: NodeJS.Platform; headless?: boolean } = {}

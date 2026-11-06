@@ -1,6 +1,9 @@
 /** Local diagnostic observations, never an import/restore format or an agent tool. */
 export type SessionDiagnosticIdentity = { projectId: string; sessionId: string }
-export type SessionDiagnosticRequest = SessionDiagnosticIdentity & { operationId: string }
+export type DiagnosticTarget =
+  | (SessionDiagnosticIdentity & { scope?: 'session' })
+  | { scope: 'application'; projectId?: never; sessionId?: never }
+export type SessionDiagnosticRequest = DiagnosticTarget & { operationId: string }
 export type SensitiveContentEvidence = {
   location: string
   offset: number
@@ -30,6 +33,7 @@ export type SessionDiagnosticItem = {
     | 'session'
     | 'invalid-session'
     | 'log'
+    | 'resource-log'
     | 'database'
     | 'notebook'
     | 'environment'
@@ -56,7 +60,7 @@ export type SessionDiagnosticExportResult = {
 }
 
 /** Main-owned worker inputs; these paths never come from the renderer. */
-export type SessionDiagnosticWorkerInput = SessionDiagnosticIdentity & {
+export type SessionDiagnosticWorkerInput = DiagnosticTarget & {
   action: 'inspect' | 'export'
   dataRoot: string
   configRoot: string

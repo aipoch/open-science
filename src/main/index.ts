@@ -531,7 +531,15 @@ async function startDesktop(): Promise<void> {
     notifyRendererSessionPersistenceFlushAborted,
     rendererSessionPersistenceFlushBlocksShutdown
   } = await import('./session-persistence/renderer-flush')
-  const { installSystemLifecycleAdapters } = await import('./system-lifecycle-adapters')
+  const { installSystemLifecycleAdapters, installResourceActivityRelay } =
+    await import('./system-lifecycle-adapters')
+  const resourceActivityRelay = installResourceActivityRelay({
+    app,
+    powerMonitor,
+    hasFocusedWindow: () => BrowserWindow.getAllWindows().some((window) => window.isFocused()),
+    send: (state) => client?.resourceActivity?.(state)
+  })
+  app.once('will-quit', () => resourceActivityRelay.dispose())
   if (process.platform === 'darwin')
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
@@ -1142,6 +1150,7 @@ async function startDesktop(): Promise<void> {
           recovery?.disconnect(attached)
       }
     })
+    attached.resourceActivity?.(resourceActivityRelay.state())
     return attached
   }
   let repairAuthorization: Awaited<ReturnType<typeof readServiceLifetime>>

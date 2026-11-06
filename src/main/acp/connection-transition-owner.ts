@@ -40,6 +40,16 @@ export class AcpConnectionTransitionOwner {
 
   constructor(private readonly options: AcpConnectionTransitionOwnerOptions) {}
 
+  diagnosticSnapshot(): Record<string, boolean> {
+    return {
+      idleReleasePending: this.idleReleaseIntent,
+      retirementPending: this.retirementIntent || this.retirementInFlight !== undefined,
+      teardownPending: this.plannedDisconnect !== undefined,
+      providerPending: this.providerIntent,
+      skillsPending: this.skillsIntent
+    }
+  }
+
   get barrier(): Promise<void> | undefined {
     return this.barrierPromise
   }

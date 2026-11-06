@@ -1,0 +1,122 @@
+name: Verify published native components
+
+# Read-only acceptance after publication and catalog update. Never compile or publish substitutes
+# for missing artifacts: each target must download the bytes selected by the candidate catalog.
+on:
+  workflow_dispatch:
+  # PRs reuse only a successful five-target verification of identical inputs.
+  # Manual dispatch always performs a fresh CDN audit.
+  pull_request:
+    paths:
+      - build/native-components-lock.json
+      - .github/workflows/native-components-download-check.yml
+      - scripts/native-components.mjs
+      - scripts/native-components.test.ts
+      - build/native-components.json
+      - .github/workflows/native-components.yml
+      - scripts/produce-native-components.mjs
+      - scripts/verify-native-component-signatures.ps1
+      - packages/credential-identity-probe-native/**
+      - packages/process-tree-native/**
+      - packages/safe-file-publisher-native/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-download-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Check native verification inputs
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      key: ${{ steps.inputs.outputs.key }}
+      verified: ${{ steps.verified.outputs.cache-hit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Identify verification inputs
+        id: inputs
+        env:
+          VERIFICATION_KEY: native-download-v1-pr-${{ github.event.pull_request.number }}-${{ hashFiles('package.json', 'package-lock.json', '.npmrc', 'build/native-components*.json', '.github/workflows/native-components*.yml', 'scripts/native-components.mjs', 'scripts/native-components.test.ts', 'scripts/produce-native-components.mjs', 'scripts/verify-native-component-signatures.ps1', 'packages/credential-identity-probe-native/**', 'packages/process-tree-native/**', 'packages/safe-file-publisher-native/**') }}
+        run: echo "key=$VERIFICATION_KEY" >> "$GITHUB_OUTPUT"
+      - name: Find successful verification
+        id: verified
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .native-download-verified
+          key: ${{ steps.inputs.outputs.key }}
+          lookup-only: true
+      - name: Report reused verification
+        if: steps.verified.outputs.cache-hit == 'true'
+        run: echo 'Unchanged native inputs already passed all five targets in this PR. No downloads were repeated; use manual dispatch for a fresh CDN audit.' >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' || needs.plan.outputs.verified != 'true'
+    name: Download ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: darwin-arm64, runner: macos-15 }
+          - { target: darwin-x64, runner: macos-15-intel }
+          - { target: linux-x64, runner: ubuntu-22.04 }
+          - { target: linux-arm64, runner: ubuntu-24.04-arm }
+          - { target: win32-x64, runner: windows-2022 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.23.3'
+          package-manager-cache: false
+      - name: Install verification dependencies only
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Install Linux runtime libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libsecret-1-0 libdbus-1-3
+      - name: Verify fresh CDN downloads
+        shell: bash
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          node -e "require('node:assert/strict').equal(process.platform + '-' + process.arch, process.env.EXPECTED_TARGET)"
+          test ! -d node_modules/.cache/native-components
+          node scripts/native-components.mjs
+      - name: Test downloaded native interfaces
+        shell: bash
+        run: |
+          node --test packages/credential-identity-probe-native/test/*.test.cjs
+          node --test packages/process-tree-native/test/*.cjs
+          node -e "require('./packages/process-tree-native'); require('./packages/safe-file-publisher-native')"
+
+  remember:
+    name: Record successful native verification
+    needs: [plan, verify]
+    if: github.event_name == 'pull_request' && needs.verify.result == 'success'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Write success receipt
+        env:
+          VERIFIED_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p .native-download-verified
+          printf '%s\n' "$VERIFIED_RUN" > .native-download-verified/run.txt
+      - name: Save successful verification
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .native-download-verified
+          key: ${{ needs.plan.outputs.key }}

@@ -101,7 +101,9 @@
     "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
     "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
     "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
-    "src/renderer/src/pages/settings/settings-manual-update-guide.ts"
+    "src/renderer/src/pages/settings/settings-manual-update-guide.ts",
+    "src/renderer/src/pages/settings/ResourceRecordingRow.tsx",
+    "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/settings/AppVersionSection.tsx",
@@ -198,7 +200,8 @@
       "src/renderer/src/pages/settings/token-usage-analytics.test.ts",
       "src/renderer/src/pages/settings/useWslSetupStatus.test.ts",
       "src/renderer/src/pages/settings/validation-message.test.ts",
-      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx"
+      "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
+      "src/renderer/src/pages/settings/ResourceRecordingRow.render.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
