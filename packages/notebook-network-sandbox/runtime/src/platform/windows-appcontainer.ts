@@ -111,6 +111,7 @@ type ProcessTreeTerminationProof = Readonly<{
   confirmState: () => Promise<WindowsProcessState>
   request: () => Promise<boolean>
   requestPath: string
+  release: () => Promise<void>
 }>
 
 type ProcessTreeProofMetadata = Pick<ProcessTreeTerminationProof, 'path' | 'token' | 'requestPath'>
@@ -675,8 +676,9 @@ const createProcessTreeTerminationProof = (
           const state = parse(await readFile(path, 'utf8'))
           if (state !== 'termination-unknown') {
             terminalState = state
-            await rm(path, { force: true }).catch(() => undefined)
-            await rm(requestPath, { force: true }).catch(() => undefined)
+            // Keep the terminal proof until the owning receipt or sandbox cleanup settles. A
+            // restart may need this evidence if the owner dies after confirmation but before it
+            // publishes cleanup completion.
             return state
           }
         } catch {
@@ -715,13 +717,20 @@ const createProcessTreeTerminationProof = (
     })
     return requesting
   }
+  const release = async (): Promise<void> => {
+    await Promise.all([
+      rm(path, { force: true }).catch(() => undefined),
+      rm(requestPath, { force: true }).catch(() => undefined)
+    ])
+  }
   return {
     path,
     token,
     confirmState,
     request,
     confirm: async () => (await confirmState()) !== 'termination-unknown',
-    requestPath
+    requestPath,
+    release
   }
 }
 
@@ -734,6 +743,7 @@ const windowsLaunch = (
   confirmProcessTreeTermination: () => Promise<boolean>
   requestProcessTreeTermination: () => Promise<boolean>
   confirmProcessState: () => Promise<WindowsProcessState>
+  releaseProcessTreeProof: () => Promise<void>
 } => {
   const shell: WindowsShell =
     typeof request.shell === 'object'
@@ -812,7 +822,8 @@ const windowsLaunch = (
     processTreeProof: { path: proof.path, token: proof.token, requestPath: proof.requestPath },
     confirmProcessTreeTermination: proof.confirm,
     requestProcessTreeTermination: proof.request,
-    confirmProcessState: proof.confirmState
+    confirmProcessState: proof.confirmState,
+    releaseProcessTreeProof: proof.release
   }
 }
 
@@ -855,6 +866,7 @@ const windowsSupervisedLaunch = (
   confirmProcessTreeTermination: () => Promise<boolean>
   requestProcessTreeTermination: () => Promise<boolean>
   confirmProcessState: () => Promise<WindowsProcessState>
+  releaseProcessTreeProof: () => Promise<void>
 } => {
   // This path does not apply AppContainer capabilities or ACLs. It only asks the bundled host to
   // contain an opted-in standard-mode worker and its helpers in a kill-on-close Job Object.
@@ -893,7 +905,8 @@ const windowsSupervisedLaunch = (
     processTreeProof: { path: proof.path, token: proof.token, requestPath: proof.requestPath },
     confirmProcessTreeTermination: proof.confirm,
     requestProcessTreeTermination: proof.request,
-    confirmProcessState: proof.confirmState
+    confirmProcessState: proof.confirmState,
+    releaseProcessTreeProof: proof.release
   }
 }
 
