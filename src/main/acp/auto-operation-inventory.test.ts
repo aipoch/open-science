@@ -163,8 +163,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Strict inputs, allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
+        // Reviewed: Inbox input descriptions and file-validation errors explain correction/retry.
+        // Accepted inputs, pre-save validation, trusted origin and allow-once disposition are unchanged.
         'literature/library-mcp-server.ts':
-          'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
+          'b50bd708d22d75792dc680915d1b78ea7f8a61b005289497969e21bc62d2b4f8',
         // Reviewed: linked-PDF reading order is resolved automatically from logical structure
         // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
         // single-use authorization are unchanged.
