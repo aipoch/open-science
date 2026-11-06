@@ -1408,6 +1408,46 @@ describe('session persistence startup', () => {
     }
   )
 
+  it.each([false, true])(
+    'retries compact preferences only when their field remains safe (conflict: %s)',
+    async (conflict) => {
+      const original = createPersistedSession({
+        revision: undefined,
+        runtimeTranscriptOwner: 'main',
+        title: 'Original'
+      })
+      const latest = {
+        ...original,
+        revision: 4,
+        pinned: true,
+        title: conflict ? 'Remote edit' : 'Original'
+      }
+      loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
+      window.api.sessions.loadOne = vi.fn(async () => latest)
+      saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await act(async () => root.render(<Probe />))
+      await act(async () => useSessionStore.getState().renameSession(original.id, 'Local edit'))
+      await act(async () =>
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: ++recoveryEpoch })
+      )
+      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+      )
+      if (conflict) {
+        expect(saveSession).toHaveBeenCalledTimes(1)
+        await expect(flushSessionPersistence()).rejects.toThrow()
+      } else {
+        expect(saveSession.mock.calls.at(-1)?.[0]).toMatchObject({
+          title: 'Local edit',
+          pinned: true
+        })
+        expect(saveSession.mock.calls.at(-1)?.[1]).toMatchObject({ expectedRevision: 4 })
+        await expect(flushSessionPersistence()).resolves.toBeUndefined()
+      }
+    }
+  )
+
   it('retains a not-submitted preference across reconnect and retries only on user action', async () => {
     const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
     loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })

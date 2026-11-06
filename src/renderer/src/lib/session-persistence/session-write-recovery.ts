@@ -5,14 +5,31 @@ import {
   isSessionSizeLimitError,
   type PersistedChatSession,
   type SaveSessionManifestRequest,
-  type SaveSessionOptions
+  type SaveSessionOptions,
+  type SessionConflictRebaseField
 } from '../../../../shared/session-persistence'
 
-export type SessionWriteIntent = Readonly<{
+export type SessionSnapshotWriteIntent = Readonly<{
+  kind?: 'snapshot'
   base?: PersistedChatSession
   session: PersistedChatSession
   options?: SaveSessionOptions
 }>
+
+export type SessionFieldWriteIntent = Readonly<{
+  kind: 'fields'
+  session: Pick<PersistedChatSession, 'id' | 'projectId' | 'title'>
+  baseRevision: number
+  changes: Partial<{
+    [Field in SessionConflictRebaseField]: Readonly<{
+      before: PersistedChatSession[Field]
+      after: PersistedChatSession[Field]
+    }>
+  }>
+  options?: SaveSessionOptions
+}>
+
+export type SessionWriteIntent = SessionSnapshotWriteIntent | SessionFieldWriteIntent
 
 type RetainedWrite = {
   target: string
