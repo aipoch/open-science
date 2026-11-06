@@ -227,7 +227,13 @@ const resolvedMemberTarget = (target: string, property: string, bindings: Bindin
     : mergeTargets(
         possibleTargets(target).map((value) => {
           const member = `${value}.${property}`
-          return bindings.get(member) ?? memberTarget(value ?? '<dynamic>', property)
+          // Object members may be changed through aliases or accessors; keep callable tracking,
+          // but do not export primitive provenance through unresolved property effects.
+          return mergeTargets(
+            possibleTargets(
+              bindings.get(member) ?? memberTarget(value ?? '<dynamic>', property)
+            ).map((target) => (target === JS_PRIMITIVE ? '@noncallable' : target))
+          )
         })
       )
 const jsApplyBoundTarget = (target: string): string | undefined =>
@@ -619,6 +625,40 @@ const jsNativeExecutionGlobal = (name: string): boolean =>
   ) ||
   ['globalThis', 'global', 'Reflect', 'Function'].includes(name)
 
+// Analysis-only provenance; unlike noncallable containers, primitives cannot run coercion hooks.
+const JS_PRIMITIVE = '@js-primitive'
+const jsPrimitiveValue = (node: Node | null, bindings: Bindings, depth = 0): boolean => {
+  if (!node || depth >= 64) return false
+  if (node.type === 'parenthesized_expression')
+    return jsPrimitiveValue(
+      node.namedChildren.find((child) => child.type !== 'comment') ?? null,
+      bindings,
+      depth + 1
+    )
+  if (['null', 'number', 'string', 'true', 'false'].includes(node.type)) return true
+  if (node.type === 'identifier')
+    return possibleTargets(bindings.get(node.text)).every((target) => target === JS_PRIMITIVE)
+  if (node.type === 'template_string')
+    return node.namedChildren
+      .filter((child) => child.type === 'template_substitution')
+      .every((child) =>
+        jsPrimitiveValue(
+          child.namedChildren.find((part) => part.type !== 'comment') ?? null,
+          bindings,
+          depth + 1
+        )
+      )
+  if (['binary_expression', 'unary_expression', 'update_expression'].includes(node.type)) {
+    const operator = fieldChild(node, 'operator')?.text ?? ''
+    if (['&&', '||', '??', 'in', 'instanceof', 'delete'].includes(operator)) return false
+    const operands = node.namedChildren.filter((child) => child.type !== 'comment')
+    return (
+      operands.length > 0 &&
+      operands.every((operand) => jsPrimitiveValue(operand, bindings, depth + 1))
+    )
+  }
+  return false
+}
 const jsNonCallableLiteral = (node: Node | null): boolean => {
   while (node?.type === 'parenthesized_expression')
     node = node.namedChildren.find((child) => child.type !== 'comment') ?? null
@@ -766,6 +806,8 @@ const identity = (
     return identity(node.namedChildren.find((child) => child.type !== 'comment') ?? null, bindings)
   if (node.type === 'list_splat' && pythonEmbeddedSequenceSpread(node))
     return identity(node.namedChild(0), bindings)
+  if (node.tree.language.name === 'javascript' && jsPrimitiveValue(node, bindings))
+    return JS_PRIMITIVE
   // None/NULL/null cannot become callable by assigning or forwarding the same value.
   if (node.type === 'none' || node.type === 'null') return '@noncallable'
   if (node.tree.rootNode.type === 'module' && pythonNonCallableData(node)) return '@noncallable'
@@ -799,6 +841,7 @@ const identity = (
   const assigned = assignment(node)
   if (assigned) {
     const value = identity(assigned.right, bindings)
+    if (value === JS_PRIMITIVE && assigned.left?.type !== 'identifier') return undefined
     // Assigned anonymous bodies are summarized instead of executed by traversal. Their return
     // identity is not yet available here, so keep an immediate invocation reviewable.
     return value === '@inline' ? undefined : value
@@ -1414,7 +1457,7 @@ const bindingUpdates = (
         bind(
           fieldChild(entry, 'value') ?? entry,
           null,
-          value && !['<dynamic>', '@noncallable'].includes(value) && key
+          value && !['<dynamic>', '@noncallable', JS_PRIMITIVE].includes(value) && key
             ? resolvedMemberTarget(value, key, bindings)
             : '<dynamic>'
         )
@@ -1495,6 +1538,27 @@ const recordBinding = (
           ? value!
           : '<dynamic>'
       )
+  }
+  if (
+    language === 'repl' &&
+    ['augmented_assignment_expression', 'update_expression'].includes(node.type)
+  ) {
+    const left = fieldChild(node, node.type === 'update_expression' ? 'argument' : 'left')
+    const right = fieldChild(node, 'right')
+    const operator = fieldChild(node, 'operator')?.text ?? ''
+    const primitive =
+      jsPrimitiveValue(left, bindings) &&
+      (node.type === 'update_expression' ||
+        (!['&&=', '||=', '??='].includes(operator) && jsPrimitiveValue(right, bindings)))
+    const updates = bindingUpdates(
+      left,
+      null,
+      bindings,
+      language,
+      primitive ? JS_PRIMITIVE : '<dynamic>'
+    )
+    for (const [name, value] of updates) bindings.set(name, value)
+    return updates
   }
   const assigned = assignment(node)
   if (assigned) {
@@ -5051,6 +5115,8 @@ export async function analyzeNotebookCodeRisk(
     // These scopes restore only names, unlike full branch/function snapshots. Keep their
     // hidden outer references live until restoration so collection cannot discard their heap.
     const preserveScopedBindings = (names: string[], states: Bindings[]): (() => void) => {
+      const writes = functionModuleWrites.at(-1)
+      const previousWrites = new Set(names.filter((name) => writes?.has(name)))
       const saved = states.map((state) => {
         const values: Bindings = new Map()
         for (const name of names) {
@@ -5061,6 +5127,7 @@ export async function analyzeNotebookCodeRisk(
         return { state, values }
       })
       return () => {
+        for (const name of names) if (!previousWrites.has(name)) writes?.delete(name)
         for (const { state, values } of saved) {
           for (const name of names) {
             spendWork()
@@ -5638,6 +5705,8 @@ export async function analyzeNotebookCodeRisk(
                   'function_declaration',
                   'function_expression',
                   'arrow_function',
+                  'generator_function',
+                  'generator_function_declaration',
                   'method_definition'
                 ].includes(parent.type)
               )
@@ -5776,7 +5845,6 @@ export async function analyzeNotebookCodeRisk(
           bindings.set(CWD_BINDING, INITIAL_CWD)
           bindings.set(FILE_SCOPE_BINDING, `@scope:${functionNode.id}`)
           const savedPrefixes = exceptionPrefixes.splice(0)
-          if (language !== 'python' && parameters) visit(parameters, effects)
           // Bash attaches these redirects to the definition, but performs them on each call.
           if (language === 'bash')
             for (const redirect of fieldChildren(functionNode, 'redirect')) visit(redirect, effects)
@@ -5785,12 +5853,51 @@ export async function analyzeNotebookCodeRisk(
           functionModuleWrites.push(writes)
           if (methodOwners.has(functionNode.id)) objectMethodDepth++
           try {
+            if (language !== 'python' && parameters) visit(parameters, effects)
             if (body) visit(body, effects)
           } finally {
             if (methodOwners.has(functionNode.id)) objectMethodDepth--
             functionModuleWrites.pop()
           }
-          const members = new Map([...writes].map((key) => [key, bindings.get(key) ?? '<dynamic>']))
+          if (language === 'repl') {
+            for (const name of parameterBindings.keys()) writes.delete(name)
+            for (const parameter of jsParameters)
+              for (const name of bindingUpdates(parameter, null, bindings, language).keys())
+                writes.delete(name)
+            // var is function-scoped; lexical declarations are restored with their block scopes.
+            for (const declaration of functionNode.descendantsOfType('variable_declarator')) {
+              if (declaration.parent?.type !== 'variable_declaration') continue
+              let scope = declaration.parent.parent
+              while (
+                scope &&
+                ![
+                  'function_declaration',
+                  'function_expression',
+                  'arrow_function',
+                  'generator_function',
+                  'generator_function_declaration',
+                  'method_definition'
+                ].includes(scope.type)
+              )
+                scope = scope.parent
+              if (scope?.id !== functionNode.id) continue
+              for (const name of bindingUpdates(
+                fieldChild(declaration, 'name'),
+                null,
+                bindings,
+                language
+              ).keys())
+                writes.delete(name)
+            }
+          }
+          const members = new Map(
+            [...writes].map((key) => [
+              key,
+              language === 'repl' && !key.startsWith('@')
+                ? '<dynamic>'
+                : (bindings.get(key) ?? '<dynamic>')
+            ])
+          )
           restore(saved)
           exceptionPrefixes.push(...savedPrefixes)
           const functionIdentity =
@@ -6172,6 +6279,8 @@ export async function analyzeNotebookCodeRisk(
                   : undefined
           for (let callback of callbacks) {
             if (!callback) continue
+            const capturedCallback = argumentValues.has(callback.id)
+            const capturedCallbackTarget = argumentValues.get(callback.id)
             while (callback.type === 'parenthesized_expression') {
               const inner = callback.namedChildren.find((child) => child.type !== 'comment')
               if (!inner) break
@@ -6192,13 +6301,12 @@ export async function analyzeNotebookCodeRisk(
             // Only R's string callback form requests another lookup by the current name.
             const callbackName = language === 'r' ? literal(callback) : undefined
             const callbackTarget =
-              (argumentValues.has(callback.id)
-                ? argumentValues.get(callback.id)
-                : identity(callback, bindings)) ??
+              (capturedCallback ? capturedCallbackTarget : identity(callback, bindings)) ??
               (callbackName ? (bindings.get(callbackName) ?? callbackName) : undefined)
             // Knowing that an object is not callable says nothing about its member values.
             for (const target of possibleTargets(callbackTarget)) {
-              if (target?.startsWith('@noncallable.')) add('dynamic callback target')
+              if (target?.startsWith('@noncallable.') || target?.startsWith(`${JS_PRIMITIVE}.`))
+                add('dynamic callback target')
               else if (target) targets.push(target)
               else if (callback.type !== 'none') add('dynamic callback target')
             }
@@ -6601,13 +6709,15 @@ export async function analyzeNotebookCodeRisk(
       // An assignment's RHS executes with the previous bindings: erase = erase(path) must still
       // recognize the deletion before the name is replaced by the return value.
       const updates = recordBinding(node, bindings, language)
+      if (language === 'repl')
+        for (const key of updates?.keys() ?? []) if (!key.startsWith('@')) noteModuleWrite(key)
       if (language === 'python')
         for (const key of updates?.keys() ?? []) {
           const dot = key.lastIndexOf('.')
           if (pythonModuleMemberKeys(key.slice(0, dot), key.slice(dot + 1)).length)
             noteModuleWrite(key)
         }
-      if (assignment(node) || ['import_statement', 'import_from_statement'].includes(node.type))
+      if (updates || ['import_statement', 'import_from_statement'].includes(node.type))
         capturePrefixes()
     }
     // A failed/timeout cell may leave bindings from any dispatched statement prefix.
