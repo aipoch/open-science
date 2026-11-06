@@ -218,8 +218,10 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         agentName: input.agentName,
         description: input.description,
         systemPrompt: input.systemPrompt,
-        openCodePermissions: { '*': 'deny' },
-        steps: 1
+        // OpenCode's step cap injects a forced-summary prompt on the last step. With
+        // steps: 1 that overrides the requested output format on the first request.
+        // Denied tools and the runtime guards below enforce tool-less inference.
+        openCodePermissions: { '*': 'deny' }
       })
       backend = resolvedBackend
       ensureActive()
