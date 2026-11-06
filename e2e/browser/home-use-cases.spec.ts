@@ -1692,7 +1692,7 @@ test('workspace resize grips follow nearby pointers and preserve drag and keyboa
         const style = getComputedStyle(element, '::before')
         return {
           opacity: style.opacity,
-          top: parseFloat(style.top),
+          top: parseFloat(style.top) + new DOMMatrixReadOnly(style.transform).m42,
           height: parseFloat(style.height),
           color: style.backgroundColor
         }
@@ -1742,6 +1742,37 @@ test('workspace resize grips follow nearby pointers and preserve drag and keyboa
     await expect.poll(async () => (await handle.boundingBox())!.x).toBeLessThan(box.x + 55)
     await page.getByRole('textbox', { name: 'Conversation draft' }).focus()
   }
+})
+
+test('workspace grip tracking does not lay out unchanged panels during dragging', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
+  const handle = page.getByRole('separator', { name: 'Resize left panel' })
+  await expect(handle).toBeVisible()
+  const box = (await handle.boundingBox())!
+  await page.mouse.move(box.x, box.y + 100)
+  await page.mouse.down()
+  await expect(handle).toHaveAttribute('data-separator', 'active')
+  const settle = (): Promise<void> =>
+    page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())))
+  await settle()
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('Performance.enable')
+  const layoutCount = async (): Promise<number> => {
+    const { metrics } = await cdp.send('Performance.getMetrics')
+    return metrics.find(({ name }) => name === 'LayoutCount')!.value
+  }
+  const before = await layoutCount()
+  // Keep the width fixed: pointer-following decoration must not force document layout.
+  for (let step = 1; step <= 15; step++) {
+    await page.mouse.move(box.x, box.y + 100 + step * 5)
+  }
+  await settle()
+  const layouts = (await layoutCount()) - before
+  await page.mouse.up()
+  expect(layouts).toBe(0)
 })
 
 test('workspace drag cursor crosses iframe previews and restores on release', async ({ page }) => {

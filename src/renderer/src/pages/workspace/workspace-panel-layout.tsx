@@ -27,14 +27,19 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 // Match the visible divider and its hit area to the resize library's hover/drag region.
 const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
-  'group/workspace-resize z-20 cursor-grab! hover:cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+  'group/workspace-resize z-20 cursor-grab! hover:cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:[transform:translateY(var(--resize-handle-offset,0px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
 // Keep pointer movement out of React state so hovering does not re-render the workspace.
 const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
   const handle = event.currentTarget
-  handle.style.setProperty(
-    '--resize-handle-y',
-    `${event.clientY - handle.getBoundingClientRect().top}px`
-  )
+  const { top, height } = handle.getBoundingClientRect()
+  // Moving top forces layout before the resize library's document hit-test. Translate the
+  // centered 48px grip instead, keeping it inside the divider without changing its geometry.
+  const maxOffset = Math.max(0, height / 2 - 24)
+  const offset = Math.min(maxOffset, Math.max(-maxOffset, event.clientY - top - height / 2))
+  const value = `${offset}px`
+  if (handle.style.getPropertyValue('--resize-handle-offset') !== value) {
+    handle.style.setProperty('--resize-handle-offset', value)
+  }
 }
 
 const captureResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -639,7 +644,7 @@ const WorkspacePanelLayout = ({
                 onPointerMove={trackResizeHandle}
                 onPointerDown={captureResizeHandle}
                 onPointerLeave={(event) =>
-                  event.currentTarget.style.removeProperty('--resize-handle-y')
+                  event.currentTarget.style.removeProperty('--resize-handle-offset')
                 }
                 aria-label={t('Resize left panel')}
                 disabled={sidebar.state === 'collapsed'}
@@ -669,7 +674,7 @@ const WorkspacePanelLayout = ({
                 onPointerMove={trackResizeHandle}
                 onPointerDown={captureResizeHandle}
                 onPointerLeave={(event) =>
-                  event.currentTarget.style.removeProperty('--resize-handle-y')
+                  event.currentTarget.style.removeProperty('--resize-handle-offset')
                 }
                 aria-label={t('Resize right panel')}
                 disabled={preview.state === 'collapsed'}
