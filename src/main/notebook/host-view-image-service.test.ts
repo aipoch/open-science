@@ -129,6 +129,7 @@ describe('HostViewImageService', () => {
     ['opencode', 'opencode-anthropic'],
     ['codex', 'codex-responses'],
     ['codex', 'codex-responses-compatibility'],
+    ['codex', 'codex-bridge'],
     ['codebuddy', 'codebuddy-openai']
   ] as const)('certifies the visual %s/%s route', (frameworkId, modelRoute) => {
     expect(
@@ -150,18 +151,27 @@ describe('HostViewImageService', () => {
 
   it.each([
     visualBackend({ supportsImageInput: false }),
-    visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge' }),
+    visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge', supportsImageInput: false }),
     visualBackend({ frameworkId: 'claude-code', modelRoute: 'opencode-openai' }),
     visualBackend({ frameworkId: 'unknown', modelRoute: undefined })
-  ])('fails closed for text-only, bridged, mismatched, and unknown routes', (backend) => {
+  ])('fails closed for text-only, mismatched, and unknown routes', (backend) => {
     expect(isHostViewImageBackendCertified(backend)).toBe(false)
   })
 
-  it('keeps the Codex Responses-to-Chat bridge unavailable and rejects a direct call', async () => {
-    const h = harness({
-      backend: visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge' })
-    })
+  it('delivers native images through the Codex Chat bridge and rejects text-only models', async () => {
+    const backend = visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge' })
+    const h = harness({ backend, items: [catalogItem('artifact')] })
 
+    await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(true)
+    await expect(
+      h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
+    ).resolves.toMatchObject({ attached: true, sourceKind: 'artifactVersion' })
+    await expect(h.service.complete('run-1')).resolves.toEqual([
+      { data: Buffer.from('png').toString('base64'), mimeType: 'image/png' }
+    ])
+    await expect(h.service.complete('run-1')).resolves.toEqual([])
+
+    h.setBackend({ ...backend, supportsImageInput: false })
     await expect(h.service.isAvailable({ sessionId: 'calling-session' })).resolves.toBe(false)
     await expect(
       h.service.stage({ versionId: 'artifact-version-1' }, {}, context())
