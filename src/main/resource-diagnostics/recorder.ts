@@ -457,6 +457,10 @@ export class ResourceRecorder {
     return result.reason
   }
 
+  settled(): Promise<void> {
+    return this.pending ?? Promise.resolve()
+  }
+
   async close(clean: boolean): Promise<void> {
     if (this.closed) return
     clearTimeout(this.timer)
@@ -473,14 +477,33 @@ export class ResourceRecorder {
 }
 
 let active: ResourceRecorder | undefined
+// Weak, bounded registrations retain no session contents while recording is off. Existing
+// runtimes can join a recording started later without inspecting them before user consent.
+const observations = new Map<string, WeakRef<ResourceObservation>>()
+let observationSequence = 0
 export const installResourceRecorder = (recorder: ResourceRecorder | undefined): void => {
   active = recorder
+  if (recorder) {
+    for (const [id, ref] of observations) {
+      const owner = ref.deref()
+      if (owner) recorder.register(owner, id)
+      else observations.delete(id)
+    }
+  }
 }
 export const registerResourceObservation = (
   owner: ResourceObservation,
   id?: string
-): string | undefined => active?.register(owner, id)
+): string | undefined => {
+  for (const [key, ref] of observations) if (!ref.deref()) observations.delete(key)
+  const key = id ?? `observation-${++observationSequence}`
+  if (observations.size >= 256 && !observations.has(key)) return undefined
+  observations.set(key, new WeakRef(owner))
+  active?.register(owner, key)
+  return key
+}
 export const unregisterResourceObservation = (id: string): void => {
+  observations.delete(id)
   active?.unregister(id)
 }
 export const recordResourceEvent = (

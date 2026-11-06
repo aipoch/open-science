@@ -22,6 +22,7 @@ type Entry = { line: string; bytes: number; anomaly: boolean }
 type Segment = { name: string; bytes: number }
 type StoreOptions = {
   directory: string
+  preserveLive?: boolean
   windowBytes?: number
   segmentBytes?: number
   queueBytes?: number
@@ -53,6 +54,7 @@ export class ResourceLogStore {
   private readonly ready: Promise<void>
   private live: Segment[] = []
   private nextSegment = 0
+  private resumed = false
   private queue: Entry[] = []
   private pendingBytes = 0
   private rateStarted = 0
@@ -160,9 +162,15 @@ export class ResourceLogStore {
     }
     if (await this.exists('seal.pending')) await this.finishSeal()
     if (await this.exists('open')) await this.seal()
-    else {
+    else if (!this.options.preserveLive) {
       for (const item of this.live) await rm(this.path(item.name))
       this.live = []
+    }
+    // Explicit stop/start retains completed recordings. Never reopen a previous segment for
+    // writing: its identity may have changed while recording was disabled.
+    if (this.live.length) {
+      this.nextSegment = Number(this.live.at(-1)!.name.slice(5, 13)) + 1
+      this.resumed = true
     }
     // Previous-run evidence is sealed before replacing its marker. Unlinking never writes
     // through a file link; exclusive creation rejects any entry inserted before the open.
@@ -283,7 +291,8 @@ export class ResourceLogStore {
     while (this.queue.length && !this.failed && (!this.suspended || this.closed)) {
       let segment = this.live.at(-1)
       const first = this.queue[0]
-      if (!segment || segment.bytes + first.bytes > this.segmentBytes) {
+      if (this.resumed || !segment || segment.bytes + first.bytes > this.segmentBytes) {
+        this.resumed = false
         if (this.nextSegment >= 100_000_000) throw new Error('Resource segment sequence exhausted')
         segment = { name: `live-${String(this.nextSegment++).padStart(8, '0')}.jsonl`, bytes: 0 }
         this.live.push(segment)

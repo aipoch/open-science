@@ -26,6 +26,7 @@ import { APP } from '../../../../shared/app-config'
 import { AppVersionSection } from './AppVersionSection'
 import { SettingsRow, SettingsSection } from './SettingsLayout'
 import { SessionDiagnosticsDialog } from '../workspace/SessionDiagnosticsDialog'
+import { ResourceRecordingRow } from './ResourceRecordingRow'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -269,11 +270,19 @@ const GeneralPanel = (): React.JSX.Element => {
       <SettingsSection
         data-settings-anchor="general.diagnostics"
         title={t('Diagnostics')}
-        description={t(
-          "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
-        )}
+        action={
+          sessionDiagnosticsAvailable() ? (
+            <Button type="button" variant="outline" onClick={() => setExportDiagnostics(true)}>
+              {t('Export diagnostics…')}
+            </Button>
+          ) : undefined
+        }
         aria-label={t('Diagnostics')}
       >
+        {sessionDiagnosticsAvailable() &&
+          window.api.platform === 'win32' &&
+          window.api.resourceRecording && <ResourceRecordingRow />}
+
         <SettingsRow
           label={t('Log file')}
           className="pt-0 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4"
@@ -322,7 +331,7 @@ const GeneralPanel = (): React.JSX.Element => {
               disabled={!logExists}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
-              {t('Reveal')}
+              {t('Show in folder')}
             </Button>
             <Button
               type="button"
@@ -336,18 +345,6 @@ const GeneralPanel = (): React.JSX.Element => {
           </div>
         </SettingsRow>
 
-        {sessionDiagnosticsAvailable() && (
-          <SettingsRow
-            label={t('Export diagnostics')}
-            description={t(
-              'Save application logs for developers. Resource diagnostics require your selection; nothing is uploaded.'
-            )}
-          >
-            <Button type="button" variant="outline" onClick={() => setExportDiagnostics(true)}>
-              {t('Export diagnostics…')}
-            </Button>
-          </SettingsRow>
-        )}
         {exportDiagnostics && (
           <SessionDiagnosticsDialog
             identity={{ scope: 'application' }}
@@ -355,18 +352,23 @@ const GeneralPanel = (): React.JSX.Element => {
           />
         )}
 
-        <pre
-          className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
-          aria-label={t('Log file path')}
-          tabIndex={0}
-        >
-          {logPath ??
-            (isCheckingLog
-              ? t('Loading…')
-              : logStatusError !== undefined
-                ? '—'
-                : t('Not available yet.'))}
-        </pre>
+        <details className="mt-1 min-w-0 text-xs text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded-sm py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2">
+            {t('Log file path')}
+          </summary>
+          <pre
+            className="mt-1 overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
+            aria-label={t('Log file path')}
+            tabIndex={0}
+          >
+            {logPath ??
+              (isCheckingLog
+                ? t('Loading…')
+                : logStatusError !== undefined
+                  ? '—'
+                  : t('Not available yet.'))}
+          </pre>
+        </details>
 
         {logStatus &&
         logPath &&
@@ -417,18 +419,9 @@ const GeneralPanel = (): React.JSX.Element => {
           </Notice>
         ) : null}
 
-        <p className="mt-3 text-xs text-muted-foreground">
-          {/* Trans clones each component and injects the translated text as its children, so the
-              empty string here is only satisfying the required prop — it never renders. */}
-          <Trans
-            i18nKey="Something not working? <docsLink>Open an issue on GitHub</docsLink> and attach the log above. It stays on this device and is never sent automatically; it may contain local file paths, so review it before sharing."
-            components={{
-              // Named docsLink, not link: <link> is a void HTML element, so the parser Trans uses
-              // self-closes it and the label would render as a sibling of an empty anchor.
-              docsLink: <ExternalTextLink href={APP.links.githubIssues}>{''}</ExternalTextLink>
-            }}
-          />
-        </p>
+        <div className="mt-3 text-xs">
+          <ExternalTextLink href={APP.links.githubIssues}>{t('Report an issue')}</ExternalTextLink>
+        </div>
       </SettingsSection>
 
       <SettingsSection

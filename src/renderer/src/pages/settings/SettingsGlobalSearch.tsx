@@ -174,7 +174,7 @@ const SETTINGS_SEARCH_INDEX: ReadonlyArray<SettingsSearchEntry> = [
     panel: 'general',
     labelKey: 'Diagnostics',
     keywords: 'log file export resource',
-    searchLabels: ['Export diagnostics']
+    searchLabels: ['Export diagnostics', 'Resource usage']
   },
   {
     id: 'general.cli',

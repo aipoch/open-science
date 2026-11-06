@@ -85,7 +85,7 @@ it('requires explicit resource consent and reuses the dialog for application-onl
   })
   const resource = checkbox('Resource diagnostics')
   expect(resource.getAttribute('aria-checked')).toBe('false')
-  expect(document.body.textContent).toContain('originals stay on this device')
+  expect(document.body.textContent).toContain('Originals remain on this device')
   await act(async () => fireEvent.click(button('Export')))
   expect(exportDiagnostics.mock.calls[0][0].selectedItems).toEqual([])
   await act(async () => fireEvent.click(resource))

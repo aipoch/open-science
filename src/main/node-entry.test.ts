@@ -133,6 +133,7 @@ vi.mock('./resource-diagnostics/recorder', () => ({
       f.resourceInit(options)
     }
     close = f.resourceClose
+    settled = async (): Promise<void> => {}
   },
   installResourceRecorder: vi.fn()
 }))
@@ -141,6 +142,9 @@ vi.mock('./resource-diagnostics/store', () => ({
     constructor(options: unknown) {
       f.resourceStore(options)
     }
+    flush = async (): Promise<void> => {}
+    close = async (): Promise<void> => {}
+    status = { failed: false }
   }
 }))
 vi.mock('node:child_process', async (original) => ({
@@ -347,7 +351,7 @@ it.each([1, 75])(
       f.closeNetwork.mock.invocationCallOrder[0]
     )
     expect(f.closeOwnership).toHaveBeenCalledOnce()
-    if (process.platform === 'win32') expect(f.resourceClose).toHaveBeenCalledWith(false)
+    expect(f.resourceInit).not.toHaveBeenCalled()
     // A real process cannot reach the outer catch after its first exit.
     expect.soft(process.exit).toHaveBeenNthCalledWith(1, code)
     expect
@@ -374,19 +378,8 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.disposeCipher).toHaveBeenCalledOnce()
   expect(process.exitCode).toBe(1)
   expect(f.initLogs).toHaveBeenCalledWith({ logDir: expect.stringMatching(/config[/\\]logs$/) })
-  if (process.platform === 'win32') {
-    expect(f.resourceInit).toHaveBeenCalledOnce()
-    expect(f.resourceInit.mock.invocationCallOrder[0]).toBeGreaterThan(
-      f.acquireOwnership.mock.invocationCallOrder[0]
-    )
-    expect(f.resourceStore).toHaveBeenCalledWith(
-      expect.objectContaining({ directory: expect.stringMatching(/logs[/\\]resources$/) })
-    )
-    expect(f.resourceClose).toHaveBeenCalledWith(false)
-    expect(f.resourceClose.mock.invocationCallOrder[0]).toBeLessThan(
-      f.closeOwnership.mock.invocationCallOrder[0]
-    )
-  } else expect(f.resourceInit).not.toHaveBeenCalled()
+  expect(f.resourceInit).not.toHaveBeenCalled()
+  expect(f.resourceStore).not.toHaveBeenCalled()
   expect(process.env.OPEN_SCIENCE_STARTUP_ATTEMPT).toBeUndefined()
   const messages = send.mock.calls.map(([message]) => backendStartupStatusSchema.parse(message))
   expect(messages).toContainEqual({
@@ -479,6 +472,27 @@ const waitForReady = async (
     ).toBe(true)
   )
 }
+
+it('creates diagnostics only after consent and stops them when the controlling desktop disconnects', async () => {
+  const send = await startHealthyRuntime()
+  await waitForReady(send)
+  const { resourceRecording } = await import('./resource-diagnostics/recording')
+  expect(f.resourceInit).not.toHaveBeenCalled()
+  expect(f.resourceStore).not.toHaveBeenCalled()
+  expect(resourceRecording.getState()).toBe(process.platform === 'win32' ? 'off' : 'unsupported')
+  if (process.platform === 'win32') {
+    await resourceRecording.start()
+    expect(f.resourceInit).toHaveBeenCalledOnce()
+    expect(f.resourceInit.mock.invocationCallOrder[0]).toBeGreaterThan(
+      f.acquireOwnership.mock.invocationCallOrder[0]
+    )
+    f.startDesktop.mock.calls[0][0].onControllerDisconnect?.()
+    await vi.waitFor(() => expect(resourceRecording.getState()).toBe('off'))
+    expect(f.resourceClose).toHaveBeenCalledWith(true)
+  }
+  f.lifecycle.mock.calls[0][0].quit()
+  await vi.waitFor(() => expect(process.exitCode).toBe(0))
+})
 
 it('publishes readiness only after the endpoint opens and drains services once on quit', async () => {
   const endpoint = Promise.withResolvers<{ port: number }>()

@@ -304,9 +304,9 @@ export const SessionDiagnosticsDialog = ({
           .map((item) =>
             single(
               item,
-              t('Resource diagnostics (including pre-failure records)'),
+              t('Resource diagnostics'),
               t(
-                'Includes system memory, process identities and session activity across this app. Retained pre-failure and current records are copied; originals stay on this device. Select only if you agree to share these records.'
+                'Memory, processes and session activity, including records retained before a failure. Originals remain on this device.'
               ),
               [
                 'logs/resources/incident-*.jsonl',
@@ -386,7 +386,7 @@ export const SessionDiagnosticsDialog = ({
             </div>
             <Dialog.Description className={dialogDescriptionClassName}>
               {t(
-                'Exports diagnostic records, error details and execution errors. Review for sensitive content before sharing. Saved locally; nothing is uploaded.'
+                'Choose what to save. Review the exported files before sharing; nothing is uploaded.'
               )}
             </Dialog.Description>
           </div>
