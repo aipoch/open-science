@@ -2642,11 +2642,16 @@ describe('WorkspaceSidebar accessible render', () => {
     const computeButton = buttons.find((button) => getTextContent(button).trim() === 'Compute')
 
     const marketplaceButton = buttons.find(
-      (button) => getTextContent(button).trim() === 'Marketplace'
+      (button) => getTextContent(button).trim() === 'Resource center'
     )
     expect(buttons[newButtonIndex + 5]).toBe(marketplaceButton)
     expect(marketplaceButton?.props['aria-controls']).toBe('right-panel')
     expect(marketplaceButton?.props['aria-pressed']).toBe(true)
+    expect(marketplaceButton?.props.title).toBe('Resource center')
+    const marketplaceLabel = collectElements(marketplaceButton).find(
+      (element) => element.type === 'span' && getTextContent(element).trim() === 'Resource center'
+    )
+    expect(String(marketplaceLabel?.props.className ?? '')).toContain('truncate')
     ;(marketplaceButton?.props.onClick as () => void)()
     expect(onOpenMarketplace).toHaveBeenCalledTimes(1)
     expect(newButtonIndex).toBeGreaterThanOrEqual(0)

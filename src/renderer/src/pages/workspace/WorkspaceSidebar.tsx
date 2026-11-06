@@ -1242,6 +1242,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
           <div className="flex h-9 items-center gap-1 px-1.5">
             <button
               type="button"
+              title={t('Resource center')}
               className={cn(
                 'flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-sm text-text-000 hover:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
                 isMarketplaceOpen && 'bg-bg-300',
@@ -1253,7 +1254,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
               onClick={onOpenMarketplace}
             >
               <Store className="size-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
-              <span>{t('Marketplace')}</span>
+              <span className="min-w-0 truncate">{t('Resource center')}</span>
             </button>
           </div>
 

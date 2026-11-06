@@ -311,7 +311,7 @@ const PreviewTab = ({
         : tab.type === 'tool' && tab.toolKind === 'files'
           ? t('Files')
           : tab.type === 'tool' && tab.toolKind === 'marketplace'
-            ? t('Marketplace')
+            ? t('Resource center')
             : tab.title
 
   return (
