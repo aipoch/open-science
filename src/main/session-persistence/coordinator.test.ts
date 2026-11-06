@@ -7994,3 +7994,53 @@ describe('discarding damaged Session recovery authority', () => {
     expect(repository.loadAllWithDiagnostics).toHaveBeenCalledOnce()
   })
 })
+
+it.each(['session', 'project'] as const)(
+  'drains derived work before acquiring the %s deletion lock',
+  async (kind) => {
+    const repository = createSessionRepository()
+    const stopped = async <T>(operation: () => Promise<T>): Promise<T> => {
+      // A publisher already owns or needs this same lane. Draining under the deletion lock deadlocks.
+      await coordinator.runSessionMutation('project-1', 'session-1', async () => undefined)
+      return operation()
+    }
+    const entered = vi.fn()
+    const work = {
+      withSessionStopped<T>(
+        _project: string,
+        _session: string,
+        operation: () => Promise<T>
+      ): Promise<T> {
+        entered('session')
+        return stopped(operation)
+      },
+      withProjectStopped<T>(_project: string, operation: () => Promise<T>): Promise<T> {
+        entered('project')
+        return stopped(operation)
+      }
+    }
+    const coordinator = new SessionPersistenceCoordinator(
+      repository,
+      createFileIndex(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      work
+    )
+    if (kind === 'session') {
+      await coordinator.deleteSession('project-1', 'session-1')
+      expect(entered).toHaveBeenCalledExactlyOnceWith('session')
+    } else {
+      await coordinator.deleteProjectSessions('project-1')
+      expect(entered).toHaveBeenCalledExactlyOnceWith('project')
+    }
+  }
+)

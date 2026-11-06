@@ -12,11 +12,13 @@ const resolveConfig = config as (input: { command: 'build' | 'serve'; mode: stri
 const resolvedConfig = resolveConfig({ command: 'build', mode: 'production' })
 
 describe('electron-vite main process dependencies', () => {
-  it('bundles the source-only Notebook network sandbox package', () => {
+  it('bundles the Notebook sandbox and portable film export entry', () => {
     expect(resolvedConfig).toMatchObject({
       main: {
         build: {
-          externalizeDeps: { exclude: ['@aipoch/notebook-network-sandbox'] }
+          externalizeDeps: {
+            exclude: ['@aipoch/notebook-network-sandbox', '@aipoch/research-film']
+          }
         }
       },
       renderer: {

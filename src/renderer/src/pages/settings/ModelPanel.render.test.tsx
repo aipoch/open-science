@@ -12,7 +12,7 @@ let snapshot: LocalModelSnapshot
 let ocrSnapshot: LocalModelSnapshot
 const api = {
   getSnapshot: vi.fn(async (capability?: LocalModelCapability) =>
-    capability === 'ocr' ? ocrSnapshot : snapshot
+    capability === 'ocr' || capability === 'research-narration' ? ocrSnapshot : snapshot
   ),
   install: vi.fn(
     async () => (snapshot = { ...snapshot, availability: 'installing', hasFiles: true })
@@ -146,6 +146,8 @@ describe('model settings A tabs', () => {
     )
     expect(await api.getSnapshot.mock.results[0]?.value).toEqual(snapshot)
     expect(container.textContent).toContain('PDF figures and tables')
+    expect(container.textContent).toContain('Research narration')
+    expect(api.getSnapshot).not.toHaveBeenCalledWith('video-export')
   })
   it('installs, cancels and removes retained partial files only after confirmation', async () => {
     await act(async () => root.render(<Harness />))

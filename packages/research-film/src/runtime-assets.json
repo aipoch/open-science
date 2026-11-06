@@ -1,0 +1,428 @@
+[
+  {
+    "package": "kokoro-js",
+    "version": "1.2.1",
+    "path": "dist/kokoro.cjs",
+    "file": "runtime-kokoro-js-dist-kokoro.cjs",
+    "url": "https://unpkg.com/kokoro-js@1.2.1/dist/kokoro.cjs",
+    "size": 10967,
+    "sha256": "689a92b6168b56f19b0bebf795371803807073835e3b39110a530d143ad4052d"
+  },
+  {
+    "package": "kokoro-js",
+    "version": "1.2.1",
+    "path": "voices/af_heart.bin",
+    "file": "runtime-kokoro-js-voices-af_heart.bin",
+    "url": "https://unpkg.com/kokoro-js@1.2.1/voices/af_heart.bin",
+    "size": 522240,
+    "sha256": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b"
+  },
+  {
+    "package": "kokoro-js",
+    "version": "1.2.1",
+    "path": "LICENSE",
+    "file": "runtime-kokoro-js-license.txt",
+    "url": "https://unpkg.com/kokoro-js@1.2.1/LICENSE",
+    "size": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "package": "phonemizer",
+    "version": "1.2.1",
+    "path": "dist/phonemizer.cjs",
+    "file": "runtime-phonemizer-dist-phonemizer.cjs",
+    "url": "https://unpkg.com/phonemizer@1.2.1/dist/phonemizer.cjs",
+    "size": 1322383,
+    "sha256": "24d24f118e44dc60af797881617415be24d84de53c1fc1a8f7f9974ab52531cc"
+  },
+  {
+    "package": "phonemizer",
+    "version": "1.2.1",
+    "path": "LICENSE",
+    "file": "runtime-phonemizer-license.txt",
+    "url": "https://unpkg.com/phonemizer@1.2.1/LICENSE",
+    "size": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "package": "@huggingface/transformers",
+    "version": "3.8.1",
+    "path": "dist/transformers.node.cjs",
+    "file": "runtime-huggingface-transformers-dist-transformers.node.cjs",
+    "url": "https://unpkg.com/@huggingface/transformers@3.8.1/dist/transformers.node.cjs",
+    "size": 1647845,
+    "sha256": "577db595dcb24a332d8148d88f0caa0874604d4d0ce315e96fe42583754653c2"
+  },
+  {
+    "package": "@huggingface/transformers",
+    "version": "3.8.1",
+    "path": "LICENSE",
+    "file": "runtime-huggingface-transformers-license.txt",
+    "url": "https://unpkg.com/@huggingface/transformers@3.8.1/LICENSE",
+    "size": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/backend-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-backend-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/backend-impl.js",
+    "size": 5608,
+    "sha256": "3d25321895995f7e9480570b9a88f121049adf152e1829d0ecb11218da02d487"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/backend.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-backend.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/backend.js",
+    "size": 433,
+    "sha256": "325aaee7a2649ea27629666f3ca01c0d80b9751e704ce502e43a8352390749b4"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/env-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-env-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/env-impl.js",
+    "size": 969,
+    "sha256": "35cd8cac33973538eab471b68622c86c35a6896f4307d1a74c9ca0eda7abbac6"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/env.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-env.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/env.js",
+    "size": 366,
+    "sha256": "22c7647f8ca1c1b83b437a92b95fee1457fcb72866fa029616b8f146dc609be8"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/index.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-index.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/index.js",
+    "size": 1955,
+    "sha256": "d7dd6cc9790e87299099fcd1b0ccb4969c01591d7eec0383a1c64dbea133dd1a"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/inference-session-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-inference-session-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/inference-session-impl.js",
+    "size": 8574,
+    "sha256": "c22095b969a6e4e7c3f0c4361b903f32d343ee6a91c92dd3ebdefe94dc0cf54f"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/inference-session.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-inference-session.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/inference-session.js",
+    "size": 467,
+    "sha256": "458be26f316c5068d32a56ddbc30ca0aa687c636e079b3d161a69f0f14a683f1"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/onnx-model.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-onnx-model.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/onnx-model.js",
+    "size": 211,
+    "sha256": "667f5fdac4b6df25e17f8a864d4dc619507f541f9fa0aafb6d3572fcca1e25e5"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/onnx-value.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-onnx-value.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/onnx-value.js",
+    "size": 211,
+    "sha256": "8446854766f4955ce438a7338216f49223767ecc508bb502b73a3dc1a1f1998e"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-conversion-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-conversion-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-conversion-impl.js",
+    "size": 8153,
+    "sha256": "c99276518d66de5826798a3c488166ed827fcd0db2372ca3ace06338cef27e5a"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-conversion.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-conversion.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-conversion.js",
+    "size": 218,
+    "sha256": "28cc462d4a9ea556ecc86c0e6d16a51d61b58d5bc5b4b7b48976b14bc8035bdc"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-factory-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-factory-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-factory-impl.js",
+    "size": 11656,
+    "sha256": "a3204838a2c14416e4e61c968dc17c663ab3c9b8b2c4a8b7f2a1c5b06e3e5173"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-factory.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-factory.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-factory.js",
+    "size": 215,
+    "sha256": "13b8d735350b828a49bda8aeec50b1dac888cf42268006efc4312f50a88b6906"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-impl-type-mapping.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-impl-type-mapping.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-impl-type-mapping.js",
+    "size": 2995,
+    "sha256": "333110edbbffdb7575ea340cb341bcaf691862d6594a649db28097f7d8cb19b7"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-impl.js",
+    "size": 16458,
+    "sha256": "11645352ba5d08971344717d3339f86aac560f84f29229b2ebe07f1ec8aa8905"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-utils-impl.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-utils-impl.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-utils-impl.js",
+    "size": 2213,
+    "sha256": "e7b1db989d33d54bdd1807b080a0989ff0b10d5f7dd8c93b92bbf293103aa4d5"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor-utils.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor-utils.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor-utils.js",
+    "size": 213,
+    "sha256": "d3f577e90dc2257c72ac728e5e6355c34af0342d971158d9f22b69d22aa97b8d"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/tensor.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-tensor.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/tensor.js",
+    "size": 393,
+    "sha256": "9097114de356750f36f28776fa6ccd08d13694f0f9aac9e7669c30b6c43153f7"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/trace.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-trace.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/trace.js",
+    "size": 1783,
+    "sha256": "f7b21eb2aa4c44bf85274c58b803ae49689a929911e103297fb26220e39e11e6"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/type-helper.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-type-helper.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/type-helper.js",
+    "size": 212,
+    "sha256": "7f786da8d2a611ad751c70a74edf4d9acfccd26be8e5c6b1cb730f982892bf32"
+  },
+  {
+    "package": "onnxruntime-common",
+    "version": "1.21.0",
+    "path": "dist/cjs/version.js",
+    "file": "runtime-onnxruntime-common-dist-cjs-version.js",
+    "url": "https://unpkg.com/onnxruntime-common@1.21.0/dist/cjs/version.js",
+    "size": 361,
+    "sha256": "e6d53dc54d8afbb5330bac1dfd244ca3ee41538cb9f878b8599a9063f194a2d6"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "dist/backend.js",
+    "file": "runtime-onnxruntime-node-dist-backend.js",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/dist/backend.js",
+    "size": 4013,
+    "sha256": "35e464b195c0e9d32c6c789664f83e6104b2eacb19cbe342c7fa7da0b163db41"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "dist/binding.js",
+    "file": "runtime-onnxruntime-node-dist-binding.js",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/dist/binding.js",
+    "size": 1507,
+    "sha256": "266a182fa5802f8f76c93979663eb572e0164577f4f59bd70bbb92c4accb83aa"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "dist/index.js",
+    "file": "runtime-onnxruntime-node-dist-index.js",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/dist/index.js",
+    "size": 1602,
+    "sha256": "019eb02133b94b1f7fdf2d89eb93b590ce1288d271f7b280647fb3978e6391fa"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "dist/version.js",
+    "file": "runtime-onnxruntime-node-dist-version.js",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/dist/version.js",
+    "size": 361,
+    "sha256": "e6d53dc54d8afbb5330bac1dfd244ca3ee41538cb9f878b8599a9063f194a2d6"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/darwin/arm64/libonnxruntime.1.21.0.dylib",
+    "target": "darwin/arm64",
+    "file": "runtime-onnxruntime-node-darwin-arm64-bin-napi-v3-darwin-arm64-libonnxruntime.1.21.0.dylib",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/darwin/arm64/libonnxruntime.1.21.0.dylib",
+    "size": 31847304,
+    "sha256": "1bce2d05d778282c912e7fab6d5dfc5fa851f5797e8d0914a62d4adeb1d4d82b"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/darwin/arm64/onnxruntime_binding.node",
+    "target": "darwin/arm64",
+    "file": "runtime-onnxruntime-node-darwin-arm64-bin-napi-v3-darwin-arm64-onnxruntime_binding.node",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/darwin/arm64/onnxruntime_binding.node",
+    "size": 233685,
+    "sha256": "8ad39fe71b4e4683ae5ae7b5edb8f4d2fb47f58dc139c68a2a14d3977281b9a5"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/darwin/x64/libonnxruntime.1.21.0.dylib",
+    "target": "darwin/x64",
+    "file": "runtime-onnxruntime-node-darwin-x64-bin-napi-v3-darwin-x64-libonnxruntime.1.21.0.dylib",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/darwin/x64/libonnxruntime.1.21.0.dylib",
+    "size": 35619040,
+    "sha256": "eadc928764eff24f8b2f332d51a6aa03d82abe6febf0fb5016f2c42dea43c8e1"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/darwin/x64/onnxruntime_binding.node",
+    "target": "darwin/x64",
+    "file": "runtime-onnxruntime-node-darwin-x64-bin-napi-v3-darwin-x64-onnxruntime_binding.node",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/darwin/x64/onnxruntime_binding.node",
+    "size": 233520,
+    "sha256": "a87a5f6b21777c733ce3b8cfb45e806d2e72b7331fe80e39fc22cec746dab1af"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/linux/arm64/libonnxruntime.so.1.21.0",
+    "target": "linux/arm64",
+    "file": "runtime-onnxruntime-node-linux-arm64-bin-napi-v3-linux-arm64-libonnxruntime.so.1.21.0",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/linux/arm64/libonnxruntime.so.1.21.0",
+    "size": 17446360,
+    "sha256": "36671b53885a8433882c4db360138bd060f3580f7d7cb6578050e755e83b6128"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/linux/arm64/onnxruntime_binding.node",
+    "target": "linux/arm64",
+    "file": "runtime-onnxruntime-node-linux-arm64-bin-napi-v3-linux-arm64-onnxruntime_binding.node",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/linux/arm64/onnxruntime_binding.node",
+    "size": 392760,
+    "sha256": "29f5a0b8e5a794736890c8c737592f503269fc00bdac352245b80e983a79bb2d"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/linux/x64/libonnxruntime.so.1.21.0",
+    "target": "linux/x64",
+    "file": "runtime-onnxruntime-node-linux-x64-bin-napi-v3-linux-x64-libonnxruntime.so.1.21.0",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/linux/x64/libonnxruntime.so.1.21.0",
+    "size": 21914784,
+    "sha256": "05bfddeefc536a44478c20226218dae8853995518bb2a994b4fa15a996f5f412"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/linux/x64/libonnxruntime_providers_shared.so",
+    "target": "linux/x64",
+    "file": "runtime-onnxruntime-node-linux-x64-bin-napi-v3-linux-x64-libonnxruntime_providers_shared.so",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/linux/x64/libonnxruntime_providers_shared.so",
+    "size": 14632,
+    "sha256": "950dbbe7c7a6f73b7f574c0e2308417e1e90e1f73b6472d799e25b47c6fdee82"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/linux/x64/onnxruntime_binding.node",
+    "target": "linux/x64",
+    "file": "runtime-onnxruntime-node-linux-x64-bin-napi-v3-linux-x64-onnxruntime_binding.node",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/linux/x64/onnxruntime_binding.node",
+    "size": 347368,
+    "sha256": "02f47073236ef20db4c27e1923cd601d21d8ac730a80efb656a7241643ad1e07"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/win32/x64/DirectML.dll",
+    "target": "win32/x64",
+    "file": "runtime-onnxruntime-node-win32-x64-bin-napi-v3-win32-x64-directml.dll",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/win32/x64/DirectML.dll",
+    "size": 18527776,
+    "sha256": "9c9e6d822561c6c41b90e6994b3e8857cf1d66dbfb1e0c4c799c7c89b4e92da1"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/win32/x64/onnxruntime.dll",
+    "target": "win32/x64",
+    "file": "runtime-onnxruntime-node-win32-x64-bin-napi-v3-win32-x64-onnxruntime.dll",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/win32/x64/onnxruntime.dll",
+    "size": 16021504,
+    "sha256": "cf96b2b7de5328adafe79f9b1d818abdc04931cbcb39c6a6c9ae2ddc872ef63b"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "bin/napi-v3/win32/x64/onnxruntime_binding.node",
+    "target": "win32/x64",
+    "file": "runtime-onnxruntime-node-win32-x64-bin-napi-v3-win32-x64-onnxruntime_binding.node",
+    "url": "https://unpkg.com/onnxruntime-node@1.21.0/bin/napi-v3/win32/x64/onnxruntime_binding.node",
+    "size": 280632,
+    "sha256": "05c102e658b33f0d8294b11ded5a53d4c3266182cf27eee60742e42ddf5c9462"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "LICENSE",
+    "file": "runtime-onnx-license.txt",
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.0/LICENSE",
+    "size": 1073,
+    "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c"
+  },
+  {
+    "package": "onnxruntime-node",
+    "version": "1.21.0",
+    "path": "ThirdPartyNotices.txt",
+    "file": "runtime-onnx-notices.txt",
+    "url": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.21.0/ThirdPartyNotices.txt",
+    "size": 316114,
+    "sha256": "8c06e8cff286a4a117b3b246a4c7da68428a144af757823db50e3d6520941ec6"
+  }
+]

@@ -7878,6 +7878,69 @@ print(reader("."))`)
     expect((await service.listRuntimes(request)).bindings.python?.runtimeId).toBe(runtimes[0].envId)
   })
 
+  it.each(['python', 'r'] as const)(
+    'selects the verified %s default before other enabled runtimes on first execution',
+    async (language) => {
+      const { service, execute, request, runtimes } = await harness(2)
+      for (const runtime of runtimes) runtime.language = language
+      const environment = language === 'r' ? 'default-r' : 'default-python'
+      // A misleading label must not make the external runtime the app-managed default.
+      runtimes[0].label = environment
+      runtimes[1].provenance = 'agent-created'
+      runtimes[1].condaEnv = 'analysis'
+      const interpreter = join(request.workspaceCwd, 'managed', environment)
+      runtimes.push({
+        language,
+        provenance: 'app-managed',
+        envId: interpreter,
+        interpreterPath: interpreter,
+        label: 'Installed runtime',
+        condaEnv: environment,
+        runnable: true
+      })
+      const environmentApproval = vi.fn(async (decision) => decision.defaultManagedFirstBinding)
+      const codeApproval = vi.fn(async () => false)
+      service.setRuntimeBindingApproval(environmentApproval)
+      service.setExecutionApproval(codeApproval)
+
+      await service.execute({ ...request, language, code: 'print(1)' })
+      await service.execute({ ...request, language, code: 'print(2)' })
+
+      expect(environmentApproval).toHaveBeenCalledTimes(1)
+      expect(environmentApproval).toHaveBeenCalledWith(
+        expect.objectContaining({
+          defaultManagedFirstBinding: true,
+          rawInput: expect.objectContaining({
+            notebookRuntimeSelection: expect.objectContaining({ runtimeId: interpreter })
+          })
+        })
+      )
+      expect(codeApproval).not.toHaveBeenCalled()
+      expect(execute).toHaveBeenCalledTimes(2)
+      expect(execute).toHaveBeenCalledWith(expect.objectContaining({ environment }))
+      expect((await service.listRuntimes(request)).bindings[language]?.runtimeId).toBe(interpreter)
+    }
+  )
+
+  it.each(['python', 'r'] as const)(
+    'keeps multiple %s runtimes ambiguous without a verified default',
+    async (language) => {
+      const { service, execute, request, runtimes } = await harness(2)
+      for (const runtime of runtimes) runtime.language = language
+      // App ownership and display copy alone do not establish the canonical default.
+      runtimes[0].provenance = 'app-managed'
+      runtimes[0].label = language === 'r' ? 'default-r' : 'default-python'
+      const approval = vi.fn(async () => true)
+      service.setRuntimeBindingApproval(approval)
+      await expect(service.execute({ ...request, language, code: 'print(1)' })).rejects.toThrow(
+        `Several ${language} environments`
+      )
+      expect(approval).not.toHaveBeenCalled()
+      expect(execute).not.toHaveBeenCalled()
+      expect((await service.listRuntimes(request)).bindings[language]).toBeUndefined()
+    }
+  )
+
   it('requires a concrete selection with multiple environments and preserves the binding on denied switch', async () => {
     const { service, request, runtimes } = await harness(2)
     const approve = vi.fn(async () => true)

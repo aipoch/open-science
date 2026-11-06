@@ -95,6 +95,7 @@ function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
 
 // These suites use the same package-owned configuration locally and in the host runner.
 const standalonePackageRoots = [
+  'packages/research-film',
   'packages/resilient-download',
   'packages/durable-files',
   'packages/compute',

@@ -14,7 +14,8 @@ import {
   RuntimeSessionOwner,
   TERMINAL_ADMISSION_WAIT_BUDGET_MS,
   TERMINAL_COMMIT_INITIAL_BUDGET_MS,
-  TERMINAL_COMMIT_RETRY_BUDGET_MS
+  TERMINAL_COMMIT_RETRY_BUDGET_MS,
+  TERMINAL_CONTINUATION_WAIT_BUDGET_MS
 } from './runtime-session-owner'
 
 const roots: string[] = []
@@ -135,6 +136,94 @@ const harness = async () => {
 }
 
 describe('terminal recovery through the real Session persistence scheduler', () => {
+  it.each([false, true])(
+    'waits outside the Session lane for a slow terminal write (abort=%s)',
+    async (abort) => {
+      const h = await harness()
+      vi.useFakeTimers()
+      const physicalWrite = deferred()
+      const enteredWrite = deferred()
+      const save = h.repository.saveSession.bind(h.repository)
+      vi.spyOn(h.repository, 'saveSession').mockImplementationOnce(async (...args) => {
+        enteredWrite.resolve()
+        await physicalWrite.promise
+        return save(...args)
+      })
+      const terminal = h.owner.commitTerminal(h.event, vi.fn())
+      await enteredWrite.promise
+      const controller = new AbortController()
+      let settled = false
+      const followUp = h.owner
+        .waitForTerminalWrites(h.scope.sessionId, controller.signal)
+        .then(() => h.owner.begin(h.nextScope, h.nextAdmission))
+        .then(
+          (session) => ({ status: 'admitted' as const, session }),
+          (error: unknown) => ({ status: 'rejected' as const, error })
+        )
+        .finally(() => {
+          settled = true
+        })
+      try {
+        await vi.advanceTimersByTimeAsync(TERMINAL_COMMIT_INITIAL_BUDGET_MS)
+        await terminal
+        h.owner.retryTerminalCommits(h.scope.sessionId)
+        await vi.advanceTimersByTimeAsync(12_000)
+        expect(settled).toBe(false)
+        if (abort) {
+          controller.abort()
+          expect(await followUp).toMatchObject({
+            status: 'rejected',
+            error: { name: 'AbortError' }
+          })
+        }
+      } finally {
+        physicalWrite.resolve()
+        await h.owner.flush(h.scope.sessionId, h.scope.promptMessageId)
+      }
+      expect(await followUp).toMatchObject({ status: abort ? 'rejected' : 'admitted' })
+      const latest = await h.read()
+      if (latest.status !== 'found') throw new Error('Expected durable Session authority.')
+      expect(latest.session.runtimeSessionAdmissions).toHaveLength(abort ? 1 : 2)
+      expect(latest.session.activeRun?.promptMessageId).toBe(abort ? undefined : 'next')
+    }
+  )
+
+  it('rejects a continuation wait when the physical terminal write never settles', async () => {
+    const h = await harness()
+    vi.useFakeTimers()
+    const physicalWrite = deferred()
+    const enteredWrite = deferred()
+    const save = h.repository.saveSession.bind(h.repository)
+    vi.spyOn(h.repository, 'saveSession').mockImplementationOnce(async (...args) => {
+      enteredWrite.resolve()
+      await physicalWrite.promise
+      return save(...args)
+    })
+    const terminal = h.owner.commitTerminal(h.event, vi.fn())
+    await enteredWrite.promise
+    const followUp = h.owner
+      .waitForTerminalWrites(h.scope.sessionId, new AbortController().signal)
+      .then(() => h.owner.begin(h.nextScope, h.nextAdmission))
+      .then(
+        () => ({ status: 'admitted' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error })
+      )
+    try {
+      await vi.advanceTimersByTimeAsync(TERMINAL_CONTINUATION_WAIT_BUDGET_MS)
+      expect(await Promise.race([followUp, Promise.resolve('pending')])).toMatchObject({
+        status: 'rejected',
+        error: { message: 'Main runtime completion has not committed yet.' }
+      })
+      await terminal
+    } finally {
+      physicalWrite.resolve()
+      await h.owner.flush(h.scope.sessionId, h.scope.promptMessageId)
+    }
+    await vi.advanceTimersByTimeAsync(10_000)
+    const latest = await h.read()
+    expect(latest.status === 'found' && latest.session.runtimeSessionAdmissions).toHaveLength(1)
+  })
+
   it('bounds a follow-up behind a timed-out physical write without admitting it after rejection', async () => {
     const h = await harness()
     vi.useFakeTimers()

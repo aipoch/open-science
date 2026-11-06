@@ -74,6 +74,8 @@ const CATEGORY_LABEL_KEYS = {
   runtime: 'Runtime',
   notebooks: 'Notebooks',
   models: 'Local parsing models',
+  'research-video-jobs': 'Research film jobs',
+  'research-video-presentations': 'Research films',
   'pdf-structure': 'PDF parsing results',
   'execution-file-evidence': 'Execution evidence',
   workspaces: 'Session workspaces'
@@ -91,6 +93,8 @@ const CATEGORY_COLORS: Record<UsageCategoryKey, string> = {
   uploads: 'bg-storage-uploads',
   notebooks: 'bg-storage-notebooks',
   models: 'bg-storage-runtime',
+  'research-video-jobs': 'bg-storage-artifacts',
+  'research-video-presentations': 'bg-storage-artifacts',
   'pdf-structure': 'bg-storage-artifacts',
   'execution-file-evidence': 'bg-storage-execution-evidence',
   workspaces: 'bg-storage-workspaces'

@@ -1306,8 +1306,8 @@ class AcpRuntime {
     await this.connectionClose.requestRetirement()
   }
 
-  // Release physical resources after completed work, retaining events for subscribers and using
-  // the ordinary Session resume path on the next turn. Active workflows defer this transition.
+  // Retain a bounded idle connection briefly; expiry releases physical resources.
+  // Active workflows defer release; subsequent cold turns use ordinary Session resume.
   requestIdleRelease(): void {
     if (this.snapshotOwner.status === 'connected') this.connectionTransitions.requestIdleRelease()
   }
@@ -2118,11 +2118,9 @@ class AcpRuntime {
         answers: response.answers,
         retryContinuation: response.retryContinuation,
         continuePrepared: !response.prepareContinuation && continuePrepared,
-        recovery: {
-          error:
-            response.continuationFailure?.slice(0, 4_000) ??
-            'The task could not continue. Your response is saved.'
-        }
+        ...(response.continuationFailure !== undefined
+          ? { recovery: { error: response.continuationFailure.slice(0, 4_000) } }
+          : {})
       })
       return this.getSnapshot()
     }
@@ -2136,7 +2134,7 @@ class AcpRuntime {
         .some(({ requestId }) => requestId === response.requestId)
     ) {
       const request = response.request
-      if (this.sessionInteractions.current(request.sessionId)) {
+      if (this.sessionInteractions.has(request.sessionId)) {
         throw new Error('Wait for the current Agent run to finish before ending this wait.')
       }
       const projectId =
@@ -2793,6 +2791,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       if (continuation.onUnaccepted) {
+        let recoveryPhase = 'preflight'
         try {
           const code =
             continuationError &&
@@ -2806,8 +2805,21 @@ class AcpRuntime {
             !providerDispatched &&
             typeof code === 'string' &&
             ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          if (!providerDispatched) {
+            await this.options.runtimeSessions?.assertAdmissionAvailable(sessionId)
+          }
+          recoveryPhase = 'rearm'
           await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
+          try {
+            log.warn('App continuation recovery failed', {
+              sessionId,
+              phase: recoveryPhase,
+              ...diagnosticErrorFields(error)
+            })
+          } catch (loggingError) {
+            void loggingError
+          }
           this.pushEvent({
             kind: 'error',
             level: 'error',

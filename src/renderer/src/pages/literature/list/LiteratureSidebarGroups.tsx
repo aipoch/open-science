@@ -2,8 +2,8 @@ import { useLiteratureHost } from '../renderer-host'
 const OPEN_DIALOG_SELECTOR =
   '[role="dialog"]:not([data-state="closed"]), [role="alertdialog"]:not([data-state="closed"])'
 import { ChevronDown, ChevronRight, ChevronUp } from 'lucide-react'
-import type { ReactElement, ReactNode } from 'react'
-import { useEffect, useState } from 'react'
+import type { ReactElement, ReactNode, RefObject } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -131,11 +131,36 @@ export function LiteratureSidebarGroup<T extends { id: string }>({
 export function LiteratureSidebarState({
   children
 }: Readonly<{
-  children: (collapsed: boolean, toggle: () => void) => React.JSX.Element
+  children: (
+    collapsed: boolean,
+    toggle: () => void,
+    sidebarRef: RefObject<HTMLElement | null>
+  ) => React.JSX.Element
 }>): React.JSX.Element {
   const { api: hostApi } = useLiteratureHost()
 
-  const [collapsed, setCollapsed] = useState(false)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const [autoCollapsed, setAutoCollapsed] = useState(false)
+  const [manualCollapsed, setManualCollapsed] = useState<boolean>()
+  const collapsed = manualCollapsed ?? autoCollapsed
+  const toggle = useCallback(
+    () => setManualCollapsed((current) => !(current ?? autoCollapsed)),
+    [autoCollapsed]
+  )
+
+  useLayoutEffect(() => {
+    // Measure the whole Library, including when it is embedded in a wider window.
+    const container = sidebarRef.current?.parentElement
+    if (!container) return
+    const update = (): void => {
+      const width = container.getBoundingClientRect().width
+      if (width > 0) setAutoCollapsed(width < 768)
+    }
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     const toggleFromShortcut = (event: KeyboardEvent): void => {
@@ -154,16 +179,12 @@ export function LiteratureSidebarState({
       }
 
       event.preventDefault()
-      setCollapsed((current) => !current)
+      toggle()
     }
 
     window.addEventListener('keydown', toggleFromShortcut)
     return () => window.removeEventListener('keydown', toggleFromShortcut)
-  }, [hostApi?.platform])
+  }, [hostApi?.platform, toggle])
 
-  return (
-    <TooltipProvider>
-      {children(collapsed, () => setCollapsed((current) => !current))}
-    </TooltipProvider>
-  )
+  return <TooltipProvider>{children(collapsed, toggle, sidebarRef)}</TooltipProvider>
 }

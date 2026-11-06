@@ -88,14 +88,47 @@ it('validates lifecycle owners and runtime prerequisites at the exact PR head', 
     'src/main/runtime-stop-confirmation.ts',
     'src/main/runtime-ownership.ts',
     'src/main/windows-powershell.ts',
-    'package-lock.json',
+    'src/main/windows-process-query.ts',
+    'src/main/settings/managed-codex.ts',
+    'src/main/acp/claude-executable.ts',
+    'src/main/settings/shell-path.ts',
+    'src/main/node-process-host.ts',
+    'src/main/process-birth-identity.ts',
+    'src/main/service-process-recovery.ts',
+    'src/main/verified-service-stop.ts',
+    'src/main/desktop-runtime-client.ts',
+    'src/main/desktop-runtime-recovery.ts',
+    'src/main/notebook/shell-process.ts',
+    'src/shared/desktop-runtime-recovery.ts',
+    'test/setup-dotenv.ts',
+    'test/setup-jsdom-polyfills.ts',
+    'test/setup-i18n.ts',
     'vitest.config.ts',
     'scripts/ci/npm-ci.mjs',
     'build/native-components-lock.json'
   ])
     expect(selected(file), file).toBe(true)
-  expect(selected('src/renderer/src/components/Button.tsx')).toBe(false)
-  expect(selected('docs/PRD.md')).toBe(false)
+  // Broad business directories and generic dependency updates used to allocate all three runners.
+  for (const file of [
+    'src/main/acp/prompt-preparation-owner.ts',
+    'src/main/acp/agent-process.test.ts',
+    'src/main/delegation/structured-output.ts',
+    'src/main/delegation/process-ownership.test.ts',
+    'src/main/settings/workflows/connectors-diagnostic.test.ts',
+    'src/main/desktop-runtime-client.test.ts',
+    'src/main/notebook/shell-process.test.ts',
+    'packages/connector-mcp-client/src/client-manager.test.ts',
+    'packages/process-tree-native/test/arguments.cjs',
+    'src/main/runtime-payload-transfers.ts',
+    'package.json',
+    'package-lock.json',
+    'patches/@agentclientprotocol+claude-agent-acp+0.70.0.patch',
+    'prisma/schema.prisma',
+    'tsconfig.web.json',
+    'src/renderer/src/components/Button.tsx',
+    'docs/PRD.md'
+  ])
+    expect(selected(file), file).toBe(false)
   const checkout = workflow.jobs.lifecycle.steps.find((step) => step.name === 'Checkout')!
   expect(checkout.with?.ref).toBe('${{ github.event.pull_request.head.sha || github.sha }}')
   expect(checkout.with?.['persist-credentials']).toBe(false)

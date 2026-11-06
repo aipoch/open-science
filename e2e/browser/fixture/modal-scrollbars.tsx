@@ -69,6 +69,10 @@ window.api = {
               ]
             : []
     }),
+    studySnapshot: async (request: { expectedSourceKey: string }) => ({
+      sourceKey: request.expectedSourceKey,
+      issue: 'not-generated' as const
+    }),
     get: async () => reference,
     sources: async () => [],
     jobs: async () => ({ jobs: [], summaries: [] }),

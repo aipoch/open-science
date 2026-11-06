@@ -45,6 +45,67 @@ async function fixture(): Promise<SessionDiagnosticWorkerInput> {
 const sessionPath = (input: SessionDiagnosticWorkerInput): string =>
   join(input.configRoot, 'sessions/project/session.json')
 describe('session diagnostics isolated collector', () => {
+  it.each([
+    { id: 'log:main.log', output: 'logs/main.log' },
+    { id: 'desktop-log:main.log', output: 'logs/desktop/main.log' }
+  ])('marks malformed canonical log records as partial: $id', async ({ id, output }) => {
+    const input = await fixture()
+    input.desktopLogPath = input.logPath
+    await writeFile(
+      input.logPath!,
+      `${JSON.stringify({ level: 'info', msg: 'startup completed' })}\n{"level":"error","msg":"PRIVATE_TRUNCATED_RECORD`
+    )
+    const result = await runSessionDiagnosticWorker({ ...input, selectedItems: [id] })
+    const extracted = join(input.directory!, 'extracted')
+    await mkdir(extracted)
+    await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+    const exported = await readFile(join(extracted, output), 'utf8')
+    expect(exported).toContain('startup completed')
+    expect(exported).not.toContain('PRIVATE_TRUNCATED_RECORD')
+    const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+    const source = manifest.items.find((item: { id: string }) => item.id === id)
+    expect(source.sourceMetadata).toMatchObject({ retainedRecords: 1, omittedLines: 1 })
+    expect(result).toMatchObject({ kind: 'archive', partial: true })
+    expect(source.status).toBe('partial')
+  })
+  it.each([false, true])(
+    'exports filtered backend logs successfully with a bounded tail: %s',
+    async (bounded) => {
+      const input = await fixture()
+      const name = 'desktop-backend-42-1700000000000.log'
+      const logs = join(input.configRoot, 'logs')
+      await mkdir(logs)
+      const prefix = bounded ? `${'x'.repeat(256 * 1024)}\n` : ''
+      await writeFile(
+        join(logs, name),
+        prefix +
+          [
+            '(node:42) ExperimentalWarning: SQLite is an experimental feature',
+            '[credential-identity] identity probe completed {',
+            "  status: 'exists'",
+            '}',
+            'PRIVATE_STDOUT',
+            JSON.stringify({ level: 'info', scope: 'startup', msg: 'startup completed' })
+          ].join('\n')
+      )
+      const result = await runSessionDiagnosticWorker({
+        ...input,
+        selectedItems: [`backend-log:${name}`]
+      })
+      expect(result).toMatchObject({ kind: 'archive', partial: false })
+      const extracted = join(input.directory!, 'extracted')
+      await mkdir(extracted)
+      await tar.extract({ file: join(input.directory!, 'archive.tar.gz'), cwd: extracted })
+      const exported = await readFile(join(extracted, 'logs/backend', name), 'utf8')
+      expect(exported).toContain('startup completed')
+      expect(exported).not.toContain('PRIVATE_STDOUT')
+      const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+      expect(manifest.items.find((item: { selected: boolean }) => item.selected)).toMatchObject({
+        status: 'exported',
+        sourceMetadata: { omittedLines: 5, omittedBytes: Buffer.byteLength(prefix) }
+      })
+    }
+  )
   it('retains a complete fatal record at the backend tail boundary', async () => {
     const input = await fixture()
     const logs = join(input.configRoot, 'logs')

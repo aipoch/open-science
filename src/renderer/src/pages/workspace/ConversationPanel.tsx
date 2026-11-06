@@ -1,5 +1,7 @@
+import { ResearchVideoButton } from '../../components/research-video-button'
 import type { TFunction } from 'i18next'
 import { ComposerNoticeSlot } from '@/components/composer-notice/ComposerNoticeSlot'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import { useComposerNotices } from '@/lib/composer-notice/use-composer-notices'
 import {
   formatNoticeDiagnostics,
@@ -14,7 +16,10 @@ import {
   SplitButtonContent
 } from '@/components/ui/split-button'
 import type { AgentAuthenticationRecovery } from './use-agent-authentication-recovery'
-import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
+import {
+  pendingWorkspaceElicitations,
+  useWorkspaceElicitationFailures
+} from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   PackageExportProgressButton,
@@ -234,8 +239,9 @@ const attachmentLimitsText = (t: TFunction): string =>
 
 const ResizableElicitationComposer = ({
   children,
-  choice
-}: React.PropsWithChildren<{ choice: boolean }>): React.JSX.Element => {
+  choice,
+  collapsed
+}: React.PropsWithChildren<{ choice: boolean; collapsed: boolean }>): React.JSX.Element => {
   const { t } = useTranslation()
   return (
     <ResizableBottomPanel
@@ -246,6 +252,7 @@ const ResizableElicitationComposer = ({
       minimumContentSelector='[data-elicitation-option-row="true"]'
       minimumContentIndex={1}
       contentScrollSelector={choice ? '[data-testid="elicitation-options"]' : undefined}
+      collapsed={collapsed}
     >
       {children}
     </ResizableBottomPanel>
@@ -326,6 +333,7 @@ type ConversationPanelView = {
   canEditLocalDraft?: boolean
   sendPreparing?: boolean
   persistenceBlocked?: boolean
+  persistenceIssue?: SessionWriteIssue
   actionError: string | null
   sideChatDisabledReason?: string
   sessionImport?: { projectId: string; projectName?: string; canImport: boolean }
@@ -430,6 +438,7 @@ type ConversationPanelSessionTools = {
   menuBindings?: React.ComponentProps<typeof SessionHeaderMenu>['bindings']
   exportDiagnostics?: (session: ChatSession) => void
   newConversation?: () => void
+  reviewPersistence?: () => void
   togglePin?: (session: ChatSession) => void
   editSession?: (session: ChatSession) => void
   notebookReference: NotebookSessionReference | undefined
@@ -486,6 +495,7 @@ const ConversationPanel = ({
     canEditDraft,
     canEditLocalDraft = canEditDraft,
     persistenceBlocked,
+    persistenceIssue,
     actionError,
     sideChatDisabledReason,
     sessionImport
@@ -936,6 +946,8 @@ const ConversationPanel = ({
   const contextResetNotice = useWorkspaceOperationErrors((state) =>
     activeSession ? state.contextResets?.[activeSession.id] : false
   )
+  const persistenceSizeLimit = !persistenceIssue || persistenceIssue.kind === 'size-limit'
+  const persistenceChecking = persistenceIssue?.state === 'checking'
   const operationDiagnostic = useWorkspaceOperationErrors((state) =>
     activeSession ? state.diagnostics[activeSession.id] : undefined
   )
@@ -982,17 +994,6 @@ const ConversationPanel = ({
               reconfigureError.reason ||
               'The agent session could not be reconfigured.'
             : undefined
-      },
-      {
-        id: 'storage',
-        message: persistenceBlocked ? 'Conversation storage limit reached' : undefined,
-        detail: persistenceBlocked
-          ? t(
-              'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
-            )
-          : undefined,
-        origin: 'environment',
-        blocksSend: true
       }
     ]
   })
@@ -1045,11 +1046,28 @@ const ConversationPanel = ({
   const pendingElicitationActivity = pendingElicitationRequest
     ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
     : undefined
+  const continuationFailure = useWorkspaceElicitationFailures((state) =>
+    activeSession ? state.failures[activeSession.id] : undefined
+  )
+  const failedContinuation =
+    pendingElicitationActivity?.elicitation?.continuationPending &&
+    !pendingElicitationActivity.elicitation.continuationRecovery &&
+    continuationFailure?.requestId === pendingElicitationRequest?.requestId
+      ? continuationFailure
+      : undefined
   const pendingElicitation: ElicitationProjection | undefined =
     pendingElicitationActivity?.elicitation &&
     (pendingElicitationActivity.elicitation.state === 'pending' ||
+      pendingElicitationActivity.elicitation.continuationPending ||
       pendingElicitationActivity.elicitation.continuationRecovery)
-      ? pendingElicitationActivity.elicitation
+      ? {
+          ...pendingElicitationActivity.elicitation,
+          ...(failedContinuation
+            ? {
+                continuationRecovery: { error: failedContinuation.error }
+              }
+            : {})
+        }
       : !pendingElicitationActivity && pendingElicitationRequest
         ? {
             message: pendingElicitationRequest.message,
@@ -1108,6 +1126,26 @@ const ConversationPanel = ({
   const packageLocked = sessionExportLocked(packageOperation, activeSession)
   const ordinaryComposerBlocked = Boolean(
     blockingInteraction || packageLocked || authenticationRequired
+  )
+  const pendingChoiceQuestions = resolveAgentUserChoiceQuestions(
+    pendingElicitationRequest?.fields ?? pendingElicitation?.fields ?? []
+  )
+  const elicitationPresentationKey = pendingElicitationRequest
+    ? `${activeSession?.id}:${pendingElicitationRequest.requestId}`
+    : undefined
+  const [elicitationPresentation, setElicitationPresentation] = useState<{
+    key: string | undefined
+    collapsed: boolean
+    focusRequestId: number
+  }>({ key: undefined, collapsed: false, focusRequestId: 0 })
+  const elicitationCollapsed =
+    elicitationPresentation.key === elicitationPresentationKey && elicitationPresentation.collapsed
+  const canRevealElicitation = Boolean(
+    pendingChoiceQuestions &&
+    blockingInteraction === 'elicitation' &&
+    !pendingElicitation?.continuationRecovery &&
+    !authenticationRequired &&
+    !packageLocked
   )
 
   useEffect(() => {
@@ -1258,7 +1296,7 @@ const ConversationPanel = ({
       }
     },
     'open-environment': {
-      run: (notice) => openSettingsToPanel(notice.operation === 'storage' ? 'storage' : 'runtimes')
+      run: () => openSettingsToPanel('runtimes')
     },
     compact: { run: () => onCompactContext(), disabled: () => !canCompactContext },
     'remove-attachments': {
@@ -1609,17 +1647,43 @@ const ConversationPanel = ({
               </Tooltip>
             </TooltipProvider>
           )}
-          {activeSession && !activeSession.firstPromptDraft && !activeSession.isPending && (
-            <SessionHeaderMenu
-              key={activeSession.id}
-              session={activeSession}
-              bindings={sessionTools.menuBindings}
-              createSideChat={sideChatController.createDraft}
-              credentialPending={pendingCredentialRequest !== undefined}
-              rootPermissionPending={presentedRootPermissionPending}
-              disabledReason={openSideChatReason}
-            />
-          )}
+          {activeSession &&
+            !activeSession.firstPromptDraft &&
+            !activeSession.isPending &&
+            (isImported ? (
+              <SessionHeaderMenu
+                session={activeSession}
+                bindings={sessionTools.menuBindings}
+                createSideChat={sideChatController.createDraft}
+                credentialPending={pendingCredentialRequest !== undefined}
+                rootPermissionPending={presentedRootPermissionPending}
+                disabledReason={openSideChatReason}
+                key={activeSession.id}
+              />
+            ) : (
+              <ResearchVideoButton
+                key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
+                projectId={activeSession.projectId}
+                sessionId={activeSession.id}
+                branchId={
+                  activeSession.conversationGraph?.frames.find(
+                    (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
+                  )?.activeBranchId
+                }
+                renderTrigger={(openResearchExplanation, researchVideoTriggerState) => (
+                  <SessionHeaderMenu
+                    session={activeSession}
+                    bindings={sessionTools.menuBindings}
+                    createSideChat={sideChatController.createDraft}
+                    credentialPending={pendingCredentialRequest !== undefined}
+                    rootPermissionPending={presentedRootPermissionPending}
+                    disabledReason={openSideChatReason}
+                    openResearchExplanation={openResearchExplanation}
+                    researchVideoTriggerState={researchVideoTriggerState}
+                  />
+                )}
+              />
+            ))}
           <PackageExportProgressButton />
           <PackageOperationIndicator />
           <NotificationBell className="md:hidden" />
@@ -1686,6 +1750,19 @@ const ConversationPanel = ({
               canBranchInNewSession={canBranchInNewSession}
               onBranchInNewSession={onBranchFromAgentMessage}
               pendingElicitations={sessionPendingElicitations}
+              pendingElicitationControl={
+                canRevealElicitation && pendingElicitationRequest
+                  ? {
+                      activityId: pendingElicitationRequest.toolCallId,
+                      onReveal: () =>
+                        setElicitationPresentation((current) => ({
+                          key: elicitationPresentationKey,
+                          collapsed: false,
+                          focusRequestId: current.focusRequestId + 1
+                        }))
+                    }
+                  : undefined
+              }
               handoffLifecycleSource={workspaceHandoffLifecycleClient}
               onRetryHandoff={(request) => workspaceHandoffLifecycleClient.retry(request)}
               reportPresentationRevealing
@@ -1732,6 +1809,50 @@ const ConversationPanel = ({
                   notices={composerNotices.notices}
                   handlers={noticeHandlers}
                   onDismiss={composerNotices.dismiss}
+                  persistence={
+                    persistenceBlocked
+                      ? {
+                          role: persistenceChecking ? 'status' : 'alert',
+                          level: persistenceChecking ? 'info' : 'error',
+                          title: persistenceSizeLimit
+                            ? t('Conversation storage limit reached')
+                            : persistenceChecking
+                              ? t('Checking conversation storage…')
+                              : t('Conversation storage needs attention'),
+                          description: persistenceSizeLimit
+                            ? t(
+                                'This conversation exceeded the 256 MiB storage limit. Its current run was stopped. Start a new conversation to keep working. Changes after the last successful save are not durable.'
+                              )
+                            : persistenceChecking
+                              ? t(
+                                  'The connection changed while saving. Checking which conversation changes were saved.'
+                                )
+                              : persistenceIssue.kind === 'conflict'
+                                ? t(
+                                    'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
+                                  )
+                                : persistenceIssue.kind === 'connection'
+                                  ? t(
+                                      'Some conversation changes could not be confirmed as saved. Review the affected conversations and retry before closing the app.'
+                                    )
+                                  : t(
+                                      'Open-Science could not save the latest conversation changes. Retry before closing the app.'
+                                    ),
+                          primaryButton:
+                            persistenceSizeLimit && sessionTools.newConversation
+                              ? {
+                                  label: t('New conversation'),
+                                  onClick: sessionTools.newConversation
+                                }
+                              : !persistenceChecking && sessionTools.reviewPersistence
+                                ? {
+                                    label: t('Review recovery options'),
+                                    onClick: sessionTools.reviewPersistence
+                                  }
+                                : undefined
+                        }
+                      : undefined
+                  }
                 />
                 {conversation.planProjectionRecoveryError && activeSession ? (
                   <UnavailablePlanNotice
@@ -1941,11 +2062,8 @@ const ConversationPanel = ({
                         />
                       ) : pendingElicitation ? (
                         <ResizableElicitationComposer
-                          choice={Boolean(
-                            resolveAgentUserChoiceQuestions(
-                              pendingElicitationRequest?.fields ?? pendingElicitation.fields
-                            )
-                          )}
+                          choice={Boolean(pendingChoiceQuestions)}
+                          collapsed={elicitationCollapsed}
                           key={
                             pendingElicitationRequest?.requestId ?? pendingElicitationActivity?.id
                           }
@@ -1954,6 +2072,22 @@ const ConversationPanel = ({
                             elicitation={pendingElicitation}
                             request={pendingElicitationRequest}
                             embedded
+                            collapsed={elicitationCollapsed}
+                            onCollapsedChange={
+                              pendingChoiceQuestions
+                                ? (collapsed) =>
+                                    setElicitationPresentation((current) => ({
+                                      ...current,
+                                      key: elicitationPresentationKey,
+                                      collapsed
+                                    }))
+                                : undefined
+                            }
+                            focusRequestId={
+                              elicitationPresentation.key === elicitationPresentationKey
+                                ? elicitationPresentation.focusRequestId
+                                : 0
+                            }
                             onRespond={onRespondToElicitation}
                             editDraft={
                               pendingElicitationActivity
@@ -2025,19 +2159,11 @@ const ConversationPanel = ({
                         aria-label={t('Imported research history')}
                       >
                         <div className="flex flex-wrap items-center gap-2">
-                          {sessionForkAvailable() ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="px-2 text-xs"
-                              onClick={() => {
-                                void forkSession(activeSession)
-                              }}
-                            >
-                              <GitBranch className="size-4" aria-hidden="true" />
-                              {t('Fork to continue')}
-                            </Button>
-                          ) : null}
+                          <SessionDiscussionButton
+                            key={activeSession.id}
+                            projectId={activeSession.projectId}
+                            sessionId={activeSession.id}
+                          />
                           <Button
                             variant="outline"
                             size="sm"
@@ -2058,11 +2184,29 @@ const ConversationPanel = ({
                             <Play className="size-4" aria-hidden="true" />
                             {t('View replay')}
                           </Button>
-                          <SessionDiscussionButton
-                            key={activeSession.id}
+                          <ResearchVideoButton
+                            key={`${activeSession.id}:${activeSession.conversationGraph?.frames.find((frame) => frame.id === activeSession.conversationGraph?.rootFrameId)?.activeBranchId ?? ''}`}
                             projectId={activeSession.projectId}
                             sessionId={activeSession.id}
+                            branchId={
+                              activeSession.conversationGraph?.frames.find(
+                                (frame) => frame.id === activeSession.conversationGraph?.rootFrameId
+                              )?.activeBranchId
+                            }
                           />
+                          {sessionForkAvailable() ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="px-2 text-xs"
+                              onClick={() => {
+                                void forkSession(activeSession)
+                              }}
+                            >
+                              <GitBranch className="size-4" aria-hidden="true" />
+                              {t('Fork to continue')}
+                            </Button>
+                          ) : null}
                         </div>
                         {activeSession.packageOrigin.excludedFiles?.length ? (
                           <details className="group/exclusions mt-1 text-xs text-muted-foreground">
