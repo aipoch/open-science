@@ -126,7 +126,7 @@ Messages and Markdown previews defer external media until the user activates it.
 the destination hosts and exposes the full URLs on hover. This permission is local to the displayed
 media and its URL set, not a permanent domain grant. After activation, media uses the browser's
 network stack and normal redirect behavior; it is not routed through the Notebook domain policy.
-Mermaid shape-image nodes are blocked before diagram rendering. At this baseline, HTML-label
+Mermaid shape-image nodes are blocked before diagram rendering. At the `v1.1.0` baseline, HTML-label
 images are not covered by that detector and can load without media activation; do not interpret
 the Markdown activation control as complete protection for Mermaid content. Ordinary diagrams remain available. Managed artifact previews retain their existing
 authorization. Import previews that disable media continue to suppress it entirely.
