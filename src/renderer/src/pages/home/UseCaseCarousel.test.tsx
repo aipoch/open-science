@@ -517,6 +517,16 @@ it('opens workbench marketplace details inline and returns to the retained list'
   expect(ui.getAllByRole('article')).toHaveLength(1)
 })
 
+it('gives the fixed detail header a subtle visual boundary', async () => {
+  await act(async () => root.render(<UseCaseCarousel variant="marketplace" compact />))
+  const ui = within(container)
+  await act(async () => fireEvent.click(ui.getByRole('button', { name: 'Case 1' })))
+
+  const details = ui.getByRole('region', { name: 'Case details' })
+  const header = details.querySelector('[data-case-detail-header]')
+  expect(header?.className).toContain('shadow-sm')
+})
+
 it('keeps cached cards on failure and shows completion on the refresh button', async () => {
   await act(async () => root.render(<UseCaseCarousel variant="marketplace" />))
   const ui = within(container)

@@ -152,7 +152,10 @@ export const UseCaseDetailsContent = ({
   const { t } = useTranslation()
   return (
     <div className="@container flex min-h-0 flex-1 flex-col overflow-hidden" key={item.slug}>
-      <div data-case-detail-header className="max-h-[50%] shrink-0 overflow-y-auto px-4 py-2">
+      <div
+        data-case-detail-header
+        className="max-h-[50%] shrink-0 overflow-y-auto bg-bg-10 px-4 py-2 shadow-sm"
+      >
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             {item.category && <p className="mb-1 text-xs text-text-200">{item.category}</p>}
