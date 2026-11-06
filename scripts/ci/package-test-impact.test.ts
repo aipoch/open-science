@@ -62,6 +62,9 @@ describe('independent package test direction', () => {
     'tsconfig.node.json',
     'test/setup.ts',
     '.github/workflows/pr-gate.yml',
+    'build/native-components.json',
+    'electron.vite.config.ts',
+    'patches/dependency+1.0.0.patch',
     'scripts/build-dev-packages.mjs',
     'scripts/check-packages.mjs',
     'scripts/ci/package-test-impact.mjs',
@@ -70,15 +73,20 @@ describe('independent package test direction', () => {
   ])('keeps all package tests for shared or unknown input %s', (path) => {
     expect(createPackageTestPlan([path], registry).excluded).toEqual([])
   })
-  it.each(['scripts/build.mjs', 'scripts/ci/classify-pr-changes.mjs', 'test/fixtures/case.jsonl'])(
-    'excludes unchanged package units for non-package evidence %s',
-    (path) => {
-      expect(createPackageTestPlan([path], registry)).toMatchObject({
-        selected: [],
-        excluded: [core, providers, mcp]
-      })
-    }
-  )
+  it.each([
+    'scripts/build.mjs',
+    'scripts/ci/classify-pr-changes.mjs',
+    'test/fixtures/case.jsonl',
+    'build/packaging.test.ts',
+    'electron-builder.yml',
+    'e2e/browser/home-use-cases.spec.ts',
+    '.github/workflows/package-smoke.yml'
+  ])('excludes unchanged package units for non-package evidence %s', (path) => {
+    expect(createPackageTestPlan([path], registry)).toMatchObject({
+      selected: [],
+      excluded: [core, providers, mcp]
+    })
+  })
   it('keeps the CI install wrapper global', () => {
     expect(createPackageTestPlan(['scripts/ci/npm-ci.mjs'], registry).excluded).toEqual([])
   })
