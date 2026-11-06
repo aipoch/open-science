@@ -227,7 +227,13 @@ const resolvedMemberTarget = (target: string, property: string, bindings: Bindin
     : mergeTargets(
         possibleTargets(target).map((value) => {
           const member = `${value}.${property}`
-          return bindings.get(member) ?? memberTarget(value ?? '<dynamic>', property)
+          // Object members may be changed through aliases or accessors; keep callable tracking,
+          // but do not export primitive provenance through unresolved property effects.
+          return mergeTargets(
+            possibleTargets(
+              bindings.get(member) ?? memberTarget(value ?? '<dynamic>', property)
+            ).map((target) => (target === JS_PRIMITIVE ? '@noncallable' : target))
+          )
         })
       )
 const jsApplyBoundTarget = (target: string): string | undefined =>
@@ -835,6 +841,7 @@ const identity = (
   const assigned = assignment(node)
   if (assigned) {
     const value = identity(assigned.right, bindings)
+    if (value === JS_PRIMITIVE && assigned.left?.type !== 'identifier') return undefined
     // Assigned anonymous bodies are summarized instead of executed by traversal. Their return
     // identity is not yet available here, so keep an immediate invocation reviewable.
     return value === '@inline' ? undefined : value

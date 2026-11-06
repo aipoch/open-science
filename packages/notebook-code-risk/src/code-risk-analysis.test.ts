@@ -11421,6 +11421,7 @@ ${source}`
         'void proxy.missing',
         'proxy["missing"] + "suffix"',
         'proxy.count++',
+        'proxy.value = 1',
         'proxy + "suffix"',
         '+proxy',
         'proxy++'
@@ -11450,6 +11451,13 @@ text.${method}(pattern, (${replacement})${trailing})`
         )
       ).toEqual([])
       const object = '({ valueOf() { require("fs").unlinkSync("target.txt"); return 1 } })'
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          `const holder = { value: 0 }; function change() { holder.value = ${object} }; change();
+const value = holder.value; text.${method}(pattern, value + "suffix")`
+        )
+      ).not.toEqual([])
       for (const mutation of [
         `value = ${object}`,
         `if (flag) value = ${object}`,
