@@ -7,12 +7,15 @@ export const packageTestRegistryPath = 'scripts/ci/package-test-boundaries.json'
 const rootPattern = /^packages\/[a-z0-9][a-z0-9-]*$/
 // These inputs can change package compilation, discovery or the trusted package-test graph.
 // Keep this list explicit: unrelated scripts and regression data must not fan out every package.
+// Postinstall stages native components and the Node runtime from the listed build/ manifests.
 const packageGlobalInput =
-  /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|(?:vitest|vite|electron|tsconfig)[^/]*|test\/config\/|patches\/|build\/|resources\/|scripts\/(?:build-dev-packages|check-packages|check-package-isolation|check-(?:connector|diagnostics|environment|notebook)-packages|package-verification-plan)(?:\.[^/]+)?$|scripts\/ci\/(?:npm-ci|package-test-|module-test-impact\.)|\.github\/actions\/select-package-tests\/|\.github\/workflows\/(?:package-test-policy-dry-run|pr-gate)\.yml$)/
+  /^(?:package(?:-lock)?\.json$|\.npmrc$|\.nvmrc$|(?:vitest|vite|electron\.vite|tsconfig)[^/]*|test\/config\/|patches\/|build\/(?:native-components(?:-lock)?|node-runtime)\.json$|resources\/|scripts\/(?:build-dev-packages|check-packages|check-package-isolation|check-(?:connector|diagnostics|environment|notebook)-packages|package-verification-plan)(?:\.[^/]+)?$|scripts\/ci\/(?:npm-ci|package-test-|module-test-impact\.)|\.github\/actions\/select-package-tests\/|\.github\/workflows\/(?:package-test-policy-dry-run|pr-gate)\.yml$)/
 
-// Fixture records and unrelated scripts are test evidence for another lane. They do not alter
-// the independently published package contracts, so changing them must not run every package.
-const packageExemptInput = /^(?:test\/fixtures\/|scripts\/|prisma\/schema\.prisma$)/
+// Fixture records, unrelated scripts, desktop packaging, Playwright and other workflows are
+// evidence for another lane. They do not alter the independently published package contracts,
+// so changing them must not run every package.
+const packageExemptInput =
+  /^(?:test\/fixtures\/|scripts\/|prisma\/schema\.prisma$|build\/|electron-builder\.yml$|e2e\/|\.github\/workflows\/)/
 
 // These packages run through module/host contracts and dedicated platform or CLI lanes.
 // They are downstream of independent libraries, never inputs to those libraries' suites.
@@ -183,7 +186,7 @@ export function createPackageTestPlan(paths, registry, { verification = false } 
     } else if (dedicatedPackageTestRoots.some((root) => path.startsWith(root + '/'))) {
       reasons.push(`${path} -> dedicated module/host lane -> independent package suites excluded`)
     } else if (!verification && packageExemptInput.test(path)) {
-      reasons.push(`${path} -> non-package test or script input -> package unit tests excluded`)
+      reasons.push(`${path} -> non-package input -> package unit tests excluded`)
     } else if (!/^(?:src\/|docs\/|[^/]+\.md$)/.test(path)) {
       return {
         selected: roots,
@@ -243,6 +246,15 @@ export function packageTestSelectedRoots(env = process.env) {
   return packageRootsFromEnvironment('OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS', env, true)
 }
 
+// GitHub recreates refs/pull/N/merge on a newer target tip without updating base.sha, so the
+// synthetic merge's own first parent is the only baseline free of later main changes.
+function checkoutBaseline(git, head, trustedBase) {
+  const [, ...parents] = git('rev-list', '--parents', '-n', '1', 'HEAD').trim().split(' ')
+  const pullHead = git('rev-parse', '--verify', `${head}^{commit}`).trim()
+  if (parents.length === 2 && parents[1] === pullHead) return parents[0]
+  return git('merge-base', trustedBase, 'HEAD').trim()
+}
+
 export function packageTestPlanFromRevisions(
   base,
   head,
@@ -286,7 +298,7 @@ export function packageTestPlanFromRevisions(
       .filter(Boolean)
     // PR preflight's base is the fork point; trustedBase retains the target branch tip.
     // Exclude main's intervening changes while retaining merge-resolution edits.
-    const checkoutBase = git('merge-base', trustedBase, 'HEAD').trim()
+    const checkoutBase = checkoutBaseline(git, head, trustedBase)
     paths.push(
       ...git('diff', '--name-only', '--no-renames', '-z', checkoutBase, 'HEAD')
         .split('\0')
