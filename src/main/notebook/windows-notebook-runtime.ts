@@ -54,6 +54,36 @@ const resolvePackagedWindowsNotebookRuntime = (
   )
 }
 
+const resolvePackagedWindowsNotebookNodeRuntime = (
+  resourcesPath: string | undefined = runtimeMetadataIfConfigured()?.resourcesPath,
+  moduleDirectory: string = __dirname,
+  architecture: string = process.arch
+): WindowsNotebookNodeRuntime => {
+  if (architecture !== 'x64' && architecture !== 'arm64') {
+    throw new Error(`Windows Notebook runtime does not support ${architecture}.`)
+  }
+  const relative = `out/node-runtime/win32-${architecture}`
+  const packagedRoot = resourcesPath && join(resourcesPath, 'node-runtime')
+  const candidates =
+    resourcesPath && existsSync(join(resourcesPath, 'app.asar'))
+      ? [packagedRoot!]
+      : [
+          packagedRoot,
+          join(moduleDirectory, '../..', relative),
+          join(moduleDirectory, '../../..', relative)
+        ]
+  for (const root of candidates) {
+    if (!root) continue
+    const files = ['node.exe', 'npm.cmd', 'npx.cmd', 'node_modules/npm/package.json']
+    if (files.every((file) => existsSync(join(root, file)))) {
+      return Object.freeze({ root, node: join(root, 'node.exe') })
+    }
+  }
+  throw new Error(
+    'Windows Notebook Node runtime is missing. Build the bundled Node runtime before starting Notebook execution.'
+  )
+}
+
 // Production resolves only a prepared, verified selection. The vendor path below is retained for
 // source-build/native CI fixtures; arbitrary host runtimes are never a protected-mode fallback.
 export const resolveWindowsNotebookRuntime = (
@@ -72,12 +102,7 @@ export const resolveWindowsNotebookNodeRuntime = (
   moduleDirectory: string = __dirname,
   architecture: string = process.arch
 ): WindowsNotebookNodeRuntime => {
-  const runtime = resolvePackagedWindowsNotebookRuntime(
-    resourcesPath,
-    moduleDirectory,
-    architecture
-  )
-  return Object.freeze({ root: runtime.root, node: runtime.node })
+  return resolvePackagedWindowsNotebookNodeRuntime(resourcesPath, moduleDirectory, architecture)
 }
 
 export const windowsNotebookNodeEnvironment = (

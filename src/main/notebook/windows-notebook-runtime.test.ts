@@ -25,6 +25,13 @@ const install = (root: string): void => {
     writeFileSync(target, '{}')
   }
 }
+const installNodeRuntime = (root: string): void => {
+  for (const file of ['node.exe', 'npm.cmd', 'npx.cmd', 'node_modules/npm/package.json']) {
+    const target = join(root, file)
+    mkdirSync(join(target, '..'), { recursive: true })
+    writeFileSync(target, '{}')
+  }
+}
 
 describe('bundled Windows Notebook runtime', () => {
   it('preserves the shared npm environment supplied by its owner', () => {
@@ -42,15 +49,17 @@ describe('bundled Windows Notebook runtime', () => {
   it('resolves packaged resources without a system PATH fallback', () => {
     const { root, resources } = fixture()
     const runtimeRoot = join(resources, 'notebook-runtime/x64')
+    const nodeRoot = join(resources, 'node-runtime')
     install(runtimeRoot)
+    installNodeRuntime(nodeRoot)
     expect(resolveWindowsNotebookRuntime(resources, root, 'x64')).toEqual({
       root: runtimeRoot,
       node: join(runtimeRoot, 'node/node.exe'),
       powershell: join(runtimeRoot, 'powershell/pwsh.exe')
     })
     expect(resolveWindowsNotebookNodeRuntime(resources, root, 'x64')).toEqual({
-      root: runtimeRoot,
-      node: join(runtimeRoot, 'node/node.exe')
+      root: nodeRoot,
+      node: join(nodeRoot, 'node.exe')
     })
   })
   it('fails closed for an incomplete packaged runtime even when a dev copy exists', () => {
@@ -68,6 +77,15 @@ describe('bundled Windows Notebook runtime', () => {
     expect(resolveWindowsNotebookRuntime(resources, join(root, 'out/main'), 'x64').root).toBe(
       runtimeRoot
     )
+  })
+  it('resolves the staged development Node/npm runtime separately from protected components', () => {
+    const { root, resources } = fixture()
+    const nodeRoot = join(root, 'out/node-runtime/win32-x64')
+    installNodeRuntime(nodeRoot)
+    expect(resolveWindowsNotebookNodeRuntime(resources, join(root, 'out/main'), 'x64')).toEqual({
+      root: nodeRoot,
+      node: join(nodeRoot, 'node.exe')
+    })
   })
   it('selects the repaired Node/npm before host tools without mutating the captured environment', () => {
     const original = {
