@@ -500,6 +500,61 @@ describe('KernelProcessLifecycleOwner', () => {
     }
   )
 
+  it('keeps a Windows reused-PID receipt fenced until its tree proof is terminal', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-reused-proof-'))
+    const proofPath = join(
+      root,
+      'proof-parent-created-after-recovery',
+      '.open-science-process-tree-terminated-proof.proof'
+    )
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const controller = {
+      probe: vi.fn().mockResolvedValue('reused' as const),
+      terminate: vi.fn().mockResolvedValue({ reaped: false })
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await first.ensureReady()
+    const intent = first.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    first.recordSpawned(intent, { pid: 4242 })
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+
+    await mkdir(join(root, 'proof-parent-created-after-recovery'), { recursive: true })
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+    const recovered = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      platform: 'win32',
+      controller
+    })
+    await recovered.ensureReady()
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+  })
+
   it('treats a missing macOS process group as dead without a boot token', async () => {
     vi.spyOn(process, 'kill').mockImplementation(() => {
       throw Object.assign(new Error('missing'), { code: 'ESRCH' })
