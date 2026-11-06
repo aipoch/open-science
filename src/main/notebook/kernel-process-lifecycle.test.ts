@@ -467,38 +467,38 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(kill).not.toHaveBeenCalled()
   })
 
-  it('clears a Windows receipt after the persisted supervisor proof reaps its tree', async () => {
-    root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-'))
-    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
-    const proof = {
-      path: proofPath,
-      token: 'proof-token',
-      requestPath: `${proofPath}.request`
+  it.each(['started-and-reaped', 'never-started'] as const)(
+    'clears a Windows receipt after the persisted supervisor proof reports %s',
+    async (processState) => {
+      root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-'))
+      const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+      const proof = {
+        path: proofPath,
+        token: 'proof-token',
+        requestPath: `${proofPath}.request`
+      }
+      const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await first.ensureReady()
+      const intent = first.beginSpawn(
+        {
+          laneKey: 'lane-a',
+          processKey: 'repl',
+          kernelEpochId: 'epoch-a'
+        },
+        'owner-token-a',
+        proof
+      )
+      first.recordSpawned(intent, { pid: 4242 })
+      await writeFile(proof.path, JSON.stringify({ version: 1, token: proof.token, processState }))
+
+      windowsProcessIsAlive.mockReturnValueOnce(false)
+      const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+      await restarted.ensureReady()
+
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
+      await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     }
-    const first = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
-    await first.ensureReady()
-    const intent = first.beginSpawn(
-      {
-        laneKey: 'lane-a',
-        processKey: 'repl',
-        kernelEpochId: 'epoch-a'
-      },
-      'owner-token-a',
-      proof
-    )
-    first.recordSpawned(intent, { pid: 4242 })
-    await writeFile(
-      proof.path,
-      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
-    )
-
-    windowsProcessIsAlive.mockReturnValueOnce(false)
-    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
-    await restarted.ensureReady()
-
-    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
-  })
+  )
 
   it('treats a missing macOS process group as dead without a boot token', async () => {
     vi.spyOn(process, 'kill').mockImplementation(() => {
