@@ -1458,17 +1458,22 @@ export async function applyCachedPdfTableSources({
         result.elements.flatMap((element) => {
           const tables =
             element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
-          const keys = new Set(
-            tables.map((_, part) => `${result.extractionId}:${element.id}:${part}`)
-          )
-          return [
-            {
-              regions: element.regions,
-              owners: new Set(
-                [...claims].filter(([, claim]) => keys.has(claim.tableKey)).map(([key]) => key)
-              )
-            }
-          ]
+          const key = (part: number): string => `${result.extractionId}:${element.id}:${part}`
+          // A grouped preview can include prose between its parts. New manifests
+          // preserve each original crop and prove it only against that part's owners.
+          // Legacy manifests retain their existing whole-element crop checks.
+          const groups = element.tableParts?.every((part) => part.regions)
+            ? element.tableParts.map((part, index) => ({
+                regions: part.regions!,
+                keys: new Set([key(index)])
+              }))
+            : [{ regions: element.regions, keys: new Set(tables.map((_, part) => key(part))) }]
+          return groups.map(({ regions, keys }) => ({
+            regions,
+            owners: new Set(
+              [...claims].filter(([, claim]) => keys.has(claim.tableKey)).map(([key]) => key)
+            )
+          }))
         })
       ),
       pages,

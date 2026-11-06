@@ -105,3 +105,11 @@ original text and native bounds, including complete non-whitespace coverage and 
 Repeated text is identified by offsets, never by guessing which substring occurrence was intended.
 If optional source metadata exceeds existing budgets, both fields are omitted together for the job.
 Verified ownership supports source-only preservation; it does not make a table cell translatable.
+
+Grouped tables may additionally carry `tableParts[].regions`, the independently extracted crop
+boundaries of each part in the same normalized coordinate system as the parent. New groups provide
+these boundaries for every part; historical results without any part boundaries remain valid.
+Part boundaries must lie inside the group's regions on processed pages and must not overlap.
+They are preserved from the individual extraction crops, never reconstructed from cell boxes.
+Readers must still verify each part's native sources before preserving its original region; a
+valid crop boundary alone does not establish text ownership.

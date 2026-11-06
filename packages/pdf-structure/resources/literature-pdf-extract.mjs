@@ -208,7 +208,11 @@ import {
   tableMarginCropTop
 } from './literature-pdf-table-geometry.mjs'
 import { recoverWrappedCountTable } from './literature-pdf-wrapped-count-grid.mjs'
-import { groupTableParts, recoverPriorPageTableCaption } from './literature-pdf-table-group.mjs'
+import {
+  groupTableParts,
+  recoverPriorPageTableCaption,
+  matchesGroupedTableCropPng
+} from './literature-pdf-table-group.mjs'
 import {
   recoverRepeatedRecordBlocks,
   groupRepeatedRecordBlocks
@@ -4239,7 +4243,12 @@ try {
               groupMixedQuestionSections(
                 groupDescriptiveRecordBlocks(
                   groupRepeatedRecordBlocks(
-                    groupTableParts(fencedPageTables, pageGeometry),
+                    groupTableParts(
+                      fencedPageTables,
+                      pageGeometry,
+                      nativeFigureTokens,
+                      nativeFigureContext
+                    ),
                     repeatedRecordBlocks
                   ),
                   descriptiveRecordBlock
@@ -4433,11 +4442,13 @@ try {
               interiorFenceProof
                 ? [interiorFenceProof.nativeCrop]
                 : cropRects?.map((r) => r.map((v) => v / 1.5)),
-              interiorFenceProof
-                ? (png) => matchesInitialPdfCropPng(png, interiorFenceProof.raster)
-                : ownedInkProof
-                  ? (png) => validateNativeOwnedGlyphOverhangCropPng(ownedInkProof, png, table)
-                  : undefined,
+              (png) =>
+                matchesGroupedTableCropPng(table, png) &&
+                (interiorFenceProof
+                  ? matchesInitialPdfCropPng(png, interiorFenceProof.raster)
+                  : ownedInkProof
+                    ? validateNativeOwnedGlyphOverhangCropPng(ownedInkProof, png, table)
+                    : true),
               !!ownedInkProof
             ))
           if (ownedInkProof && !bodyThumbnail && !graphicalThumbnail) {
@@ -5393,6 +5404,7 @@ try {
         }
         const restore = (rect) => originalRect(rect, width, height, rotation)
         if (data.cropRect) data.cropRect = restore(data.cropRect)
+        if (data.cropRects) data.cropRects = data.cropRects.map(restore)
         for (const cell of data.cells ?? []) {
           cell.rect = restore(cell.rect)
           cell.sourceRects = cell.sourceRects.map(restore)

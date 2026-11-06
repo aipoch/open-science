@@ -262,6 +262,52 @@ it('rejects a short captionless bibliography tail with dense citation keys', () 
   expect(hasTableEvidence(bibliography, { text: 'Table 1. Reference dataset' })).toBe(true)
 })
 
+it('rejects two final bracketed references and a folio only under a complete native bibliography heading', () => {
+  const token = (
+    text: string,
+    index: number,
+    x0: number,
+    x1: number,
+    baseline: number,
+    height = 10
+  ): {
+    text: string
+    rect: number[]
+    baseline: number
+    height: number
+    horizontal: boolean
+    sourceItem: { pageNumber: number; index: number; text: string }
+  } => ({
+    text,
+    rect: [x0, baseline - height, x1, baseline],
+    baseline,
+    height,
+    horizontal: true,
+    sourceItem: { pageNumber: 8, index, text }
+  })
+  const heading = token('References', 0, 8, 92, 15, 15)
+  const entries = [38, 62, 86, 124].flatMap((baseline, i) => [
+    token(`[${i + 1}]`, 1 + i * 3, 18, 28, baseline),
+    token(`A. North, Notes on a generic transport procedure,`, 2 + i * 3, 38, 415, baseline),
+    token(`Example Journal ${i + 1} (${2020 + i}), 40–51.`, 3 + i * 3, 38, 211, baseline + 14)
+  ])
+  const folio = token('8', 13, 210, 219, 170, 12)
+  const tail = {
+    cropRect: [4, 76, 425, 182],
+    grid: [
+      ['[3]', entries[7].text],
+      ['', entries[8].text],
+      ['[4]', `${entries[10].text} ${entries[11].text}`],
+      ['', folio.text]
+    ],
+    cells: [],
+    unassigned: [],
+    issues: []
+  }
+  expect(hasTableEvidence(tail, undefined, [heading, ...entries, folio], [])).toBe(false)
+  expect(hasTableEvidence(tail, undefined, [...entries, folio], [])).toBe(true)
+})
+
 it('rejects a prose continuation captured by a table and figure cross-reference', () => {
   const table = {
     grid: [['', 'or from its consistent co-occurrence with another class']],

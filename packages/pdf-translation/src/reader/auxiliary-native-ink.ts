@@ -508,7 +508,7 @@ export function createAuxiliaryNativeCaptionInkReader(options: Options): Auxilia
   return createNativeInkReader(options, nativeIsolatedPlotCaptionInk)
 }
 
-function createNativeInkReader(
+export function createNativeInkReader(
   { document: primary, nativeDocumentFactory, sourceIdentity, signal }: Options,
   readInk: typeof nativeTextFreeClipInkRegions,
   carryInk?: (from: Ink, to: Ink) => void

@@ -4,6 +4,8 @@ import {
   nativeCompleteRuledRecordPaintCrop
 } from './literature-pdf-native-leaf-record-repair.mjs'
 import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+import { nativeClosedProgramInkPacket } from './literature-pdf-figure-native-plot-labels.mjs'
+import { MAX_EDGE, MAX_SCALE, matchesInitialPdfCropPng } from './literature-pdf-crop.mjs'
 
 // This independent final-grid path does not relax the wider closed-face proof.
 function narrowNativeCountTable(table, tokens, rules, page, captions, context) {
@@ -287,7 +289,103 @@ export function recoverPriorPageTableCaption(
 
 // Group only explicit, consecutive A/B/... sections on one page with a shared
 // table caption. Column counts may differ: each part retains its own grid.
-export function groupTableParts(tables, page) {
+// Complete note records, rather than their baseline-ended line boxes, own the
+// added ink. A competing mark in the added raster strip prevents grouping.
+function groupedNoteCrop(rect, notes, page, tokens, context) {
+  if (!notes.length) return rect
+  const inside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-8 : n <= a[i] + 1e-8))
+  const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
+  const literal = (s) => s.replace(/\s/gu, '')
+  if (page.rotation !== 0 || page.invalidGraphicsBounds !== 0 || !Array.isArray(tokens)) return
+  const selected = []
+  for (const note of notes) {
+    const own = tokens
+      .filter((t) => t.horizontal && inside(note.rect, t.rect))
+      .sort((a, b) => (a.sourceItem?.index ?? -1) - (b.sourceItem?.index ?? -1))
+    if (!own.length || literal(own.map((t) => t.text).join('')) !== literal(note.text)) return
+    selected.push(...own)
+  }
+  const indices = new Set(selected.map((t) => t.sourceItem?.index))
+  if (indices.size !== selected.length) return
+  const packet = nativeClosedProgramInkPacket(
+    page,
+    tokens,
+    context,
+    selected.map((t) => t.sourceItem)
+  )
+  if (!packet) return
+  const records = packet.records.filter((r) => indices.has(r.index))
+  if (
+    records.length !== selected.length ||
+    records.some((r) => !r.advanceComplete || !packet.valid(r.ink))
+  )
+    return
+  const owners = new Set(),
+    owned = new Set(records.flatMap((r) => r.part.map((z) => z.g)))
+  for (const record of packet.records) {
+    for (const glyph of new Set(record.part.map((z) => z.g))) {
+      if (owners.has(glyph)) return
+      owners.add(glyph)
+    }
+  }
+  const ink = union(records.map((r) => r.ink))
+  if (ink[0] < rect[0] || ink[2] > rect[2] || ink[1] < rect[1]) return
+  if (ink[3] <= rect[3]) return rect
+  // One antialiasing pixel at renderPdfCrop's actual initial scale; account
+  // for the resulting height before computing its ceil-sized raster strip.
+  const scale = Math.min(
+    MAX_SCALE,
+    MAX_EDGE / (rect[2] - rect[0]),
+    (MAX_EDGE - 1) / (ink[3] - rect[1])
+  )
+  const next = [...rect.slice(0, 3), ink[3] + 1 / scale]
+  const actualScale = Math.min(MAX_SCALE, MAX_EDGE / Math.max(next[2] - next[0], next[3] - next[1]))
+  const strip = [
+    rect[0],
+    rect[3],
+    rect[2],
+    rect[1] + (Math.ceil((next[3] - rect[1]) * actualScale) + 1) / actualScale
+  ]
+  if (
+    strip[3] > page.height ||
+    packet.glyphs.some((g) => !owned.has(g) && !g.rendererSkipped && hit(strip, g.ink))
+  )
+    return
+  if (tokens.some((t) => !indices.has(t.sourceItem?.index) && hit(strip, t.rect))) return
+  if (
+    page.graphicsBounds.some((g) =>
+      hit(
+        strip,
+        (g.paintedNormalizedRect ?? g.normalizedRect).map(
+          (n, i) => n * (i % 2 ? page.height : page.width)
+        )
+      )
+    )
+  )
+    return
+  return next
+}
+
+// The note extension proves the initial ceil-sized raster strip. A byte-budget
+// resize changes that strip and cannot publish a grouped note preview.
+export function matchesGroupedTableCropPng(table, png) {
+  if (
+    !table.parts?.length ||
+    !table.notes?.length ||
+    !table.parts.every((p) => p.cropRects?.length)
+  )
+    return true
+  const rect = table.cropRect.map((n) => n / 1.5),
+    width = rect[2] - rect[0],
+    height = rect[3] - rect[1],
+    scale = Math.min(MAX_SCALE, MAX_EDGE / Math.max(width, height))
+  return matchesInitialPdfCropPng(png, {
+    pixelWidth: Math.min(MAX_EDGE, Math.max(1, Math.ceil(width * scale))),
+    pixelHeight: Math.min(MAX_EDGE, Math.max(1, Math.ceil(height * scale)))
+  })
+}
+
+export function groupTableParts(tables, page, tokens, context) {
   const continued = [...tables]
   for (const first of [...continued]) {
     if (first.caption || !first.grid?.length) continue
@@ -427,12 +525,17 @@ export function groupTableParts(tables, page) {
     continued.splice(continued.indexOf(next), 1)
   }
   const ordered = continued.sort((a, b) => a.cropRect[1] - b.cropRect[1])
+  const partLabel = /^(?:([A-Z])[.)]|\(([a-z])\))\s+\p{L}/u
+  const partOrdinal = (line) => {
+    const [, letter, parenthesized] = partLabel.exec(line.text)
+    return (letter ?? parenthesized.toUpperCase()).charCodeAt(0)
+  }
   const heading = (table) => {
     const rect = bounds(table)
     return page.lines
       .filter(
         (line) =>
-          /^[A-Z][.)]\s+\p{L}/u.test(line.text) &&
+          partLabel.test(line.text) &&
           line.y + line.height <= rect[1] &&
           rect[1] - line.y <= line.height * 4 &&
           line.x >= rect[0] - 2 &&
@@ -447,7 +550,7 @@ export function groupTableParts(tables, page) {
     if (
       !first.caption ||
       !firstHeading ||
-      firstHeading.text[0] !== 'A' ||
+      partOrdinal(firstHeading) !== 65 ||
       first.caption.rect[3] > firstHeading.y ||
       firstHeading.y - first.caption.rect[3] > 60
     ) {
@@ -467,7 +570,8 @@ export function groupTableParts(tables, page) {
         next.page !== first.page ||
         next.caption ||
         !label ||
-        label.text.charCodeAt(0) !== 65 + members.length ||
+        partOrdinal(label) !== 65 + members.length ||
+        label.text.startsWith('(') !== firstHeading.text.startsWith('(') ||
         label.y < prior[3] ||
         label.y - prior[3] > label.height * 4 ||
         Math.abs(rect[0] - prior[0]) > 12 ||
@@ -492,12 +596,19 @@ export function groupTableParts(tables, page) {
       continue
     }
     const notes = members.at(-1).notes ?? []
-    const rect = union([
+    let rect = union([
       ...members.map((member) => member.cropRect.map((v) => v / 1.5)),
       first.caption.rect,
       ...headings.map(lineRect),
       ...notes.map((note) => note.rect)
     ])
+    if (tokens !== undefined || context !== undefined) {
+      rect = groupedNoteCrop(rect, notes, page, tokens, context)
+      if (!rect) {
+        result.push(first)
+        continue
+      }
+    }
     result.push({
       id: first.id,
       page: first.page,
@@ -506,9 +617,15 @@ export function groupTableParts(tables, page) {
       cropRect: rect.map((v) => v * 1.5),
       parts: members.map((member, index) => ({
         title: headings[index].text,
+        // Preserve each independently extracted crop. Cell glyph boxes cannot
+        // establish a part boundary or reconstruct the space between parts.
+        cropRects: (member.cropRects ?? [member.cropRect]).map((rect) => [...rect]),
         sourceViewport: member.sourceViewport,
         grid: member.grid,
         cells: member.cells,
+        ...(member.unreliableMathSourceItems
+          ? { unreliableMathSourceItems: member.unreliableMathSourceItems }
+          : {}),
         unassigned: member.unassigned,
         issues: member.issues,
         notes: []

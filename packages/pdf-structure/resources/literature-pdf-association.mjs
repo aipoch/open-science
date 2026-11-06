@@ -101,6 +101,7 @@ import {
   nativeCaptionedTextIllustration,
   nativeCaptionedVectorDiagram,
   nativeCaptionedConnectedNodes,
+  nativeCaptionedCircularDags,
   nativeCaptionedVectorGrid,
   nativeCaptionedVectorTableGrid,
   nativeCaptionedVectorChartStrip,
@@ -1782,9 +1783,10 @@ function associateNativeFigures(
       candidates,
       tableRects,
       nativeTokens,
-      operatorContext
+      operatorContext,
+      closedFrames
     )
-    if (isolatedVector && (!figure.rect || area(figure.rect) > area(isolatedVector) * 3))
+    if (isolatedVector)
       return { ...figure, rect: isolatedVector, reason: undefined, issue: undefined }
     const keyedPlotBand = recoverNativeKeyedPlotBand(
       page,
@@ -2798,7 +2800,11 @@ export function associateFigures(...args) {
       priorComplete || isolatedRaster
         ? undefined
         : nativeRecoveryFigureCrop(args[0], figure, args[1], args[2], args[5], args[6])
-    const complete = priorComplete ?? isolatedRaster ?? recovery
+    const circular =
+      priorComplete || isolatedRaster || recovery
+        ? undefined
+        : nativeCaptionedCircularDags(args[0], figure, args[1], args[2], args[5], args[6])
+    const complete = priorComplete ?? isolatedRaster ?? recovery ?? circular
     if (
       !complete ||
       figures.some(
@@ -2807,14 +2813,22 @@ export function associateFigures(...args) {
     )
       return figure
     const retained = { ...figure }
-    if (closedSave || program || orderedForms || isolatedForm || isolatedRaster || recovery) {
+    if (
+      closedSave ||
+      program ||
+      orderedForms ||
+      isolatedForm ||
+      isolatedRaster ||
+      recovery ||
+      circular
+    ) {
       delete retained.reason
       delete retained.issue
     }
     return {
       ...retained,
       ...complete,
-      ...(program || orderedForms || isolatedForm || isolatedRaster || recovery
+      ...(program || orderedForms || isolatedForm || isolatedRaster || recovery || circular
         ? { fallbackFigure: figure }
         : {})
     }
@@ -3419,7 +3433,15 @@ function nativePathPaintEnvelopes(context) {
   return paints
 }
 
-function recoverIsolatedNativeVectorBand(page, figure, candidates, tables, tokens, context) {
+export function recoverIsolatedNativeVectorBand(
+  page,
+  figure,
+  candidates,
+  tables,
+  tokens,
+  context,
+  closedFrames = []
+) {
   const caption = figure.caption
   if (!caption || page.invalidGraphicsBounds || !tokens.length) return
   const captionFonts = tokens.filter(
@@ -3503,8 +3525,39 @@ function recoverIsolatedNativeVectorBand(page, figure, candidates, tables, token
       t.rect[1] >= Math.max(lane[1], bounds[1] - font * 2) &&
       t.rect[3] <= caption.rect[1]
   )
+  // An outlined plot has no text tokens for its labels. Require the same
+  // complete bounds in the independent path inventory and an enclosed axis,
+  // with a continuous paragraph separating the rejected upper paint.
+  let outlined = false
+  if (!labels.length && figure.rect) {
+    const lastRows = prose.slice(-3)
+    const frames = closedFrames.filter((frame) => intersection(frame, lane) > 0)
+    const encloses = (outer, inner) =>
+      inner.every((v, i) => (i < 2 ? v >= outer[i] - 1e-7 : v <= outer[i] + 1e-7))
+    if (
+      lastRows.length === 3 &&
+      lastRows[2].y + lastRows[2].height === lane[1] &&
+      lastRows.every(
+        (line, i) =>
+          encloses(figure.rect, lineRect(line)) &&
+          Math.abs(line.x - lastRows[0].x) <= font * 0.1 &&
+          Math.abs(line.fontSize - lastRows[0].fontSize) <= font * 0.05 &&
+          (!i || (line.y - lastRows[i - 1].y >= font && line.y - lastRows[i - 1].y <= font * 1.5))
+      ) &&
+      encloses(figure.rect, bounds) &&
+      frames.length === 1 &&
+      area(frames[0]) >= area(bounds) / 2 &&
+      encloses(bounds, frames[0])
+    ) {
+      const native = nativePathPaintEnvelopes(context)?.filter((r) => intersection(r, lane) > 0)
+      outlined =
+        native?.length === local.length &&
+        native.every((r) => !outside(r)) &&
+        union(native).every((v, i) => Math.abs(v - bounds[i]) <= 1e-7)
+    }
+  }
   if (
-    labels.length < 2 ||
+    (!outlined && labels.length < 2) ||
     labels.some(
       (t) =>
         t.height > font * 1.5 ||
@@ -3528,7 +3581,7 @@ function recoverIsolatedNativeVectorBand(page, figure, candidates, tables, token
     tokens.some((t) => t.text?.trim() && intersection(t.rect, rect) > 0 && !labels.includes(t))
   )
     return
-  return rect
+  if (outlined || !figure.rect || area(figure.rect) > area(rect) * 3) return rect
 }
 
 // A complete, caption-wide keyed plate owns every native source above its

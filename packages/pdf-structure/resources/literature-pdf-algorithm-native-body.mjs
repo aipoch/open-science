@@ -1664,7 +1664,7 @@ function nativeDeclarationNote(page, context, step, next, line) {
   )
 }
 
-function closedNumberedFrame(page, candidate, lines, rules, context) {
+function closedNumberedFrame(page, candidate, lines, rules, context, captionOverhang = 0) {
   const title = candidate.caption,
     h = title.rect[3] - title.rect[1],
     // In addition to the established wide frame, accept a full column frame
@@ -1676,8 +1676,8 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
           r[1] === r[3] &&
           (r[2] - r[0] >= page.width * 0.5 ||
             (r[2] - r[0] >= candidate.rect[2] - candidate.rect[0] - h * 2 &&
-              r[0] <= title.rect[0] &&
-              r[2] >= title.rect[2])) &&
+              r[0] <= title.rect[0] + captionOverhang &&
+              r[2] >= title.rect[2] - captionOverhang)) &&
           inside(candidate.rect, r)
       )
       .sort((a, b) => a[1] - b[1])
@@ -1791,6 +1791,84 @@ function closedNumberedFrame(page, candidate, lines, rules, context) {
     if (stack.length) stack.at(-1).body = true
   }
   return loops > 0 && stack.length === 0
+}
+
+// Recover a wrapped title only inside the same three native rails as the
+// numbered program. A nearby paragraph never extends the caption or the crop.
+function wrappedNumberedFrame(page, candidate, lines, context) {
+  const title = candidate.caption,
+    { operators, viewport } = context
+  if (
+    title.lines.length !== 1 ||
+    !Array.isArray(operators?.fnArray) ||
+    !Array.isArray(operators.argsArray) ||
+    operators.fnArray.length !== operators.argsArray.length ||
+    operators.fnArray.length > 100000 ||
+    !viewport
+  )
+    return
+  const first = lines.find((line) => line.text === title.lines[0] && inside(title.rect, box(line))),
+    inventory = nativeInventory(page, context)
+  if (!first || !inventory || !(first.fontSize > 0)) return
+  const em = first.fontSize,
+    overhang = em * 0.1,
+    paint = new Map(),
+    rails = collectTableRules(operators, viewport, paint)
+      .filter(
+        (rule) =>
+          rule[1] === rule[3] &&
+          inside(candidate.rect, rule) &&
+          rule[0] <= title.rect[0] + overhang &&
+          rule[2] >= title.rect[2] - overhang
+      )
+      .sort((a, b) => a[1] - b[1])
+  if (
+    rails.length !== 3 ||
+    rails.some((rule) => rule[0] !== rails[0][0] || rule[2] !== rails[0][2]) ||
+    first.right - first.x < (rails[0][2] - rails[0][0]) * 0.8
+  )
+    return
+  const [top, divider, bottom] = rails.map((rule) => paint.get(rule.join(',')))
+  if (!top || !divider || !bottom) return
+  const wrapped = lines.filter(
+    (line) =>
+      line !== first &&
+      line.y >= first.bottom &&
+      line.y < divider[1] &&
+      overlap(box(line), candidate.rect)
+  )
+  if (wrapped.length !== 1) return
+  const [next] = wrapped,
+    leading = next.bottom - first.bottom
+  if (
+    Math.abs(next.fontSize - em) > em * 0.05 ||
+    Math.abs(next.x - first.x) > overhang ||
+    next.right > rails[0][2] + overhang ||
+    leading < em * 0.9 ||
+    leading > em * 1.5 ||
+    !/^[\p{Ll}(]/u.test(next.text)
+  )
+    return
+  const caption = {
+    ...title,
+    lines: [...title.lines, next.text],
+    rect: union([title.rect, box(next)])
+  }
+  if (
+    inventory.some(
+      (item) =>
+        item.invalid ||
+        (overlap(item.rect, candidate.rect) &&
+          (inside(caption.rect, item.rect)
+            ? item.labelRect[1] <= top[3] || item.labelRect[3] >= divider[1]
+            : item.labelRect[1] <= divider[3] || item.labelRect[3] >= bottom[1]))
+    )
+  )
+    return
+  const completed = { ...candidate, caption }
+  if (!closedNumberedFrame(page, completed, lines, rails, context, overhang)) return
+  const proved = proveNativeAlgorithmBody(page, completed, context)
+  return proved && inside(candidate.rect, proved.rect) ? proved : undefined
 }
 
 // A publisher may close one numbered while scope through native indentation
@@ -2915,7 +2993,7 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
     closedNumberedFrame(page, candidate, lines, rules, context) ||
     nativeIndentedNumberedFrame(page, candidate, context)
       ? (proveNativeAlgorithmBody(page, candidate, context) ?? candidate)
-      : candidate
+      : (wrappedNumberedFrame(page, candidate, lines, context) ?? candidate)
   )
   for (const title of titles) {
     for (const c of [

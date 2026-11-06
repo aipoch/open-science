@@ -5,6 +5,9 @@ import { tableTextToken } from './literature-pdf-orientation.mjs'
 import { area, intersection, union, lineRect } from './literature-pdf-page-geometry.mjs'
 import { nativeTableDividerGraphic } from './literature-pdf-native-owned-figure-labels.mjs'
 import { captionKind, groupPageLines } from './literature-pdf-caption-group.mjs'
+import { getInitialPdfCropRaster } from './literature-pdf-crop.mjs'
+import { nativeFigurePathPaint } from './literature-pdf-figure-native-complete-form.mjs'
+import { nativeClosedProgramInkPacket } from './literature-pdf-figure-native-plot-labels.mjs'
 import {
   nativeTopParagraphTail,
   completeNativeNodeGlyphProgram
@@ -3214,6 +3217,396 @@ export function nativeCaptionedConnectedNodes(page, caption, captions, tables, t
   )
     return
   return { caption, rect, graphicsCount: inside.length }
+}
+
+// A saved circular diagram is complete only when each shaft and arrowhead
+// binds two distinct labeled circles. A detached variable key can separate
+// the drawing from its caption, but stays exterior to this pixel-only proof.
+const diagramOffset = (a, b) => [a[0] - b[0], a[1] - b[1]]
+const diagramDistance = (a, b) => Math.hypot(...diagramOffset(a, b))
+const diagramDot = (a, b) => a[0] * b[0] + a[1] * b[1]
+const diagramCross = (a, b) => a[0] * b[1] - a[1] * b[0]
+const diagramPad = (rect, pad) => rect.map((v, i) => v + (i < 2 ? -pad : pad))
+const diagramLiteral = (text) => text.replace(/\s/gu, '')
+const circleK = 0.55228475
+const circularCubic = [
+  [1, 0],
+  [1, -circleK],
+  [circleK, -1],
+  [0, -1],
+  [-circleK, -1],
+  [-1, -circleK],
+  [-1, 0],
+  [-1, circleK],
+  [-circleK, 1],
+  [0, 1],
+  [circleK, 1],
+  [1, circleK],
+  [1, 0]
+]
+
+function circularNode(mark) {
+  if (mark.paint !== OPS.fillStroke || mark.fill !== '#ffffff' || mark.commands !== '0,2,2,2,2,4,0')
+    return
+  const center = mark.points[13]
+  const radius = diagramDistance(mark.points[0], center)
+  if (
+    !(radius > 0) ||
+    !circularCubic.every(
+      ([x, y], i) =>
+        diagramDistance(mark.points[i], [center[0] + radius * x, center[1] + radius * y]) <=
+        radius * 0.007
+    )
+  )
+    return
+  return { mark, center, radius }
+}
+
+function circularGraphIsConnected(nodes, shafts, heads) {
+  const edges = [],
+    used = new Set()
+  for (const shaft of shafts) {
+    const [start, end] = shaft.points
+    const span = diagramDistance(end, start)
+    if (span < nodes[0].radius * 2) return false
+    const axis = diagramOffset(end, start).map((v) => v / span)
+    const matching = heads.filter((head) => {
+      const [tip, wingA, stem, wingB] = head.points.map((p) => diagramOffset(p, end))
+      const sideA = diagramCross(axis, wingA),
+        sideB = diagramCross(axis, wingB)
+      return (
+        Math.hypot(...stem) <= 0.4 &&
+        diagramDot(axis, tip) > 1.2 &&
+        diagramDot(axis, tip) < 5 &&
+        Math.abs(diagramCross(axis, tip)) < 0.3 &&
+        sideA * sideB < 0 &&
+        Math.max(Math.abs(sideA), Math.abs(sideB)) < 3 &&
+        diagramDot(axis, wingA) < 0 &&
+        diagramDot(axis, wingB) < 0
+      )
+    })
+    if (matching.length !== 1 || used.has(matching[0])) return false
+    const head = matching[0]
+    const endpoints = (point, sign) =>
+      nodes.filter((node) => {
+        const radial = diagramOffset(point, node.center),
+          distance = Math.hypot(...radial)
+        return (
+          distance >= node.radius - 0.6 &&
+          distance <= node.radius + 4 &&
+          sign * diagramDot(radial, axis) >= distance * 0.96
+        )
+      })
+    const from = endpoints(start, 1),
+      to = endpoints(head.points[0], -1)
+    if (
+      from.length !== 1 ||
+      to.length !== 1 ||
+      from[0] === to[0] ||
+      edges.some(([a, b]) => a === from[0] && b === to[0])
+    )
+      return false
+    if (
+      nodes.some((node) => {
+        if (node === from[0] || node === to[0]) return false
+        const along = Math.max(
+          0,
+          Math.min(span, diagramDot(diagramOffset(node.center, start), axis))
+        )
+        const nearest = start.map((v, i) => v + axis[i] * along)
+        return diagramDistance(node.center, nearest) <= node.radius + 0.5
+      })
+    )
+      return false
+    used.add(head)
+    edges.push([from[0], to[0]])
+  }
+  const connected = new Set([nodes[0]])
+  const ordered = new Set()
+  for (let pass = 0; pass < nodes.length; pass++) {
+    for (const [a, b] of edges) {
+      if (connected.has(a) || connected.has(b)) {
+        connected.add(a)
+        connected.add(b)
+      }
+    }
+    for (const node of nodes)
+      if (edges.every(([a, b]) => b !== node || ordered.has(a))) ordered.add(node)
+  }
+  return (
+    used.size === heads.length && connected.size === nodes.length && ordered.size === nodes.length
+  )
+}
+
+function circularDiagramPaint(packet) {
+  const { o, v, evidence } = packet
+  const allowed = new Set([
+    OPS.save,
+    OPS.restore,
+    OPS.transform,
+    OPS.setFillRGBColor,
+    OPS.setStrokeRGBColor,
+    OPS.setDash,
+    OPS.setLineWidth,
+    OPS.setLineCap,
+    OPS.setLineJoin,
+    OPS.constructPath,
+    OPS.beginText,
+    OPS.endText,
+    OPS.dependency,
+    OPS.setFont,
+    OPS.moveText,
+    OPS.setTextMatrix,
+    OPS.showText
+  ])
+  if (o.fnArray.some((op) => !allowed.has(op))) return
+  let fill = '#000000',
+    stroke = '#000000'
+  const scopes = [],
+    saved = [],
+    marks = []
+  for (const [i, op] of o.fnArray.entries()) {
+    const args = o.argsArray[i]
+    if (op === OPS.save) saved.push({ i, fill, stroke })
+    else if (op === OPS.restore) {
+      const previous = saved.pop()
+      if (!previous) return
+      fill = previous.fill
+      stroke = previous.stroke
+      if (!saved.length) scopes.push([previous.i, i])
+    } else if (op === OPS.setFillRGBColor) fill = args[0]
+    else if (op === OPS.setStrokeRGBColor) stroke = args[0]
+    else if (op === OPS.constructPath && args[1]?.[0]) {
+      const state = evidence.paths.get(i)
+      const bound = nativeFigurePathPaint(packet, i, state)
+      if (
+        !bound ||
+        !state.clip ||
+        !contains(state.clip, bound.rect) ||
+        stroke !== '#000000' ||
+        state.strokeAlpha !== 1 ||
+        state.fillAlpha !== 1 ||
+        !state.solidStroke
+      )
+        return
+      const program = args[1][0],
+        matrix = Util.transform(v.transform, state.transform)
+      const commands = [],
+        points = []
+      for (let n = 0; n < program.length;) {
+        const command = program[n++]
+        const count = command === 0 || command === 1 ? 2 : command === 2 ? 6 : 0
+        commands.push(command)
+        for (let j = 0; j < count; j += 2) {
+          const point = [program[n + j], program[n + j + 1]]
+          Util.applyTransform(point, matrix)
+          points.push(point)
+        }
+        n += count
+      }
+      marks.push({ i, ...bound, points, commands: commands.join(','), paint: args[0], fill })
+    }
+  }
+  if (!saved.length) return { scopes, marks }
+}
+
+export function nativeCaptionedCircularDags(page, figure, captions, tables, tokens, context) {
+  try {
+    const caption = figure?.caption
+    const local = captions.filter((c) => c.page === page.pageNumber)
+    const operators = context?.operators
+    if (
+      page.rotation !== 0 ||
+      page.renderRotation !== 0 ||
+      page.invalidGraphicsBounds !== 0 ||
+      local.length !== 1 ||
+      local[0] !== caption ||
+      !/^Figure\s+\d+[.:]\s/u.test(caption.lines[0]) ||
+      figure.sourceItems?.length ||
+      figure.parts ||
+      figure.formCropRaster ||
+      figure.fallbackFigure ||
+      page.graphicsBounds.length < 12 ||
+      page.graphicsBounds.length > 60 ||
+      page.graphicsBounds.some((g) => g.kind !== 'path') ||
+      !context?.glyphBounds ||
+      context.content.items.length > 1500 ||
+      operators.fnArray.length > 20000 ||
+      page.graphicsBounds.filter(({ operationIndex }) => {
+        const args = operators.argsArray[operationIndex]
+        return args?.[0] === OPS.fillStroke && args[1]?.[0]?.length === 35
+      }).length < 4
+    )
+      return
+    const em = captionFont(page, caption)
+    const seed = tokens.find(
+      (t) => t.sourceItem?.text?.trim() && intersection(t.rect, caption.rect) > 0
+    )
+    const packet = seed && nativeClosedProgramInkPacket(page, tokens, context, [seed.sourceItem])
+    if (!(em > 0) || !packet || packet.evidence.images.length || packet.records.length > 1500)
+      return
+    const { records } = packet
+    const captionRecords = records.filter((r) => intersection(r.rect, caption.rect) > 0)
+    if (
+      !captionRecords.length ||
+      captionRecords.some((r) => !r.advanceComplete) ||
+      diagramLiteral(captionRecords.map((r) => r.r.str).join('')) !==
+        diagramLiteral(caption.lines.join(''))
+    )
+      return
+    const paint = circularDiagramPaint(packet)
+    if (!paint) return
+    const diagrams = []
+    for (const [start, end] of paint.scopes) {
+      const marks = paint.marks.filter((p) => p.i > start && p.i < end)
+      const nodes = marks.map(circularNode).filter(Boolean)
+      if (!nodes.length) continue
+      const heads = marks.filter(
+        (p) => p.paint === OPS.fillStroke && p.fill === '#000000' && p.commands === '0,1,1,1,4'
+      )
+      const shafts = marks.filter((p) => p.paint === OPS.stroke && p.commands === '0,1')
+      if (
+        nodes.length < 4 ||
+        nodes.length > 8 ||
+        nodes.some(
+          (n) =>
+            n.radius < em * 0.8 ||
+            n.radius > em * 1.3 ||
+            Math.abs(n.radius - nodes[0].radius) > 0.02
+        ) ||
+        heads.length !== shafts.length ||
+        marks.length !== nodes.length + heads.length + shafts.length ||
+        !circularGraphIsConnected(nodes, shafts, heads)
+      )
+        return
+      const labels = records.filter((r) => r.part.some((z) => z.g.i > start && z.g.i < end))
+      const labelValues = new Set(labels.map((r) => r.r.str.trim()))
+      if (
+        labels.length !== nodes.length ||
+        labelValues.size !== nodes.length ||
+        labels.some(
+          (r) =>
+            !r.advanceComplete ||
+            !/^[A-Z]$/u.test(r.r.str.trim()) ||
+            r.part.some((z) => z.g.i <= start || z.g.i >= end)
+        ) ||
+        nodes.some(
+          (n) =>
+            labels.filter((r) => {
+              const [x, y, right, bottom] = r.ink
+              return (
+                r.part[0].g.i > n.mark.i &&
+                [
+                  [x, y],
+                  [x, bottom],
+                  [right, y],
+                  [right, bottom]
+                ].every((p) => diagramDistance(p, n.center) < n.radius * 0.8)
+              )
+            }).length !== 1
+        )
+      )
+        return
+      const body = union([...marks.map((p) => p.rect), ...labels.map((r) => r.ink)])
+      if (body[3] >= caption.rect[1]) return
+      diagrams.push({ marks, labels, labelValues, body })
+    }
+    if (diagrams.length < 1 || diagrams.length > 2) return
+    const drawing = union(diagrams.map((d) => d.body))
+    const overlapX = Math.min(caption.rect[2], drawing[2]) - Math.max(caption.rect[0], drawing[0])
+    if (
+      overlapX < Math.min(caption.rect[2] - caption.rect[0], drawing[2] - drawing[0]) * 0.65 ||
+      caption.rect[1] - drawing[3] > em * 6 ||
+      paint.marks.some(
+        (p) =>
+          !diagrams.some((d) => d.marks.includes(p)) &&
+          p.rect[1] < caption.rect[1] &&
+          p.rect[3] > drawing[1]
+      )
+    )
+      return
+    const gap = page.lines.filter(
+      (l) => l.y >= drawing[3] - em * 0.15 && l.y < caption.rect[1] - em * 0.2 && l.text.trim()
+    )
+    if (
+      gap.length > 6 ||
+      gap.some((l) => {
+        const match = /^([A-Z])\s*(?:=\s*\d+\s*)?:\s*\p{L}/u.exec(l.text.trim())
+        return !match || !diagrams.some((d) => d.labelValues.has(match[1]))
+      })
+    )
+      return
+    const panelTitles = []
+    if (diagrams.length === 2) {
+      diagrams.sort((a, b) => a.body[0] - b.body[0])
+      const [left, right] = diagrams.map((d) => d.body)
+      if (
+        left[2] >= right[0] ||
+        Math.abs(left[1] - right[1]) > em * 0.3 ||
+        Math.abs(left[3] - right[3]) > em * 0.3
+      )
+        return
+      for (const [i, d] of diagrams.entries()) {
+        const titles = records.filter(
+          (r) =>
+            r.ink[0] >= d.body[0] &&
+            r.ink[2] <= d.body[2] &&
+            r.ink[3] < d.body[1] &&
+            r.ink[1] > d.body[1] - em * 1.8
+        )
+        if (
+          !titles.length ||
+          titles.some(
+            (r) => !r.advanceComplete || Math.abs(r.ink[1] - titles[0].ink[1]) > em * 0.2
+          ) ||
+          !titles
+            .map((r) => r.r.str)
+            .join(' ')
+            .trim()
+            .startsWith(i === 0 ? 'Left Panel:' : 'Right Panel:')
+        )
+          return
+        panelTitles.push(...titles)
+      }
+    }
+    const included = [...diagrams.flatMap((d) => d.labels), ...panelTitles]
+    if (
+      included.some((record) =>
+        record.part.some(
+          ({ g }) => g.textPaint.fillColor !== '#000000' || g.textPaint.fillAlpha !== 1
+        )
+      ) ||
+      (figure.rect && included.every((record) => contains(figure.rect, record.ink)))
+    )
+      return
+    const owned = diagrams.flatMap((d) => d.marks)
+    const ownedRects = [
+      ...owned.map((p) => diagramPad(p.rect, p.floor / 4)),
+      ...included.map((r) => r.ink)
+    ]
+    const foreignPaints = [
+      ...paint.marks.filter((p) => !owned.includes(p)).map(({ rect, floor }) => ({ rect, floor })),
+      ...records
+        .filter((r) => !included.includes(r) && area(r.ink) > 0)
+        .map((r) => ({ rect: r.ink, floor: 0 }))
+    ]
+    const rect = diagramPad(union(ownedRects), 0.75)
+    const padded = diagramPad(rect, 2 / (Math.ceil(page.width * 1.5) / page.width))
+    const initial = getInitialPdfCropRaster(padded, page)
+    if (
+      initial?.scale !== 4 ||
+      blocked(initial.protection, caption, captions, tables) ||
+      initial.protection[3] >= caption.rect[1] ||
+      (figure.rect && !contains(padded, figure.rect)) ||
+      foreignPaints.some(
+        (p) => intersection(initial.protection, diagramPad(p.rect, (p.floor + 2) / 4)) > 0
+      )
+    )
+      return
+    return { rect, graphicsCount: owned.length, formCropRaster: { ownedRects, foreignPaints } }
+  } catch {
+    return
+  }
 }
 
 // A narrow-column vector plate can contain only boxes, arrows, and short

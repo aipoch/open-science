@@ -18,6 +18,91 @@ const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
 
+function wrappedNumberedCaption(): ReturnType<typeof JSON.parse> {
+  const rows: [string, number, number, number][] = [
+    ['Algorithm 1 Collect samples for bounded estimates. Prepare values', 299.65, 76, 10],
+    ['for a single independent group.', 300, 88, 10],
+    ['Require: a sequence', 300, 105, 10],
+    ['Ensure: a normalized total', 300, 117, 10],
+    ['1: initialize total', 305, 129, 10],
+    ['2: for each value do', 305, 141, 10],
+    ['3: add the value', 305, 153, 10],
+    ['4: end for', 305, 165, 10],
+    ['5: total ← 1', 305, 177, 10],
+    ['z', 346, 180, 7],
+    ['6: return total', 305, 189, 10],
+    ['The following paragraph remains ordinary prose.', 300, 226, 10]
+  ]
+  const items = rows.map(([str, x, baseline, height], index) => ({
+      str,
+      dir: 'ltr',
+      width: str.length * height * 0.36,
+      height,
+      transform: [height, 0, 0, height, x, 800 - baseline],
+      fontName: 'native',
+      sourceItem: { pageNumber: 1, index, text: str }
+    })),
+    rails = [67, 93, 206],
+    operators = {
+      fnArray: rails.map(() => OPS.constructPath),
+      argsArray: rails.map((y) => [
+        OPS.stroke,
+        [[0, 300, 800 - y, 1, 535, 800 - y]],
+        [300, 800 - y, 535, 800 - y]
+      ])
+    },
+    viewport = { width: 600, height: 800, scale: 1, rotation: 0, transform: [1, 0, 0, -1, 0, 800] },
+    page = {
+      pageNumber: 1,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: rows.map(([text, x, baseline, height], i) => ({
+        text,
+        x,
+        y: baseline - height,
+        width: items[i].width,
+        height,
+        fontSize: height
+      })),
+      graphicsBounds: rails.map((y, operationIndex) => ({
+        operationIndex,
+        kind: 'path',
+        normalizedRect: [299 / 600, (y - 1) / 800, 536 / 600, (y + 1) / 800]
+      }))
+    },
+    content = { items, styles: { native: { ascent: 0.8, descent: -0.2, vertical: false } } }
+  return {
+    page,
+    context: { content, viewport, operators, rules: collectTableRules(operators, viewport) }
+  }
+}
+
+it('retains the final numbered return under a complete wrapped native algorithm caption', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  expect(legacy.caption.lines).toHaveLength(1)
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate.rect).toEqual(legacy.rect)
+  expect(candidate.caption.lines).toEqual(
+    page.lines.slice(0, 2).map((line: { text: string }) => line.text)
+  )
+  expect(candidate.nativeBody?.sourceItems).toEqual(
+    context.content.items.slice(2, -1).map((item: { sourceItem: unknown }) => item.sourceItem)
+  )
+})
+
+it('keeps a wrapped algorithm caption unchanged if the divider only exists in page geometry', () => {
+  const { page, context } = wrappedNumberedCaption()
+  const [legacy] = findAlgorithmCandidates(page, context.rules)
+  context.operators.fnArray[1] = OPS.dependency
+  context.operators.argsArray[1] = []
+  const [candidate] = findNativeAlgorithmCandidates(page, context)
+  expect(candidate).toEqual(legacy)
+  expect(candidate.nativeBody).toBeUndefined()
+})
+
 // Three actual native strokes close nested scopes; the two caption fragments
 // have disjoint used ink although their font-wide boxes overlap Output.
 function verticalScopeProgram(mode = '', dotted = false): ReturnType<typeof JSON.parse> {

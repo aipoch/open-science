@@ -169,6 +169,126 @@ describe('unreliable mathematical source witnesses', () => {
   )
 })
 
+describe('independent original regions for grouped tables', () => {
+  it.each(['complete', 'legacy', 'foreign-text', 'blocked-part'] as const)(
+    'keeps only independently proved part crops without consuming the intervening prose: %s',
+    async (mode) => {
+      const f = setup()
+      const top = { page: 1, x: 0.1, y: 0.1, width: 0.5, height: 0.13 }
+      const bottom = { page: 1, x: 0.1, y: 0.6, width: 0.2, height: 0.13 }
+      f.items.push({ ...f.items[2], str: 'Explanation', transform: [10, 0, 0, 10, 10, 50] })
+      const source = createPdfTranslationSource({
+        ...f.extraction.source,
+        units: [
+          ...f.extraction.source.units,
+          {
+            id: 'between',
+            source: 'Explanation',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: f.rect(0.1, 0.4),
+                items: [{ index: 3, text: 'Explanation' }]
+              }
+            ]
+          },
+          ...(mode === 'foreign-text'
+            ? [
+                {
+                  id: 'foreign',
+                  source: 'Foreign',
+                  fragments: [
+                    {
+                      pageNumber: 1,
+                      rect: f.rect(0.2, 0.16),
+                      items: [{ index: 4, text: 'Foreign' }]
+                    }
+                  ]
+                }
+              ]
+            : [])
+        ]
+      })
+      if (mode === 'foreign-text')
+        f.items.push({ ...f.items[2], str: 'Foreign', transform: [10, 0, 0, 10, 20, 76] })
+      f.context.extraction = {
+        ...f.extraction,
+        source,
+        coverage: {
+          ...f.extraction.coverage,
+          textItemCount: f.items.length,
+          includedItemCount: f.items.length
+        }
+      }
+      const table = f.cached.elements[0].table!
+      if (mode === 'blocked-part')
+        table.issues = [{ code: 'unresolved-spanning-cells', detail: 'Unproved span' }]
+      f.cached.elements[0] = {
+        ...f.cached.elements[0],
+        table: undefined,
+        caption: {
+          text: 'Table 1. Separate measurements.',
+          regions: [{ page: 1, x: 0.1, y: 0.02, width: 0.5, height: 0.04 }]
+        },
+        regions: [{ page: 1, x: 0.1, y: 0.1, width: 0.5, height: 0.63 }],
+        tableParts: [
+          { title: 'First', table, ...(mode === 'legacy' ? {} : { regions: [top] }) },
+          {
+            title: 'Second',
+            ...(mode === 'legacy' ? {} : { regions: [bottom] }),
+            table: {
+              rowCount: 1,
+              columnCount: 1,
+              issues: [],
+              unassignedText: [],
+              cells: [
+                {
+                  row: 0,
+                  column: 0,
+                  rowSpan: 1,
+                  columnSpan: 1,
+                  text: 'Prose',
+                  regions: [{ page: 1, ...f.rect(0.1, 0.6) }],
+                  sourceItems: [{ pageNumber: 1, index: 2, text: 'Prose' }]
+                }
+              ]
+            }
+          }
+        ]
+      }
+      expect(() => parsePdfStructureResult(f.cached, f.cached)).not.toThrow()
+      const result = await applyCachedPdfTableSources(f.context)
+      const expected = mode === 'legacy' ? [] : mode === 'complete' ? [top, bottom] : [bottom]
+      expect(result.source.originalRegions ?? []).toEqual(
+        expected.map(({ page: pageNumber, ...rect }) => ({
+          pageNumber,
+          rect: { ...rect, width: expect.closeTo(rect.width, 12) }
+        }))
+      )
+      expect(result.source.units.find((unit) => unit.id === 'between')).toEqual(source.units[2])
+      if (mode === 'foreign-text')
+        expect(result.source.units.find((unit) => unit.id === 'foreign')).toEqual(source.units[3])
+      const origins = (value: typeof source) =>
+        value.units
+          .flatMap((unit) =>
+            unit.fragments.flatMap((fragment) =>
+              fragment.items.map((item) =>
+                JSON.stringify([fragment.pageNumber, item.index, item.text])
+              )
+            )
+          )
+          .sort()
+      const before = origins(source)
+      const after = origins(result.source)
+      expect(after).toEqual(before)
+      expect(new Set(after).size).toBe(after.length)
+      expect(
+        result.source.units.filter((unit) => unit.id.startsWith('table-source:'))
+      ).toHaveLength(mode === 'blocked-part' ? 1 : 3)
+    }
+  )
+})
+
 function setup() {
   const sourceIdentity = { sourceChecksum: 'a'.repeat(64), sourceSizeBytes: 100 }
   const item = (
@@ -1260,7 +1380,8 @@ describe('cached PDF table source ownership', () => {
     'stable',
     'early replacement',
     'late replacement',
-    'late in-place fingerprint'
+    'late in-place fingerprint',
+    'key-stage replacement'
   ] as const)(
     'publishes figure ownership only while the source remains current: %s',
     async (mode) => {
@@ -1329,6 +1450,10 @@ describe('cached PDF table source ownership', () => {
           changedAtRead = pageReads
           fingerprints[0] = 'replacement'
         }
+        if (mode === 'key-stage replacement' && pageReads === 4) {
+          changedAtRead = pageReads
+          f.document.fingerprints = ['replacement']
+        }
         return f.page
       })
       const result = await applyCachedPdfFigureSources(f.context)
@@ -1339,11 +1464,24 @@ describe('cached PDF table source ownership', () => {
         expect(result.coverage).toBe(f.context.extraction.coverage)
       }
       // After the figure and original whole-region checks, an independent
-      // captioned-math proof may read this page once more; it cannot publish
-      // the earlier figure ownership after either source-failure injection.
-      expect(pageReads).toBe(mode === 'early replacement' ? 1 : 3)
+      // captioned-math proof reads this page once more. A stable source then
+      // reaches the detached-key candidate read. Neither stage may publish
+      // earlier figure ownership after a source-failure injection.
+      expect(pageReads).toBe(
+        mode === 'early replacement'
+          ? 1
+          : mode === 'stable' || mode === 'key-stage replacement'
+            ? 4
+            : 3
+      )
       expect(changedAtRead).toBe(
-        mode === 'stable' ? undefined : mode === 'early replacement' ? 1 : 2
+        mode === 'stable'
+          ? undefined
+          : mode === 'early replacement'
+            ? 1
+            : mode === 'key-stage replacement'
+              ? 4
+              : 2
       )
       expect(f.document.getPage.mock.calls).toEqual(Array.from({ length: pageReads }, () => [1]))
       if (mode === 'stable' || mode === 'late in-place fingerprint') {

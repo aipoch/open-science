@@ -13,6 +13,11 @@ type Entry = { item: Item; index: number; owner: Unit }
 type Box = [number, number, number, number]
 type Paint = {
   operator: number
+  kind: number
+  path: number[]
+  matrix: number[]
+  strokeWidth: number
+  plainBlack: boolean
   bounds: Box
   hull: Box
   horizontalRule: boolean
@@ -40,7 +45,7 @@ export function hasNativeDisplaySequence(content: Content): boolean {
 /** Every path is bounded by its actual control hull and a conservative stroke
  * expansion. Clipping never shrinks this envelope. No image, form, transparency,
  * or unknown paint operation is admitted by this display-only branch. */
-async function nativePaints(
+export async function nativePaints(
   ops: Awaited<ReturnType<PDFPageProxy['getOperatorList']>>,
   viewport: Viewport
 ): Promise<Paint[] | undefined> {
@@ -54,6 +59,7 @@ async function nativePaints(
     miter: number
     dash: number[]
     stroke: string
+    fill: string
     clip: number
   }
   let state: State = {
@@ -64,6 +70,7 @@ async function nativePaints(
       miter: 10,
       dash: [],
       stroke: '#000000',
+      fill: '#000000',
       clip: 0
     },
     pendingClip = false,
@@ -129,7 +136,7 @@ async function nativePaints(
       state.dash = Array.from(a[0])
     } else if (op === OPS.setStrokeRGBColor || op === OPS.setFillRGBColor) {
       if (typeof a?.[0] !== 'string' || !/^#[0-9a-f]{6}$/u.test(a[0])) return
-      if (op === OPS.setStrokeRGBColor) state.stroke = a[0]
+      state[op === OPS.setStrokeRGBColor ? 'stroke' : 'fill'] = a[0]
     } else if (op === OPS.clip || op === OPS.eoClip) {
       if (pendingClip || !stack.length) return
       pendingClip = true
@@ -181,6 +188,16 @@ async function nativePaints(
       if (stroke || fill)
         result.push({
           operator: index,
+          kind: a[0],
+          path: data,
+          matrix,
+          strokeWidth: stroke
+            ? Math.hypot(matrix[0], matrix[1], matrix[2], matrix[3]) * state.width
+            : 0,
+          plainBlack:
+            state.clip === 0 &&
+            (!stroke || (state.stroke === '#000000' && !state.dash.length)) &&
+            (!fill || state.fill === '#000000'),
           hull,
           bounds: [hull[0] - pad, hull[1] - pad, hull[2] + pad, hull[3] + pad],
           horizontalRule:
