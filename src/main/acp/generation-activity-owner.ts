@@ -61,6 +61,7 @@ export class AcpGenerationActivityOwner {
     const endObservation = this.options.observeWork?.()
     this.operationLeaseCount += 1
     try {
+      this.options.activityChanged()
       return await work()
     } finally {
       this.operationLeaseCount -= 1
@@ -73,6 +74,7 @@ export class AcpGenerationActivityOwner {
     const endObservation = this.options.observeWork?.()
     this.activityLeaseCount += 1
     try {
+      this.options.activityChanged()
       return await work()
     } finally {
       this.activityLeaseCount -= 1

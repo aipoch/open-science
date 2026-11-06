@@ -49,7 +49,19 @@
 
 Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el código y el historial de ejecución disponibles. Para compartir su trabajo, elija las ramas de conversación, las versiones de los archivos, los registros del Notebook y las pruebas de verificación que quiera incluir y expórtelos en un paquete `.science`.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 publicado](https://github.com/aipoch/open-science/releases/latest)** _(actualizado por última vez en noviembre de 2026)_. Esta versión reorganiza la configuración en pestañas, importa hasta 100 referencias a la vez desde identificadores DOI, arXiv o PubMed y añade resúmenes de estudio con IA a la vista de detalle de la biblioteca. Las sesiones finalizadas liberan sus procesos de agentes, las consultas de eQTL Catalogue vuelven a funcionar y las actualizaciones en macOS y Windows son más fluidas. Consulte las [notas de la versión v1.0.8](../../release-notes/1.0.8/es.md) para ver todos los detalles.
+### 💡 AIPOCH Open-Science v1.0.8 — Novedades
+
+_4 de noviembre de 2026_
+
+- **Ajustes**: Pestañas por función organizan la información de la aplicación, los diagnósticos y la ayuda.
+- **Importación de bibliografía**: Hasta **100** identificadores DOI, arXiv o PubMed, o enlaces oficiales de artículos, por lote, con normalización y eliminación de duplicados.
+- **Resúmenes de estudios con IA**: Presentan la pregunta, la población, los métodos, los resultados principales y las limitaciones, e indican si utilizan el texto completo o el resumen.
+- **Recursos de sesión**: Los cinco marcos de agentes liberan los procesos al finalizar las sesiones para reducir la acumulación de memoria.
+- **Modelos**: Tencent TokenHub añade Hy4 y rutas DeepSeek V4.1 Flash, además de entrada de imágenes para determinados modelos.
+- **Datos científicos y PDF**: Se restablecen las consultas eQTL Catalogue con validación GRCh38 y se mejoran el orden de lectura y la extracción de texto de PDF.
+- **Fiabilidad**: Se mejoran la verificación de dependencias de R y la procedencia de artefactos; se corrigen actualizaciones, descargas, red aislada e instalación de Pi.
+
+[Notas completas v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
@@ -58,7 +70,6 @@ Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el c�
 ## Tabla de contenido
 
 - [Inicio rápido](#-inicio-rápido)
-- [Recorrido por el producto](#recorrido-por-el-producto)
 - [Paquetes de investigación `.science` de AIPOCH Open-Science](#paquetes-de-investigación-science-de-aipoch-open-science)
 - [AIPOCH Open-Science: artículo y cita](#aipoch-open-science-artículo-y-cita)
 - [Resultados de benchmarks](#rendimiento-en-benchmarks)
@@ -142,44 +153,6 @@ En los ajustes del sistema encontrará las opciones de apariencia y notificacion
 3. Revise la actividad de las herramientas y las solicitudes de aprobación, previsualice los resultados y consulte la evidencia disponible en **Procedencia**.
 
 > Las capturas de pantalla de este archivo README ilustran el flujo de trabajo. Las etiquetas, catálogos y otros detalles de la interfaz pueden diferir de la versión que instale.
-
-## Recorrido por el producto
-
-### De la solicitud de investigación al resultado rastreable
-
-Considere una tarea bioinformática representativa: reproducir un análisis publicado de expresión diferencial, comparar los resultados regenerados con el artículo y entregar el informe, las tablas y las figuras necesarias para la revisión. Las capturas siguientes son vistas representativas de flujos de trabajo documentados de AIPOCH Open-Science; ilustran cada etapa, pero no pertenecen a una única sesión continua.
-
-#### 1. Definir la tarea de investigación y sus evidencias
-
-Describa la pregunta de investigación, el artículo y los conjuntos de datos de origen, los métodos o umbrales necesarios, los resultados esperados y los criterios de aceptación. Cargue los archivos de apoyo o haga referencia a un artefacto existente del proyecto con `@`, para que el agente parta de entradas explícitas y no de un contexto oculto.
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="Tarea de reproducción de un artículo en AIPOCH Open-Science con la conclusión, los artefactos generados y la comparación de fuentes en un mismo espacio de trabajo" width="900">
-</p>
-
-#### 2. Ejecutar con herramientas científicas inspeccionables
-
-El agente puede combinar en el Notebook compartido habilidades científicas, conectores de investigación sujetos a permisos, búsquedas, operaciones con archivos y código Python o R. Las figuras generadas se pueden revisar junto al resumen de la investigación, mientras que el registro del artefacto permite inspeccionar el código productor capturado y las evidencias de ejecución.
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="Análisis bioinformático en AIPOCH Open-Science que muestra juntos el resumen de la investigación, la figura generada y el código productor capturado" width="900">
-</p>
-
-#### 3. Revisar informes, tablas y figuras en contexto
-
-La respuesta final resume qué se reprodujo, qué presentó diferencias y qué limitaciones son importantes. Los informes Markdown, las tablas CSV, las imágenes y otros artefactos de investigación generados permanecen asociados a la sesión y también se reúnen en la biblioteca de archivos del proyecto, donde se pueden previsualizar junto a la conversación y reutilizar en trabajos posteriores.
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="Resultado de reproducción en AIPOCH Open-Science con figuras de expresión diferencial y archivos generados junto a la explicación del agente" width="900">
-</p>
-
-#### 4. Rastrear cada artefacto hasta sus evidencias
-
-Cada artefacto generado se almacena como una versión inmutable con suma de comprobación. La vista **Provenance** puede mostrar el código productor y el historial de ejecución, las entradas referenciadas, el inventario observado del entorno, la rama de conversación productora y los hallazgos del Reviewer específicos de la versión. Las evidencias que no se pudieron verificar se marcan como no disponibles en lugar de inferirse.
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Vista previa de un artefacto de investigación de AIPOCH Open-Science con acceso a Provenance para rastrear un resultado generado" width="900">
-</p>
 
 ## Paquetes de investigación `.science` de AIPOCH Open-Science
 

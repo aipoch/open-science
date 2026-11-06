@@ -145,7 +145,10 @@ async function main(): Promise<void> {
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
   // Credential preflight can fail before full application diagnostics are initialized.
-  initLogger({ logDir: join(configRoot, 'logs') })
+  initLogger({
+    logDir: join(configRoot, 'logs'),
+    consoleFormat: process.stdout.isTTY ? 'text' : 'json'
+  })
   const resourceRecording = new ResourceRecording(
     process.platform === 'win32'
       ? async () => {

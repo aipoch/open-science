@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type Ref } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowUpRight,
   ChevronRight,
@@ -26,7 +26,7 @@ export const UseCaseCarousel = ({
   variant = 'home',
   compact = false
 }: {
-  sectionRef?: Ref<HTMLElement>
+  sectionRef?: (element: HTMLElement | null) => void
   variant?: 'home' | 'marketplace'
   compact?: boolean
 }): React.JSX.Element | null => {
@@ -143,27 +143,153 @@ export const UseCaseCarousel = ({
     const item = items?.find((item) => item.slug === slug)
     return item ? [item] : []
   })
+  const homeGridRef = useRef<HTMLDivElement>(null)
+  const homeSectionRef = useRef<HTMLElement>(null)
+  const homeLastLoadScrollTop = useRef<number | null>(null)
+  const homeGalleryOffsetRef = useRef(0)
+  const [homeGalleryOffset, setHomeGalleryOffset] = useState(0)
+  // Render the complete loaded batch immediately. The one-row viewport below controls what is
+  // initially visible without delaying cards or making the first scroll trigger a render.
+  const homeVisible = visible
   const visibleKey = visible.map((item) => item.slug).join(',')
-  // Observe the shared homepage viewport so reaching the list end appends one batch.
+  const homeHasMore = variant === 'home' && slugs.length < (items?.length ?? 0)
+  const setHomeSectionRef = useCallback(
+    (element: HTMLElement | null): void => {
+      homeSectionRef.current = element
+      sectionRef?.(element)
+    },
+    [sectionRef]
+  )
+  const loadHomeMore = useCallback((): void => {
+    const scroll = homeGridRef.current?.closest('[data-home-scroll]') as HTMLElement | null
+    const scrollTop = scroll?.scrollTop ?? 0
+    if (homeLastLoadScrollTop.current === scrollTop) return
+    homeLastLoadScrollTop.current = scrollTop
+    loadMore()
+  }, [loadMore])
+
+  // Keep the first row fully visible and let about half of the next row peek in, so the fold
+  // shows that more cases are already loaded below. mt-auto absorbs part of the padding, and the
+  // first startup layout can report a short card, so correct the visible error until it settles.
+  useLayoutEffect(() => {
+    if (variant !== 'home') return
+    const grid = homeGridRef.current
+    const section = homeSectionRef.current
+    const scroll = section?.closest('[data-home-scroll]') as HTMLElement | null
+    if (!grid || !section) return
+    const applyOffset = (offset: number): void => {
+      homeGalleryOffsetRef.current = offset
+      section.style.paddingTop = offset ? `${offset}px` : ''
+      setHomeGalleryOffset((previousOffset) =>
+        previousOffset === offset ? previousOffset : offset
+      )
+    }
+    const alignFirstRow = (): void => {
+      if (!scroll || scroll.scrollTop > 0 || scroll.clientHeight <= 0) return
+      const cards = [...grid.children].filter(
+        (child): child is HTMLElement => child instanceof HTMLElement
+      )
+      const firstCard = cards[0]
+      if (!firstCard) return
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const firstBounds = firstCard.getBoundingClientRect()
+        const secondCard = cards.find(
+          (card) => card.getBoundingClientRect().top > firstBounds.top + 1
+        )
+        const secondBounds = secondCard?.getBoundingClientRect()
+        const peek = secondBounds ? Math.round(secondBounds.height / 2) : 0
+        const rowGap = secondBounds ? Math.max(0, secondBounds.top - firstBounds.bottom) : 0
+        const delta = Math.ceil(
+          scroll.getBoundingClientRect().bottom - peek - rowGap - firstBounds.bottom
+        )
+        if (Math.abs(delta) <= 1) return
+        const next = Math.max(0, homeGalleryOffsetRef.current + delta)
+        if (next === homeGalleryOffsetRef.current) return
+        applyOffset(next)
+      }
+    }
+    let frame = 0
+    let framesLeft = 4
+    const scheduleAlign = (): void => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        alignFirstRow()
+        // Startup layout (fonts, flex height, covers) settles over the first few frames.
+        if (framesLeft > 0) {
+          framesLeft -= 1
+          scheduleAlign()
+        }
+      })
+    }
+    const realign = (): void => {
+      framesLeft = 1
+      scheduleAlign()
+    }
+    const onScroll = (): void => {
+      if (!scroll || scroll.scrollTop > 0) return
+      realign()
+    }
+    const observer = new ResizeObserver(realign)
+    observer.observe(grid)
+    if (scroll) observer.observe(scroll)
+    window.addEventListener('resize', realign)
+    if (scroll) scroll.addEventListener('scroll', onScroll, { passive: true })
+    alignFirstRow()
+    scheduleAlign()
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', realign)
+      if (scroll) scroll.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [variant, visibleKey])
+
+  // Observe the shared homepage viewport so reaching the list end appends one batch. The first
+  // batch is already rendered behind the one-row viewport, so this only fetches later batches.
   useEffect(() => {
     const sentinel = sentinelRef.current
     if (!sentinel || slugs.length >= (items?.length ?? 0)) return
     let active = true
+    const root = sentinel.closest('[data-home-scroll]') as HTMLElement | null
     const observer = new IntersectionObserver(
       (entries) => {
         if (!active || !entries.some((entry) => entry.isIntersecting)) return
+        // The initial one-row viewport can place the sentinel inside a tall, otherwise empty
+        // homepage. Wait for an actual page scroll before requesting the next batch.
+        if (variant === 'home' && root && root.scrollTop <= 0) return
         active = false
         observer.disconnect()
-        loadMore()
+        if (variant === 'home') loadHomeMore()
+        else loadMore()
       },
-      { root: sentinel.closest('[data-home-scroll]'), rootMargin: '0px 0px 80px 0px' }
+      { root, rootMargin: '0px 0px 80px 0px' }
     )
     observer.observe(sentinel)
     return () => {
       active = false
       observer.disconnect()
     }
-  }, [visibleKey, slugs.length, items?.length, loadMore])
+  }, [variant, visibleKey, slugs.length, items?.length, loadMore, loadHomeMore])
+
+  // The overflow-visible gallery keeps its sentinel outside the one-row section box. A scroll
+  // boundary check complements IntersectionObserver so a fast wheel or programmatic scroll still
+  // appends the next batch reliably.
+  useEffect(() => {
+    if (variant !== 'home') return
+    const scroll = homeGridRef.current?.closest('[data-home-scroll]') as HTMLElement | null
+    if (!scroll) return
+    const onScroll = (): void => {
+      if (
+        scroll.scrollTop <= 0 ||
+        scroll.scrollTop + scroll.clientHeight < scroll.scrollHeight - 80
+      )
+        return
+      loadHomeMore()
+    }
+    scroll.addEventListener('scroll', onScroll, { passive: true })
+    return () => scroll.removeEventListener('scroll', onScroll)
+  }, [variant, visibleKey, loadHomeMore])
 
   const renderImport = (item: UseCase): React.JSX.Element => {
     const download =
@@ -249,7 +375,10 @@ export const UseCaseCarousel = ({
     return (
       <>
         {downloading && !inline && (
-          <div className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 bg-background/95 pr-3 text-xs sm:pr-4">
+          <div
+            data-case-download-status="true"
+            className="absolute inset-x-0 bottom-0 z-20 flex items-center justify-between gap-2 border-t border-border bg-background/95 pr-3 text-xs shadow-sm sm:pr-4"
+          >
             <div className="relative flex h-[35px] min-w-0 flex-1 items-center overflow-hidden px-3 sm:px-4">
               <div
                 role="progressbar"
@@ -334,7 +463,10 @@ export const UseCaseCarousel = ({
             onClick={(event) => setBrowser({ slug: item.slug, opener: event.currentTarget })}
             className="absolute inset-0 z-10 cursor-pointer rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
-          <div className="relative aspect-[16/9] overflow-hidden bg-bg-100">
+          {/* Home covers stay shorter so the one-row viewport does not dominate the page. */}
+          <div
+            className={`relative aspect-[16/9] w-full overflow-hidden bg-bg-100 ${variant === 'marketplace' ? 'max-h-50' : 'max-h-40'}`}
+          >
             <div className="absolute inset-0 transition-transform duration-300 ease-out group-hover:scale-[1.025] group-focus-within:scale-[1.025] motion-reduce:transform-none motion-reduce:transition-none">
               <UseCaseCover key={item.imageUrl} src={item.imageUrl} />
             </div>
@@ -401,9 +533,15 @@ export const UseCaseCarousel = ({
         </div>
       ) : (
         <section
-          ref={sectionRef}
+          ref={setHomeSectionRef}
           aria-labelledby={headingId}
-          className="mt-auto -mx-3 overflow-clip px-3 pt-10 [&_button:enabled]:cursor-pointer"
+          data-home-gallery-has-more={
+            homeHasMore || slugs.length < (items?.length ?? 0) ? 'true' : 'false'
+          }
+          // The heading background sits immediately under the project card when the page is full.
+          // This gap keeps that card's 1px ring visible; a positive pin replaces it inline.
+          className="mt-auto -mx-3 overflow-visible px-3 pt-2 [&_button:enabled]:cursor-pointer"
+          style={homeGalleryOffset ? { paddingTop: homeGalleryOffset } : undefined}
         >
           <div className="sticky top-0 z-20 -mx-3 mb-3 flex items-center justify-between gap-4 bg-bg-10 px-3 py-2">
             <h2 id={headingId} className="text-base font-medium text-text-000">
@@ -413,7 +551,7 @@ export const UseCaseCarousel = ({
                 className="inline-flex cursor-pointer items-center gap-1 rounded-sm transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <GalleryHorizontalEnd className="size-4 text-text-100" aria-hidden="true" />
-                {t('Use Case Marketplace')}
+                {t('Use Case Gallery')}
               </button>
             </h2>
             <Button
@@ -426,12 +564,15 @@ export const UseCaseCarousel = ({
               <ArrowUpRight className="size-4" aria-hidden="true" />
             </Button>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-5 lg:grid-cols-3">
-            {renderCards(visible)}
+          <div
+            ref={homeGridRef}
+            className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3"
+          >
+            {renderCards(homeVisible)}
           </div>
-          {slugs.length < (items?.length ?? 0) && (
+          {homeHasMore || slugs.length < (items?.length ?? 0) ? (
             <div ref={sentinelRef} className="h-px" aria-hidden="true" />
-          )}
+          ) : null}
         </section>
       )}
       {!inlineDetails && browser && selected && (

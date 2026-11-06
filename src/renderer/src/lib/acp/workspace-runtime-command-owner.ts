@@ -22,6 +22,8 @@ import {
   isSessionSizeLimitError,
   materializeSessionConversationGraph,
   MAX_SESSION_PDF_CONTEXTS,
+  type DeleteSessionRequest,
+  type SessionDeletionResult,
   type DelegationPolicy,
   type MessageAttribution,
   type MessagePart,
@@ -44,6 +46,7 @@ import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/
 import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
 import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
 import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import { isSessionDeletionAllowed } from '../../stores/session-actionability'
 import type { ChatMessage } from '../../stores/session-store-contract'
 import {
   confirmPendingDelegationPolicyAuthority,
@@ -60,7 +63,8 @@ import {
 import type { useAcpRuntime } from './useAcpRuntime'
 import {
   clearWorkspaceOperationError,
-  reportWorkspaceOperationError
+  reportWorkspaceOperationError,
+  useWorkspaceOperationErrors
 } from './workspace-operation-error'
 import {
   attemptWorkspacePromptRollback,
@@ -79,7 +83,6 @@ import {
 import {
   canAdmitExistingWorkspacePrompt,
   consumePendingSessionRetry,
-  isPendingSessionRetryable,
   markPendingSessionRetryable,
   prepareExistingWorkspacePrompt
 } from './workspace-runtime-prompt-preparation-owner'
@@ -87,6 +90,7 @@ import {
   branchWorkspaceSessionFromMessage,
   reconcileBranchedAttachments
 } from './workspace-runtime-session-branch-owner'
+import { cleanupUnsentWorkspaceSession } from './workspace-runtime-session-cleanup-owner'
 type SendWorkspaceMessageIntent = {
   expectedFrameworkId?: AgentFrameworkId
   sessionId?: string
@@ -257,6 +261,7 @@ const rejectPreparedPrompt = async (
   const cleanup = preparation ? attemptWorkspacePromptRollback(preparation) : undefined
   if (attempt) attempt.rollback = cleanup
   if (preparation) withdrawWorkspacePrompt(preparation)
+  markPendingSessionRetryable(sessionId)
   reportWorkspaceOperationError(sessionId, message, { providerTarget })
   rejected?.(message, sessionId, restoredAttachments)
   void cleanup?.then(({ failure }) => {
@@ -656,7 +661,6 @@ const pendingPromptSeed = (
 }
 const withdrawUnboundPendingPrompt = (pending: SendWorkspaceMessageResult): void => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
-  if (source?.isPending) markPendingSessionRetryable(source.id)
   if (source?.isPending && source.activeRun?.promptMessageId === pending.messageId) {
     useSessionStore.getState().applyDurableSessionProjection({
       source,
@@ -671,6 +675,7 @@ const withdrawUnboundPendingPrompt = (pending: SendWorkspaceMessageResult): void
         candidate.id === pending.sessionId && candidate.isPending
           ? {
               ...candidate,
+              pendingRetryable: true,
               status: 'idle',
               activeRun: undefined,
               activeRunRuntimeSegmentId: undefined,
@@ -692,26 +697,6 @@ const rejectUnboundPendingPrompt = async (
   if (!ownsPrompt(pending.sessionId, pending.messageId)) return
   withdrawUnboundPendingPrompt(pending)
   await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerTarget)
-}
-
-const discardUnboundSeedSession = async (
-  runtime: WorkspaceCommandRuntime,
-  projectId: string,
-  sessionId: string
-): Promise<string | undefined> => {
-  try {
-    // The terminal deletion owner removes runtime, JSON and file relations in order.
-    const result = await deleteSession({ projectId, sessionId })
-    if (result.status === 'deleted') return undefined
-    return 'Agent Session cleanup did not complete.'
-  } catch (error) {
-    try {
-      await runtime.deleteSession?.(sessionId)
-    } catch {
-      // The reported failure below already names the Session cleanup problem.
-    }
-    return errorMessage(error)
-  }
 }
 
 const startPendingPrompt = (
@@ -764,13 +749,14 @@ const startPendingPrompt = (
     }
     const discardCreated = (): void => {
       if (!created?.sessionId) return
-      void discardUnboundSeedSession(
-        runtime,
-        request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID,
-        created.sessionId
-      ).then((failure) => {
-        if (failure) console.warn('Unsent Session cleanup failed', failure)
-      })
+      const cleanup = cleanupUnsentWorkspaceSession(
+        {
+          projectId: request.projectId ?? DEFAULT_UPLOAD_PROJECT_ID,
+          sessionId: created.sessionId
+        },
+        runtime.deleteSession ? () => runtime.deleteSession!(created.sessionId) : undefined
+      )
+      if (attempt) attempt.cleanup = cleanup
     }
     if (attempt?.cancelled || !ownsPrompt(pending.sessionId, pending.messageId)) {
       discardCreated()
@@ -799,7 +785,10 @@ const startPendingPrompt = (
     const pendingSession = useSessionStore
       .getState()
       .sessions.find((session) => session.id === pending.sessionId)
-    if (!pendingSession) return undefined
+    if (!pendingSession) {
+      discardCreated()
+      return undefined
+    }
     // Persist an empty/copied-history seed while the optimistic prompt remains isPending and
     // invisible to the saver. Main then captures a real baseline before binding publishes it.
     const seed = pendingPromptSeed(pendingSession, pending.messageId, created.sessionId)
@@ -1031,7 +1020,7 @@ const startPendingPrompt = (
             useSessionStore.setState((state) => ({
               sessions: state.sessions.map((session) =>
                 attempt.sessionIds.has(session.id) && session.firstPromptDraft
-                  ? { ...session, firstPromptDraft: undefined }
+                  ? { ...session, firstPromptDraft: undefined, pendingRetryable: undefined }
                   : session
               )
             }))
@@ -1060,26 +1049,37 @@ const startPendingPrompt = (
     return { sessionId: created.sessionId, messageId: boundMessageId }
   })().finally(() => {
     if (!bindingSessionId) return
-    // Release on every exit, including cancellation and failed preparation. An older attempt
-    // must not release a newer retry's binding or hide an orphan whose cleanup failed.
-    useSessionStore.setState((state) => {
-      if (
-        !state.sessions.some(
-          (session) =>
+    // Retain the real identity if cleanup failed so Delete can retry it. An older attempt
+    // must not release a newer retry's binding.
+    const releaseBinding = (): void =>
+      useSessionStore.setState((state) => {
+        if (
+          !state.sessions.some(
+            (session) =>
+              session.id === request.pending.sessionId &&
+              session.pendingBindingSessionId === bindingSessionId
+          )
+        )
+          return state
+        return {
+          sessions: state.sessions.map((session) =>
             session.id === request.pending.sessionId &&
             session.pendingBindingSessionId === bindingSessionId
-        )
-      )
-        return state
-      return {
-        sessions: state.sessions.map((session) =>
-          session.id === request.pending.sessionId &&
-          session.pendingBindingSessionId === bindingSessionId
-            ? { ...session, pendingBindingSessionId: undefined }
-            : session
-        )
-      }
-    })
+              ? { ...session, pendingBindingSessionId: undefined }
+              : session
+          )
+        }
+      })
+    if (attempt?.cleanup)
+      void attempt.cleanup.then((result) => {
+        if (result.status === 'deleted') releaseBinding()
+        else if (!useWorkspaceOperationErrors.getState().errors[request.pending.sessionId])
+          reportWorkspaceOperationError(
+            request.pending.sessionId,
+            'Agent Session cleanup did not complete.'
+          )
+      })
+    else releaseBinding()
   })
 }
 
@@ -1331,8 +1331,7 @@ const performSendWorkspaceMessage = async (
       rearmExistingStableMessage = true
     }
     if (input.requireExistingSession && !session) return undefined
-    const pendingRetry = Boolean(session?.isPending && isPendingSessionRetryable(sessionId))
-    if (!pendingRetry && !canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
+    if (!canAdmitExistingWorkspacePrompt(runtime.state, input)) return undefined
     if (session?.delegationPolicyAuthorityPending) {
       try {
         await confirmPendingDelegationPolicyAuthority(session)
@@ -1697,7 +1696,7 @@ const performSendWorkspaceMessage = async (
             useSessionStore.setState((state) => ({
               sessions: state.sessions.map((session) =>
                 attempt.sessionIds.has(session.id) && session.firstPromptDraft
-                  ? { ...session, firstPromptDraft: undefined }
+                  ? { ...session, firstPromptDraft: undefined, pendingRetryable: undefined }
                   : session
               )
             }))
@@ -1795,6 +1794,8 @@ type WorkspaceSendAttempt = {
   pendingPreparation?: Promise<SendWorkspaceMessageResult | undefined>
   promptAdmission?: Promise<boolean>
   rollback?: ReturnType<typeof attemptWorkspacePromptRollback>
+  cleanup?: Promise<SessionDeletionResult>
+  settlement?: Promise<void>
   bindForCancellation?: () => string | undefined
   attachments: UploadedAttachment[]
   draftReceipts: ReadonlyMap<string, string>
@@ -1832,6 +1833,7 @@ const cancelPreparingWorkspacePrompt = (sessionId: string): boolean => {
   )
   if (attempt.preparation) withdrawWorkspacePrompt(attempt.preparation)
   else if (attempt.message) withdrawUnboundPendingPrompt(attempt.message)
+  markPendingSessionRetryable(attempt.message?.sessionId ?? sessionId)
   attempt.restore?.(attempt.message?.sessionId ?? sessionId, attachments)
   attempt.stop()
   return true
@@ -1843,15 +1845,25 @@ const sendWorkspaceMessage = async (
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const sessionId = input.sessionId
+  const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   const existingAttempt = sessionId ? preparingSessionAttempts.get(sessionId) : undefined
-  if (existingAttempt?.dispatched === false) return undefined
+  if (
+    existingAttempt?.dispatched === false &&
+    !(
+      (existingAttempt.cancelled || existingAttempt.failed) &&
+      previousSession?.isPending &&
+      previousSession.pendingRetryable &&
+      !previousSession.pendingBindingSessionId &&
+      !existingAttempt.preparation
+    )
+  )
+    return undefined
   if (existingAttempt?.dispatched && !canAdmitExistingWorkspacePrompt(runtime.state, input)) {
     // A refused contender must not replace the submitted attempt that Stop still needs to latch.
     return input.messageId === existingAttempt.message?.messageId
       ? existingAttempt.message
       : undefined
   }
-  const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   let stop!: () => void
   const stopped = new Promise<undefined>((resolve) => {
     stop = () => resolve(undefined)
@@ -1927,6 +1939,7 @@ const sendWorkspaceMessage = async (
       if (attempt.rollback) await attempt.rollback
       if (attempt.cancelled && !attempt.dispatched && attempt.preparation)
         await attemptWorkspacePromptRollback(attempt.preparation)
+      if (attempt.cleanup) await attempt.cleanup
     } finally {
       unsubscribeSelection()
       attempt.endPresentation()
@@ -1934,10 +1947,52 @@ const sendWorkspaceMessage = async (
         if (preparingSessionAttempts.get(id) === attempt) preparingSessionAttempts.delete(id)
     }
   }
-  void operation
-    .then(finish, finish)
-    .catch((error) => console.warn('Prompt preparation cleanup failed', error))
+  attempt.settlement = operation.then(finish, finish)
+  void attempt.settlement.catch((error) => console.warn('Prompt preparation cleanup failed', error))
   return Promise.race([operation, stopped])
+}
+
+const deleteWorkspaceSession = async (
+  request: DeleteSessionRequest
+): Promise<SessionDeletionResult> => {
+  const source = useSessionStore
+    .getState()
+    .sessions.find(
+      (session) => session.id === request.sessionId && session.projectId === request.projectId
+    )
+  if (!source?.isPending && !source?.firstPromptDraft) return deleteSession(request)
+  if (!isSessionDeletionAllowed(source))
+    return { status: 'failed', reason: 'runtime', runtimeDetached: false }
+  const attempt = preparingSessionAttempts.get(source.id)
+  if (attempt && !attempt.dispatched) attempt.cancelled = true
+  consumePendingSessionRetry(source.id)
+  const boundId = source.isPending ? source.pendingBindingSessionId : source.id
+  if (!boundId) {
+    useSessionStore.getState().deleteSession(source.id)
+    clearWorkspaceOperationError(source.id)
+    return { status: 'deleted', runtimeDetached: true }
+  }
+  try {
+    await attempt?.settlement
+    const cleanupResult = source.isPending ? await attempt?.cleanup : undefined
+    const result =
+      cleanupResult?.status === 'deleted'
+        ? cleanupResult
+        : source.isPending
+          ? await cleanupUnsentWorkspaceSession({ ...request, sessionId: boundId })
+          : await deleteSession({ ...request, sessionId: boundId })
+    if (result.status === 'deleted') {
+      if (source.isPending) {
+        useSessionStore.getState().deleteSession(boundId)
+        useSessionStore.getState().deleteSession(source.id)
+      }
+      clearWorkspaceOperationError(source.id)
+    } else markPendingSessionRetryable(source.id)
+    return result
+  } catch (error) {
+    markPendingSessionRetryable(source.id)
+    throw error
+  }
 }
 
 const resendEditedWorkspaceMessage = async (
@@ -1997,5 +2052,10 @@ const resendEditedWorkspaceMessage = async (
     )
   )
 }
-export { cancelPreparingWorkspacePrompt, resendEditedWorkspaceMessage, sendWorkspaceMessage }
+export {
+  cancelPreparingWorkspacePrompt,
+  deleteWorkspaceSession,
+  resendEditedWorkspaceMessage,
+  sendWorkspaceMessage
+}
 export type { ResendEditedMessageInput, SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

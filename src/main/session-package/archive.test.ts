@@ -151,6 +151,17 @@ it('deduplicates identical content objects in a self-contained package', async (
       Buffer.byteLength(readme) +
       content.length * (process.platform === 'win32' ? 2 : 1)
   )
+  // Export may omit optional objects; default import validation and required aliases stay strict.
+  const keys = manifest.inventory.flatMap((entry) => (entry.storageKey ? [entry.storageKey] : []))
+  await rm(join(extracted, objectPath))
+  await expect(validatePackageDirectory(extracted)).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(
+    validatePackageDirectory(extracted, undefined, undefined, undefined, new Set([keys[0]]))
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+  await expect(
+    validatePackageDirectory(extracted, undefined, undefined, undefined, new Set(keys))
+  ).resolves.toEqual(manifest)
+  await writeFile(join(extracted, objectPath), content)
   // Reusing object bytes must not accept an alias that claims different content.
   manifest.inventory[manifest.inventory.length - 1].checksum = 'b'.repeat(64)
   await writeFile(join(extracted, 'manifest.json'), JSON.stringify(manifest))

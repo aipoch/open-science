@@ -12,6 +12,7 @@ import type {
   AcpConnectionResourceReadyHandle
 } from './connection-resource-owner'
 import { retainInitializeCapabilities } from './native-follow-up'
+import { PROVIDER_NOTICE_META_KEY } from './provider-session-notice'
 
 type LifecycleEvent = AcpRuntimeEventInput
 type TransferredConnection = ReturnType<AcpAgentConnectionCandidate['transferTo']>
@@ -35,6 +36,7 @@ const resolveFallbackProviderConfiguration = async (
 
 type AcpConnectionLifecycleWorkflowOptions = Readonly<{
   appVersion: string
+  separateProviderNotices?: boolean
   defaultCwd: string
   currentConnection: () => ClientConnection | undefined
   currentStatus: () => AcpStateSnapshot['status']
@@ -172,7 +174,18 @@ class AcpConnectionLifecycleWorkflow {
           fs: { readTextFile: true, writeTextFile: true },
           session: { configOptions: { boolean: {} } },
           plan: {},
-          elicitation: { form: {} }
+          elicitation: { form: {} },
+          ...(this.options.separateProviderNotices === true &&
+          (spawnedFramework === 'codex' || spawnedFramework === 'claude-code')
+            ? {
+                _meta: {
+                  [PROVIDER_NOTICE_META_KEY]: { version: 1 },
+                  ...(spawnedFramework === 'codex'
+                    ? { jetbrains: { air: { version: 1, capabilities: ['sessionFailure'] } } }
+                    : {})
+                }
+              }
+            : {})
         }
       })
       attempt.assertCurrent()

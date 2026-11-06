@@ -53,7 +53,7 @@ files:
   - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'
   # These feature packages run in resources/backend; renderer imports are already bundled.
   # electronHostDependencyGuard rejects new direct/transitive Electron consumers before packaging.
-  - '!node_modules/@aipoch/{connector-builtins,notebook-analysis,notebook-code-risk,notebook-syntax,environment,compute,skills,specialists,journal-catalog,literature-citations,literature-discovery,literature-library,literature-reading,literature-screening,reproducibility}{,/**/*}'
+  - '!node_modules/@aipoch/{connector-builtins,notebook-analysis,notebook-code-risk,notebook-syntax,environment,compute,skills,specialists,journal-catalog,literature-citations,literature-discovery,literature-library,literature-reading,literature-screening,reproducibility,research-film}{,/**/*}'
   - '!node_modules/{styled-exceljs,tar,brotli,pako,unicode-trie,protobufjs,flatbuffers,guid-typescript,fflate}{,/**/*}'
   # The internal Notebook sandbox is bundled into the main process by electron-vite. Keep its
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per

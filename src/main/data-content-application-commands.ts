@@ -1,3 +1,16 @@
+import type { LocalModelSnapshot } from '../shared/local-models'
+import type {
+  ResearchVideoPresentationRequest,
+  ResearchVideoStatusRequest,
+  ResearchVideoPresentationStatus
+} from '../shared/research-video-presentation'
+import type { createResearchVideoPresentationOwner } from './research-video/presentation'
+import type {
+  ResearchVideoProgress,
+  ResearchVideoExportResult
+} from '@aipoch/research-film/contracts'
+import type { createVideoExportTools } from '@aipoch/research-film'
+import { createResearchVideoExportControl } from './research-video/export-control'
 import type { UseCaseCatalog } from './session-package/use-case-catalog'
 import {
   useCaseCatalogContract,
@@ -225,6 +238,8 @@ type DataContentApplicationCommandDependencies = Readonly<{
   electron: ElectronDataContentApplicationCommandAdapter
   events: ApplicationEventPublisher
   managedFileVersions: ManagedFileVersionCommandOwner
+  researchVideoPresentation?: ReturnType<typeof createResearchVideoPresentationOwner>
+  videoExportTools?: ReturnType<typeof createVideoExportTools<LocalModelSnapshot>>
   managedPreview: ManagedPreviewApplicationCommandOwner
   preview: PreviewApplicationCommandOwner
   projectFiles: ProjectFilesHandlers
@@ -418,6 +433,41 @@ const dataContentApplicationCommands = Object.freeze({
     readonly [request: PreviewResources.ReadManagedPreviewRangeRequest],
     PreviewResources.ManagedPreviewRangeResult
   >('preview-resources:read-range'),
+  previewResearchVideoExport: defineApplicationCommand<
+    'preview-resources:export-research-video',
+    readonly [request: { resourceId: string }],
+    ResearchVideoExportResult
+  >('preview-resources:export-research-video'),
+  researchVideoPresentationStart: defineApplicationCommand<
+    'research-video:start',
+    readonly [request: ResearchVideoPresentationRequest],
+    ResearchVideoPresentationStatus
+  >('research-video:start'),
+  researchVideoPresentationStatus: defineApplicationCommand<
+    'research-video:status',
+    readonly [request: ResearchVideoStatusRequest],
+    ResearchVideoPresentationStatus
+  >('research-video:status'),
+  researchVideoPresentationRemove: defineApplicationCommand<
+    'research-video:remove',
+    readonly [request: ResearchVideoPresentationRequest],
+    ResearchVideoPresentationStatus
+  >('research-video:remove'),
+  researchVideoPresentationCancel: defineApplicationCommand<
+    'research-video:cancel',
+    readonly [request: ResearchVideoPresentationRequest],
+    void
+  >('research-video:cancel'),
+  previewResearchVideoProgress: defineApplicationCommand<
+    'preview-resources:research-video-progress',
+    readonly [request: { resourceId: string }],
+    ResearchVideoProgress | null
+  >('preview-resources:research-video-progress'),
+  previewResearchVideoCancel: defineApplicationCommand<
+    'preview-resources:cancel-research-video-export',
+    readonly [request: { resourceId: string }],
+    void
+  >('preview-resources:cancel-research-video-export'),
   previewResourceRelease: defineApplicationCommand<
     'preview-resources:release',
     readonly [request: PreviewResources.ReleaseManagedPreviewRequest],
@@ -676,7 +726,14 @@ const dataContentApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('preview-resources', [
     dataContentApplicationCommands.previewResourceAcquire,
     dataContentApplicationCommands.previewResourceReadRange,
-    dataContentApplicationCommands.previewResourceRelease
+    dataContentApplicationCommands.previewResourceRelease,
+    dataContentApplicationCommands.previewResearchVideoExport,
+    dataContentApplicationCommands.previewResearchVideoCancel,
+    dataContentApplicationCommands.researchVideoPresentationStart,
+    dataContentApplicationCommands.researchVideoPresentationStatus,
+    dataContentApplicationCommands.researchVideoPresentationRemove,
+    dataContentApplicationCommands.researchVideoPresentationCancel,
+    dataContentApplicationCommands.previewResearchVideoProgress
   ] as const),
   defineApplicationCommandGroup('project-files', [
     dataContentApplicationCommands.projectFilesGetOverview,
@@ -856,6 +913,10 @@ const registerDataContentApplicationCommands = (
   registrar: ApplicationCommandRegistrar,
   dependencies: DataContentApplicationCommandDependencies
 ): ApplicationCommandInstallation => {
+  const videoExports = createResearchVideoExportControl(
+    dependencies.managedPreview,
+    dependencies.videoExportTools
+  )
   const scope = registrar.createScope()
   const runtimeWriter = dependencies.runtimeWriter ?? new RuntimeWriterOwner()
 
@@ -932,6 +993,46 @@ const registerDataContentApplicationCommands = (
           assertLocalCaller(invocation, 'preview-resources:acquire')
         }
         return dependencies.managedPreview.acquire(invocation.callerLease, invocation.args[0])
+      },
+      'preview-resources:export-research-video': (invocation) => {
+        assertElectronCaller(invocation, 'preview-resources:export-research-video')
+        return videoExports.export(
+          invocation.callerLease,
+          invocation.args[0],
+          invocation.callerContext.lifecycleClientId
+        )
+      },
+      'research-video:start': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:start')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.start(invocation.args[0])
+      },
+      'research-video:status': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:status')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.status(invocation.args[0])
+      },
+      'research-video:remove': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:remove')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.remove(invocation.args[0])
+      },
+      'research-video:cancel': (invocation) => {
+        assertElectronCaller(invocation, 'research-video:cancel')
+        if (!dependencies.researchVideoPresentation)
+          throw new Error('Research explanation service is unavailable.')
+        return dependencies.researchVideoPresentation.cancel(invocation.args[0])
+      },
+      'preview-resources:research-video-progress': (invocation) => {
+        assertElectronCaller(invocation, 'preview-resources:research-video-progress')
+        return videoExports.progress(invocation.callerLease, invocation.args[0])
+      },
+      'preview-resources:cancel-research-video-export': (invocation) => {
+        assertElectronCaller(invocation, 'preview-resources:cancel-research-video-export')
+        return videoExports.cancel(invocation.callerLease, invocation.args[0])
       },
       'preview-resources:read-range': ({ args, callerLease }) =>
         dependencies.managedPreview.readRange(callerLease, args[0]),
@@ -1437,7 +1538,11 @@ const registerDataContentApplicationCommands = (
       'office-preview:report-state': (invocation) =>
         dependencies.officePreviewCommands.reportState(invocation)
     })
-    return scope.complete(() => dependencies.reproducibility?.dispose())
+    return scope.complete(() => {
+      return Promise.all([videoExports.close(), dependencies.reproducibility?.dispose()]).then(
+        () => undefined
+      )
+    })
   } catch (error) {
     scope.rollback()
     throw error

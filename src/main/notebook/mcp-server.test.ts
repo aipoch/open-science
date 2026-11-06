@@ -73,7 +73,8 @@ import { NotebookRunRepository } from './repository'
 import {
   NotebookRuntimeService,
   type NotebookExecutionRequest,
-  type NotebookExecutionResult
+  type NotebookExecutionResult,
+  type NotebookShellResult
 } from './runtime-service'
 
 const tokenizer = new Tiktoken(cl100kBase)
@@ -1923,6 +1924,43 @@ describe('repl_execute tool', () => {
 })
 
 describe('bash_execute tool', () => {
+  it.each([0, 1])('reports Shell exit %s through the MCP failure flag', async (exitCode) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: process.cwd()
+    })
+    const client = new ModelContextProtocolClient({ name: 'notebook-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const stderr = exitCode === 0 ? '' : 'ls: input: Operation not permitted'
+    const shellResult: NotebookShellResult = { stdout: '', stderr, exitCode }
+    // Reproduce the reported runtime result at the existing RPC boundary, not an OS denial.
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ result: shellResult })
+    } as Response)
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'bash_execute',
+        arguments: { command: 'ls input' }
+      })
+      expect(fetch).toHaveBeenCalledTimes(1)
+      const text = (result.content as Array<{ type: string; text?: string }>).find(
+        (item) => item.type === 'text'
+      )?.text
+      expect(JSON.parse(text!)).toMatchObject({ exitCode, ...(stderr ? { stderr } : {}) })
+      expect(result.isError === true).toBe(exitCode !== 0)
+    } finally {
+      fetch.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'bash_execute')
 
   it('supports foreground compatibility and durable background Shell receipts', () => {

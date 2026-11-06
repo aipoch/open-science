@@ -176,7 +176,7 @@ describe('ACP Runtime base composition', () => {
     })
     const { resourceActivity } = await import('../resource-diagnostics/activity')
     expect(resourceActivity.state.sampling).toBe(false)
-    expect(activityChanged).toHaveBeenCalledOnce()
+    expect(activityChanged).toHaveBeenCalledTimes(2)
 
     await owners.connectionTransitions.requestProviderReconnect()
     expect(disconnect).toHaveBeenCalledWith(false)

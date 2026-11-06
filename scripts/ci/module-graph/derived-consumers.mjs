@@ -203,14 +203,19 @@ export function checkModuleConsumerCoverage({
 function formatIndexJson(text) {
   // Format as the repository path, not the destination: a checkout under /tmp would otherwise
   // match the `tmp` .prettierignore entry and Prettier would echo the input unformatted.
+  // The index is gitignored, so read only .prettierignore; Prettier 3 also honors .gitignore.
   const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
   const prettier = resolve(repositoryRoot, 'node_modules/prettier/bin/prettier.cjs')
-  return execFileSync(process.execPath, [prettier, '--stdin-filepath', derivedConsumersPath], {
-    cwd: repositoryRoot,
-    input: text,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024
-  })
+  return execFileSync(
+    process.execPath,
+    [prettier, '--ignore-path', '.prettierignore', '--stdin-filepath', derivedConsumersPath],
+    {
+      cwd: repositoryRoot,
+      input: text,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024
+    }
+  )
 }
 
 // --write regenerates the index; --check validates it; --coverage runs the whole-tree guard.

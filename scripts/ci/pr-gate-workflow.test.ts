@@ -209,6 +209,8 @@ describe('PR Gate workflow', () => {
         git('merge', '--no-ff', docsHead, '-m', 'synthetic docs merge')
         // PR preflight passes the fork point as base and the target tip as trusted-base.
         expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(host)
+        // GitHub can recreate the synthetic merge on a newer main than the event's base.sha.
+        expect(run(docsHead, 'pull_request', trustedDir, base, ['docs'])).toEqual(host)
         expect(
           run(git('rev-parse', 'HEAD'), 'merge_group', trustedDir, targetTip, ['docs'], targetTip)
         ).toEqual(host)
@@ -217,6 +219,7 @@ describe('PR Gate workflow', () => {
         git('add', 'packages')
         git('commit', '--amend', '--no-edit')
         expect(run(docsHead, 'pull_request', trustedDir, targetTip, ['docs'])).toEqual(both)
+        expect(run(docsHead, 'pull_request', trustedDir, base, ['docs'])).toEqual(both)
       } finally {
         rmSync(cwd, { recursive: true, force: true })
       }

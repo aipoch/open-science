@@ -1,5 +1,9 @@
 import { create } from 'zustand'
-import type { DesktopRuntimeRecoveryState } from '../../../shared/desktop-runtime-recovery'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError,
+  type DesktopRuntimeRecoveryState
+} from '../../../shared/desktop-runtime-recovery'
 
 export const useDesktopRuntimeRecoveryStore = create<DesktopRuntimeRecoveryState>(() => ({
   phase: 'connected',
@@ -11,11 +15,14 @@ export const desktopRuntimeWritable = (): boolean => {
   const state = useDesktopRuntimeRecoveryStore.getState()
   return state.phase === 'connected'
 }
-export const assertDesktopRuntimeWrite = (epoch = getDesktopRuntimeEpoch()): void => {
-  if (!desktopRuntimeWritable() || epoch !== getDesktopRuntimeEpoch())
-    throw new Error(
-      'Desktop connection changed. This operation was not submitted; review current state before saving.'
-    )
+export const assertDesktopRuntimeWrite = (
+  epoch = getDesktopRuntimeEpoch(),
+  phase: 'before-submit' | 'after-submit' = 'before-submit'
+): void => {
+  if (!desktopRuntimeWritable() || epoch !== getDesktopRuntimeEpoch()) {
+    if (phase === 'after-submit') throw new DesktopRuntimeDisconnectedError()
+    throw new DesktopRuntimeWriteNotSubmittedError()
+  }
 }
 
 let sessionRecovery:

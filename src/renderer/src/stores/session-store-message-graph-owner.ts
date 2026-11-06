@@ -674,6 +674,7 @@ export const createSessionMessageGraphOwner = <
       ...pendingSession,
       id: sessionId,
       isPending: false,
+      pendingRetryable: undefined,
       pendingBindingSessionId: undefined,
       ...(pendingSession.conversationGraph
         ? {

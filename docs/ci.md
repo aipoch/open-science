@@ -112,11 +112,22 @@ default-branch SHA is unchanged. Its manual `core` and `detector` modes are focu
 dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
 Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
 module tests do not collect its native suite or count it as portable consumer evidence.
-PRs changing its harness, tested process owners, dynamic Notebook host or declared setup inputs
-also run the same collection at the exact PR head. The workflow's path inventory and discovery
-contract must be updated when scenario dependencies change; it is not an exhaustive transitive
-dependency selector. Unrelated UI/documentation changes do not allocate these native runners.
-The 14 source scenarios retain immediate MCP cancellation/timeout cleanup checks, owned/borrowed
+PRs changing its harness, explicit lifecycle owners, process identity/stop helpers, dynamic
+Notebook host or direct harness setup inputs run the same collection at the exact PR head.
+The workflow lists individual source files instead of whole delegation/runtime directories;
+ordinary unit tests, unrelated business code, root dependency manifests, generic patches and
+Prisma changes do not independently trigger these three native runners. Shared dependency and
+other indirect changes receive lifecycle coverage in the daily default-branch run; use manual
+`core` when earlier feedback is needed. This is an intentional bounded PR policy, not an exhaustive
+transitive dependency selector. Update the workflow inventory and its positive/negative contract
+when scenario dependencies change. PR filtering does not reduce the daily collection.
+The 21 source scenarios include ACP candidate disposal, post-spawn failure cleanup, main-agent
+shutdown, Codex direct/bridged connection disposal and OpenCode companion release/startup-failure
+cleanup using controlled real subprocesses. The bridged case checks transport-lease release, not
+the bridge server or protocol.
+They exercise production ownership and cleanup with an independent OS observer; external CLI
+workloads are substituted, so these scenarios do not certify vendor protocols, model calls, history
+replay or subscriptions. The collection retains immediate MCP cancellation/timeout cleanup checks, owned/borrowed
 runtime behavior and recovery. Twelve detector controls verify the observer itself, including
 delayed/failed initial capture, capture deadlines and spawn failure. Workloads start only after their runner has
 been observed, and the orphan control waits for descendant readiness before reparenting.

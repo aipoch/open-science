@@ -101,6 +101,41 @@ const setActivities = (
 }
 
 describe('AcpDurableContinuationContextOwner', () => {
+  it('publishes the saved decision without declaring a continuation failure', async () => {
+    let session = createSession([message('prompt-active', 'Choose an approach.')])
+    setActivities(session, [pendingChoice()])
+    const publish = vi.fn()
+    const owner = new AcpDurableContinuationContextOwner(
+      {
+        loadSessionForContinuation: async () => structuredClone(session),
+        mutateRuntimeSession: async (_scope, mutate) => {
+          session = { ...mutate(structuredClone(session)), runtimeTranscriptOwner: 'main' }
+          return structuredClone(session)
+        }
+      },
+      publish
+    )
+    await owner.prepareElicitation({
+      projectId: session.projectId,
+      sessionId: session.id,
+      requestId: 'choice-1',
+      toolCallId: 'tool-choice-1',
+      action: 'accept',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }]
+    })
+    expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+    expect(session.activities?.[0].elicitation).toMatchObject({
+      state: 'answered',
+      answers: [{ fieldId: 'question_0', value: 'Expanded' }],
+      continuationPending: true
+    })
+    expect(session.activities?.[0].elicitation?.continuationRecovery).toBeUndefined()
+    const restarted = normalizeSessionFile(JSON.parse(JSON.stringify(session)))!
+    expect(restarted.activities?.[0].elicitation?.state).toBe('answered')
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.error).toBeTruthy()
+    expect(restarted.activities?.[0].elicitation?.continuationRecovery?.retryable).toBeUndefined()
+  })
+
   it.each(
     (['accept', 'decline', 'cancel'] as const).flatMap((action) =>
       ['success', 'question-changed', 'write-failed'].map((scenario) => ({ action, scenario }))
@@ -526,6 +561,8 @@ describe('AcpDurableContinuationContextOwner', () => {
       }
       await owner.prepareElicitation(input)
       const committedDecision = structuredClone(session.activities![0].elicitation!)
+      expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+      publish.mockClear()
       failWrite = true
       await expect(
         owner.prepareElicitation({
@@ -659,6 +696,20 @@ describe('AcpDurableContinuationContextOwner', () => {
           answers: [{ fieldId: 'question_0', value: 'Expanded' }]
         }
         await owner.prepareElicitation(input)
+        expect(publish).toHaveBeenCalledOnce()
+        expect(publish.mock.calls[0][0]).toMatchObject({
+          id: session.id,
+          runtimeTranscriptOwner: 'main',
+          activities: [
+            {
+              elicitation: { state: 'answered', answers: input.answers, continuationPending: true }
+            }
+          ]
+        })
+        expect(
+          publish.mock.calls[0][0].activities[0].elicitation.continuationRecovery
+        ).toBeUndefined()
+        publish.mockClear()
         failWrite = true
         await expect(
           owner.prepareElicitation({
@@ -691,10 +742,10 @@ describe('AcpDurableContinuationContextOwner', () => {
       let session = createSession([message('prompt-active', 'Choose an approach.')])
       session.runtimeTranscriptOwner = 'main'
       setActivities(session, [pendingChoice()])
-      const publish = vi.fn(async () => {
-        if (scenario === 'publication-failed') throw new Error('Observer disconnected')
-      })
       let failWrite = false
+      const publish = vi.fn(async () => {
+        if (scenario === 'publication-failed' && failWrite) throw new Error('Observer disconnected')
+      })
       const owner = new AcpDurableContinuationContextOwner(
         {
           loadSessionForContinuation: async () => structuredClone(session),
@@ -729,6 +780,8 @@ describe('AcpDurableContinuationContextOwner', () => {
         answers: [{ fieldId: 'question_0', value: 'Expanded' }]
       }
       await owner.prepareElicitation(input)
+      expect(publish).toHaveBeenCalledExactlyOnceWith(session)
+      publish.mockClear()
       failWrite = true
       await expect(
         owner.prepareElicitation({

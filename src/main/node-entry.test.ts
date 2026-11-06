@@ -1,3 +1,8 @@
+import { Console } from 'node:console'
+import { Writable } from 'node:stream'
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi, type MockInstance } from 'vitest'
 import { backendStartupStatusSchema } from './backend-startup'
 import { createElectronCallerContext } from './caller-context'
@@ -315,6 +320,61 @@ afterEach(() => {
   }
 })
 
+it('exports early startup errors captured by the backend without dropping their records', async () => {
+  const logger = await vi.importActual<typeof import('@aipoch/diagnostics/node')>(
+    '@aipoch/diagnostics/node'
+  )
+  const { runSessionDiagnosticWorker } = await import('./session-diagnostics/collector')
+  const root = await mkdtemp(join(tmpdir(), 'startup-diagnostic-export-'))
+  const configRoot = join(root, 'config')
+  const directory = join(root, 'output')
+  const name = 'desktop-backend-42-1700000000000.log'
+  let stderr = ''
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      stderr += chunk.toString()
+      callback()
+    }
+  })
+  const terminal = new Console({ stdout: stream, stderr: stream })
+  const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+  Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: false })
+  vi.spyOn(console, 'error').mockImplementation(terminal.error)
+  f.initLogs.mockImplementation((options) =>
+    logger.initLogger({ ...options, logDir: join(configRoot, 'logs'), mirrorToConsole: true })
+  )
+  f.log.error.mockImplementation(logger.createLogger('node-runtime').error)
+  f.startupFailure = true
+  try {
+    await mkdir(directory, { recursive: true })
+    await import('./node-entry')
+    await vi.waitFor(() => expect(process.exit).toHaveBeenCalled())
+    await logger.flushLogs()
+    await writeFile(join(configRoot, 'logs', name), stderr)
+    const result = await runSessionDiagnosticWorker({
+      action: 'export',
+      projectId: 'project',
+      sessionId: 'session',
+      configRoot,
+      dataRoot: join(root, 'data'),
+      directory,
+      appVersion: 'test',
+      selectedItems: [`backend-log:${name}`]
+    })
+    expect(result).toMatchObject({ kind: 'archive', partial: false })
+    expect(await readFile(join(directory, 'content/logs/backend', name), 'utf8')).toContain(
+      'isolated startup failure'
+    )
+  } finally {
+    f.initLogs.mockReset()
+    f.log.error.mockReset()
+    if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor)
+    else Reflect.deleteProperty(process.stdout, 'isTTY')
+    await logger.flushLogs()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 it('logs the startup failure before cleanup can terminate the process', async () => {
   f.startupFailure = true
   await import('./node-entry')
@@ -377,7 +437,9 @@ it('reports credential recovery during startup as a failure after draining resou
   expect(f.closeOwnership).toHaveBeenCalledOnce()
   expect(f.disposeCipher).toHaveBeenCalledOnce()
   expect(process.exitCode).toBe(1)
-  expect(f.initLogs).toHaveBeenCalledWith({ logDir: expect.stringMatching(/config[/\\]logs$/) })
+  expect(f.initLogs).toHaveBeenCalledWith(
+    expect.objectContaining({ logDir: expect.stringMatching(/config[/\\]logs$/) })
+  )
   expect(f.resourceInit).not.toHaveBeenCalled()
   expect(f.resourceStore).not.toHaveBeenCalled()
   expect(process.env.OPEN_SCIENCE_STARTUP_ATTEMPT).toBeUndefined()

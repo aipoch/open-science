@@ -736,13 +736,13 @@ open-science run \
 
 Exit codes form part of the automation contract:
 
-| Exit code | Meaning                                                                       |
-| --------- | ----------------------------------------------------------------------------- |
-| `0`       | The command succeeded, including a completed waited run.                      |
-| `1`       | A run failed, status found no service, or a general command failure occurred. |
-| `2`       | CLI usage was invalid.                                                        |
-| `3`       | The local daemon was unavailable.                                             |
-| `4`       | A requested project, run, session, artifact, or Specialist was not found.     |
+| Exit code | Meaning                                                                                    |
+| --------- | ------------------------------------------------------------------------------------------ |
+| `0`       | The command succeeded, including a completed waited run.                                   |
+| `1`       | A run failed, status found no service, or a general command failure occurred.              |
+| `2`       | CLI usage was invalid.                                                                     |
+| `3`       | The local daemon was unavailable.                                                          |
+| `4`       | A requested project, run, session, artifact, Literature item, or Specialist was not found. |
 
 Codex login can propagate the native login process exit code (a signal without a code becomes `1`).
 A successfully cancelled Run is not itself a CLI failure; inspect its `cancelled` status.
@@ -760,6 +760,32 @@ open-science artifacts download <artifact-id> --output ./report.md --json
 ```
 
 Artifact output paths are resolved relative to the current working directory.
+
+## Literature
+
+Read the running service's Literature library and format citations:
+
+```bash
+open-science literature search "single-cell atlas" --project "First review" --json
+open-science literature show <item-id> --json
+open-science literature styles
+open-science literature format <item-id> <item-id> --style apa --locale en-US
+open-science literature lookup 10.1038/s41586-020-2649-2
+```
+
+`search` matches title, abstract, journal, author, personal note, and identifiers in the global
+library; omit the query to browse. `--project` limits results to records linked to that Project.
+Pages default to the service page size; `--limit` accepts 1-100 and `nextOffset` is the next
+`--offset`. `format` prints one bibliography entry per line; `--json` also returns in-text
+citations and BibTeX/RIS exports. `--locale` accepts `en-US` (default) or `zh-CN`. Use `styles`
+for style IDs. `lookup` accepts a DOI, `pmid:<n>`, `pmcid:PMC<n>`, or `arxiv:<id>` and always
+prints JSON. It queries external registries through the service and does not save the record.
+
+These commands do not import, edit, or delete records, styles, or attachments, and do not read
+PDF full text. Record objects mirror the running service's Literature schema; only `id`, `item`,
+`entries`, `nextOffset`, `references`, and `exports` are stable fields. A missing or stale item ID
+returns `literature_item_not_found` (exit code `4`) for both `show` and `format`. Older services
+without these commands return `unsupported_capability`.
 
 ## Current scope
 
@@ -914,6 +940,11 @@ schema and behavior annotations through `tools/list`.
 | `get_plan`                     | Read the plan and its version/revision                   |
 | `respond_plan`                 | Approve/reject a reviewed version or request changes     |
 | `list_artifacts`               | List artifact metadata without downloading files         |
+| `search_literature`            | Search or browse Literature library records              |
+| `get_literature_item`          | Read one Literature record                               |
+| `list_citation_styles`         | List citation styles available for formatting            |
+| `format_references`            | Format records as citations with BibTeX/RIS exports      |
+| `get_reference_metadata`       | Resolve DOI/PMID/PMCID/arXiv metadata without saving it  |
 
 A typical workflow calls `list_projects`, `start_run` with `{ "projectId": "…", "prompt": "…" }`,
 then polls `get_run` with the returned run ID and calls `list_artifacts` with the session ID.
@@ -930,6 +961,10 @@ interactions using the existing capability check; it does not expand permissions
 be combined with `turnIntent: "plan-first"`. Plan approval/rejection requires the version and
 revision from `get_plan`. Configuration updates require the revision from
 `get_session_configuration`.
+
+Literature tools are read-only. `search_literature` returns at most 20 records per page and
+`format_references` defaults to `en-US`. `get_reference_metadata` contacts external registries
+through the service, so it is marked open-world; none of these tools save records.
 
 MCP access grants the listed operations for the selected profile under its existing permissions.
 The adapter is not a separate sandbox or a read-only view. Project/configuration changes, plan

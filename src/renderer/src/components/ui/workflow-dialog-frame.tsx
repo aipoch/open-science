@@ -94,6 +94,7 @@ export const WorkflowDialogLayout = ({
 export function WorkflowDialogFrame({
   title,
   description,
+  descriptionClassName,
   busy,
   onClose,
   onCloseAutoFocus,
@@ -104,6 +105,7 @@ export function WorkflowDialogFrame({
 }: {
   title: string
   description?: string
+  descriptionClassName?: string
   busy: boolean
   onClose: () => void
   onCloseAutoFocus?: React.ComponentProps<typeof Dialog.Content>['onCloseAutoFocus']
@@ -129,7 +131,11 @@ export function WorkflowDialogFrame({
           {description ? (
             <Dialog.Description
               id={descriptionId}
-              className={cn(dialogDescriptionClassName, '[overflow-wrap:anywhere]')}
+              className={cn(
+                dialogDescriptionClassName,
+                '[overflow-wrap:anywhere]',
+                descriptionClassName
+              )}
             >
               {description}
             </Dialog.Description>

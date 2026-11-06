@@ -32,7 +32,10 @@ import {
 } from '../../stores/session-store'
 import { buildWorkspaceHistoryReplay } from './history-preamble'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
-import { useWorkspaceOperationErrors } from './workspace-operation-error'
+import {
+  useWorkspaceElicitationFailures,
+  useWorkspaceOperationErrors
+} from './workspace-operation-error'
 import {
   applyWorkspaceRuntimeEvent,
   applyWorkspaceRuntimeEventBatch,
@@ -175,6 +178,7 @@ describe('workspace runtime events', () => {
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
     useWorkspaceOperationErrors.setState({ errors: {} })
+    useWorkspaceElicitationFailures.setState({ failures: {} })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.getState().appendUserMessage({
@@ -229,6 +233,8 @@ describe('workspace runtime events', () => {
   it.each([
     'older-prompt',
     'inactive-branch',
+    'inactive-frame',
+    'inactive-message-branch',
     'missing-prompt',
     'terminal',
     'commit-failure'
@@ -246,7 +252,8 @@ describe('workspace runtime events', () => {
         elicitation: {
           message: 'Continue?',
           fields: [],
-          state: 'pending',
+          state: 'answered',
+          continuationPending: true,
           durable: {
             kind: 'agent-user-choice',
             requestId: 'choice',
@@ -271,11 +278,14 @@ describe('workspace runtime events', () => {
           level: 'error',
           promptMessageId: scenario === 'missing-prompt' ? undefined : originalPrompt,
           title: scenario === 'terminal' ? 'Prompt failed' : 'Could not continue the Agent task',
+          agentFrameId: scenario === 'inactive-frame' ? 'another-frame' : undefined,
+          messageBranchId: scenario === 'inactive-message-branch' ? 'another-branch' : undefined,
           terminalCommitFailure: scenario === 'commit-failure' ? 'storage' : undefined,
           text: 'Failure belongs elsewhere'
         })
       )
       expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual({})
       expect(useSessionStore.getState().sessions[0]).toEqual(before)
     }
   )
@@ -382,6 +392,7 @@ describe('workspace runtime events', () => {
         })
       )
       expect(useWorkspaceOperationErrors.getState().errors).toEqual({})
+      expect(useWorkspaceElicitationFailures.getState().failures).toEqual({})
       expect(useSessionStore.getState().sessions[0]).toEqual(before)
     }
   )
