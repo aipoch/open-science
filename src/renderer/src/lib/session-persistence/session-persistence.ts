@@ -636,7 +636,8 @@ const sessionPreferenceValuesEqual = (
 const captureSessionFieldWrite = (
   base: PersistedChatSession | undefined,
   session: PersistedChatSession,
-  options?: SaveSessionOptions
+  options?: SaveSessionOptions,
+  retained?: SessionWriteIntent
 ): SessionFieldWriteIntent | undefined => {
   const fields = options?.conflictRebaseFields
   if (
@@ -653,10 +654,26 @@ const captureSessionFieldWrite = (
     return undefined
   // Unknown renderer changes and transcript changes keep the full-snapshot fallback.
   const changedFields = new Set<string>(fields)
+  const retainedFields =
+    retained?.kind === 'fields' &&
+    retained.session.id === session.id &&
+    retained.session.projectId === session.projectId
+      ? retained.changes
+      : undefined
   for (const key of new Set([...Object.keys(base), ...Object.keys(session)]) as Set<
     keyof PersistedChatSession
   >) {
     if (changedFields.has(key) || key === 'updatedAt' || MAIN_OWNED_SESSION_FIELDS.has(key))
+      continue
+    const retainedChange = retainedFields?.[key as SessionConflictRebaseField]
+    if (
+      retainedChange &&
+      sessionPreferenceValuesEqual(
+        key as SessionConflictRebaseField,
+        retainedChange.after,
+        session[key]
+      )
+    )
       continue
     if (!sessionFieldValuesEqual(key, base[key], session[key])) return undefined
   }
@@ -681,9 +698,10 @@ const captureSessionFieldWrite = (
 const captureSessionWriteIntent = (
   base: PersistedChatSession | undefined,
   session: PersistedChatSession,
-  options?: SaveSessionOptions
+  options?: SaveSessionOptions,
+  retained?: SessionWriteIntent
 ): SessionWriteIntent =>
-  captureSessionFieldWrite(base, session, options) ?? { base, session, options }
+  captureSessionFieldWrite(base, session, options, retained) ?? { base, session, options }
 
 const sessionWriteHasBase = (intent: SessionWriteIntent | undefined): boolean =>
   intent !== undefined && (intent.kind === 'fields' || intent.base !== undefined)
@@ -1445,7 +1463,12 @@ const createOrderedSessionPersistence = (
       // pending buffer after an older save waits in the queue can attach a newer Message command.
       const submittedOptions = withPendingConversationCommands(session, options)
       const base = acknowledgedSessions.get(session.id)
-      const intent = captureSessionWriteIntent(base, session, submittedOptions)
+      const intent = captureSessionWriteIntent(
+        base,
+        session,
+        submittedOptions,
+        recovery.get(`session:${session.id}`)?.intent
+      )
       return recovery.trackSession(
         `session:${session.id}`,
         () => intent,
@@ -1456,7 +1479,12 @@ const createOrderedSessionPersistence = (
     saveSessionWithRecovery: (session, options, recover) => {
       const submittedOptions = withPendingConversationCommands(session, options)
       const base = acknowledgedSessions.get(session.id)
-      const intent = captureSessionWriteIntent(base, session, submittedOptions)
+      const intent = captureSessionWriteIntent(
+        base,
+        session,
+        submittedOptions,
+        recovery.get(`session:${session.id}`)?.intent
+      )
       return recovery.trackSession(
         `session:${session.id}`,
         () => intent,

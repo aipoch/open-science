@@ -4,7 +4,10 @@ import {
   DesktopRuntimeDisconnectedError,
   DesktopRuntimeWriteNotSubmittedError
 } from '../../../../shared/desktop-runtime-recovery'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { createOrderedSessionPersistence } from './session-persistence'
 
@@ -63,6 +66,60 @@ describe('unconfirmed Session writes', () => {
     expect(
       JSON.stringify(h.persistence.recovery.get('session:session-1')?.intent).length
     ).toBeLessThan(4096)
+    await h.persistence.recovery.reconcile(
+      async () => desired,
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it('keeps consecutive ordinary preference edits compact across different fields', async () => {
+    const h = harness(
+      materializeSessionConversationGraph(
+        session({
+          pinned: false,
+          messages: [
+            {
+              id: 'large-message',
+              role: 'user',
+              content: 'x'.repeat(1024 * 1024),
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        })
+      )
+    )
+    let desired = { ...h.base, pinned: true }
+    for (const title of [undefined, 'First title', 'Latest title']) {
+      if (title) desired = { ...desired, title }
+      h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await expect(
+        h.persistence.saveSession(desired, {
+          conflictRebaseFields: [title ? 'title' : 'pinned']
+        })
+      ).rejects.toThrow()
+
+      const retained = h.persistence.recovery.get('session:session-1')?.intent
+      expect(retained?.kind).toBe('fields')
+      expect(retained).toMatchObject({
+        kind: 'fields',
+        changes: {
+          pinned: { before: false, after: true },
+          ...(title ? { title: { before: 'Original', after: title } } : {})
+        }
+      })
+      expect(retained).not.toHaveProperty('base')
+      expect(retained?.session).toEqual({
+        id: h.base.id,
+        projectId: h.base.projectId,
+        title: desired.title
+      })
+      expect(JSON.stringify(retained).length).toBeLessThan(4096)
+    }
     await h.persistence.recovery.reconcile(
       async () => desired,
       {},
