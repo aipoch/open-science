@@ -622,6 +622,13 @@ const jsNativeExecutionGlobal = (name: string): boolean =>
 const jsNonCallableValue = (node: Node | null): boolean => {
   while (node?.type === 'parenthesized_expression')
     node = node.namedChildren.find((child) => child.type !== 'comment') ?? null
+  // Property access can execute getters or Proxy traps that ordinary traversal cannot resolve.
+  if (
+    node &&
+    ['unary_expression', 'update_expression', 'binary_expression'].includes(node.type) &&
+    node.descendantsOfType(['member_expression', 'subscript_expression']).length
+  )
+    return false
   // Scalar operators never return callbacks; operand effects are visited separately.
   if (['unary_expression', 'update_expression'].includes(node?.type ?? '')) return true
   if (

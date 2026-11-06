@@ -11410,6 +11410,26 @@ ${source}`
         ).toBe(true)
       }
     })
+    it('retains review for scalar operands that can invoke Proxy traps', async () => {
+      for (const replacement of [
+        'void proxy.missing',
+        'proxy["missing"] + "suffix"',
+        'proxy.count++'
+      ]) {
+        expect(
+          await analyzeNotebookCodeRisk(
+            'repl',
+            `const fs = require("fs");
+const proxy = new Proxy({}, { get() { fs.unlinkSync("target.txt"); return 1 } });
+text.${method}(pattern, ${replacement})`
+          )
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ operation: 'dynamic callback target' })
+          ])
+        )
+      }
+    })
     it('does not invoke replacement text or unrelated data', async () => {
       for (const replacement of [
         '"unlink"',
