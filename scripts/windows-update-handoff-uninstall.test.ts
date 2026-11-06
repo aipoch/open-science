@@ -29,7 +29,8 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       'other-installation',
       'reused-parent',
       'reused-helper',
-      'reused-successor'
+      'reused-successor',
+      'reused-uninstaller-parent'
     ].flatMap((scenario) =>
       ['Open-Science/UpdateHandoffs', 'Open-Science-UpdateHandoffs'].map((storage) => [
         scenario,
@@ -68,7 +69,11 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           schema: 1,
           operationId,
           parentPid:
-            scenario === 'active' || scenario === 'reused-parent' ? process.pid : 2147483647,
+            scenario === 'active' || scenario === 'reused-parent'
+              ? process.pid
+              : scenario === 'reused-uninstaller-parent'
+                ? 2001
+                : 2147483647,
           ...(scenario === 'reused-helper' ? { helperPid: process.pid } : {}),
           ...(scenario === 'reused-successor' ? { successorPid: process.pid } : {}),
           applicationPath: join(
@@ -95,6 +100,13 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       )
       expect(redirected).not.toBe(script)
       const target = join(root, 'uninstall.ps1')
+      const processInventory =
+        scenario === 'reused-uninstaller-parent'
+          ? `@(
+  [pscustomobject]@{ ProcessId = $PID; ParentProcessId = 2001; ExecutablePath = $null }
+  [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null }
+)`
+          : undefined
       writeFileSync(
         target,
         scenario === 'no-storage'
@@ -102,7 +114,12 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
               "$ErrorActionPreference = 'Stop'",
               "$ErrorActionPreference = 'Stop'\nfunction Get-CimInstance { throw 'No storage should not require WMI' }"
             )
-          : redirected
+          : processInventory
+            ? redirected.replace(
+                '$processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)',
+                `$processes = ${processInventory}`
+              )
+            : redirected
       )
       copyFileSync(
         resolve('build/windows-runtime-cache-uninstall.ps1'),
