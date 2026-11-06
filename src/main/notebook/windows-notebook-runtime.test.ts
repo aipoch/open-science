@@ -87,6 +87,15 @@ describe('bundled Windows Notebook runtime', () => {
       node: join(nodeRoot, 'node.exe')
     })
   })
+  it('resolves the prepared source fixture when the standalone development runtime is absent', () => {
+    const { root, resources } = fixture()
+    const nodeRoot = join(root, 'packages/notebook-network-sandbox/vendor/windows-runtime/x64/node')
+    installNodeRuntime(nodeRoot)
+    expect(resolveWindowsNotebookNodeRuntime(resources, join(root, 'out/main'), 'x64')).toEqual({
+      root: nodeRoot,
+      node: join(nodeRoot, 'node.exe')
+    })
+  })
   it('selects the repaired Node/npm before host tools without mutating the captured environment', () => {
     const original = {
       Path: 'C:\\host',

@@ -63,6 +63,7 @@ const resolvePackagedWindowsNotebookNodeRuntime = (
     throw new Error(`Windows Notebook runtime does not support ${architecture}.`)
   }
   const relative = `out/node-runtime/win32-${architecture}`
+  const vendorRelative = `packages/notebook-network-sandbox/vendor/windows-runtime/${architecture}/node`
   const packagedRoot = resourcesPath && join(resourcesPath, 'node-runtime')
   const candidates =
     resourcesPath && existsSync(join(resourcesPath, 'app.asar'))
@@ -70,7 +71,12 @@ const resolvePackagedWindowsNotebookNodeRuntime = (
       : [
           packagedRoot,
           join(moduleDirectory, '../..', relative),
-          join(moduleDirectory, '../../..', relative)
+          join(moduleDirectory, '../../..', relative),
+          // Source-only fixtures are produced by the Windows runtime preparation workflow. They
+          // keep clean Windows shell tests runnable without making packaged standard mode depend
+          // on the protected runtime tree.
+          join(moduleDirectory, '../..', vendorRelative),
+          join(moduleDirectory, '../../..', vendorRelative)
         ]
   for (const root of candidates) {
     if (!root) continue
