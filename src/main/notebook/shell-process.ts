@@ -53,6 +53,8 @@ import {
 } from './shell-runtime'
 import {
   resolveWindowsNotebookRuntime,
+  resolveWindowsNotebookNodeRuntime,
+  windowsNotebookNodeEnvironment,
   windowsNotebookRuntimeEnvironment
 } from './windows-notebook-runtime'
 
@@ -112,9 +114,10 @@ const buildShellEnv = (
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }
-  return binding.kind === 'powershell' && binding.version === '7.6'
+  if (binding.kind !== 'powershell') return env
+  return binding.version === '7.6'
     ? windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
-    : env
+    : windowsNotebookNodeEnvironment(env, resolveWindowsNotebookNodeRuntime())
 }
 
 const POWERSHELL_CLIXML_BLOCK = /#< CLIXML\r?\n<Objs\b[\s\S]*?<\/Objs>(?:\r?\n)?/gu
@@ -378,6 +381,12 @@ const prepareShellLaunchOptions = async (
           workloadCacheEnv,
           runtimeBinding
         )
+    if (options.environment && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     // Resolve host npm before injecting the workload-writable global bin into PATH.
     if (options.processSandbox && runtimeBinding.kind === 'native-posix') {
       npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
@@ -419,6 +428,15 @@ const prepareShellLaunchOptions = async (
     Boolean(options.processSandbox)
   )
   const baseEnv = shellEnv
+  const bundledNodeRoot =
+    runtimePlatform === 'win32' && runtimeBinding.kind === 'powershell'
+      ? dirname(
+          (runtimeBinding.version === '7.6'
+            ? resolveWindowsNotebookRuntime()
+            : resolveWindowsNotebookNodeRuntime()
+          ).node
+        )
+      : undefined
   let sandboxed: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
   try {
     sandboxed = options.processSandbox
@@ -451,9 +469,7 @@ const prepareShellLaunchOptions = async (
             readOnlyRoots: [
               options.runtimeRoot,
               ...(fallbackNodeDirectory ? [fallbackNodeDirectory] : []),
-              ...(runtimeBinding.kind === 'powershell' && runtimeBinding.version === '7.6'
-                ? [dirname(resolveWindowsNotebookRuntime().node)]
-                : []),
+              ...(bundledNodeRoot ? [bundledNodeRoot] : []),
               ...(options.inputRoot ? [options.inputRoot] : []),
               ...(runtimeBinding.kind === 'wsl2-bash'
                 ? []

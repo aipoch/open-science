@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   resolveWindowsNotebookRuntime,
+  resolveWindowsNotebookNodeRuntime,
+  windowsNotebookNodeEnvironment,
   windowsNotebookRuntimeEnvironment
 } from './windows-notebook-runtime'
 
@@ -46,6 +48,10 @@ describe('bundled Windows Notebook runtime', () => {
       node: join(runtimeRoot, 'node/node.exe'),
       powershell: join(runtimeRoot, 'powershell/pwsh.exe')
     })
+    expect(resolveWindowsNotebookNodeRuntime(resources, root, 'x64')).toEqual({
+      root: runtimeRoot,
+      node: join(runtimeRoot, 'node/node.exe')
+    })
   })
   it('fails closed for an incomplete packaged runtime even when a dev copy exists', () => {
     const { root, resources } = fixture()
@@ -82,6 +88,23 @@ describe('bundled Windows Notebook runtime', () => {
       OPEN_SCIENCE_PSMODULEPATH: 'D:\\runtime\\powershell\\Modules',
       NODE_OPTIONS: '--preserve-symlinks --preserve-symlinks-main',
       OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: 'D:\\cache',
+      OTHER: 'kept'
+    })
+    expect(original.Path).toBe('C:\\host')
+  })
+  it('prepends the bundled Node directory without changing PowerShell 5.1 variables', () => {
+    const original = {
+      Path: 'C:\\host',
+      PSModulePath: 'C:\\WindowsPowerShell\\Modules',
+      OTHER: 'kept'
+    }
+    const env = windowsNotebookNodeEnvironment(original, {
+      root: 'D:\\runtime',
+      node: 'D:\\runtime\\node\\node.exe'
+    })
+    expect(env).toEqual({
+      Path: 'D:\\runtime\\node;C:\\host',
+      PSModulePath: 'C:\\WindowsPowerShell\\Modules',
       OTHER: 'kept'
     })
     expect(original.Path).toBe('C:\\host')

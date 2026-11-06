@@ -8,6 +8,8 @@ export type WindowsNotebookRuntime = Readonly<{
   powershell: string
 }>
 
+export type WindowsNotebookNodeRuntime = Readonly<Pick<WindowsNotebookRuntime, 'root' | 'node'>>
+
 let preparedRuntime: (() => WindowsNotebookRuntime) | undefined
 
 // Installed by the application composition root; preparation remains asynchronous and explicit.
@@ -21,14 +23,11 @@ export const configureWindowsNotebookRuntime = (
   }
 }
 
-// Production resolves only a prepared, verified selection. The vendor path below is retained for
-// source-build/native CI fixtures; arbitrary host runtimes are never a protected-mode fallback.
-export const resolveWindowsNotebookRuntime = (
+const resolvePackagedWindowsNotebookRuntime = (
   resourcesPath: string | undefined = runtimeMetadataIfConfigured()?.resourcesPath,
   moduleDirectory: string = __dirname,
   architecture: string = process.arch
 ): WindowsNotebookRuntime => {
-  if (preparedRuntime) return preparedRuntime()
   if (architecture !== 'x64' && architecture !== 'arm64') {
     throw new Error(`Windows Notebook runtime does not support ${architecture}.`)
   }
@@ -55,13 +54,47 @@ export const resolveWindowsNotebookRuntime = (
   )
 }
 
-export const windowsNotebookRuntimeEnvironment = (
+// Production resolves only a prepared, verified selection. The vendor path below is retained for
+// source-build/native CI fixtures; arbitrary host runtimes are never a protected-mode fallback.
+export const resolveWindowsNotebookRuntime = (
+  resourcesPath: string | undefined = runtimeMetadataIfConfigured()?.resourcesPath,
+  moduleDirectory: string = __dirname,
+  architecture: string = process.arch
+): WindowsNotebookRuntime =>
+  preparedRuntime?.() ??
+  resolvePackagedWindowsNotebookRuntime(resourcesPath, moduleDirectory, architecture)
+
+// Ordinary Windows PowerShell does not enable protected runtime preparation, but shell tasks still
+// need the shipped Node/npm pair. Resolve only the immutable packaged/development files here; the
+// protected path above remains owned by the verified runtime manager.
+export const resolveWindowsNotebookNodeRuntime = (
+  resourcesPath: string | undefined = runtimeMetadataIfConfigured()?.resourcesPath,
+  moduleDirectory: string = __dirname,
+  architecture: string = process.arch
+): WindowsNotebookNodeRuntime => {
+  const runtime = resolvePackagedWindowsNotebookRuntime(
+    resourcesPath,
+    moduleDirectory,
+    architecture
+  )
+  return Object.freeze({ root: runtime.root, node: runtime.node })
+}
+
+export const windowsNotebookNodeEnvironment = (
   environment: NodeJS.ProcessEnv,
-  runtime: WindowsNotebookRuntime
+  runtime: WindowsNotebookNodeRuntime
 ): NodeJS.ProcessEnv => {
   const env = { ...environment }
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
   env[pathKey] = [win32.dirname(runtime.node), env[pathKey]].filter(Boolean).join(';')
+  return env
+}
+
+export const windowsNotebookRuntimeEnvironment = (
+  environment: NodeJS.ProcessEnv,
+  runtime: WindowsNotebookRuntime
+): NodeJS.ProcessEnv => {
+  const env = windowsNotebookNodeEnvironment(environment, runtime)
   // The module loader's realpath walk requires metadata on ungranted ancestors. Keep module
   // paths as supplied, including npm entry points and descendant Node processes, without ACLs
   // on those ancestors. Do not inherit host NODE_OPTIONS (which may preload arbitrary code).
