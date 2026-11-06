@@ -27,7 +27,7 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 // Match the visible divider and its hit area to the resize library's hover/drag region.
 const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
-  'group/workspace-resize z-20 cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+  'group/workspace-resize z-20 cursor-grab! hover:cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
 // Keep pointer movement out of React state so hovering does not re-render the workspace.
 const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
   const handle = event.currentTarget
