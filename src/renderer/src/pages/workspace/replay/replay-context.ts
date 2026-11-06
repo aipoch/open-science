@@ -16,6 +16,11 @@ import {
   type ReplayCapturedRecord
 } from '../../../../../shared/session-replay'
 
+type TemporaryDiscussionInspection = {
+  notebookInspection?: unknown
+  stepInspection?: unknown
+}
+
 export type SessionDiscussionCapture = {
   scope?: 'step' | 'session'
   phase?: ReplayScene['phase']
@@ -33,6 +38,17 @@ export type SessionDiscussionCapture = {
   recordedAt?: number
   evidence: ReplayEvidenceReference[]
   excerpt: string
+}
+
+// Replay inspection state belongs to the mounted renderer only. Keep it out of the persisted
+// snapshot contract even when a caller forwards a capture object with temporary fields attached.
+export const persistedDiscussionCapture = (
+  capture: SessionDiscussionCapture & TemporaryDiscussionInspection
+): SessionDiscussionCapture => {
+  const persisted = structuredClone(capture)
+  delete persisted.notebookInspection
+  delete persisted.stepInspection
+  return persisted
 }
 
 export const captureDiscussionSession = (

@@ -14,7 +14,7 @@ import {
 import { annotationValidationMessage } from './annotations/annotation-validation-message'
 import { requestComposerFocus } from './composer-focus-events'
 import type { ComposerDoc } from './composer/composer-doc'
-import { requestReplaySeek } from './replay/replay-context'
+import { persistedDiscussionCapture, requestReplaySeek } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget
@@ -112,7 +112,7 @@ export const useWorkspaceSessionDiscussion = ({
       .saveSelectionSnapshot({
         projectId: pending.projectId,
         sourceSessionId: pending.sourceSessionId,
-        context: { ...structuredClone(pending), id }
+        context: { ...persistedDiscussionCapture(pending), id }
       })
       .then(() => {
         const current = latest.current

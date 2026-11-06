@@ -110,6 +110,33 @@ describe('durable step-scoped Ask snapshots', () => {
     expect(actions.setError).toHaveBeenLastCalledWith(null)
   })
 
+  it('strips renderer inspection state before the Ask snapshot crosses IPC', async () => {
+    const saveSelectionSnapshot = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    renderHook(() =>
+      useWorkspaceSessionDiscussion({
+        draftKey: 'target',
+        editable: true,
+        composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
+      })
+    )
+    act(() =>
+      useSessionReplayStore.getState().ask(
+        {
+          ...context,
+          notebookInspection: { open: true },
+          stepInspection: { tab: 'output' }
+        } as SessionDiscussionCapture & { notebookInspection: unknown; stepInspection: unknown },
+        destination
+      )
+    )
+    await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledTimes(1))
+    const saved = saveSelectionSnapshot.mock.calls[0][0].context
+    expect(saved).not.toHaveProperty('notebookInspection')
+    expect(saved).not.toHaveProperty('stepInspection')
+  })
+
   it('saves every visible reference before adding an annotation and retains typing during storage', async () => {
     const gate = deferred<void>()
     const saveSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)

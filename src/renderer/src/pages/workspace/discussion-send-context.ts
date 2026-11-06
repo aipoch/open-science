@@ -1,7 +1,7 @@
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import type { SessionReadingBinding } from '../../../../shared/session-reading'
-import type { SessionDiscussionCapture } from './replay/replay-context'
+import { persistedDiscussionCapture, type SessionDiscussionCapture } from './replay/replay-context'
 import {
   createSessionDiscussionAnnotation,
   replayAnnotationTarget
@@ -24,7 +24,10 @@ export const captureDiscussionSendContext = (
     source.sourceSessionId !== playhead.sourceSessionId
   )
     return undefined
-  return structuredClone({ ...playhead.capture(), scope: 'step' })
+  // A durable annotation is the user's explicit selection. Do not replace it with a queued
+  // playhead capture merely because the replay panel is still mounted at the same source.
+  if (draftSource?.contextId) return undefined
+  return persistedDiscussionCapture({ ...playhead.capture(), scope: 'step' })
 }
 
 export const prepareDiscussionSendAnnotations = async (
@@ -37,7 +40,7 @@ export const prepareDiscussionSendAnnotations = async (
   await window.api.sessionReplay.saveSelectionSnapshot({
     projectId: focus.projectId,
     sourceSessionId: focus.sourceSessionId,
-    context: { ...focus, id }
+    context: { ...persistedDiscussionCapture(focus), id }
   })
   return [...annotations.filter((item) => !replayAnnotationTarget(item)), annotation]
 }

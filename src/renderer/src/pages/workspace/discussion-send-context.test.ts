@@ -105,9 +105,24 @@ it('matches the selected source, ignores self and unrelated replay, and preserve
       undefined,
       'discussion'
     )
-  ).toMatchObject({ stepId: 'one' })
+  ).toBeUndefined()
   useSessionReplayStore.setState({ playhead: undefined })
   expect(captureDiscussionSendContext([], binding, 'discussion')).toBeUndefined()
+})
+
+it('strips renderer-only inspection state before saving a snapshot', async () => {
+  const save = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('window', { api: { sessionReplay: { saveSelectionSnapshot: save } } })
+  const capture = {
+    ...focus(),
+    notebookInspection: { open: true },
+    stepInspection: { tab: 'output' }
+  }
+  await prepareDiscussionSendAnnotations([], capture)
+  expect(save).toHaveBeenCalledOnce()
+  const saved = save.mock.calls[0][0].context
+  expect(saved).not.toHaveProperty('notebookInspection')
+  expect(saved).not.toHaveProperty('stepInspection')
 })
 
 it('rejects failed saves without mutating the original message annotations', async () => {
