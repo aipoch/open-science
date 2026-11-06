@@ -2605,11 +2605,22 @@ describe('renderer session persistence bridge', () => {
       await settled
 
       expect(api.saveSession).not.toHaveBeenCalled()
-      expect(persistence.recovery.get(`session:${authority.id}`)?.intent).toMatchObject({
-        base: { title: 'Original', pinned: false },
-        session: { title: 'Renamed', pinned: true },
-        options: { conflictRebaseFields: ['pinned', 'title'] }
-      })
+      expect(persistence.recovery.get(`session:${authority.id}`)?.intent).toMatchObject(
+        mode === 'full'
+          ? {
+              kind: 'fields',
+              changes: {
+                title: { before: 'Original', after: 'Renamed' },
+                pinned: { before: false, after: true }
+              },
+              options: { conflictRebaseFields: ['pinned', 'title'] }
+            }
+          : {
+              base: { title: 'Original', pinned: false },
+              session: { title: 'Renamed', pinned: true },
+              options: { conflictRebaseFields: ['pinned', 'title'] }
+            }
+      )
       useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
       await persistence.recovery.reconcile(
         async () => authority,

@@ -4,7 +4,11 @@ import {
   DesktopRuntimeDisconnectedError,
   DesktopRuntimeWriteNotSubmittedError
 } from '../../../../shared/desktop-runtime-recovery'
-import type { PersistedChatSession } from '../../../../shared/session-persistence'
+import {
+  materializeSessionConversationGraph,
+  sanitizeSession,
+  type PersistedChatSession
+} from '../../../../shared/session-persistence'
 import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { createOrderedSessionPersistence } from './session-persistence'
 
@@ -38,6 +42,272 @@ beforeEach(() =>
 afterEach(() => vi.unstubAllGlobals())
 
 describe('unconfirmed Session writes', () => {
+  it('retains a small preference write independently of the conversation history', async () => {
+    const h = harness(
+      session({
+        messages: [
+          {
+            id: 'large-message',
+            role: 'user',
+            content: 'x'.repeat(1024 * 1024),
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+    )
+    const desired = { ...h.base, pinned: true }
+    h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+    await expect(
+      h.persistence.saveSession(desired, { conflictRebaseFields: ['pinned'] })
+    ).rejects.toThrow()
+
+    expect(
+      JSON.stringify(h.persistence.recovery.get('session:session-1')?.intent).length
+    ).toBeLessThan(4096)
+    await h.persistence.recovery.reconcile(
+      async () => desired,
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it('keeps consecutive ordinary preference edits compact across different fields', async () => {
+    const h = harness(
+      materializeSessionConversationGraph(
+        session({
+          pinned: false,
+          messages: [
+            {
+              id: 'large-message',
+              role: 'user',
+              content: 'x'.repeat(1024 * 1024),
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1
+            }
+          ]
+        })
+      )
+    )
+    let desired = { ...h.base, pinned: true }
+    for (const title of [undefined, 'First title', 'Latest title']) {
+      if (title) desired = { ...desired, title }
+      h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await expect(
+        h.persistence.saveSession(desired, {
+          conflictRebaseFields: [title ? 'title' : 'pinned']
+        })
+      ).rejects.toThrow()
+
+      const retained = h.persistence.recovery.get('session:session-1')?.intent
+      expect(retained?.kind).toBe('fields')
+      expect(retained).toMatchObject({
+        kind: 'fields',
+        changes: {
+          pinned: { before: false, after: true },
+          ...(title ? { title: { before: 'Original', after: title } } : {})
+        }
+      })
+      expect(retained).not.toHaveProperty('base')
+      expect(retained?.session).toEqual({
+        id: h.base.id,
+        projectId: h.base.projectId,
+        title: desired.title
+      })
+      expect(JSON.stringify(retained).length).toBeLessThan(4096)
+    }
+    await h.persistence.recovery.reconcile(
+      async () => desired,
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it('captures an optional preference clear before the save can fail', async () => {
+    const h = harness(session({ memoryEnabled: false }))
+    const desired: PersistedChatSession = { ...h.base, memoryEnabled: undefined }
+    let rejectSave!: (error: Error) => void
+    h.saveSession.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectSave = reject
+        })
+    )
+    const pending = h.persistence.saveSession(desired, { conflictRebaseFields: ['memoryEnabled'] })
+    const failure = expect(pending).rejects.toThrow()
+    await vi.waitFor(() => expect(rejectSave).toBeDefined())
+    desired.memoryEnabled = false
+    rejectSave(new DesktopRuntimeDisconnectedError())
+    await failure
+    await h.persistence.recovery.reconcile(
+      async () => sanitizeSession(h.base),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toMatchObject([{ state: 'failed' }])
+
+    const authority = sanitizeSession({ ...h.base, memoryEnabled: undefined })
+    expect(authority?.memoryEnabled).toBe(true)
+    await h.persistence.recovery.reconcile(
+      async () => authority,
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it.each(['fields-first', 'snapshot-first'] as const)(
+    'preserves both preferences when recovery changes representation: %s',
+    async (order) => {
+      const h = harness()
+      const failedSave = async (
+        candidate: PersistedChatSession,
+        options: Parameters<typeof h.persistence.saveSession>[1]
+      ): Promise<void> => {
+        h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+        await expect(h.persistence.saveSession(candidate, options)).rejects.toThrow()
+      }
+      const fields = { ...h.base, title: 'Retained title' }
+      const snapshot = { ...h.base, pinned: true }
+      const fieldOptions = { conflictRebaseFields: ['title'] as const }
+      const snapshotOptions = {
+        conflictRebaseFields: ['pinned'] as const,
+        runtimeWriterToken: 'writer'
+      }
+      if (order === 'fields-first') {
+        await failedSave(fields, { conflictRebaseFields: [...fieldOptions.conflictRebaseFields] })
+        await failedSave(snapshot, {
+          ...snapshotOptions,
+          conflictRebaseFields: [...snapshotOptions.conflictRebaseFields]
+        })
+      } else {
+        await failedSave(snapshot, {
+          ...snapshotOptions,
+          conflictRebaseFields: [...snapshotOptions.conflictRebaseFields]
+        })
+        await failedSave(fields, { conflictRebaseFields: [...fieldOptions.conflictRebaseFields] })
+      }
+      await h.persistence.recovery.reconcile(
+        async () => ({ ...h.base, title: 'Retained title', pinned: true }),
+        {},
+        () => true
+      )
+      expect(h.persistence.recovery.getSnapshot()).toEqual([])
+    }
+  )
+
+  it('preserves the original field baseline when compact edits are repeated', async () => {
+    const h = harness()
+    for (const title of ['First', 'Latest']) {
+      h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await expect(
+        h.persistence.saveSession({ ...h.base, title }, { conflictRebaseFields: ['title'] })
+      ).rejects.toThrow()
+      h.persistence.seedAcknowledgedSessions([{ ...h.base, title, revision: 2 }])
+    }
+    const retained = h.persistence.recovery.get('session:session-1')?.intent
+    expect(retained).toMatchObject({
+      kind: 'fields',
+      changes: { title: { before: 'Original', after: 'Latest' } }
+    })
+    await h.persistence.recovery.reconcile(
+      async () => ({ ...h.base, title: 'First' }),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toHaveLength(1)
+    await h.persistence.recovery.reconcile(
+      async () => ({ ...h.base, title: 'Latest' }),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it('does not lose unknown command outcomes when compact recovery becomes a snapshot', async () => {
+    const h = harness()
+    h.saveSession.mockRejectedValue(new DesktopRuntimeDisconnectedError())
+    await expect(
+      h.persistence.saveSession(
+        { ...h.base, title: 'Local title' },
+        { conflictRebaseFields: ['title'] }
+      )
+    ).rejects.toThrow()
+    await expect(
+      h.persistence.saveSession(h.base, {
+        conversationCommands: [
+          {
+            id: 'select-mixed',
+            kind: 'select-branch',
+            timestamp: 2,
+            branchId: 'branch-2',
+            previousBranchId: 'branch-1'
+          }
+        ]
+      })
+    ).rejects.toThrow()
+    await h.persistence.recovery.reconcile(
+      async () => ({ ...h.base, title: 'Local title' }),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toHaveLength(1)
+    await h.persistence.recovery.reconcile(
+      async () => ({
+        ...h.base,
+        title: 'Local title',
+        runtimeConversationCommandIds: ['select-mixed']
+      }),
+      {},
+      () => true
+    )
+    expect(h.persistence.recovery.getSnapshot()).toEqual([])
+  })
+
+  it('keeps full snapshots for new Sessions and transcript changes', async () => {
+    const h = harness()
+    h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+    await expect(
+      h.persistence.saveSession(
+        { ...h.base, id: 'new-session', title: 'New' },
+        { conflictRebaseFields: ['title'] }
+      )
+    ).rejects.toThrow()
+    expect(h.persistence.recovery.get('session:new-session')?.intent).toMatchObject({
+      session: { messages: [] }
+    })
+    h.saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+    await expect(
+      h.persistence.saveSession(
+        {
+          ...h.base,
+          title: 'Edited',
+          messages: [
+            {
+              id: 'new',
+              role: 'user',
+              content: 'Keep history',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 2,
+              updatedAt: 2
+            }
+          ]
+        },
+        { conflictRebaseFields: ['title'] }
+      )
+    ).rejects.toThrow()
+    expect(h.persistence.recovery.get('session:session-1')?.intent).toMatchObject({
+      session: { messages: [expect.objectContaining({ content: 'Keep history' })] }
+    })
+  })
+
   it('keeps normal successful saves out of recovery diagnostics', async () => {
     const reportRendererFailure = vi.fn()
     vi.stubGlobal('window', { api: { diagnostics: { reportRendererFailure } } })
