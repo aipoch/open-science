@@ -116,8 +116,13 @@ describe('same-backend desktop recovery', () => {
       'desktop runtime recovery failed',
       expect.objectContaining({ startupStage: 'credentials', error: diagnostics.error })
     )
-    // Inventory details remain transient, matching the credential owner's persistence policy.
-    expect(recoveryLog.warn.mock.lastCall?.[1]).not.toHaveProperty('credentialDiagnostic')
+    expect(recoveryLog.warn.mock.lastCall?.[1]).toHaveProperty('credentialDiagnostic', {
+      code: 'inventory-failed',
+      source: 'cookies',
+      stage: 'read-files',
+      reason: 'operation-failed',
+      systemCode: 'EACCES'
+    })
   })
   it('deduplicates concurrent attempts, waits for reconciliation, ignores old disconnects', async () => {
     const old = client()

@@ -10,6 +10,7 @@
     "src/main/session-diagnostics/desktop.ts",
     "src/main/session-diagnostics/desktop-log-paths.ts",
     "src/main/session-diagnostics/desktop-log-paths.test.ts",
+    "src/main/session-diagnostics/electron-fallback.ts",
     "src/main/session-diagnostics/detail.test.ts",
     "src/main/session-diagnostics/detail.ts",
     "src/main/session-diagnostics/environment.test.ts",
@@ -34,6 +35,7 @@
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.ts",
     "src/main/session-diagnostics/worker-entry.ts",
+    "src/main/session-diagnostics/electron-fallback.ts",
     "src/shared/session-diagnostics.ts",
     "src/main/session-diagnostics/resources.ts"
   ],
