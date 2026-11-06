@@ -392,6 +392,12 @@ const prepareShellLaunchOptions = async (
       npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
     }
     shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
+    if (runtimePlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {

@@ -117,7 +117,11 @@ export const windowsNotebookNodeEnvironment = (
 ): NodeJS.ProcessEnv => {
   const env = { ...environment }
   const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
-  env[pathKey] = [win32.dirname(runtime.node), env[pathKey]].filter(Boolean).join(';')
+  const nodeDirectory = win32.dirname(runtime.node)
+  const existingPath = env[pathKey]
+    ?.split(';')
+    .filter((entry) => entry && entry.toLowerCase() !== nodeDirectory.toLowerCase())
+  env[pathKey] = [nodeDirectory, ...(existingPath ?? [])].join(';')
   return env
 }
 

@@ -192,6 +192,9 @@ describe('notebook shell process behavior', () => {
           )
           expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
         }
+        const pathEntries = env.PATH?.split(';') ?? []
+        expect(pathEntries[0]).toBe(nodeRoot)
+        expect(pathEntries.indexOf(env.NPM_CONFIG_PREFIX ?? '')).toBeGreaterThan(0)
         expect(filesystem.readOnlyRoots).toContain(nodeRoot)
         expect(filesystem.readOnlyRoots).not.toContain(hostTools)
         expect(filesystem.optionalReadOnlyRoots).toContain(hostTools)
