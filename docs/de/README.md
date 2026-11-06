@@ -49,19 +49,19 @@
 
 Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-### 💡 AIPOCH Open-Science v1.0.8 — Neuerungen
+### 💡 AIPOCH Open-Science v1.1.0 — Neuerungen
 
-_4. November 2026_
+_5. November 2026_
 
-- **Einstellungen**: Funktionsbezogene Registerkarten ordnen App-Informationen, Diagnose und Hilfe.
-- **Literaturimport**: Bis zu **100** DOI-, arXiv- oder PubMed-Kennungen oder offizielle Artikellinks gleichzeitig importieren, normalisieren und deduplizieren.
-- **KI-Studienübersichten**: Forschungsfrage, Studienpopulation, Methoden, Hauptergebnisse und Grenzen aus Volltext oder Abstract zusammenfassen und die Textquelle anzeigen.
-- **Sitzungsressourcen**: Alle fünf Agenten-Frameworks geben Prozesse nach abgeschlossenen Sitzungen frei und reduzieren die Speicheransammlung.
-- **Modellunterstützung**: Tencent TokenHub ergänzt Hy4 und DeepSeek V4.1 Flash sowie Bildeingaben für ausgewählte Modelle.
-- **Wissenschaftliche Daten und PDF**: eQTL Catalogue mit GRCh38-Prüfung wiederherstellen sowie PDF-Lesereihenfolge und Textextraktion verbessern.
-- **Zuverlässigkeit**: R-Abhängigkeitsprüfung und Artefakt-Provenienz verbessern; Updates, Downloads, Sandbox-Netzwerk und Pi-Installation korrigieren.
+- **Forschungsfilme**: Jede Sitzung als portablen, kommentierten Forschungsfilm mit Terminal-Wiedergabe und Sprachausgabe exportieren.
+- **Mobile Kopplung**: Ein Telefon oder Tablet per QR-Code verbinden, über lokales WLAN oder einen Pinggy-Tunnel.
+- **Literatur in CLI und MCP**: Referenzen von der Befehlszeile und aus MCP-Clients durchsuchen und verwalten — mit schreibgeschütztem Durchsuchen und Schreibwerkzeugen.
+- **Fortsetzbare Übersichten**: Stapelübersichten von Publikationen setzen nach Unterbrechungen fort, ohne fertige Ergebnisse erneut zu erzeugen.
+- **Ressourcenzentrum**: Umbenanntes Ressourcenzentrum mit angepasstem Layout der Fallbibliothek, kompakteren externen Links und Recheneinstellungen unter Verbindungen.
+- **Diagnose**: Exporte bewahren die Ausführungsevidenz des Notebooks, erlauben die Auswahl historischer Backend-Protokolle und können optionale Ressourcenaufzeichnungen enthalten (Windows).
+- **Zuverlässigkeitskorrekturen**: Unterhaltungen nach Unterbrechungen wiederherstellen, PDF-Abbildungen und -Tabellen aus durchsuchbaren Scans zurückgewinnen sowie Start, Windows-Aktualisierungsprüfungen und Speichernutzung verbessern.
 
-[Vollständige Versionshinweise v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
+[Vollständige Versionshinweise v1.1.0](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />

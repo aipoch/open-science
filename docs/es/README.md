@@ -49,19 +49,19 @@
 
 Para entender cómo se obtuvo un resultado, consulte los datos de entrada, el código y el historial de ejecución disponibles. Para compartir su trabajo, elija las ramas de conversación, las versiones de los archivos, los registros del Notebook y las pruebas de verificación que quiera incluir y expórtelos en un paquete `.science`.
 
-### 💡 AIPOCH Open-Science v1.0.8 — Novedades
+### 💡 AIPOCH Open-Science v1.1.0 — Novedades
 
-_4 de noviembre de 2026_
+_5 de noviembre de 2026_
 
-- **Ajustes**: Pestañas por función organizan la información de la aplicación, los diagnósticos y la ayuda.
-- **Importación de bibliografía**: Hasta **100** identificadores DOI, arXiv o PubMed, o enlaces oficiales de artículos, por lote, con normalización y eliminación de duplicados.
-- **Resúmenes de estudios con IA**: Presentan la pregunta, la población, los métodos, los resultados principales y las limitaciones, e indican si utilizan el texto completo o el resumen.
-- **Recursos de sesión**: Los cinco marcos de agentes liberan los procesos al finalizar las sesiones para reducir la acumulación de memoria.
-- **Modelos**: Tencent TokenHub añade Hy4 y rutas DeepSeek V4.1 Flash, además de entrada de imágenes para determinados modelos.
-- **Datos científicos y PDF**: Se restablecen las consultas eQTL Catalogue con validación GRCh38 y se mejoran el orden de lectura y la extracción de texto de PDF.
-- **Fiabilidad**: Se mejoran la verificación de dependencias de R y la procedencia de artefactos; se corrigen actualizaciones, descargas, red aislada e instalación de Pi.
+- **Películas de investigación**: Exporte cualquier sesión como una película de investigación portátil y narrada con reproducción del terminal y narración de voz.
+- **Emparejamiento móvil**: Conecte un teléfono o una tableta escaneando un código QR, por WiFi local o un túnel Pinggy.
+- **Literature en la CLI y MCP**: Busque y gestione las referencias desde la línea de comandos y los clientes MCP, con exploración de solo lectura más herramientas de escritura.
+- **Resúmenes que se pueden reanudar**: Los resúmenes por lotes de artículos se reanudan tras las interrupciones sin regenerar los resultados completados.
+- **Centro de recursos**: Centro de recursos renombrado con una disposición adaptada de la biblioteca de casos, enlaces externos más compactos y configuración de cómputo bajo conexiones.
+- **Diagnóstico**: Las exportaciones conservan la evidencia de ejecución de Notebook, permiten seleccionar registros históricos del backend y pueden incluir grabaciones de recursos opcionales (Windows).
+- **Correcciones de fiabilidad**: Recuperación de conversaciones tras interrupciones, restauración de figuras y tablas de PDF desde escaneos con texto, y mejoras en el arranque, las comprobaciones de actualización de Windows y el uso de memoria.
 
-[Notas completas v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
+[Notas completas v1.1.0](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="Banner principal de AIPOCH Open-Science: Science, Open to All — un entorno de investigación de IA científica de código abierto, independiente del modelo y autohospedado" src="../images/readme/open-science-banner.png" />
