@@ -400,6 +400,7 @@ test('edits and navigates message revisions that persist after relaunch', async 
 test('persists Memory toggles after idle provider release and restart', async ({
   app
 }, testInfo) => {
+  test.setTimeout(180_000)
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
   await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
@@ -408,7 +409,10 @@ test('persists Memory toggles after idle provider release and restart', async ({
   await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   await expect
-    .poll(() => page.evaluate(async () => (await window.api.acp.getState()).sessionIds))
+    .poll(() => page.evaluate(async () => (await window.api.acp.getState()).sessionIds), {
+      // The provider remains warm for 60 seconds after its last activity.
+      timeout: 90_000
+    })
     .toEqual([])
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()

@@ -578,7 +578,7 @@ const setFixtureServiceReconnectBlocked = (_electron: unknown, blocked: boolean)
 const disconnectFixtureServiceConnection = (
   electron?: Pick<typeof import('electron'), 'BrowserWindow' | 'ipcMain'>,
   timing?: 'during-preflight' | 'after-preflight' | void
-): { url: string; destroyed: boolean } => {
+): { url: string; destroyed: boolean } | Promise<{ url: string; destroyed: boolean }> => {
   type Socket = {
     readable?: boolean
     writable?: boolean
@@ -628,7 +628,15 @@ const disconnectFixtureServiceConnection = (
         send.call(contents, channel, ...args)
       }
     }
-  } else socket.destroy()
+  } else {
+    // Inspector evaluation can interrupt a native Pipe read; destroy on the normal event loop.
+    return new Promise((resolve) => {
+      setImmediate(() => {
+        socket.destroy()
+        resolve({ url: websocket.url!, destroyed: socket.destroyed === true })
+      })
+    })
+  }
   return { url: websocket.url!, destroyed: socket.destroyed === true }
 }
 

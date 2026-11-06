@@ -232,7 +232,13 @@ export async function composeResearchFilm({
           'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
         )
     },
-    loadSession: (projectId, sessionId) => sessionRepository.loadSession(projectId, sessionId),
+    loadSession: async (projectId, sessionId) => {
+      // Status probes must leave damaged authority available for diagnostics and recovery.
+      const result = await sessionRepository.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      return result.status === 'found' ? result.session : undefined
+    },
     generate: researchVideoGenerate,
     engineDirectory: researchVideoEngineDirectory,
     ...createResearchFilmAuthor(inferResearchVideo)

@@ -38,6 +38,8 @@ vi.mock('../acp/restricted-inference-runner', async () => ({
 }))
 
 const outcomes = [
+  'session-missing',
+  'session-unreadable',
   'runtime-unavailable',
   'provider-unavailable',
   'provider-missing',
@@ -218,7 +220,13 @@ it.each(outcomes)(
           reasoningEffort: 'medium'
         }))
       },
-      sessionRepository: { loadSession: vi.fn(async () => session) },
+      sessionRepository: {
+        loadSessionWithDiagnostics: vi.fn(async () => {
+          if (outcome === 'session-missing') return { status: 'missing' as const }
+          if (outcome === 'session-unreadable') return { status: 'unreadable' as const }
+          return { status: 'found' as const, session }
+        })
+      },
       sessionPersistenceCoordinator: { runSessionMutation: vi.fn() },
       sessionPackageService: { readResearchFilm: vi.fn() },
       researchFilmLifecycle: createResearchFilmLifecycle({ dataRoot: () => mocks.root }),
@@ -232,7 +240,17 @@ it.each(outcomes)(
     )
     try {
       const owner = runtime.interfaces.researchVideoPresentation
-      expect(await owner.status(request)).toEqual({})
+      const initialStatus = await owner.status(request)
+      expect(input.sessionRepository.loadSessionWithDiagnostics).toHaveBeenCalledWith('p', 's', {
+        mode: 'read-only'
+      })
+      if (outcome === 'session-missing' || outcome === 'session-unreadable') {
+        expect(initialStatus).toEqual({ generationBlock: 'unavailable' })
+        expect(mocks.run).not.toHaveBeenCalled()
+        expect(await readdir(mocks.root)).toEqual([])
+        return
+      }
+      expect(initialStatus).toEqual({})
       expect(mocks.run).not.toHaveBeenCalled()
       expect(mocks.acquire).not.toHaveBeenCalled()
       expect(mocks.install).not.toHaveBeenCalled()
