@@ -102,7 +102,8 @@ const buildShellEnv = (
   sourceEnv: NodeJS.ProcessEnv = process.env,
   runtimeRoot?: string,
   workloadCacheEnv?: NodeJS.ProcessEnv,
-  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
+  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform),
+  hostPlatform: NodeJS.Platform = platform
 ): NodeJS.ProcessEnv => {
   const env = buildShellProcessEnvironment(
     platform,
@@ -114,7 +115,7 @@ const buildShellEnv = (
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }
-  if (binding.kind !== 'powershell') return env
+  if (hostPlatform !== 'win32' || binding.kind !== 'powershell') return env
   return binding.version === '7.6'
     ? windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
     : windowsNotebookNodeEnvironment(env, resolveWindowsNotebookNodeRuntime())
@@ -379,9 +380,10 @@ const prepareShellLaunchOptions = async (
           process.env,
           options.runtimeRoot,
           workloadCacheEnv,
-          runtimeBinding
+          runtimeBinding,
+          hostPlatform
         )
-    if (options.environment && runtimeBinding.kind === 'powershell') {
+    if (options.environment && hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
       shellEnv =
         runtimeBinding.version === '7.6'
           ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
@@ -392,7 +394,7 @@ const prepareShellLaunchOptions = async (
       npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
     }
     shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
-    if (runtimePlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+    if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
       shellEnv =
         runtimeBinding.version === '7.6'
           ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
@@ -1144,7 +1146,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
       process.env,
       request.runtimeRoot,
       prepareNotebookWorkloadCache(request.runtimeRoot),
-      binding
+      binding,
+      this.platform
     )
   }
 
