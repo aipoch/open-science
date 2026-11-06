@@ -11369,6 +11369,47 @@ ${source}`
         ).toEqual([])
       }
     })
+    it('treats scalar replacement expressions as data while retaining operand effects', async () => {
+      for (const replacement of [
+        'prefix + "suffix"',
+        '(prefix + suffix) + "text"',
+        'left * right',
+        'left === right',
+        'left | right',
+        'typeof value',
+        'void value',
+        '!value',
+        'counter++',
+        '--counter'
+      ]) {
+        expect(
+          await analyzeNotebookCodeRisk('repl', `text.${method}(pattern, ${replacement})`)
+        ).toEqual([])
+        expect(
+          await analyzeNotebookCodeRisk('repl', `text.${method}(pattern, saved)`, undefined, [
+            `const replacement = ${replacement}; const saved = replacement`
+          ])
+        ).toEqual([])
+      }
+      for (const [replacement, operation] of [
+        ['fs.unlinkSync("target.txt") + "text"', 'fs.unlinkSync'],
+        ['void fs.unlinkSync("target.txt")', 'fs.unlinkSync'],
+        ...['&&', '||', '??'].map((operator) => [
+          `flag ${operator} fs.unlinkSync`,
+          'dynamic callback target'
+        ]),
+        ['flag ? fs.unlinkSync : String', 'dynamic callback target']
+      ]) {
+        expect(
+          (
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `const fs = require("fs"); text.${method}(pattern, ${replacement})`
+            )
+          ).some((risk) => risk.operation === operation)
+        ).toBe(true)
+      }
+    })
     it('does not invoke replacement text or unrelated data', async () => {
       for (const replacement of [
         '"unlink"',

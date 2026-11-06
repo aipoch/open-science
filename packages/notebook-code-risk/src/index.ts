@@ -619,9 +619,39 @@ const jsNativeExecutionGlobal = (name: string): boolean =>
   ) ||
   ['globalThis', 'global', 'Reflect', 'Function'].includes(name)
 
-const jsNonCallableLiteral = (node: Node | null): boolean => {
+const jsNonCallableValue = (node: Node | null): boolean => {
   while (node?.type === 'parenthesized_expression')
     node = node.namedChildren.find((child) => child.type !== 'comment') ?? null
+  // Scalar operators never return callbacks; operand effects are visited separately.
+  if (['unary_expression', 'update_expression'].includes(node?.type ?? '')) return true
+  if (
+    node?.type === 'binary_expression' &&
+    [
+      '+',
+      '-',
+      '*',
+      '/',
+      '%',
+      '**',
+      '<<',
+      '>>',
+      '>>>',
+      '&',
+      '|',
+      '^',
+      '==',
+      '!=',
+      '===',
+      '!==',
+      '<',
+      '<=',
+      '>',
+      '>=',
+      'in',
+      'instanceof'
+    ].includes(fieldChild(node, 'operator')?.text ?? '')
+  )
+    return true
   return [
     'null',
     'number',
@@ -1372,7 +1402,7 @@ const bindingUpdates = (
     left: Node | null,
     right: Node | null,
     value = identity(right, bindings) ??
-      (language === 'repl' && jsNonCallableLiteral(right) ? '@noncallable' : undefined)
+      (language === 'repl' && jsNonCallableValue(right) ? '@noncallable' : undefined)
   ): void => {
     if (!left) return
     if (['identifier', 'undefined', 'shorthand_property_identifier_pattern'].includes(left.type))
@@ -5676,7 +5706,7 @@ export async function analyzeNotebookCodeRisk(
                 entry.type === 'shorthand_property_identifier'
                   ? (bindings.get(entry.text) ?? entry.text)
                   : (identity(value ?? null, bindings) ??
-                      (jsNonCallableLiteral(value ?? null) ? '@noncallable' : '<dynamic>'))
+                      (jsNonCallableValue(value ?? null) ? '@noncallable' : '<dynamic>'))
               )
           }
           return
@@ -6187,7 +6217,7 @@ export async function analyzeNotebookCodeRisk(
               continue
             // JS uses these values as replacement text, ignores them as Promise handlers, or
             // rejects them as mappers. Eager expressions are still inspected by normal traversal.
-            if (language === 'repl' && jsNonCallableLiteral(callback)) continue
+            if (language === 'repl' && jsNonCallableValue(callback)) continue
             // A resolved function value keeps its identity after the original name is rebound.
             // Only R's string callback form requests another lookup by the current name.
             const callbackName = language === 'r' ? literal(callback) : undefined
