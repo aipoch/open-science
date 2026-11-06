@@ -11370,6 +11370,8 @@ ${source}`
       }
     })
     it('treats scalar replacement expressions as data while retaining operand effects', async () => {
+      const primitives =
+        'const prefix = "prefix", suffix = "suffix", left = 1, right = 2, value = 3; let counter = 0;'
       for (const replacement of [
         'prefix + "suffix"',
         '(prefix + suffix) + "text"',
@@ -11383,10 +11385,14 @@ ${source}`
         '--counter'
       ]) {
         expect(
-          await analyzeNotebookCodeRisk('repl', `text.${method}(pattern, ${replacement})`)
+          await analyzeNotebookCodeRisk(
+            'repl',
+            `${primitives} text.${method}(pattern, ${replacement})`
+          )
         ).toEqual([])
         expect(
           await analyzeNotebookCodeRisk('repl', `text.${method}(pattern, saved)`, undefined, [
+            primitives,
             `const replacement = ${replacement}; const saved = replacement`
           ])
         ).toEqual([])
@@ -11414,20 +11420,53 @@ ${source}`
       for (const replacement of [
         'void proxy.missing',
         'proxy["missing"] + "suffix"',
-        'proxy.count++'
+        'proxy.count++',
+        'proxy + "suffix"',
+        '+proxy',
+        'proxy++'
       ]) {
-        expect(
-          await analyzeNotebookCodeRisk(
-            'repl',
-            `const fs = require("fs");
-const proxy = new Proxy({}, { get() { fs.unlinkSync("target.txt"); return 1 } });
-text.${method}(pattern, ${replacement})`
+        for (const trailing of ['', ', proxy = 1']) {
+          expect(
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `const fs = require("fs");
+let proxy = new Proxy({}, { get() { fs.unlinkSync("target.txt"); return 1 } });
+text.${method}(pattern, (${replacement})${trailing})`
+            )
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ operation: 'dynamic callback target' })
+            ])
           )
-        ).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({ operation: 'dynamic callback target' })
-          ])
+        }
+      }
+    })
+    it('requires primitive provenance across updates and history', async () => {
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          'let prefix = "prefix"; for (const item of items) { prefix += `item ${item}` }' +
+            `text.${method}(pattern, prefix + "suffix")`
         )
+      ).toEqual([])
+      const object = '({ valueOf() { require("fs").unlinkSync("target.txt"); return 1 } })'
+      for (const mutation of [
+        `value = ${object}`,
+        `if (flag) value = ${object}`,
+        `value ||= ${object}`,
+        `function change() { value = ${object} }; change()`
+      ]) {
+        const history = `let value = 0; ${mutation}`
+        for (const incomplete of [false, true]) {
+          expect(
+            await analyzeNotebookCodeRisk(
+              'repl',
+              `text.${method}(pattern, value + "suffix")`,
+              undefined,
+              [{ script: history, incomplete }]
+            )
+          ).not.toEqual([])
+        }
       }
     })
     it('does not invoke replacement text or unrelated data', async () => {

@@ -619,46 +619,43 @@ const jsNativeExecutionGlobal = (name: string): boolean =>
   ) ||
   ['globalThis', 'global', 'Reflect', 'Function'].includes(name)
 
-const jsNonCallableValue = (node: Node | null): boolean => {
+// Analysis-only provenance; unlike noncallable containers, primitives cannot run coercion hooks.
+const JS_PRIMITIVE = '@js-primitive'
+const jsPrimitiveValue = (node: Node | null, bindings: Bindings, depth = 0): boolean => {
+  if (!node || depth >= 64) return false
+  if (node.type === 'parenthesized_expression')
+    return jsPrimitiveValue(
+      node.namedChildren.find((child) => child.type !== 'comment') ?? null,
+      bindings,
+      depth + 1
+    )
+  if (['null', 'number', 'string', 'true', 'false'].includes(node.type)) return true
+  if (node.type === 'identifier')
+    return possibleTargets(bindings.get(node.text)).every((target) => target === JS_PRIMITIVE)
+  if (node.type === 'template_string')
+    return node.namedChildren
+      .filter((child) => child.type === 'template_substitution')
+      .every((child) =>
+        jsPrimitiveValue(
+          child.namedChildren.find((part) => part.type !== 'comment') ?? null,
+          bindings,
+          depth + 1
+        )
+      )
+  if (['binary_expression', 'unary_expression', 'update_expression'].includes(node.type)) {
+    const operator = fieldChild(node, 'operator')?.text ?? ''
+    if (['&&', '||', '??', 'in', 'instanceof', 'delete'].includes(operator)) return false
+    const operands = node.namedChildren.filter((child) => child.type !== 'comment')
+    return (
+      operands.length > 0 &&
+      operands.every((operand) => jsPrimitiveValue(operand, bindings, depth + 1))
+    )
+  }
+  return false
+}
+const jsNonCallableLiteral = (node: Node | null): boolean => {
   while (node?.type === 'parenthesized_expression')
     node = node.namedChildren.find((child) => child.type !== 'comment') ?? null
-  // Property access can execute getters or Proxy traps that ordinary traversal cannot resolve.
-  if (
-    node &&
-    ['unary_expression', 'update_expression', 'binary_expression'].includes(node.type) &&
-    node.descendantsOfType(['member_expression', 'subscript_expression']).length
-  )
-    return false
-  // Scalar operators never return callbacks; operand effects are visited separately.
-  if (['unary_expression', 'update_expression'].includes(node?.type ?? '')) return true
-  if (
-    node?.type === 'binary_expression' &&
-    [
-      '+',
-      '-',
-      '*',
-      '/',
-      '%',
-      '**',
-      '<<',
-      '>>',
-      '>>>',
-      '&',
-      '|',
-      '^',
-      '==',
-      '!=',
-      '===',
-      '!==',
-      '<',
-      '<=',
-      '>',
-      '>=',
-      'in',
-      'instanceof'
-    ].includes(fieldChild(node, 'operator')?.text ?? '')
-  )
-    return true
   return [
     'null',
     'number',
@@ -803,6 +800,8 @@ const identity = (
     return identity(node.namedChildren.find((child) => child.type !== 'comment') ?? null, bindings)
   if (node.type === 'list_splat' && pythonEmbeddedSequenceSpread(node))
     return identity(node.namedChild(0), bindings)
+  if (node.tree.language.name === 'javascript' && jsPrimitiveValue(node, bindings))
+    return JS_PRIMITIVE
   // None/NULL/null cannot become callable by assigning or forwarding the same value.
   if (node.type === 'none' || node.type === 'null') return '@noncallable'
   if (node.tree.rootNode.type === 'module' && pythonNonCallableData(node)) return '@noncallable'
@@ -1409,7 +1408,7 @@ const bindingUpdates = (
     left: Node | null,
     right: Node | null,
     value = identity(right, bindings) ??
-      (language === 'repl' && jsNonCallableValue(right) ? '@noncallable' : undefined)
+      (language === 'repl' && jsNonCallableLiteral(right) ? '@noncallable' : undefined)
   ): void => {
     if (!left) return
     if (['identifier', 'undefined', 'shorthand_property_identifier_pattern'].includes(left.type))
@@ -1451,7 +1450,7 @@ const bindingUpdates = (
         bind(
           fieldChild(entry, 'value') ?? entry,
           null,
-          value && !['<dynamic>', '@noncallable'].includes(value) && key
+          value && !['<dynamic>', '@noncallable', JS_PRIMITIVE].includes(value) && key
             ? resolvedMemberTarget(value, key, bindings)
             : '<dynamic>'
         )
@@ -1532,6 +1531,28 @@ const recordBinding = (
           ? value!
           : '<dynamic>'
       )
+  }
+  if (
+    language === 'repl' &&
+    ['augmented_assignment_expression', 'update_expression'].includes(node.type)
+  ) {
+    const left = fieldChild(node, node.type === 'update_expression' ? 'argument' : 'left')
+    const right = fieldChild(node, 'right')
+    const operator = fieldChild(node, 'operator')?.text ?? ''
+    const primitive =
+      jsPrimitiveValue(left, bindings) &&
+      (node.type === 'update_expression' ||
+        (!['&&=', '||=', '??='].includes(operator) &&
+          (jsPrimitiveValue(right, bindings) || right?.type === 'template_string')))
+    const updates = bindingUpdates(
+      left,
+      null,
+      bindings,
+      language,
+      primitive ? JS_PRIMITIVE : '<dynamic>'
+    )
+    for (const [name, value] of updates) bindings.set(name, value)
+    return updates
   }
   const assigned = assignment(node)
   if (assigned) {
@@ -5713,7 +5734,7 @@ export async function analyzeNotebookCodeRisk(
                 entry.type === 'shorthand_property_identifier'
                   ? (bindings.get(entry.text) ?? entry.text)
                   : (identity(value ?? null, bindings) ??
-                      (jsNonCallableValue(value ?? null) ? '@noncallable' : '<dynamic>'))
+                      (jsNonCallableLiteral(value ?? null) ? '@noncallable' : '<dynamic>'))
               )
           }
           return
@@ -5827,7 +5848,14 @@ export async function analyzeNotebookCodeRisk(
             if (methodOwners.has(functionNode.id)) objectMethodDepth--
             functionModuleWrites.pop()
           }
-          const members = new Map([...writes].map((key) => [key, bindings.get(key) ?? '<dynamic>']))
+          const members = new Map(
+            [...writes].map((key) => [
+              key,
+              language === 'repl' && !key.startsWith('@')
+                ? '<dynamic>'
+                : (bindings.get(key) ?? '<dynamic>')
+            ])
+          )
           restore(saved)
           exceptionPrefixes.push(...savedPrefixes)
           const functionIdentity =
@@ -6209,6 +6237,8 @@ export async function analyzeNotebookCodeRisk(
                   : undefined
           for (let callback of callbacks) {
             if (!callback) continue
+            const capturedCallback = argumentValues.has(callback.id)
+            const capturedCallbackTarget = argumentValues.get(callback.id)
             while (callback.type === 'parenthesized_expression') {
               const inner = callback.namedChildren.find((child) => child.type !== 'comment')
               if (!inner) break
@@ -6224,18 +6254,17 @@ export async function analyzeNotebookCodeRisk(
               continue
             // JS uses these values as replacement text, ignores them as Promise handlers, or
             // rejects them as mappers. Eager expressions are still inspected by normal traversal.
-            if (language === 'repl' && jsNonCallableValue(callback)) continue
+            if (language === 'repl' && jsNonCallableLiteral(callback)) continue
             // A resolved function value keeps its identity after the original name is rebound.
             // Only R's string callback form requests another lookup by the current name.
             const callbackName = language === 'r' ? literal(callback) : undefined
             const callbackTarget =
-              (argumentValues.has(callback.id)
-                ? argumentValues.get(callback.id)
-                : identity(callback, bindings)) ??
+              (capturedCallback ? capturedCallbackTarget : identity(callback, bindings)) ??
               (callbackName ? (bindings.get(callbackName) ?? callbackName) : undefined)
             // Knowing that an object is not callable says nothing about its member values.
             for (const target of possibleTargets(callbackTarget)) {
-              if (target?.startsWith('@noncallable.')) add('dynamic callback target')
+              if (target?.startsWith('@noncallable.') || target?.startsWith(`${JS_PRIMITIVE}.`))
+                add('dynamic callback target')
               else if (target) targets.push(target)
               else if (callback.type !== 'none') add('dynamic callback target')
             }
@@ -6465,6 +6494,13 @@ export async function analyzeNotebookCodeRisk(
               // A summarized body may branch, return or fail before writing. Preserve both
               // the old member and its possible replacement; never invent a completed write.
               for (const [member, value] of fn.members) {
+                // Identifier writes invalidate primitive evidence without exporting local values.
+                if (
+                  language === 'repl' &&
+                  !member.startsWith('@') &&
+                  !possibleTargets(bindings.get(member)).includes(JS_PRIMITIVE)
+                )
+                  continue
                 bindings.set(
                   member,
                   mergeTargets([
@@ -6638,13 +6674,15 @@ export async function analyzeNotebookCodeRisk(
       // An assignment's RHS executes with the previous bindings: erase = erase(path) must still
       // recognize the deletion before the name is replaced by the return value.
       const updates = recordBinding(node, bindings, language)
+      if (language === 'repl')
+        for (const key of updates?.keys() ?? []) if (!key.startsWith('@')) noteModuleWrite(key)
       if (language === 'python')
         for (const key of updates?.keys() ?? []) {
           const dot = key.lastIndexOf('.')
           if (pythonModuleMemberKeys(key.slice(0, dot), key.slice(dot + 1)).length)
             noteModuleWrite(key)
         }
-      if (assignment(node) || ['import_statement', 'import_from_statement'].includes(node.type))
+      if (updates || ['import_statement', 'import_from_statement'].includes(node.type))
         capturePrefixes()
     }
     // A failed/timeout cell may leave bindings from any dispatched statement prefix.
