@@ -584,6 +584,33 @@ describe('PermissionApprovalControls', () => {
     expect(html).not.toContain('notebookNetworkApproval')
   })
 
+  it('brackets IPv6 hosts in the approval summary and details', () => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[
+          {
+            ...networkApprovalRequest,
+            rawInput: {
+              notebookNetworkApproval: {
+                hostname: '::1',
+                protocol: 'http',
+                port: 8080,
+                runtime: 'bash',
+                addresses: []
+              }
+            }
+          }
+        ]}
+        onRespond={() => undefined}
+      />
+    )
+    expect(html).toContain('[::1]')
+    expect(html).toContain('>HTTP</dd>')
+    expect(html).not.toContain('Resolved IP addresses')
+    expect(html).toContain('8080')
+    expect(html).not.toContain('>\u003a\u003a1<')
+  })
+
   it('defaults trusted destination approval to the project and presents the reviewed addresses and risks', () => {
     const html = renderToStaticMarkup(
       <PermissionApprovalControls

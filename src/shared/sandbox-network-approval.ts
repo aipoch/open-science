@@ -1,4 +1,8 @@
-import { requiresNetworkException, normalizeNetworkHostname } from './notebook-network-settings'
+import {
+  requiresNetworkException,
+  normalizeNetworkHostname,
+  formatNetworkHostname
+} from './notebook-network-settings'
 import type { NetworkBlockEvidence } from './network-destination-grants'
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import {
@@ -45,7 +49,7 @@ export const sandboxNetworkApprovalRequest = (
   appOwned: true,
   durable: true,
   providerToolName: 'Open-Science',
-  title: `Connect to ${approval.hostname}?`,
+  title: `Connect to ${formatNetworkHostname(approval.hostname)}?`,
   rawInput: {
     notebookNetworkApproval: {
       hostname: approval.hostname,

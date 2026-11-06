@@ -1,3 +1,4 @@
+import { formatNetworkHostname } from '../../../../shared/notebook-network-settings'
 import {
   SplitButton,
   SplitButtonGroup,
@@ -179,7 +180,7 @@ const getScopeConfirmationSubject = (
   const networkApproval = getNotebookNetworkApproval(request)
   if (networkApproval) {
     return {
-      subject: networkApproval.hostname,
+      subject: `${networkApproval.protocol}://${formatNetworkHostname(networkApproval.hostname)}:${networkApproval.port ?? (networkApproval.protocol === 'http' ? 80 : 443)}`,
       codeExecution: false,
       settingsTarget: 'network'
     }
@@ -480,10 +481,16 @@ const NotebookNetworkApprovalDetail = ({
     <div className="space-y-2 text-xs leading-5 text-muted-foreground">
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1">
         <dt>{t('Requested domain')}</dt>
-        <dd className="break-all font-mono text-foreground">{approval.hostname}</dd>
+        <dd className="break-all font-mono text-foreground">
+          {formatNetworkHostname(approval.hostname)}
+        </dd>
+        <dt>{t('Protocol')}</dt>
+        <dd className="font-mono text-foreground">{approval.protocol.toUpperCase()}</dd>
         <dt>{t('Port')}</dt>
-        <dd className="font-mono text-foreground">{approval.port ?? 443}</dd>
-        {approval.addresses ? (
+        <dd className="font-mono text-foreground">
+          {approval.port ?? (approval.protocol === 'http' ? 80 : 443)}
+        </dd>
+        {approval.addresses?.length ? (
           <>
             <dt>{t('Resolved IP addresses')}</dt>
             <dd className="break-all font-mono text-foreground">{approval.addresses.join(', ')}</dd>
@@ -551,7 +558,7 @@ const NotebookNetworkApprovalDetail = ({
           <p>
             {t(
               'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
-              { domain: approval.hostname }
+              { domain: formatNetworkHostname(approval.hostname) }
             )}
           </p>
         </div>
