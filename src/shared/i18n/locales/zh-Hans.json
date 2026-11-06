@@ -7009,6 +7009,7 @@
     "Unsupported text direction": "不支持的文字方向",
     "Text outside page bounds": "文字超出页面边界",
     "Invalid text geometry": "文字位置数据无效",
+    "Text hidden beneath other page content": "被其他页面内容遮住的文字",
     "Full-text preparation cancelled.": "全文准备已取消。",
     "Prepare full text": "准备全文",
     "Located separately": "单独定位的片段",

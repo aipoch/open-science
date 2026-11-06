@@ -1967,16 +1967,20 @@ function terminalRawPageMatches(context: TerminalContext): boolean {
   return content.items.every((item, index) => {
     const raw = rawPage.items[index]
     if (!raw) return false
-    if (!('str' in item) || !item.str.trim())
-      return (
-        raw.str === '' &&
-        raw.width === 0 &&
-        raw.height === 0 &&
-        raw.dir === 'ltr' &&
-        raw.transform.length === 6 &&
-        raw.transform.every((value) => value === 0) &&
-        raw.hasEOL === ('hasEOL' in item ? item.hasEOL : undefined)
-      )
+    // Older extraction snapshots erased spaces. Retain that exact placeholder;
+    // observed spaces must satisfy the same complete native projection as text.
+    if (
+      (!('str' in item) || !item.str.trim()) &&
+      raw.str === '' &&
+      raw.width === 0 &&
+      raw.height === 0 &&
+      raw.dir === 'ltr' &&
+      raw.transform.length === 6 &&
+      raw.transform.every((value) => value === 0) &&
+      raw.hasEOL === ('hasEOL' in item ? item.hasEOL : undefined)
+    )
+      return true
+    if (!('str' in item) || !item.str) return false
     if (
       item.transform.length !== 6 ||
       ![...item.transform, item.width, item.height].every(Number.isFinite) ||

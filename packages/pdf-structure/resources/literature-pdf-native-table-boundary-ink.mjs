@@ -1430,6 +1430,62 @@ export function preciseNativeGraphicsBounds(context) {
   })
 }
 
+// Caption classification may be blocked by a quantized paint envelope that
+// crosses otherwise separate text. Refine only existing operation identities;
+// unsupported paths keep their original conservative envelope. This derived
+// page never replaces the render inventory used for native source ownership.
+export function nativeCaptionGeometryPage(page, context) {
+  try {
+    if (
+      !context ||
+      page.invalidGraphicsBounds !== 0 ||
+      context.pageNumber !== page.pageNumber ||
+      context.viewport?.scale !== 1 ||
+      context.viewport.rotation !== 0 ||
+      context.viewport.width !== page.width ||
+      context.viewport.height !== page.height ||
+      !Array.isArray(page.graphicsBounds) ||
+      !Array.isArray(context.graphicsBounds)
+    )
+      return
+    // Earlier page-furniture removal can omit a proven running rule. Bind
+    // every remaining operation to the unchanged render inventory, and use
+    // that complete inventory again for caption/foreign-paint barriers.
+    const operations = new Map(context.graphicsBounds.map((g) => [g.operationIndex, g]))
+    if (
+      operations.size !== context.graphicsBounds.length ||
+      [...operations.keys()].some((n) => !Number.isSafeInteger(n) || n < 0) ||
+      new Set(page.graphicsBounds.map((g) => g.operationIndex)).size !==
+        page.graphicsBounds.length ||
+      page.graphicsBounds.some((g) => !isDeepStrictEqual(operations.get(g.operationIndex), g))
+    )
+      return
+    const identities = context.graphicsBounds.map((g) => ({
+        ...g,
+        rect: g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+      })),
+      paint = new Map()
+    collectTableRules(context.operators, context.viewport, paint)
+    const bounds = preciseNativeGraphicsBounds({
+      nativeGlyphContext: context,
+      viewport: context.viewport,
+      nativeEvidenceGraphics: identities,
+      nativePaintIdentityGraphics: identities,
+      rulePaintBounds: paint
+    })
+    if (bounds.some((r) => !valid(r))) return
+    return {
+      ...page,
+      graphicsBounds: context.graphicsBounds.map((g, i) => ({
+        ...g,
+        normalizedRect: bounds[i].map((v, axis) => v / (axis % 2 ? page.height : page.width))
+      }))
+    }
+  } catch {
+    return
+  }
+}
+
 // A raised, cited symbol can sit above the font box of its footer description,
 // while both boxes cross a padded detector edge. Actual ink and the closing
 // stroke establish ownership without treating every clipped sentence as a note.

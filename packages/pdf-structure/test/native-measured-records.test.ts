@@ -28,6 +28,7 @@ const { refineTable } = await import(
 const {
   recoverNativeMeasuredRecordGrid,
   recoverNativeGroupedParameterGrid,
+  recoverNativeMixedParameterGrid,
   recoverNativeRuledFormulaGrid
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-measured-record-grid.mjs')).href
@@ -476,3 +477,164 @@ it.each(['caption', 'closing', 'fraction', 'name', 'column', 'foreign'])(
     expect(recoverNativeRuledFormulaGrid(f.table, f.tokens, f.captions, f.rules)).toBeUndefined()
   }
 )
+
+const mixedParameterGroups = (scale = 1): ReturnType<typeof JSON.parse> => {
+  const tokens: ReturnType<typeof JSON.parse>[] = []
+  const add = (text: string, x: number, y: number, width: number, height = 10): void => {
+    tokens.push({
+      text,
+      rect: [x, y - height, x + width, y],
+      baseline: y,
+      height,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: tokens.length, text }
+    })
+  }
+  add('Category', 22, 39, 38)
+  add('Parameter', 82, 39, 50)
+  add('Value', 205, 39, 30)
+  for (let g = 0; g < 3; g++) {
+    const y = 62 + g * 40
+    add('Group ' + g, 22, y + 7, 38)
+    add('Choice ' + g, 82, y, 48)
+    add('Literal value', 190, y, 65)
+    add('Amount ' + g, 82, y + 14, 48)
+    add('10', 205, y + 14, 10)
+    add('−2', 215, y + 10, 7, 7)
+  }
+  const rules = [25, 46, 86, 126, 166].map((y) => [20, y, 285, y])
+  const table = {
+    id: 'anonymous',
+    cropRect: [0, 20, 295, 172],
+    structure: {
+      objects: [
+        ...[
+          [20, 70],
+          [70, 175],
+          [175, 285]
+        ].map(([x, r]) => ({ label: 'table column', rect: [x, 5, r, 146] })),
+        ...[
+          [25, 46],
+          [46, 86],
+          [86, 126],
+          [126, 166]
+        ].map(([y, b]) => ({ label: 'table row', rect: [20, y - 20, 285, b - 20] }))
+      ]
+    }
+  }
+  const captions = [
+    { page: 1, lines: ['Table 1. Independent native parameter records.'], rect: [20, 5, 285, 15] }
+  ]
+  for (const t of tokens) {
+    t.rect = t.rect.map((n: number) => n * scale)
+    t.height *= scale
+    t.baseline *= scale
+  }
+  table.cropRect = table.cropRect.map((n) => n * scale)
+  for (const o of table.structure.objects) o.rect = o.rect.map((n) => n * scale)
+  return {
+    table,
+    tokens,
+    captions: captions.map((c) => ({ ...c, rect: c.rect.map((n) => n * scale) })),
+    rules: rules.map((r) => r.map((n) => n * scale))
+  }
+}
+it.each([1, 1.5])(
+  'retains each mixed parameter record and centered group owner at scale %s',
+  (scale) => {
+    const f = mixedParameterGroups(scale),
+      original = structuredClone(f),
+      r = refineTable(f.table, f.tokens, f.captions, [], f.rules)
+    expect(r.grid).toHaveLength(7)
+    expect(r.grid[0]).toEqual(['Category', 'Parameter', 'Value'])
+    expect(r.grid.slice(1).map((row: string[]) => row[2])).toEqual([
+      'Literal value',
+      '10−2',
+      'Literal value',
+      '10−2',
+      'Literal value',
+      '10−2'
+    ])
+    expect(
+      r.cells
+        .filter((c: { column: number; rowSpan: number }) => c.column === 0 && c.rowSpan > 1)
+        .map((c: { row: number; rowSpan: number }) => [c.row, c.rowSpan])
+    ).toEqual([
+      [1, 2],
+      [3, 2],
+      [5, 2]
+    ])
+    expect(
+      r.cells
+        .flatMap((c: { sourceItems: unknown[] }) => c.sourceItems)
+        .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    ).toEqual(f.tokens.map((t: { sourceItem: unknown }) => t.sourceItem))
+    expect(r.unassigned).toEqual([])
+    expect(f).toEqual(original)
+  }
+)
+it.each([
+  'boundary-source',
+  'expanded-edge-source',
+  'neighbor-frame',
+  'missing-value',
+  'changed-source',
+  'competing-caption',
+  'gutter-crossing',
+  'uncentered-stub',
+  'orphan-script',
+  'missing-group-rule',
+  'extra-rule'
+])('declines mixed parameter evidence with %s', (fault) => {
+  for (const scale of [1, 2]) {
+    const f = mixedParameterGroups(scale)
+    if (fault === 'boundary-source')
+      f.tokens.push({
+        text: 'foreign',
+        rect: [284 * scale, 50 * scale, 310 * scale, 60 * scale],
+        height: 10 * scale,
+        baseline: 60 * scale,
+        horizontal: true,
+        sourceItem: { pageNumber: 1, index: 99, text: 'foreign' }
+      })
+    if (fault === 'expanded-edge-source') {
+      f.tokens[5].rect[2] = 285.001 * scale
+      f.tokens.push({
+        text: 'foreign',
+        rect: [285.0005 * scale, 68 * scale, 290 * scale, 78 * scale],
+        height: 10 * scale,
+        baseline: 78 * scale,
+        horizontal: true,
+        sourceItem: { pageNumber: 1, index: 99, text: 'foreign' }
+      })
+    }
+    if (fault === 'neighbor-frame')
+      f.rules.forEach((r: number[]) => {
+        r[0] += 12 * scale
+        r[2] += 12 * scale
+      })
+    if (fault === 'missing-value')
+      f.tokens.splice(
+        f.tokens.findIndex((t: { text: string }) => t.text === 'Literal value'),
+        1
+      )
+    if (fault === 'changed-source') f.tokens[5].sourceItem.text = 'different'
+    if (fault === 'competing-caption')
+      f.captions.push({ ...f.captions[0], lines: ['Table 2. Independent records.'] })
+    if (fault === 'gutter-crossing') f.tokens[4].rect[2] = 210 * scale
+    if (fault === 'uncentered-stub') {
+      f.tokens[3].rect[1] -= 15 * scale
+      f.tokens[3].rect[3] -= 15 * scale
+      f.tokens[3].baseline -= 15 * scale
+    }
+    if (fault === 'orphan-script') {
+      const t = f.tokens.find((i: { text: string }) => i.text === '−2')
+      t.rect[1] -= 12 * scale
+      t.rect[3] -= 12 * scale
+      t.baseline -= 12 * scale
+    }
+    if (fault === 'missing-group-rule') f.rules.splice(2, 1)
+    if (fault === 'extra-rule') f.rules.push([20 * scale, 70 * scale, 285 * scale, 70 * scale])
+    expect(recoverNativeMixedParameterGrid(f.table, f.tokens, f.captions, f.rules)).toBeUndefined()
+  }
+})

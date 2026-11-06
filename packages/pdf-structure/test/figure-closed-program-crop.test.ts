@@ -17,6 +17,8 @@ const {
   nativeClosedProgramPixelCrop,
   nativeClosedPaintPixelCrop,
   nativeClosedPaintPixelPngSafe,
+  nativeSavedPaintPixelCrop,
+  nativeSavedPaintPixelPngSafe,
   nativeClosedProgramPixelPngSafe,
   nativeCaptionedProgramPixelCrop,
   nativeCaptionedProgramPixelPngSafe
@@ -29,7 +31,7 @@ const { nativeClosedSaveFigureCrop } = await import(
 const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
-import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { OPS, version as nativePdfVersion } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createCanvas } from '@napi-rs/canvas'
 
 function anonymousCaptionedWorkflow(): ReturnType<typeof anonymousClosedSaveFigure> {
@@ -550,4 +552,302 @@ it('contains two clipped native panels and their whole labels without treating n
     tableTextToken(item, context.viewport, 0)
   )
   expect(nativeClosedPaintPixelCrop(...missingLabel)).toBeUndefined()
+})
+
+// These outlined marks have no text-layer owner. Only the complete native
+// save/restore program and its separate literal caption can bound a preview.
+function anonymousSavedPaint(mode = 'outlined'): ReturnType<typeof anonymousClosedSaveFigure> {
+  const fixture = anonymousPixelProgram(mode === 'alpha' ? 'owned-alpha' : 'normal'),
+    a = fixture.args,
+    context = a[5],
+    o = context.operators
+  delete a[1].rect
+  if (mode === 'outlined') {
+    const begin = o.fnArray.indexOf(OPS.beginText),
+      end = o.fnArray.indexOf(OPS.restore)
+    o.fnArray.splice(begin, end - begin)
+    o.argsArray.splice(begin, end - begin)
+    // An outlined L-shaped label, painted as an ordinary PDF path.
+    o.fnArray.splice(begin, 0, OPS.constructPath)
+    o.argsArray.splice(begin, 0, [
+      OPS.fill,
+      [[0, 60, 122, 1, 62, 122, 1, 62, 116, 1, 66, 116, 1, 66, 114, 1, 60, 114, 4]],
+      [60, 114, 66, 122]
+    ])
+    context.content.items.splice(0, 3)
+    context.content.items.forEach((item: { str: string; sourceItem: unknown }, index: number) => {
+      item.sourceItem = { pageNumber: 1, index, text: item.str }
+    })
+    a[4] = context.content.items.map((item: unknown) => tableTextToken(item, context.viewport, 0))
+  }
+  return fixture
+}
+
+it.each(['outlined', 'alpha'])(
+  'bounds a complete saved %s preview without Source claims',
+  (mode) => {
+    const a = anonymousSavedPaint(mode).args,
+      before = JSON.stringify(a)
+    expect(nativeClosedPaintPixelCrop(...a)).toBeUndefined()
+    expect(nativeClosedProgramFigureCrop(...a)).toBeUndefined()
+    const plan = nativeSavedPaintPixelCrop(...a)
+    expect(plan).toEqual({
+      rect: [48.666666666666664, 68.66666666666667, 281.3333333333333, 187.33333333333334]
+    })
+    expect(JSON.stringify(a)).toBe(before)
+    const canvas = createCanvas(
+      Math.ceil((plan.rect[2] - plan.rect[0]) * 4),
+      Math.ceil((plan.rect[3] - plan.rect[1]) * 4)
+    )
+    try {
+      const png = canvas.toBuffer('image/png')
+      expect(nativeSavedPaintPixelPngSafe(plan, png, plan.rect, a[0])).toBe(true)
+      expect(nativeClosedPaintPixelPngSafe(plan, png, plan.rect, a[0])).toBe(false)
+      expect(nativeSavedPaintPixelPngSafe(structuredClone(plan), png, plan.rect, a[0])).toBe(false)
+      a[5].operators.argsArray = [...a[5].operators.argsArray]
+      expect(nativeSavedPaintPixelPngSafe(plan, png, plan.rect, a[0])).toBe(false)
+    } finally {
+      canvas.width = canvas.height = 1
+    }
+  }
+)
+
+function appendSavedForeignText(
+  a: ReturnType<typeof anonymousClosedSaveFigure>['args'],
+  text = 'Foreign',
+  x = 320,
+  baseline = 270,
+  narrowInk = false
+): void {
+  const context = a[5],
+    o = context.operators,
+    index = context.content.items.length,
+    item = {
+      str: text,
+      dir: 'ltr',
+      width: text.length * 5,
+      height: 10,
+      transform: [10, 0, 0, 10, x, a[0].height - baseline],
+      fontName: 'Foreign',
+      sourceItem: { pageNumber: 1, index, text }
+    }
+  o.fnArray.push(OPS.beginText, OPS.setFont, OPS.setTextMatrix, OPS.showText, OPS.endText)
+  o.argsArray.push(
+    null,
+    ['Foreign', 10],
+    [[1, 0, 0, 1, x, a[0].height - baseline]],
+    [[{ unicode: text, fontChar: text, width: text.length * 500, isInFont: true }]],
+    null
+  )
+  context.content.items.push(item)
+  context.content.styles.Foreign = { ascent: 0.7, descent: -0.1, vertical: false }
+  context.glyphBounds.push({
+    fontName: 'Foreign',
+    glyphs: [{ fontChar: text, bounds: [0, -0.1, narrowInk ? 0.5 : text.length * 0.5, 0.7] }]
+  })
+  a[4].push(tableTextToken(item, context.viewport, 0))
+}
+
+function anonymousSavedDualPaint(): ReturnType<typeof anonymousClosedSaveFigure> {
+  const fixture = anonymousSavedPaint('alpha'),
+    a = fixture.args,
+    context = a[5]
+  appendSavedForeignText(a, 'µ')
+  const r = context.content.items.at(-1)
+  context.operators.argsArray.at(-2)[0][0].originalCharCode = 181
+  r.str = r.sourceItem.text = a[4].at(-1).text = 'μ'
+  const defaultContent = structuredClone(context.content)
+  defaultContent.items.forEach((item: { sourceItem?: unknown }) => delete item.sourceItem)
+  const rawContent = structuredClone(defaultContent)
+  rawContent.items.at(-1).str = 'µ'
+  const viewport = { ...context.viewport }
+  delete viewport.convertToViewportPoint
+  context.dualApiEvidence = {
+    schema: 'same-pdfjs-page-dual-api-capture-v1',
+    pdfjsVersion: nativePdfVersion,
+    apiDefaultOptions: {},
+    apiRawOptions: { disableNormalization: true },
+    pageNumber: 1,
+    sourceSha256: context.sourceSha256,
+    defaultContent,
+    rawContent,
+    renderContext: {
+      pageNumber: 1,
+      sourceSha256: context.sourceSha256,
+      viewport,
+      operators: structuredClone(context.operators),
+      content: structuredClone(defaultContent),
+      glyphBounds: structuredClone(context.glyphBounds),
+      graphicsBounds: structuredClone(a[0].graphicsBounds)
+    }
+  }
+  return fixture
+}
+
+it('consumes only a complete dual API witness for a saved preview without changing source text', () => {
+  const a = anonymousSavedDualPaint().args,
+    before = JSON.stringify(a),
+    plan = nativeSavedPaintPixelCrop(...a)
+  expect(plan).toBeDefined()
+  expect(Object.keys(plan)).toEqual(['rect'])
+  expect(nativeClosedPaintPixelCrop(...a)).toBeUndefined()
+  expect(JSON.stringify(a)).toBe(before)
+})
+
+it.each(['missing', 'raw-text', 'operator', 'source'])(
+  'rejects incomplete saved-preview dual API evidence: %s',
+  (variant) => {
+    const a = anonymousSavedDualPaint().args,
+      c = a[5],
+      e = c.dualApiEvidence
+    if (variant === 'missing') delete c.dualApiEvidence
+    if (variant === 'raw-text') e.rawContent.items.at(-1).str = 'u'
+    if (variant === 'operator') c.operators.argsArray.at(-2)[0][0].originalCharCode++
+    if (variant === 'source') a[4].at(-1).sourceItem.index--
+    expect(nativeSavedPaintPixelCrop(...a)).toBeUndefined()
+  }
+)
+
+it.each(['raw-reference', 'caption', 'paint'])(
+  'revokes saved-preview publication after late %s drift',
+  (variant) => {
+    const a = anonymousSavedDualPaint().args,
+      c = a[5],
+      plan = nativeSavedPaintPixelCrop(...a)
+    expect(plan).toBeDefined()
+    const canvas = createCanvas(
+      Math.ceil((plan.rect[2] - plan.rect[0]) * 4),
+      Math.ceil((plan.rect[3] - plan.rect[1]) * 4)
+    )
+    try {
+      const png = canvas.toBuffer('image/png')
+      expect(nativeSavedPaintPixelPngSafe(plan, png, plan.rect, a[0])).toBe(true)
+      if (variant === 'raw-reference')
+        c.dualApiEvidence.rawContent = structuredClone(c.dualApiEvidence.rawContent)
+      if (variant === 'caption') a[1].caption.lines = [...a[1].caption.lines]
+      if (variant === 'paint')
+        c.operators.argsArray[c.operators.fnArray.indexOf(OPS.setGState)][0][0][1] = 0.8
+      expect(nativeSavedPaintPixelPngSafe(plan, png, plan.rect, a[0])).toBe(false)
+    } finally {
+      canvas.width = canvas.height = 1
+    }
+  }
+)
+
+it.each([
+  'caption',
+  'duplicate-caption',
+  'missing-outline',
+  'open-save',
+  'blend',
+  'alpha-zero',
+  'table'
+])('rejects incomplete or foreign saved-preview evidence: %s', (variant) => {
+  const a = anonymousSavedPaint('alpha').args,
+    c = a[5],
+    o = c.operators
+  if (variant === 'caption')
+    a[2].push({ page: 1, lines: ['Figure 2. Adjacent.'], rect: [60, 175, 140, 190] })
+  if (variant === 'duplicate-caption') a[2].push({ ...a[1].caption, rect: [39, 209, 351, 236] })
+  if (variant === 'missing-outline') c.glyphBounds = []
+  if (variant === 'open-save') o.fnArray[o.fnArray.indexOf(OPS.restore)] = OPS.dependency
+  const state = o.argsArray[o.fnArray.indexOf(OPS.setGState)][0]
+  if (variant === 'blend') state.push(['BM', 'multiply'])
+  if (variant === 'alpha-zero') state[0][1] = 0
+  if (variant === 'table') a[3].push([60, 175, 140, 190])
+  expect(nativeSavedPaintPixelCrop(...a)).toBeUndefined()
+})
+
+it.each([false, true])('inventories an unlisted exterior paint, crossing=%s', (crossing) => {
+  const a = anonymousSavedPaint().args,
+    o = a[5].operators,
+    x = crossing ? 70 : 320
+  // Intentionally absent from graphicsBounds: the native operator inventory
+  // must still see the real paint and apply the same foreign guard.
+  o.fnArray.push(OPS.constructPath)
+  o.argsArray.push([
+    OPS.fill,
+    [[0, x, 190, 1, x + 10, 190, 1, x + 10, 200, 1, x, 200, 4]],
+    [x, 190, x + 10, 200]
+  ])
+  expect(!!nativeSavedPaintPixelCrop(...a)).toBe(!crossing)
+})
+
+it.each([false, true])('checks complete foreign font advances, crossing=%s', (crossing) => {
+  const a = anonymousSavedPaint().args
+  // The actual glyph is outside; only the complete native advance reaches
+  // the candidate. A tiny outline must not hide a foreign text occurrence.
+  appendSavedForeignText(a, 'Foreign advance', crossing ? 20 : 320, 110, true)
+  expect(!!nativeSavedPaintPixelCrop(...a)).toBe(!crossing)
+})
+
+it.each([false, true])(
+  'does not choose the final part of same-caption scopes, same lane=%s',
+  (sameLane) => {
+    const a = anonymousSavedPaint().args,
+      o = a[5].operators,
+      x = sameLane ? 70 : 320
+    o.fnArray.unshift(OPS.save, OPS.constructPath, OPS.restore)
+    o.argsArray.unshift(
+      null,
+      [
+        OPS.fill,
+        [[0, x, 270, 1, x + 10, 270, 1, x + 10, 280, 1, x, 280, 4]],
+        [x, 270, x + 10, 280]
+      ],
+      null
+    )
+    a[0].graphicsBounds.forEach((g: { operationIndex: number }) => {
+      g.operationIndex += 3
+    })
+    expect(!!nativeSavedPaintPixelCrop(...a)).toBe(!sameLane)
+  }
+)
+
+it('keeps a strict saved-preview packet independent of unused extra API evidence', () => {
+  const a = anonymousSavedPaint().args
+  a[5].dualApiEvidence = { unrelated: true }
+  expect(nativeSavedPaintPixelCrop(...a)).toBeDefined()
+})
+
+it('separates earlier same-lane programs by their own complete native caption', () => {
+  const a = anonymousSavedPaint().args,
+    c = a[5],
+    o = c.operators,
+    text = 'Figure 2. Earlier drawing.'
+  appendSavedForeignText(a, text, 40, 40)
+  const capOps = o.fnArray.splice(-5),
+    capArgs = o.argsArray.splice(-5),
+    earlier = c.content.items.pop()
+  o.fnArray.unshift(OPS.save, OPS.constructPath, OPS.restore, ...capOps)
+  o.argsArray.unshift(
+    null,
+    [OPS.fill, [[0, 70, 280, 1, 80, 280, 1, 80, 290, 1, 70, 290, 4]], [70, 280, 80, 290]],
+    null,
+    ...capArgs
+  )
+  a[0].graphicsBounds.forEach((g: { operationIndex: number }) => {
+    g.operationIndex += 8
+  })
+  c.content.items.unshift(earlier)
+  c.content.items.forEach((item: { str: string; sourceItem: unknown }, index: number) => {
+    item.sourceItem = { pageNumber: 1, index, text: item.str }
+  })
+  a[4] = c.content.items.map((item: unknown) => tableTextToken(item, c.viewport, 0))
+  a[2].unshift({ page: 1, lines: [text], rect: [40, 30, 350, 45] })
+  expect(nativeSavedPaintPixelCrop(...a)).toBeDefined()
+})
+
+it('rejects an unlisted native image even outside the candidate', () => {
+  const a = anonymousSavedPaint().args,
+    o = a[5].operators
+  o.fnArray.push(OPS.save, OPS.transform, OPS.paintImageXObject, OPS.restore)
+  o.argsArray.push(null, [10, 0, 0, 10, 350, 40], ['unlisted-image', 10, 10], null)
+  expect(nativeSavedPaintPixelCrop(...a)).toBeUndefined()
+})
+
+it('rejects foreign rendered whitespace even without a token owner', () => {
+  const fixture = anonymousSavedPaint()
+  addAnonymousUnclaimedFigureGlyph(fixture)
+  expect(nativeSavedPaintPixelCrop(...fixture.args)).toBeUndefined()
 })

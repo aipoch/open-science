@@ -129,7 +129,12 @@ import {
   recoverNativeRuledFormulaGrid
 } from './literature-pdf-native-measured-record-grid.mjs'
 import { proveNativeCaptionRaisedGlyphOwnership } from './literature-pdf-native-caption-raised-glyphs.mjs'
-import { recoverNativeCoefficientRecordGrid } from './literature-pdf-native-coefficient-record-grid.mjs'
+import {
+  recoverNativeCoefficientRecordGrid,
+  recoverNativeRuledCoefficientHeader,
+  recoverNativeFooterRecordRows,
+  recoverNativeOwnedWrappedRow
+} from './literature-pdf-native-coefficient-record-grid.mjs'
 import {
   recoverNativePairedRecordGrid,
   recoverNativeGroupedFlagRecordGrid,
@@ -2020,6 +2025,37 @@ export function refineTable(
   nativeFontRoleWitness
 ) {
   const originalPageItems = pageItems
+  const leadingCoefficientHeader = recoverNativeRuledCoefficientHeader(
+    table,
+    pageItems,
+    captions,
+    rules
+  )
+  if (
+    leadingCoefficientHeader &&
+    !table.structure.objects.some(
+      (o) =>
+        o.label === 'table row' &&
+        leadingCoefficientHeader.items.some(
+          (i) =>
+            i.baseline >= table.cropRect[1] + o.rect[1] &&
+            i.baseline <= table.cropRect[1] + o.rect[3]
+        )
+    )
+  ) {
+    const rect = leadingCoefficientHeader.rect.map((x, n) => x - table.cropRect[n % 2])
+    table = {
+      ...table,
+      structure: {
+        ...table.structure,
+        objects: [
+          ...table.structure.objects.filter((o) => o.label !== 'table column header'),
+          { label: 'table row', rect },
+          { label: 'table column header', rect }
+        ]
+      }
+    }
+  }
   let leadingDenseRecordRecovered = false
   const terminalRecordSeed = table
   const sideTableBoundary = boundNativeSideBySideTable(table, pageItems, captions, rules)
@@ -15417,19 +15453,41 @@ export function refineTable(
     )
       nativeConflicts.push('span-conflicts-with-source-columns')
     if (nativeConflicts.length)
-      return {
+      return finishFooter({
         ...finalResult,
         issues: [...new Set([...finalResult.issues, ...nativeConflicts])],
         reviewCandidate: false
-      }
+      })
   }
   if (ambiguity)
-    return {
+    return finishFooter({
       ...finalResult,
       issues: [...new Set([...finalResult.issues, 'native-table-structure-ambiguous'])],
       reviewCandidate: false
-    }
-  return finalResult
+    })
+  return finishFooter(finalResult)
+
+  function finishFooter(reviewed) {
+    const wrapped =
+      recoverNativeOwnedWrappedRow(
+        reviewed,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordText,
+        nativeRecordContext
+      ) ?? reviewed
+    return (
+      recoverNativeFooterRecordRows(
+        wrapped,
+        originalPageItems,
+        captions,
+        sourceRules,
+        nativeRecordText,
+        nativeRecordContext
+      ) ?? wrapped
+    )
+  }
 }
 
 // A native divider is a contradiction only with complete, unique whole-font

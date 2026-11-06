@@ -2977,6 +2977,194 @@ export function acceptsNativeScopedAlgorithmPng(page, candidate, png) {
   )
 }
 
+// Outdented, unpunctuated ordinals need their own complete I/O frame and native
+// conditional scope strokes. Neither a numbered prose list nor a title alone
+// authorizes borrowing the gutter or the figure immediately below it.
+function framedOutdentedConditionals(page, title, titles, context) {
+  const inventory = nativeInventory(page, context),
+    h = title.fontSize
+  if (
+    !inventory?.length ||
+    inventory.some((t) => !t.valid || !t.horizontal) ||
+    !Array.isArray(context.operators?.fnArray) ||
+    !Array.isArray(context.operators.argsArray)
+  )
+    return []
+  const paint = new Map(),
+    rules = collectTableRules(context.operators, context.viewport, paint)
+  const tops = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[2] - r[0] > page.width * 0.5 &&
+      Math.abs(r[1] - title.y) < h &&
+      title.x >= r[0] - h * 0.1 &&
+      title.right <= r[2]
+  )
+  if (tops.length !== 1) return []
+  const top = tops[0],
+    frame = rules
+      .filter((r) => r[1] === r[3] && r[0] === top[0] && r[2] === top[2] && r[1] >= top[1])
+      .sort((a, b) => a[1] - b[1])
+  if (frame.length !== 3 || frame.some((r) => !valid(paint.get(r.join(','))))) return []
+  const [, divider, bottom] = frame
+  if (divider[1] <= title.bottom || divider[1] - title.bottom > h || bottom[1] - divider[1] < h * 5)
+    return []
+  const body = inventory.filter(
+      (t) =>
+        t.baseline > divider[1] &&
+        t.rect[1] < bottom[1] &&
+        t.rect[0] >= top[0] - h * 2 &&
+        t.rect[2] <= top[2]
+    ),
+    markers = body.filter((t) => /^[1-9]\d*$/u.test(t.text) && t.rect[2] < top[0]),
+    font = (t) => context.content.items[t.sourceItem.index].fontName
+  if (
+    body.some(
+      (t) => t.rect[3] >= bottom[1] || t.labelRect[3] >= bottom[1] || t.labelRect[1] <= divider[1]
+    )
+  )
+    return []
+  if (
+    markers.length < 4 ||
+    markers.length > 128 ||
+    markers.some(
+      (t, i) =>
+        Number(t.text) !== i + 1 ||
+        font(t) !== font(markers[0]) ||
+        t.height !== markers[0].height ||
+        Math.abs(t.rect[2] - markers[0].rect[2]) > t.height * 0.1 ||
+        (i && t.rect[1] <= markers[i - 1].rect[3])
+    )
+  )
+    return []
+  const prefix = body.filter((t) => t.sourceItem.index < markers[0].sourceItem.index),
+    inputs = prefix.filter((t) => t.text === 'Input:'),
+    outputs = prefix.filter((t) => t.text === 'Output:')
+  if (
+    inputs.length !== 1 ||
+    outputs.length !== 1 ||
+    prefix[0] !== inputs[0] ||
+    inputs[0].baseline >= outputs[0].baseline ||
+    outputs[0].baseline >= markers[0].baseline ||
+    [inputs[0], outputs[0]].some(
+      (anchor) =>
+        !prefix.some(
+          (t) =>
+            t !== anchor &&
+            t.sourceItem.index > anchor.sourceItem.index &&
+            t.rect[0] >= anchor.rect[2] &&
+            Math.abs(t.baseline - anchor.baseline) < anchor.height * 0.02 &&
+            /[\p{L}\p{N}]/u.test(t.text)
+        )
+    ) ||
+    prefix.some((t) => t.rect[0] < top[0] || t.baseline >= markers[0].baseline)
+  )
+    return []
+  const em = inputs[0].height,
+    comments = body.filter(
+      (t) =>
+        /^\/\/\s+\S/u.test(t.text) &&
+        t.height === em &&
+        t.rect[0] >= top[0] - em * 0.1 &&
+        markers.some(
+          (m, i) => markers[i + 1] && t.rect[1] > m.baseline && t.rect[3] < markers[i + 1].rect[1]
+        ) &&
+        body.filter((other) => Math.abs(other.baseline - t.baseline) < em * 0.3).length === 1
+    ),
+    rows = markers.map((marker, i) => {
+      const items = body.filter(
+        (t) =>
+          t.sourceItem.index > marker.sourceItem.index &&
+          t.sourceItem.index < (markers[i + 1]?.sourceItem.index ?? Infinity) &&
+          !comments.includes(t)
+      )
+      return { marker, items, first: items[0], text: items.map((t) => t.text).join(' ') }
+    })
+  if (
+    rows.some(
+      ({ marker, items, first }) =>
+        !first ||
+        first.rect[0] < top[0] - 0.02 ||
+        Math.abs(first.baseline - marker.baseline) > em * 0.02 ||
+        items.some(
+          (t) => t.rect[0] < top[0] - 0.02 || Math.abs(t.baseline - marker.baseline) > em * 0.3
+        )
+    )
+  )
+    return []
+  const controls = rows.filter((r) => /^if\b.+\bthen\s*$/iu.test(r.text)),
+    vertical = rules.filter(
+      (r) =>
+        r[0] === r[2] &&
+        r[0] > top[0] &&
+        r[0] < top[0] + em * 2 &&
+        r[1] > divider[1] &&
+        r[3] < bottom[1]
+    ),
+    caps = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        r[0] > top[0] &&
+        r[2] < top[0] + em * 3 &&
+        r[1] > divider[1] &&
+        r[1] < bottom[1]
+    )
+  if (
+    controls.length < 2 ||
+    vertical.length !== controls.length ||
+    caps.length !== controls.length ||
+    !rows.some((r) => /^return\b/iu.test(r.text)) ||
+    rows.some((r) => /^(?:(?:for|while)\b.+\bdo\s*$|(?:else|end)\b)/iu.test(r.text))
+  )
+    return []
+  const owned = [...frame]
+  for (const row of controls) {
+    const matches = vertical.filter(
+      (r) =>
+        r[0] > row.first.rect[0] &&
+        r[0] - row.first.rect[0] < em &&
+        r[1] > row.marker.baseline &&
+        r[1] - row.marker.baseline < em * 0.5
+    )
+    if (matches.length !== 1) return []
+    const rule = matches[0],
+      ends = caps.filter(
+        (r) =>
+          Math.abs(r[0] - rule[0]) < em * 0.05 &&
+          Math.abs(r[1] - rule[3]) < em * 0.05 &&
+          r[2] - r[0] > em * 0.2
+      ),
+      nested = rows.filter((r) => r.marker.baseline > rule[1] && r.marker.baseline < rule[3])
+    if (
+      ends.length !== 1 ||
+      !nested.length ||
+      nested.some((r) => r.first.rect[0] <= rule[0]) ||
+      rule[3] - nested.at(-1).marker.baseline > em * 0.5
+    )
+      return []
+    owned.push(rule, ends[0])
+  }
+  if (new Set(owned).size !== owned.length || owned.some((r) => !valid(paint.get(r.join(',')))))
+    return []
+  const caption = inventory.filter((t) => inside(box(title), t.rect)),
+    rect = union([
+      ...owned.map((r) => paint.get(r.join(','))),
+      ...caption.concat(body).flatMap((t) => [t.rect, t.labelRect])
+    ])
+  if (
+    !caption.length ||
+    !inside([0, 0, page.width, page.height], rect) ||
+    titles.some((t) => t !== title && overlap(box(t), rect)) ||
+    inventory.some((t) => !caption.includes(t) && !body.includes(t) && overlap(t.rect, rect)) ||
+    rules.some(
+      (r) =>
+        !owned.includes(r) && overlap([r[0] - 0.01, r[1] - 0.01, r[2] + 0.01, r[3] + 0.01], rect)
+    )
+  )
+    return []
+  return [{ rect, caption: { page: page.pageNumber, lines: [title.text], rect: box(title) } }]
+}
+
 export function findNativeAlgorithmCandidates(page, context = {}) {
   const { rules = [] } = context,
     old = findAlgorithmCandidates(page, rules)
@@ -2999,6 +3187,7 @@ export function findNativeAlgorithmCandidates(page, context = {}) {
     for (const c of [
       ...framedSteps(page, title, titles, rules, context),
       ...framedNumberedInput(page, title, titles, rules, context),
+      ...framedOutdentedConditionals(page, title, titles, context),
       ...framedLoop(page, title, titles, lines, rules, context),
       ...numberedScope(page, title, titles, lines, rules, context)
     ]) {

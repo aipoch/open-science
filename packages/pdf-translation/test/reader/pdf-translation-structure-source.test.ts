@@ -21,10 +21,411 @@ import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { pdfReflowContentKinds } from '../../src/reader/reflow-content.js'
 import {
   nativeLabelRegion,
+  nativeAlgorithmInkRegions,
   nativePartialNavigation
 } from '../../src/reader/native-source-geometry.js'
-import { verifiedPdfStructureRegions } from '../../src/reader/structure-regions.js'
+import {
+  verifiedPdfStructureRegions,
+  verifiedPdfTableRegions
+} from '../../src/reader/structure-regions.js'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
+
+async function foreignTableInkFixture() {
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(fontkit)
+  const font = await pdf.embedFont(
+    await readFile(
+      path.join(
+        path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+        'standard_fonts/LiberationSans-Regular.ttf'
+      )
+    )
+  )
+  const sheet = pdf.addPage([400, 500])
+  sheet.drawText('Outside', { x: 40, y: 410, size: 12, font })
+  const key = sheet.node.Resources()!.lookup(PDFName.of('Font'), PDFDict).keys()[0].toString()
+  sheet.node.set(
+    PDFName.of('Contents'),
+    pdf.context.register(
+      pdf.context.flateStream(
+        `BT ${key} 12 Tf 40 410 Td ${font.encodeText('Outside')} Tj ET\nBT ${key} 12 Tf 40 390 Td ${font.encodeText('Body')} Tj ET`
+      )
+    )
+  )
+  const bytes = await pdf.save(),
+    task = getDocument({
+      data: bytes.slice(),
+      fontExtraProperties: true,
+      disableFontFace: true,
+      isEvalSupported: false
+    }),
+    document = await task.promise,
+    proxy = await document.getPage(1),
+    content = await proxy.getTextContent(),
+    viewport = proxy.getViewport({ scale: 1 }),
+    body = content.items.findIndex((i) => 'str' in i && i.str === 'Body'),
+    outside = content.items.findIndex((i) => 'str' in i && i.str === 'Outside'),
+    selected = new Set([body]),
+    ink = await nativeAlgorithmInkRegions(proxy, content, viewport, 1, selected)
+  expect(ink).toBeDefined()
+  const native = (index: number) =>
+      nativeLabelRegion(
+        content.items[index] as TextItem,
+        content.styles[(content.items[index] as TextItem).fontName],
+        viewport,
+        1
+      )!,
+    exterior = native(outside),
+    actual = ink!.get(outside)!,
+    owned = native(body),
+    top = (exterior.y + exterior.height + actual.y + actual.height) / 2,
+    crop = { page: 1, x: 0.05, y: top, width: 0.8, height: 0.3 - top },
+    source = createPdfTranslationSource({
+      resourceRequestKey: 'foreign-table-ink',
+      fingerprint: document.fingerprints[0],
+      pages: [{ width: 400, height: 500 }],
+      units: [
+        {
+          id: 'body',
+          source: 'Body',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: owned.x, y: owned.y, width: owned.width, height: owned.height },
+              items: [{ index: body, text: 'Body' }]
+            }
+          ]
+        }
+      ]
+    }),
+    candidates = [{ regions: [crop], owners: new Set([`1:${body}`]) }],
+    pages = new Map([[1, { proxy, content, viewport }]]),
+    options = {
+      document,
+      sourceIdentity: {
+        sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+        sourceSizeBytes: bytes.length
+      }
+    }
+  expect(actual.y + actual.height).toBeLessThan(top)
+  expect(exterior.y + exterior.height).toBeGreaterThan(top)
+  return {
+    task,
+    proxy,
+    content,
+    viewport,
+    source,
+    candidates,
+    pages,
+    options,
+    outside,
+    body,
+    crop,
+    actual
+  }
+}
+
+it('proves table foreign ink outside a crop without shrinking the owned native box', async () => {
+  const f = await foreignTableInkFixture()
+  try {
+    expect(verifiedPdfStructureRegions(f.source, f.candidates, f.pages, [])).toEqual([])
+    const result = await verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], f.options)
+    expect(result.current()).toBe(true)
+    expect(result.regions).toEqual([
+      {
+        pageNumber: 1,
+        rect: { x: f.crop.x, y: f.crop.y, width: f.crop.width, height: f.crop.height }
+      }
+    ])
+  } finally {
+    await f.task.destroy()
+  }
+})
+
+it.each([
+  'partial-content',
+  'missing-outline',
+  'ink-overlap',
+  'pixel-overlap',
+  'owned-overflow',
+  'caption-overlap',
+  'foreign-fragment'
+] as const)('rejects table foreign ink fallback with %s', async (mode) => {
+  const f = await foreignTableInkFixture()
+  try {
+    let source = f.source
+    const captions: (typeof f.crop)[] = []
+    if (mode === 'partial-content') f.content.items.splice(f.outside, 1)
+    if (mode === 'missing-outline') {
+      const has = f.proxy.commonObjs.has.bind(f.proxy.commonObjs)
+      vi.spyOn(f.proxy.commonObjs, 'has').mockImplementation(
+        (key) => !key.includes('_path_') && has(key)
+      )
+    }
+    if (mode === 'ink-overlap') {
+      f.crop.height += f.crop.y - f.actual.y
+      f.crop.y = f.actual.y
+    }
+    if (mode === 'pixel-overlap') f.crop.y = f.actual.y + f.actual.height + 0.000001
+    if (mode === 'owned-overflow') {
+      f.crop.x = 0.1
+      f.crop.width = 0.001
+      source = createPdfTranslationSource({
+        ...source,
+        units: source.units.map((u) => ({
+          ...u,
+          fragments: u.fragments.map((g) => ({ ...g, rect: { ...g.rect, width: 0.001 } }))
+        }))
+      })
+    }
+    if (mode === 'caption-overlap') captions.push({ ...f.crop })
+    if (mode === 'foreign-fragment')
+      source = createPdfTranslationSource({
+        ...source,
+        units: [
+          ...source.units,
+          {
+            id: 'foreign',
+            source: 'Outside',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { ...source.units[0].fragments[0].rect },
+                items: [{ index: f.outside, text: 'Outside' }]
+              }
+            ]
+          }
+        ]
+      })
+    const result = await verifiedPdfTableRegions(source, f.candidates, f.pages, captions, f.options)
+    expect(result.regions).toEqual([])
+  } finally {
+    vi.restoreAllMocks()
+    await f.task.destroy()
+  }
+})
+
+it.each(['outline', 'operators', 'projection', 'owners', 'source', 'document'] as const)(
+  'invalidates table foreign ink after %s drift',
+  async (mode) => {
+    const f = await foreignTableInkFixture()
+    try {
+      const result = await verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], f.options)
+      expect(result.regions).toHaveLength(1)
+      expect(result.current()).toBe(true)
+      const ops = await f.proxy.getOperatorList(),
+        item = f.content.items[f.outside] as TextItem,
+        font = f.proxy.commonObjs.get(item.fontName)
+      if (mode === 'outline') {
+        const index = ops.fnArray.indexOf(OPS.showText),
+          glyph = ops.argsArray[index][0].find((g: unknown) => typeof g === 'object')
+        f.proxy.commonObjs.get(font.loadedName + '_path_' + glyph.fontChar).path[1] += 0.01
+      }
+      if (mode === 'operators') ops.argsArray[ops.fnArray.indexOf(OPS.moveText)][0] += 1
+      if (mode === 'projection') f.viewport.convertToViewportPoint = () => [0, 0]
+      if (mode === 'owners') f.candidates[0].owners.add(`1:${f.outside}`)
+      if (mode === 'source') f.candidates[0].regions[0].height += 0.01
+      if (mode === 'document') vi.spyOn(f.options.document, 'getPage').mockResolvedValue(f.proxy)
+      expect(result.current()).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+      await f.task.destroy()
+    }
+  }
+)
+
+it('rejects table foreign ink when native content changes across a page await', async () => {
+  const f = await foreignTableInkFixture()
+  try {
+    vi.spyOn(f.options.document, 'getPage').mockImplementation(async () => {
+      await Promise.resolve()
+      ;(f.content.items[f.outside] as TextItem).width += 0.001
+      return f.proxy
+    })
+    const result = await verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], f.options)
+    expect(result.regions).toEqual([])
+    expect(result.current()).toBe(false)
+  } finally {
+    vi.restoreAllMocks()
+    await f.task.destroy()
+  }
+})
+
+it.each(['text', 'style', 'projection', 'text-api'] as const)(
+  'binds the synchronous table crop path across its new await: %s',
+  async (mode) => {
+    const f = await foreignTableInkFixture()
+    try {
+      f.crop.y = 0.2
+      f.crop.height = 0.1
+      expect(verifiedPdfStructureRegions(f.source, f.candidates, f.pages, [])).toHaveLength(1)
+      const pending = verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], f.options)
+      const item = f.content.items[f.outside] as TextItem
+      if (mode === 'text') item.str += '!'
+      if (mode === 'style') f.content.styles[item.fontName].ascent! += 0.01
+      if (mode === 'projection') f.viewport.convertToViewportPoint = () => [0, 0]
+      if (mode === 'text-api') vi.spyOn(f.proxy, 'getTextContent').mockResolvedValue(f.content)
+      const result = await pending
+      expect(result.current()).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+      await f.task.destroy()
+    }
+  }
+)
+
+it('retains baseline crop eligibility when the optional native operator API is unavailable', async () => {
+  const f = await foreignTableInkFixture()
+  try {
+    vi.spyOn(f.proxy, 'getOperatorList').mockRejectedValue(
+      new Error('Unavailable native outline capability')
+    )
+    const result = await verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], f.options)
+    expect(result.current()).toBe(true)
+    expect(result.regions).toEqual(verifiedPdfStructureRegions(f.source, f.candidates, f.pages, []))
+  } finally {
+    vi.restoreAllMocks()
+    await f.task.destroy()
+  }
+})
+
+it.each(['complete', 'operator-unavailable', 'late-style-drift'] as const)(
+  'retains the table foreign ink contract through the complete structure entry: %s',
+  async (mode) => {
+    const f = await foreignTableInkFixture()
+    try {
+      const body = f.content.items[f.body] as TextItem,
+        extraction: PdfTranslationExtraction = {
+          source: f.source,
+          coverage: {
+            pageCount: 1,
+            textItemCount: 1,
+            includedItemCount: 1,
+            excludedItemCount: 0,
+            pagesWithoutText: [],
+            exclusions: [],
+            warnings: []
+          }
+        },
+        result: PdfStructureResult = {
+          schemaVersion: 1,
+          extractionId: 'foreign-crop',
+          engineFingerprint: 'b'.repeat(64),
+          ...f.options.sourceIdentity,
+          pageCount: 1,
+          requestedPages: [1],
+          processedPages: [1],
+          pages: [{ page: 1, width: 400, height: 500, rotation: 0 }],
+          elements: [
+            {
+              id: 'table',
+              kind: 'table',
+              issues: [],
+              regions: [f.crop],
+              table: {
+                rowCount: 1,
+                columnCount: 1,
+                issues: [],
+                unassignedText: [],
+                cells: [
+                  {
+                    row: 0,
+                    column: 0,
+                    rowSpan: 1,
+                    columnSpan: 1,
+                    text: body.str,
+                    regions: [
+                      {
+                        page: 1,
+                        x: body.transform[4] / 400,
+                        y: (500 - body.transform[5] - body.height) / 500,
+                        width: body.width / 400,
+                        height: body.height / 500
+                      }
+                    ],
+                    sourceItems: [{ pageNumber: 1, index: f.body, text: body.str }]
+                  }
+                ]
+              }
+            }
+          ],
+          thumbnails: [],
+          navigation: [],
+          issues: []
+        }
+      vi.spyOn(f.proxy, 'getTextContent').mockResolvedValue(f.content)
+      if (mode === 'operator-unavailable')
+        vi.spyOn(f.proxy, 'getOperatorList').mockRejectedValue(new Error('No operators'))
+      let reads = 0
+      const applied = await applyCachedPdfStructureSources({
+        extraction,
+        ...f.options,
+        sourceId: 'foreign-crop',
+        signal: new AbortController().signal,
+        readCached: async () => {
+          if (++reads === 2 && mode === 'late-style-drift')
+            f.content.styles[body.fontName].ascent! += 0.01
+          return result
+        }
+      })
+      if (mode === 'late-style-drift') expect(applied.extraction).toBe(extraction)
+      else {
+        expect(applied.extraction.source.units).toHaveLength(1)
+        expect(applied.extraction.source.units[0]).toMatchObject({
+          source: 'Body',
+          sourceOnly: true
+        })
+        expect(applied.extraction.source.originalRegions ?? []).toHaveLength(
+          mode === 'complete' ? 1 : 0
+        )
+      }
+    } finally {
+      vi.restoreAllMocks()
+      await f.task.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'closes auxiliary table ink evidence before publication (font drift %s)',
+  async (drift) => {
+    const f = await foreignTableInkFixture()
+    vi.stubGlobal('document', { createElement: () => createCanvas(1, 1) })
+    try {
+      const has = f.proxy.commonObjs.has.bind(f.proxy.commonObjs)
+      vi.spyOn(f.proxy.commonObjs, 'has').mockImplementation(
+        (key) => !key.includes('_path_') && has(key)
+      )
+      let destroyed = 0
+      const factory = vi.fn((options: Parameters<typeof getDocument>[0]) => {
+        const task = getDocument(options),
+          destroy = task.destroy.bind(task)
+        task.destroy = async () => {
+          const document = await task.promise,
+            page = await document.getPage(1),
+            content = await page.getTextContent(),
+            item = content.items.find((i) => 'str' in i && i.str.trim()) as TextItem
+          if (drift) page.commonObjs.get(item.fontName).data[0] ^= 1
+          await destroy()
+          destroyed++
+        }
+        return task
+      })
+      const result = await verifiedPdfTableRegions(f.source, f.candidates, f.pages, [], {
+        ...f.options,
+        nativeDocumentFactory: factory
+      })
+      expect(factory).toHaveBeenCalledTimes(1)
+      expect(destroyed).toBe(1)
+      expect(result.regions).toHaveLength(drift ? 0 : 1)
+      expect(result.current()).toBe(!drift)
+    } finally {
+      vi.restoreAllMocks()
+      vi.unstubAllGlobals()
+      await f.task.destroy()
+    }
+  }
+)
 
 it.each(['left', 'right', 'edge'] as const)(
   'keeps explicit %s page clipping out of original crops without changing ordinary edge admission',

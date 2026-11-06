@@ -169,17 +169,28 @@ it('preserves legacy identity encoding, pinned layouts, incremental reports and 
       })),
       coverage: {
         pageCount: 1,
-        textItemCount: 2,
+        textItemCount: 3,
         includedItemCount: 2,
-        excludedItemCount: 0,
+        excludedItemCount: 1,
         pagesWithoutText: [],
-        exclusions: [],
+        exclusions: [
+          {
+            reason: 'occluded-native-text',
+            items: [{ pageNumber: 1, index: 2, text: 'Covered heading' }]
+          }
+        ],
         warnings: []
       }
     }
     await tx.pinLayout(edition.id, snapshot)
     await tx.pinLayout(edition.id, { ...snapshot, parserVersion: 'replacement' })
     expect((await tx.readMetadata(edition.id))?.layoutSnapshot).toEqual(snapshot)
+    expect(
+      JSON.parse(
+        h.connection.prepare('SELECT layoutSnapshotJson FROM PdfTranslation').get()!
+          .layoutSnapshotJson as string
+      ).coverage.exclusions
+    ).toEqual(snapshot.coverage.exclusions)
     const reports = [
       {
         sourceIndex: 1,

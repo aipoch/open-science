@@ -667,7 +667,13 @@ describe('worker result boundary', () => {
     })
     await expect(readWorkerResult(root, identity, new Map())).rejects.toThrow()
   })
-  it.each(['algorithm', 'graphical-table', 'open-rule-table', 'native-ordinary-three-line'])(
+  it.each([
+    'table',
+    'algorithm',
+    'graphical-table',
+    'open-rule-table',
+    'native-ordinary-three-line'
+  ])(
     'accounts for and cleans %s thumbnails while retaining unexpected scratch files',
     async (kind) => {
       const originalBytes = await inspectScratch(root)
@@ -995,6 +1001,7 @@ it.each(['bottom-strip', 'native-marker'])(
     for (const name of [
       `p1-figure-0.png.${suffix}.pending`,
       `p1-algorithm-0.png.${suffix}.pending`,
+      `p1-table-0.png.${suffix}.pending`,
       `page-1-table-0.png.other.pending`,
       'page-1-table-0.png.pending',
       pending + '.extra'

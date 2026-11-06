@@ -7007,6 +7007,7 @@
     "Unsupported text direction": "지원하지 않는 텍스트 방향",
     "Text outside page bounds": "페이지 경계를 벗어난 텍스트",
     "Invalid text geometry": "잘못된 텍스트 위치 정보",
+    "Text hidden beneath other page content": "페이지의 다른 콘텐츠에 가려진 텍스트",
     "Full-text preparation cancelled.": "전체 텍스트 준비가 취소되었습니다.",
     "Prepare full text": "전체 텍스트 준비",
     "Located separately": "개별적으로 위치를 확인한 조각",

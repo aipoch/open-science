@@ -7169,6 +7169,7 @@
     "Unsupported text direction": "Nicht unterstützte Textrichtung",
     "Text outside page bounds": "Text außerhalb der Seitengrenzen",
     "Invalid text geometry": "Ungültige Textgeometrie",
+    "Text hidden beneath other page content": "Von anderen Seiteninhalten verdeckter Text",
     "Full-text preparation cancelled.": "Volltextvorbereitung abgebrochen.",
     "Prepare full text": "Volltext vorbereiten",
     "Located separately": "Separat verortet",

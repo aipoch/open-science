@@ -3,6 +3,7 @@ import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { createHash } from 'node:crypto'
 import {
   nativeClosedProgramInkPacket,
+  nativeSavedPaintInkPacket,
   nativeRecoveryFigureInkPacket
 } from './literature-pdf-figure-native-plot-labels.mjs'
 import { nativeFigureLabelBounds } from './literature-pdf-figure-crop-geometry.mjs'
@@ -22,6 +23,7 @@ const certificates = new WeakMap()
 const pixelCertificates = new WeakMap()
 const nativeCaptionPixelMode = Symbol('native-caption-pixel')
 const nativePaintPixelMode = Symbol('native-paint-pixel')
+const nativeSavedPaintPixelMode = Symbol('native-saved-paint-pixel')
 const hit = (a, b) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]
 const inside = (a, b) => b.every((n, i) => (i < 2 ? n >= a[i] - 1e-7 : n <= a[i] + 1e-7))
 const expand = (r, n) => r.map((v, i) => v + (i < 2 ? -n : n))
@@ -580,6 +582,29 @@ export function nativeClosedPaintPixelCrop(
     nativePaintPixelMode
   )
 }
+// Complete independently saved vector programs can contain outlined lettering
+// without text-layer owners, or supported normal alpha. This preview-only
+// purpose leaves the existing owning and opaque-paint admissions unchanged.
+export function nativeSavedPaintPixelCrop(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  context,
+  publishedRect = figure?.rect
+) {
+  return closedProgramPixelCrop(
+    page,
+    figure,
+    captions,
+    tables,
+    tokens,
+    context,
+    publishedRect,
+    nativeSavedPaintPixelMode
+  )
+}
 function closedPaintMetrics(s) {
   return (
     s?.vertical === false &&
@@ -672,7 +697,9 @@ function closedProgramPixelCrop(
   originalCaptions
 ) {
   try {
-    const values = nativeRecoveryOwnValues(context)
+    const saved = mode === nativeSavedPaintPixelMode,
+      paintMode = mode === nativePaintPixelMode || saved,
+      values = nativeRecoveryOwnValues(context)
     if (!values) return
     const prototype = Object.getPrototypeOf(context),
       descriptors = Object.getOwnPropertyDescriptors(context),
@@ -687,7 +714,8 @@ function closedProgramPixelCrop(
           'viewport',
           'content',
           'pageNumber',
-          'sourceSha256'
+          'sourceSha256',
+          ...(saved ? ['dualApiEvidence'] : [])
         ]
           .filter((key) => Object.hasOwn(values, key))
           .map((key) => [key, values[key]])
@@ -733,13 +761,17 @@ function closedProgramPixelCrop(
     )
       return
     const seed = tokens.find((t) => t.sourceItem?.text?.trim())?.sourceItem,
-      packet = seed && nativeClosedProgramInkPacket(page, tokens, input, [seed])
+      packet =
+        seed &&
+        (saved ? nativeSavedPaintInkPacket : nativeClosedProgramInkPacket)(page, tokens, input, [
+          seed
+        ])
     if (
       !packet ||
       (mode !== nativeCaptionPixelMode && packet.evidence.images.length) ||
       packet.records.length > 4096 ||
       packet.evidence.paths.size > 4096 ||
-      (mode !== nativePaintPixelMode &&
+      (!paintMode &&
         packet.o.fnArray.some((op) =>
           [
             OPS.paintFormXObjectBegin,
@@ -750,8 +782,8 @@ function closedProgramPixelCrop(
         )) ||
       !packet.records.every(
         (r) =>
-          (mode === nativePaintPixelMode || r.advanceComplete) &&
-          (mode === nativePaintPixelMode
+          (paintMode || r.advanceComplete) &&
+          (paintMode
             ? closedPaintMetrics(input.content.styles[r.r.fontName])
             : metrics(input.content.styles[r.r.fontName]) ||
               zeroMetrics(input.content.styles[r.r.fontName]))
@@ -767,33 +799,24 @@ function closedProgramPixelCrop(
       const op = packet.o.fnArray[i]
       if (
         op === OPS.save ||
-        (mode === nativePaintPixelMode && [OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
+        (paintMode && [OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
       ) {
         const a = packet.o.argsArray[i]
-        if (
-          mode === nativePaintPixelMode &&
-          op === OPS.paintFormXObjectBegin &&
-          (a?.[0] !== null || a?.[1] !== null)
-        )
+        if (paintMode && op === OPS.paintFormXObjectBegin && (a?.[0] !== null || a?.[1] !== null))
           return
-        if (
-          mode === nativePaintPixelMode &&
-          op === OPS.beginGroup &&
-          !packet.evidence.isolatedGroups?.get(i)
-        )
-          return
+        if (paintMode && op === OPS.beginGroup && !packet.evidence.isolatedGroups?.get(i)) return
         const scope = { start: i, op, parent: stack.at(-1), matrix: [...matrix] }
         if (!stack.length) roots.push(scope)
         stack.push(scope)
         if (roots.length > 512) return
       } else if (
         op === OPS.restore ||
-        (mode === nativePaintPixelMode && [OPS.paintFormXObjectEnd, OPS.endGroup].includes(op))
+        (paintMode && [OPS.paintFormXObjectEnd, OPS.endGroup].includes(op))
       ) {
         const scope = stack.pop()
         if (
           !scope ||
-          (mode === nativePaintPixelMode &&
+          (paintMode &&
             scope.op !==
               (op === OPS.restore
                 ? OPS.save
@@ -856,19 +879,17 @@ function closedProgramPixelCrop(
           a[2] === null)
       )
         continue
-      const line =
-          mode === nativePaintPixelMode ? undefined : clippedStraightLinePaint(packet, i, state),
-        paint =
-          mode === nativePaintPixelMode
-            ? closedProgramClippedPaint(packet, i, state)
-            : (line ?? nativeFigurePathPaint(packet, i, state))
+      const line = paintMode ? undefined : clippedStraightLinePaint(packet, i, state),
+        paint = paintMode
+          ? closedProgramClippedPaint(packet, i, state)
+          : (line ?? nativeFigurePathPaint(packet, i, state))
       if (!paint) return
       paths.push({
         i,
         state,
         ...paint,
         line: !!line,
-        ...(mode === nativePaintPixelMode ? { clippedPaint: true } : {})
+        ...(paintMode ? { clippedPaint: true } : {})
       })
     }
     const cap = packet.records.filter((r) => inside(caption.rect, r.rect)),
@@ -876,6 +897,32 @@ function closedProgramPixelCrop(
     if (
       !cap.length ||
       literal(cap.map((r) => r.r.str).join('')) !== literal(caption.lines.join(''))
+    )
+      return
+    const boundCaptions = saved
+      ? captions
+          .filter((c) => c.page === page.pageNumber)
+          .map((c) => {
+            const rows = packet.records.filter((r) => inside(c.rect, r.rect))
+            if (
+              !rows.length ||
+              rows.some((r) => !r.advanceComplete) ||
+              literal(rows.map((r) => r.r.str).join('')) !== literal(c.lines.join(''))
+            )
+              return
+            return {
+              caption: c,
+              start: Math.min(...rows.flatMap((r) => r.part.map((z) => z.g.i))),
+              end: Math.max(...rows.flatMap((r) => r.part.map((z) => z.g.i)))
+            }
+          })
+      : []
+    if (
+      saved &&
+      (boundCaptions.some((c) => !c) ||
+        boundCaptions.some((c, i) =>
+          boundCaptions.some((d, j) => i !== j && c.start <= d.end && c.end >= d.start)
+        ))
     )
       return
     const capStart = Math.min(...cap.flatMap((r) => r.part.map((z) => z.g.i))),
@@ -902,13 +949,17 @@ function closedProgramPixelCrop(
         paints = paths.filter((p) => belongs(p.i)),
         ownImages = images.filter((p) => belongs(p.i))
       if (
-        records.length < 3 ||
+        (!saved && records.length < 3) ||
         records.length > (mode === nativeCaptionPixelMode ? 256 : 64) ||
         (mode === nativeCaptionPixelMode && (records.length <= 64 || !ownImages.length)) ||
         paints.length < 3 ||
-        !own.length ||
+        (!saved && !own.length) ||
         !records.every((r) => r.part.every((z) => belongs(z.g.i))) ||
-        paints.some((q) => q.state.fillAlpha !== 1 || q.state.strokeAlpha !== 1) ||
+        paints.some((q) =>
+          [q.state.fillAlpha, q.state.strokeAlpha].some((alpha) =>
+            saved ? !Number.isFinite(alpha) || alpha <= 0 || alpha > 1 : alpha !== 1
+          )
+        ) ||
         own.some(
           (g) =>
             g.textPaint?.fillAlpha !== 1 ||
@@ -916,7 +967,7 @@ function closedProgramPixelCrop(
         ) ||
         root.end >= capStart ||
         roots.some((s) => s.start > root.end && s.start < capStart) ||
-        (mode !== nativePaintPixelMode &&
+        ((!paintMode || saved) &&
           packet.records.some(
             (r) => !cap.includes(r) && r.part.some((z) => z.g.i > root.end && z.g.i < capStart)
           ))
@@ -948,6 +999,11 @@ function closedProgramPixelCrop(
       }
       const body = union([
           ...own.map((g) => g.ink),
+          ...(saved
+            ? records.map((r) =>
+                closedPaintForeignFontBounds(r.r, input.content.styles[r.r.fontName], v)
+              )
+            : []),
           ...paints.map((p) => p.rect),
           ...ownImages.map((p) => p.rect)
         ]),
@@ -955,7 +1011,7 @@ function closedProgramPixelCrop(
         rect = union([expand(body, pad), ...(publishedRect ? [publishedRect] : [])]),
         foreign = [
           ...glyphs.filter((g) => !belongs(g.i)).map((g) => ({ rect: g.ink, floor: 0 })),
-          ...(mode === nativePaintPixelMode
+          ...(paintMode
             ? packet.records
                 .filter((r) => !records.includes(r))
                 .map((r) => ({
@@ -969,6 +1025,41 @@ function closedProgramPixelCrop(
           ...paths.filter((p) => !belongs(p.i)),
           ...images.filter((p) => !belongs(p.i))
         ]
+      if (saved) {
+        const em = Math.max(...cap.map((r) => r.r.height))
+        if (
+          !(em > 0) ||
+          body[2] - body[0] < (caption.rect[2] - caption.rect[0]) * 0.5 ||
+          body[3] - body[1] < em * 5 ||
+          caption.rect[1] - body[3] > em * 4 ||
+          boundCaptions.filter(
+            (c) =>
+              c.start > root.end &&
+              !packet.records.some((r) => r.part.some((z) => z.g.i > root.end && z.g.i < c.start))
+          ).length !== 1 ||
+          roots.some((s) => {
+            if (s.end >= root.start) return false
+            const earlier = [
+              ...paths.filter((p) => p.i > s.start && p.i < s.end).map((p) => p.rect),
+              ...glyphs.filter((g) => g.i > s.start && g.i < s.end).map((g) => g.ink)
+            ]
+            if (!earlier.length) return false
+            const box = union(earlier)
+            return (
+              box[0] < body[2] &&
+              box[2] > body[0] &&
+              !boundCaptions.some(
+                (c) =>
+                  c.start > s.end &&
+                  c.end < root.start &&
+                  c.caption.rect[0] < box[2] &&
+                  c.caption.rect[2] > box[0]
+              )
+            )
+          })
+        )
+          continue
+      }
       if (
         (mode === nativePaintPixelMode &&
           !closedProgramNotesBetween(
@@ -984,7 +1075,9 @@ function closedProgramPixelCrop(
         body[3] >= caption.rect[1] ||
         body[2] <= caption.rect[0] ||
         body[0] >= caption.rect[2] ||
-        (publishedRect && !own.some((g) => !inside(publishedRect, g.ink))) ||
+        (publishedRect &&
+          !own.some((g) => !inside(publishedRect, g.ink)) &&
+          (!saved || !paints.some((p) => !inside(publishedRect, p.rect)))) ||
         tables.some((r) => hit(rect, r)) ||
         captions.some((c) => c !== caption && c.page === page.pageNumber && hit(rect, c.rect)) ||
         foreign.some((p) => hit(rect, expand(p.rect, (p.floor + 2) / 4)))
@@ -1128,6 +1221,13 @@ export function nativeCaptionedProgramPixelPngSafe(plan, png, rect, page) {
 export function nativeClosedPaintPixelPngSafe(plan, png, rect, page) {
   return (
     pixelCertificates.get(plan)?.mode === nativePaintPixelMode &&
+    nativeClosedProgramPixelPngSafe(plan, png, rect, page)
+  )
+}
+
+export function nativeSavedPaintPixelPngSafe(plan, png, rect, page) {
+  return (
+    pixelCertificates.get(plan)?.mode === nativeSavedPaintPixelMode &&
     nativeClosedProgramPixelPngSafe(plan, png, rect, page)
   )
 }

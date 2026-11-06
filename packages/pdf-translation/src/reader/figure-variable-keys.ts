@@ -83,6 +83,113 @@ function circle(p: Paint): { center: number[]; radius: number } | undefined {
   return { center, radius }
 }
 
+/** Repeated names belong to separate native graph components, never to a
+ * text/position match. Every body paint must be a node, connecting shaft, or
+ * a uniquely attached arrowhead before the component label sets can agree. */
+function sharedComponentLabels(
+  nodes: { center: number[]; radius: number; paint: Paint; label: string }[],
+  marks: Paint[],
+  stroke: number,
+  fillStroke: number
+): boolean {
+  const point = (p: Paint, x: number, y: number): number[] => [
+      p.matrix[0] * x + p.matrix[2] * y + p.matrix[4],
+      p.matrix[1] * x + p.matrix[3] * y + p.matrix[5]
+    ],
+    distance = (a: number[], b: number[]): number => Math.hypot(a[0] - b[0], a[1] - b[1]),
+    rest = marks.filter((p) => !nodes.some((n) => n.paint === p)),
+    edges: { paint: Paint; a: number; b: number; start: number[]; end: number[] }[] = []
+  for (const p of rest.filter((p) => p.kind === stroke)) {
+    if (p.path.length !== 6 || p.path[0] !== 0 || p.path[3] !== 1) return false
+    const start = point(p, p.path[1], p.path[2]),
+      end = point(p, p.path[4], p.path[5]),
+      length = distance(start, end)
+    if (!length) return false
+    const dx = (end[0] - start[0]) / length,
+      dy = (end[1] - start[1]) / length,
+      matches = (at: number[], direction: number): number[] =>
+        nodes.flatMap((node, index) => {
+          const x = node.center[0] - at[0],
+            y = node.center[1] - at[1],
+            along = (x * dx + y * dy) * direction,
+            across = Math.abs(x * dy - y * dx)
+          return along >= node.radius - p.strokeWidth &&
+            along <= node.radius * 1.75 &&
+            across <= p.strokeWidth &&
+            p.strokeWidth < node.radius / 3
+            ? [index]
+            : []
+        }),
+      a = matches(start, -1),
+      b = matches(end, 1)
+    if (a.length !== 1 || b.length !== 1 || a[0] === b[0]) return false
+    edges.push({ paint: p, a: a[0], b: b[0], start, end })
+  }
+  const usedHeads = new Set<string>()
+  for (const p of rest.filter((p) => p.kind !== stroke)) {
+    if (
+      p.kind !== fillStroke ||
+      p.path.length !== 13 ||
+      [0, 3, 6, 9, 12].some((at, i) => p.path[at] !== (i === 0 ? 0 : i === 4 ? 4 : 1))
+    )
+      return false
+    const vertices = [1, 4, 7, 10].map((at) => point(p, p.path[at], p.path[at + 1])),
+      candidates: string[] = []
+    for (const [index, edge] of edges.entries())
+      for (const reverse of [false, true]) {
+        const start = reverse ? edge.end : edge.start,
+          end = reverse ? edge.start : edge.end,
+          node = nodes[reverse ? edge.a : edge.b],
+          length = distance(start, end),
+          dx = (end[0] - start[0]) / length,
+          dy = (end[1] - start[1]) / length,
+          projected = vertices.map(([x, y]) => [
+            (x - end[0]) * dx + (y - end[1]) * dy,
+            (x - end[0]) * dy - (y - end[1]) * dx
+          ]),
+          tip = projected.findIndex((v) => v[0] === Math.max(...projected.map((q) => q[0]))),
+          [front, wing, notch, other] = [0, 1, 2, 3].map((offset) => projected[(tip + offset) % 4]),
+          tolerance = Math.max(p.strokeWidth, edge.paint.strokeWidth) / 4
+        if (
+          Math.abs(front[1]) > tolerance ||
+          Math.abs(notch[1]) > tolerance ||
+          Math.abs(wing[0] - other[0]) > tolerance ||
+          Math.abs(wing[1] + other[1]) > tolerance ||
+          wing[1] * other[1] >= 0 ||
+          front[0] <= notch[0] ||
+          notch[0] <= wing[0] ||
+          front[0] - wing[0] > node.radius ||
+          Math.abs(wing[1]) > node.radius / 2 ||
+          Math.abs(notch[0]) > edge.paint.strokeWidth * 2 ||
+          distance(vertices[tip], node.center) > node.radius * 1.5 ||
+          p.strokeWidth >= node.radius / 3
+        )
+          continue
+        candidates.push(`${index}:${reverse}`)
+      }
+    if (candidates.length !== 1 || usedHeads.has(candidates[0])) return false
+    usedHeads.add(candidates[0])
+  }
+  const pending = new Set(nodes.map((_, i) => i)),
+    components: number[][] = []
+  while (pending.size) {
+    const component = [pending.values().next().value!]
+    pending.delete(component[0])
+    for (const index of component)
+      for (const edge of edges) {
+        const peer = edge.a === index ? edge.b : edge.b === index ? edge.a : undefined
+        if (peer !== undefined && pending.delete(peer)) component.push(peer)
+      }
+    components.push(component)
+  }
+  if (components.length !== 2) return false
+  const labels = components.map((component) => component.map((i) => nodes[i].label).sort())
+  return (
+    labels.every((set) => set.length >= 2 && new Set(set).size === set.length) &&
+    JSON.stringify(labels[0]) === JSON.stringify(labels[1])
+  )
+}
+
 /** Independently prove complete native key owners outside a circular figure crop. */
 export async function nativeFigureVariableKeys(
   units: readonly Unit[],
@@ -147,7 +254,10 @@ export async function nativeFigureVariableKeys(
       caption = toBox(figure.caption),
       nodes = paints
         .filter((p) => p.kind === OPS.fillStroke && inside(p.bounds, body))
-        .map(circle)
+        .map((paint) => {
+          const node = circle(paint)
+          return node && { ...node, paint, label: '' }
+        })
         .filter((n) => !!n)
     if (nodes.length < 4 || nodes.length > 8 || caption[1] <= body[3] || caption[1] - body[3] > 80)
       return empty
@@ -210,7 +320,8 @@ export async function nativeFigureVariableKeys(
       )
     )
       return empty
-    const labels = new Set<string>()
+    const labels = new Set<string>(),
+      nodeIndexes = new Set<number>()
     for (const node of nodes) {
       const matches = entries.filter((e) => {
         const b = toBox(ink.get(e.index)!)
@@ -224,14 +335,21 @@ export async function nativeFigureVariableKeys(
       if (
         matches.length !== 1 ||
         !/^[A-Z]$/u.test(matches[0].item.str.trim()) ||
-        labels.has(matches[0].item.str.trim())
+        nodeIndexes.has(matches[0].index)
       )
         return empty
       labels.add(matches[0].item.str.trim())
+      nodeIndexes.add(matches[0].index)
+      node.label = matches[0].item.str.trim()
     }
     const marks = paints.filter((p) => overlaps(p.bounds, body)),
       bottom = Math.max(...marks.map((p) => p.bounds[3]))
     if (!marks.length || marks.some((p) => !inside(p.bounds, body))) return empty
+    if (
+      labels.size !== nodes.length &&
+      !sharedComponentLabels(nodes, marks, OPS.stroke, OPS.fillStroke)
+    )
+      return empty
     const keys = entries.filter((e) => {
       const b = toBox(ink.get(e.index)!)
       return b[1] >= bottom && b[3] <= caption[1]
@@ -250,8 +368,19 @@ export async function nativeFigureVariableKeys(
     const found = new Set<string>()
     for (const row of rows) {
       const groups: (typeof keys)[] = []
-      for (const e of row.sort((a, b) => a.item.transform[4] - b.item.transform[4])) {
-        if (/^[A-Z](?:\s*(?:=\s*\d+)?\s*:.*)?$/u.test(e.item.str.trim())) groups.push([e])
+      row.sort((a, b) => a.item.transform[4] - b.item.transform[4])
+      for (const [index, e] of row.entries()) {
+        // A letter in the definition is not a new key. Require the native
+        // following sequence to contain its delimiter before starting a group.
+        if (
+          /^[A-Z]\s*(?:=\s*\d+\s*)?:/u.test(
+            row
+              .slice(index)
+              .map((entry) => entry.item.str)
+              .join('')
+          )
+        )
+          groups.push([e])
         else if (groups.length) groups.at(-1)!.push(e)
         else return empty
       }

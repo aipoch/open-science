@@ -403,7 +403,9 @@ export function PdfTranslationPreparation({
                                   ? t('Unsupported text direction')
                                   : reason === 'outside-page'
                                     ? t('Text outside page bounds')
-                                    : t('Invalid text geometry')}
+                                    : reason === 'occluded-native-text'
+                                      ? t('Text hidden beneath other page content')
+                                      : t('Invalid text geometry')}
                               </span>
                               <span className="shrink-0 tabular-nums">{count}</span>
                             </div>

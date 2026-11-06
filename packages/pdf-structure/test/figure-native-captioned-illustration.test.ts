@@ -1111,6 +1111,70 @@ it('rejects a side-by-side plate when a third image shares the caption band', ()
   expect(nativeCaptionedRasterSideBySide(page, caption, [caption], [])).toBeUndefined()
 })
 
+function bareKeyedRasterPair(): ReturnType<typeof JSON.parse> {
+  const caption = { page: 1, lines: ['Figure 1: Paired photographs.'], rect: [80, 350, 520, 360] }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: '(a) (b)', x: 178, y: 320, width: 244, height: 10, fontSize: 10 },
+      { text: caption.lines[0], x: 80, y: 350, width: 440, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      [80, 180, 290, 320],
+      [310, 180, 520, 320]
+    ].map((rect) => ({
+      kind: 'image',
+      normalizedRect: rect.map((v, i) => v / (i % 2 ? 800 : 600))
+    }))
+  }
+  const tokens = [178, 408].map((x, index) => ({
+    text: `(${index ? 'b' : 'a'})`,
+    horizontal: true,
+    rect: [x, 320, x + 14, 330],
+    nativeLabelRect: [x - 0.2, 320, x + 14.2, 332],
+    baseline: 330,
+    height: 10,
+    fontDescent: -0.2,
+    sourceItem: { pageNumber: 1, index, text: `(${index ? 'b' : 'a'})` }
+  }))
+  return { page, caption, tokens }
+}
+
+it('includes the full native ink of bare panel keys below a proven raster pair', () => {
+  const { page, caption, tokens } = bareKeyedRasterPair(),
+    before = structuredClone(tokens)
+  expect(associateFigures(page, [caption], [], [], [], tokens)[0].rect).toEqual([80, 180, 520, 332])
+  expect(tokens).toEqual(before)
+})
+
+it.each(['foreign-text', 'duplicate-source', 'foreign-ink', 'foreign-paint', 'table'])(
+  'does not extend a raster pair through bare keys with %s',
+  (failure) => {
+    const { page, caption, tokens } = bareKeyedRasterPair(),
+      tables: number[][] = []
+    if (failure === 'foreign-text')
+      tokens.push({
+        ...tokens[0],
+        text: 'Independent prose',
+        rect: [300, 332, 350, 342],
+        sourceItem: { pageNumber: 1, index: 2, text: 'Independent prose' }
+      })
+    if (failure === 'duplicate-source') tokens[1].sourceItem.index = tokens[0].sourceItem.index
+    if (failure === 'foreign-ink') tokens[1].nativeLabelRect[2] = 550
+    if (failure === 'foreign-paint')
+      page.graphicsBounds.push({
+        kind: 'path',
+        normalizedRect: [300 / 600, 331 / 800, 350 / 600, 340 / 800]
+      })
+    if (failure === 'table') tables.push([80, 321, 520, 340])
+    const rect = associateFigures(page, [caption], tables, [], [], tokens)[0].rect
+    expect(rect?.[3] ?? 0).toBeLessThanOrEqual(320)
+  }
+)
+
 it('separates a lower raster grid after an intervening figure caption', () => {
   const upperCaption = {
       page: 1,

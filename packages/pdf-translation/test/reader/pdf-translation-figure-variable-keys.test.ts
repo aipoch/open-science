@@ -15,7 +15,8 @@ import {
 import * as auxiliaryModule from '../../src/reader/auxiliary-native-ink.js'
 
 async function fixture(
-  fault = ''
+  fault = '',
+  shared = false
 ): Promise<Awaited<ReturnType<typeof extractPdfTranslationSource>>['source']['units'][number][]> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
@@ -38,24 +39,47 @@ async function fixture(
       x += font.widthOfTextAtSize(word, 9) + 3
     }
   }
-  for (const [i, key] of ['A', 'B', 'C', 'D'].entries()) {
-    const x = 140 + (i % 2) * 90,
-      y = 300 - Math.floor(i / 2) * 70
+  for (const [i, originalKey] of (shared
+    ? ['A', 'B', 'C', 'D', 'A', 'B', 'C', 'D']
+    : ['A', 'B', 'C', 'D']
+  ).entries()) {
+    const key =
+      fault === 'component-duplicate' && i === 7
+        ? 'C'
+        : fault === 'component-labels' && i === 7
+          ? 'E'
+          : originalKey
+    const x = shared ? 70 + (i % 2) * 60 + Math.floor(i / 4) * 180 : 140 + (i % 2) * 90,
+      y = 300 - Math.floor((i % 4) / 2) * 70
     stream.push(
       `q 1 0 0 1 ${x} ${y} cm 1 g 12 0 m 12 6.627417 6.627417 12 0 12 c -6.627417 12 -12 6.627417 -12 0 c -12 -6.627417 -6.627417 -12 0 -12 c 6.627417 -12 12 -6.627417 12 0 c h B Q`
     )
     text(key, x - 3, y - 3)
   }
-  stream.push('152 300 m 218 300 l S 140 288 m 140 242 l S 230 288 m 230 242 l S')
+  if (shared) {
+    for (const x of [70, 250]) {
+      stream.push(`${x + 13} 300 m ${x + 45} 300 l S ${x} 287 m ${x} 245 l S`)
+      if (fault !== 'disconnected-component' || x !== 250)
+        stream.push(`${x + 60} 287 m ${x + 60} 245 l S`)
+      stream.push(`${x + 47} 300 m ${x + 44} 301 l ${x + 45} 300 l ${x + 44} 299 l h B`)
+      for (const at of [x, x + 60])
+        stream.push(`${at} 243 m ${at + 1} 246 l ${at} 245 l ${at - 1} 246 l h B`)
+      if (fault === 'unattached-head' && x === 250)
+        stream.push('180 270 m 177 271 l 178 270 l 177 269 l h B')
+    }
+    if (fault === 'foreign-body-paint') stream.push('160 280 m 200 280 l S')
+  } else stream.push('152 300 m 218 300 l S 140 288 m 140 242 l S 230 288 m 230 242 l S')
   for (const [i, key] of ['A', 'B', 'C', fault === 'unknown-key' ? 'E' : 'D'].entries())
     text(
-      `${key}: ${['first input', 'second input', 'observed outcome', 'missing outcome'][i]}`,
-      70 + (i % 2) * 150,
-      195 - Math.floor(i / 2) * 13
+      shared
+        ? `${key} ${fault === 'missing-colon' && i === 3 ? '' : ':'} ${['first input', 'second input', 'observed outcome', 'missing outcome for A, when D = 1'][i]}`
+        : `${key}: ${['first input', 'second input', 'observed outcome', 'missing outcome'][i]}`,
+      shared ? 70 : 70 + (i % 2) * 150,
+      195 - (shared ? i : Math.floor(i / 2)) * 13
     )
   if (fault === 'foreign-paint') stream.push('70 190 m 340 190 l S')
   if (fault === 'foreign-text') text('A normal explanatory sentence.', 70, 170)
-  text('Figure 1: A bounded example.', 110, 150)
+  text('Figure 1: A bounded example.', 110, shared ? 140 : 150)
   page.node.set(
     PDFName.of('Contents'),
     pdf.context.register(pdf.context.flateStream(stream.join('\n')))
@@ -121,8 +145,12 @@ async function fixture(
         elements: [
           {
             kind: 'figure',
-            regions: [{ page: 1, x: 0.3, y: 0.2, width: 0.32, height: 0.27 }],
-            caption: { regions: [{ page: 1, x: 0.27, y: 0.6, width: 0.42, height: 0.04 }] }
+            regions: [
+              { page: 1, x: shared ? 0.12 : 0.3, y: 0.2, width: shared ? 0.72 : 0.32, height: 0.27 }
+            ],
+            caption: {
+              regions: [{ page: 1, x: 0.27, y: shared ? 0.625 : 0.6, width: 0.42, height: 0.04 }]
+            }
           }
         ]
       }
@@ -139,8 +167,14 @@ async function fixture(
       input.source.units.map((u) => [u.id, u.source, u.fragments])
     )
     expect(
-      output.source.originalRegions?.some((r) => r.rect.y > 0.47 && r.rect.y + r.rect.height < 0.6)
+      output.source.originalRegions?.some(
+        (r) => r.rect.y > 0.47 && r.rect.y + r.rect.height < (shared ? 0.625 : 0.6)
+      )
     ).toBe(true)
+    const occurrences = output.source.units.flatMap((u) =>
+      u.fragments.flatMap((f) => f.items.map((i) => `${f.pageNumber}:${i.index}`))
+    )
+    expect(new Set(occurrences).size).toBe(occurrences.length)
     expect(isCurrentNativeFigureVariableKeys(output)).toBe(true)
     mutate()
     expect(isCurrentNativeFigureVariableKeys(output)).toBe(false)
@@ -154,6 +188,23 @@ it('preserves complete native variable keys independently of the original crop',
   expect(selected.map((u) => u.source).join(' ')).toContain('first input')
   expect(selected.map((u) => u.source).join(' ')).toContain('missing outcome')
   expect(selected.some((u) => u.source.startsWith('Figure'))).toBe(false)
+})
+
+it('retains one shared key for two complete native components including variable references in definitions', async () => {
+  const selected = await fixture('', true)
+  expect(selected.map((u) => u.source).join(' ')).toContain('missing outcome for A, when D = 1')
+  expect(selected.every((u) => u.sourceOnly)).toBe(true)
+})
+
+it.each([
+  'component-duplicate',
+  'component-labels',
+  'disconnected-component',
+  'foreign-body-paint',
+  'unattached-head',
+  'missing-colon'
+])('rejects a shared key without complete compatible native components: %s', async (fault) => {
+  expect(await fixture(fault, true)).toEqual([])
 })
 
 it.each([

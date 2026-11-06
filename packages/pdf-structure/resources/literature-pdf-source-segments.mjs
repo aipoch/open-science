@@ -349,7 +349,36 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     return
   const runs = observations.filter((r) => r.text === token.text && sameRect(r.rect, token.rect))
   if (runs.length !== 1) return
-  const leaves = splitNativeMeasuredFields(token, observations, token.height)
+  const run = runs[0],
+    boundaries = new Set()
+  if (
+    !Array.isArray(run.literalGlyphs) ||
+    !Array.isArray(run.glyphRuns) ||
+    !Array.isArray(run.gaps) ||
+    run.literalGlyphs.some((s) => typeof s !== 'string' || !s) ||
+    run.glyphRuns.some((n) => !Number.isInteger(n) || n < 0)
+  )
+    return
+  let offset = 0
+  for (const literal of run.literalGlyphs) {
+    offset += Array.from(literal).length
+    boundaries.add(offset)
+  }
+  if (
+    run.gaps.some(
+      (gap, index) =>
+        !gap ||
+        !boundaries.has(gap.index) ||
+        !Number.isFinite(gap.left) ||
+        !Number.isFinite(gap.right) ||
+        gap.left >= gap.right ||
+        gap.left < token.rect[0] ||
+        gap.right > token.rect[2] ||
+        (index && (gap.index <= run.gaps[index - 1].index || gap.left <= run.gaps[index - 1].right))
+    )
+  )
+    return
+  const leaves = splitNativeMeasuredFields(token, runs, token.height)
   if (!leaves || leaves.length < 2) return
   const ranges = measuredSourceRanges(
     { str: token.text, sourceItem: origin },
@@ -455,10 +484,13 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     }
     return proveNativeUniqueWholeFonts(peers, tokens)
   })()
+  const plans = []
   if (
     group.some(({ cell, table }, index) => {
-      const assigned = cell.sourceTokens?.[0],
-        leaf = leaves[index]
+      const leaf = leaves[index],
+        assigned = cell.sourceTokens?.filter(
+          (t) => t.text === leaf.text && sameRect(t.rect, leaf.rect)
+        )
       return (
         table !== owner ||
         !Number.isSafeInteger(cell.row) ||
@@ -469,20 +501,22 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
         (cell.rowSpan !== 1 && !(index === 0 && sharedDescriptor)) ||
         cell.colSpan !== 1 ||
         cell.column !== first.cell.column + index ||
-        cell.text !== leaf.text ||
         owner.grid?.[cell.row]?.[cell.column] !== cell.text ||
         !plainRunsAgree(cell) ||
         cell.sourceSegments ||
-        cell.sourceItems?.length !== 1 ||
-        !sameOrigin(cell.sourceItems[0], origin) ||
-        cell.sourceRects?.length !== 1 ||
-        cell.sourceTokens?.length !== 1 ||
-        !assigned ||
-        !wholeOnly(assigned) ||
-        carriers(assigned).some((s) => !sameOrigin(s, origin)) ||
-        assigned.text !== leaf.text ||
-        !sameRect(cell.sourceRects[0], leaf.rect) ||
-        !sameRect(assigned.rect, leaf.rect) ||
+        !cell.sourceItems?.length ||
+        cell.sourceItems.length !== cell.sourceRects?.length ||
+        cell.sourceItems.length !== cell.sourceTokens?.length ||
+        new Set(cell.sourceItems.map(sourceKey)).size !== cell.sourceItems.length ||
+        cell.sourceItems.filter((s) => sameOrigin(s, origin)).length !== 1 ||
+        assigned?.length !== 1 ||
+        !wholeOnly(assigned[0]) ||
+        carriers(assigned[0]).some((s) => !sameOrigin(s, origin)) ||
+        cell.sourceRects.filter((r) => sameRect(r, leaf.rect)).length !== 1 ||
+        cell.sourceTokens
+          .map((t) => t.text)
+          .join('')
+          .replace(/\s/gu, '') !== cell.text.replace(/\s/gu, '') ||
         !containsRect(cell.rect, leaf.rect) ||
         entries.filter(
           (e) =>
@@ -496,6 +530,63 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     })
   )
     return
+  // A split parent can be only one contribution to a cell (for example the
+  // final unit letter beside separate native value/symbol items). Certify the
+  // other whole contributions too before replacing the cell's declaration.
+  // Existing segmented cells remain untouched; this path must never overwrite
+  // an unrelated range or turn a range back into a whole-source claim.
+  for (const [index, { cell }] of group.entries()) {
+    const leaf = leaves[index],
+      segments = []
+    for (const rect of cell.sourceRects) {
+      const assigned = cell.sourceTokens.filter((t) => sameRect(t.rect, rect))
+      if (assigned.length !== 1 || !wholeOnly(assigned[0]) || !containsRect(cell.rect, rect)) return
+      if (sameRect(rect, leaf.rect)) {
+        segments.push({ ...ranges[index], rect: [...rect] })
+        continue
+      }
+      const found = tokens.filter((t) => sameRect(t.rect, rect) && t.text === assigned[0].text)
+      if (found.length !== 1) return
+      const native = found[0],
+        source = native.sourceItem
+      if (
+        !source ||
+        !Number.isSafeInteger(source.pageNumber) ||
+        source.pageNumber < 1 ||
+        !Number.isSafeInteger(source.index) ||
+        source.index < 0 ||
+        typeof source.text !== 'string' ||
+        !source.text.trim() ||
+        source.text !== native.text ||
+        !native.horizontal ||
+        rect[2] <= rect[0] ||
+        rect[3] <= rect[1] ||
+        !wholeOnly(native) ||
+        carriers(native).some((s) => !sameOrigin(s, source)) ||
+        carriers(assigned[0]).some((s) => !sameOrigin(s, source)) ||
+        cell.sourceItems.filter((s) => sameOrigin(s, source)).length !== 1 ||
+        tokens.filter((t) => carriers(t).some((s) => sourceKey(s) === sourceKey(source))).length !==
+          1 ||
+        entries.some(
+          (e) =>
+            e.cell !== cell &&
+            (claims(e.cell).some((s) => sourceKey(s) === sourceKey(source)) ||
+              e.cell.sourceRects?.some((r) => overlaps(r, rect)))
+        ) ||
+        cell.sourceRects.some((r) => r !== rect && overlaps(r, rect)) ||
+        tokens.some((t) => t !== native && t.text?.trim() && overlaps(t.rect, rect))
+      )
+        return
+      segments.push({ ...source, start: 0, end: source.text.length, rect: [...rect] })
+    }
+    if (cell.sourceItems.some((s) => !segments.some((part) => sameOrigin(s, part)))) return
+    plans.push({
+      cell,
+      segments: segments.sort(
+        (a, b) => a.pageNumber - b.pageNumber || a.index - b.index || a.start - b.start
+      )
+    })
+  }
   if (
     entries.some(
       (e) =>
@@ -505,10 +596,7 @@ function exactMeasuredParentPlan(entries, tokens, observations, token) {
     )
   )
     return
-  return group.map(({ cell }, index) => ({
-    cell,
-    segment: { ...ranges[index], rect: [...leaves[index].rect] }
-  }))
+  return plans
 }
 
 // Refine an existing, complete assignment. Numeric clips may shrink within
@@ -519,8 +607,8 @@ export function refineMeasuredAssignedNumericSegments(table, tokens, observation
   for (const token of tokens) {
     const exact = exactMeasuredParentPlan(entries, tokens, observations, token)
     if (exact) {
-      for (const { cell, segment } of exact) {
-        cell.sourceSegments = [segment]
+      for (const { cell, segments } of exact) {
+        cell.sourceSegments = segments
         delete cell.sourceItems
       }
       continue
