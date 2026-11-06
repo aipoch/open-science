@@ -430,6 +430,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
     permission: permissionContext
   })
   const sessionUpdateProjector = new AcpSessionUpdateProjector({
+    separateProviderNotices: options.separateProviderNotices,
     registry: sessionRegistry,
     contextUsage: base.contextUsageTracker,
     contextPolicy: contextUsagePolicy,

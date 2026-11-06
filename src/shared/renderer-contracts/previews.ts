@@ -1,3 +1,12 @@
+import type {
+  ResearchVideoPresentationRequest,
+  ResearchVideoStatusRequest,
+  ResearchVideoPresentationStatus
+} from '../research-video-presentation'
+import type {
+  ResearchVideoProgress,
+  ResearchVideoExportResult
+} from '@aipoch/research-film/contracts'
 import type { PdfReconcileRequest, PdfSharingPreview } from '../pdf-annotations'
 // Ordered fragments keep the public registration order when capabilities interleave.
 import type { PdfAnnotationsChangedEvent } from '../pdf-annotations'
@@ -113,6 +122,28 @@ export const previewDeleteContracts = {
   'previewResources.readRange': callable<
     (request: ReadManagedPreviewRangeRequest) => Promise<ManagedPreviewRangeResult>
   >()('preview-resources', ['preview-resources:read-range']),
+  'previewResources.exportResearchVideo': callable<
+    (request: { resourceId: string }) => Promise<ResearchVideoExportResult>
+  >()('preview-resources', ['preview-resources:export-research-video', ELECTRON]),
+  'researchVideo.start': callable<
+    (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
+  >()('preview-resources', ['research-video:start', ELECTRON]),
+  'researchVideo.status': callable<
+    (request: ResearchVideoStatusRequest) => Promise<ResearchVideoPresentationStatus>
+  >()('preview-resources', ['research-video:status', ELECTRON]),
+  'researchVideo.remove': callable<
+    (request: ResearchVideoPresentationRequest) => Promise<ResearchVideoPresentationStatus>
+  >()('preview-resources', ['research-video:remove', ELECTRON]),
+  'researchVideo.cancel': callable<(request: ResearchVideoPresentationRequest) => Promise<void>>()(
+    'preview-resources',
+    ['research-video:cancel', ELECTRON]
+  ),
+  'previewResources.researchVideoExportProgress': callable<
+    (request: { resourceId: string }) => Promise<ResearchVideoProgress | null>
+  >()('preview-resources', ['preview-resources:research-video-progress', ELECTRON]),
+  'previewResources.cancelResearchVideoExport': callable<
+    (request: { resourceId: string }) => Promise<void>
+  >()('preview-resources', ['preview-resources:cancel-research-video-export', ELECTRON]),
   'previewResources.release': callable<(request: ReleaseManagedPreviewRequest) => Promise<void>>()(
     'preview-resources',
     ['preview-resources:release']

@@ -376,7 +376,15 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     onDelegatedWorkSessionUpdated?: SessionUpdatePublisher,
     onDelegationPolicyUpdated?: (session: PersistedChatSession) => void,
     private readonly workspaceOwnership?: SessionWorkspaceOwnership,
-    preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>
+    preparePackageDeletion?: (session: PersistedChatSession) => Promise<void>,
+    private readonly deletionWork?: {
+      withSessionStopped<T>(
+        projectId: string,
+        sessionId: string,
+        operation: () => Promise<T>
+      ): Promise<T>
+      withProjectStopped<T>(projectId: string, operation: () => Promise<T>): Promise<T>
+    }
   ) {
     const publishSessionUpdate = safeSessionUpdates(onDelegatedWorkSessionUpdated, log)
     this.notifySessionRecordProblems = publishSessionUpdate
@@ -1359,42 +1367,46 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     projectId: string,
     options: { requireExistingUploadAuthority?: boolean } = {}
   ): Promise<ProjectSessionDeletionResult> {
-    return this.operationScheduler.runProject(projectId, async (scope) => {
-      if (
-        [...this.exportingSessions.values()].some(
-          (reservation) => reservation.projectId === projectId
+    const operation = (): Promise<ProjectSessionDeletionResult> =>
+      this.operationScheduler.runProject(projectId, async (scope) => {
+        if (
+          [...this.exportingSessions.values()].some(
+            (reservation) => reservation.projectId === projectId
+          )
         )
-      )
-        throw new Error('This Project contains a Session locked for export.')
-      // Whole-Project deletion can complete from a durable intent without re-entering
-      // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
-      // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
-      this.hydrationCache.invalidate()
-      this.deletedProjects.add(projectId)
-      try {
-        const deleted = await this.deletionOwner.deleteProjectSessions(
-          projectId,
-          (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
-          options
-        )
-        for (const key of this.sessionRecordProblems.keys()) {
-          if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
-        }
-        return deleted
-      } catch (error) {
+          throw new Error('This Project contains a Session locked for export.')
+        // Whole-Project deletion can complete from a durable intent without re-entering
+        // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
+        // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
+        this.hydrationCache.invalidate()
+        this.deletedProjects.add(projectId)
         try {
-          const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
-          if (state === 'live' || state === 'absent') {
-            this.deletedProjects.delete(projectId)
-            await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+          const deleted = await this.deletionOwner.deleteProjectSessions(
+            projectId,
+            (sessionIds, operation) => scope.runSessionIdentities(sessionIds, operation),
+            options
+          )
+          for (const key of this.sessionRecordProblems.keys()) {
+            if (key.startsWith(`${projectId}\0`)) this.sessionRecordProblems.delete(key)
           }
-        } catch {
-          // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
-          this.fileIndex.markReconciliationIncomplete(projectId)
+          return deleted
+        } catch (error) {
+          try {
+            const state = await this.deletionOwner.getProjectSessionDeletionState(projectId)
+            if (state === 'live' || state === 'absent') {
+              this.deletedProjects.delete(projectId)
+              await this.computeJobs?.abortProjectJobDeletion?.(projectId)
+            }
+          } catch {
+            // Unknown durable state is treated as committed: retain the in-memory tombstone and intent.
+            this.fileIndex.markReconciliationIncomplete(projectId)
+          }
+          throw error
         }
-        throw error
-      }
-    })
+      })
+    return this.deletionWork
+      ? this.deletionWork.withProjectStopped(projectId, operation)
+      : operation()
   }
 
   getProjectSessionDeletionState(projectId: string): Promise<ProjectSessionDeletionState> {
@@ -1476,54 +1488,58 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    * deleted-owner event so already loaded renderer pages invalidate in the same operation.
    */
   deleteSession(projectId: string, sessionId: string): Promise<void> {
-    return this.operationScheduler.runSessionThenGlobalIfNeeded(
-      projectId,
-      sessionId,
-      async () => {
-        const key = sessionKey(projectId, sessionId)
-        // A committed deletion may need to retry its remaining cleanup. Only an active export
-        // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
-        if (this.exportingSessions.has(key))
-          throw new Error('This Session is locked while its research package is being exported.')
-        this.deletedSessions.add(key)
-        const deletion = await this.deletionOwner
-          .deleteSession(projectId, sessionId)
-          .catch(async (error: unknown) => {
-            try {
-              const authority = await this.repository.loadSessionWithDiagnostics(
-                projectId,
-                sessionId
-              )
-              if (authority.status === 'found') this.deletedSessions.delete(key)
-            } catch {
-              // Authority cannot be proven live, so retain the tombstone fail-closed.
-            }
-            throw error
-          })
-        const reconciled =
-          this.stateOwner.metadataSnapshot().isComplete &&
-          (await this.deletionOwner
-            .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+    const operation = (): Promise<void> =>
+      this.operationScheduler.runSessionThenGlobalIfNeeded(
+        projectId,
+        sessionId,
+        async () => {
+          const key = sessionKey(projectId, sessionId)
+          // A committed deletion may need to retry its remaining cleanup. Only an active export
+          // blocks deletion; the mutation tombstone must continue to block saves, not these retries.
+          if (this.exportingSessions.has(key))
+            throw new Error('This Session is locked while its research package is being exported.')
+          this.deletedSessions.add(key)
+          const deletion = await this.deletionOwner
+            .deleteSession(projectId, sessionId)
+            .catch(async (error: unknown) => {
+              try {
+                const authority = await this.repository.loadSessionWithDiagnostics(
+                  projectId,
+                  sessionId
+                )
+                if (authority.status === 'found') this.deletedSessions.delete(key)
+              } catch {
+                // Authority cannot be proven live, so retain the tombstone fail-closed.
+              }
+              throw error
+            })
+          const reconciled =
+            this.stateOwner.metadataSnapshot().isComplete &&
+            (await this.deletionOwner
+              .reconcileProjectSessionDeletion(projectId, sessionId, deletion.receiptKind)
+              .catch((error: unknown) => {
+                throw new SessionDeletionCommittedError(error)
+              }))
+          if (reconciled) {
+            this.clearSessionRecordProblem(projectId, sessionId)
+            if (deletion.cleanupError) throw deletion.cleanupError
+            return undefined
+          }
+          return deletion
+        },
+        async ({ receiptKind, cleanupError }) => {
+          await this.deletionOwner
+            .reconcileSessionDeletion(projectId, sessionId, receiptKind)
             .catch((error: unknown) => {
               throw new SessionDeletionCommittedError(error)
-            }))
-        if (reconciled) {
+            })
           this.clearSessionRecordProblem(projectId, sessionId)
-          if (deletion.cleanupError) throw deletion.cleanupError
-          return undefined
+          if (cleanupError) throw cleanupError
         }
-        return deletion
-      },
-      async ({ receiptKind, cleanupError }) => {
-        await this.deletionOwner
-          .reconcileSessionDeletion(projectId, sessionId, receiptKind)
-          .catch((error: unknown) => {
-            throw new SessionDeletionCommittedError(error)
-          })
-        this.clearSessionRecordProblem(projectId, sessionId)
-        if (cleanupError) throw cleanupError
-      }
-    )
+      )
+    return this.deletionWork
+      ? this.deletionWork.withSessionStopped(projectId, sessionId, operation)
+      : operation()
   }
 
   deleteRecoveryFile(request: DeleteSessionRecoveryFileRequest): Promise<void> {

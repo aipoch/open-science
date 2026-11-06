@@ -192,5 +192,76 @@
   "packages/open-science/cli.mjs": ["packages/open-science/mcp.integration.test.ts"],
   "src/main/pdf-annotations/agent-geometry-worker-entry.ts": [
     "src/main/pdf-annotations/agent-geometry.ts"
-  ]
+  ],
+  "packages/research-film/src/generation-worker.ts": [
+    "packages/research-film/src/resources.ts",
+    "packages/research-film/src/generation.ts"
+  ],
+  "packages/research-film/resources/stage/index.html": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/tokens.json": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/ui/os-kit.css": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/ui/os-session.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/ui/os-app.css": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/ui/os-kit.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/css/stage.css": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/js/kit.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/js/anim.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/js/stage.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/js/panels.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/logos/open-science-symbol-black.svg": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/logos/open-science-lockup-black.svg": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/logos/aipoch-logo-primary.svg": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/fonts/LICENSE-Inter.txt": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/fonts/Inter-latin.woff2": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/fonts/RobotoMono-latin.woff2": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/fonts/LICENSE-RobotoMono.txt": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/brand/fonts/fonts.css": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/icons/LICENSE-lucide.txt": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/resources/stage/icons/lucide.js": [
+    "packages/research-film/src/build-player.ts"
+  ],
+  "packages/research-film/src/runtime-assets.json": ["packages/research-film/src/runtime.ts"],
+  "packages/research-film/resources/authoring/KIT.md": ["packages/research-film/src/authoring.ts"],
+  "packages/research-film/src/ffmpeg-assets.json": ["packages/research-film/src/ffmpeg-catalog.ts"],
+  "packages/research-film/src/skill-video.schema.json": ["packages/research-film/src/screenplay.ts"]
 }

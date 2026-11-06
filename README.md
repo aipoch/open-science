@@ -47,7 +47,19 @@
 
 When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 released](https://github.com/aipoch/open-science/releases/latest)** _(last updated November 2026)_. This release reorganizes Settings into focused tabs, imports references in batches of up to 100 from DOI, arXiv, or PubMed identifiers, and adds AI study snapshots to the literature detail view. Finished sessions now release their agent processes, eQTL Catalogue queries work again, and macOS and Windows updates run smoother. See the [v1.0.8 release notes](release-notes/1.0.8/en.md) for full details.
+### 💡 AIPOCH Open-Science v1.0.8 updates
+
+_November 4, 2026_
+
+- **Settings**: Focused tabs organize preferences, app information, diagnostics, and help.
+- **Batch reference import**: Import up to **100** DOI, arXiv, or PubMed identifiers or official article links at once, with normalization and deduplication.
+- **AI study snapshots**: Summarize the research question, study population, methods, main findings, and limitations, with the full-text or abstract source labeled.
+- **Session resources**: All five agent frameworks release processes after completed sessions to reduce memory accumulation.
+- **Model support**: Tencent TokenHub adds Hy4 and DeepSeek V4.1 Flash routes, plus image input for selected models.
+- **Scientific data and PDFs**: Restore eQTL Catalogue queries with GRCh38 coordinate validation and improve PDF reading order and extraction.
+- **Reliability fixes**: Improve R dependency verification and artifact provenance, and fix cross-platform updates, downloads, sandbox networking, and Pi installation.
+
+[View the full v1.0.8 release notes](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
@@ -56,7 +68,6 @@ When you want to see how a result was produced, inspect the available inputs, co
 ## Table of Contents
 
 - [Quick Start](#-quick-start)
-- [Product Tour](#product-tour)
 - [AIPOCH Open-Science `.science` Research Packages](#aipoch-open-science-science-research-packages)
 - [AIPOCH Open-Science Paper and Citation](#aipoch-open-science-paper-and-citation)
 - [Benchmark Results](#benchmark-performance)
@@ -140,44 +151,6 @@ After setup, open **System** settings to change appearance or notifications. In 
 3. Review tool activity and any approval requests, preview the results, and check their available evidence in **Provenance**.
 
 > Screenshots in this README illustrate the workflow. Labels, catalogs, and other interface details may differ from the version you install.
-
-## Product Tour
-
-### From a research request to a traceable result
-
-Consider a representative bioinformatics task: reproduce a published differential-expression analysis, compare the regenerated results with the paper, and deliver the report, tables, and figures needed for review. The screenshots below are representative views from documented AIPOCH Open-Science workflows; they illustrate each stage rather than one continuous session.
-
-#### 1. Define the research task and evidence
-
-Describe the research question, source paper and datasets, required methods or thresholds, expected outputs, and acceptance criteria. Upload supporting files or reference an existing project artifact with `@`, so the agent starts from explicit inputs instead of hidden context.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science paper reproduction task with the research conclusion, generated artifacts, and source comparison visible in one workspace" width="900">
-</p>
-
-#### 2. Execute with inspectable scientific tools
-
-The agent can combine scientific skills, permissioned research connectors, searches, file operations, and Python or R code in the shared Notebook. Generated figures can be reviewed beside the research summary, while the artifact record exposes captured producer code and execution evidence for inspection.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-execute.png" alt="AIPOCH Open-Science bioinformatics analysis showing the research summary, generated figure, and captured producer code side by side" width="900">
-</p>
-
-#### 3. Review reports, tables, and figures in place
-
-The final response summarizes what reproduced, what differed, and which limitations matter. Generated Markdown reports, CSV tables, images, and other research artifacts remain attached to the session and are collected in the project file library, where they can be previewed beside the conversation and reused in follow-up work.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science reproduction result with differential-expression figures and generated files previewed beside the agent's explanation" width="900">
-</p>
-
-#### 4. Trace every artifact back to its evidence
-
-Each generated artifact is stored as an immutable, checksummed version. Its **Provenance** view can expose the producing code and execution history, referenced inputs, observed environment inventory, producing conversation branch, and version-scoped Reviewer findings. Evidence that could not be verified is marked unavailable rather than inferred.
-
-<p align="center">
-  <img src="docs/images/readme/product-tour-provenance.jpg" alt="AIPOCH Open-Science research artifact preview with the Provenance entry for tracing a generated result" width="900">
-</p>
 
 ## AIPOCH Open-Science `.science` Research Packages
 
@@ -335,7 +308,7 @@ Translated PDFs can optionally reflow body text and captions into a single-colum
 
 In the desktop app, artifact provenance can also be exported as RO-Crate 1.1. A version-bound environment bundle can create a managed environment only when the captured bundle is complete and compatible with the target platform; this is separate from a full machine backup.
 
-Browse research cases in the Sharing marketplace from Home or the conversation workspace, filter by category, search by keyword, and download packages from case details.
+Browse research cases in the Marketplace from Home or the conversation workspace, filter by category, search by keyword, and download packages from case details.
 
 ## Model Providers
 

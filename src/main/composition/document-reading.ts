@@ -9,7 +9,6 @@ import { type ApplicationModuleBuilder } from '../application-runtime'
 import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { BookmarkService } from '../bookmarks/service'
-import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
 import { LiteratureDocumentReader } from '../literature/document-reader'
 import { literatureIndex } from '../literature/full-text-index'
@@ -29,7 +28,6 @@ import {
   OCR_RUNTIME_REVISIONS,
   PDF_TRANSLATION_MODEL_REVISIONS
 } from '../local-models/catalog'
-import { createLocalModelApi } from '../local-models/owner'
 import { createLocalOcrModelOwner } from '../local-models/ocr-owner'
 import type { OcrLanguage } from '../../shared/local-models'
 import { runtimeMetadata } from '../runtime-metadata'
@@ -48,7 +46,6 @@ import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { createDefaultUploadRepository } from '../uploads/ipc'
 
 export async function composeDocumentReading({
-  declareElectronAdapter,
   applicationEvents,
   pdfUploadImporter,
   uploadRepository,
@@ -62,7 +59,6 @@ export async function composeDocumentReading({
   settingsService,
   defaultOcrLanguages
 }: {
-  declareElectronAdapter: (name: string, install: () => void | (() => void)) => void
   applicationEvents: ApplicationEvents
   pdfUploadImporter: { current?: PdfAnnotationService }
   sessionPackageService: Pick<
@@ -93,7 +89,8 @@ export async function composeDocumentReading({
   literatureContextLog: ReturnType<typeof createLogger>
   localModelOwner: ReturnType<typeof createLocalModelOwner>
   pdfTranslationOwner: PdfTranslationOwner
-  localModels: ReturnType<typeof createLocalModelApi>
+  localTranslationModels: ReturnType<typeof createLocalModelOwner>
+  ocrModels: ReturnType<typeof createLocalOcrModelOwner>
   pdfStructureReader: PdfStructureReader
   pdfAnnotationAgent: PdfAnnotationAgent
   pdfElementReader: PdfElementAgentReader
@@ -213,8 +210,6 @@ export async function composeDocumentReading({
     capability: undefined,
     dispose: () => owner.close()
   }))
-  const localModels = createLocalModelApi(localModelOwner, localTranslationModels, ocrModels)
-  declareElectronAdapter('local-models', () => registerLocalModelIpcHandlers(localModels))
   const pdfStructureSources = new PdfStructureSourceAuthority({
     literature: literatureAttachmentAuthority,
     sources: sessionPdfSourceResolver,
@@ -308,7 +303,8 @@ export async function composeDocumentReading({
     sessionPdfContextOwner,
     literatureContextLog,
     localModelOwner,
-    localModels,
+    localTranslationModels,
+    ocrModels,
     pdfTranslationOwner,
     pdfStructureReader,
     pdfElementReader,

@@ -1,3 +1,7 @@
+import {
+  renderResearchVideoMp4,
+  readResearchVideoExportProgress
+} from './research-video/export-electron'
 import { renderReviewerDesktopResource } from './reviewer/paged-preview-electron'
 import {
   createOfficePreviewFrameProcessResolver,
@@ -76,6 +80,13 @@ export function createDesktopNativeHandler(
       case 'message-box': {
         const selected = await dialog.showMessageBox(parent, { ...request.options, signal })
         result = { response: selected.response }
+        break
+      }
+      case 'research-video-progress':
+        result = readResearchVideoExportProgress(request)
+        break
+      case 'research-video-mp4': {
+        result = await renderResearchVideoMp4(request, signal)
         break
       }
       case 'conversation-pdf': {

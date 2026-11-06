@@ -39,6 +39,38 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it.each([true, false])(
+    'allows deletion of a stopped first-prompt draft with pending=%s',
+    (isPending) => {
+      const onDeleteSession = vi.fn()
+      const bindings = createSessionActionBindings({
+        canMutateConversations: true,
+        canDeleteConversations: true,
+        canDownloadArtifacts: false,
+        onTogglePin: vi.fn(),
+        onRenameSession: vi.fn(),
+        onDeleteSession
+      })
+      const context = invocation(
+        createSession({ isPending, firstPromptDraft: true, pendingRetryable: true })
+      )
+      const entries = resolveActionMenuEntries(
+        {
+          identityKey: 'stopped-draft',
+          catalog: SESSION_ACTION_CATALOG,
+          recipe: SESSION_ACTION_RECIPE,
+          bindings
+        },
+        context
+      )
+      expect(
+        entries.find((entry) => entry.kind === 'action' && entry.action === 'delete')
+      ).toMatchObject({ disabled: false })
+      bindings.delete.execute?.(context)
+      expect(onDeleteSession).toHaveBeenCalledWith(context.session)
+    }
+  )
+
   it.each([true, false])('protects a restored first-prompt draft with pending=%s', (isPending) => {
     const onDeleteSession = vi.fn()
     const bindings = createSessionActionBindings({

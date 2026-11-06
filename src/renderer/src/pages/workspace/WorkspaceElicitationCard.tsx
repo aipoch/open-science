@@ -2,6 +2,7 @@
 import { useId, useEffectEvent, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowDownRight,
   Bot,
   Check,
   ChevronDown,
@@ -9,6 +10,8 @@ import {
   ChevronRight,
   ChevronUp,
   CircleHelp,
+  LoaderCircle,
+  MessageCircleQuestion,
   Minus,
   Pencil
 } from 'lucide-react'
@@ -148,6 +151,10 @@ type WorkspaceElicitationCardProps = {
   variant?: 'default' | 'pending-placeholder'
   readOnly?: boolean
   embedded?: boolean
+  collapsed?: boolean
+  onCollapsedChange?: (collapsed: boolean) => void
+  focusRequestId?: number
+  onReveal?: () => void
   onRespond?: (response: ElicitationResponse) => Promise<void>
   onDraftChange?: (answers: ElicitationAnswer[]) => void
   editDraft?: ElicitationEditDraft
@@ -206,6 +213,10 @@ const WorkspaceElicitationCard = ({
   variant = 'default',
   readOnly = false,
   embedded = false,
+  collapsed = false,
+  onCollapsedChange,
+  focusRequestId = 0,
+  onReveal,
   onRespond,
   onDraftChange,
   editDraft,
@@ -216,6 +227,10 @@ const WorkspaceElicitationCard = ({
   const { t } = useTranslation()
   const fieldStatusId = useId()
   const questionTitleId = useId()
+  const contentId = useId()
+  const cardRef = useRef<HTMLDivElement>(null)
+  const previousFocusRequestId = useRef(focusRequestId)
+  const focusOnExpand = useRef(false)
   // Historical surfaces have saved fields but no pending request.
   const questionFields = request?.fields ?? elicitation.fields
   const choiceQuestions = resolveAgentUserChoiceQuestions(questionFields)
@@ -318,6 +333,10 @@ const WorkspaceElicitationCard = ({
     !isPendingPlaceholder &&
     elicitation.state === 'pending'
   )
+  const collapsible = Boolean(
+    embedded && choiceQuestions && !readOnly && elicitation.state === 'pending' && onCollapsedChange
+  )
+  const isCollapsed = collapsible && collapsed
   const isAnsweredSummary = elicitation.state === 'answered' && answers.length > 0
   // Terminal choice cards render their own summary-style header, so the top title hides too.
   const isTerminalChoiceSummary = Boolean(terminalLabel && choiceQuestions)
@@ -582,6 +601,32 @@ const WorkspaceElicitationCard = ({
   }, [activeChoiceIndex])
 
   useEffect(() => {
+    if (previousFocusRequestId.current !== focusRequestId) focusOnExpand.current = true
+    previousFocusRequestId.current = focusRequestId
+    if (!focusOnExpand.current || isCollapsed) return
+    focusOnExpand.current = false
+    const selected = cardRef.current?.querySelector<HTMLButtonElement>(
+      'button[data-selected="true"]'
+    )
+    const target =
+      typeof customChoiceValue === 'string' && !agentDecidesSelected
+        ? customAnswerRef.current
+        : (selected ?? optionsRef.current?.querySelector<HTMLButtonElement>('button'))
+    target?.focus({ preventScroll: true })
+    const options = optionsRef.current
+    if (target && options?.contains(target)) {
+      // Reveal the focused choice inside its own scroller without moving the transcript.
+      const viewportTop = options.getBoundingClientRect().top + options.clientTop
+      const targetBounds = target.getBoundingClientRect()
+      const delta =
+        targetBounds.top < viewportTop || targetBounds.height > options.clientHeight
+          ? targetBounds.top - viewportTop
+          : Math.max(0, targetBounds.bottom - viewportTop - options.clientHeight)
+      options.scrollTop += delta
+    }
+  }, [focusRequestId, isCollapsed, customChoiceValue, agentDecidesSelected])
+
+  useEffect(() => {
     const textarea = customAnswerRef.current
     if (!textarea) return
     textarea.style.height = 'auto'
@@ -623,11 +668,58 @@ const WorkspaceElicitationCard = ({
     setError(undefined)
   }
 
+  // Reserve the interaction lane while the saved decision waits for continuation.
+  // Transcript cards have no responder and keep showing the recorded answer.
+  if (
+    !readOnly &&
+    request &&
+    onRespond &&
+    elicitation.continuationPending &&
+    (elicitation.state === 'answered' || elicitation.state === 'declined')
+  ) {
+    return (
+      <div
+        data-testid="elicitation-continuation-progress"
+        role="status"
+        className="flex items-center gap-2 rounded-2xl bg-bg-000 p-4 text-sm text-text-300"
+      >
+        <LoaderCircle
+          className="size-4 animate-spin motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+        {t('Resuming session')}
+      </div>
+    )
+  }
+
+  if (isPendingPlaceholder && choiceQuestions && !readOnly && onReveal) {
+    return (
+      <div data-testid="elicitation-pending-placeholder" className="py-1">
+        <button
+          type="button"
+          onClick={onReveal}
+          className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg bg-primary/5 px-2.5 py-1.5 text-left text-[13px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:keyboard-focus [@media(pointer:coarse)]:min-h-11"
+        >
+          <MessageCircleQuestion className="size-4 shrink-0" aria-hidden="true" />
+          <span>
+            {t('{{count}} questions awaiting your answer', {
+              count: choiceQuestions.length,
+              defaultValue_one: '{{count}} question awaiting your answer'
+            })}
+          </span>
+          <ArrowDownRight className="size-3.5 shrink-0" aria-hidden="true" />
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div
+      ref={cardRef}
       data-testid="elicitation-card"
       className={cn(
-        'rounded-2xl p-3 text-text-000 sm:p-4',
+        'rounded-2xl text-text-000',
+        isCollapsed ? 'px-3 py-2.5 sm:px-4' : 'p-3 sm:p-4',
         elicitation.state === 'pending' &&
           choiceQuestion &&
           !isPendingPlaceholder &&
@@ -639,43 +731,85 @@ const WorkspaceElicitationCard = ({
         !embedded && elicitation.state === 'pending' && 'border border-border-200 shadow-sm'
       )}
     >
-      {showChoiceProgress && choiceQuestions ? (
-        <div className="pointer-events-none mb-2 flex h-5 justify-end">
-          <span
-            data-testid="elicitation-question-progress"
-            role="status"
-            aria-label={t('Question {{current}} of {{total}}', {
-              current: activeChoiceIndex + 1,
-              total: choiceQuestions.length
-            })}
-            className="inline-flex shrink-0 items-center gap-3 bg-bg-000 pl-3 text-xs leading-5 text-text-300 tabular-nums"
-          >
-            <span aria-hidden="true" className="flex w-16 items-center gap-0.5">
-              {choiceQuestions.map((question, index) => (
-                <span
-                  key={question.choiceField.id}
-                  data-testid="elicitation-question-progress-segment"
-                  data-state={index === activeChoiceIndex ? 'current' : 'upcoming'}
-                  className={cn(
-                    'h-1 min-w-0 flex-1 rounded-full',
-                    index === activeChoiceIndex ? 'bg-text-000' : 'bg-bg-400'
-                  )}
-                />
-              ))}
+      {showChoiceProgress || collapsible ? (
+        <div
+          data-testid="elicitation-panel-toolbar"
+          className={cn('flex min-w-0 items-center justify-end gap-2', !isCollapsed && 'mb-2')}
+        >
+          {isCollapsed ? (
+            <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-text-300">
+              <MessageCircleQuestion className="size-4 shrink-0" aria-hidden="true" />
+              <span className="truncate">{t('Waiting for your answer')}</span>
             </span>
-            <span aria-hidden="true">
-              {t('{{current}} of {{total}}', {
+          ) : null}
+          {showChoiceProgress && choiceQuestions ? (
+            <span
+              data-testid="elicitation-question-progress"
+              role="status"
+              aria-label={t('Question {{current}} of {{total}}', {
                 current: activeChoiceIndex + 1,
                 total: choiceQuestions.length
               })}
+              className="ml-auto inline-flex shrink-0 items-center gap-2 text-xs leading-5 text-text-300 tabular-nums"
+            >
+              <span aria-hidden="true" className="flex w-10 items-center gap-0.5 sm:w-16">
+                {choiceQuestions.map((question, index) => (
+                  <span
+                    key={question.choiceField.id}
+                    data-testid="elicitation-question-progress-segment"
+                    data-state={
+                      index === activeChoiceIndex
+                        ? 'current'
+                        : answerForChoiceQuestion(question, values)
+                          ? 'done'
+                          : 'upcoming'
+                    }
+                    className={cn(
+                      'h-1 min-w-0 flex-1 rounded-full',
+                      index === activeChoiceIndex
+                        ? 'bg-text-000'
+                        : answerForChoiceQuestion(question, values)
+                          ? 'bg-text-300'
+                          : 'bg-bg-400'
+                    )}
+                  />
+                ))}
+              </span>
+              <span aria-hidden="true">
+                {t('{{current}} of {{total}}', {
+                  current: activeChoiceIndex + 1,
+                  total: choiceQuestions.length
+                })}
+              </span>
             </span>
-          </span>
+          ) : null}
+          {collapsible ? (
+            <button
+              type="button"
+              aria-label={isCollapsed ? t('Expand question panel') : t('Collapse question panel')}
+              aria-expanded={!isCollapsed}
+              aria-controls={contentId}
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1 text-xs text-text-300 transition-colors hover:bg-bg-200 hover:text-text-000 focus-visible:keyboard-focus [@media(pointer:coarse)]:relative [@media(pointer:coarse)]:before:absolute [@media(pointer:coarse)]:before:-inset-y-2 [@media(pointer:coarse)]:before:inset-x-0 [@media(pointer:coarse)]:before:content-['']"
+              onClick={() => {
+                if (isCollapsed) focusOnExpand.current = true
+                onCollapsedChange?.(!isCollapsed)
+              }}
+            >
+              {isCollapsed ? t('Expand') : t('Collapse')}
+              {isCollapsed ? (
+                <ChevronUp className="size-3.5" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="size-3.5" aria-hidden="true" />
+              )}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
         <div
           data-testid="elicitation-question-title"
+          hidden={isCollapsed}
           role={elicitation.state === 'pending' && choiceQuestion ? 'region' : undefined}
           aria-labelledby={
             elicitation.state === 'pending' && choiceQuestion ? questionTitleId : undefined
@@ -683,6 +817,7 @@ const WorkspaceElicitationCard = ({
           tabIndex={elicitation.state === 'pending' && choiceQuestion ? 0 : undefined}
           className={cn(
             'flex items-start gap-2',
+            isCollapsed && 'hidden',
             elicitation.state === 'pending' &&
               choiceQuestion &&
               'scrollbar-auto-hide max-h-[min(9rem,12dvh)] overflow-y-auto overscroll-contain focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40'
@@ -761,7 +896,9 @@ const WorkspaceElicitationCard = ({
         </p>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
         <form
-          className="mt-2 flex min-h-0 flex-1 flex-col"
+          id={contentId}
+          hidden={isCollapsed}
+          className={cn('mt-2 flex min-h-0 flex-1 flex-col', isCollapsed && 'hidden')}
           data-testid="elicitation-choice-mode"
           onSubmit={handleChoiceSubmit}
         >

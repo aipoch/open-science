@@ -664,6 +664,9 @@ vi.mock('./composition/delegation', () => ({ composeDelegation: vi.fn(() => root
 vi.mock('./composition/desktop-utilities', () => ({
   composeDesktopUtilities: vi.fn(() => rootFixture.owners)
 }))
+vi.mock('./composition/research-film', () => ({
+  composeResearchFilm: vi.fn(() => rootFixture.owners)
+}))
 vi.mock('./composition/document-reading', () => ({
   composeDocumentReading: vi.fn(() => rootFixture.owners)
 }))

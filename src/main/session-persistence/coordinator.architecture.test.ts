@@ -536,7 +536,8 @@ describe('Session persistence coordinator architecture', () => {
       'onDelegatedWorkSessionUpdated:optional',
       'onDelegationPolicyUpdated:optional',
       'workspaceOwnership:optional',
-      'preparePackageDeletion:optional'
+      'preparePackageDeletion:optional',
+      'deletionWork:optional'
     ])
     expect(exportedNames(facadeFile, 'value')).toEqual(
       ['SessionPersistenceCoordinator', 'SessionRuntimeContextRevisionConflictError'].sort()
@@ -577,6 +578,7 @@ describe('Session persistence coordinator architecture', () => {
         'deletedProjects',
         'deletedSessions',
         'deletionOwner',
+        'deletionWork',
         'destructiveStartupWindowOpen',
         'exportingSessions',
         'fileIndex',
@@ -817,6 +819,29 @@ describe('Session persistence coordinator architecture', () => {
         expect(repositoryCalls).toEqual(['this.repository.loadSessionWithDiagnostics'])
         expect(method.getText(facadeFile)).toContain("mode: 'read-only'")
         expect(method.getText(facadeFile)).not.toContain('this.operationScheduler.')
+        continue
+      }
+      if (name === 'deleteSession' || name === 'deleteProjectSessions') {
+        // Drain film publishers before taking a persistence lane; publication itself needs it.
+        const capture = method.body?.statements[0]
+        expect(method.body?.statements, name).toHaveLength(2)
+        expect(capture && isVariableStatement(capture), name).toBe(true)
+        if (!capture || !isVariableStatement(capture)) continue
+        const operation = capture.declarationList.declarations[0]
+        expect(operation.name.getText(facadeFile), name).toBe('operation')
+        expect(operation.initializer && isArrowFunction(operation.initializer), name).toBe(true)
+        const schedulerCalls = walk(method, isCallExpression)
+          .filter(isCallExpression)
+          .map((call) => call.expression.getText(facadeFile))
+          .filter((call) => call.startsWith('this.operationScheduler.'))
+        expect(schedulerCalls, name).toEqual([
+          `this.operationScheduler.${expectedSchedulerRoute.get(name)}`
+        ])
+        const route = name === 'deleteSession' ? 'withSessionStopped' : 'withProjectStopped'
+        const args = name === 'deleteSession' ? 'projectId, sessionId' : 'projectId'
+        expect(method.body?.statements[1].getText(facadeFile), name).toBe(
+          `return this.deletionWork\n      ? this.deletionWork.${route}(${args}, operation)\n      : operation()`
+        )
         continue
       }
       if (name === 'saveSession' || name === 'reserveSessionExport') {

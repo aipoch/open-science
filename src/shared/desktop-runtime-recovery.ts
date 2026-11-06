@@ -22,12 +22,30 @@ export class DesktopRuntimeDisconnectedError extends Error {
   }
 }
 
+/** The connection changed before this operation was submitted. No side effect was admitted. */
+export class DesktopRuntimeWriteNotSubmittedError extends Error {
+  readonly code = 'desktop-runtime-not-submitted'
+  constructor(
+    message = 'The connection changed before the operation was submitted.',
+    options?: ErrorOptions
+  ) {
+    super(message, options)
+    this.name = 'DesktopRuntimeWriteNotSubmittedError'
+  }
+}
+
 /** Classifies connection failures without relying on user-visible message text. */
-export function isDesktopRuntimeConnectionError(error: unknown): boolean {
+export function isDesktopRuntimeConnectionError(
+  error: unknown
+): error is Readonly<{ code: 'desktop-runtime-disconnected' | 'desktop-runtime-not-submitted' }> {
   if (!error || typeof error !== 'object') return false
   // A save/business failure may wrap a connection failure as its cause. Its own classification
   // must remain visible; suppress only errors explicitly owned by the connection boundary.
-  return 'code' in error && error.code === 'desktop-runtime-disconnected'
+  return (
+    'code' in error &&
+    (error.code === 'desktop-runtime-disconnected' ||
+      error.code === 'desktop-runtime-not-submitted')
+  )
 }
 
 export const DESKTOP_RUNTIME_RECOVERY_CHANNELS = {

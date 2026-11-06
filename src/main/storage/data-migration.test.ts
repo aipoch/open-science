@@ -89,11 +89,15 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 describe('validateMigrationSourceLinks', () => {
-  it('moves model receipts, installed weights and resumable downloads with the data root', async () => {
+  it('moves models and research presentation sources with the data root', async () => {
     const files = [
       'models/pdf-tables/active.json',
       'models/pdf-tables/revisions/v1/detection.onnx',
-      'models/pdf-tables/staging/v2/detection.onnx.part'
+      'models/pdf-tables/staging/v2/detection.onnx.part',
+      'research-video-jobs/job/source/session.json',
+      'research-video-presentations/scope/latest.json',
+      'research-video-presentations/scope/job/output/player.html',
+      'research-video-presentations/scope/job/output/sources.zip'
     ]
     for (const file of files) {
       await mkdir(dirname(join(from, file)), { recursive: true })

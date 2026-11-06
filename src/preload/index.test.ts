@@ -533,8 +533,11 @@ describe('preload bridge — public surface inventory', () => {
       'preview.save',
       'previewContextMenu.onRequested',
       'previewResources.acquire',
+      'previewResources.cancelResearchVideoExport',
+      'previewResources.exportResearchVideo',
       'previewResources.readRange',
       'previewResources.release',
+      'previewResources.researchVideoExportProgress',
       'projectFiles.getOverview',
       'projectFiles.listArtifactGroups',
       'projectFiles.listFiles',
@@ -565,6 +568,10 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.revokeBrowser',
       'remoteAccess.revokeBrowsers',
       'remoteAccess.setMode',
+      'researchVideo.cancel',
+      'researchVideo.remove',
+      'researchVideo.start',
+      'researchVideo.status',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',
       'reviewer.getReviewLog',
@@ -1236,6 +1243,22 @@ describe('preload bridge — core renderer contract catalog', () => {
       code: 'session-revision-conflict'
     })
     expect(invokeMock).toHaveBeenCalledWith('sessions:save-session', { id: 'session-1' })
+  })
+
+  it.each([
+    'session-size-limit',
+    'session-revision-conflict',
+    'desktop-runtime-disconnected',
+    'desktop-runtime-not-submitted'
+  ])('keeps %s in a contextBridge-safe Session rejection', async (code) => {
+    const failure = { code, message: 'Reviewed Session failure.' }
+    invokeMock.mockResolvedValueOnce({ ok: false, error: failure })
+    const rejected = await Promise.resolve(api.sessions.saveSession({ id: 'session-1' })).catch(
+      (error: unknown) => error
+    )
+    expect(rejected).not.toBeInstanceOf(Error)
+    expect(rejected).toEqual(failure)
+    expect(JSON.parse(JSON.stringify(rejected))).toEqual(failure)
   })
 
   it('restores a details-conflict rejection from the Session edit IPC outcome', async () => {

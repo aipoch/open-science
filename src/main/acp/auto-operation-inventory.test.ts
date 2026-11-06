@@ -170,10 +170,10 @@ describe('Auto operation completeness against real tool registrations', () => {
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
-        // Reviewed: runtime-list and notebook_execute descriptions explain app-managed default
-        // selection. Schemas, handlers and Auto operation dispositions are unchanged.
+        // Reviewed: the runtime descriptions explain default selection, and failed foreground
+        // Shell executions set the MCP error flag. Input schemas and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '5a44ac6bcbc353130bbb6151833ce416bdc1a8b9d9887c3dc1cd116959235cd0',
+          '6e2247ab0d1d8ea524ba2190673bca565a8930ce9e912ef8c562a3cc54823120',
         // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
         // call, its result and the Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

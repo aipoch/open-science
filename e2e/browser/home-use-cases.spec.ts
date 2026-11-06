@@ -220,8 +220,8 @@ test('opens the same marketplace from the toolbar and detail Go to Use Case Mark
   page
 }, info) => {
   await page.goto('/home-use-cases.html?long')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Sharing marketplace' })).toBeVisible()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  await expect(page.getByRole('navigation', { name: 'Marketplace' })).toBeVisible()
   await expect(
     page.getByRole('heading', { name: 'Use Case Marketplace', exact: true })
   ).toHaveCount(1)
@@ -505,7 +505,7 @@ for (const catalogFails of [false, true]) {
           })
     })
     await page.goto('/home-use-cases.html')
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+    await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
     const cards = page.getByRole('main').getByRole('article')
     await expect(cards).toHaveCount(2)
     const failed = cards.nth(0).locator('img')
@@ -788,7 +788,7 @@ test('refreshes marketplace data on demand, preserves filters and recovers from 
     })
   })
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
   await expect(
     page.getByText('Discover and reuse research examples', { exact: true })
   ).toBeVisible()
@@ -913,8 +913,8 @@ test('opens the marketplace in the conversation workbench and browses details in
   await page.goto('/home-use-cases.html?panel')
   const draft = page.getByRole('textbox', { name: 'Conversation draft' })
   await draft.fill('An unfinished research question')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
   await expect(panel).toBeVisible()
   await expect(page.getByTestId('navigation')).toHaveText('workspace:research')
   await expect(draft).toHaveValue('An unfinished research question')
@@ -923,7 +923,7 @@ test('opens the marketplace in the conversation workbench and browses details in
   await expect(heading).toHaveCSS('font-size', '14px')
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   const categories = panel.getByRole('group', { name: 'Category' })
-  const openMarket = panel.getByRole('button', { name: 'View in sharing marketplace' })
+  const openMarket = panel.getByRole('button', { name: 'View in marketplace' })
   await expect(openMarket).toBeVisible()
   const headingBounds = (await heading.boundingBox())!
   const searchBounds = (await search.boundingBox())!
@@ -978,21 +978,19 @@ test('opens the marketplace in the conversation workbench and browses details in
   await details.getByRole('button', { name: 'Back to list', exact: true }).click()
   await expect(cards).toHaveCount(6)
   await expect(cards.first().getByRole('button')).toBeFocused()
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  await expect(page.getByRole('tab', { name: 'Sharing marketplace', exact: true })).toHaveCount(1)
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Marketplace', exact: true })).toHaveCount(1)
   await page.screenshot({ path: info.outputPath('marketplace-workspace-list.png') })
-  await page
-    .getByRole('button', { name: 'Close preview of Sharing marketplace', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Close preview of Marketplace', exact: true }).click()
   await expect(draft).toHaveValue('An unfinished research question')
   await expect(panel).toHaveCount(0)
 })
 
 test('opens the full marketplace from its compact workbench header', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
+  await panel.getByRole('button', { name: 'View in marketplace' }).click()
   await expect(page.getByTestId('navigation')).toHaveText('marketplace:research')
   await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Back to Project', exact: true }).click()
@@ -1013,8 +1011,8 @@ test('preserves the compact marketplace filters and visible case across full-pag
   await page.route('**/manifest.json', (route) => route.fulfill({ json: manyCases }))
   await page.setViewportSize({ width: 1600, height: 700 })
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
   await panel.getByRole('textbox', { name: 'Search examples' }).fill('Research example')
   await panel.getByRole('button', { name: 'Biology', exact: true }).click()
   const scroller = panel.locator('[data-use-case-browser-scroll]')
@@ -1029,7 +1027,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
     const viewport = el.closest('[data-use-case-browser-scroll]')!
     viewport.scrollTop += el.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 20
   })
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in marketplace' }).click()
   const full = page.getByRole('main')
   await expect(full.getByRole('textbox', { name: 'Search examples' })).toHaveValue(
     'Research example'
@@ -1055,7 +1053,7 @@ test('preserves the compact marketplace filters and visible case across full-pag
   )
   await expect(anchor).toBeInViewport()
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
   await expect(full.getByRole('textbox', { name: 'Search examples' })).toHaveValue('')
   await expect(full.getByRole('button', { name: 'All categories', exact: true })).toHaveAttribute(
     'aria-pressed',
@@ -1068,15 +1066,15 @@ test('preserves the compact marketplace filters and visible case across full-pag
 
 test('syncs changed and cleared full-page filters back to the project panel', async ({ page }) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
   const search = (surface: Locator): Locator =>
     surface.getByRole('textbox', { name: 'Search examples' })
   const category = (surface: Locator, name: string): Locator =>
     surface.getByRole('button', { name, exact: true })
   await search(panel).fill('Research example 2')
   await category(panel, 'Biology').click()
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in marketplace' }).click()
   const full = page.getByRole('main')
   await search(full).fill('Research example 3')
   await category(full, 'Science').click()
@@ -1093,7 +1091,7 @@ test('syncs changed and cleared full-page filters back to the project panel', as
   )
 
   // A second round trip must also transfer an empty query and the all-categories selection.
-  await panel.getByRole('button', { name: 'View in sharing marketplace' }).click()
+  await panel.getByRole('button', { name: 'View in marketplace' }).click()
   await expect(search(full)).toHaveValue('Research example 3')
   await search(full).fill('')
   await category(full, 'All categories').click()
@@ -1151,7 +1149,7 @@ test('masks hovered card shadows behind the sticky home marketplace heading', as
 
 test('returns home when the full marketplace was opened from home', async ({ page }) => {
   await page.goto('/home-use-cases.html')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Back to Project', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
   await expect(page.getByTestId('navigation')).toHaveText('home:')
@@ -1161,8 +1159,8 @@ test('selects the case marketplace without resetting its filters or opening deta
   page
 }, info) => {
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
   const search = panel.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example 1')
   const selector = panel.getByRole('combobox', { name: 'Marketplace', exact: true })
@@ -1200,10 +1198,10 @@ for (const surface of ['panel', 'dialog'] as const) {
     await page.setViewportSize({ width: 1100, height: 800 })
     await page.goto(`/home-use-cases.html?download${surface === 'panel' ? '&panel' : ''}`)
     if (surface === 'panel')
-      await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+      await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
     const owner =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
         : page.getByRole('region', { name: 'Use Case Marketplace', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
@@ -1243,11 +1241,11 @@ for (const surface of ['panel', 'dialog'] as const) {
     )
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
     if (surface === 'panel') {
-      await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+      await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
     }
     const owner =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
         : page.getByRole('region', { name: 'Use Case Marketplace', exact: true })
     await owner.getByRole('article').first().getByRole('button').first().click()
     const detail =
@@ -1315,8 +1313,8 @@ for (const outcome of ['changed', 'unchanged', 'failed'] as const) {
       })
     })
     await page.goto('/home-use-cases.html?panel')
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-    const panel = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+    await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+    const panel = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
     const search = panel.getByRole('textbox', { name: 'Search examples' })
     await search.fill('Research example 1')
     await panel.getByRole('button', { name: 'Science', exact: true }).click()
@@ -1374,10 +1372,10 @@ for (const surface of ['panel', 'standalone'] as const) {
         : route.fulfill({ json: outcome === 'empty' ? [] : catalog })
     })
     await page.goto(`/home-use-cases.html${surface === 'panel' ? '?panel' : ''}`)
-    await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+    await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
     const market =
       surface === 'panel'
-        ? page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+        ? page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
         : page.getByRole('main')
     await expect(market.getByRole('status')).toHaveText('Loading examples…')
     await expect(market.getByText('No matching examples')).toHaveCount(0)
@@ -1409,8 +1407,8 @@ test('recovers from a retired category without losing search or restoring the re
   let current = many
   await page.route('**/manifest.json', (route) => route.fulfill({ json: current }))
   await page.goto('/home-use-cases.html?panel')
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
-  const market = page.getByRole('tabpanel', { name: 'Sharing marketplace', exact: true })
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  const market = page.getByRole('tabpanel', { name: 'Marketplace', exact: true })
   const search = market.getByRole('textbox', { name: 'Search examples' })
   await search.fill('Research example')
   await market.getByRole('button', { name: 'Biology', exact: true }).click()
@@ -1439,4 +1437,34 @@ test('recovers from a retired category without losing search or restoring the re
     'aria-pressed',
     'true'
   )
+})
+
+test('keeps workspace panels inside the viewport through wide content and tab switches', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/home-use-cases.html?panel&resizable')
+  const group = page.locator('[data-slot="resizable-panel-group"]').first()
+  const sidebar = page.locator('#left-panel')
+  const expectWithinViewport = async (): Promise<void> => {
+    await expect
+      .poll(() => group.evaluate((element) => element.getBoundingClientRect().right - innerWidth))
+      .toBeLessThanOrEqual(1)
+  }
+  await expectWithinViewport()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
+  await expect(page.locator('#right-panel-resizable')).toHaveCSS('flex-grow', '40')
+  await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Library preview' })).toBeVisible()
+  for (const width of [1280, 900, 1440]) {
+    await page.setViewportSize({ width, height: 800 })
+    await expectWithinViewport()
+    const sidebarWidth = (await sidebar.boundingBox())!.width
+    for (let index = 0; index < 3; index++) {
+      await page.getByRole('tab', { name: 'Marketplace', exact: true }).click()
+      await page.getByRole('tab', { name: 'Library', exact: true }).click()
+      await expectWithinViewport()
+      expect(Math.abs((await sidebar.boundingBox())!.width - sidebarWidth)).toBeLessThanOrEqual(1)
+    }
+  }
 })

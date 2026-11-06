@@ -183,6 +183,7 @@ it.each([
                   'packages/durable-files',
                   'packages/compute',
                   'packages/providers',
+                  'packages/research-film',
                   ...literaturePackages.map((name) => `packages/${name}`)
                 ]
               : []
@@ -214,11 +215,13 @@ it.each([
         })),
         ...(hostOnly
           ? []
-          : ['resilient-download', 'durable-files', 'compute', 'providers'].map((name) => ({
-              name,
-              hookTimeout: 10000,
-              testTimeout: 60000
-            }))),
+          : ['resilient-download', 'durable-files', 'compute', 'providers', 'research-film'].map(
+              (name) => ({
+                name,
+                hookTimeout: 10000,
+                testTimeout: 60000
+              })
+            )),
         ...(hostOnly
           ? []
           : literaturePackages.map((name) => ({

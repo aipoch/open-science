@@ -1,5 +1,9 @@
 // @vitest-environment jsdom
 import type { AcpRuntimeEvent } from '../../../../shared/acp'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from '../../../../shared/desktop-runtime-recovery'
 import { useWorkspaceOperationErrors } from '../acp/workspace-operation-error'
 import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
 import { act } from 'react'
@@ -133,6 +137,8 @@ describe('session persistence startup', () => {
         data-deletion-ready={String(persistence.canDeleteSessionsAndProjects)}
         data-write-retryable={String(persistence.writeErrorRetryable)}
         data-persistence-blocked={persistence.persistenceBlockedSessionIds.join(',')}
+        data-checking={String(persistence.isCheckingWrites)}
+        data-write-targets={persistence.writeIssues.map(({ target }) => target).join(',')}
       >
         <span data-testid="load-error">{persistence.loadError ?? 'sessions available'}</span>
         <span data-testid="load-warning">{persistence.loadWarning ?? 'no load warnings'}</span>
@@ -149,6 +155,18 @@ describe('session persistence startup', () => {
         </button>
         <button type="button" data-testid="retry-writes" onClick={persistence.retryWrites}>
           Retry writes
+        </button>
+        <button type="button" data-testid="review-writes" onClick={persistence.reviewWriteIssues}>
+          Review writes
+        </button>
+        <button
+          type="button"
+          data-testid="discard-write"
+          onClick={() => {
+            void persistence.discardWrite('session:session-1')
+          }}
+        >
+          Discard retained changes
         </button>
         <button
           type="button"
@@ -968,7 +986,15 @@ describe('session persistence startup', () => {
       surface: 'unknown',
       context: 'session-save',
       errorCategory: 'error',
-      fingerprint: expect.stringMatching(/^[a-f0-9]{8}$/)
+      fingerprint: expect.stringMatching(/^[a-f0-9]{8}$/),
+      sessionWrite: {
+        target: 'session',
+        sessionId: 'session-1',
+        projectId: 'project-a',
+        code: 'unknown',
+        epoch: 0,
+        phase: 'rejected'
+      }
     })
     await expect(flushSessionPersistence()).rejects.toThrow('could not write')
 
@@ -1168,7 +1194,7 @@ describe('session persistence startup', () => {
     expect(saveSession.mock.calls.at(-1)?.[0].id).toBe('session-1')
   })
 
-  it('replaces unsaved local changes with durable content when retrying a conflict', async () => {
+  it('retains conflicting local changes until the user explicitly discards them', async () => {
     const restored = createPersistedSession({ revision: 1 })
     const latest = createPersistedSession({ revision: 2, title: 'Durable title' })
     loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [latest] })
@@ -1186,12 +1212,25 @@ describe('session persistence startup', () => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
     })
-    expect(useSessionStore.getState().sessions[0].title).toBe('Durable title')
+    expect(useSessionStore.getState().sessions[0].title).toBe('Unsaved local title')
     expect(saveSession).toHaveBeenCalledOnce()
+    await expect(flushSessionPersistence()).rejects.toThrow()
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="discard-write"]')!.click()
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Durable title')
     await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: 'session-1',
+          recovery: expect.objectContaining({ event: 'forgotten', reason: 'explicit-discard' })
+        })
+      })
+    )
   })
 
-  it('reloads after a Session revision conflict instead of resending stale JSON', async () => {
+  it('checks current authority before an explicit conflict retry without losing the local intent', async () => {
     const restored = createPersistedSession({ revision: 1 })
     loadAll.mockReset().mockResolvedValue({
       ...emptyLoadResult(),
@@ -1210,7 +1249,7 @@ describe('session persistence startup', () => {
     })
 
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
-      'This conversation changed in another window. Your local changes were not saved. Retry to reload the latest version before closing the app.'
+      'This conversation changed in another window. Local changes are retained. Review the conversation, then retry or discard the retained changes.'
     )
     expect(saveSession).toHaveBeenCalledOnce()
 
@@ -1220,10 +1259,11 @@ describe('session persistence startup', () => {
       await Promise.resolve()
     })
 
-    // Web has no loadOne command: conflict recovery falls back to loadAll once, then the explicit
-    // retry reloads the full durable snapshot again.
-    expect(loadAll).toHaveBeenCalledTimes(3)
+    // An incomplete legacy authority cannot justify resending the retained graph.
+    expect(loadAll.mock.calls.length).toBeGreaterThanOrEqual(3)
     expect(saveSession).toHaveBeenCalledOnce()
+    expect(useSessionStore.getState().sessions[0].title).toBe('Local title')
+    await expect(flushSessionPersistence()).rejects.toThrow()
   })
 
   it('clears an unresolved revision conflict after its Session is durably deleted', async () => {
@@ -1324,6 +1364,212 @@ describe('session persistence startup', () => {
     expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
       'changes saved'
     )
+  })
+
+  it.each([false, true])(
+    'checks a late lost acknowledgement with diagnostics unavailable=%s',
+    async (diagnosticsUnavailable) => {
+      if (diagnosticsUnavailable)
+        reportRendererFailure.mockImplementation(() => {
+          throw new Error('diagnostics unavailable')
+        })
+      const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
+      loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
+      let resolveRead!: (session: PersistedChatSession) => void
+      window.api.sessions.loadOne = vi.fn(
+        () =>
+          new Promise<PersistedChatSession>((resolve) => {
+            resolveRead = resolve
+          })
+      )
+      saveSession.mockRejectedValueOnce(new DesktopRuntimeDisconnectedError())
+      await act(async () => root.render(<Probe />))
+      await act(async () =>
+        useSessionStore.getState().renameSession(original.id, 'Saved but reply lost')
+      )
+      expect(container.querySelector('div')?.dataset.checking).toBe('true')
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      expect(container.querySelector('div')?.dataset.writeTargets).toBe('session:session-1')
+      await expect(flushSessionPersistence()).rejects.toThrow()
+      await act(async () =>
+        resolveRead({ ...original, title: 'Saved but reply lost', revision: 2 })
+      )
+      expect(container.querySelector('div')?.dataset.checking).toBe('false')
+      expect(container.querySelector('div')?.dataset.writeTargets).toBe('')
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+      expect(saveSession).toHaveBeenCalledOnce()
+      const notices = reportRendererFailure.mock.calls
+        .map(([report]) => report.sessionWrite)
+        .filter((write) => write?.recovery?.event === 'notice-changed')
+      expect(notices.map((write) => write.recovery.notice)).toEqual(['checking', 'hidden'])
+      expect(notices.every((write) => write.sessionId === original.id)).toBe(true)
+    }
+  )
+
+  it('retains a not-submitted preference across reconnect and retries only on user action', async () => {
+    const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
+    loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
+    window.api.sessions.loadOne = vi.fn(async () => original)
+    saveSession.mockRejectedValueOnce(new DesktopRuntimeWriteNotSubmittedError())
+    await act(async () => root.render(<Probe />))
+    await act(async () =>
+      useSessionStore.getState().renameSession(original.id, 'Retained local title')
+    )
+    await act(async () =>
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: ++recoveryEpoch })
+    )
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' }))
+    await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+    expect(useSessionStore.getState().sessions[0].title).toBe('Retained local title')
+    expect(saveSession).toHaveBeenCalledOnce()
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'could not be confirmed as saved'
+    )
+    await expect(flushSessionPersistence()).rejects.toThrow()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+    )
+    expect(saveSession.mock.calls.at(-1)?.[0].title).toBe('Retained local title')
+    expect(saveSession.mock.calls.at(-1)?.[1]).toMatchObject({
+      expectedRevision: 1,
+      conflictRebaseFields: ['title']
+    })
+    expect(useSessionStore.getState().sessions[0].title).toBe('Retained local title')
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: original.id,
+          recovery: expect.objectContaining({ event: 'retry-started', expectedRevision: 1 })
+        })
+      })
+    )
+    expect(reportRendererFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          sessionId: original.id,
+          recovery: expect.objectContaining({ event: 'resolved', reason: 'save-acknowledged' })
+        })
+      })
+    )
+  })
+
+  it.each(['full', 'metadata'] as const)(
+    'retries every coalesced preference after a not-submitted %s save',
+    async (mode) => {
+      let authority = createPersistedSession({
+        number: 1,
+        revision: 1,
+        runtimeTranscriptOwner: 'main',
+        title: 'Original',
+        pinned: false
+      })
+      const other = createPersistedSession({ id: 'other-session', number: 2 })
+      if (mode === 'metadata') installHistory([other, authority])
+      else loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [authority] })
+      window.api.sessions.loadOne = vi.fn(async ({ sessionId }) =>
+        structuredClone(sessionId === authority.id ? authority : other)
+      )
+      saveSession.mockImplementation(async (submitted, options) => {
+        const next = { ...authority, revision: (authority.revision ?? 0) + 1 }
+        for (const field of options?.conflictRebaseFields ?? []) {
+          Object.assign(next, { [field]: submitted[field] })
+        }
+        authority = next
+        return structuredClone(authority)
+      })
+      saveSession.mockRejectedValueOnce(new DesktopRuntimeWriteNotSubmittedError())
+      await act(async () => root.render(<Probe />))
+      const current = (): ChatSession =>
+        useSessionStore.getState().sessions.find(({ id }) => id === authority.id)!
+      expect(current().contentLoaded === false).toBe(mode === 'metadata')
+
+      await act(async () => {
+        useSessionStore.getState().togglePinned(authority.id)
+        useSessionStore.getState().renameSession(authority.id, 'Renamed')
+      })
+      expect(saveSession).toHaveBeenCalledOnce()
+      expect(saveSession.mock.calls[0][1]?.conflictRebaseFields).toEqual(['pinned', 'title'])
+      await expect(flushSessionPersistence()).rejects.toThrow()
+      expect(authority).toMatchObject({ title: 'Original', pinned: false })
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="dismiss-write-warning"]')!.click()
+      )
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      expect(container.querySelector('div')?.dataset.persistenceBlocked).toBe(authority.id)
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="review-writes"]')!.click()
+      )
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+        'could not be confirmed as saved'
+      )
+      expect(saveSession).toHaveBeenCalledOnce()
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+      )
+
+      expect(authority).toMatchObject({ title: 'Renamed', pinned: true })
+      expect(current()).toMatchObject({
+        title: 'Renamed',
+        pinned: true
+      })
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toBe(
+        'changes saved'
+      )
+      await expect(flushSessionPersistence()).resolves.toBeUndefined()
+    }
+  )
+
+  it('retries an independent terminal failure alongside retained local changes', async () => {
+    const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
+    loadAll.mockReset().mockResolvedValue({ ...emptyLoadResult(), sessions: [original] })
+    window.api.sessions.loadOne = vi.fn(async ({ sessionId }) =>
+      sessionId === original.id ? original : undefined
+    )
+    const event: AcpRuntimeEvent = {
+      id: 'terminal-failure',
+      timestamp: 1,
+      kind: 'error',
+      level: 'error',
+      sessionId: 'other',
+      promptMessageId: 'prompt-other',
+      terminalCommitFailure: 'storage',
+      terminalScope: {
+        projectId: 'project-a',
+        executionId: 'other-execution',
+        startedAt: 1,
+        agentFrameId: 'frame',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment'
+      }
+    }
+    const list = vi.fn().mockResolvedValue([event])
+    const retryTerminal = vi.fn(async () => {
+      list.mockResolvedValue([])
+    })
+    window.api.sessions.listRuntimeTerminalFailures = list
+    window.api.sessions.retryRuntimeTerminalCommit = retryTerminal
+    saveSession.mockRejectedValueOnce(new DesktopRuntimeWriteNotSubmittedError())
+    await act(async () => root.render(<Probe />))
+    await act(async () =>
+      useSessionStore.getState().renameSession(original.id, 'Retained local title')
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-writes"]')!.click()
+    )
+    expect(retryTerminal).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-a',
+      sessionId: 'other',
+      promptMessageId: 'prompt-other',
+      executionId: 'other-execution'
+    })
+    expect(saveSession.mock.calls.at(-1)?.[0].title).toBe('Retained local title')
+    await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
 
   it('settles an incomplete reconnect read while keeping storage recovery and write gates active', async () => {
