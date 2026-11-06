@@ -89,6 +89,18 @@ export function ResearchVideoButton({
     busy: t('Wait for the current response to finish before generating.')
   }
   const preflightMessages: Record<string, string> = {
+    'Select a model in Settings before generating a research film.': t(
+      'Select a model in Settings before generating a research film.'
+    ),
+    'The selected provider credentials are unavailable. Check them in Settings.': t(
+      'The selected provider credentials are unavailable. Check them in Settings.'
+    ),
+    'The selected model is unavailable. Select another model in Settings.': t(
+      'The selected model is unavailable. Select another model in Settings.'
+    ),
+    "This provider isn't compatible with the active agent framework.": t(
+      "This provider isn't compatible with the active agent framework."
+    ),
     'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.':
       t(
         'The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.'
@@ -426,7 +438,7 @@ export function ResearchVideoButton({
         >
           <div className={`${dialogBodyClassName} min-h-0 overflow-y-auto`} data-workflow-body>
             <div className="space-y-4" data-workflow-content>
-              {blocked && !busy && <ErrorNotice inline level="info" description={blocked} />}
+              {blocked && !busy && <ErrorNotice inline level="warning" description={blocked} />}
               {!blocked && (error || status.error) && (
                 <ErrorNotice inline tone="amber" description={error ?? status.error} />
               )}

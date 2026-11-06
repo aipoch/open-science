@@ -329,6 +329,8 @@ it('blocks known failures before narration download and rechecks when the entry 
   await click('Generate research film')
   expect(api.researchVideo.status).toHaveBeenCalledWith({ ...request, checkReadiness: true })
   expect(document.body.textContent).toContain('Runtime unavailable')
+  expect(document.querySelector('[data-notice-level="warning"]')).not.toBeNull()
+  expect(document.querySelector('[data-notice-level="info"]')).toBeNull()
   expect(document.body.textContent).not.toContain('Install and generate')
   expect(api.localModels.install).not.toHaveBeenCalled()
   expect(api.researchVideo.start).not.toHaveBeenCalled()

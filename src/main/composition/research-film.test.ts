@@ -7,6 +7,7 @@ import { composeApplicationRuntime } from '../application-runtime'
 import { createResearchFilmLifecycle } from '../research-video/lifecycle'
 import { composeResearchFilm } from './research-film'
 import { RestrictedInferenceError } from '../acp/restricted-inference-contract'
+import { computePreflight } from '../settings/preflight'
 
 const mocks = vi.hoisted(() => ({
   root: '',
@@ -20,6 +21,7 @@ vi.mock('../storage-root', () => ({ resolveDataRoot: () => mocks.root }))
 vi.mock('../runtime-metadata', () => ({ runtimeMetadata: () => ({ version: 'test' }) }))
 vi.mock('../local-models/owner', () => ({
   createLocalModelOwner: ({ namespace }: { namespace: string }) => ({
+    getSnapshot: async () => ({ availability: 'notInstalled' }),
     install: mocks.install,
     acquireUse: mocks.acquire,
     close: async () => {
@@ -40,8 +42,12 @@ const outcomes = [
   'session-unreadable',
   'runtime-unavailable',
   'provider-unavailable',
+  'provider-missing',
+  'model-unavailable',
+  'incompatible',
   'input-unavailable',
   'running',
+  'unvalidated-interface',
   'max_tokens',
   'output-limit',
   'transport',
@@ -101,7 +107,7 @@ it.each(outcomes)(
           )
         })
     )
-    if (outcome !== 'running')
+    if (outcome !== 'running' && outcome !== 'unvalidated-interface')
       mocks.run.mockResolvedValue({
         text: '',
         frameworkId: 'pi',
@@ -176,10 +182,36 @@ it.each(outcomes)(
             }
           ]
         })),
-        getPreflight: vi.fn(async () => ({
-          agentReady: outcome !== 'runtime-unavailable',
-          activeProviderReady: outcome !== 'provider-unavailable'
-        })),
+        getPreflight: vi.fn(async () =>
+          computePreflight({
+            settings: {
+              version: 2,
+              activeProviderId: outcome === 'provider-missing' ? undefined : 'test',
+              providers: [
+                {
+                  id: 'test',
+                  name: 'Test',
+                  type: 'custom',
+                  lastValidatedAt: 1,
+                  lastValidatedTarget: {
+                    model: 'test',
+                    endpoint: outcome === 'unvalidated-interface' ? 'chat-completions' : 'responses'
+                  }
+                }
+              ]
+            },
+            agentFrameworkId: 'pi',
+            piRuntimeReady: outcome !== 'runtime-unavailable',
+            claudePathExists: false,
+            opencodePathExists: false,
+            codebuddyPathExists: false,
+            codexPathExists: false,
+            isProviderKeyUsable: () => outcome !== 'provider-unavailable',
+            activeProviderCompatible: outcome !== 'incompatible',
+            activeProviderModelAvailable: outcome !== 'model-unavailable',
+            activeValidationTarget: { model: 'test', endpoint: 'responses' }
+          })
+        ),
         captureActiveExplicitAgentBackendTarget: vi.fn(async () => ({
           frameworkId: 'pi',
           providerId: 'test',
@@ -223,19 +255,17 @@ it.each(outcomes)(
       expect(mocks.acquire).not.toHaveBeenCalled()
       expect(mocks.install).not.toHaveBeenCalled()
       expect(await readdir(mocks.root)).toEqual([])
-      if (
-        outcome === 'runtime-unavailable' ||
-        outcome === 'provider-unavailable' ||
-        outcome === 'input-unavailable'
-      ) {
+      const preflightErrors: Partial<Record<(typeof outcomes)[number], string>> = {
+        'runtime-unavailable': 'agent runtime',
+        'provider-unavailable': 'credentials are unavailable',
+        'provider-missing': 'Select a model in Settings',
+        'model-unavailable': 'selected model is unavailable',
+        incompatible: "isn't compatible",
+        'input-unavailable': 'input limit'
+      }
+      if (preflightErrors[outcome]) {
         const preflight = await owner.status({ ...request, checkReadiness: true })
-        expect(preflight.preflightError).toContain(
-          outcome === 'runtime-unavailable'
-            ? 'agent runtime'
-            : outcome === 'input-unavailable'
-              ? 'input limit'
-              : 'model and credentials'
-        )
+        expect(preflight.preflightError).toContain(preflightErrors[outcome])
         expect((await owner.start(request)).preflightError).toBe(preflight.preflightError)
         expect(mocks.run).not.toHaveBeenCalled()
         expect(mocks.acquire).not.toHaveBeenCalled()
@@ -243,6 +273,15 @@ it.each(outcomes)(
         expect(await readdir(mocks.root)).toEqual([])
         expect(input.recordAuxiliaryUsage).not.toHaveBeenCalled()
         return
+      }
+      if (outcome === 'unvalidated-interface') {
+        expect(await input.settingsService.getPreflight()).toMatchObject({
+          activeProviderReady: false,
+          providerReadiness: { status: 'not_ready' }
+        })
+        expect(
+          (await owner.status({ ...request, checkReadiness: true })).preflightError
+        ).toBeUndefined()
       }
       await owner.start(request)
       await vi.waitFor(() => expect(mocks.run).toHaveBeenCalled())
@@ -255,7 +294,7 @@ it.each(outcomes)(
         )
         expect(mocks.run.mock.calls[0][0].target.model).toEqual({ kind: 'provider-default' })
       }
-      if (outcome !== 'running') {
+      if (outcome !== 'running' && outcome !== 'unvalidated-interface') {
         await vi.waitFor(async () =>
           expect((await owner.status(request)).progress?.phase).toBe('failed')
         )
@@ -285,15 +324,18 @@ it.each(outcomes)(
         }
         if (outcome === 'recovered') {
           expect(mocks.run.mock.calls[2][0].systemPrompt).toContain('JavaScript animation')
-          // Failure is published before the previous job finishes its file cleanup.
-          await vi.waitFor(() => expect(mocks.events).toContain('release'))
-          await owner.start(request)
-          await vi.waitFor(async () =>
+          // Failed progress can arrive before file cleanup releases the active job. Retry until
+          // a second job is admitted rather than observing the first job's terminal state again.
+          await vi.waitFor(async () => {
+            await owner.start(request)
+            expect(mocks.acquire).toHaveBeenCalledTimes(2)
+          })
+          await vi.waitFor(async () => {
+            expect(
+              input.settingsService.captureActiveExplicitAgentBackendTarget
+            ).toHaveBeenCalledTimes(2)
             expect((await owner.status(request)).progress?.phase).toBe('failed')
-          )
-          expect(
-            input.settingsService.captureActiveExplicitAgentBackendTarget
-          ).toHaveBeenCalledTimes(2)
+          })
         }
         return
       }
