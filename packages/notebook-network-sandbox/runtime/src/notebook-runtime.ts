@@ -129,6 +129,7 @@ type RuntimeContext = {
   filesystem: FilesystemLayout
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
+  releaseProcessTreeProof?: () => Promise<void>
   platformOwnsProcesses?: boolean
   independentCommandAdmission?: boolean
   executionActive: boolean
@@ -542,25 +543,29 @@ const wrap = async (
       // Standard mode has no AppContainer, but opted-in process trees still need reliable
       // process-tree ownership so a normal leader exit cannot poison the next cleanup attempt.
       if (!windowsGatewayPort && request.superviseProcessTree) {
+        const launch = windowsSupervisedLaunch({
+          ...launchRequest,
+          cwd: request.cwd,
+          hostPath: config.windowsHostPath
+        })
+        context.releaseProcessTreeProof = launch.releaseProcessTreeProof
         return {
-          ...windowsSupervisedLaunch({
-            ...launchRequest,
-            cwd: request.cwd,
-            hostPath: config.windowsHostPath
-          }),
+          ...launch,
           ...spawnAdmission
         }
       }
       if (!windowsGatewayPort) return { ...windowsStandardLaunch(launchRequest), ...spawnAdmission }
+      const launch = windowsLaunch({
+        ...launchRequest,
+        cwd: request.cwd,
+        filesystem,
+        hostPath: config.windowsHostPath,
+        installationId: config.installationId,
+        ownershipRoot: config.windowsOwnershipRoot
+      })
+      context.releaseProcessTreeProof = launch.releaseProcessTreeProof
       return {
-        ...windowsLaunch({
-          ...launchRequest,
-          cwd: request.cwd,
-          filesystem,
-          hostPath: config.windowsHostPath,
-          installationId: config.installationId,
-          ownershipRoot: config.windowsOwnershipRoot
-        }),
+        ...launch,
         ...spawnAdmission
       }
     }
@@ -609,7 +614,12 @@ const closeContext = async (
     platformCleanup.processState ??
     (context.platformOwnsProcesses && platformCleanup.processesTerminated
       ? (processOutcome.processState ?? 'started-and-reaped')
-      : processOutcome.processState)
+      : context.releaseProcessTreeProof && processOutcome.processesTerminated
+        ? 'started-and-reaped'
+        : processOutcome.processState)
+  const [processTreeProof] = await Promise.allSettled([
+    processState !== 'termination-unknown' ? context.releaseProcessTreeProof?.() : undefined
+  ])
   const callerProcessesTerminated = processStateForOutcome(processOutcome) !== 'termination-unknown'
   const processesTerminated = context.platformOwnsProcesses
     ? platformCleanup.processesTerminated
@@ -619,12 +629,15 @@ const closeContext = async (
     ...(processState !== undefined ? { processState } : {}),
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
     temporaryResourcesRemoved:
-      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled',
+      platformCleanup.temporaryResourcesRemoved &&
+      trustBundle.status === 'fulfilled' &&
+      processTreeProof.status === 'fulfilled',
     ...(context.independentCommandAdmission &&
     network.status === 'fulfilled' &&
     platformCleanup.networkClosed &&
     platformCleanup.temporaryResourcesRemoved &&
-    trustBundle.status === 'fulfilled'
+    trustBundle.status === 'fulfilled' &&
+    processTreeProof.status === 'fulfilled'
       ? { admission: 'independent-command-allowed' as const }
       : {})
   }

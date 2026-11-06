@@ -435,6 +435,7 @@ describe('Windows AppContainer launch', () => {
 
           writeFileSync(spec.terminationProofPath, JSON.stringify(proof))
           await expect(launch.confirmProcessState()).resolves.toBe(terminalState)
+          await launch.releaseProcessTreeProof()
           expect(existsSync(spec.terminationProofPath)).toBe(false)
           await expect(launch.confirmProcessTreeTermination()).resolves.toBe(true)
           await expect(launch.confirmProcessState()).resolves.toBe(terminalState)

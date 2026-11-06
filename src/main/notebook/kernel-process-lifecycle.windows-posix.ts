@@ -448,7 +448,17 @@ class KernelProcessLifecycleOwner {
   }
 
   complete(receipt: KernelProcessReceipt, reaped: boolean): void {
-    if (reaped) this.removeIfOwned(receipt.path, receipt.receiptId)
+    if (!reaped) return
+    let proof: WindowsProcessTreeProof | undefined
+    try {
+      const record = decodeRecord(readFileSync(receipt.path, 'utf8'))
+      if (record?.receiptId === receipt.receiptId) proof = record.windowsProcessTreeProof
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (this.removeIfOwned(receipt.path, receipt.receiptId)) {
+      removeWindowsProcessTreeProof(proof)
+    }
   }
 
   environment(ownerToken: string): NodeJS.ProcessEnv {

@@ -500,6 +500,36 @@ describe('KernelProcessLifecycleOwner', () => {
     }
   )
 
+  it('retains a Windows tree proof until receipt completion settles', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-proof-settlement-'))
+    const proofPath = join(root, '.open-science-process-tree-terminated-proof.proof')
+    const proof = {
+      path: proofPath,
+      token: 'proof-token',
+      requestPath: `${proofPath}.request`
+    }
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root, platform: 'win32' })
+    await owner.ensureReady()
+    const intent = owner.beginSpawn(
+      {
+        laneKey: 'lane-a',
+        processKey: 'repl',
+        kernelEpochId: 'epoch-a'
+      },
+      'owner-token-a',
+      proof
+    )
+    const receipt = owner.recordSpawned(intent, { pid: 4242 })
+    await writeFile(
+      proof.path,
+      JSON.stringify({ version: 1, token: proof.token, processState: 'started-and-reaped' })
+    )
+
+    await expect(readFile(proof.path, 'utf8')).resolves.toContain(proof.token)
+    owner.complete(receipt, true)
+    await expect(readFile(proof.path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('keeps a Windows reused-PID receipt fenced until its tree proof is terminal', async () => {
     root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-reused-proof-'))
     const proofPath = join(
