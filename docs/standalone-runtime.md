@@ -320,7 +320,7 @@ open-science start --no-open --password-store=gnome-libsecret
 
 Missing or locked secure storage fails explicitly. Existing Linux headless `--credential-store=file`
 is an explicit plaintext opt-in, never an automatic fallback, and does not enable Compute's
-OS-protected credentials. At this baseline, desktop attachment verifies backend generation/version but does not enforce
+OS-protected credentials. At the `v1.1.0` baseline, desktop attachment verifies backend generation/version but does not enforce
 credential-store compatibility. A desktop can attach to an explicitly file-mode backend, so
 attachment must not be interpreted as proof of OS-encrypted credential writes.
 
