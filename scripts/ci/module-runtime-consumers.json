@@ -129,7 +129,10 @@
     "src/main/windows.ts"
   ],
   "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
-  "src/main/session-diagnostics/worker-entry.ts": ["src/main/composition/session-foundation.ts"],
+  "src/main/session-diagnostics/worker-entry.ts": [
+    "src/main/composition/session-foundation.ts",
+    "src/main/session-diagnostics/electron-fallback.ts"
+  ],
   "packages/pdf-structure/resources/host.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/scratch.mjs": ["packages/pdf-structure/src/engine.ts"],
   "packages/pdf-structure/resources/literature-pdf-extract.mjs": [

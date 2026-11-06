@@ -377,7 +377,7 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
   ).toEqual({})
 })
 
-it('retains recovery evidence but excludes transient credential inventory diagnostics', () => {
+it('retains schema-safe credential inventory diagnostics in recovery evidence', () => {
   const event = {
     scope: 'desktop-runtime-recovery',
     msg: 'desktop runtime recovery failed',
@@ -405,7 +405,12 @@ it('retains recovery evidence but excludes transient credential inventory diagno
         }
       }
     }).diagnostics
-  ).not.toHaveProperty('credentialDiagnostic')
+  ).toHaveProperty('credentialDiagnostic', {
+    code: 'inventory-failed',
+    source: 'cookies',
+    stage: 'read-files',
+    reason: 'operation-failed'
+  })
 })
 
 it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {
