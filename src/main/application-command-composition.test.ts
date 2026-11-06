@@ -269,6 +269,7 @@ describe('application command composition', () => {
       'literature:jobs',
       'literature:journals',
       'literature:lookup-metadata',
+      'literature:overview-batch',
       'literature:publication-check',
       'literature:related',
       'literature:search',

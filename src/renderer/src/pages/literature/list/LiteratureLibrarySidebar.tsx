@@ -94,13 +94,14 @@ export function LiteratureLibrarySidebar({
   const { inboxPendingCount, libraryCountRevision, projectItemCounts, duplicateCountRef } = counts
   return (
     <LiteratureSidebarState>
-      {(sidebarCollapsed, toggleSidebar) => {
+      {(sidebarCollapsed, toggleSidebar, sidebarRef) => {
         const navButtonClassName = cn(
           'relative flex h-9 w-full items-center rounded-lg text-sm hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:bg-bg-300 disabled:cursor-not-allowed disabled:opacity-50',
           sidebarCollapsed ? 'justify-center px-0' : 'gap-2 px-3'
         )
         return (
           <aside
+            ref={sidebarRef}
             className={cn(
               'flex shrink-0 flex-col border-r border-border-300/80 bg-bg-000 py-3',
               sidebarCollapsed ? 'w-14 px-2' : 'w-60 px-3'

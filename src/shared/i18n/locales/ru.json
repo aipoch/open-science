@@ -8247,7 +8247,7 @@
     "Pasted references": "Вставленные источники",
     "References could not be prepared for import.": "Не удалось подготовить источники к импорту.",
     "Lookup failed": "Не удалось получить данные",
-    "Study overview": "Обзор исследования",
+    "Paper overview": "Обзор статьи",
     "Generate overview": "Создать обзор",
     "Generating overview…": "Создание обзора…",
     "Based on abstract": "На основе аннотации",
@@ -8343,6 +8343,20 @@
     "The selected provider credentials are unavailable. Check them in Settings.": "Учётные данные выбранного поставщика недоступны. Проверьте их в настройках.",
     "The selected model is unavailable. Select another model in Settings.": "Выбранная модель недоступна. Выберите другую модель в настройках.",
     "Check the selected model and credentials in Settings before generating a research film.": "Перед созданием исследовательского фильма проверьте выбранную модель и учётные данные в настройках.",
-    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Лимит ввода выбранной модели не вмещает инструкции для создания исследовательского фильма. Выберите модель с большим лимитом ввода."
+    "The selected model input limit cannot fit the research film instructions. Select a model with a larger input limit.": "Лимит ввода выбранной модели не вмещает инструкции для создания исследовательского фильма. Выберите модель с большим лимитом ввода.",
+    "Batch overviews": "Пакетные обзоры",
+    "Select up to {{limit}} references.": "Выберите до {{limit}} источников.",
+    "Retry failed overviews": "Повторить неудавшиеся обзоры",
+    "Could not generate batch overviews. Check the selection and try again.": "Не удалось обработать пакетные обзоры. Проверьте выбор и повторите попытку.",
+    "Overview saved": "Обзор сохранён",
+    "Overview failed": "Ошибка обзора",
+    "Generate overviews": "Создать обзоры",
+    "Continue remaining": "Продолжить оставшиеся",
+    "{{done}} of {{total}} finished": "Обработано {{done}} из {{total}}",
+    "{{count}} failed overviews_one": "Не удалось создать {{count}} обзор",
+    "{{count}} failed overviews_few": "Не удалось создать {{count}} обзора",
+    "{{count}} failed overviews_many": "Не удалось создать {{count}} обзоров",
+    "{{count}} failed overviews_other": "Не удалось создать {{count}} обзора",
+    "Could not load the overview. Try again.": "Не удалось загрузить обзор. Попробуйте ещё раз."
   }
 }

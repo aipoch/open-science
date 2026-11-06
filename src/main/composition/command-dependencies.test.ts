@@ -149,7 +149,8 @@ function fixture() {
     },
     notebookRuntime: {},
     researchCatalog: {
-      literatureStudySnapshot: { run: vi.fn() },
+      literatureOverview: { run: vi.fn() },
+      literatureOverviewBatch: { run: vi.fn() },
       literatureCatalog: { get: vi.fn() },
       memoryService,
       tagService: {}
@@ -222,13 +223,13 @@ describe('composeCommandDependencies Literature snapshot boundary', () => {
     const f = fixture()
     const request = { itemId: 'paper', expectedSourceKey: 'source-v2', language: 'en' }
     const result = { itemId: 'paper', status: 'ready' }
-    f.input.researchCatalog.literatureStudySnapshot.run.mockResolvedValue(result)
+    f.input.researchCatalog.literatureOverview.run.mockResolvedValue(result)
     const commands = f.compose()
     const controller = new AbortController()
     await expect(commands.literature.studySnapshot(request, controller.signal)).resolves.toBe(
       result
     )
-    expect(f.input.researchCatalog.literatureStudySnapshot.run).toHaveBeenCalledExactlyOnceWith(
+    expect(f.input.researchCatalog.literatureOverview.run).toHaveBeenCalledExactlyOnceWith(
       request,
       controller.signal
     )
@@ -242,7 +243,7 @@ describe('composeCommandDependencies Literature snapshot boundary', () => {
     const controller = new AbortController()
     const reason = new Error('Caller closed snapshot')
     let observedSignal: AbortSignal | undefined
-    f.input.researchCatalog.literatureStudySnapshot.run.mockImplementation(
+    f.input.researchCatalog.literatureOverview.run.mockImplementation(
       (_request, signal: AbortSignal) =>
         new Promise((_resolve, reject) => {
           observedSignal = signal
@@ -264,13 +265,10 @@ describe('composeCommandDependencies Literature snapshot boundary', () => {
   it('does not wrap owner errors or require an optional cancellation signal', async () => {
     const f = fixture()
     const error = new Error('Snapshot source changed')
-    f.input.researchCatalog.literatureStudySnapshot.run.mockRejectedValue(error)
+    f.input.researchCatalog.literatureOverview.run.mockRejectedValue(error)
     const request = { itemId: 'paper', expectedSourceKey: 'old-source', language: 'en' }
     await expect(f.compose().literature.studySnapshot(request)).rejects.toBe(error)
-    expect(f.input.researchCatalog.literatureStudySnapshot.run).toHaveBeenCalledWith(
-      request,
-      undefined
-    )
+    expect(f.input.researchCatalog.literatureOverview.run).toHaveBeenCalledWith(request, undefined)
   })
 })
 
