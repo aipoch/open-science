@@ -333,6 +333,26 @@ const runInput = (
 })
 
 describe('RestrictedInferenceRunner', () => {
+  it('keeps OpenCode structured inference out of the forced-summary step', async () => {
+    const { runner } = await makeRunner(backend(opencodeFramework), {
+      events: [event({ role: 'assistant', text: '{"title":"Research"}' })],
+      onCreateSession: async (prepared) => {
+        const config = JSON.parse(prepared.env.OPENCODE_CONFIG_CONTENT!)
+        const agent = config.agent['open-science-test-inference']
+        // OpenCode injects its MAX_STEPS summary instruction when step >= agent.steps,
+        // including the very first model request when steps is 1.
+        expect(agent.steps).toBeUndefined()
+        expect(agent.permission).toEqual({ '*': 'deny' })
+        expect(config.permission).toEqual({ '*': 'deny' })
+      }
+    })
+
+    await expect(runner.run(runInput({ target: target('opencode') }))).resolves.toMatchObject({
+      text: '{"title":"Research"}',
+      stopReason: 'end_turn'
+    })
+  })
+
   it('builds a disposable tool-less profile from app-owned Codex subscription auth', async () => {
     temporaryRoot = await mkdtemp(join(tmpdir(), 'open-science-restricted-codex-subscription-'))
     const sourceHome = join(temporaryRoot, 'subscription-home')
