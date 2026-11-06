@@ -49,19 +49,19 @@
 
 Pour comprendre comment un résultat a été obtenu, consultez les données d’entrée, le code et l’historique d’exécution disponibles. Pour partager votre travail, choisissez les branches de conversation, les versions de fichiers, les enregistrements du Notebook et les éléments de vérification à inclure dans un paquet `.science`, puis exportez-le.
 
-### 💡 AIPOCH Open-Science v1.0.8 — Nouveautés
+### 💡 AIPOCH Open-Science v1.1.0 — Nouveautés
 
-_4 novembre 2026_
+_5 novembre 2026_
 
-- **Paramètres**: Des onglets par fonction organisent les informations de l'application, les diagnostics et l'aide.
-- **Import de références**: Jusqu'à **100** identifiants DOI, arXiv ou PubMed, ou liens officiels d'articles, par lot, avec normalisation et dédoublonnage.
-- **Synthèses d'études par IA**: Question de recherche, population, méthodes, principaux résultats et limites, avec indication de la source, texte intégral ou résumé.
-- **Ressources des sessions**: Les cinq frameworks d'agents libèrent les processus des sessions terminées pour réduire l'accumulation de mémoire.
-- **Modèles**: Tencent TokenHub ajoute Hy4 et des routes DeepSeek V4.1 Flash, ainsi que l'entrée d'images pour certains modèles.
-- **Données scientifiques et PDF**: Rétablissement des requêtes eQTL Catalogue avec validation GRCh38 et amélioration de l'ordre de lecture et de l'extraction du texte des PDF.
-- **Fiabilité**: Amélioration de la vérification des dépendances R et de la provenance des artefacts ; correction des mises à jour, téléchargements, réseau isolé et installation de Pi.
+- **Films de recherche**: Exportez toute session sous forme de film de recherche portable et narré, avec relecture du terminal et narration vocale.
+- **Appairage mobile**: Connectez un téléphone ou une tablette en scannant un code QR, via le WiFi local ou un tunnel Pinggy.
+- **Literature dans le CLI et MCP**: Recherche et gestion des références depuis la ligne de commande et les clients MCP, avec navigation en lecture seule et outils d'écriture.
+- **Synthèses reprises sur interruption**: Les synthèses par lots de papiers reprennent après une interruption sans régénérer les résultats déjà achevés.
+- **Centre de ressources**: Un centre de ressources renommé avec une disposition de la bibliothèque de cas adaptée, des liens externes plus compacts et les paramètres de calcul sous les connexions.
+- **Diagnostics**: Les exports préservent les preuves d'exécution du Notebook, permettent de sélectionner des journaux backend historiques et peuvent inclure des enregistrements de ressources en opt-in (Windows).
+- **Correctifs de fiabilité**: Récupération des conversations après interruption, restauration des figures et tableaux des PDF à partir de scans avec texte, et amélioration du démarrage, des vérifications de mise à jour Windows et de l'utilisation mémoire.
 
-[Notes complètes v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
+[Notes complètes v1.1.0](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
 
 <p align="center">
  <img width="1920" height="1140" alt="Bannière AIPOCH Open-Science : Science, Open to All — un banc de travail de recherche en IA scientifique open source, indépendant des modèles et auto-hébergé" src="../images/readme/open-science-banner.png" />

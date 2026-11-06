@@ -47,17 +47,19 @@
 
 When you want to see how a result was produced, inspect the available inputs, code, and execution history. To share the work, export a `.science` package with the conversation branches, file versions, Notebook records, and verification evidence you choose.
 
-### 💡 AIPOCH Open-Science v1.0.8 updates
+### 💡 AIPOCH Open-Science v1.1.0 updates
 
-_November 4, 2026_
+_November 5, 2026_
 
-- **Settings**: Focused tabs organize preferences, app information, diagnostics, and help.
-- **Batch reference import**: Import up to **100** DOI, arXiv, or PubMed identifiers or official article links at once, with normalization and deduplication.
-- **AI paper overviews**: Summarize the research question, study population, methods, main findings, and limitations, with the full-text or abstract source labeled.
-- **Session resources**: All five agent frameworks release processes after completed sessions to reduce memory accumulation.
-- **Model support**: Tencent TokenHub adds Hy4 and DeepSeek V4.1 Flash routes, plus image input for selected models.
-- **Scientific data and PDFs**: Restore eQTL Catalogue queries with GRCh38 coordinate validation and improve PDF reading order and extraction.
-- **Reliability fixes**: Improve R dependency verification and artifact provenance, and fix cross-platform updates, downloads, sandbox networking, and Pi installation.
+- **Research films**: Export any session as a portable, narrated research film with terminal playback and voice narration.
+- **Mobile pairing**: Connect a phone or tablet by scanning a QR code, over local WiFi or a Pinggy tunnel.
+- **Literature in CLI and MCP**: Search and manage references from the command line and MCP clients, with read-only browsing plus write tools.
+- **Resumable overviews**: Batch paper overviews resume after interruptions without regenerating completed results.
+- **Resource center**: A renamed resource center with an adapted case library layout, more compact external links, and compute settings under connections.
+- **Diagnostics**: Exports preserve Notebook execution evidence, allow selecting historical backend logs, and can include opt-in resource recordings (Windows).
+- **Reliability fixes**: Recover conversations after interruptions, restore PDF figures and tables from searchable scans, and improve startup, Windows update checks, and memory use.
+
+[View the full v1.1.0 release notes](https://github.com/aipoch/open-science/releases/tag/v1.1.0)
 
 [View the full v1.0.8 release notes](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
