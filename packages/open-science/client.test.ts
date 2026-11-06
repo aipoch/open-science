@@ -127,6 +127,11 @@ describe('OpenScienceClient', () => {
         'waitForRun',
         'listArtifacts',
         'downloadArtifact',
+        'searchLiterature',
+        'getLiteratureItem',
+        'listCitationStyles',
+        'formatReferences',
+        'getReferenceMetadata',
         'events',
         'request',
         'throwResponseError'
