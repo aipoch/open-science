@@ -102,6 +102,21 @@ export function createDesktopUpdateIntegration(options: {
   let pending: Promise<unknown> | undefined
   let cancellation = new AbortController()
   let cancelRequested = false
+  let closingForUpdate = false
+  let handedOff = false
+  const publishClosing = (): void => {
+    closingForUpdate = true
+    options.onProgress?.({
+      recovery: {
+        phase: 'stopping',
+        runtime: 'running',
+        installation: 'unchanged',
+        canCancel: false,
+        canRecover: false,
+        canRetryInstall: false
+      }
+    })
+  }
   const checkCancellation = (): void => {
     if (cancelRequested)
       throw new UpdateLifecycleError('user-cancelled', 'Installation was cancelled before handoff.')
@@ -469,6 +484,7 @@ export function createDesktopUpdateIntegration(options: {
     if (active.stopped)
       return { completed: true, reaped: false, runtimeStopped: true, recovery: recovery() }
     options.setClosing(true)
+    publishClosing()
     const deadlineAt = updateShutdownDeadline()
     try {
       const result = await prepareRuntimeStop(apply, deadlineAt)
@@ -476,16 +492,6 @@ export function createDesktopUpdateIntegration(options: {
         options.setClosing(false)
         return result
       }
-      options.onProgress?.({
-        recovery: {
-          phase: 'stopping',
-          runtime: 'running',
-          installation: 'unchanged',
-          canCancel: false,
-          canRecover: false,
-          canRetryInstall: false
-        }
-      })
       const lease = await stopRuntimeForUpdate(deadlineAt)
       options.retainLease(lease)
       active.stopped = true
@@ -510,6 +516,8 @@ export function createDesktopUpdateIntegration(options: {
         throw new UpdateLifecycleError(error.code, error.message, undefined, { cause: error })
       }
       throw error
+    } finally {
+      closingForUpdate = false
     }
   }
   return {
@@ -663,6 +671,7 @@ export function createDesktopUpdateIntegration(options: {
         await options.verifyInstallerReady?.()
         checkCancellation()
         options.setClosing(true)
+        publishClosing()
         let stopped = false
         const deadlineAt = updateShutdownDeadline()
         try {
@@ -706,6 +715,8 @@ export function createDesktopUpdateIntegration(options: {
             throw new UpdateLifecycleError(error.code, error.message, recovery(), { cause: error })
           }
           throw error
+        } finally {
+          closingForUpdate = false
         }
       }),
     beforeInstallHandoff: async () => {
@@ -725,6 +736,7 @@ export function createDesktopUpdateIntegration(options: {
               canRetryInstall: false
             }
           })
+          handedOff = true
           options.onHandoff()
           return
         }
@@ -737,11 +749,27 @@ export function createDesktopUpdateIntegration(options: {
           undefined,
           { allowedProcessIds: options.allowedProcessIds(), signal: cancellation.signal }
         )
+        handedOff = true
         options.onHandoff()
         publish()
       })
     },
     cancelInstall: async (beforeRestart) => {
+      // UI state alone cannot fence a stale click/RPC. Reject before changing cancellation state:
+      // saving/peer shutdown has already committed this operation to settling its native close.
+      if (closingForUpdate || handedOff || record?.phase === 'handoff')
+        throw new UpdateLifecycleError(
+          'installation-busy',
+          'The update is closing application processes and cannot be cancelled.',
+          {
+            phase: handedOff || record?.phase === 'handoff' ? 'handoff' : 'stopping',
+            runtime: 'unknown',
+            installation: 'unchanged',
+            canCancel: false,
+            canRecover: false,
+            canRetryInstall: false
+          }
+        )
       cancelRequested = true
       cancellation.abort()
       // Teardown cannot be undone while still settling. Wait for its proof, then restore service.
@@ -938,6 +966,7 @@ export function createDesktopUpdateIntegration(options: {
         }
       }),
     releaseInstallHandoff: () => {
+      handedOff = false
       if (legacy && !record) {
         const active = legacy
         legacy = undefined

@@ -18,6 +18,20 @@ export function getDarwinProcess(pid: number): DarwinProcessIdentity | null
 export function getDarwinProcessArguments(pid: number): string[] | null
 export function getDarwinEnvironmentValue(pid: number, name: string): string | false | null
 export function listDarwinProcesses(): DarwinProcessTable | null
+// macOS only. Null means this exact generation disappeared; other query errors throw.
+export function getDarwinProcessExecutable(pid: number, uniqueId: string): string | null
+// The caller first establishes installation/managed ancestry. Rechecks birth identity natively;
+// newer macOS also binds signal delivery to the kernel's PID version. Never signals groups.
+export function signalDarwinProcess(
+  pid: number,
+  uniqueId: string,
+  signal: 9 | 15,
+  executablePath: string
+): boolean
+export function listDarwinInstallationMappings(root: string): {
+  pids: number[]
+  complete: boolean
+} | null
 
 // Windows only. The opaque handle retains the non-inherited kill-on-close Job.
 export function spawnWindowsOwnedProcess(

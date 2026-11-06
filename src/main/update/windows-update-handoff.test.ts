@@ -8,6 +8,7 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   symlink,
@@ -65,7 +66,7 @@ const resolveWindowsUpdateStartup = async (
 }
 beforeEach(async () => {
   vi.mocked(rename).mockReset()
-  root = await mkdtemp(join(tmpdir(), 'update-receipts-'))
+  root = await realpath(await mkdtemp(join(tmpdir(), 'update-receipts-')))
   vi.stubEnv('OPEN_SCIENCE_INSTALLATION_STATE_ROOT', join(root, 'state'))
   vi.mocked(isWindowsInstallationWriterActive).mockReset().mockResolvedValue(false)
 })
@@ -1013,4 +1014,18 @@ describe('successor window readiness', () => {
     expect(window.listenerCount('show')).toBe(0)
     await expect(waitForWindowsUpdateWindow(undefined)).rejects.toThrow('unavailable')
   })
+})
+
+it('bounds presentation waiting without leaking show/close listeners', async () => {
+  const { waitForWindowsUpdateWindow } = await import('./windows-update-handoff')
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false,
+    isVisible: () => false
+  })
+  const deadline = new AbortController()
+  const waiting = waitForWindowsUpdateWindow(window, deadline.signal)
+  deadline.abort(new Error('fixture deadline'))
+  await expect(waiting).rejects.toThrow('did not become ready')
+  expect(window.listenerCount('show')).toBe(0)
+  expect(window.listenerCount('closed')).toBe(0)
 })

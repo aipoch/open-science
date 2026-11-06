@@ -356,6 +356,7 @@
         "packages/environment/src/micromamba-cache-acl.integration.test.ts",
         "src/main/composition/session-foundation.ts",
         "src/main/system-boot-identity.ts",
+        "src/main/update/mac-update-handoff.ts",
         "src/main/update/installation-artifact.ts",
         "src/main/update/installation-executor.ts",
         "src/main/update/installation-occupancy.ts",

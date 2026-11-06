@@ -51,6 +51,54 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('rejects stale Mac acceptance native pins before installing dependencies', () => {
+    const build = workflow('build.yml').jobs.build
+    const gate = step(build, 'Require reviewed native components for Mac acceptance')
+    expect(gate.run).toBe('node scripts/native-components.mjs --check-catalog')
+    expect(gate.if).toContain("inputs.diagnostic_mac_feed_url != ''")
+    expect(gate.if).toContain("matrix.platform == 'mac'")
+    expect(build.steps!.indexOf(gate)).toBeLessThan(
+      build.steps!.indexOf(step(build, 'Install dependencies'))
+    )
+  })
+  it.each([
+    ['http://127.0.0.1:18761/', 'Mac Update Acceptance', 'mac', true],
+    ['https://statics.aipoch.com/open-science/app/stable', 'Mac Update Acceptance', 'mac', false],
+    ['http://127.0.0.1:18761/', 'Windows Upgrade Smoke', 'mac', false],
+    ['http://127.0.0.1:18761/', 'Mac Update Acceptance', 'win', false],
+    ['http://127.0.0.1:18761/; echo unsafe', 'Mac Update Acceptance', 'mac', false]
+  ])('bounds signed Mac feed injection: %s %s %s', (feed, caller, platform, allowed) => {
+    const root = mkdtempSync(join(tmpdir(), 'diagnostic-mac-feed-'))
+    try {
+      writeFileSync(
+        join(root, 'package.json'),
+        JSON.stringify({ name: 'fixture', version: '1.0.5', private: true })
+      )
+      const script = step(workflow('build.yml').jobs.build, 'Build & package')
+        .run!.split('npm run build:e2e')[0]
+        .replaceAll('${{ inputs.nightly }}', 'false')
+        .replaceAll('${{ matrix.platform }}', platform)
+        .replaceAll('${{ steps.mac_signing.outputs.enabled }}', 'true')
+      const execute = (): void => {
+        execFileSync('bash', ['-e', '-c', script], {
+          cwd: root,
+          stdio: 'pipe',
+          env: {
+            ...process.env,
+            GITHUB_WORKFLOW: caller,
+            GITHUB_EVENT_NAME: 'workflow_dispatch',
+            DIAGNOSTIC_VERSION: '1.0.6',
+            DIAGNOSTIC_MAC_FEED_URL: feed
+          }
+        })
+      }
+      if (allowed) expect(execute).not.toThrow()
+      else expect(execute).toThrow()
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('runs both renderer save failure phases against immutable Windows packages', () => {
     const job = workflow('windows-upgrade-smoke.yml').jobs['artifact-upgrade']
     expect(job.strategy?.matrix?.scenario).toEqual(
@@ -170,6 +218,7 @@ describe('release and scheduled workflow topology', () => {
       }
     }
     expect(callers.sort()).toEqual([
+      'mac-update-acceptance.yml:diagnostic-build',
       'nightly.yml:build',
       'notarize-dryrun.yml:build',
       'performance-package-dryrun.yml:build',

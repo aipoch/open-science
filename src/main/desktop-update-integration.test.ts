@@ -238,7 +238,10 @@ describe('Desktop installation orchestration', () => {
     state.check.mockResolvedValue('incomplete')
     const { hooks, stop } = setup()
     expect((await hooks.prepareInstall!(status, {}))?.reason).toBe('install-failed')
-    await hooks.cancelInstall!()
+    await expect(hooks.cancelInstall!()).rejects.toMatchObject({
+      reason: 'installation-busy',
+      recovery: { canCancel: false }
+    })
     await hooks.recheckInstall!()
     expect(state.finish).not.toHaveBeenCalled()
     expect(stop).not.toHaveBeenCalled()
@@ -269,7 +272,7 @@ describe('Desktop installation orchestration', () => {
     expect((await cancelled).outcome).toBe('cancelled')
     expect(state.finish).toHaveBeenCalled()
   })
-  it('waits for an in-flight stop before cancellation restores the app', async () => {
+  it('rejects stale cancellation during an in-flight stop without changing the operation', async () => {
     const { hooks, stop, restart } = setup()
     await hooks.prepareInstall!(status, {})
     let finishStop!: () => void
@@ -281,13 +284,15 @@ describe('Desktop installation orchestration', () => {
     )
     const gate = hooks.installGate!({})
     await vi.waitFor(() => expect(finishStop).toBeTypeOf('function'))
-    const cancelled = hooks.cancelInstall!()
+    await expect(hooks.cancelInstall!()).rejects.toMatchObject({
+      reason: 'installation-busy',
+      recovery: { phase: 'stopping', canCancel: false }
+    })
     expect(restart).not.toHaveBeenCalled()
     finishStop()
     await gate
-    await expect(hooks.beforeInstallHandoff!(status)).rejects.toThrow('cancelled')
-    expect((await cancelled).outcome).toBe('cancelled')
-    expect(restart).toHaveBeenCalledOnce()
+    await hooks.beforeInstallHandoff!(status)
+    expect(restart).not.toHaveBeenCalled()
   })
   it('reconfirms a stop that timed out instead of leaving recovery permanently blocked', async () => {
     state.record = { ...base, phase: 'stopping' }
@@ -743,6 +748,26 @@ it.each([true, false])('saves before stopping the runtime (legacy=%s)', async (l
 })
 
 it.each([true, false])(
+  'fences cancellation before the first save callback can close peers (legacy=%s)',
+  async (legacy) => {
+    const flushRenderer = vi.fn(async () => {
+      expect(h.progress).toHaveBeenCalledWith({
+        recovery: expect.objectContaining({ phase: 'stopping', canCancel: false })
+      })
+      await expect(h.hooks.cancelInstall!()).rejects.toMatchObject({
+        reason: 'installation-busy',
+        recovery: { canCancel: false }
+      })
+    })
+    const h = setup('desktop', undefined, () => legacy, { flushRenderer })
+    await h.hooks.prepareInstall!(status, {})
+    await expect(h.hooks.installGate!({})).resolves.toMatchObject({ runtimeStopped: true })
+    expect(flushRenderer).toHaveBeenCalledTimes(2)
+    expect(h.restart).not.toHaveBeenCalled()
+  }
+)
+
+it.each([true, false])(
   'records renderer save failures but still stops the verified runtime (legacy=%s)',
   async (legacy) => {
     for (const failedPhase of ['preflight', 'final']) {
@@ -793,7 +818,7 @@ it.each([true, false])(
 )
 
 it.each([true, false])(
-  'settles an initiated stop before cancellation can restore admission (legacy=%s)',
+  'rejects cancellation while shutdown settles and allows recovery after it stops (legacy=%s)',
   async (legacy) => {
     const h = setup('desktop', undefined, () => legacy)
     let finishGate!: () => void
@@ -806,12 +831,15 @@ it.each([true, false])(
     await h.hooks.prepareInstall!(status, {})
     const installing = h.hooks.installGate!({})
     await vi.waitFor(() => expect(finishGate).toBeTypeOf('function'))
-    const cancelling = h.hooks.cancelInstall!()
+    await expect(h.hooks.cancelInstall!()).rejects.toMatchObject({
+      reason: 'installation-busy',
+      recovery: { phase: 'stopping', canCancel: false }
+    })
     expect(h.restart).not.toHaveBeenCalled()
     expect(h.setClosing).not.toHaveBeenCalledWith(false)
     finishGate()
     await installing
-    await cancelling
+    await expect(h.hooks.cancelInstall!()).resolves.toMatchObject({ outcome: 'cancelled' })
     expect(h.stop).toHaveBeenCalledOnce()
     expect(h.restart).toHaveBeenCalledOnce()
   }
@@ -842,7 +870,7 @@ it.each([true, false])(
   }
 )
 
-it('awaits native instance closure before cancelling and reopening the original profile', async () => {
+it('rejects stale cancellation during native instance closure, then can restore the stopped profile', async () => {
   let finishClosure!: () => void
   const closeOtherInstances = vi.fn<(deadlineAt: number) => Promise<void>>(
     () =>
@@ -854,12 +882,15 @@ it('awaits native instance closure before cancelling and reopening the original 
   await h.hooks.prepareInstall!(status, {})
   const applying = h.hooks.installGate!({})
   await vi.waitFor(() => expect(closeOtherInstances).toHaveBeenCalledOnce())
-  const cancelling = h.hooks.cancelInstall!()
+  await expect(h.hooks.cancelInstall!()).rejects.toMatchObject({
+    reason: 'installation-busy',
+    recovery: { phase: 'stopping', canCancel: false }
+  })
   expect(h.restart).not.toHaveBeenCalled()
   expect(h.stop).not.toHaveBeenCalled()
   finishClosure()
   await applying
-  await cancelling
+  await h.hooks.cancelInstall!()
   expect(h.stop).toHaveBeenCalledWith('update', {
     deadlineAt: closeOtherInstances.mock.calls[0][0],
     requireCleanExit: false

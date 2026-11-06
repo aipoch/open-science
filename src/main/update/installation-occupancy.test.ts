@@ -215,6 +215,84 @@ describe('cold Windows resource scans', () => {
   })
 })
 
+describe('bounded Mac inspection recovery', () => {
+  beforeEach(() => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    mocks.realpath.mockImplementation((path: string) => path)
+  })
+
+  it('automatically retries a transient query failure and preserves already seen occupants', async () => {
+    mocks.run
+      .mockResolvedValueOnce({ stdout: '42 /fixture/Science.app/node\n' })
+      .mockRejectedValueOnce(new Error('first mapping query failed'))
+      .mockResolvedValueOnce({ stdout: '43 /fixture/Science.app/node\n' })
+      .mockResolvedValueOnce({ stdout: 'p44\nftxt\nn/fixture/Science.app/Contents/app.asar\n' })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).resolves.toEqual([
+      42, 43, 44
+    ])
+    expect(mocks.run).toHaveBeenCalledTimes(4)
+    expect(mocks.warn).toHaveBeenCalledWith(
+      'Mac installation occupancy inspection failed',
+      expect.objectContaining({ attempt: 1 })
+    )
+  })
+
+  it('uses an independent native scan after settled timeout and repeated primary failure', async () => {
+    mocks.run
+      .mockRejectedValueOnce(new Error('Installation verification exceeded its time limit.'))
+      .mockRejectedValueOnce(new Error('ps unavailable'))
+      .mockResolvedValueOnce({ stdout: JSON.stringify({ complete: true, pids: [52] }) })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).resolves.toEqual([52])
+    expect(mocks.run).toHaveBeenLastCalledWith(
+      process.execPath,
+      expect.arrayContaining(['/native/process_tree_native.node', '/fixture/Science.app']),
+      expect.objectContaining({
+        timeoutMs: 10000,
+        env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' })
+      })
+    )
+  })
+
+  it.each([
+    'null',
+    '{"complete":false,"pids":[]}',
+    '{"complete":true,"pids":[0]}',
+    '{"complete":true,"pids":["52"]}',
+    'not-json'
+  ])('keeps unknown occupancy after malformed or incomplete fallback %s', async (stdout) => {
+    mocks.run
+      .mockRejectedValueOnce(new Error('primary failed'))
+      .mockRejectedValueOnce(new Error('retry failed'))
+      .mockResolvedValueOnce({ stdout })
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).rejects.toMatchObject({
+      reason: 'installation-busy',
+      cause: expect.objectContaining({ errors: expect.any(Array) })
+    })
+    expect(mocks.run).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not start another scan when timeout cleanup is unsettled', async () => {
+    const { VerificationProcessUnsettledError } = await import('./verification-process')
+    const failure = new VerificationProcessUnsettledError()
+    mocks.run.mockRejectedValue(failure)
+    await expect(inspectInstallationProcessesAsync('/fixture/Science.app')).rejects.toBe(failure)
+    expect(mocks.run).toHaveBeenCalledOnce()
+  })
+
+  it('preserves cancellation without starting a retry', async () => {
+    const controller = new AbortController()
+    const failure = new Error('cancelled')
+    mocks.run.mockImplementation(() => {
+      controller.abort(failure)
+      throw failure
+    })
+    await expect(
+      inspectInstallationProcessesAsync('/fixture/Science.app', controller.signal)
+    ).rejects.toBe(failure)
+    expect(mocks.run).toHaveBeenCalledOnce()
+  })
+})
+
 it('defers native loading until macOS inspection and retains occupancy when the binding fails', () => {
   // Exercise the actual CommonJS dependency boundary, outside Vitest's native-module mock.
   const script = `
@@ -486,9 +564,9 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
       }
       if (platform === 'darwin') output('')
       mocks.spawnSync.mockReturnValueOnce({ status: 1, stdout: '' })
-      mocks.run.mockRejectedValueOnce(new Error('inspection failed'))
+      mocks.run.mockRejectedValue(new Error('inspection failed'))
       await expect(inspect('/installed/app')).rejects.toThrow(
-        mode === 'sync' ? 'could not be inspected' : 'inspection failed'
+        mode === 'sync' || platform === 'darwin' ? 'could not be inspected' : 'inspection failed'
       )
     }
   )

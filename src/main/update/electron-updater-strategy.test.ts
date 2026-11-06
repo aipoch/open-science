@@ -138,6 +138,62 @@ describe('ElectronUpdaterStrategy', () => {
     ])
     expect(windowsRecoveryArtifactUrl(updater, '1.2.3', 'verified')).toBeUndefined()
   })
+  it('binds Mac recovery to the selected ZIP, never the manual DMG or an ambiguous digest', () => {
+    const updater = new FakeUpdater()
+    const files = [
+      { url: new URL('https://example.test/target.zip'), info: { sha512: 'zip-digest' } },
+      { url: new URL('https://example.test/target.dmg'), info: { sha512: 'dmg-digest' } }
+    ]
+    Reflect.set(updater, 'updateInfoAndProvider', {
+      info: { version: '2.0.0' },
+      provider: { resolveFiles: () => files }
+    })
+    expect(windowsRecoveryArtifactUrl(updater, '2.0.0', 'zip-digest', '.zip')).toBe(
+      'https://example.test/target.zip'
+    )
+    expect(windowsRecoveryArtifactUrl(updater, '2.0.0', 'dmg-digest', '.zip')).toBeUndefined()
+    files.push({ url: new URL('https://example.test/another.zip'), info: { sha512: 'zip-digest' } })
+    expect(windowsRecoveryArtifactUrl(updater, '2.0.0', 'zip-digest', '.zip')).toBeUndefined()
+  })
+  it.each(['arm64', 'x64'])(
+    'retains the SDK selected %s ZIP digest from a combined Mac feed',
+    async (arch) => {
+      const updater = new FakeUpdater()
+      const files = ['arm64', 'x64'].map((entry) => ({
+        url: `https://example.test/target-${entry}.zip`,
+        sha512: `${entry}-digest`
+      }))
+      const event = { version: '0.3.0', downloadedFile: '/cache/pending/update.zip', files }
+      Reflect.set(updater, 'downloadedUpdateHelper', {
+        file: event.downloadedFile,
+        versionInfo: { version: event.version },
+        fileInfo: { info: { sha512: `${arch}-digest` } }
+      })
+      Reflect.set(updater, 'updateInfoAndProvider', {
+        info: { version: event.version },
+        provider: {
+          resolveFiles: () =>
+            files.map((file) => ({
+              url: new URL(file.url),
+              info: { sha512: file.sha512 }
+            }))
+        }
+      })
+      updater.runDownload = async () => {
+        updater.emit('update-downloaded', event)
+      }
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform: 'darwin',
+        arch: 'x64',
+        isRosetta: () => false,
+        broadcast: vi.fn(),
+        fetchImpl: offlineFetch()
+      })
+      await markUpdateReady(strategy, updater)
+      expect(strategy.getStatus().artifactSha512).toBe(`${arch}-digest`)
+    }
+  )
   it.each(['up-to-date', 'error'])(
     'releases a waiting download after a provider check returns %s',
     async (outcome) => {

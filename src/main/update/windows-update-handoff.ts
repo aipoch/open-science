@@ -781,8 +781,10 @@ export function waitForWindowsUpdateWindow(
         once(event: 'show' | 'closed', listener: () => void): unknown
         removeListener(event: 'show' | 'closed', listener: () => void): unknown
       }
-    | undefined
+    | undefined,
+  signal?: AbortSignal
 ): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason)
   if (!window || window.isDestroyed())
     return Promise.reject(new Error('Updated application window is unavailable'))
   if (window.isVisible()) return Promise.resolve()
@@ -790,13 +792,21 @@ export function waitForWindowsUpdateWindow(
     const finish = (error?: Error): void => {
       window.removeListener('show', shown)
       window.removeListener('closed', closed)
+      signal?.removeEventListener('abort', aborted)
       if (error) reject(error)
       else resolve()
     }
+    const aborted = (): void =>
+      finish(
+        new Error('Updated application window did not become ready in time', {
+          cause: signal?.reason
+        })
+      )
     const shown = (): void => finish()
     const closed = (): void =>
       finish(new Error('Updated application window closed before presentation'))
     window.once('show', shown)
     window.once('closed', closed)
+    signal?.addEventListener('abort', aborted, { once: true })
   })
 }

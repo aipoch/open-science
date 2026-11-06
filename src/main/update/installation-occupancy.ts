@@ -267,6 +267,8 @@ export async function inspectInstallationProcessesAsync(
 ): Promise<number[]> {
   signal?.throwIfAborted()
   const { runVerificationProcess } = await import('./verification-process')
+  if (process.platform === 'darwin')
+    return inspectDarwinInstallationProcessesAsync(installationRoot, signal)
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
@@ -367,11 +369,110 @@ export async function inspectInstallationProcessesAsync(
     )
       pids.add(Number(match[1]))
   }
-  if (process.platform === 'darwin') {
-    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'])
-    for (const pid of parseDarwinLsofMappings(maps.stdout, installationRoot)) pids.add(pid)
-  }
   return [...pids]
+}
+
+async function inspectDarwinInstallationProcessesAsync(
+  root: string,
+  signal?: AbortSignal
+): Promise<number[]> {
+  const { runVerificationProcess, VerificationProcessUnsettledError } =
+    await import('./verification-process')
+  try {
+    root = realpathSync(root) || root
+  } catch {
+    // The installation may already have moved; preserve the original identity for diagnostics.
+  }
+  const pids = new Set<number>()
+  const failures: unknown[] = []
+  // Two attempts, then an independent libproc inspection. Never convert query failure into idle,
+  // and never run a replacement scanner while a timed-out owned scanner remains unsettled.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    signal?.throwIfAborted()
+    try {
+      const { stdout } = await runVerificationProcess('/bin/ps', ['-axo', 'pid=,command='], {
+        signal,
+        timeoutMs: 5_000
+      })
+      let rows = 0
+      for (const line of stdout.split('\n')) {
+        const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+        if (match) {
+          const pid = Number(match[1])
+          if (!Number.isSafeInteger(pid) || pid <= 0)
+            throw new Error('Invalid Mac process inspection PID.')
+          rows++
+        }
+        if (
+          match &&
+          (match[2] === root ||
+            match[2].includes(root + '/') ||
+            match[2].endsWith(' ' + root) ||
+            match[2].includes(' ' + root + ' '))
+        )
+          pids.add(Number(match[1]))
+      }
+      if (!rows) throw new Error('Incomplete Mac process inspection.')
+      const mappings = await runVerificationProcess('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'], {
+        signal,
+        timeoutMs: 5_000
+      })
+      if (!/^p[1-9]\d*$/m.test(mappings.stdout))
+        throw new Error('Incomplete Mac mapping inspection.')
+      for (const pid of parseDarwinLsofMappings(mappings.stdout, root)) pids.add(pid)
+      signal?.throwIfAborted()
+      return [...pids]
+    } catch (cause) {
+      signal?.throwIfAborted()
+      if (cause instanceof VerificationProcessUnsettledError) throw cause
+      failures.push(cause)
+      createLogger('update').warn('Mac installation occupancy inspection failed', {
+        attempt,
+        ...queryDiagnostic(cause, root)
+      })
+    }
+  }
+  try {
+    const nativePath = requireNative
+      .resolve('@aipoch/process-tree-native/build/Release/process_tree_native.node')
+      .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+    const { stdout } = await runVerificationProcess(
+      process.execPath,
+      [
+        '-e',
+        'const native = require(process.argv[1]); process.stdout.write(JSON.stringify(native.listDarwinInstallationMappings(process.argv[2])))',
+        nativePath,
+        root
+      ],
+      { signal, timeoutMs: 10_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+    )
+    signal?.throwIfAborted()
+    const result: unknown = JSON.parse(stdout)
+    if (
+      !result ||
+      typeof result !== 'object' ||
+      !('complete' in result) ||
+      result.complete !== true ||
+      !('pids' in result) ||
+      !Array.isArray(result.pids) ||
+      !result.pids.every((pid) => Number.isSafeInteger(pid) && pid > 0)
+    )
+      throw new Error('Incomplete native Mac installation inspection.')
+    for (const pid of result.pids) pids.add(pid)
+    return [...pids]
+  } catch (cause) {
+    signal?.throwIfAborted()
+    if (cause instanceof VerificationProcessUnsettledError) throw cause
+    createLogger('update').warn('Independent Mac installation inspection failed', {
+      ...queryDiagnostic(cause, root)
+    })
+    throw new UpdateLifecycleError(
+      'installation-busy',
+      'Installation process occupancy could not be inspected.',
+      undefined,
+      { cause: new AggregateError([...failures, cause], 'Mac installation inspections failed.') }
+    )
+  }
 }
 
 // macOS `ps -o comm=` prints the full executable path; show the executable name only.

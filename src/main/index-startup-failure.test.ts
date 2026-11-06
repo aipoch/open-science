@@ -22,6 +22,9 @@ const f = vi.hoisted(() => {
     windowCreated: vi.fn(),
     diagnostics: vi.fn(),
     completedStartup: vi.fn(),
+    installationStartup: vi.fn(),
+    macStartup: vi.fn(),
+    macRecovery: vi.fn(),
     windowsStartup: vi.fn(),
     windowsResume: vi.fn(),
     verifyRecovery: vi.fn(async () => {}),
@@ -87,6 +90,14 @@ vi.mock('electron', () => ({
     defaultSession: { protocol: f.protocol },
     fromPartition: () => ({ protocol: f.protocol })
   }
+}))
+vi.mock('./desktop-startup-recovery', async (original) => ({
+  ...(await original<typeof import('./desktop-startup-recovery')>()),
+  resolveDesktopInstallationStartup: f.installationStartup
+}))
+vi.mock('./update/mac-update-handoff', () => ({
+  readMacUpdateStartupOptions: f.macStartup,
+  recoverMacUpdateHandoff: f.macRecovery
 }))
 vi.mock('./update/windows-update-handoff', async (original) => ({
   ...(await original<typeof import('./update/windows-update-handoff')>()),
@@ -232,6 +243,9 @@ beforeEach(() => {
   vi.stubEnv('OPEN_SCIENCE_ALLOW_MULTI_INSTANCE', '0')
   vi.clearAllMocks()
   f.ready = false
+  f.installationStartup.mockResolvedValue(undefined)
+  f.macStartup.mockReturnValue(undefined)
+  f.macRecovery.mockResolvedValue({ state: 'none' })
   f.windowsStartup.mockReturnValue(undefined)
   f.windowsResume.mockResolvedValue(false)
   f.handlers.clear()
@@ -840,3 +854,82 @@ it.each(['ready', 'checking-to-ready', 'checking-abort'] as const)(
     }
   }
 )
+
+it('selects original Mac credentials and inventory before asynchronous update recovery', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'darwin' })
+  try {
+    f.macStartup.mockReturnValue({
+      configRoot: '/test/config',
+      dataRoot: '/test/data',
+      profilePath: '/test/profile',
+      host: '127.0.0.1',
+      port: 0,
+      credentialStore: 'os'
+    })
+    let observed = false
+    f.macRecovery.mockImplementation(async () => {
+      observed = true
+      expect(f.select).toHaveBeenCalledOnce()
+      expect(f.inventory).toHaveBeenCalledWith({
+        configRoot: '/test/config',
+        profilePath: '/test/profile'
+      })
+      expect(f.validate).toHaveBeenCalledOnce()
+      expect(f.app.setName).toHaveBeenCalledWith('Open-Science (DEV)')
+      expect(f.app.setPath).toHaveBeenCalledWith('userData', '/test/profile')
+      return { state: 'none' }
+    })
+    await import('./index')
+    await vi.waitFor(() => expect(observed).toBe(true))
+    await vi.waitFor(() => expect(f.app.exit).toHaveBeenCalledWith(1))
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})
+
+it('retains a Mac ticket-only recovery when the updated window is unavailable', async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+  Object.defineProperty(process, 'platform', { value: 'darwin' })
+  try {
+    const startupOptions = {
+      configRoot: '/test/config',
+      dataRoot: '/test/data',
+      profilePath: '/test/profile',
+      host: '127.0.0.1',
+      port: 0,
+      credentialStore: 'os'
+    }
+    const completeAfterReady = vi.fn()
+    f.macStartup.mockReturnValue(startupOptions)
+    f.macRecovery.mockResolvedValue({ state: 'none' })
+    f.installationStartup.mockResolvedValue({
+      startupOptions,
+      outcome: 'installed',
+      completeBeforeLaunch: async () => {},
+      completeAfterReady
+    })
+    f.lifecycle.mockReturnValue({
+      showMainWindow: vi.fn(),
+      getMainWindow: () => undefined,
+      isMainWindowHidden: () => false,
+      onSystemShutdown: vi.fn()
+    })
+    f.connect.mockResolvedValue({
+      ownsRuntime: () => false,
+      processId: () => 123,
+      runtimeInfo: () => ({ generation: 'mac-ticket', startupOptions }),
+      invokeHost: async () => ({ locale: 'en' }),
+      startupState: () => ({ phase: 'checking' }),
+      close: vi.fn()
+    })
+    f.launch.mockResolvedValue({})
+    await import('./index')
+    await vi.waitFor(() => expect(f.verifyRecovery).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(completeAfterReady).not.toHaveBeenCalled()
+    expect(f.app.exit).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+  }
+})

@@ -45,6 +45,7 @@ export type InstallationManifest = { version: string; files: Record<string, stri
 const nativeInstallationUpdateSchema = z
   .object({
     schema: z.literal(1),
+    channel: z.enum(['windows-nsis', 'mac-electron-updater']).optional(),
     operationId: z.string().uuid(),
     installationRoot: z.string().refine(isAbsolute),
     handoffDirectory: z.string().refine(isAbsolute),
@@ -83,6 +84,13 @@ const installationStartupTicketSchema = z
   .object({
     schema: z.literal(1),
     intent: z.enum(['cancel', 'complete']),
+    nativeHandoff: z
+      .object({
+        directory: z.string().refine(isAbsolute),
+        requestSha256: z.string().regex(/^[0-9a-f]{64}$/)
+      })
+      .strict()
+      .optional(),
     operationId: z.string().min(1),
     installationRoot: z.string().refine(isAbsolute),
     startupOptions: runtimeStartupOptionsSchema,
@@ -106,6 +114,21 @@ function readStartupTicket(directory: string): InstallationStartupTicket | undef
     )
   }
 }
+/** Select credentials/profile before yielding; full file verification still gates backend launch. */
+export function readInstallationStartupOptions(
+  location: InstallationLocation
+): RuntimeStartupOptions | undefined {
+  return coordinated(location, (directory) => {
+    const ticket = readStartupTicket(directory)
+    if (ticket && ticket.installationRoot !== canonicalInstallationRoot(location))
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The startup installation identity has changed.'
+      )
+    return ticket?.startupOptions
+  })
+}
+
 /** Configuration survives marker removal and a crash before the first successful data read. */
 export function inspectInstallationStartup(
   location: InstallationLocation
@@ -124,6 +147,44 @@ export function inspectInstallationStartup(
     return ticket
   })
 }
+function cleanupNativeStartupHandoff(ticket: InstallationStartupTicket): void {
+  const handoff = ticket.nativeHandoff
+  if (!handoff) return
+  const requestPath = join(handoff.directory, 'request.json')
+  if (existsSync(requestPath)) {
+    const bytes = readFileSync(requestPath)
+    if (createHash('sha256').update(bytes).digest('hex') !== handoff.requestSha256)
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The retained update cleanup identity has changed.'
+      )
+    const request = JSON.parse(bytes.toString('utf8'))
+    if (
+      request.operationId !== ticket.operationId ||
+      request.applicationPath !== ticket.installationRoot ||
+      request.installerPath !== join(handoff.directory, 'update.zip')
+    )
+      throw new UpdateLifecycleError(
+        'install-failed',
+        'The retained update cleanup location has changed.'
+      )
+    // Interrupted downloads leave owned temporary files. Match only our exact generated names;
+    // never recursively remove an externally changed directory.
+    for (const name of readdirSync(handoff.directory)) {
+      if (/^update\.zip\.[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.download$/.test(name))
+        rmSync(join(handoff.directory, name), { force: true })
+    }
+    rmSync(request.installerPath, { force: true })
+    rmSync(requestPath)
+  }
+  try {
+    installationFs.rmdirSync(handoff.directory)
+  } catch (error) {
+    // Unknown additions are not ours to remove and must not hold completed startup hostage.
+    if (!['ENOENT', 'ENOTEMPTY'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
+}
+
 export function completeInstallationStartup(
   location: InstallationLocation,
   operationId: string
@@ -140,6 +201,7 @@ export function completeInstallationStartup(
         'install-failed',
         'The verified startup installation has changed.'
       )
+    cleanupNativeStartupHandoff(ticket)
     rmSync(join(directory, 'verified-startup.json'))
   })
 }
@@ -267,7 +329,12 @@ export function acquireNativeInstallationUpdate(
   location: InstallationLocation,
   input: Pick<
     NativeInstallationUpdateRecord,
-    'operationId' | 'handoffDirectory' | 'targetVersion' | 'installerSha512' | 'requestSha256'
+    | 'operationId'
+    | 'handoffDirectory'
+    | 'targetVersion'
+    | 'installerSha512'
+    | 'requestSha256'
+    | 'channel'
   >
 ): NativeInstallationUpdateRecord {
   return coordinated(location, (directory) => {
@@ -406,6 +473,34 @@ export function assertNativeInstallationUpdateAuthorized(
     throw new UpdateLifecycleError('installation-busy', 'The native update close owner has exited.')
   })
 }
+/** A recovery owner gets one fresh bounded close phase before re-submitting the same target. */
+export function restartMacInstallationShutdown(
+  location: InstallationLocation,
+  operationId: string,
+  deadlineAt: number
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.channel !== 'mac-electron-updater' ||
+      record.operationId !== operationId ||
+      nativeOwners.get(directory)?.operationId !== operationId ||
+      !Number.isSafeInteger(deadlineAt) ||
+      deadlineAt <= Date.now()
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The Mac recovery close authority has changed.'
+      )
+    atomicWrite(join(directory, NATIVE_UPDATE_RECORD), {
+      ...record,
+      phase: 'preparing',
+      shutdownDeadlineAt: Math.min(deadlineAt, Date.now() + UPDATE_CLOSE_BUDGET_MS)
+    })
+  })
+}
+
 /** Startup may resume a durable operation only after its original owner has actually exited. */
 export function claimNativeInstallationUpdateRecovery(
   location: InstallationLocation,
@@ -473,6 +568,42 @@ export function releaseNativeInstallationUpdate(
     }
   })
 }
+/** Preserve the verified target/profile until readiness while reopening backend admission.
+ * The native owner must verify the installed manifest before requesting this transition. */
+export function settleNativeInstallationUpdateStartup(
+  location: InstallationLocation,
+  operationId: string,
+  input: { startupOptions: RuntimeStartupOptions; manifest: InstallationManifest }
+): void {
+  coordinated(location, (directory) => {
+    const record = readBoundNativeRecord(location, directory)
+    if (
+      !record ||
+      record.channel !== 'mac-electron-updater' ||
+      record.operationId !== operationId ||
+      record.targetVersion !== input.manifest.version ||
+      nativeOwners.get(directory)?.operationId !== operationId
+    )
+      throw new UpdateLifecycleError(
+        'installation-busy',
+        'The verified native update owner has changed.'
+      )
+    const ticket = installationStartupTicketSchema.parse({
+      schema: 1,
+      intent: 'complete',
+      operationId,
+      installationRoot: record.installationRoot,
+      startupOptions: input.startupOptions,
+      manifest: input.manifest,
+      nativeHandoff: { directory: record.handoffDirectory, requestSha256: record.requestSha256 }
+    })
+    // Write first: interruption between these writes retains both records, never loses context.
+    atomicWrite(join(directory, 'verified-startup.json'), ticket)
+    rmSync(join(directory, NATIVE_UPDATE_RECORD))
+    nativeOwners.get(directory)?.release()
+  })
+}
+
 function readRecord(directory: string): InstallationUpdateRecord | undefined {
   const path = join(directory, 'update-in-progress.json')
   if (!existsSync(path)) return undefined
@@ -1035,6 +1166,7 @@ export async function completeInstallationStartupAsync(
     throw new UpdateLifecycleError('install-failed', 'The verified startup operation has changed.')
   coordinated(location, (directory) => {
     unchangedSnapshot(readStartupTicket(directory), ticket)
+    cleanupNativeStartupHandoff(ticket)
     rmSync(join(directory, 'verified-startup.json'))
   })
 }

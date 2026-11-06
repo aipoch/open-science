@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { installationFs } from './installation-filesystem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -19,6 +20,7 @@ import { buildSync } from 'esbuild'
 import {
   advanceInstallationUpdate,
   acquireNativeInstallationUpdate,
+  settleNativeInstallationUpdateStartup,
   advanceNativeInstallationUpdate,
   readNativeInstallationUpdate,
   releaseNativeInstallationUpdate,
@@ -639,7 +641,11 @@ describe('native installer admission', () => {
     const f = fixture()
     const input = operation(f.directory)
     const record = acquireNativeInstallationUpdate(f.location, input)
-    expect(record).toMatchObject({ ...input, phase: 'preparing' })
+    expect(record).toMatchObject({
+      ...input,
+      handoffDirectory: realpathSync(input.handoffDirectory),
+      phase: 'preparing'
+    })
     expect(() => acquireNativeInstallationUpdate(f.location, input)).toThrow(
       'already requires recovery'
     )
@@ -658,6 +664,47 @@ describe('native installer admission', () => {
     releaseNativeInstallationUpdate(f.location, record.operationId, 'installed')
     expect(readNativeInstallationUpdate(f.location)).toBeUndefined()
     protectInstallationStartup(f.entry, 'next-profile', f.location.stateRoot).release()
+  })
+
+  it('keeps verified Mac startup context and owned cache cleanup across a restart', () => {
+    const f = fixture()
+    const handoffDirectory = join(realpathSync(f.directory), 'handoff')
+    mkdirSync(handoffDirectory)
+    const input = { ...operation(handoffDirectory), channel: 'mac-electron-updater' as const }
+    const bytes = JSON.stringify({
+      operationId: input.operationId,
+      applicationPath: realpathSync(f.location.installationRoot),
+      installerPath: join(handoffDirectory, 'update.zip')
+    })
+    writeFileSync(join(handoffDirectory, 'request.json'), bytes)
+    writeFileSync(join(handoffDirectory, 'update.zip'), 'retained package')
+    writeFileSync(
+      join(handoffDirectory, 'update.zip.22222222-2222-4222-8222-222222222222.download'),
+      'interrupted download'
+    )
+    input.requestSha256 = createHash('sha256').update(bytes).digest('hex')
+    const record = acquireNativeInstallationUpdate(f.location, input)
+    const manifest = captureInstallationManifest(f.location.installationRoot, '2')
+    const startup = { startupOptions: f.options.startupOptions, manifest }
+    expect(() =>
+      settleNativeInstallationUpdateStartup(f.location, 'wrong-owner', startup)
+    ).toThrow()
+    expect(() =>
+      settleNativeInstallationUpdateStartup(f.location, record.operationId, {
+        ...startup,
+        manifest: { ...manifest, version: '3' }
+      })
+    ).toThrow()
+    settleNativeInstallationUpdateStartup(f.location, record.operationId, startup)
+    expect(readNativeInstallationUpdate(f.location)).toBeUndefined()
+    expect(inspectInstallationStartup(f.location)?.startupOptions).toEqual(startup.startupOptions)
+    const backend = registerInstallationRuntime({ ...f.location, ...f.runtime })
+    backend.release()
+    expect(() => acquireNativeInstallationUpdate(f.location, operation(f.directory))).toThrow()
+    // No in-memory Mac recovery closure is needed to clean the exact retained package.
+    completeInstallationStartup(f.location, record.operationId)
+    expect(inspectInstallationStartup(f.location)).toBeUndefined()
+    expect(existsSync(handoffDirectory)).toBe(false)
   })
 
   it('reopens admission on pre-handoff cancellation without changing another installation', () => {

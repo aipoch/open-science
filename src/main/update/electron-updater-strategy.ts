@@ -1,5 +1,7 @@
 import { app, shell } from 'electron'
 import { spawnSync } from 'node:child_process'
+import { dirname, resolve } from 'node:path'
+import { prepareMacUpdateHandoff } from './mac-update-handoff'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
@@ -79,7 +81,8 @@ export interface MinimalAutoUpdater {
 export function windowsRecoveryArtifactUrl(
   updater: MinimalAutoUpdater,
   version: string,
-  sha512: string
+  sha512: string,
+  extension: '.exe' | '.zip' = '.exe'
 ): string | undefined {
   const snapshot = Reflect.get(updater, 'updateInfoAndProvider') as
     | {
@@ -91,7 +94,7 @@ export function windowsRecoveryArtifactUrl(
   const files = snapshot.provider
     .resolveFiles(snapshot.info)
     .filter(
-      (file) => file.info.sha512 === sha512 && file.url.pathname.toLowerCase().endsWith('.exe')
+      (file) => file.info.sha512 === sha512 && file.url.pathname.toLowerCase().endsWith(extension)
     )
   if (files.length !== 1) return undefined
   const url = files[0].url
@@ -331,9 +334,9 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       deps.markUpdateShutdown ?? (() => markApplicationShutdownTrigger('update'))
     this.prepareInstallHandoff =
       deps.prepareInstallHandoff ??
-      (this.platform === 'win32' && !deps.updater && app.isPackaged
+      (['win32', 'darwin'].includes(this.platform) && !deps.updater && app.isPackaged
         ? async () => {
-            const installerPath = this.updater.installerPath
+            const installerPath = this.updater.installerPath ?? this.status.localPath
             if (!installerPath) throw new Error('Downloaded installer path is unavailable')
             const startupOptions = deps.getStartupOptions?.()
             if (!startupOptions) throw new Error('Update startup configuration is unavailable')
@@ -346,6 +349,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
               recovery.sha512 !== installerSha512
             )
               throw new Error('Verified update recovery source is unavailable')
+            if (this.platform === 'darwin') {
+              return prepareMacUpdateHandoff(
+                app.getPath('appData'),
+                {
+                  installerPath,
+                  installerUrl: recovery.url,
+                  applicationPath: resolve(dirname(app.getPath('exe')), '../..'),
+                  profilePath: app.getPath('userData'),
+                  targetVersion: recovery.version,
+                  startupOptions
+                },
+                { installerSha512 }
+              )
+            }
             return prepareWindowsUpdateHandoff(
               app.getPath('appData'),
               {
@@ -482,20 +499,43 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         downloaded?.files?.filter((file) =>
           file.url?.split('?')[0].toLowerCase().endsWith(`.${extension}`)
         ) ?? []
+      // Mac's production feed contains both architectures. Use the SDK's completed download
+      // binding, not feed order or the host architecture (Rosetta may select a different ZIP).
+      const selected = Reflect.get(this.updater, 'downloadedUpdateHelper') as
+        | {
+            file?: string
+            versionInfo?: { version?: string }
+            fileInfo?: { info?: { sha512?: string } }
+          }
+        | undefined
+      const selectedDigest = selected?.fileInfo?.info?.sha512
+      const verifiedCandidate =
+        this.platform === 'darwin' &&
+        selected?.file === downloaded?.downloadedFile &&
+        selected?.versionInfo?.version === downloaded?.version &&
+        selectedDigest
+          ? candidates.find((file) => file.sha512 === selectedDigest)
+          : undefined
       const readyStatus: UpdateStatus = {
         ...this.status,
         state: 'ready',
         progress: 100,
-        artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
+        artifactSha512:
+          verifiedCandidate?.sha512 ?? (candidates.length === 1 ? candidates[0].sha512 : undefined),
         localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
       }
       this.recoveryArtifact = undefined
-      if (this.platform === 'win32' && readyStatus.latest && readyStatus.artifactSha512) {
+      if (
+        ['win32', 'darwin'].includes(this.platform) &&
+        readyStatus.latest &&
+        readyStatus.artifactSha512
+      ) {
         try {
           const url = windowsRecoveryArtifactUrl(
             this.updater,
             readyStatus.latest,
-            readyStatus.artifactSha512
+            readyStatus.artifactSha512,
+            this.platform === 'darwin' ? '.zip' : '.exe'
           )
           if (url)
             this.recoveryArtifact = {

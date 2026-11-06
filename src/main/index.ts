@@ -68,6 +68,7 @@ import {
   type RuntimeDirectoryLease
 } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
+import { readMacUpdateStartupOptions } from './update/mac-update-handoff'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
 import {
   installationRootForEntry,
@@ -268,8 +269,44 @@ async function startDesktop(): Promise<void> {
   let initialRecoveryError: DesktopRuntimeStartupError | undefined
   let startupCredentialCiphertexts: Buffer[] | undefined
   let startupCredentialInventoryCapturedAt: number | undefined
+  const macUpdateLocation = {
+    installationRoot: installationRootForEntry(initialBackendPaths.entry)
+  }
+  let macUpdateRecovery:
+    | Awaited<ReturnType<typeof import('./update/mac-update-handoff').recoverMacUpdateHandoff>>
+    | undefined
+  const macStartupFailure = (cause: unknown): DesktopRuntimeStartupError =>
+    new DesktopRuntimeStartupError(
+      {
+        reason: 'startup-recovery-required',
+        desktopVersion: app.getVersion(),
+        canStop: false,
+        canRecover: true,
+        diagnostics: cause instanceof Error ? cause.message : String(cause)
+      },
+      'The interrupted update could not be resumed.',
+      undefined,
+      async () => {
+        app.relaunch()
+        app.exit(0)
+      }
+    )
+  // Select the original profile synchronously, before yielding to recovery work.
+  let macUpdateStartupOptions: import('./runtime-startup-options').RuntimeStartupOptions | undefined
+  if (process.platform === 'darwin') {
+    try {
+      macUpdateStartupOptions = readMacUpdateStartupOptions(macUpdateLocation)
+      if (macUpdateStartupOptions) {
+        app.setPath('userData', macUpdateStartupOptions.profilePath)
+        app.setPath('sessionData', macUpdateStartupOptions.profilePath)
+      }
+    } catch (cause) {
+      initialRecoveryError = macStartupFailure(cause)
+    }
+  }
   let installationStartup: Awaited<ReturnType<typeof resolveDesktopInstallationStartup>>
   try {
+    if (initialRecoveryError) throw initialRecoveryError
     if (process.platform === 'win32') {
       const identity = {
         appData: app.getPath('appData'),
@@ -299,18 +336,19 @@ async function startDesktop(): Promise<void> {
         )
       }
     }
-    installationStartup = await resolveDesktopInstallationStartup({
-      installationRoot: installationRootForEntry(initialBackendPaths.entry),
-      allowedProcessIds: allowedInstallationProcessIds,
-      version: app.getVersion()
-    })
+    if (process.platform !== 'darwin' || !macUpdateStartupOptions)
+      installationStartup = await resolveDesktopInstallationStartup({
+        installationRoot: installationRootForEntry(initialBackendPaths.entry),
+        allowedProcessIds: allowedInstallationProcessIds,
+        version: app.getVersion()
+      })
   } catch (error) {
     if (!(error instanceof DesktopRuntimeStartupError)) throw error
     initialRecoveryError = error
   }
-  const completeVerifiedStartup = installationStartup?.completeAfterReady
-  const verifiedStartupOutcome = installationStartup?.outcome
-  let preservedStartupOptions = installationStartup?.startupOptions
+  let completeVerifiedStartup = installationStartup?.completeAfterReady
+  let verifiedStartupOutcome = installationStartup?.outcome
+  let preservedStartupOptions = installationStartup?.startupOptions ?? macUpdateStartupOptions
   let windowsUpdateAlreadyConfirmed = false
   let windowsUpdateStartup: ReturnType<typeof prepareWindowsUpdateStartup>
   if (process.platform === 'win32' && !initialRecoveryError) {
@@ -390,6 +428,69 @@ async function startDesktop(): Promise<void> {
       if (identity.backend === 'windows-dpapi') initializeNodeWindowsProfileKey(profilePath)
     } finally {
       bootstrapLease.release()
+    }
+  }
+  if (process.platform === 'darwin' && macUpdateStartupOptions && !initialRecoveryError) {
+    try {
+      if (process.platform === 'darwin' && macUpdateStartupOptions) {
+        try {
+          const { recoverMacUpdateHandoff } = await import('./update/mac-update-handoff')
+          const { resumeMacUpdateHandoff } = await import('./update/mac-update-resume')
+          macUpdateRecovery = await recoverMacUpdateHandoff(macUpdateLocation, {
+            runningVersion: app.getVersion()
+          })
+          if (macUpdateRecovery.state === 'resume') {
+            const { restartMacInstallationShutdown } =
+              await import('./update/installation-protection')
+            const { prepareMacRecoveryProcesses } =
+              await import('./update/mac-installation-processes')
+            const { UPDATE_CLOSE_BUDGET_MS } = await import('./update/shutdown')
+            const deadlineAt = Date.now() + UPDATE_CLOSE_BUDGET_MS
+            restartMacInstallationShutdown(
+              macUpdateLocation,
+              macUpdateRecovery.request.operationId,
+              deadlineAt
+            )
+            await prepareMacRecoveryProcesses(macUpdateLocation.installationRoot, {
+              excludedProcessIds: allowedInstallationProcessIds(),
+              deadlineAt
+            })
+            await app.whenReady()
+            await resumeMacUpdateHandoff(macUpdateRecovery)
+            return
+          }
+          if (macUpdateRecovery.state === 'busy')
+            throw new DesktopRuntimeStartupError(
+              {
+                reason: 'startup-recovery-required',
+                desktopVersion: app.getVersion(),
+                canStop: false,
+                canRecover: false,
+                diagnostics: 'Another process is completing this installation update.'
+              },
+              'The installation update is still in progress.'
+            )
+          if (macUpdateRecovery.state === 'ready') {
+            macUpdateRecovery.settleBeforeLaunch()
+            app.once('will-quit', macUpdateRecovery.dispose)
+          }
+        } catch (cause) {
+          if (macUpdateRecovery?.state === 'ready' || macUpdateRecovery?.state === 'resume')
+            macUpdateRecovery.dispose()
+          throw cause instanceof DesktopRuntimeStartupError ? cause : macStartupFailure(cause)
+        }
+      }
+      installationStartup = await resolveDesktopInstallationStartup({
+        ...macUpdateLocation,
+        allowedProcessIds: allowedInstallationProcessIds,
+        version: app.getVersion()
+      })
+      completeVerifiedStartup = installationStartup?.completeAfterReady
+      verifiedStartupOutcome = installationStartup?.outcome
+      preservedStartupOptions ??= installationStartup?.startupOptions
+    } catch (cause) {
+      initialRecoveryError =
+        cause instanceof DesktopRuntimeStartupError ? cause : macStartupFailure(cause)
     }
   }
   // Windows preparation is synchronous: bind the original profile/key before any writer wait
@@ -1584,7 +1685,7 @@ async function startDesktop(): Promise<void> {
     client: () => client!,
     currentVersion: app.getVersion(),
     allowedProcessIds: allowedInstallationProcessIds,
-    ...(process.platform === 'win32'
+    ...(process.platform === 'win32' || process.platform === 'darwin'
       ? {
           ownedRuntimeProcessIds: async (runtime): Promise<number[]> => {
             const pids = await runtime.invokeHost('desktop:update-owned-processes')
@@ -1603,17 +1704,24 @@ async function startDesktop(): Promise<void> {
         )
     },
     legacyInstall: isLegacyInstall,
-    installationOperation: process.platform === 'win32' ? nativeUpdateOperation : undefined,
+    installationOperation:
+      process.platform === 'win32' || process.platform === 'darwin'
+        ? nativeUpdateOperation
+        : undefined,
     closeOtherInstances:
-      process.platform === 'win32'
+      process.platform === 'win32' || process.platform === 'darwin'
         ? async (deadlineAt) => {
             nativeUpdateOperation()
-            const { closeWindowsInstallationProcesses } =
-              await import('./update/windows-installation-processes')
+            const closeInstallationProcesses =
+              process.platform === 'darwin'
+                ? (await import('./update/mac-installation-processes'))
+                    .closeMacInstallationProcesses
+                : (await import('./update/windows-installation-processes'))
+                    .closeWindowsInstallationProcesses
             const { UPDATE_FORCE_RESERVE_MS } = await import('./update/shutdown')
             // Preserve a normal-stop opportunity and native verification for this Runtime.
             const otherInstancesDeadline = deadlineAt - UPDATE_FORCE_RESERVE_MS - 500
-            const result = await closeWindowsInstallationProcesses(
+            const result = await closeInstallationProcesses(
               installationRootForEntry(backendPaths.entry),
               {
                 excludedProcessIds: [
@@ -1631,12 +1739,16 @@ async function startDesktop(): Promise<void> {
           }
         : undefined,
     forceStopRuntime:
-      process.platform === 'win32'
+      process.platform === 'win32' || process.platform === 'darwin'
         ? async (deadlineAt) => {
             nativeUpdateOperation()
-            const { closeWindowsInstallationProcesses } =
-              await import('./update/windows-installation-processes')
-            const result = await closeWindowsInstallationProcesses(
+            const closeInstallationProcesses =
+              process.platform === 'darwin'
+                ? (await import('./update/mac-installation-processes'))
+                    .closeMacInstallationProcesses
+                : (await import('./update/windows-installation-processes'))
+                    .closeWindowsInstallationProcesses
+            const result = await closeInstallationProcesses(
               installationRootForEntry(backendPaths.entry),
               { excludedProcessIds: allowedInstallationProcessIds(), timeoutMs: 0, deadlineAt }
             )
@@ -1825,7 +1937,7 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' || process.platform === 'darwin') {
     const { observeNativeInstallationUpdate } = await import('./update/native-update-observer')
     const { attemptUpdateShutdownStep, UPDATE_STOP_RESERVE_MS } = await import('./update/shutdown')
     const stopObserving = observeNativeInstallationUpdate({
@@ -1869,8 +1981,8 @@ async function startDesktop(): Promise<void> {
         )
         diagnostics.log.info('update observed instance close', {
           operationId,
-          save: save.outcome,
-          finalSave: finalSave.outcome,
+          save: save.outcome === 'completed' ? save.value : save.outcome,
+          finalSave: finalSave.outcome === 'completed' ? finalSave.value : finalSave.outcome,
           backend: gate.outcome,
           stop: stopped.outcome
         })
@@ -2133,6 +2245,9 @@ async function startDesktop(): Promise<void> {
   if (preservedStartupOptions && !windowsUpdateAlreadyConfirmed) {
     try {
       await verifyDesktopRecoveryReadiness(client, preservedStartupOptions)
+      if (process.platform === 'darwin' && verifiedStartupOutcome)
+        await waitForWindowsUpdateWindow(getMainWindow() ?? undefined, AbortSignal.timeout(30_000))
+      if (macUpdateRecovery?.state === 'ready') await macUpdateRecovery.completeAfterReady()
       await completeVerifiedStartup?.()
       // Stopping an older service is not an installation recovery; publish only a real outcome.
       if (verifiedStartupOutcome)
@@ -2159,6 +2274,12 @@ async function startDesktop(): Promise<void> {
         undefined,
         async () => {
           await verifyDesktopRecoveryReadiness(client!, preservedStartupOptions!, 60_000, true)
+          if (process.platform === 'darwin' && verifiedStartupOutcome)
+            await waitForWindowsUpdateWindow(
+              getMainWindow() ?? undefined,
+              AbortSignal.timeout(30_000)
+            )
+          if (macUpdateRecovery?.state === 'ready') await macUpdateRecovery.completeAfterReady()
           await completeVerifiedStartup?.()
           publishRuntimeStartup({ phase: 'ready' })
         }

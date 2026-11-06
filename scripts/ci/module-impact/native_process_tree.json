@@ -10,7 +10,9 @@
     "packages/process-tree-native/test/windows-process-identity.cjs",
     "packages/process-tree-native/test/windows-process-query.cjs",
     "src/main/windows-process-query.ts",
-    "src/main/windows-process-query.test.ts"
+    "src/main/windows-process-query.test.ts",
+    "packages/process-tree-native/src/darwin_installation_processes.cc",
+    "packages/process-tree-native/test/darwin-installation-processes.cjs"
   ],
   "interfacePaths": ["packages/process-tree-native/index.cjs", "src/main/windows-process-query.ts"],
   "consumerModules": [],
