@@ -212,13 +212,18 @@ const defaultController = (
     }
     if (platform === 'win32') {
       try {
-        if (!windowsProcessIsAlive(record.pid)) return 'dead'
+        if (!windowsProcessIsAlive(record.pid)) return 'unknown'
       } catch {
         // Fall back to the portable PID probe. An unreadable native query must not authorize
         // clearing or killing a receipt that may still refer to a live process.
       }
+      // A missing host PID does not prove that its descendant tree was reaped. Keep the receipt
+      // fenced until recovery has a process-tree proof rather than admitting a concurrent kernel.
     }
     const alive = pidIsAlive(record.pid)
+    if (platform === 'win32') {
+      if (!alive) return 'unknown'
+    }
     if (platform !== 'win32') {
       const groupAlive = isOwnedPosixProcessGroupAlive(record.pid)
       if (!groupAlive) return 'dead'
@@ -226,8 +231,6 @@ const defaultController = (
       // identity. A later group can reuse it during the same boot, so retain the fence rather than
       // authorizing a group signal from the number alone.
       if (!alive) return 'unknown'
-    } else if (!alive) {
-      return 'dead'
     }
 
     if (record.processStartToken !== undefined) {

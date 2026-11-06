@@ -445,9 +445,9 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
   })
 
-  it('drops a Windows receipt when the native process handle proves it exited', async () => {
+  it('keeps a Windows receipt fenced when only the native host process has exited', async () => {
     windowsProcessIsAlive.mockReturnValueOnce(false)
-    const kill = vi.spyOn(process, 'kill')
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
 
     await expect(
       defaultController('win32').probe({
@@ -462,7 +462,7 @@ describe('KernelProcessLifecycleOwner', () => {
         kernelEpochId: 'epoch-a',
         pid: 4242
       })
-    ).resolves.toBe('dead')
+    ).resolves.toBe('unknown')
 
     expect(kill).not.toHaveBeenCalled()
   })
