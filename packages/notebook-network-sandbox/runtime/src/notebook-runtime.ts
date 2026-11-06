@@ -289,6 +289,11 @@ const wrap = async (
 ): Promise<{
   argv: string[]
   env: NodeJS.ProcessEnv
+  processTreeProof?: Readonly<{
+    path: string
+    token: string
+    requestPath: string
+  }>
   confirmProcessTreeTermination?: () => Promise<boolean>
   requestProcessTreeTermination?: () => Promise<boolean>
   confirmProcessState?: () => Promise<SandboxProcessState>

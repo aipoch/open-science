@@ -294,6 +294,7 @@ class NotebookNetworkSandbox {
     return {
       argv: wrapped.argv,
       env: wrapped.env,
+      ...(wrapped.processTreeProof ? { processTreeProof: wrapped.processTreeProof } : {}),
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
