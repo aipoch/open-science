@@ -246,8 +246,7 @@ const MANAGE_ENVIRONMENTS_DOC = [
 ].join('\n')
 
 const LIST_NOTEBOOK_RUNTIMES_DOC = [
-  `List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status in pages of at most ${MAX_RUNTIME_RESULTS} using optional offset/limit and nextOffset. Disabled runtimes are omitted.`,
-  'No binding is required for the app-managed default; bind only to select another listed runtime.'
+  `List enabled managed/external Python/R runtimes and their runtimeId, source, version, runnable, and bound status in pages of at most ${MAX_RUNTIME_RESULTS} using optional offset/limit and nextOffset. Disabled runtimes are omitted.`
 ].join('\n')
 
 const BIND_RUNTIME_DOC = [
@@ -1569,10 +1568,11 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description: [
-      "artifactVersionInputs: this Run's provenance inputs (Version IDs). Use runId as producerRunId.",
-      'Use foreground when reasoning needs the result now; use background:true for longer independent work.',
-      'Save the returned runId; follow its dependency-point query guidance.',
-      'Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.'
+      'Uses the session binding, else the installed, enabled app-managed default. Multiple runtimes require explicit binding only without a usable default.',
+      "artifactVersionInputs: this Run's provenance inputs (Version IDs); producerRunId=runId.",
+      'Foreground for results needed now; background:true for longer independent work.',
+      'Save the returned runId; follow dependency-point query guidance.',
+      'Accepted background Runs survive Turn end/MCP disconnect; explicitly cancel with background_run.'
     ].join(' '),
     method: 'execute',
     inputSchema: executeToolSchema,
