@@ -247,6 +247,13 @@ const WorkspaceMarketFixture = (): React.JSX.Element => {
                 <ResizablePanel id="main-content" defaultSize="60%" minSize="30%">
                   <div className="h-full min-w-0 overflow-auto">
                     <pre>{'long_result_identifier_'.repeat(100)}</pre>
+                    {query.has('iframe') && (
+                      <iframe
+                        title="Resize cursor preview"
+                        className="h-72 w-full"
+                        srcDoc='<body style="cursor:crosshair">Preview frame</body>'
+                      />
+                    )}
                     <textarea
                       aria-label="Conversation draft"
                       defaultValue="Keep my draft"
