@@ -3314,10 +3314,9 @@ const useSessionPersistence = (): SessionPersistenceState => {
     setCanDeleteSessionsAndProjects(false)
     setLoadError(undefined)
     setLoadWarning(undefined)
-    setWriteError(undefined)
-    setWriteErrorRetryable(true)
-    sizeLimitTargets.current.clear()
-    setPersistenceBlockedSessionIds([])
+    // Rechecking the catalog is not evidence that an outstanding write succeeded. Keep its
+    // notice and Session write gates until a matching acknowledgement or authoritative
+    // reconciliation resolves them.
     setLoadAttempt((attempt) => attempt + 1)
   }, [isHydrated])
   const retryWrites = useCallback(() => {

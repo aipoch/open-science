@@ -1612,6 +1612,78 @@ describe('session persistence startup', () => {
     await expect(flushSessionPersistence()).resolves.toBeUndefined()
   })
 
+  it('keeps a failed write visible when reloading the saved catalog fails', async () => {
+    const original = createPersistedSession({ revision: 1, runtimeTranscriptOwner: 'main' })
+    loadAll.mockReset().mockResolvedValueOnce({ ...emptyLoadResult(), sessions: [original] })
+    saveSession.mockRejectedValueOnce(new Error('disk full'))
+    await act(async () => root.render(<Probe />))
+    await act(async () => useSessionStore.getState().renameSession(original.id, 'Unsaved title'))
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'could not save'
+    )
+    loadAll.mockRejectedValueOnce(new Error('catalog unavailable'))
+
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+    )
+
+    expect(container.querySelector('[data-testid="load-error"]')?.textContent).not.toBe(
+      'sessions available'
+    )
+    expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+      'could not save'
+    )
+    expect(container.querySelector('div')?.dataset.writeTargets).toBe('session:session-1')
+    await expect(flushSessionPersistence()).rejects.toThrow()
+  })
+
+  it.each(['save', 'external'] as const)(
+    'keeps %s size-limit failures blocked while rechecking the catalog',
+    async (source) => {
+      const original = createPersistedSession({
+        id: source === 'save' ? 'session-1' : 'session-plan',
+        revision: 1,
+        runtimeTranscriptOwner: 'main'
+      })
+      loadAll.mockReset().mockResolvedValueOnce({ ...emptyLoadResult(), sessions: [original] })
+      saveSession.mockRejectedValueOnce(
+        Object.assign(new Error('Session exceeds the persistence limit.'), {
+          code: 'session-size-limit'
+        })
+      )
+      await act(async () => root.render(<Probe />))
+      await act(async () => {
+        if (source === 'save')
+          useSessionStore.getState().renameSession(original.id, 'Unsaved title')
+        else
+          container
+            .querySelector<HTMLButtonElement>('[data-testid="report-plan-size-limit"]')!
+            .click()
+      })
+      let rejectReload!: (error: Error) => void
+      loadAll.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectReload = reject
+          })
+      )
+
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[data-testid="retry-load"]')!.click()
+      )
+
+      expect(container.querySelector('div')?.dataset.persistenceBlocked).toBe(original.id)
+      expect(container.querySelector('div')?.dataset.writeRetryable).toBe('false')
+      expect(container.querySelector('[data-testid="write-error"]')?.textContent).toContain(
+        'exceeded the 256 MiB storage limit'
+      )
+      await act(async () => rejectReload(new Error('catalog unavailable')))
+      expect(container.querySelector('div')?.dataset.persistenceBlocked).toBe(original.id)
+      expect(container.querySelector('div')?.dataset.writeRetryable).toBe('false')
+      if (source === 'save') await expect(flushSessionPersistence()).rejects.toThrow()
+    }
+  )
+
   it('settles an incomplete reconnect read while keeping storage recovery and write gates active', async () => {
     loadAll.mockReset().mockResolvedValue(emptyLoadResult())
     await act(async () => root.render(<Probe />))
