@@ -999,7 +999,7 @@ const registerDataContentApplicationCommands = (
         return videoExports.export(
           invocation.callerLease,
           invocation.args[0],
-          invocation.callerContext.lifecycleClientId
+          invocation.callerContext.clientId
         )
       },
       'research-video:start': (invocation) => {

@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { randomUUID } from 'node:crypto'
+import * as desktopInteraction from './desktop-interaction'
+import { currentDesktopCaller } from './desktop-native-contract'
+import { connectDesktopRuntime } from './desktop-runtime-client'
+import { startDesktopRuntimeTransport } from './desktop-runtime-transport'
 
 import {
   createApplicationCommandRouter,
@@ -91,6 +96,67 @@ const registeredCommands = (): Array<{ name: string }> => {
   for (const group of dataContentApplicationCommandGroups) commands.push(...group.commands)
   return commands
 }
+
+it('routes research video export to the connected desktop document save dialog', async () => {
+  const deps = createDependencies()
+  const content = Buffer.from('<meta name="open-science-research-video" content="1">')
+  deps.managedPreview.readRange.mockImplementation(async () => ({
+    begin: 0,
+    end: content.length,
+    total: content.length,
+    data: content
+  }))
+  const router = createApplicationCommandRouter()
+  registerDataContentApplicationCommands(router.registrar, {
+    ...deps.dependencies,
+    videoExportTools: {
+      available: async () => true,
+      snapshot: vi.fn(),
+      acquire: vi.fn()
+    }
+  })
+  const command = dataContentApplicationCommands.previewResearchVideoExport
+  const server = await startDesktopRuntimeTransport({
+    version: 'test',
+    events: new ApplicationEventHub(),
+    commands: {
+      commandNames: () => [command.name],
+      invoke: (_name, call) =>
+        router.dispatcher.invoke(command, { ...call, args: [{ resourceId: 'resource-1' }] })
+    }
+  })
+  const fileInteraction = vi.spyOn(desktopInteraction, 'desktopFileInteraction').mockReturnValue(
+    desktopInteraction.createRemoteDesktopFileInteraction((request, callerId) => {
+      const caller = currentDesktopCaller()
+      return server.requestNative(request, callerId ?? caller?.clientId, caller?.signal)
+    })
+  )
+  const onNativeRequest = vi.fn(async () => ({ canceled: true }))
+  const client = await connectDesktopRuntime({
+    endpoint: server.endpoint,
+    onNativeRequest,
+    onEvent: () => {},
+    onDisconnect: () => {}
+  })
+  try {
+    const documentId = randomUUID()
+    await expect(
+      client.invoke(documentId, command.name, [{ resourceId: 'resource-1' }])
+    ).resolves.toEqual({ canceled: true })
+    expect(onNativeRequest).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        clientId: documentId,
+        request: expect.objectContaining({ operation: 'save-dialog' })
+      }),
+      expect.any(AbortSignal)
+    )
+  } finally {
+    client.close()
+    await server.close()
+    router.dispose()
+    fileInteraction.mockRestore()
+  }
+})
 
 // The inferred spy surface is intentionally retained so each assertion keeps its exact Vitest type.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
