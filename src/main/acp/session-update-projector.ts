@@ -18,6 +18,7 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
+import { normalizeProviderSessionNotice } from './provider-session-notice'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
@@ -70,6 +71,7 @@ type AcpToolFailureDiagnostic = Readonly<{
 }>
 
 type AcpSessionUpdateProjectorOptions = Readonly<{
+  separateProviderNotices?: boolean
   registry: Pick<AcpSessionRegistry, 'lookup'>
   contextUsage: Pick<
     ContextUsageTracker,
@@ -237,13 +239,16 @@ class AcpSessionUpdateProjector {
     )
       return Object.freeze([])
 
+    const runtimeEvent = toAcpRuntimeEvent(
+      routed,
+      routing.eventId,
+      routing.timestamp,
+      routing.framework === 'claude-code'
+    )
     const projection = this.codexSkillActivity.projectWithContext(
-      toAcpRuntimeEvent(
-        routed,
-        routing.eventId,
-        routing.timestamp,
-        routing.framework === 'claude-code'
-      )
+      this.options.separateProviderNotices === true
+        ? normalizeProviderSessionNotice(routed, routing.framework, runtimeEvent)
+        : runtimeEvent
     )
     const originalEvent = projection.event
     const outputPrefix =
@@ -325,7 +330,7 @@ class AcpSessionUpdateProjector {
     if (event.contextUsage && routing.reconnectPending) return Object.freeze([])
 
     const effects: AcpSessionUpdateEffect[] = []
-    if (!routing.reconnectPending) {
+    if (!routing.reconnectPending && event.status !== 'provider-notice') {
       effects.push(
         deepFreeze({
           kind: 'context-observation' as const,

@@ -1,5 +1,6 @@
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   extractRestrictedInferenceUsage,
   RestrictedInferenceError,
@@ -18,10 +19,12 @@ import { AcpRuntime } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
 import type { AcpRuntimeOptions } from './runtime-contract'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
+import { extractProviderPromptFailure } from './provider-session-notice'
 
 const STALE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000
 const DEFAULT_OUTPUT_LIMIT_BYTES = 256 * 1024
 const PROVIDER_DEFAULT_MODEL = 'provider-default'
+const log = createLogger('restricted-inference')
 
 type RestrictedInferenceRuntime = Pick<
   AcpRuntime,
@@ -166,6 +169,16 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
     }
 
     const onEvent = (event: AcpRuntimeEvent): void => {
+      if (event.kind === 'system' && event.status === 'provider-notice') {
+        log[event.level === 'warning' ? 'warn' : event.level](
+          'Restricted inference provider notice',
+          {
+            code: 'provider-notice',
+            level: event.level
+          }
+        )
+        return
+      }
       if (event.kind === 'message' && event.role === 'assistant' && event.text) {
         assistantBytes += Buffer.byteLength(event.text, 'utf8')
         if (outputLimitBytes !== undefined && assistantBytes > outputLimitBytes) {
@@ -226,6 +239,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
 
       const runtimeOptions: AcpRuntimeOptions = {
         appVersion: this.options.appVersion,
+        separateProviderNotices: true,
         defaultCwd: cwd,
         resolveBackend: () => {
           backendTransferred = true
@@ -272,6 +286,14 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
         )
       }
       ensureActive()
+      // Only this prompt response owns the outcome; earlier session notices do not.
+      const failure = extractProviderPromptFailure(response._meta)
+      if (failure === 'invalid')
+        throw new RestrictedInferenceError(
+          'transport-unavailable',
+          'The provider returned an unsupported inference outcome.'
+        )
+      if (failure === 'error') throw new Error('The provider reported a failed inference.')
       if (toolLessBridgeScopeRegistered) {
         const observed = bridge!.unregisterToolLessSession!(sessionId)
         toolLessBridgeScopeRegistered = false

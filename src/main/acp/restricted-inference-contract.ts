@@ -25,6 +25,7 @@ export const extractRestrictedInferenceUsage = (error: unknown): AcpTurnTokenUsa
 }
 
 export type RestrictedInferenceResult = Readonly<{
+  // Model output excluding proven operational notices; unknown messages remain intact.
   text: string
   frameworkId: AgentFrameworkId
   model: string
