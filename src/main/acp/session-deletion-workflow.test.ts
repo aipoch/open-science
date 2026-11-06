@@ -45,6 +45,7 @@ const dependencies = (
   registry,
   withOperation: (work) => work(),
   currentConnection: () => connection,
+  currentGeneration: () => 1,
   supportsSessionDelete: () => capabilities.delete,
   supportsSessionClose: () => capabilities.close,
   permission: { cancelForSession: vi.fn(), clearSession: vi.fn() },
@@ -104,6 +105,7 @@ describe('AcpSessionDeletionWorkflow', () => {
         return work()
       },
       currentConnection: () => connection,
+      currentGeneration: () => 1,
       supportsSessionDelete: () => true,
       supportsSessionClose: () => true,
       permission: {
@@ -464,6 +466,38 @@ describe('AcpSessionDeletionWorkflow', () => {
     expect(retry.collision).toBeUndefined()
     retry.reservation?.release()
   })
+})
+
+describe('Session deletion connection ownership', () => {
+  it.each(['interaction cancellation', 'provider close'] as const)(
+    'preserves local ownership when the connection is superseded during %s',
+    async (phase) => {
+      const registry = new AcpSessionRegistry()
+      const dispose = vi.fn()
+      publishSession(registry, 'app-session', 'provider-session', dispose)
+      let generation = 1
+      const request = vi.fn(async () => {
+        generation += 1
+        return {}
+      })
+      const connection = { agent: { request, notify: vi.fn() } } as unknown as ClientConnection
+      const deps = dependencies(registry, connection, { delete: false, close: true })
+      const workflow = new AcpSessionDeletionWorkflow({
+        ...deps,
+        currentGeneration: () => generation,
+        elicitation: {
+          cancelForSession: () => {
+            if (phase === 'interaction cancellation') generation += 1
+          }
+        }
+      })
+      await expect(workflow.delete('app-session')).rejects.toThrow('connection was superseded')
+      expect(dispose).not.toHaveBeenCalled()
+      expect(registry.lookup('app-session')?.attachment?.providerSessionId).toBe('provider-session')
+      expect(deps.capabilities.revokeSession).not.toHaveBeenCalled()
+      expect(request).toHaveBeenCalledTimes(phase === 'provider close' ? 1 : 0)
+    }
+  )
 })
 
 describe('captured resume cleanup', () => {

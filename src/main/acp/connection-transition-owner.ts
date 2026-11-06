@@ -33,6 +33,7 @@ export class AcpConnectionTransitionOwner {
   private retirementIntent = false
   private retirementCompleted = false
   private retirementInFlight: Promise<void> | undefined
+  private readonly activeTeardowns = new Set<Promise<void>>()
   private plannedDisconnect: Promise<void> | undefined
   private barrierPromise: Promise<void> | undefined
   private resolveBarrier: (() => void) | undefined
@@ -52,6 +53,15 @@ export class AcpConnectionTransitionOwner {
 
   get barrier(): Promise<void> | undefined {
     return this.barrierPromise
+  }
+
+  get inFlight(): Promise<unknown> | undefined {
+    // Pending intents deliberately do not count as physical transitions.
+    return (
+      this.plannedDisconnect ??
+      this.retirementInFlight ??
+      (this.activeTeardowns.size ? Promise.all([...this.activeTeardowns]) : undefined)
+    )
   }
 
   get providerReconnectPending(): boolean {
@@ -139,9 +149,13 @@ export class AcpConnectionTransitionOwner {
   async settleTeardown<T>(teardown: () => Promise<T>): Promise<T> {
     this.cancelIdleReleaseTimer()
     const expectedBarrierGeneration = this.barrierGeneration
+    const completion = Promise.withResolvers<void>()
+    this.activeTeardowns.add(completion.promise)
     try {
       return await teardown()
     } finally {
+      this.activeTeardowns.delete(completion.promise)
+      completion.resolve()
       this.completeReconnect(expectedBarrierGeneration)
     }
   }
