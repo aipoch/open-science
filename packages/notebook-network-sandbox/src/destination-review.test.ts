@@ -56,6 +56,27 @@ it('accepts literal IPs and rejects malformed trusted service input', async () =
   })
 })
 
+it('reviews bracketed IPv6 and localhost without DNS validation', async () => {
+  await expect(
+    reviewPrivateDestination({ hostname: '[2001:0DB8::1]', port: 8080, protocol: 'http' })
+  ).resolves.toEqual({
+    ok: true,
+    destination: {
+      hostname: '2001:db8::1',
+      port: 8080,
+      protocol: 'http',
+      approvedAddresses: []
+    }
+  })
+  await expect(
+    reviewPrivateDestination({ hostname: 'localhost', port: 80, protocol: 'https' })
+  ).resolves.toMatchObject({
+    ok: true,
+    destination: { hostname: 'localhost', port: 80, protocol: 'https' }
+  })
+  expect(lookup).not.toHaveBeenCalled()
+})
+
 it('keeps mixed DNS answers as routing evidence for HTTPS domains', async () => {
   lookup.mockResolvedValue([
     { address: '127.0.0.1', family: 4 },

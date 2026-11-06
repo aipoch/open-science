@@ -503,11 +503,14 @@ describe('Notebook command gateway', () => {
     const echo = await listen((socket) => socket.pipe(socket))
     const reservation = await listen(() => undefined)
     await reservation.close()
-    const decisions: Array<{ host: string; port: number }> = []
+    const decisions: Array<{ host: string; port: number; protocol: 'http' | 'https' | undefined }> =
+      []
     const gateway = await CommandGateway.open({
-      decide: async (host, port) => {
-        decisions.push({ host, port })
-        return { allowed: true, address: '127.0.0.1' }
+      decide: async (host, port, _purpose, _canResume, protocol) => {
+        decisions.push({ host, port, protocol })
+        return protocol === 'http'
+          ? { allowed: true, address: '127.0.0.1' }
+          : { allowed: false, source: 'unknown' }
       },
       credentials,
       sharedPort: reservation.port
@@ -547,7 +550,10 @@ describe('Notebook command gateway', () => {
     gateway.resetConnections()
     await closed
 
-    expect(decisions).toEqual([{ host: 'localhost', port: echo.port }])
+    expect(decisions).toEqual([
+      { host: 'localhost', port: echo.port, protocol: 'https' },
+      { host: 'localhost', port: echo.port, protocol: 'http' }
+    ])
   })
 
   it('rejects plaintext bytes inside an HTTPS CONNECT tunnel', async () => {
@@ -569,6 +575,34 @@ describe('Notebook command gateway', () => {
     const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()))
     socket.write('GET / HTTP/1.1\r\nHost: example.invalid\r\n\r\n')
     await closed
+  })
+
+  it('uses the trusted HTTP protocol on a non-80 CONNECT destination', async () => {
+    const payload = Buffer.from('GET / HTTP/1.1\r\nHost: example.invalid\r\n\r\n')
+    const echo = await listen((socket) => socket.pipe(socket))
+    const protocols: Array<'http' | 'https' | undefined> = []
+    const gateway = await CommandGateway.open({
+      decide: async (_host, _port, _purpose, _canResume, protocol) => {
+        protocols.push(protocol)
+        return protocol === 'http'
+          ? { allowed: true, address: '127.0.0.1' }
+          : { allowed: false, source: 'unknown' }
+      },
+      credentials
+    })
+    closeTasks.push(() => gateway.close())
+    const socket = connect({ host: '127.0.0.1', port: gateway.port })
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve)
+      socket.once('error', reject)
+    })
+    socket.write(
+      `CONNECT example.invalid:${echo.port} HTTP/1.1\r\nHost: example.invalid:${echo.port}\r\nProxy-Authorization: ${authorization}\r\n\r\n`
+    )
+    await expect(readHttpHeader(socket)).resolves.toContain('200 Connection Established')
+    socket.write(payload)
+    await expect(readBytes(socket, payload.length)).resolves.toEqual(payload)
+    expect(protocols).toEqual(['https', 'http'])
   })
 
   it('connects to the address approved by policy instead of resolving the hostname again', async () => {

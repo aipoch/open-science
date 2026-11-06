@@ -82,6 +82,28 @@ describe('Notebook destination policy', () => {
     })
   })
 
+  it.each([
+    ['http', 8080],
+    ['https', 80]
+  ] as const)(
+    'matches a trusted %s rule on port %s without port-based protocol assumptions',
+    async (protocol, port) => {
+      const policy = new DestinationPolicy({
+        allowedDomains: [],
+        deniedDomains: [],
+        trustedPrivateDestinations: [
+          { hostname: 'service.example', port, protocol, approvedAddresses: [] }
+        ]
+      })
+      await expect(policy.inspect('service.example', port, protocol)).resolves.toMatchObject({
+        kind: 'allow'
+      })
+      await expect(
+        policy.inspect('service.example', port, protocol === 'http' ? 'https' : 'http')
+      ).resolves.not.toMatchObject({ kind: 'allow' })
+    }
+  )
+
   it('does not use current DNS addresses as a trusted rule condition', async () => {
     const policy = new DestinationPolicy({
       allowedDomains: [],

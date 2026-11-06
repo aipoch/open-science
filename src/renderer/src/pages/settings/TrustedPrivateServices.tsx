@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
-import type { TrustedPrivateDestination } from '../../../../shared/notebook-network-settings'
+import {
+  formatNetworkHostname,
+  type TrustedPrivateDestination
+} from '../../../../shared/notebook-network-settings'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -93,9 +96,7 @@ export function TrustedPrivateServices({
             ? t('Could not resolve this hostname. Check your network or VPN and try again.')
             : result.reason === 'invalid'
               ? t('Enter an exact hostname and a port from 1 to 65535.')
-              : t(
-                  'Only private service addresses are supported. Localhost, this computer, and reserved addresses remain blocked.'
-                )
+              : t('Only exact private service hostnames and ports are supported.')
         )
     } catch {
       if (current === generation.current) setError(t('Could not review the service. Try again.'))
@@ -133,18 +134,21 @@ export function TrustedPrivateServices({
         <ul className="mt-3 divide-y divide-border">
           {rules.map((rule) => (
             <li
-              key={`${rule.protocol ?? 'https'}:${rule.hostname}:${rule.port}:${rule.managedGrantId ?? 'manual'}`}
+              key={`${rule.protocol ?? 'https'}://${formatNetworkHostname(rule.hostname)}:${rule.port}:${rule.managedGrantId ?? 'manual'}`}
               className="flex items-start justify-between gap-3 py-3"
             >
               <div className="min-w-0 text-sm">
                 <code className="break-all">
-                  {(rule.protocol ?? 'https').toUpperCase()}://{rule.hostname}:{rule.port}
+                  {(rule.protocol ?? 'https').toUpperCase()}://
+                  {formatNetworkHostname(rule.hostname)}:{rule.port}
                 </code>
-                <p className="mt-1 break-all text-xs text-muted-foreground">
-                  {t('Approved addresses: {{addresses}}', {
-                    addresses: rule.approvedAddresses.join(', ')
-                  })}
-                </p>
+                {rule.approvedAddresses.length ? (
+                  <p className="mt-1 break-all text-xs text-muted-foreground">
+                    {t('Approved addresses: {{addresses}}', {
+                      addresses: rule.approvedAddresses.join(', ')
+                    })}
+                  </p>
+                ) : null}
                 {rule.managedGrantId ? (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {t('Managed by the trusted backend.')}
@@ -250,8 +254,8 @@ export function TrustedPrivateServices({
             <div className="space-y-2 text-sm" role="status">
               <p className="font-medium">{t('Review private access')}</p>
               <code className="block break-all">
-                {(reviewed.protocol ?? protocol).toUpperCase()}://{reviewed.hostname}:
-                {reviewed.port}
+                {(reviewed.protocol ?? protocol).toUpperCase()}://
+                {formatNetworkHostname(reviewed.hostname)}:{reviewed.port}
               </code>
               {reviewed.approvedAddresses.length ? (
                 <p className="break-all text-xs text-muted-foreground">

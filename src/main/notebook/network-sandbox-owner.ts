@@ -32,9 +32,13 @@ import {
 import { probeWindowsRuntimeComponent } from './windows-runtime-probe'
 import type { ShellRuntimeBinding } from '../../shared/notebook'
 
-import { type NotebookNetworkSettings } from '../../shared/notebook-network-settings'
+import {
+  formatNetworkHostname,
+  type NotebookNetworkSettings
+} from '../../shared/notebook-network-settings'
 import {
   buildNotebookNetworkPolicy,
+  normalizeNetworkHostname,
   notebookNetworkSettingsAllowDomain,
   normalizeNotebookNetworkSettings,
   validateCustomAllowedDomain,
@@ -203,7 +207,7 @@ const commandGrantKey = (
 ): string => `${executionGrantKey(sessionId, runtime)}\0${commandText}`
 
 const blockedDestinationKey = (sessionId: string, hostname: string): string =>
-  `${sessionId}\0${hostname}`
+  `${sessionId}\0${formatNetworkHostname(hostname)}`
 
 type NotebookNetworkSandboxOwnerOptions = Readonly<{
   configRoot?: string
@@ -691,7 +695,8 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (request.addresses) {
             if (!executionActive || !activeExecutionId || request.signal.aborted) return false
             // This snapshot is emitted by the trusted gateway, never parsed from process output.
-            const hostname = request.host
+            const hostname = normalizeNetworkHostname(request.host)
+            if (!hostname) return false
             const port = request.port ?? 443
             const protocol = request.protocol ?? 'https'
             const addresses = [...request.addresses]
@@ -736,10 +741,15 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
               !exactTarget
             )
               return true
-            const destinationKey = JSON.stringify([hostname, port, protocol])
+            const destinationKey = JSON.stringify([formatNetworkHostname(hostname), port, protocol])
             const once = exactExecutionGrants.get(destinationKey)
             if (once) return true
-            const key = JSON.stringify([executionGeneration, hostname, port, protocol])
+            const key = JSON.stringify([
+              executionGeneration,
+              formatNetworkHostname(hostname),
+              port,
+              protocol
+            ])
             const previous = decisions.get(key)
             if (previous) return previous
             if (request.purpose === 'probe') return false
@@ -835,8 +845,9 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
           if (!normalized.ok) return false
           const hostname = normalized.hostname
           const port = request.port ?? 443
+          const protocol = request.protocol ?? 'https'
           const generation = executionGeneration
-          const key = `${generation}:${hostname}:${port}`
+          const key = `${generation}:${protocol}://${formatNetworkHostname(hostname)}:${port}`
           const existing = decisions.get(key)
           if (request.purpose === 'probe' && !existing) return false
           const existingConnections = connections.get(key) ?? new Set<() => boolean>()
@@ -1276,7 +1287,10 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
         }
       )
     }
-    const normalized = validateCustomAllowedDomain(request.hostname)
+    const networkHostname = normalizeNetworkHostname(request.hostname)
+    const normalized = networkHostname
+      ? { ok: true as const, hostname: networkHostname }
+      : validateCustomAllowedDomain(request.hostname)
     if (!normalized.ok) {
       return this.networkAccessResult(request.hostname, 'blocked', request.runtime, {
         validationReason: normalized.reason
@@ -1292,6 +1306,18 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       this.settings ?? (await this.options.getSettings())
     )
     this.settings = settings
+    const port = request.port ?? 443
+    const protocol = request.protocol ?? 'https'
+    if (
+      settings.trustedPrivateDestinations?.some(
+        (grant) =>
+          grant.hostname === normalized.hostname &&
+          grant.port === port &&
+          (grant.protocol ?? 'https') === protocol
+      )
+    ) {
+      return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime)
+    }
     if (notebookNetworkSettingsAllowDomain(settings, normalized.hostname)) {
       return this.networkAccessResult(normalized.hostname, 'alreadyAllowed', request.runtime, {
         message:

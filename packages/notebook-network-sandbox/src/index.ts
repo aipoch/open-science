@@ -566,6 +566,8 @@ export type {
 } from './types.js'
 
 export {
+  formatNetworkHostname,
+  normalizeRequestedHost,
   reviewPrivateDestination,
   validPrivateDestination
 } from '../runtime/src/gateway/address-policy.js'

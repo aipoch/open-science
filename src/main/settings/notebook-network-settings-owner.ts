@@ -4,8 +4,7 @@ import { reviewPrivateDestination, validPrivateDestination } from '@aipoch/noteb
 import {
   type PrivateDestinationRequest,
   type PrivateDestinationReview,
-  type NotebookNetworkSettings,
-  type TrustedPrivateDestination
+  type NotebookNetworkSettings
 } from '../../shared/notebook-network-settings'
 import {
   normalizeNotebookNetworkSettings,

@@ -250,6 +250,11 @@ describe('durable sandbox destination approvals', () => {
     const request = await f.pending()
     const context = f.session.runtimeContext!
     const approval = context.networkApprovals![0]
+    const restoredHttp = sanitizeSessionRuntimeContext({
+      ...context,
+      networkApprovals: [{ ...approval, protocol: 'http' }]
+    })
+    expect(restoredHttp?.networkApprovals?.[0].protocol).toBe('http')
     const clean = sanitizeSessionRuntimeContext({
       ...context,
       networkApprovals: [
@@ -829,6 +834,29 @@ describe('durable sandbox destination approvals', () => {
     ])
     expect(f.session.status).toBe('waiting-permission')
     await f.broker.respond({ requestId: b.requestId, optionId: 'allow-once' })
+    await second
+  })
+
+  it('keeps concurrent approvals separate when only the protocol differs', async () => {
+    const f = fixture()
+    const first = f.owner.request(
+      { ...f.input, networkApproval: { ...f.input.networkApproval!, protocol: 'https' } },
+      'prompt-fixture',
+      f.send
+    )
+    await f.pending()
+    const second = f.owner.request(
+      { ...f.input, networkApproval: { ...f.input.networkApproval!, protocol: 'http' } },
+      'prompt-fixture',
+      f.send
+    )
+    await vi.waitFor(() => expect(f.broker.getPendingRequests()).toHaveLength(2))
+    const [httpsRequest, httpRequest] = f.broker.getPendingRequests()
+    await f.broker.respond({ requestId: httpsRequest.requestId, optionId: 'deny' })
+    await expect(first).resolves.toBe('deny')
+    expect(f.session.runtimeContext?.networkApprovals).toHaveLength(1)
+    expect(f.session.runtimeContext?.networkApprovals?.[0].protocol).toBe('http')
+    await f.broker.respond({ requestId: httpRequest.requestId, optionId: 'allow-once' })
     await second
   })
 

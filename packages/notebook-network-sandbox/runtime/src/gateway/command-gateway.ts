@@ -1,4 +1,5 @@
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_UPSTREAM_FAILED } from './recovery-context.js'
+import { normalizeRequestedHost } from './address-policy.js'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { connect as connectTcp, createServer as createTcpServer, isIP, type Socket } from 'node:net'
@@ -592,7 +593,9 @@ const parseAuthority = (
   const url = new URL(`https://${authority}`)
   if (url.username || url.password || url.pathname !== '/' || url.search || url.hash)
     throw new Error('Malformed authority')
-  return { host: url.hostname, port: Number(url.port || fallbackPort) }
+  const host = normalizeRequestedHost(url.hostname)
+  if (!host) throw new Error('Malformed authority')
+  return { host, port: Number(url.port || fallbackPort) }
 }
 
 const LOCAL_RPC_BROKER_HOST = 'open-science-notebook-rpc.invalid'
@@ -860,6 +863,41 @@ class CommandGateway {
     }
   }
 
+  async #authorizeTunnel(
+    host: string,
+    port: number,
+    generation: number,
+    purpose: 'probe' | 'block',
+    connectionAlive: () => boolean
+  ): Promise<{ decision: GatewayDecision; protocol: 'http' | 'https' }> {
+    // CONNECT and SOCKS carry an authority, not a URL scheme. Try the conventional HTTPS
+    // interpretation first, then the explicit HTTP exception. The policy still matches the
+    // complete protocol/host/port tuple; port 80 is no longer the source of truth.
+    const preferred: 'http' | 'https' = 'https'
+    const first = await this.#authorize(host, port, generation, purpose, connectionAlive, preferred)
+    if (first.allowed) return { decision: first, protocol: preferred }
+    // CONNECT to the canonical TLS port has an unambiguous transport. Avoid a second policy
+    // evaluation so an inspection probe remains one request and cannot create duplicate prompts.
+    if (port === 443) return { decision: first, protocol: preferred }
+    // An explicit ask is already the user's decision for this attempt. Retrying the same
+    // blocked request with the other protocol would create a second approval prompt and could
+    // cross the protocol boundary that the user just denied.
+    if (purpose === 'block' && first.source === 'explicit') {
+      return { decision: first, protocol: preferred }
+    }
+    const alternate: 'http' | 'https' = preferred === 'https' ? 'http' : 'https'
+    const second = await this.#authorize(
+      host,
+      port,
+      generation,
+      purpose,
+      connectionAlive,
+      alternate
+    )
+    if (second.allowed) return { decision: second, protocol: alternate }
+    return { decision: first, protocol: preferred }
+  }
+
   #authenticated(header: string | string[] | undefined): boolean {
     if (!this.#active) return false
     if (typeof header !== 'string' || !header.startsWith('Basic ')) return false
@@ -1034,17 +1072,17 @@ class CommandGateway {
     destination.host = isIP(destination.host)
       ? destination.host
       : domainToASCII(destination.host.replace(/\.$/, '').toLowerCase())
-    let decision = await this.#authorize(
+    let tunnel = await this.#authorizeTunnel(
       destination.host,
       destination.port,
       generation,
       'probe',
-      () => !client.destroyed,
-      destination.port === 80 ? 'http' : 'https'
+      () => !client.destroyed
     )
     if (
-      !decision.allowed &&
-      decision.source === 'unknown' &&
+      !tunnel.decision.allowed &&
+      tunnel.decision.source === 'unknown' &&
+      tunnel.protocol === 'https' &&
       destination.port === 443 &&
       !isIP(destination.host) &&
       this.#options.inspection
@@ -1052,17 +1090,16 @@ class CommandGateway {
       await this.#inspectConnect(destination.host, client, head, generation)
       return
     }
-    if (!decision.allowed) {
-      decision = await this.#authorize(
+    if (!tunnel.decision.allowed) {
+      tunnel = await this.#authorizeTunnel(
         destination.host,
         destination.port,
         generation,
         'block',
-        () => !client.destroyed,
-        destination.port === 80 ? 'http' : 'https'
+        () => !client.destroyed
       )
-      if (!decision.allowed) {
-        rejectSocket(client, decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
+      if (!tunnel.decision.allowed) {
+        rejectSocket(client, tunnel.decision.message ?? 'OPEN_SCIENCE_NETWORK_POLICY_BLOCKED')
         return
       }
     }
@@ -1070,7 +1107,7 @@ class CommandGateway {
       const upstream = await destinationSocket(
         this.#parent,
         destination.host,
-        decision.address,
+        tunnel.decision.address,
         destination.port
       )
       if (!this.#active || generation !== this.#connectionGeneration) {
@@ -1083,7 +1120,7 @@ class CommandGateway {
         return
       }
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
-      if (destination.port === 80) {
+      if (tunnel.protocol === 'http') {
         if (head.length) upstream.write(head)
         client.pipe(upstream).pipe(client)
       } else bridgeTlsTunnel(client, upstream, head)
@@ -1494,19 +1531,18 @@ class CommandGateway {
       throw new Error('Unsupported SOCKS address type.')
     }
     const port = (await reader.receive(2)).readUInt16BE(0)
-    const decision = await this.#authorize(
+    const tunnel = await this.#authorizeTunnel(
       host,
       port,
       generation,
       'block',
-      () => !client.destroyed,
-      port === 80 ? 'http' : 'https'
+      () => !client.destroyed
     )
-    if (!decision.allowed) {
+    if (!tunnel.decision.allowed) {
       client.end(Buffer.from([5, 2, 0, 1, 0, 0, 0, 0, 0, 0]))
       return
     }
-    const upstream = await destinationSocket(this.#parent, host, decision.address, port)
+    const upstream = await destinationSocket(this.#parent, host, tunnel.decision.address, port)
     if (!this.#active || generation !== this.#connectionGeneration) {
       upstream.destroy()
       client.destroy()
@@ -1518,7 +1554,7 @@ class CommandGateway {
     }
     client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]))
     const buffered = reader.remainder()
-    if (port === 80) {
+    if (tunnel.protocol === 'http') {
       if (buffered.length) upstream.write(buffered)
       client.pipe(upstream).pipe(client)
     } else bridgeTlsTunnel(client, upstream, buffered)

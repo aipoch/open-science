@@ -1550,7 +1550,7 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(requestDecision).not.toHaveBeenCalled()
     await expect(
       owner.requestNetworkAccess({ ...request, hostname: 'localhost' })
-    ).resolves.toMatchObject({ status: 'blocked' })
+    ).resolves.toMatchObject({ status: 'alreadyAllowed' })
     await expect(
       owner.requestNetworkAccess({ ...request, signal: AbortSignal.abort() })
     ).resolves.toMatchObject({ status: 'denied', decisionSource: 'aborted' })

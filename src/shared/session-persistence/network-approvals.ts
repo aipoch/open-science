@@ -1,5 +1,6 @@
 import type { SandboxNetworkApproval } from '../sandbox-network-approval'
 import { isRecord } from './primitives'
+import { normalizeNetworkHostname } from '../notebook-network-settings'
 
 export const sanitizeSandboxNetworkApprovals = (
   value: unknown
@@ -37,14 +38,11 @@ export const sanitizeSandboxNetworkApprovals = (
       !/^[a-f0-9]{64}$/.test(entry.commandFingerprint)
     )
       return undefined
-    if (
-      typeof entry.hostname !== 'string' ||
-      entry.hostname.length > 253 ||
-      (!entry.evidence &&
-        !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(
-          entry.hostname
-        ))
-    )
+    const hostname =
+      typeof entry.hostname === 'string' ? normalizeNetworkHostname(entry.hostname) : undefined
+    if (!hostname || (!entry.evidence && !hostname.includes('.') && hostname !== 'localhost'))
+      return undefined
+    if (entry.protocol !== undefined && entry.protocol !== 'http' && entry.protocol !== 'https')
       return undefined
     if (
       !['bash', 'python', 'r', 'repl'].includes(String(entry.runtime)) ||
@@ -106,8 +104,9 @@ export const sanitizeSandboxNetworkApprovals = (
       sessionId: entry.sessionId as string,
       executionId: entry.executionId as string,
       commandFingerprint: entry.commandFingerprint,
-      hostname: entry.hostname,
+      hostname,
       port: entry.port as number,
+      ...(entry.protocol !== undefined ? { protocol: entry.protocol } : {}),
       runtime: entry.runtime as SandboxNetworkApproval['runtime'],
       originatingPromptMessageId: entry.originatingPromptMessageId as string,
       agentFrameId: entry.agentFrameId as string,

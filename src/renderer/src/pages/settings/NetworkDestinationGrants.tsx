@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { formatNetworkHostname } from '../../../../shared/notebook-network-settings'
 
 export const NetworkDestinationGrants = (): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -27,7 +28,8 @@ export const NetworkDestinationGrants = (): React.JSX.Element | null => {
         >
           <div className="min-w-0 space-y-1 break-words">
             <p className="font-medium">
-              {grant.hostname}:{grant.port}
+              {(grant.protocol ?? 'https').toUpperCase()}://{formatNetworkHostname(grant.hostname)}:
+              {grant.port}
             </p>
             <p>
               {grant.scope === 'global'
@@ -41,15 +43,17 @@ export const NetworkDestinationGrants = (): React.JSX.Element | null => {
             {grant.scope === 'global' ? (
               <p className="text-muted-foreground">
                 {t(
-                  'Protected Notebook and Shell code can send data to this service across all projects. Address changes require another review.'
+                  'Protected Notebook and Shell code can send data to this service across all projects.'
                 )}
               </p>
             ) : null}
-            <p>
-              {t('Resolved addresses: {{addresses}}', {
-                addresses: grant.approvedAddresses.join(', ')
-              })}
-            </p>
+            {grant.approvedAddresses.length ? (
+              <p>
+                {t('Approved addresses: {{addresses}}', {
+                  addresses: grant.approvedAddresses.join(', ')
+                })}
+              </p>
+            ) : null}
             <p>{t('Source session: {{session}}', { session: grant.sessionId })}</p>
           </div>
           <Button

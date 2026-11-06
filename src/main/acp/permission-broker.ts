@@ -76,6 +76,7 @@ type AppPermissionRequest = Readonly<{
     commandFingerprint: string
     hostname: string
     port: number
+    protocol?: 'http' | 'https'
     runtime: 'bash' | 'python' | 'r' | 'repl'
     evidence?: import('../../shared/network-destination-grants').NetworkBlockEvidence
   }>

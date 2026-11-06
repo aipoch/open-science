@@ -82,7 +82,9 @@ const ruleAccepts = (rule: Rule, host: string, port: number): boolean => {
 
 const normalizeRequestedHost = (input: string): string | undefined => {
   const unwrapped = input.startsWith('[') && input.endsWith(']') ? input.slice(1, -1) : input
-  if (isIP(unwrapped)) return unwrapped.toLowerCase()
+  if (isIP(unwrapped) === 4) return unwrapped
+  if (isIP(unwrapped) === 6)
+    return new URL(`http://[${unwrapped}]/`).hostname.slice(1, -1).toLowerCase()
   const ascii = domainToASCII(unwrapped.trim().replace(/\.$/, '').toLowerCase())
   if (!ascii || ascii.length > 253) return undefined
   const labels = ascii.split('.')
@@ -95,6 +97,9 @@ const normalizeRequestedHost = (input: string): string | undefined => {
   return ascii
 }
 
+const formatNetworkHostname = (hostname: string): string =>
+  hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
+
 const canonicalAddress = (address: string): string => {
   const unscoped = address.split('%', 1)[0]!
   return isIP(unscoped) === 6 ? new URL(`http://[${unscoped}]/`).hostname.slice(1, -1) : unscoped
@@ -104,7 +109,7 @@ const validPrivateService = (value: { hostname: string; port: number }): boolean
   Boolean(
     value &&
     typeof value.hostname === 'string' &&
-    normalizeRequestedHost(value.hostname) === value.hostname &&
+    normalizeRequestedHost(value.hostname) !== undefined &&
     Number.isInteger(value.port) &&
     value.port >= 1 &&
     value.port <= 65535
@@ -125,7 +130,7 @@ const reviewPrivateDestination = async (request: {
   | { ok: false; reason: 'invalid' | 'ineligible' | 'dns' }
 > => {
   if (!request || typeof request.hostname !== 'string') return { ok: false, reason: 'invalid' }
-  if (/[\s/\\:@?#%]/.test(request.hostname.trim())) return { ok: false, reason: 'invalid' }
+  if (/[\s/\\@?#%]/.test(request.hostname.trim())) return { ok: false, reason: 'invalid' }
   const hostname = normalizeRequestedHost(request.hostname)
   if (!hostname || !validPrivateService({ hostname, port: request.port }))
     return { ok: false, reason: 'invalid' }
@@ -150,7 +155,11 @@ class DestinationPolicy {
   constructor(options: DestinationPolicyOptions) {
     this.#trusted = (options.trustedPrivateDestinations ?? [])
       .filter(validPrivateDestination)
-      .map((entry) => ({ ...entry, protocol: entry.protocol ?? 'https' }))
+      .map((entry) => ({
+        ...entry,
+        hostname: normalizeRequestedHost(entry.hostname)!,
+        protocol: entry.protocol ?? 'https'
+      }))
     this.#allowed = options.allowedDomains.map(parseRule)
     this.#asked = (options.askDomains ?? []).map(parseRule)
     this.#denied = options.deniedDomains.map((raw) => ({ raw, rule: parseRule(raw) }))
@@ -218,5 +227,11 @@ class DestinationPolicy {
   }
 }
 
-export { DestinationPolicy, reviewPrivateDestination, validPrivateDestination }
+export {
+  DestinationPolicy,
+  formatNetworkHostname,
+  normalizeRequestedHost,
+  reviewPrivateDestination,
+  validPrivateDestination
+}
 export type { DestinationPolicyOptions, DestinationVerdict }

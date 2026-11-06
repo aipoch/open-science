@@ -40,7 +40,7 @@ export const sandboxNetworkApprovalRequest = (
   rawInput: {
     notebookNetworkApproval: {
       hostname: approval.hostname,
-      protocol: approval.protocol ?? 'https',
+      ...(approval.protocol ? { protocol: approval.protocol } : {}),
       ...(approval.evidence ? { ...approval.evidence } : {}),
       port: approval.port,
       runtime: approval.runtime,

@@ -1,3 +1,5 @@
+import { normalizeNetworkHostname } from './notebook-network-settings'
+
 export type NetworkDestination = Readonly<{
   hostname: string
   port: number
@@ -33,10 +35,12 @@ export const destinationGrantAllows = (
   protocol: 'http' | 'https' = 'https'
 ): boolean => {
   void addresses
+  const normalizedHostname = normalizeNetworkHostname(hostname)
   return (
     grant.revokedAt === undefined &&
     (grant.scope === 'global' || grant.projectId === projectId) &&
-    grant.hostname === hostname &&
+    normalizedHostname !== undefined &&
+    grant.hostname === normalizedHostname &&
     grant.port === port &&
     (grant.protocol ?? 'https') === protocol
   )
@@ -57,6 +61,8 @@ export const normalizeNetworkDestinationGrants = (value: unknown): NetworkDestin
         (!Number.isSafeInteger(entry.revokedAt) || entry.revokedAt < 0)) ||
       !['project', 'global'].includes(entry.scope) ||
       (entry.protocol !== undefined && entry.protocol !== 'http' && entry.protocol !== 'https') ||
+      typeof entry.hostname !== 'string' ||
+      normalizeNetworkHostname(entry.hostname) === undefined ||
       !Number.isInteger(entry.port) ||
       entry.port < 1 ||
       entry.port > 65535 ||
@@ -75,7 +81,7 @@ export const normalizeNetworkDestinationGrants = (value: unknown): NetworkDestin
     result.push({
       ...(entry.revokedAt !== undefined ? { revokedAt: entry.revokedAt } : {}),
       id: entry.id,
-      hostname: entry.hostname,
+      hostname: normalizeNetworkHostname(entry.hostname)!,
       port: entry.port,
       approvedAddresses: [...new Set<string>(entry.approvedAddresses)].sort(),
       ...(entry.protocol === 'http' || entry.protocol === 'https'

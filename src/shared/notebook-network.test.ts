@@ -278,6 +278,27 @@ describe('custom public domain input', () => {
     ).toMatchObject([{ hostname: '127.0.0.1', protocol: 'http' }])
   })
 
+  it('normalizes IPv4, IPv6 and localhost trusted service keys consistently', () => {
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [
+          { hostname: '[2001:0DB8::1]', port: 8080, protocol: 'http', approvedAddresses: [] },
+          { hostname: 'localhost', port: 80, protocol: 'https', approvedAddresses: [] }
+        ]
+      }).trustedPrivateDestinations
+    ).toEqual([
+      { hostname: '2001:db8::1', port: 8080, protocol: 'http', approvedAddresses: [] },
+      { hostname: 'localhost', port: 80, protocol: 'https', approvedAddresses: [] }
+    ])
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [
+          { hostname: '[2001:db8::1]:8080', port: 8080, protocol: 'https', approvedAddresses: [] }
+        ]
+      }).trustedPrivateDestinations
+    ).toEqual([])
+  })
+
   it('does not classify a private DNS answer as a policy violation', async () => {
     lookup.mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }])
     const settings = normalizeNotebookNetworkSettings({ allowedDomains: ['*.example.com'] })

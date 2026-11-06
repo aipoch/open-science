@@ -2,12 +2,15 @@ import { normalizeNetworkDestinationGrants } from './network-destination-grants'
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
+  formatNetworkHostname,
+  normalizeNetworkHostname,
   type OpenScienceDomainGroupId,
   type OpenScienceDomainGroup,
   type TrustedPrivateDestination,
   type NotebookNetworkSettings,
   type NotebookNetworkPolicy
 } from './notebook-network-settings'
+export { formatNetworkHostname, normalizeNetworkHostname } from './notebook-network-settings'
 export { OPEN_SCIENCE_DOMAIN_GROUP_IDS } from './notebook-network-settings'
 export type {
   OpenScienceDomainGroupId,
@@ -397,7 +400,8 @@ export const normalizeTrustedPrivateDestinations = (
   for (const item of value) {
     if (!item || typeof item !== 'object') continue
     const { hostname, port, protocol, approvedAddresses, managedGrantId, source } = item
-    const host = typeof hostname === 'string' ? normalizeNetworkHost(hostname) : undefined
+    const hostValue = typeof hostname === 'string' ? normalizeNetworkHostname(hostname) : undefined
+    const host = hostValue ? { ok: true as const, hostname: hostValue } : undefined
     const hasManagedId = typeof managedGrantId === 'string' && managedGrantId.length > 0
     const hasManagedSource = source === 'global-destination-grant'
     if (
@@ -412,7 +416,7 @@ export const normalizeTrustedPrivateDestinations = (
       (managedGrantId !== undefined && !hasManagedId)
     )
       continue
-    const key = `${host.hostname}:${port}:${protocol ?? 'https'}:${hasManagedId ? managedGrantId : 'manual'}`
+    const key = `${protocol ?? 'https'}://${formatNetworkHostname(host.hostname)}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
     if (entries.has(key)) return []
     entries.set(key, {
@@ -426,17 +430,4 @@ export const normalizeTrustedPrivateDestinations = (
   return [...entries.values()].sort(
     (a, b) => a.hostname.localeCompare(b.hostname) || a.port - b.port
   )
-}
-
-const normalizeNetworkHost = (value: string): { ok: true; hostname: string } | { ok: false } => {
-  const trimmed = value.trim().toLowerCase().replace(/\.$/, '')
-  if (!trimmed || /[\s/\\:@?#%]/.test(trimmed)) return { ok: false }
-  try {
-    const authority = trimmed.includes(':') && !trimmed.startsWith('[') ? `[${trimmed}]` : trimmed
-    const hostname = new URL(`https://${authority}`).hostname.replace(/^\[|\]$/g, '')
-    if (!hostname || hostname.length > 253) return { ok: false }
-    return { ok: true, hostname }
-  } catch {
-    return { ok: false }
-  }
 }
