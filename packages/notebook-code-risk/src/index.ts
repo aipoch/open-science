@@ -1542,8 +1542,7 @@ const recordBinding = (
     const primitive =
       jsPrimitiveValue(left, bindings) &&
       (node.type === 'update_expression' ||
-        (!['&&=', '||=', '??='].includes(operator) &&
-          (jsPrimitiveValue(right, bindings) || right?.type === 'template_string')))
+        (!['&&=', '||=', '??='].includes(operator) && jsPrimitiveValue(right, bindings)))
     const updates = bindingUpdates(
       left,
       null,
@@ -5109,6 +5108,8 @@ export async function analyzeNotebookCodeRisk(
     // These scopes restore only names, unlike full branch/function snapshots. Keep their
     // hidden outer references live until restoration so collection cannot discard their heap.
     const preserveScopedBindings = (names: string[], states: Bindings[]): (() => void) => {
+      const writes = functionModuleWrites.at(-1)
+      const previousWrites = new Set(names.filter((name) => writes?.has(name)))
       const saved = states.map((state) => {
         const values: Bindings = new Map()
         for (const name of names) {
@@ -5119,6 +5120,7 @@ export async function analyzeNotebookCodeRisk(
         return { state, values }
       })
       return () => {
+        for (const name of names) if (!previousWrites.has(name)) writes?.delete(name)
         for (const { state, values } of saved) {
           for (const name of names) {
             spendWork()
@@ -5696,6 +5698,8 @@ export async function analyzeNotebookCodeRisk(
                   'function_declaration',
                   'function_expression',
                   'arrow_function',
+                  'generator_function',
+                  'generator_function_declaration',
                   'method_definition'
                 ].includes(parent.type)
               )
@@ -5834,7 +5838,6 @@ export async function analyzeNotebookCodeRisk(
           bindings.set(CWD_BINDING, INITIAL_CWD)
           bindings.set(FILE_SCOPE_BINDING, `@scope:${functionNode.id}`)
           const savedPrefixes = exceptionPrefixes.splice(0)
-          if (language !== 'python' && parameters) visit(parameters, effects)
           // Bash attaches these redirects to the definition, but performs them on each call.
           if (language === 'bash')
             for (const redirect of fieldChildren(functionNode, 'redirect')) visit(redirect, effects)
@@ -5843,10 +5846,42 @@ export async function analyzeNotebookCodeRisk(
           functionModuleWrites.push(writes)
           if (methodOwners.has(functionNode.id)) objectMethodDepth++
           try {
+            if (language !== 'python' && parameters) visit(parameters, effects)
             if (body) visit(body, effects)
           } finally {
             if (methodOwners.has(functionNode.id)) objectMethodDepth--
             functionModuleWrites.pop()
+          }
+          if (language === 'repl') {
+            for (const name of parameterBindings.keys()) writes.delete(name)
+            for (const parameter of jsParameters)
+              for (const name of bindingUpdates(parameter, null, bindings, language).keys())
+                writes.delete(name)
+            // var is function-scoped; lexical declarations are restored with their block scopes.
+            for (const declaration of functionNode.descendantsOfType('variable_declarator')) {
+              if (declaration.parent?.type !== 'variable_declaration') continue
+              let scope = declaration.parent.parent
+              while (
+                scope &&
+                ![
+                  'function_declaration',
+                  'function_expression',
+                  'arrow_function',
+                  'generator_function',
+                  'generator_function_declaration',
+                  'method_definition'
+                ].includes(scope.type)
+              )
+                scope = scope.parent
+              if (scope?.id !== functionNode.id) continue
+              for (const name of bindingUpdates(
+                fieldChild(declaration, 'name'),
+                null,
+                bindings,
+                language
+              ).keys())
+                writes.delete(name)
+            }
           }
           const members = new Map(
             [...writes].map((key) => [
@@ -6494,13 +6529,6 @@ export async function analyzeNotebookCodeRisk(
               // A summarized body may branch, return or fail before writing. Preserve both
               // the old member and its possible replacement; never invent a completed write.
               for (const [member, value] of fn.members) {
-                // Identifier writes invalidate primitive evidence without exporting local values.
-                if (
-                  language === 'repl' &&
-                  !member.startsWith('@') &&
-                  !possibleTargets(bindings.get(member)).includes(JS_PRIMITIVE)
-                )
-                  continue
                 bindings.set(
                   member,
                   mergeTargets([

@@ -11445,7 +11445,7 @@ text.${method}(pattern, (${replacement})${trailing})`
       expect(
         await analyzeNotebookCodeRisk(
           'repl',
-          'let prefix = "prefix"; for (const item of items) { prefix += `item ${item}` }' +
+          'let prefix = "prefix"; for (const item of items) { prefix += `suffix` }' +
             `text.${method}(pattern, prefix + "suffix")`
         )
       ).toEqual([])
@@ -11454,7 +11454,9 @@ text.${method}(pattern, (${replacement})${trailing})`
         `value = ${object}`,
         `if (flag) value = ${object}`,
         `value ||= ${object}`,
-        `function change() { value = ${object} }; change()`
+        'value += `interpolation ${' + object + '} `',
+        `function change() { value = ${object} }; change()`,
+        `function change(unused = (value = ${object})) {}; change()`
       ]) {
         const history = `let value = 0; ${mutation}`
         for (const incomplete of [false, true]) {
@@ -11467,6 +11469,25 @@ text.${method}(pattern, (${replacement})${trailing})`
             )
           ).not.toEqual([])
         }
+      }
+    })
+    it('invalidates captured callable writes without exporting function-local writes', async () => {
+      const prelude = 'const fs = require("fs"); let callback = String;'
+      expect(
+        await analyzeNotebookCodeRisk(
+          'repl',
+          prelude +
+            `function change() { callback = fs.unlinkSync }; change(); text.${method}(pattern, callback)`
+        )
+      ).not.toEqual([])
+      for (const declaration of ['let', 'const', 'var']) {
+        expect(
+          await analyzeNotebookCodeRisk(
+            'repl',
+            prelude +
+              `function local() { ${declaration} callback = fs.unlinkSync }; local(); text.${method}(pattern, callback)`
+          )
+        ).toEqual([])
       }
     })
     it('does not invoke replacement text or unrelated data', async () => {
