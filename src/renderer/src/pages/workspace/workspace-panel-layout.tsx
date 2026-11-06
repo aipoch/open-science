@@ -27,7 +27,7 @@ const PREVIEW_PANEL_DEFAULT_SIZE_CSS = `${PREVIEW_PANEL_DEFAULT_SIZE}%`
 const PREVIEW_PANEL_MIN_OPEN_SIZE = 30
 // Match the visible divider and its hit area to the resize library's hover/drag region.
 const WORKSPACE_RESIZE_HANDLE_CLASS_NAME =
-  'group/workspace-resize z-20 cursor-grab data-[separator=active]:cursor-grabbing after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
+  'group/workspace-resize z-20 cursor-grab! data-[separator=active]:cursor-grabbing! after:w-5 before:top-[clamp(24px,var(--resize-handle-y,50%),calc(100%-24px))] before:h-12 before:max-h-full before:w-1.5 before:bg-primary hover:before:opacity-100 focus-visible:before:opacity-100 data-[separator=active]:before:opacity-100 transition-opacity duration-200 ease-out'
 // Keep pointer movement out of React state so hovering does not re-render the workspace.
 const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
   const handle = event.currentTarget
@@ -35,6 +35,13 @@ const trackResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
     '--resize-handle-y',
     `${event.clientY - handle.getBoundingClientRect().top}px`
   )
+}
+
+const captureResizeHandle = (event: React.PointerEvent<HTMLDivElement>): void => {
+  if (event.button !== 0) return
+  trackResizeHandle(event)
+  // Capture before the first move can enter an embedded preview frame.
+  event.currentTarget.setPointerCapture(event.pointerId)
 }
 
 const OPEN_DIALOG_SELECTOR =
@@ -603,11 +610,10 @@ const WorkspacePanelLayout = ({
         ) : null}
         <ResizablePanelGroup
           orientation="horizontal"
-          disableCursor
           resizeTargetMinimumSize={{ coarse: 20, fine: 20 }}
           aria-hidden={isMobile && mobileSidebar.isOpen ? true : undefined}
           inert={isMobile && mobileSidebar.isOpen ? true : undefined}
-          className={isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}
+          className={`has-[>[data-separator=active]]:cursor-grabbing! [&:has(>[data-separator=active])_[data-resize-cursor]]:cursor-grabbing! ${isMobile ? 'min-w-0 flex-1' : '-mr-[10px] min-w-0 flex-1'}`}
         >
           {!isMobile ? (
             <>
@@ -631,7 +637,7 @@ const WorkspacePanelLayout = ({
               <ResizableHandle
                 elementRef={sidebar.separatorRef}
                 onPointerMove={trackResizeHandle}
-                onPointerDown={trackResizeHandle}
+                onPointerDown={captureResizeHandle}
                 onPointerLeave={(event) =>
                   event.currentTarget.style.removeProperty('--resize-handle-y')
                 }
@@ -661,7 +667,7 @@ const WorkspacePanelLayout = ({
               <ResizableHandle
                 elementRef={preview.separatorRef}
                 onPointerMove={trackResizeHandle}
-                onPointerDown={trackResizeHandle}
+                onPointerDown={captureResizeHandle}
                 onPointerLeave={(event) =>
                   event.currentTarget.style.removeProperty('--resize-handle-y')
                 }

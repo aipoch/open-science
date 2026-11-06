@@ -1682,7 +1682,7 @@ test('workspace resize grips follow nearby pointers and preserve drag and keyboa
   page
 }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await page.goto('/home-use-cases.html?panel&resizable')
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
   await page.getByRole('button', { name: 'Resource center', exact: true }).click()
   for (const side of ['left', 'right']) {
     const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
@@ -1742,4 +1742,40 @@ test('workspace resize grips follow nearby pointers and preserve drag and keyboa
     await expect.poll(async () => (await handle.boundingBox())!.x).toBeLessThan(box.x + 55)
     await page.getByRole('textbox', { name: 'Conversation draft' }).focus()
   }
+})
+
+test('workspace drag cursor crosses iframe previews and restores on release', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/home-use-cases.html?panel&resizable&iframe')
+  const handle = page.getByRole('separator', { name: 'Resize left panel' })
+  await expect(handle).toBeVisible()
+  const frame = page.getByTitle('Resize cursor preview')
+  await expect(frame).toBeVisible()
+  const box = (await handle.boundingBox())!
+  const frameBox = (await frame.boundingBox())!
+  const y = frameBox.y + 100
+  await page.mouse.move(box.x, y)
+  await page.mouse.down()
+  // Move beyond the sidebar's maximum so the pointer is over the embedded preview.
+  await page.mouse.move(1050, y, { steps: 15 })
+  await expect(handle).toHaveAttribute('data-separator', 'active')
+  await expect.poll(async () => (await handle.boundingBox())!.x).toBeGreaterThan(box.x + 100)
+  await expect
+    .poll(() =>
+      page.evaluate(
+        ({ x, y }) => {
+          const hit = document.elementFromPoint(x, y)!
+          return getComputedStyle(hit).cursor
+        },
+        { x: 1050, y }
+      )
+    )
+    .toBe('grabbing')
+  await page.mouse.up()
+  await frame.hover()
+  await expect(handle).not.toHaveAttribute('data-separator', 'active')
+  await expect(page.locator('[data-resize-cursor]')).toHaveCount(0)
+  await expect(
+    page.frameLocator('iframe[title="Resize cursor preview"]').locator('body')
+  ).toHaveCSS('cursor', 'crosshair')
 })
