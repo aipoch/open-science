@@ -1452,7 +1452,7 @@ test('keeps workspace panels inside the viewport through wide content and tab sw
       .toBeLessThanOrEqual(1)
   }
   await expectWithinViewport()
-  await page.getByRole('button', { name: 'Sharing marketplace', exact: true }).click()
+  await page.getByRole('button', { name: 'Marketplace', exact: true }).click()
   await expect(page.locator('#right-panel-resizable')).toHaveCSS('flex-grow', '40')
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await expect(page.getByRole('region', { name: 'Library preview' })).toBeVisible()
@@ -1461,7 +1461,7 @@ test('keeps workspace panels inside the viewport through wide content and tab sw
     await expectWithinViewport()
     const sidebarWidth = (await sidebar.boundingBox())!.width
     for (let index = 0; index < 3; index++) {
-      await page.getByRole('tab', { name: 'Sharing marketplace', exact: true }).click()
+      await page.getByRole('tab', { name: 'Marketplace', exact: true }).click()
       await page.getByRole('tab', { name: 'Library', exact: true }).click()
       await expectWithinViewport()
       expect(Math.abs((await sidebar.boundingBox())!.width - sidebarWidth)).toBeLessThanOrEqual(1)
