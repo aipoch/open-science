@@ -437,7 +437,7 @@ const prepareShellLaunchOptions = async (
   )
   const baseEnv = shellEnv
   const bundledNodeRoot =
-    runtimePlatform === 'win32' && runtimeBinding.kind === 'powershell'
+    hostPlatform === 'win32' && runtimeBinding.kind === 'powershell'
       ? dirname(
           (runtimeBinding.version === '7.6'
             ? resolveWindowsNotebookRuntime()
