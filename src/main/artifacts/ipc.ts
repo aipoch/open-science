@@ -20,6 +20,7 @@ import {
   type ArtifactFile,
   type ArtifactPreviewResult,
   type FinalizeRunArtifactsResult,
+  type OpenArtifactInBrowserRequest,
   type ReconcilePendingArtifactsResult,
   type ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
@@ -103,6 +104,7 @@ type ArtifactHandlers = {
   finalizeRunArtifacts: (request: FinalizeRunArtifactsRequest) => Promise<ArtifactFile[]>
   reconcilePendingArtifacts: (request: ReconcilePendingArtifactsRequest) => Promise<ArtifactFile[]>
   openFile: (request: OpenArtifactFileRequest) => Promise<void>
+  openInBrowser: (request: OpenArtifactInBrowserRequest) => Promise<void>
   readPreview: (request: ReadArtifactPreviewRequest) => Promise<ArtifactPreviewResult>
   getLineage: (
     request: GetArtifactLineageRequest
@@ -136,6 +138,7 @@ type ArtifactHandlers = {
 type ArtifactHandlerDependencies = {
   onPublished?: (artifacts: readonly ArtifactFile[]) => void
   openPath?: (path: string) => Promise<string>
+  openInBrowser?: (request: OpenArtifactInBrowserRequest) => Promise<void>
   logger?: Pick<Logger, 'error'>
   openLatestManagedFile?: (
     request: Omit<ReadArtifactPreviewRequest, 'versionId'> & { versionId?: never }
@@ -350,6 +353,12 @@ const createArtifactHandlers = (
         throw error
       }
       await lease.close()
+    },
+    openInBrowser: async (request) => {
+      if (!dependencies.openInBrowser) {
+        throw new Error('Opening an artifact in the browser is not configured.')
+      }
+      await dependencies.openInBrowser(request)
     },
     readPreview: async (request) => {
       const versionIdentity = parseArtifactVersionLocator(request.path)
@@ -728,6 +737,9 @@ const registerArtifactIpcHandlers = (
   )
   ipcMainHandle('artifacts:open-file', (_event, request: OpenArtifactFileRequest) =>
     handlers.openFile(request)
+  )
+  ipcMainHandle('artifacts:open-in-browser', (_event, request: OpenArtifactInBrowserRequest) =>
+    handlers.openInBrowser(request)
   )
   ipcMainHandle('artifacts:read-preview', (_event, request: ReadArtifactPreviewRequest) =>
     handlers.readPreview(request)

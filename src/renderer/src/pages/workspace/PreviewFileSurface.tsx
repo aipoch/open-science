@@ -344,7 +344,8 @@ const PreviewFileHeader = ({
     (entry) => entry.kind === 'action' && entry.action === 'view-in-context'
   )
   const openInBrowserEntry = previewActions.entries.find(
-    (entry) => entry.kind === 'action' && entry.action === 'open-in-browser'
+    (entry): entry is Extract<(typeof previewActions.entries)[number], { kind: 'action' }> =>
+      entry.kind === 'action' && entry.action === 'open-in-browser'
   )
   const managedMenuEntries = [
     ...(provenanceActionEntry ? [provenanceActionEntry] : []),
@@ -511,6 +512,9 @@ const PreviewFileHeader = ({
                         className={previewHeaderActionClassName}
                         disabled={openInBrowserEntry.disabled}
                         aria-label={t('Open in browser')}
+                        onFocus={(event) => {
+                          if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                        }}
                         onClick={() => void previewActions.execute('open-in-browser')}
                       >
                         <ExternalLink aria-hidden="true" />
@@ -1152,10 +1156,16 @@ const PreviewFileSurfaceContent = forwardRef<PreviewFileSurfaceHandle, PreviewFi
           const result = await window.api.localFs.openPath(resolvedPreviewItem.path)
           if (result) throw new Error(result)
         } else {
-          await window.api.artifacts.openFile({
-            path: resolvedPreviewItem.path,
-            suggestedName: resolvedPreviewItem.name
-          })
+          // Task artifacts are persisted by Version id; keep historical previews pointed at the
+          // exact bytes currently selected instead of silently opening the session's head.
+          const artifactId =
+            resolvedPreviewItem.selectedVersionId ??
+            resolvedPreviewItem.artifactId ??
+            resolvedPreviewItem.managedFileId
+          if (!artifactId) {
+            throw new Error(t('Could not open this file.'))
+          }
+          await window.api.artifacts.openInBrowser({ artifactId })
         }
       } catch (error) {
         setLocalActionFailure({

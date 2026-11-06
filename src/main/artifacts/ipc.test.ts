@@ -907,6 +907,18 @@ describe('artifact IPC handlers', () => {
     )
   })
 
+  it('opens the requested artifact through the configured browser URL action', async () => {
+    const openInBrowser = vi.fn().mockResolvedValue(undefined)
+    const handlers = createArtifactHandlers({} as ArtifactRepository, new ArtifactRunRegistry(), {
+      openInBrowser
+    })
+
+    await handlers.openInBrowser({ artifactId: 'artifact-html-1' })
+
+    expect(openInBrowser).toHaveBeenCalledOnce()
+    expect(openInBrowser).toHaveBeenCalledWith({ artifactId: 'artifact-html-1' })
+  })
+
   it('reads only bounded preview text from managed artifact files', async () => {
     const openLatestManagedFile = vi
       .fn()
@@ -1229,6 +1241,7 @@ describe('artifact IPC handler registration', () => {
       'artifacts:get-version-provenance',
       'artifacts:get-version-review',
       'artifacts:open-file',
+      'artifacts:open-in-browser',
       'artifacts:read-preview',
       'artifacts:reconcile-pending',
       'artifacts:resolve-version-descriptors'
@@ -1334,6 +1347,7 @@ describe('artifact IPC handler registration', () => {
       finalizeRunArtifacts: vi.fn(),
       reconcilePendingArtifacts: vi.fn(),
       openFile: vi.fn(),
+      openInBrowser: vi.fn(),
       readPreview: vi.fn(),
       getLineage: vi.fn(),
       getVersionProvenance: vi.fn(),

@@ -6,6 +6,7 @@ import type {
   ArtifactPreviewResult,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
+  OpenArtifactInBrowserRequest,
   OpenArtifactFileRequest,
   ReadArtifactPreviewRequest,
   ReconcilePendingArtifactsRequest,
@@ -156,6 +157,10 @@ export const contracts = {
   'artifacts.openFile': callable<(request: OpenArtifactFileRequest) => Promise<void>>()(
     'artifacts',
     ['artifacts:open-file', LOCAL]
+  ),
+  'artifacts.openInBrowser': callable<(request: OpenArtifactInBrowserRequest) => Promise<void>>()(
+    'artifacts',
+    ['artifacts:open-in-browser', ELECTRON]
   ),
   'artifacts.onReproducibilityCheckChanged': callable<
     (listener: (state: ArtifactReproducibilityCheckState) => void) => RemoveListener
