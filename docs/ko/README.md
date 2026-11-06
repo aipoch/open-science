@@ -49,7 +49,19 @@
 
 결과가 어떻게 나왔는지 궁금하다면 기록된 입력, 코드, 실행 이력을 확인하세요. 작업 내용을 공유하려면 대화 분기, 파일 버전, Notebook 기록, 검증 근거 중 포함할 항목을 선택해 `.science` 패키지로 내보내세요.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 출시](https://github.com/aipoch/open-science/releases/latest)** _(2026년 11월 최종 업데이트)_. 이번 업데이트는 설정을 탭으로 재구성하고, DOI·arXiv·PubMed 식별자에서 한 번에 최대 100개의 참조 문헌을 가져오며, 문헌 라이브러리 상세 보기에 AI 연구 요약을 추가합니다. 종료된 세션은 에이전트 프로세스를 해제하고, eQTL Catalogue 쿼리가 복구되며, macOS와 Windows 업데이트가 더 원활해집니다. 자세한 내용은 [v1.0.8 릴리스 노트](../../release-notes/1.0.8/ko.md)를 참조하세요.
+### 💡 AIPOCH Open-Science v1.0.8 업데이트
+
+_2026년 11월 4일_
+
+- **설정 재구성**: 기능별 탭으로 나누고 앱 정보, 진단 및 도움말 진입점을 정리했습니다.
+- **문헌 일괄 가져오기**: DOI, arXiv, PubMed 식별자 또는 공식 논문 링크를 한 번에 최대 **100개** 가져오며, 정규화와 중복 제거를 수행합니다.
+- **AI 연구 스냅샷**: 전문 또는 초록에서 연구 질문, 연구 대상 집단, 방법, 주요 결과와 한계를 정리하고 사용한 텍스트 출처를 표시합니다.
+- **세션 리소스 관리**: 다섯 가지 에이전트 프레임워크에서 세션 완료 후 관련 프로세스를 해제해 메모리 누적을 줄입니다.
+- **모델 지원 업데이트**: Tencent TokenHub에 Hy4 및 DeepSeek V4.1 Flash 경로를 추가하고 일부 모델의 이미지 입력을 지원합니다.
+- **과학 데이터와 PDF**: eQTL Catalogue 쿼리를 복구하고 GRCh38 좌표 검증을 추가했으며, PDF 읽기 순서와 텍스트 추출을 개선했습니다.
+- **안정성 수정**: R 분석 의존성 검증과 산출물 출처 추적을 개선하고, 플랫폼별 업데이트, 다운로드, 샌드박스 네트워크 및 Pi 설치 문제를 수정했습니다.
+
+[v1.0.8 전체 릴리스 노트 보기](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 히어로 배너: Science, Open to All — 오픈 소스, 모델 독립적, 자체 호스팅 가능한 과학 AI 연구 워크벤치" src="../images/readme/open-science-banner.png" />
@@ -58,7 +70,6 @@
 ## 목차
 
 - [빠른 시작](#-빠른-시작)
-- [제품 둘러보기](#제품-둘러보기)
 - [AIPOCH Open-Science `.science` 연구 패키지](#aipoch-open-science-science-연구-패키지)
 - [AIPOCH Open-Science 논문 및 인용](#aipoch-open-science-논문-및-인용)
 - [벤치마크 결과](#벤치마크-성능)
@@ -141,44 +152,6 @@ Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화�
 3. 도구 활동과 승인 요청을 확인하고, 결과를 미리 보며 **Provenance**에서 이용 가능한 근거를 확인하세요.
 
 > 이 README의 스크린샷은 워크플로를 설명하기 위한 예시입니다. 레이블, 카탈로그 및 기타 인터페이스 세부 사항은 설치한 버전과 다를 수 있습니다.
-
-## 제품 둘러보기
-
-### 연구 요청에서 추적 가능한 결과까지
-
-대표적인 생물정보학 작업을 예로 들어 보겠습니다. 출판된 차등 발현 분석을 재현하고, 다시 생성한 결과를 논문과 비교한 뒤 검토에 필요한 보고서, 표, 그림을 제공합니다. 아래 스크린샷은 기록된 AIPOCH Open-Science 워크플로의 대표 화면으로, 각 단계를 보여 주지만 하나의 연속된 세션을 의미하지는 않습니다.
-
-#### 1. 연구 작업과 근거 정의
-
-연구 질문, 원문 논문과 데이터 세트, 필요한 방법 또는 임계값, 예상 출력, 승인 기준을 설명합니다. 관련 파일을 업로드하거나 `@`로 기존 프로젝트 아티팩트를 참조하여 에이전트가 숨겨진 컨텍스트가 아닌 명시적인 입력에서 시작하도록 합니다.
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="연구 결론, 생성 아티팩트, 출처 비교를 한 작업 공간에 표시한 AIPOCH Open-Science 논문 재현 작업" width="900">
-</p>
-
-#### 2. 검사 가능한 과학 도구로 실행
-
-에이전트는 공유 Notebook에서 과학 스킬, 권한이 적용된 연구 커넥터, 검색, 파일 작업, Python 또는 R 코드를 함께 사용할 수 있습니다. 생성된 그림을 연구 요약 옆에서 검토할 수 있으며, 아티팩트 기록에서는 캡처된 생성 코드와 실행 근거를 확인할 수 있습니다.
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="연구 요약, 생성된 그림, 캡처된 생성 코드를 나란히 표시한 AIPOCH Open-Science 생물정보학 분석" width="900">
-</p>
-
-#### 3. 보고서, 표, 그림을 한곳에서 검토
-
-최종 응답은 재현된 내용, 달라진 내용, 중요한 한계를 요약합니다. 생성된 Markdown 보고서, CSV 표, 이미지 및 기타 연구 아티팩트는 세션에 연결된 상태로 프로젝트 파일 라이브러리에도 모이며, 대화 옆에서 미리 보고 후속 작업에 다시 사용할 수 있습니다.
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="에이전트 설명 옆에서 차등 발현 그림과 생성 파일을 미리 보는 AIPOCH Open-Science 재현 결과" width="900">
-</p>
-
-#### 4. 모든 아티팩트를 근거까지 추적
-
-생성된 각 아티팩트는 체크섬이 있는 변경 불가능한 버전으로 저장됩니다. **Provenance** 보기에서는 생성 코드와 실행 기록, 참조된 입력, 관찰된 환경 목록, 생성한 대화 브랜치, 버전별 Reviewer 결과를 표시할 수 있습니다. 검증할 수 없는 근거는 추론하지 않고 사용할 수 없음으로 표시합니다.
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="생성 결과를 추적하는 Provenance 진입점이 있는 AIPOCH Open-Science 연구 아티팩트 미리 보기" width="900">
-</p>
 
 ## AIPOCH Open-Science `.science` 연구 패키지
 

@@ -12,7 +12,10 @@ import {
   InMemoryCompletionHandoffRepository
 } from '../agents/completion-handoff-lifecycle'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
-import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import {
+  ACP_IDLE_RELEASE_DELAY_MS,
+  AcpConnectionTransitionOwner
+} from './connection-transition-owner'
 
 const context = (sessionId = 'session-1', generation = 1): TrustedToolCompletionContext => ({
   sessionId,
@@ -57,6 +60,7 @@ describe('approved Handoff outcome boundary', () => {
   ] as const)(
     'releases the provider idle hold when a handoff is superseded during %s',
     async (stage) => {
+      vi.useFakeTimers()
       const entered = Promise.withResolvers<void>()
       const resume = Promise.withResolvers<void>()
       const leases: Array<() => void> = []
@@ -158,6 +162,7 @@ describe('approved Handoff outcome boundary', () => {
         resume.resolve()
         await running
         expect(activity.blockers().retirement).toBe(false)
+        await vi.advanceTimersByTimeAsync(ACP_IDLE_RELEASE_DELAY_MS)
         await transitions.barrier
         expect(disconnect).toHaveBeenCalledOnce()
         expect(inner.continueAsApproved).not.toHaveBeenCalled()
@@ -167,6 +172,8 @@ describe('approved Handoff outcome boundary', () => {
       } finally {
         resume.resolve()
         for (const release of leases) release()
+        transitions.resetReconnect()
+        vi.useRealTimers()
       }
     }
   )

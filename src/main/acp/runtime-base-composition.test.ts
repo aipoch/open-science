@@ -171,7 +171,7 @@ describe('ACP Runtime base composition', () => {
       retirement: false
     })
     await owners.generationActivity.withActivity(async () => undefined)
-    expect(activityChanged).toHaveBeenCalledOnce()
+    expect(activityChanged).toHaveBeenCalledTimes(2)
 
     await owners.connectionTransitions.requestProviderReconnect()
     expect(disconnect).toHaveBeenCalledWith(false)

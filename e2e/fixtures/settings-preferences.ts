@@ -22,7 +22,7 @@ export const openGeneralSettings = async (page: Page): Promise<Locator> => {
 
 export const openAppearanceSettings = async (page: Page): Promise<Locator> => {
   const settings = await openSettingsPage(page, 'Appearance')
-  await expect(settings.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible()
+  await expect(settings.getByRole('region', { name: 'Appearance', exact: true })).toBeVisible()
   return settings
 }
 

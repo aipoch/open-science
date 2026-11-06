@@ -49,7 +49,19 @@
 
 Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren Eingabedaten, den Code und den Ausführungsverlauf einsehen. Wenn Sie Ihre Arbeit teilen möchten, wählen Sie die Gesprächszweige, Dateiversionen, Notebook-Aufzeichnungen und Prüfnachweise aus und exportieren Sie sie als `.science`-Paket.
 
-> 💡 **[AIPOCH Open-Science v1.0.8 veröffentlicht](https://github.com/aipoch/open-science/releases/latest)** _(zuletzt aktualisiert im November 2026)_. Diese Version ordnet die Einstellungen in übersichtliche Tabs, importiert bis zu 100 Referenzen gleichzeitig aus DOI-, arXiv- oder PubMed-Kennungen und fügt der Literaturdetailansicht KI-Studienübersichten hinzu. Beendete Sitzungen geben ihre Agenten-Prozesse frei, eQTL-Catalogue-Abfragen funktionieren wieder, und Aktualisierungen unter macOS und Windows verlaufen reibungsloser. Vollständige Details finden Sie in den [Versionshinweisen zu v1.0.8](../../release-notes/1.0.8/de.md).
+### 💡 AIPOCH Open-Science v1.0.8 — Neuerungen
+
+_4. November 2026_
+
+- **Einstellungen**: Funktionsbezogene Registerkarten ordnen App-Informationen, Diagnose und Hilfe.
+- **Literaturimport**: Bis zu **100** DOI-, arXiv- oder PubMed-Kennungen oder offizielle Artikellinks gleichzeitig importieren, normalisieren und deduplizieren.
+- **KI-Studienübersichten**: Forschungsfrage, Studienpopulation, Methoden, Hauptergebnisse und Grenzen aus Volltext oder Abstract zusammenfassen und die Textquelle anzeigen.
+- **Sitzungsressourcen**: Alle fünf Agenten-Frameworks geben Prozesse nach abgeschlossenen Sitzungen frei und reduzieren die Speicheransammlung.
+- **Modellunterstützung**: Tencent TokenHub ergänzt Hy4 und DeepSeek V4.1 Flash sowie Bildeingaben für ausgewählte Modelle.
+- **Wissenschaftliche Daten und PDF**: eQTL Catalogue mit GRCh38-Prüfung wiederherstellen sowie PDF-Lesereihenfolge und Textextraktion verbessern.
+- **Zuverlässigkeit**: R-Abhängigkeitsprüfung und Artefakt-Provenienz verbessern; Updates, Downloads, Sandbox-Netzwerk und Pi-Installation korrigieren.
+
+[Vollständige Versionshinweise v1.0.8](https://github.com/aipoch/open-science/releases/tag/v1.0.8)
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
@@ -58,7 +70,6 @@ Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren
 ## Inhaltsverzeichnis
 
 - [Schnellstart](#-schnellstart)
-- [Produkttour](#produkttour)
 - [AIPOCH Open-Science `.science`-Forschungspakete](#aipoch-open-science-science-forschungspakete)
 - [AIPOCH Open-Science: Paper und Zitierung](#aipoch-open-science-paper-und-zitierung)
 - [Benchmark-Ergebnisse](#benchmark-ergebnisse)
@@ -142,44 +153,6 @@ Darstellung und Benachrichtigungen finden Sie in den Systemeinstellungen. Unter 
 3. Prüfen Sie Werkzeugaktivitäten und Freigabeanfragen, betrachten Sie die Ergebnisse und die verfügbaren Belege in der **Provenienzansicht**.
 
 > Screenshots in dieser README-Datei veranschaulichen den Arbeitsablauf. Beschriftungen, Kataloge und andere Schnittstellendetails können von der von Ihnen installierten Version abweichen.
-
-## Produkttour
-
-### Von der Forschungsanfrage zum nachvollziehbaren Ergebnis
-
-Nehmen wir eine typische Bioinformatikaufgabe: Eine veröffentlichte Analyse der differentiellen Genexpression wird reproduziert, die neu erzeugten Ergebnisse werden mit der Publikation verglichen und Bericht, Tabellen sowie Abbildungen für die Prüfung bereitgestellt. Die folgenden Screenshots zeigen repräsentative Ansichten aus dokumentierten Open-Science-Workflows; sie veranschaulichen die einzelnen Schritte, stammen aber nicht aus einer einzigen durchgängigen Sitzung.
-
-#### 1. Forschungsaufgabe und Evidenz festlegen
-
-Beschreiben Sie die Forschungsfrage, die Quellpublikation und Datensätze, erforderliche Methoden oder Schwellenwerte, erwartete Ergebnisse und Abnahmekriterien. Laden Sie unterstützende Dateien hoch oder referenzieren Sie mit `@` ein vorhandenes Projektartefakt, damit der Agent mit expliziten Eingaben statt mit verborgenem Kontext beginnt.
-
-<p align="center">
-  <img src="../images/readme/product-tour-task.jpg" alt="AIPOCH Open-Science-Aufgabe zur Reproduktion einer Publikation mit Forschungsergebnis, erzeugten Artefakten und Quellenvergleich in einem Arbeitsbereich" width="900">
-</p>
-
-#### 2. Mit überprüfbaren wissenschaftlichen Werkzeugen ausführen
-
-Der Agent kann im gemeinsamen Notebook wissenschaftliche Fähigkeiten, berechtigungsgesteuerte Forschungskonnektoren, Suchen, Dateioperationen sowie Python- oder R-Code kombinieren. Erzeugte Abbildungen lassen sich neben der Forschungszusammenfassung prüfen; der Artefaktdatensatz stellt dazu den erfassten Erzeugungscode und Ausführungsevidenz bereit.
-
-<p align="center">
-  <img src="../images/readme/product-tour-execute.png" alt="AIPOCH Open-Science-Bioinformatikanalyse mit Forschungszusammenfassung, erzeugter Abbildung und erfasstem Erzeugungscode nebeneinander" width="900">
-</p>
-
-#### 3. Berichte, Tabellen und Abbildungen direkt prüfen
-
-Die abschließende Antwort fasst zusammen, was reproduziert wurde, was abwich und welche Einschränkungen relevant sind. Erzeugte Markdown-Berichte, CSV-Tabellen, Bilder und weitere Forschungsartefakte bleiben mit der Sitzung verknüpft und werden zugleich in der Projektdateibibliothek gesammelt. Dort können sie neben dem Dialog angezeigt und in späteren Arbeiten wiederverwendet werden.
-
-<p align="center">
-  <img src="../images/readme/product-tour-output.jpg" alt="AIPOCH Open-Science-Reproduktionsergebnis mit Abbildungen zur differentiellen Genexpression und erzeugten Dateien neben der Erläuterung des Agenten" width="900">
-</p>
-
-#### 4. Jedes Artefakt bis zu seiner Evidenz zurückverfolgen
-
-Jedes erzeugte Artefakt wird als unveränderliche Version mit Prüfsumme gespeichert. Die Ansicht **Provenance** kann Erzeugungscode und Ausführungshistorie, referenzierte Eingaben, das beobachtete Umgebungsinventar, den erzeugenden Gesprächszweig sowie versionsbezogene Reviewer-Ergebnisse anzeigen. Nicht überprüfbare Evidenz wird als nicht verfügbar gekennzeichnet und nicht hergeleitet.
-
-<p align="center">
-  <img src="../images/readme/product-tour-provenance.jpg" alt="Vorschau eines AIPOCH Open-Science-Forschungsartefakts mit Provenance-Zugang zur Rückverfolgung eines erzeugten Ergebnisses" width="900">
-</p>
 
 ## AIPOCH Open-Science `.science`-Forschungspakete
 

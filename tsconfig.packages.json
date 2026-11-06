@@ -72,6 +72,9 @@
     },
     {
       "path": "./packages/providers/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/research-film/tsconfig.dev.json"
     }
   ]
 }

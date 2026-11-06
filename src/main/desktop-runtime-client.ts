@@ -11,7 +11,10 @@ import {
   type ServiceLifetimeSnapshot,
   type ServiceStopOptions
 } from './local-service-lifetime'
-import { DesktopRuntimeDisconnectedError } from '../shared/desktop-runtime-recovery'
+import {
+  DesktopRuntimeDisconnectedError,
+  DesktopRuntimeWriteNotSubmittedError
+} from '../shared/desktop-runtime-recovery'
 import { randomUUID } from 'node:crypto'
 import { desktopRuntimeInfoSchema, type DesktopRuntimeInfo } from './desktop-runtime-info'
 import { waitForRuntimeStopped } from './runtime-stop-confirmation'
@@ -274,7 +277,7 @@ export async function connectDesktopRuntime(options: {
   timer.unref()
   const send = (message: unknown, onSent?: () => void): void => {
     if (closed || socket.readyState !== WebSocket.OPEN)
-      throw new DesktopRuntimeDisconnectedError('Desktop runtime is disconnected.', {
+      throw new DesktopRuntimeWriteNotSubmittedError('Desktop runtime is disconnected.', {
         cause: disconnectCause
       })
     const serialized = stringifyRpcJson(message)

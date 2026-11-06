@@ -1,7 +1,8 @@
 import type { DownloadProgress } from '@aipoch/resilient-download'
 import type { Locale } from './locale'
 
-export type LocalModelCapability = 'pdf-tables' | 'pdf-translation' | 'ocr'
+export type LocalModelCapability =
+  'pdf-tables' | 'pdf-translation' | 'ocr' | 'research-narration' | 'video-export'
 
 export const OCR_LANGUAGES = [
   'eng',

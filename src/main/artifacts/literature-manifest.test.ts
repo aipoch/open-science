@@ -7,7 +7,7 @@ import {
   type ArtifactLiteratureItemSnapshot
 } from './literature-manifest'
 
-const literatureSnapshot = (metadataRevision = 3): ArtifactLiteratureItemSnapshot => ({
+const literatureOverview = (metadataRevision = 3): ArtifactLiteratureItemSnapshot => ({
   id: 'item-1',
   metadataRevision,
   item: literatureItemInputSchema.parse({
@@ -24,7 +24,7 @@ const literatureSnapshot = (metadataRevision = 3): ArtifactLiteratureItemSnapsho
 })
 
 const owner = (metadataRevision = 3): ArtifactLiteratureManifestOwner =>
-  new ArtifactLiteratureManifestOwner(async () => [literatureSnapshot(metadataRevision)])
+  new ArtifactLiteratureManifestOwner(async () => [literatureOverview(metadataRevision)])
 
 describe('ArtifactLiteratureManifestOwner', () => {
   it('supports citation-free artifacts without a catalog and rejects unconfigured citation capture', async () => {
@@ -40,7 +40,7 @@ describe('ArtifactLiteratureManifestOwner', () => {
   })
 
   it('reads requested identities through the injected snapshot capability and rejects missing items', async () => {
-    const readItems = vi.fn(async () => [literatureSnapshot()])
+    const readItems = vi.fn(async () => [literatureOverview()])
     const manifestOwner = new ArtifactLiteratureManifestOwner(readItems)
     const request = {
       styleId: 'apa',
@@ -260,12 +260,12 @@ describe('Literature evidence delivered to a review', () => {
   })
 
   it('retains bibliographic content for included papers that are not cited', async () => {
-    const uncited = literatureSnapshot()
+    const uncited = literatureOverview()
     uncited.id = 'item-2'
     uncited.item.title = 'Uncited included study'
     uncited.item.abstract = 'Frozen uncited findings.'
     const manifestOwner = new ArtifactLiteratureManifestOwner(async () => [
-      literatureSnapshot(),
+      literatureOverview(),
       uncited
     ])
     recordResults(manifestOwner, ['item-1', 'item-2'])

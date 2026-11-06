@@ -892,6 +892,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     })
   }
 
+  private failInstallationOperation(operation: DiagnosticOperation, error: unknown): void {
+    this.applying = false
+    const recovery = error instanceof UpdateLifecycleError ? error.recovery : undefined
+    operation.fail(error, {
+      result: 'error',
+      reason: error instanceof UpdateLifecycleError ? error.reason : 'install-failed',
+      detail: recovery?.detail,
+      blockingProcesses: recovery?.blockingProcesses
+        ?.map((entry) => (entry.name ? `${entry.pid}:${entry.name}` : String(entry.pid)))
+        .join(',')
+    })
+    this.setLifecycleFailure(error)
+  }
+
   private async runRecoveryAction(
     action: () => Promise<Partial<UpdateStatus>>
   ): Promise<UpdateStatus> {
@@ -963,17 +977,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         return this.status
       }
     } catch (error) {
-      this.applying = false
-      const recovery = error instanceof UpdateLifecycleError ? error.recovery : undefined
-      operation.fail(error, {
-        result: 'error',
-        reason: error instanceof UpdateLifecycleError ? error.reason : 'install-failed',
-        detail: recovery?.detail,
-        blockingProcesses: recovery?.blockingProcesses
-          ?.map((entry) => (entry.name ? `${entry.pid}:${entry.name}` : String(entry.pid)))
-          .join(',')
-      })
-      this.setLifecycleFailure(error)
+      this.failInstallationOperation(operation, error)
       return this.status
     }
     if (!this.applying) return this.status
@@ -1086,17 +1090,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       await this.installationHooks.beforeInstallHandoff?.(this.status)
     } catch (error) {
       this.releaseAbortedInstallHandoff()
-      this.applying = false
-      const recovery = error instanceof UpdateLifecycleError ? error.recovery : undefined
-      operation.fail(error, {
-        result: 'error',
-        reason: error instanceof UpdateLifecycleError ? error.reason : 'install-failed',
-        detail: recovery?.detail,
-        blockingProcesses: recovery?.blockingProcesses
-          ?.map((entry) => (entry.name ? `${entry.pid}:${entry.name}` : String(entry.pid)))
-          .join(',')
-      })
-      this.setLifecycleFailure(error)
+      this.failInstallationOperation(operation, error)
       return this.status
     }
     if (!this.applying) return this.status

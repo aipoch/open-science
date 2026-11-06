@@ -98,6 +98,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.jobs': 'literature:jobs',
   'literature.journals': 'literature:journals',
   'literature.lookupMetadata': 'literature:lookup-metadata',
+  'literature.overviewBatch': 'literature:overview-batch',
   'literature.publicationCheck': 'literature:publication-check',
   'literature.related': 'literature:related',
   'literature.search': 'literature:search',
