@@ -51,10 +51,10 @@ Um nachzuvollziehen, wie ein Ergebnis zustande kam, können Sie die verfügbaren
 
 ### 💡 AIPOCH Open-Science v1.1.0 — Neuerungen
 
-_5. November 2026_
+_6. November 2026_
 
-- **Forschungsfilme**: Jede Sitzung als portablen, kommentierten Forschungsfilm mit Terminal-Wiedergabe und Sprachausgabe exportieren.
-- **Mobile Kopplung**: Ein Telefon oder Tablet per QR-Code verbinden, über lokales WLAN oder einen Pinggy-Tunnel.
+- **Forschungsfilme**: Abgeschlossene Sitzungen als portable Forschungsfilme mit Terminal-Wiedergabe exportieren. Die Sprachausgabe benötigt ein lokal installiertes Sprachmodell.
+- **Mobile Kopplung**: Den aktuellen Arbeitsbereich per QR-Code auf einem Telefon oder Tablet öffnen, über lokales WLAN oder einen Pinggy-Tunnel; Internetverkehr läuft über Pinggys Server.
 - **Literatur in CLI und MCP**: Referenzen von der Befehlszeile und aus MCP-Clients durchsuchen und verwalten — mit schreibgeschütztem Durchsuchen und Schreibwerkzeugen.
 - **Fortsetzbare Übersichten**: Stapelübersichten von Publikationen setzen nach Unterbrechungen fort, ohne fertige Ergebnisse erneut zu erzeugen.
 - **Ressourcenzentrum**: Umbenanntes Ressourcenzentrum mit angepasstem Layout der Fallbibliothek, kompakteren externen Links und Recheneinstellungen unter Verbindungen.
@@ -308,7 +308,7 @@ Die optionale OCR erkennt gescannte PDF-Seiten, nachdem die Komponente und die e
 
 In der Desktop-App lässt sich die Artefaktherkunft auch als RO-Crate 1.1 exportieren. Ein versionsgebundenes Umgebungspaket kann nur bei vollständiger Erfassung und Kompatibilität mit der Zielplattform eine verwaltete Umgebung erzeugen; es ist keine vollständige Rechnersicherung.
 
-Durchsuchen Sie den Sharing-Marktplatz nach Forschungsbeispielen, vom Startbildschirm oder aus dem Gesprächsarbeitsbereich aus. Filtern Sie nach Kategorie, suchen Sie nach Stichworten und laden Sie Pakete aus den Detailansichten herunter.
+Durchsuchen Sie Forschungsbeispiele im Ressourcenzentrum, filtern Sie nach Kategorie, suchen Sie nach Stichworten und laden Sie Pakete aus den Detailansichten herunter.
 
 ## Modellanbieter
 
@@ -386,9 +386,7 @@ Desktop-App und Browser teilen denselben Dienst. App-Verbindungen und eine ausdr
 
 ### Mobiler Fernzugriff
 
-Über die Remote.It-Kopplung ist dieselbe Localhost-Web-UI auch auf einem Smartphone oder Tablet erreichbar. Koppeln Sie einen Browser mit einem sechsstelligen AIPOCH Open-Science-Code und geben Sie ihn einmal auf dem Desktop frei. Der Arbeitsbereich bleibt erreichbar, ohne den Loopback-Server direkt freizugeben. Das Vertrauen für einen Browser kann widerrufen werden; Änderungen des Modus oder das Beenden des Dienstes machen aktive Remote-Sitzungen sofort ungültig.
-
-Der Host muss eingeschaltet und online bleiben; AIPOCH Open-Science und der Remote.It-Agent müssen laufen. Der Host muss einem angemeldeten Remote.It-Konto hinzugefügt sein. Browserfreigaben laufen ab und sind widerrufbar; siehe die [Fernzugriffsanleitung](../remote-control.md).
+Scannen Sie einen QR-Code, um den aktuellen Arbeitsbereich auf einem Smartphone oder Tablet über lokales WLAN oder einen Pinggy-Tunnel zu öffnen. Die WLAN-Kopplung bleibt im lokalen Netzwerk; Internettunnel leiten den Verkehr über Pinggys Server, worauf der Verbindungsdialog hinweist.
 
 ### Headless CLI und SDK
 
@@ -424,7 +422,7 @@ A: Mindestens eine Pflichtbedingung des aktuellen Schritts ist noch nicht erfül
 <details>
 <summary>Wie führe ich Jobs auf einem Remote-HPC-Cluster aus?</summary>
 
-A: **Remote Compute (SSH)** ist dauerhaft aktiviert und muss nicht in den Einstellungen eingeschaltet werden. Registrieren Sie unter **Einstellungen → Rechenressourcen** einen SSH-Rechenhost, stellen Sie ihn für die aktuelle Sitzung bereit und verwenden Sie anschließend natürliche Sprache oder `/remote-compute-ssh`. Erforderlich sind ein erreichbarer SSH-Host, gültige Anmeldedaten, Rechte für die benötigten Verzeichnisse sowie die für den Auftrag nötige Software, Abhängigkeiten und Rechenleistung. Direct SSH benötigt keinen Scheduler; der Slurm-Modus setzt eine funktionsfähige Slurm-Umgebung und das Recht zur Jobübermittlung voraus. „Dauerhaft aktiviert“ bezieht sich auf die Fähigkeit, nicht auf die ständige Verfügbarkeit jedes registrierten Hosts.
+A: **Remote Compute (SSH)** ist dauerhaft aktiviert und muss nicht in den Einstellungen eingeschaltet werden. Registrieren Sie unter **Einstellungen → Verbindungen → Rechenressourcen** einen SSH-Rechenhost, stellen Sie ihn für die aktuelle Sitzung bereit und verwenden Sie anschließend natürliche Sprache oder `/remote-compute-ssh`. Erforderlich sind ein erreichbarer SSH-Host, gültige Anmeldedaten, Rechte für die benötigten Verzeichnisse sowie die für den Auftrag nötige Software, Abhängigkeiten und Rechenleistung. Direct SSH benötigt keinen Scheduler; der Slurm-Modus setzt eine funktionsfähige Slurm-Umgebung und das Recht zur Jobübermittlung voraus. „Dauerhaft aktiviert“ bezieht sich auf die Fähigkeit, nicht auf die ständige Verfügbarkeit jedes registrierten Hosts.
 
 </details>
 
