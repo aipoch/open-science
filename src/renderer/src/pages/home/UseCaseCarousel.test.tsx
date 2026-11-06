@@ -525,6 +525,7 @@ it('gives the fixed detail header a subtle visual boundary', async () => {
   const details = ui.getByRole('region', { name: 'Case details' })
   const header = details.querySelector('[data-case-detail-header]')
   expect(header?.className).toContain('shadow-sm')
+  expect(header?.className).not.toContain('bg-bg-10')
 })
 
 it('keeps cached cards on failure and shows completion on the refresh button', async () => {
