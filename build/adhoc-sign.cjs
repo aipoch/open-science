@@ -86,4 +86,7 @@ exports.default = async function adhocSign(context) {
   )
 
   console.log(`[adhoc-sign] deep ad-hoc signed ${path.basename(appPath)}`)
+  // Register only a deferred, architecture-specific entry factory here. Packaging invokes it
+  // after electron-builder's optional Developer ID signature has replaced this ad-hoc signature.
+  require('./mac-recovery-package.cjs').prepare(context)
 }

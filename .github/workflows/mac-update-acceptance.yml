@@ -13,6 +13,11 @@ on:
         type: choice
         default: macos-arm64
         options: [macos-arm64, macos-x64]
+      scenario:
+        description: Fixed acceptance scenario (accept mode only)
+        type: choice
+        default: M01
+        options: [M01, M02, M03, M04, M05, M06, M07, M08, M09, M10, M11, M12, M13, M14]
       diagnostic_version:
         description: Plain semver for build mode; run twice at the same SHA with increasing versions
         type: string
@@ -64,7 +69,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    secrets: inherit
+    secrets:
+      MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
     with:
       platform_name: ${{ inputs.platform_name }}
       diagnostic_version: ${{ inputs.diagnostic_version }}
@@ -84,7 +91,12 @@ jobs:
         with:
           node-version: 24
       - name: Run acceptance counterexamples
-        run: node --test scripts/mac-update-acceptance.test.mjs
+        run: >-
+          node --test scripts/mac-update-acceptance.test.mjs
+          scripts/mac-update-fault-scenarios.test.mjs
+          scripts/mac-update-target-observation.test.mjs
+          scripts/mac-update-stale-startup-scenario.test.mjs
+          scripts/mac-update-interruption-scenarios.test.mjs
       - name: Probe native GUI, isolated Keychain and loopback feed
         run: node scripts/mac-update-preflight.mjs test-results/mac-update
       - name: Verify immutable package source runs
@@ -109,9 +121,20 @@ jobs:
       - name: Install acceptance dependencies
         if: inputs.mode == 'accept'
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify native fault drivers before package scenarios
+        if: inputs.mode == 'accept'
+        env:
+          MAC_UPDATE_NATIVE_FIXTURES: '1'
+        run: >-
+          node --test scripts/mac-update-fault-scenarios.test.mjs
+          scripts/mac-update-interruption-scenarios.test.mjs
+          scripts/mac-update-process-scenarios.test.mjs
+
       - name: Certify real UI update and automatic target readiness
         if: inputs.mode == 'accept'
-        run: node scripts/mac-update-acceptance.mjs --previous-dir packages/previous --current-dir packages/current --output test-results/mac-update
+        env:
+          UPDATE_SCENARIO: ${{ inputs.scenario }}
+        run: node scripts/mac-update-acceptance.mjs --previous-dir packages/previous --current-dir packages/current --output test-results/mac-update --scenario "$UPDATE_SCENARIO"
       - name: Upload all evidence including failures
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

@@ -38,6 +38,14 @@ test('accepts automatic target with real readiness and preserved contents', () =
   assert.equal(assertAutomaticUpdate(good(), expected).status, 'passed'))
 for (const [name, patch] of [
   ['no automatic target', { process: undefined }],
+  [
+    'unknown target birth identity',
+    { process: { pid: 11, startedAt: Number.NaN, executable: expected.executable } }
+  ],
+  [
+    'malformed target PID',
+    { process: { pid: 0, startedAt: 101, executable: expected.executable } }
+  ],
   ['old version started', { version: '1.0.6' }],
   ['target launched by harness', { launchedByHarness: true }],
   ['headless only', { nativeWindowVisible: false }],
@@ -74,7 +82,7 @@ test('loopback feed serves real range bytes and rejects out-of-bounds requests',
     )
     assert.equal((await fetch(`${feed.url}../secrets`)).status, 404)
     await (await fetch(`${feed.url}latest-mac.yml`)).text()
-    assert.deepEqual(feed.metrics, { feedRequests: 1, packageBytes: 4 })
+    assert.deepEqual(feed.metrics, { feedRequests: 1, packageBytes: 4, packageRequests: 1 })
   } finally {
     await feed?.close()
     await rm(root, { recursive: true, force: true })

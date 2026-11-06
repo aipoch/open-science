@@ -20,6 +20,7 @@ import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { load } from 'js-yaml'
+import { selectMacFeedEntry } from './mac-artifact-contract.mjs'
 import {
   artifactHash,
   validateArtifactName,
@@ -141,6 +142,19 @@ export function buildManifest({
       metadataOnly,
       allowLegacyNames
     )
+    if (filename.endsWith('-mac.yml')) {
+      const arches =
+        filename === 'latest-mac.yml'
+          ? ['arm64', 'x64'].filter((arch) =>
+              feed.files.some(
+                (file) =>
+                  file.url.endsWith(`-mac-${arch}.zip`) ||
+                  file.url.endsWith(`-mac-${arch}-runtime.zip`)
+              )
+            )
+          : [filename.startsWith('arm64') ? 'arm64' : 'x64']
+      for (const arch of arches) selectMacFeedEntry(feed, dir, arch)
+    }
     if (filename === 'latest-linux.yml' || filename === 'latest-linux-arm64.yml') {
       const arch = filename === 'latest-linux-arm64.yml' ? 'arm64' : 'x64'
       if (feed.files.some((file) => !keyForFile(file.url)?.startsWith(`linux-${arch}-`))) {
@@ -164,9 +178,11 @@ export function buildManifest({
         version,
         metadataOnly
       )
+      if (name === 'latest-mac.yml')
+        for (const arch of ['arm64', 'x64']) selectMacFeedEntry(feed, dir, arch)
       const required =
         name === 'latest-mac.yml'
-          ? ['-mac-arm64.zip', '-mac-x64.zip']
+          ? []
           : name === 'latest.yml'
             ? ['-win-x64-setup.exe']
             : name === 'latest-linux-arm64.yml'

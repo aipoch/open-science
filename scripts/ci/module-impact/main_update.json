@@ -67,7 +67,13 @@
     "src/main/update/mac-update-resume.test.ts",
     "src/main/update/mac-installation-processes.ts",
     "src/main/update/mac-installation-processes.test.ts",
-    "src/main/update/mac-installation-processes.integration.test.ts"
+    "src/main/update/mac-installation-processes.integration.test.ts",
+    "src/main/update/fixtures/mac-real-work-host.ts",
+    "src/main/update/mac-real-work-shutdown.integration.test.ts",
+    "src/main/update/mac-recovery-control-entry.ts",
+    "src/main/update/mac-startup-fault-gate.test.ts",
+    "src/main/update/mac-startup-fault-gate.ts",
+    "src/main/update/mac-default-handoff.test.ts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -134,7 +140,10 @@
       "src/main/update/mac-update-handoff.test.ts",
       "src/main/update/mac-update-resume.test.ts",
       "src/main/update/mac-installation-processes.test.ts",
-      "src/main/update/mac-installation-processes.integration.test.ts"
+      "src/main/update/mac-installation-processes.integration.test.ts",
+      "src/main/update/mac-real-work-shutdown.integration.test.ts",
+      "src/main/update/mac-startup-fault-gate.test.ts",
+      "src/main/update/mac-default-handoff.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

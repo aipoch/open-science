@@ -5,7 +5,8 @@ import CoreGraphics
 if CommandLine.arguments.count > 1, let pid = Int32(CommandLine.arguments[1]) {
     let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     let owned = windows.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-    print("{\"pid\":\(pid),\"onScreenWindows\":\(owned.count)}")
+    let number = owned.first?[kCGWindowNumber as String] as? Int ?? 0
+    print("{\"pid\":\(pid),\"onScreenWindows\":\(owned.count),\"windowNumber\":\(number)}")
     exit(owned.isEmpty ? 1 : 0)
 }
 let app = NSApplication.shared

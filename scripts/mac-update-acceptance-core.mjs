@@ -8,6 +8,9 @@ export const FEED_URL = 'http://127.0.0.1:18761/'
 export const assertAutomaticUpdate = (observation, expected) => {
   if (
     !observation.process ||
+    !Number.isSafeInteger(observation.process.pid) ||
+    observation.process.pid <= 1 ||
+    !Number.isFinite(observation.process.startedAt) ||
     observation.process.pid === expected.sourcePid ||
     observation.process.startedAt < expected.appliedAt ||
     observation.process.executable !== expected.executable
@@ -48,7 +51,13 @@ export const digest = async (path, algorithm = 'sha256', encoding = 'hex') => {
   return hash.digest(encoding)
 }
 export const startFeed = async (assets, port = 18761) => {
-  const metrics = { feedRequests: 0, packageBytes: 0 }
+  const metrics = { feedRequests: 0, packageBytes: 0, packageRequests: 0 }
+  let held = false
+  const heldTransfers = new Set()
+  const releasePackages = () => {
+    held = false
+    for (const transfer of heldTransfers) transfer.release()
+  }
   const server = createServer((request, response) => {
     void (async () => {
       const pathname = new URL(request.url, FEED_URL).pathname
@@ -82,6 +91,19 @@ export const startFeed = async (assets, port = 18761) => {
         return
       }
       if (pathname.endsWith('.yml')) metrics.feedRequests += 1
+      if (pathname.endsWith('.zip')) {
+        metrics.packageRequests += 1
+        if (held)
+          await new Promise((release) => {
+            const transfer = { pathname, release, observedAt: Date.now() }
+            heldTransfers.add(transfer)
+            response.once('close', release)
+          }).finally(() => {
+            for (const transfer of heldTransfers)
+              if (transfer.pathname === pathname) heldTransfers.delete(transfer)
+          })
+        if (response.destroyed) return
+      }
       const stream = createReadStream(file, { start, end })
       stream.on('data', (chunk) => {
         if (pathname.endsWith('.zip')) metrics.packageBytes += chunk.length
@@ -97,9 +119,16 @@ export const startFeed = async (assets, port = 18761) => {
   })
   return {
     metrics,
+    holdPackages: () => {
+      held = true
+    },
+    releasePackages,
+    heldTransfers: () =>
+      [...heldTransfers].map(({ pathname, observedAt }) => ({ pathname, observedAt })),
     url: `http://127.0.0.1:${server.address().port}/`,
     close: () =>
       new Promise((resolve, reject) => {
+        releasePackages()
         server.close((error) => (error ? reject(error) : resolve()))
         server.closeAllConnections()
       })

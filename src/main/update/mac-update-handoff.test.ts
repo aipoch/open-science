@@ -290,6 +290,63 @@ describe('Mac electron-updater durable handoff', () => {
 })
 
 describe('original Mac update package recovery', () => {
+  it.each(['network failure', 'wrong package'] as const)(
+    'retains the bound operation after persistent %s and permits recovery of only its original target',
+    async (failure) => {
+      await orphaned()
+      const record = structuredClone(state.record!)
+      const requestPath = join(record.handoffDirectory, 'request.json')
+      const requestBytes = await readFile(requestPath, 'utf8')
+      const request = JSON.parse(requestBytes)
+      await rm(request.installerPath)
+      const inspectArtifact = vi.fn(async () => targetManifest)
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        if (failure === 'network failure') throw new Error('network continuously unavailable')
+        return new Response('different target')
+      })
+
+      await expect(
+        recoverMacUpdateHandoff(
+          { installationRoot: input.applicationPath },
+          { runningVersion: '1.0.8', fetchImpl, inspectArtifact }
+        )
+      ).rejects.toThrow('three attempts')
+      expect(fetchImpl).toHaveBeenCalledTimes(3)
+      for (const [url] of fetchImpl.mock.calls) expect(url).toBe(input.installerUrl)
+      expect(inspectArtifact).not.toHaveBeenCalled()
+      expect(state.record).toEqual(record)
+      expect(state.ownerActive).toBe(false)
+      expect(await readFile(requestPath, 'utf8')).toBe(requestBytes)
+      await expect(readFile(request.installerPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+      const retryFetch = vi.fn(async () => new Response(bytes))
+      const retry = await recoverMacUpdateHandoff(
+        { installationRoot: input.applicationPath },
+        { runningVersion: '1.0.8', fetchImpl: retryFetch, inspectArtifact }
+      )
+      expect(retry.state).toBe('resume')
+      if (retry.state !== 'resume') throw new Error('expected original-target recovery')
+      expect(retry.request).toEqual(request)
+      expect(retryFetch).toHaveBeenCalledExactlyOnceWith(
+        input.installerUrl,
+        expect.objectContaining({ redirect: 'error' })
+      )
+      expect(inspectArtifact).toHaveBeenCalledExactlyOnceWith(
+        request.installerPath,
+        request.targetVersion,
+        expect.any(AbortSignal)
+      )
+      expect(await readFile(request.installerPath)).toEqual(bytes)
+      expect(await readFile(requestPath, 'utf8')).toBe(requestBytes)
+      expect(await readFile(join(input.startupOptions.dataRoot, 'persisted.txt'), 'utf8')).toBe(
+        'protected scientific result'
+      )
+      retry.dispose()
+      expect(state.record).toEqual(record)
+      expect(state.ownerActive).toBe(false)
+    }
+  )
+
   it.each(['missing', 'corrupt'])(
     'reacquires a %s cache from the original source with bounded transient retries',
     async (kind) => {

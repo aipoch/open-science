@@ -24,6 +24,8 @@ const f = vi.hoisted(() => {
     completedStartup: vi.fn(),
     installationStartup: vi.fn(),
     macStartup: vi.fn(),
+    ordinaryEntry: vi.fn(),
+    ordinaryBundle: vi.fn(),
     macRecovery: vi.fn(),
     windowsStartup: vi.fn(),
     windowsResume: vi.fn(),
@@ -95,6 +97,10 @@ vi.mock('./desktop-startup-recovery', async (original) => ({
   ...(await original<typeof import('./desktop-startup-recovery')>()),
   resolveDesktopInstallationStartup: f.installationStartup
 }))
+vi.mock('./mac-ordinary-entry', () => ({
+  loadMacOrdinaryEntry: f.ordinaryEntry,
+  ordinaryMacBundle: (runtime: string) => runtime
+}))
 vi.mock('./update/mac-update-handoff', () => ({
   readMacUpdateStartupOptions: f.macStartup,
   recoverMacUpdateHandoff: f.macRecovery
@@ -149,6 +155,7 @@ vi.mock('./update/scheduler', () => ({ startUpdateScheduler: vi.fn() }))
 vi.mock('./runtime-network-electron', () => ({ installElectronNetwork: vi.fn() }))
 vi.mock('./renderer-broadcast-electron', () => ({ installElectronBroadcast: vi.fn() }))
 vi.mock('./mac-installation', () => ({
+  setVerifiedMacOrdinaryBundle: f.ordinaryBundle,
   isReadOnlyMacInstallation: () => false,
   showMacInstallationGuidance: vi.fn()
 }))
@@ -245,6 +252,7 @@ beforeEach(() => {
   f.ready = false
   f.installationStartup.mockResolvedValue(undefined)
   f.macStartup.mockReturnValue(undefined)
+  f.ordinaryEntry.mockReturnValue(undefined)
   f.macRecovery.mockResolvedValue({ state: 'none' })
   f.windowsStartup.mockReturnValue(undefined)
   f.windowsResume.mockResolvedValue(false)
@@ -855,17 +863,30 @@ it.each(['ready', 'checking-to-ready', 'checking-abort'] as const)(
   }
 )
 
-it('selects original Mac credentials and inventory before asynchronous update recovery', async () => {
+it('restores the ordinary-entry state root before selecting original Mac credentials and recovery', async () => {
   const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
   Object.defineProperty(process, 'platform', { value: 'darwin' })
   try {
-    f.macStartup.mockReturnValue({
-      configRoot: '/test/config',
-      dataRoot: '/test/data',
-      profilePath: '/test/profile',
-      host: '127.0.0.1',
-      port: 0,
-      credentialStore: 'os'
+    vi.stubEnv('OPEN_SCIENCE_INSTALLATION_STATE_ROOT', '')
+    f.ordinaryEntry.mockReturnValue({
+      stateRoot: '/test/restored-installation-state',
+      runtimePath: '/test/runtime.app',
+      wrapperPath: '/test/ordinary.app'
+    })
+    f.macStartup.mockImplementation(() => {
+      expect(f.ordinaryEntry).toHaveBeenCalledOnce()
+      expect(f.ordinaryBundle).toHaveBeenCalledWith('/test/runtime.app', '/test/ordinary.app')
+      expect(process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT).toBe(
+        '/test/restored-installation-state'
+      )
+      return {
+        configRoot: '/test/config',
+        dataRoot: '/test/data',
+        profilePath: '/test/profile',
+        host: '127.0.0.1',
+        port: 0,
+        credentialStore: 'os'
+      }
     })
     let observed = false
     f.macRecovery.mockImplementation(async () => {

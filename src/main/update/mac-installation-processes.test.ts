@@ -9,15 +9,18 @@ const state = vi.hoisted(() => ({
   rows: new Map<number, DarwinProcessIdentity & { path: string }>(),
   list: vi.fn(),
   executable: vi.fn(),
+  arguments: vi.fn(),
+  realpath: vi.fn(),
   signal: vi.fn(),
   inspect: vi.fn()
 }))
 vi.mock('./installation-occupancy', () => ({ inspectInstallationProcessesAsync: state.inspect }))
-vi.mock('node:fs', () => ({ realpathSync: (path: string) => path }))
+vi.mock('node:fs', () => ({ realpathSync: state.realpath }))
 vi.mock('node:module', () => ({
   createRequire: () => () => ({
     listDarwinProcesses: state.list,
     getDarwinProcessExecutable: state.executable,
+    getDarwinProcessArguments: state.arguments,
     signalDarwinProcess: state.signal
   })
 }))
@@ -38,6 +41,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   state.rows.clear()
   state.inspect.mockResolvedValue([])
+  state.arguments.mockReturnValue(null)
+  state.realpath.mockImplementation((path: string) => path)
   state.list.mockImplementation(() => ({ complete: true, processes: [...state.rows.values()] }))
   state.executable.mockImplementation((pid, generation) => {
     const current = state.rows.get(pid)
@@ -98,6 +103,76 @@ it('does not deliver a signal to a PID reused after installation ownership was i
   expect(state.rows.get(100)?.uniqueId).toBe('99999')
 })
 
+it('closes a managed Python inside another software bundle only when it runs this installation loop', async () => {
+  row(100)
+  row(101, '/Applications/Xcode.app/Contents/Developer/Python.app/Contents/MacOS/Python', 100)
+  row(102, '/Applications/Other.app/Contents/MacOS/Open-Science', 100)
+  row(103, '/Applications/Python.app/Contents/MacOS/Python', 100)
+  state.arguments.mockImplementation((pid) =>
+    pid === 101
+      ? [
+          '/usr/bin/python3',
+          root + '/Contents/Resources/app.asar.unpacked/resources/notebook/python_loop.py'
+        ]
+      : [
+          '/usr/bin/python3',
+          '/Applications/Other.app/Contents/Resources/app.asar.unpacked/resources/notebook/python_loop.py'
+        ]
+  )
+  const pending = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  await vi.advanceTimersByTimeAsync(100)
+  await expect(pending).resolves.toEqual({ graceful: [], forced: [100, 101] })
+  expect(state.rows.has(102)).toBe(true)
+  expect(state.rows.has(103)).toBe(true)
+})
+
+it('does not trust a loop-script argument without generation ancestry', async () => {
+  row(101, '/Applications/Python.app/Contents/MacOS/Python', 900)
+  state.arguments.mockReturnValue([
+    '/usr/bin/python3',
+    root + '/Contents/Resources/resources/notebook/python_loop.py'
+  ])
+  await expect(
+    closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  ).resolves.toEqual({ graceful: [], forced: [] })
+  expect(state.signal).not.toHaveBeenCalled()
+})
+
+it('retains native managed ancestry for an exact shipped loop after its application root is missing', async () => {
+  row(100)
+  row(101, '/Applications/Python.app/Contents/MacOS/Python', 100)
+  state.realpath.mockImplementation((path: string) => {
+    if (path === root || path.startsWith(root + '/'))
+      throw Object.assign(new Error('removed bundle'), { code: 'ENOENT' })
+    return path
+  })
+  state.arguments.mockReturnValue([
+    '/usr/bin/python3',
+    root + '/Contents/Resources/resources/notebook/python_loop.py'
+  ])
+  const pending = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  await vi.advanceTimersByTimeAsync(100)
+  await expect(pending).resolves.toEqual({ graceful: [], forced: [100, 101] })
+})
+
+it('does not turn a denied loop-path query into permission to close another application interpreter', async () => {
+  row(100)
+  row(101, '/Applications/Python.app/Contents/MacOS/Python', 100)
+  state.realpath.mockImplementation((path: string) => {
+    if (path.endsWith('/python_loop.py'))
+      throw Object.assign(new Error('denied'), { code: 'EACCES' })
+    return path
+  })
+  state.arguments.mockReturnValue([
+    '/usr/bin/python3',
+    root + '/Contents/Resources/resources/notebook/python_loop.py'
+  ])
+  const pending = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  await vi.advanceTimersByTimeAsync(100)
+  await expect(pending).resolves.toEqual({ graceful: [], forced: [100] })
+  expect(state.rows.has(101)).toBe(true)
+})
+
 it('revokes retained ownership when exec enters another installation without changing birth identity', async () => {
   row(100)
   const pending = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 1000 })
@@ -124,22 +199,41 @@ it('retains verified descendants after their parent exits and they are reparente
 
 it('reports unknown process-table coverage without using it as idle or signal authority', async () => {
   row(100)
+  row(102, '/fixtures/Other.app/Contents/MacOS/Science')
   state.list.mockReturnValue({ complete: false, processes: [...state.rows.values()] })
   await expect(
     closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
   ).rejects.toMatchObject({ reason: 'installation-busy', stage: 'process-table-incomplete' })
   expect(state.signal).not.toHaveBeenCalled()
+  state.list.mockImplementation(() => ({ complete: true, processes: [...state.rows.values()] }))
+  const retry = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  await vi.runAllTimersAsync()
+  await expect(retry).resolves.toEqual({ graceful: [], forced: [100] })
+  expect([...state.rows.keys()]).toEqual([102])
 })
 
 it('preserves a real signal permission failure instead of declaring occupancy released', async () => {
   row(100)
+  row(102, '/fixtures/Other.app/Contents/MacOS/Science')
+  const identity = { ...state.rows.get(100)! }
   state.signal.mockImplementation(() => {
     throw new Error('signal-delivery;errno=1')
   })
   await expect(
     closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
   ).rejects.toMatchObject({ reason: 'installation-busy', stage: 'verified-close' })
-  expect(state.rows.has(100)).toBe(true)
+  expect(state.rows.get(100)).toEqual(identity)
+  // The fault is injected at signal delivery; clearing it must re-inspect the same object.
+  state.signal.mockImplementation((pid, generation) => {
+    if (state.rows.get(pid)?.uniqueId !== generation) return false
+    state.rows.delete(pid)
+    return true
+  })
+  const retry = closeMacInstallationProcesses(root, { excludedProcessIds: [], timeoutMs: 0 })
+  await vi.runAllTimersAsync()
+  await expect(retry).resolves.toEqual({ graceful: [], forced: [100] })
+  expect(state.signal).toHaveBeenLastCalledWith(100, identity.uniqueId, 9, identity.path)
+  expect([...state.rows.keys()]).toEqual([102])
 })
 
 it('ends at the original close deadline when an identified process survives force', async () => {

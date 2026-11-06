@@ -55,6 +55,12 @@ on:
         type: string
         default: ''
 
+    secrets:
+      MAC_CSC_LINK:
+        required: false
+      MAC_CSC_KEY_PASSWORD:
+        required: false
+
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
   contents: read

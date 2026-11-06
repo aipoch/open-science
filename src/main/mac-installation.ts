@@ -35,13 +35,25 @@ export const inspectInstallationLocation = (
   }
 }
 
-const runningBundle = (): string => resolve(dirname(app.getPath('exe')), '../..')
+const runtimeBundle = (): string => resolve(dirname(app.getPath('exe')), '../..')
+let verifiedOrdinaryBundle: { runtime: string; wrapper: string } | undefined
+/** Called by startup composition only after validating the signed ordinary-entry association. */
+export function setVerifiedMacOrdinaryBundle(runtime: string, wrapper: string): void {
+  verifiedOrdinaryBundle = { runtime, wrapper }
+}
+const runningBundle = (): string => {
+  const runtime = runtimeBundle()
+  return verifiedOrdinaryBundle?.runtime === runtime ? verifiedOrdinaryBundle.wrapper : runtime
+}
 const installedBundle = (): string => join('/Applications', basename(runningBundle()))
 
 export const isReadOnlyMacInstallation = (): boolean => {
   if (process.platform !== 'darwin' || !app?.isPackaged) return false
   try {
-    return inspectInstallationLocation(runningBundle()) === 'read-only'
+    return (
+      inspectInstallationLocation(runningBundle()) === 'read-only' ||
+      inspectInstallationLocation(runtimeBundle()) === 'read-only'
+    )
   } catch {
     return false
   }

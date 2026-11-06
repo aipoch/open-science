@@ -51,6 +51,21 @@ const step = (job: Job, name: string): Step => {
 }
 
 describe('release and scheduled workflow topology', () => {
+  it('maps only the required Mac signing secrets into reviewed acceptance builds', () => {
+    const acceptance = workflow('mac-update-acceptance.yml')
+    const caller = acceptance.jobs['diagnostic-build'] as Job & { secrets: unknown }
+    expect(caller.secrets).toEqual({
+      MAC_CSC_LINK: '${{ secrets.MAC_CSC_LINK }}',
+      MAC_CSC_KEY_PASSWORD: '${{ secrets.MAC_CSC_KEY_PASSWORD }}'
+    })
+    expect(
+      step(acceptance.jobs.verify, 'Certify real UI update and automatic target readiness').env
+        ?.UPDATE_SCENARIO
+    ).toBe('${{ inputs.scenario }}')
+    const counterexamples = step(acceptance.jobs.verify, 'Run acceptance counterexamples').run!
+    expect(counterexamples).toContain('mac-update-fault-scenarios.test.mjs')
+    expect(counterexamples).toContain('mac-update-target-observation.test.mjs')
+  })
   it('rejects stale Mac acceptance native pins before installing dependencies', () => {
     const build = workflow('build.yml').jobs.build
     const gate = step(build, 'Require reviewed native components for Mac acceptance')
@@ -1001,7 +1016,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
       'gh release list --exclude-drafts --exclude-pre-releases'
     )
     expect(step(job, 'Download final macOS arm64 archive').run).toContain(
-      "--pattern '*-mac-arm64.zip'"
+      "--pattern '*-mac-arm64-runtime.zip'"
     )
     const materialize = step(job, 'Materialize packaged application for scanning')
     expect(materialize.run).toContain('npm ci --ignore-scripts --omit=optional')

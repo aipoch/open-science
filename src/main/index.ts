@@ -1,3 +1,5 @@
+import { setVerifiedMacOrdinaryBundle } from './mac-installation'
+import { loadMacOrdinaryEntry } from './mac-ordinary-entry'
 import { isRuntimeProcessAlive } from './runtime-stop-confirmation'
 import { readServiceLifetime } from './local-service-lifetime'
 import { assertDesktopRuntimeRestartAllowed } from './desktop-runtime-recovery'
@@ -295,6 +297,11 @@ async function startDesktop(): Promise<void> {
   let macUpdateStartupOptions: import('./runtime-startup-options').RuntimeStartupOptions | undefined
   if (process.platform === 'darwin') {
     try {
+      const ordinaryEntry = loadMacOrdinaryEntry(macUpdateLocation.installationRoot)
+      if (ordinaryEntry) {
+        process.env.OPEN_SCIENCE_INSTALLATION_STATE_ROOT = ordinaryEntry.stateRoot
+        setVerifiedMacOrdinaryBundle(ordinaryEntry.runtimePath, ordinaryEntry.wrapperPath)
+      }
       macUpdateStartupOptions = readMacUpdateStartupOptions(macUpdateLocation)
       if (macUpdateStartupOptions) {
         app.setPath('userData', macUpdateStartupOptions.profilePath)
@@ -347,6 +354,7 @@ async function startDesktop(): Promise<void> {
     initialRecoveryError = error
   }
   let completeVerifiedStartup = installationStartup?.completeAfterReady
+  let verifiedStartupOperationId = installationStartup?.operationId
   let verifiedStartupOutcome = installationStartup?.outcome
   let preservedStartupOptions = installationStartup?.startupOptions ?? macUpdateStartupOptions
   let windowsUpdateAlreadyConfirmed = false
@@ -486,6 +494,7 @@ async function startDesktop(): Promise<void> {
         version: app.getVersion()
       })
       completeVerifiedStartup = installationStartup?.completeAfterReady
+      verifiedStartupOperationId = installationStartup?.operationId
       verifiedStartupOutcome = installationStartup?.outcome
       preservedStartupOptions ??= installationStartup?.startupOptions
     } catch (cause) {
@@ -2247,6 +2256,17 @@ async function startDesktop(): Promise<void> {
       await verifyDesktopRecoveryReadiness(client, preservedStartupOptions)
       if (process.platform === 'darwin' && verifiedStartupOutcome)
         await waitForWindowsUpdateWindow(getMainWindow() ?? undefined, AbortSignal.timeout(30_000))
+      if (process.platform === 'darwin' && verifiedStartupOutcome) {
+        const { pauseMacVerifiedStartup } = await import('./update/mac-startup-fault-gate')
+        await pauseMacVerifiedStartup(
+          macUpdateLocation,
+          verifiedStartupOperationId ??
+            (macUpdateRecovery?.state === 'ready'
+              ? macUpdateRecovery.request.operationId
+              : undefined),
+          preservedStartupOptions.profilePath
+        )
+      }
       if (macUpdateRecovery?.state === 'ready') await macUpdateRecovery.completeAfterReady()
       await completeVerifiedStartup?.()
       // Stopping an older service is not an installation recovery; publish only a real outcome.

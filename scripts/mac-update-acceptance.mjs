@@ -1,9 +1,18 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { spawn } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   FEED_URL,
   assertAutomaticUpdate,
@@ -27,10 +36,14 @@ const wait = async (label, fn, timeout = 180000) => {
   throw new Error(`Timed out: ${label}; ${last?.message || 'not observed'}`)
 }
 const processes = async () => {
-  const { stdout } = await run('/bin/ps', ['-axo', 'pid=,lstart=,comm='])
+  const { stdout } = await run('/bin/ps', ['-axo', 'pid=,ppid=,lstart=,comm='])
   return stdout.split('\n').flatMap((line) => {
-    const match = /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d+:\d+:\d+\s+\d{4})\s+(.+)$/.exec(line)
-    return match ? [{ pid: +match[1], startedAt: Date.parse(match[2]), executable: match[3] }] : []
+    const match = /^\s*(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d+:\d+:\d+\s+\d{4})\s+(.+)$/.exec(
+      line
+    )
+    return match
+      ? [{ pid: +match[1], ppid: +match[2], startedAt: Date.parse(match[3]), executable: match[4] }]
+      : []
   })
 }
 const identity = (p) => p && `${p.pid}:${p.startedAt}:${p.executable}`
@@ -51,10 +64,14 @@ const main = async () => {
   const previous = arg('--previous-dir')
   const current = arg('--current-dir')
   const output = arg('--output')
+  const scenarioId = process.argv.includes('--scenario')
+    ? process.argv[process.argv.indexOf('--scenario') + 1]
+    : 'M01'
+  if (!/^M(?:0[1-9]|1[0-4])$/.test(scenarioId)) throw new Error('Unknown fixed Mac scenario')
   const expectedSha = process.env.GITHUB_SHA
   await mkdir(output, { recursive: true })
   const report = {
-    scenario: 'normal-update',
+    scenario: scenarioId,
     status: 'failed',
     sourceSha: expectedSha,
     arch: process.arch,
@@ -62,16 +79,21 @@ const main = async () => {
     launchesByHarness: [],
     cleanup: {}
   }
-  const root = await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), 'open-science-mac-update-'))
+  const root = await realpath(
+    await mkdtemp(join(process.env.RUNNER_TEMP || tmpdir(), 'open-science-mac-update-'))
+  )
   const logs = []
   let feed
   let sourceBrowser
-  let targetBrowser
   let sentinelBrowser
   let originalKeychains
   let fixtureKeychain
   let failure
   const children = []
+  const attachedBrowsers = new Set()
+  let scenario
+  let admissionObserver
+  let ctx
   try {
     await preflight(output)
     const { load } = await import('js-yaml')
@@ -86,11 +108,42 @@ const main = async () => {
       )
       if (!provenance.internalTestBuild || provenance.commit !== expectedSha)
         throw new Error('Both packages must be internal builds of the exact acceptance SHA')
-      const zip = await one(directory, (name) => name.endsWith(`-mac-${process.arch}.zip`))
+      const zip = await one(directory, (name) =>
+        name.endsWith(
+          label === 'source' ? `-mac-${process.arch}.zip` : `-mac-${process.arch}-runtime.zip`
+        )
+      )
       const extracted = join(root, label)
       await mkdir(extracted)
       await run('/usr/bin/ditto', ['-x', '-k', zip, extracted])
-      const app = await one(extracted, (name) => name.endsWith('.app'))
+      const entryApp = await one(extracted, (name) => name.endsWith('.app'))
+      let app = entryApp
+      let entryConfiguration
+      if (label === 'source') {
+        await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', entryApp])
+        const entryDetails = (
+          await run('/usr/bin/codesign', ['-d', '--verbose=4', entryApp])
+        ).stderr.split('\n')
+        if (
+          !entryDetails.includes('Identifier=com.aipoch.open-science.launcher') ||
+          !entryDetails.includes('TeamIdentifier=87G9WFU9H3')
+        )
+          throw new Error('Source ordinary entry must have the official stable launcher identity')
+        entryConfiguration = JSON.parse(
+          await readFile(join(entryApp, 'Contents/Resources/mac-recovery-entry.json'), 'utf8')
+        )
+        const seed = join(entryApp, 'Contents/Resources/runtime-seed.zip')
+        if (
+          entryConfiguration.schema !== 1 ||
+          entryConfiguration.runtimeBundleIdentifier !== 'com.aipoch.open-science' ||
+          entryConfiguration.seedSha512 !== (await digest(seed, 'sha512', 'base64'))
+        )
+          throw new Error('Stable source entry seed identity or SHA-512 is invalid')
+        const seedRoot = join(root, 'source-runtime-inspection')
+        await mkdir(seedRoot)
+        await run('/usr/bin/ditto', ['-x', '-k', seed, seedRoot])
+        app = await one(seedRoot, (name) => name.endsWith('.app'))
+      }
       await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app])
       const details = await run('/usr/bin/codesign', ['-d', '--verbose=4', app])
       if (
@@ -105,6 +158,8 @@ const main = async () => {
           join(app, 'Contents/Info.plist')
         ])
       ).stdout.trim()
+      if (entryConfiguration && entryConfiguration.seedVersion !== version)
+        throw new Error('Stable entry seed version does not match its signed runtime')
       if (version !== provenance.version)
         throw new Error('Signed bundle version does not match build provenance')
       const config = load(await readFile(join(app, 'Contents/Resources/app-update.yml'), 'utf8'))
@@ -116,6 +171,8 @@ const main = async () => {
         label,
         zip,
         app,
+        entryApp: label === 'source' ? entryApp : undefined,
+        entryConfiguration,
         version,
         provenance,
         sha256: await digest(zip),
@@ -149,12 +206,62 @@ const main = async () => {
         [`/${basename(target.zip)}`, target.zip]
       ])
     )
-    const profile = join(root, 'electron-profile')
+    let profile = join(root, 'electron-profile')
     const configRoot = join(root, 'saved-data')
-    const sentinelApp = join(root, 'another-installation', basename(source.app))
-    await cp(source.app, sentinelApp, { recursive: true })
+    const runtimeRoot = join(root, 'runtimes')
+    await mkdir(runtimeRoot)
+    const entryApp = await realpath(source.entryApp)
+    const entryExecutableName = (
+      await run('/usr/libexec/PlistBuddy', [
+        '-c',
+        'Print :CFBundleExecutable',
+        join(entryApp, 'Contents/Info.plist')
+      ])
+    ).stdout.trim()
+    const entryExecutable = join(entryApp, 'Contents/MacOS', entryExecutableName)
+    const entryExecutableBefore = await digest(entryExecutable)
+    const sentinelEntry = join(root, 'another-installation', basename(entryApp))
+    await cp(entryApp, sentinelEntry, { recursive: true })
+    const installedRuntime = (entry) =>
+      join(runtimeRoot, createHash('sha256').update(entry).digest('hex'), 'Open-Science.app')
+    const runtimeTemplate = source.app
+    source.app = installedRuntime(entryApp)
+    const sentinelApp = installedRuntime(await realpath(sentinelEntry))
     const executable = join(source.app, 'Contents/MacOS/Open-Science')
     const sentinelExecutable = join(sentinelApp, 'Contents/MacOS/Open-Science')
+    const stateRoot = join(root, 'installation-state')
+    const ownedHandoffs = []
+    ctx = {
+      root,
+      output,
+      appBundle: source.app,
+      entryApp,
+      runtimeRoot,
+      executable,
+      profile,
+      configRoot,
+      stateRoot,
+      appDataRoot: join(homedir(), 'Library/Application Support'),
+      ownedHandoffs,
+      targetVersion: target.version,
+      sourceVersion: source.version,
+      feed,
+      report,
+      wait,
+      processes,
+      run,
+      logs,
+      children
+    }
+    const { loadMacUpdateScenario } = await import('./mac-update-fault-scenarios.mjs')
+    ctx.registerOwnedHandoff = async (bound) => {
+      const { validateOwnedHandoff } = await import('./mac-update-fault-scenarios.mjs')
+      const directory = await validateOwnedHandoff(ctx, bound)
+      if (!ownedHandoffs.some((entry) => entry.directory === directory))
+        ownedHandoffs.push({ directory, bound })
+    }
+    scenario = await loadMacUpdateScenario(scenarioId, ctx)
+
     // Real packaged secret storage, restricted to the disposable runner and fixture keychain.
     originalKeychains = (
       (await run('/usr/bin/security', ['list-keychains', '-d', 'user'])).stdout.match(
@@ -168,11 +275,11 @@ const main = async () => {
     await run('/usr/bin/security', ['unlock-keychain', '-p', password, fixtureKeychain])
     await run('/usr/bin/security', ['list-keychains', '-d', 'user', '-s', fixtureKeychain])
     const helper = join(
-      source.app,
+      runtimeTemplate,
       'Contents/Resources/backend/node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret'
     )
     const sentinelHelper = join(
-      sentinelApp,
+      runtimeTemplate,
       'Contents/Resources/backend/node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret'
     )
     await run('/usr/bin/security', [
@@ -184,41 +291,51 @@ const main = async () => {
       '-w',
       randomBytes(32).toString('hex'),
       '-T',
-      executable,
+      join(runtimeTemplate, 'Contents/MacOS/Open-Science'),
       '-T',
       helper,
       '-T',
-      sentinelExecutable,
+      join(runtimeTemplate, 'Contents/MacOS/Open-Science'),
       '-T',
       sentinelHelper,
       fixtureKeychain
     ])
-    const launchSource = (path, storage, userData) => {
-      const child = spawn(path, ['--remote-debugging-port=0', '--serve=0'], {
-        detached: true,
-        env: {
-          ...process.env,
-          OPEN_SCIENCE_CONFIG_ROOT: storage,
-          OPEN_SCIENCE_E2E_STORAGE_ROOT: storage,
-          OPEN_SCIENCE_USER_DATA: userData
-        },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      children.push(child)
+    const launchSource = async (path, storage, userData) => {
+      const entry = path === executable ? entryApp : sentinelEntry
+      const before = new Set(
+        (await processes()).filter((row) => row.executable === path).map((row) => row.pid)
+      )
+      const environment = {
+        ...(path === executable ? ctx.launchEnv : {}),
+        OPEN_SCIENCE_MAC_RUNTIME_ROOT: runtimeRoot,
+        OPEN_SCIENCE_INSTALLATION_STATE_ROOT: stateRoot,
+        OPEN_SCIENCE_CONFIG_ROOT: storage,
+        OPEN_SCIENCE_E2E_STORAGE_ROOT: storage,
+        OPEN_SCIENCE_USER_DATA: userData
+      }
+      const arguments_ = ['-n']
+      for (const [key, value] of Object.entries(environment))
+        arguments_.push('--env', `${key}=${value}`)
+      arguments_.push(entry, '--args', '--remote-debugging-port=0', '--serve=0')
       report.launchesByHarness.push({
-        executable: path,
-        pid: child.pid,
-        purpose: path === executable ? 'source-only' : 'protected-other-installation'
+        executable: entry,
+        runtimeExecutable: path,
+        purpose: path === executable ? 'source-ordinary-entry' : 'protected-other-ordinary-entry'
       })
-      child.on('error', (error) => logs.push(error.message))
-      child.stdout.on('data', (b) => logs.push(b.toString()))
-      child.stderr.on('data', (b) => logs.push(b.toString()))
-      return child
+      await run('/usr/bin/open', arguments_)
+      const process = await wait(
+        'ordinary launcher automatically creates its runtime process',
+        async () =>
+          (await processes()).find((row) => row.executable === path && !before.has(row.pid))
+      )
+      report.launchesByHarness.at(-1).runtimePid = process.pid
+      return { pid: process.pid }
     }
     const connect = async (userData, pid) => {
       const port = (await readFile(join(userData, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
       const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 3000 })
       try {
+        attachedBrowsers.add(browser)
         const session = await browser.newBrowserCDPSession()
         const info = await session.send('SystemInfo.getProcessInfo')
         await session.detach()
@@ -254,9 +371,112 @@ const main = async () => {
         }),
         { projectId: fixture.project.id, sessionId: fixture.session.id }
       )
+    Object.assign(ctx, {
+      connect,
+      readFixture,
+      readBackend,
+      nativeWindow: async (pid) =>
+        JSON.parse((await run(join(output, 'gui-probe'), [String(pid)])).stdout),
+      readStatus: () => ctx.page.evaluate(() => window.api.update.getStatus()),
+      readProductLogs: () => readFile(join(ctx.profile, 'desktop-logs/main.log'), 'utf8'),
+      prepareProfile: async ({ page: profilePage, label }) => {
+        await profilePage.waitForFunction(
+          async () => (await window.api.databaseStartup.getState()).phase === 'ready',
+          undefined,
+          { timeout: 60000 }
+        )
+        return profilePage.evaluate(
+          async ({ cwd, label }) => {
+            const project = await window.api.projects.create({ name: label })
+            const session = {
+              id: `saved-${project.id}`,
+              projectId: project.id,
+              cwd,
+              title: label,
+              status: 'idle',
+              createdAt: 1,
+              updatedAt: 1,
+              messages: [
+                {
+                  id: `message-${project.id}`,
+                  role: 'user',
+                  content: `Original saved content ${label}`,
+                  status: 'complete',
+                  eventIds: [],
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+            await window.api.sessions.saveSession(session)
+            return {
+              project: { id: project.id, name: project.name },
+              session: { id: session.id, content: session.messages[0].content }
+            }
+          },
+          { cwd: root, label }
+        )
+      },
+
+      launchSameInstallation: async ({ configRoot: storage, profile: userData, purpose }) => {
+        if (purpose === 'participant-data-verification' && report.result?.status !== 'passed')
+          throw new Error(
+            'Additional target profiles may launch only after automatic target success'
+          )
+        const child = await launchSource(executable, storage, userData)
+        report.launchesByHarness.at(-1).purpose = purpose || 'same-installation-source-peer'
+        const connection = await wait('additional profile desktop', () =>
+          connect(userData, child.pid)
+        )
+        return { ...connection, pid: child.pid, child }
+      },
+      openOrdinaryEntry: async ({ pauseAt, startupPause, releaseFile } = {}) => {
+        if (startupPause && !releaseFile?.startsWith(stateRoot + '/'))
+          throw new Error('Invalid isolated startup fault gate')
+        if (
+          pauseAt &&
+          (!['native-recovery-runtime-absent', 'native-recovery-installed'].includes(pauseAt) ||
+            !releaseFile?.startsWith(root + '/'))
+        )
+          throw new Error('Invalid isolated native fault gate')
+        report.launchesByHarness.push({
+          executable: entryApp,
+          purpose: 'ordinary-recovery-entry',
+          profileFromMarker: true
+        })
+        await run('/usr/bin/open', [
+          '-n',
+          '--env',
+          `OPEN_SCIENCE_INSTALLATION_STATE_ROOT=${stateRoot}`,
+          '--env',
+          `OPEN_SCIENCE_MAC_RUNTIME_ROOT=${runtimeRoot}`,
+          ...(pauseAt
+            ? [
+                '--env',
+                `OPEN_SCIENCE_MAC_ENTRY_PAUSE_AT=${pauseAt}`,
+                '--env',
+                `OPEN_SCIENCE_MAC_ENTRY_RELEASE_FILE=${releaseFile}`
+              ]
+            : []),
+          ...(startupPause
+            ? [
+                '--env',
+                'OPEN_SCIENCE_MAC_STARTUP_PAUSE_AT=verified-ready',
+                '--env',
+                `OPEN_SCIENCE_MAC_STARTUP_RELEASE_FILE=${releaseFile}`
+              ]
+            : []),
+          entryApp,
+          '--args',
+          '--remote-debugging-port=0',
+          '--serve=0'
+        ])
+      }
+    })
+    await scenario.prepareLaunch?.(ctx)
     const sentinelConfig = join(root, 'other-data')
     const sentinelProfile = join(root, 'other-profile')
-    const sentinel = launchSource(sentinelExecutable, sentinelConfig, sentinelProfile)
+    const sentinel = await launchSource(sentinelExecutable, sentinelConfig, sentinelProfile)
     const sentinelProcess = await wait('protected other installation process', async () =>
       (await processes()).find((p) => p.pid === sentinel.pid && p.executable === sentinelExecutable)
     )
@@ -326,12 +546,12 @@ const main = async () => {
       data: sentinelBefore
     }
     await sentinelPage.screenshot({ path: join(output, 'other-installation-before.png') })
-    const sourceChild = launchSource(executable, configRoot, profile)
+    const sourceChild = await launchSource(executable, configRoot, profile)
     const sourceConnection = await wait('source desktop CDP', () =>
       connect(profile, sourceChild.pid)
     )
     sourceBrowser = sourceConnection.browser
-    const page = sourceConnection.page
+    let page = sourceConnection.page
     await page.waitForFunction(
       async () => (await window.api.databaseStartup.getState()).phase === 'ready',
       undefined,
@@ -372,6 +592,27 @@ const main = async () => {
         session: { id: session.id, content: session.messages[0].content }
       }
     }, root)
+    Object.assign(ctx, {
+      page,
+      browser: sourceBrowser,
+      sourceBrowser,
+      sourcePid: sourceChild.pid,
+      fixture,
+      setInitiator: (next) => {
+        page = next.page
+        profile = next.profile
+        sourceBrowser = next.browser
+        Object.assign(ctx, {
+          page,
+          browser: sourceBrowser,
+          sourceBrowser,
+          sourcePid: next.pid,
+          profile
+        })
+      }
+    })
+    await scenario.beforeDownload?.(ctx)
+    page = ctx.page
     await page.getByRole('button', { name: /^Settings$/ }).click()
     const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
     const nav = settings.getByRole('navigation', { name: 'Settings', exact: true })
@@ -381,40 +622,46 @@ const main = async () => {
     await settings.getByRole('button', { name: 'Check now', exact: true }).click()
     await page.getByRole('button', { name: `Update to ${target.version}`, exact: true }).click()
     await page.getByRole('button', { name: /^Download update/ }).click()
-    const restart = page.getByRole('button', { name: 'Restart to update', exact: true })
+    await scenario.duringDownload?.(ctx)
+    let restart = page.getByRole('button', { name: 'Restart to update', exact: true })
     await expect(restart).toBeVisible({ timeout: 180000 })
+    await scenario.afterDownloaded?.(ctx)
+    await scenario.beforeApply?.(ctx)
+    page = ctx.page
+    restart = page.getByRole('button', { name: 'Restart to update', exact: true })
     await page.screenshot({ path: join(output, 'before-update.png') })
     const appliedAt = Math.floor(Date.now() / 1000) * 1000 // ps lstart has second precision
-    await restart.click()
-    const successor = await wait('automatically started target PID', async () =>
-      (await processes()).find(
-        (p) => p.executable === executable && p.pid !== sourceChild.pid && p.startedAt >= appliedAt
-      )
+    ctx.appliedAt = appliedAt
+    const { observeAutomaticTarget, watchUpdateAdmissions } =
+      await import('./mac-update-target-observation.mjs')
+    admissionObserver = watchUpdateAdmissions(ctx)
+    const defaultApply = () =>
+      ctx.page.getByRole('button', { name: 'Restart to update', exact: true }).click()
+    if (scenario.apply) await scenario.apply(ctx, defaultApply)
+    else await defaultApply()
+    await scenario.afterApply?.(ctx)
+    const { successor, targetReadiness } = await wait(
+      'automatic target process, native window and original data readiness',
+      async () => {
+        for (const candidate of await processes()) {
+          if (
+            candidate.executable !== executable ||
+            candidate.pid === ctx.sourcePid ||
+            candidate.startedAt < appliedAt
+          )
+            continue
+          try {
+            const targetReadiness = await observeAutomaticTarget(ctx, candidate)
+            return { successor: candidate, targetReadiness }
+          } catch {
+            /* An original-version recovery process is not target completion. */
+          }
+        }
+        return undefined
+      }
     )
-    // Observation only: never spawn or open the target package to repair a failed relaunch.
-    const connection = await wait('automatic target desktop CDP', () =>
-      connect(profile, successor.pid)
-    )
-    targetBrowser = connection.browser
-    const targetPage = connection.page
-    await targetPage.waitForFunction(
-      async () => (await window.api.databaseStartup.getState()).phase === 'ready',
-      undefined,
-      { timeout: 60000 }
-    )
-    const data = await targetPage.evaluate(
-      async ({ projectId, sessionId }) => ({
-        app: await window.api.update.getAppInfo(),
-        projects: await window.api.projects.list(),
-        session: await window.api.sessions.loadOne({ projectId, sessionId }),
-        storage: await window.api.storage.getStatus()
-      }),
-      { projectId: fixture.project.id, sessionId: fixture.session.id }
-    )
-    const bootstrap = await readBackend(configRoot)
-    const nativeWindow = JSON.parse(
-      (await run(join(output, 'gui-probe'), [String(successor.pid)])).stdout
-    )
+    // Squirrel does not promise to preserve CDP launch flags. Use the authenticated real backend
+    // owner and its native process ancestry, plus the actual shown native window, to observe target.
     const sentinelAfter = (await processes()).find((p) => p.pid === sentinel.pid)
     const sentinelData = await readFixture(sentinelPage, sentinelFixture)
     const sentinelBackend = await readBackend(sentinelConfig)
@@ -442,20 +689,13 @@ const main = async () => {
         sentinelData.session.messages?.[0]?.content === sentinelFixture.session.content,
       process: successor,
       launchedByHarness: false,
-      version: data.app.version,
-      nativeWindowVisible: nativeWindow.onScreenWindows > 0,
-      rendererReady: await targetPage.locator('body').isVisible(),
-      backendReady: bootstrap.appVersion === target.version && bootstrap.platform === 'darwin',
-      configRoot: bootstrap.configRoot,
-      profilePath: profile,
-      project: data.projects.find((p) => p.id === fixture.project.id),
-      session: data.session,
+      ...targetReadiness,
       sentinelIdentity: identity(sentinelAfter),
       ...feed.metrics
     }
     report.observation = observation
     report.result = assertAutomaticUpdate(observation, {
-      sourcePid: sourceChild.pid,
+      sourcePid: ctx.sourcePid,
       appliedAt,
       executable,
       version: target.version,
@@ -464,15 +704,35 @@ const main = async () => {
       ...fixture,
       sentinelIdentity: identity(sentinelProcess)
     })
-    await targetPage.screenshot({ path: join(output, 'target-ready.png') })
+    Object.assign(ctx, {
+      successor,
+      readTargetFixture: async (requested) => {
+        const result = await observeAutomaticTarget({ ...ctx, fixture: requested }, successor)
+        return { projects: result.project ? [result.project] : [], session: result.session }
+      }
+    })
+    await scenario.afterUpdate?.(ctx, observation)
+    await run('/usr/sbin/screencapture', [
+      '-x',
+      '-l',
+      String(targetReadiness.nativeWindow.windowNumber),
+      join(output, 'target-ready.png')
+    ])
     await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', source.app])
+    await run('/usr/bin/codesign', ['--verify', '--deep', '--strict', entryApp])
+    if ((await digest(entryExecutable)) !== entryExecutableBefore)
+      throw new Error('The stable ordinary entry executable changed during runtime update')
+    report.entryPreserved = {
+      executableSha256: entryExecutableBefore,
+      originalEntryBundle: entryApp,
+      runtimeInstallation: source.app
+    }
     report.status = 'passed'
   } catch (error) {
     failure = error
     report.error = error.message
     for (const [label, browser] of [
       ['source', sourceBrowser],
-      ['target', targetBrowser],
       ['other-installation', sentinelBrowser]
     ]) {
       try {
@@ -493,10 +753,12 @@ const main = async () => {
         report.status = 'failed'
       }
     }
+    await clean('admissionObserverStopped', async () => admissionObserver?.stop())
+    await clean('scenarioCleanup', async () => scenario?.cleanup?.(ctx))
     await clean('cdpDisconnected', async () => {
       await sourceBrowser?.close()
-      await targetBrowser?.close()
       await sentinelBrowser?.close()
+      for (const browser of attachedBrowsers) await browser.close()
     })
     await clean('processesStopped', async () => {
       // Resolve current executable ownership again; never kill a reused historical PID.
@@ -518,6 +780,18 @@ const main = async () => {
         10000
       )
     })
+    await clean('ownedHandoffsRemoved', async () => {
+      const { validateOwnedHandoff } = await import('./mac-update-fault-scenarios.mjs')
+      for (const entry of ctx?.ownedHandoffs || []) {
+        try {
+          await validateOwnedHandoff(ctx, entry.bound)
+        } catch (error) {
+          if (error.code === 'ENOENT') continue
+          throw error
+        }
+        await rm(entry.directory, { recursive: true, force: true })
+      }
+    })
     await clean('feedClosed', async () => feed?.close())
     await clean('keychainRestored', async () => {
       if (originalKeychains)
@@ -525,12 +799,20 @@ const main = async () => {
       if (fixtureKeychain) await run('/usr/bin/security', ['delete-keychain', fixtureKeychain])
     })
     // Raw stderr can contain service tokens. Keep equivalent diagnostics with tokens redacted.
+    try {
+      if (ctx?.readProductLogs) logs.push(await ctx.readProductLogs())
+    } catch {
+      /* Startup can fail before logs exist. */
+    }
     await writeFile(
       join(output, 'app.log'),
       logs.join('').replace(/([?&]token=)[A-Za-z0-9_-]+/g, '$1[redacted]')
     )
     await clean('fixtureRootRemoved', async () => rm(root, { recursive: true, force: true }))
-    await writeFile(join(output, 'normal-update.json'), JSON.stringify(report, null, 2))
+    await writeFile(
+      join(output, scenarioId === 'M01' ? 'normal-update.json' : `${scenarioId}.json`),
+      JSON.stringify(report, null, 2)
+    )
   }
   if (failure) throw failure
 }

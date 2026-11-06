@@ -1,13 +1,16 @@
 import { createRequire } from 'node:module'
 import { realpathSync } from 'node:fs'
-import { isAbsolute } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import type { DarwinProcessIdentity } from '@aipoch/process-tree-native'
 import { UpdateLifecycleError } from '../../shared/update'
 
 const requireNative = createRequire(__filename)
 type Native = Pick<
   typeof import('@aipoch/process-tree-native'),
-  'listDarwinProcesses' | 'getDarwinProcessExecutable' | 'signalDarwinProcess'
+  | 'listDarwinProcesses'
+  | 'getDarwinProcessExecutable'
+  | 'getDarwinProcessArguments'
+  | 'signalDarwinProcess'
 >
 type OwnedProcess = DarwinProcessIdentity & { executablePath: string }
 export class MacInstallationProcessError extends UpdateLifecycleError {
@@ -21,6 +24,23 @@ export class MacInstallationProcessError extends UpdateLifecycleError {
   }
 }
 const inside = (path: string, root: string): boolean => path === root || path.startsWith(root + '/')
+function canonicalManagedLoop(path: string): string | undefined {
+  if (!isAbsolute(path)) return undefined
+  let existing = resolve(path)
+  const missing: string[] = []
+  while (true) {
+    try {
+      return join(realpathSync(existing), ...missing)
+    } catch (error) {
+      // A live kernel can outlast the bundle's removal during replacement. Only ENOENT permits
+      // normalizing the exact shipped path from its existing parent; denial/IO errors stay unknown.
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(existing) === existing)
+        return undefined
+      missing.unshift(basename(existing))
+      existing = dirname(existing)
+    }
+  }
+}
 
 /** Only canonical executable identity or a verified process-generation ancestry grants close
  * authority. An installation mapping, argv substring, name, coalition or stale PID never does. */
@@ -36,9 +56,33 @@ function collectOwned(
     return executablePath ? [{ ...identity, executablePath }] : []
   })
   const owned = new Map<string, OwnedProcess>()
-  const foreign = (row: OwnedProcess): boolean =>
-    /\.app\//i.test(row.executablePath) && !inside(row.executablePath, root)
+  const foreign = (row: OwnedProcess): boolean => {
+    if (!/\.app\//i.test(row.executablePath) || inside(row.executablePath, root)) return false
+    // Python/R may live inside another software bundle. This narrow exception needs verified
+    // managed ancestry below AND native argv for this installation's exact shipped kernel loop.
+    // Another Open-Science main/backend and arbitrary external applications remain excluded.
+    if (
+      !/^(?:python(?:\d+(?:\.\d+)*)?|r(?:script)?|node|electron)$/i.test(
+        basename(row.executablePath)
+      )
+    )
+      return true
+    const script = native.getDarwinProcessArguments(row.pid)?.at(-1)
+    if (!script) return true
+    const canonical = canonicalManagedLoop(script)
+    if (!canonical) return true
+    if (!inside(canonical, root)) return true
+    const matched = ['python_loop.py', 'r_loop.R', 'repl_loop.js'].some((name) =>
+      ['app.asar.unpacked/resources/notebook', 'resources/notebook'].some((directory) => {
+        return canonicalManagedLoop(join(root, 'Contents/Resources', directory, name)) === canonical
+      })
+    )
+    return (
+      !matched || native.getDarwinProcessExecutable(row.pid, row.uniqueId) !== row.executablePath
+    )
+  }
   for (const row of current) {
+    if (!inside(row.executablePath, root) && retained.get(row.uniqueId)?.pid !== row.pid) continue
     if (foreign(row)) {
       // exec preserves uniqueId. A previously owned process that becomes another installation
       // also loses authority to lend its retained ancestry to new workers.
@@ -53,10 +97,10 @@ function collectOwned(
     changed = false
     for (const row of current) {
       if (owned.has(row.uniqueId)) continue
-      // Launching another installed app does not make that installation part of this update.
-      if (foreign(row)) continue
       const parent = owned.get(row.parentUniqueId) ?? retained.get(row.parentUniqueId)
       if (!parent || (row.ppid !== parent.pid && row.ppid !== 1)) continue
+      // Launching another installed app does not make that installation part of this update.
+      if (foreign(row)) continue
       owned.set(row.uniqueId, row)
       changed = true
     }
@@ -87,7 +131,21 @@ export async function closeMacInstallationProcesses(
     !options.excludedProcessIds.every((pid) => Number.isSafeInteger(pid) && pid > 0)
   )
     throw new MacInstallationProcessError('close-input')
-  root = realpathSync(root)
+  // A stable native entry also invokes this after the replaceable bundle was moved away.
+  // Canonicalize existing parents without treating the missing application as an idle proof.
+  let existing = resolve(root)
+  const missing: string[] = []
+  while (true) {
+    try {
+      root = join(realpathSync(existing), ...missing)
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(existing) === existing)
+        throw error
+      missing.unshift(basename(existing))
+      existing = dirname(existing)
+    }
+  }
   const deadlineAt = options.deadlineAt ?? Date.now() + options.timeoutMs + 1000
   const native = requireNative('@aipoch/process-tree-native') as Native
   const excluded = new Set([process.pid, ...options.excludedProcessIds])
