@@ -218,6 +218,22 @@ Call `dispose()` during lifecycle shutdown.
   the receipt's loopback/WFP resources, and delete the profile idempotently. Resources without
   a valid scoped receipt are preserved.
 
+### Windows orphan ACL lease diagnostics
+
+If a machine has an `acl-leases/<lease-id>.json` receipt but no `acl-state.json`, do not delete the
+receipt, create a replacement state file, or reset the affected ACLs. The original DACL snapshots
+and inheritance-control bits are unavailable, so automatic restoration cannot be made safe or
+rollbackable. Capture a read-only report with the bundled host before opening a support issue:
+
+```powershell
+& .\notebook-appcontainer-host.exe inspect-acl-leases <installation-id> <ownership-root>
+```
+
+The JSON report lists whether ACL state exists, every lease receipt, owner-process liveness,
+capability SIDs, affected paths, and grant masks. The command does not create, delete, or modify
+receipts, state, profiles, firewall rules, or filesystem ACLs. Preserve the receipt and report
+together; only a verified ACL baseline can authorize a later manual repair.
+
 `status()` never elevates privileges or changes durable setup resources. When a receipt appears
 active, it launches short-lived positive and negative connection probes before reporting protected
 mode. Missing Windows setup leaves the runtime in standard mode; first Notebook use never prompts.
