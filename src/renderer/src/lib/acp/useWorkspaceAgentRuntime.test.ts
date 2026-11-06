@@ -464,6 +464,7 @@ describe('workspace permission wait recovery', () => {
       executionId: 'execution-fixture',
       commandFingerprint: 'a'.repeat(64),
       hostname,
+      protocol: 'http' as const,
       port: 443,
       runtime: 'bash' as const,
       originatingPromptMessageId: source.messages[0].id,
