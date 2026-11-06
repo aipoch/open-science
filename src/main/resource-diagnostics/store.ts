@@ -9,7 +9,7 @@ import {
   open,
   type FileHandle
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export const RESOURCE_LOG_LIMIT = 64 * 1024 * 1024
 const WINDOW_LIMIT = RESOURCE_LOG_LIMIT / 2 - 4096
@@ -22,6 +22,8 @@ type Entry = { line: string; bytes: number; anomaly: boolean }
 type Segment = { name: string; bytes: number }
 type StoreOptions = {
   directory: string
+  // Existing application-owned boundary; never create or follow a link at this root.
+  rootDirectory?: string
   preserveLive?: boolean
   windowBytes?: number
   segmentBytes?: number
@@ -127,10 +129,26 @@ export class ResourceLogStore {
   }
 
   private async initialize(): Promise<void> {
-    await mkdir(this.directory, { recursive: true })
-    const directory = await lstat(this.directory)
-    if (!directory.isDirectory() || directory.isSymbolicLink())
-      throw new Error('Invalid resource log directory')
+    const root = resolve(this.options.rootDirectory ?? dirname(this.directory))
+    const suffix = relative(root, resolve(this.directory))
+    if (!suffix || suffix === '..' || suffix.startsWith(`..${sep}`) || isAbsolute(suffix))
+      throw new Error('Resource log directory is outside its root')
+    let current = root
+    // Check each boundary before descending or creating a child. Recursive mkdir would
+    // follow an existing logs junction and mutate its target before checking the leaf.
+    for (const part of ['', ...suffix.split(sep)]) {
+      if (part) {
+        current = join(current, part)
+        try {
+          await mkdir(current)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        }
+      }
+      const directory = await lstat(current)
+      if (!directory.isDirectory() || directory.isSymbolicLink())
+        throw new Error('Invalid resource log directory')
+    }
     // Only this version's fixed names may be mutated. Unknown contents are preserved fail-closed.
     const names = await readdir(this.directory)
     if (names.some((name) => !SEGMENT.test(name) && name !== 'open' && name !== 'seal.pending')) {

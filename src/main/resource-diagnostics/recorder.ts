@@ -33,6 +33,7 @@ const SERIALIZATION_BUDGET_BYTES = 256 * 1024
 const QUEUE_HIGH_WATER_BYTES = 512 * 1024
 
 export class ResourceRecorder {
+  private readonly processListeners = new Set<() => void>()
   private readonly runtimes = new Map<string, WeakRef<ResourceObservation>>()
   private readonly native: Options['native']
   private readonly now: () => number
@@ -461,6 +462,47 @@ export class ResourceRecorder {
     return this.pending ?? Promise.resolve()
   }
 
+  observeProcess(
+    child: ChildProcess,
+    fields: ResourceFacts,
+    expected: () => boolean | undefined
+  ): void {
+    if (this.closed) return
+    const identity = { ...fields, pid: child.pid, birth: this.birth(child.pid) }
+    const dispose = (): void => {
+      child.off('exit', onExit)
+      child.off('error', onError)
+      child.off('close', dispose)
+      this.processListeners.delete(dispose)
+    }
+    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
+      dispose()
+      let wasExpected: boolean | undefined
+      try {
+        wasExpected = expected()
+      } catch {
+        /* Missing owner evidence stays unknown. */
+      }
+      this.event(
+        'process-exited',
+        { ...identity, code, signal, expected: wasExpected },
+        wasExpected === false
+      )
+    }
+    const onError = (): void => this.event('process-error', identity)
+    this.processListeners.add(dispose)
+    try {
+      child.once('exit', onExit)
+      child.once('error', onError)
+      // Failed spawns can emit error/close without exit. They must not retain this recorder.
+      child.once('close', dispose)
+      this.observeIdentity(identity)
+      this.event('process-born', identity)
+    } catch {
+      dispose()
+    }
+  }
+
   async close(clean: boolean): Promise<void> {
     if (this.closed) return
     clearTimeout(this.timer)
@@ -468,6 +510,7 @@ export class ResourceRecorder {
     this.unsubscribeActivity?.()
     this.event('run-end', { expected: clean, missing: this.missing, ...this.options.store.status })
     this.closed = true
+    for (const dispose of this.processListeners) dispose()
     this.runtimes.clear()
     this.retained = []
     this.identities.clear()
@@ -528,26 +571,8 @@ export const observeResourceProcess = (
   fields: ResourceFacts,
   expected: () => boolean | undefined
 ): void => {
-  const recorder = active
-  if (!recorder) return
   try {
-    const identity = { ...fields, pid: child.pid, birth: recorder.birth(child.pid) }
-    recorder.observeIdentity(identity)
-    recorder.event('process-born', identity)
-    child.once('exit', (code, signal) => {
-      let wasExpected: boolean | undefined
-      try {
-        wasExpected = expected()
-      } catch {
-        /* Missing owner evidence stays unknown. */
-      }
-      recorder.event(
-        'process-exited',
-        { ...identity, code, signal, expected: wasExpected },
-        wasExpected === false
-      )
-    })
-    child.once('error', () => recorder.event('process-error', identity))
+    active?.observeProcess(child, fields, expected)
   } catch {
     /* Observing a child must not change process ownership. */
   }

@@ -1,6 +1,6 @@
 import { link, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import * as fs from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RESOURCE_LOG_LIMIT, ResourceLogStore } from './store'
@@ -49,6 +49,54 @@ afterEach(async () => {
 })
 
 describe('bounded resource journal', () => {
+  it('creates missing journal directories beneath the existing owned root', async () => {
+    const root = await directory()
+    const path = join(root, 'logs', 'resources')
+    const journal = store(path, { rootDirectory: root })
+    journal.append('{"event":"first"}\n')
+    await journal.close(true)
+    expect(journal.status.failed).toBe(false)
+    expect(await content(path, 'live-')).toContain('first')
+  })
+
+  it('rejects a journal outside its declared root without creating it', async () => {
+    const root = await directory()
+    const outside = await directory()
+    const journal = store(join(outside, 'resources'), { rootDirectory: root })
+    journal.append('{"event":"test"}\n')
+    await journal.close(true)
+    expect(journal.status.failed).toBe(true)
+    expect(await readdir(outside)).toEqual([])
+  })
+
+  it.each(['root', 'logs', 'resources'] as const)(
+    'refuses a linked %s directory before creating or changing journal contents',
+    async (boundary) => {
+      const base = await directory()
+      const outside = await directory()
+      const root = join(base, 'config')
+      const path = join(root, 'logs', 'resources')
+      const linked =
+        boundary === 'root'
+          ? root
+          : join(root, 'logs', ...(boundary === 'resources' ? ['resources'] : []))
+      await fs.mkdir(dirname(linked), { recursive: true })
+      await writeFile(join(outside, 'keep'), 'original')
+      await symlink(outside, linked, process.platform === 'win32' ? 'junction' : 'dir')
+      try {
+        const journal = store(path, { rootDirectory: root })
+        journal.append('{"event":"test"}\n')
+        await journal.flush()
+        await journal.close(true)
+        expect(journal.status.failed).toBe(true)
+        expect(await readdir(outside)).toEqual(['keep'])
+        expect(await readFile(join(outside, 'keep'), 'utf8')).toBe('original')
+      } finally {
+        await rm(linked)
+      }
+    }
+  )
+
   it.each([false, true])(
     'refuses a replaced segment before append (existing: %s)',
     async (existing) => {

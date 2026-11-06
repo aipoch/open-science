@@ -154,6 +154,7 @@ async function main(): Promise<void> {
       ? async () => {
           const store = new ResourceLogStore({
             directory: join(configRoot, 'logs', 'resources'),
+            rootDirectory: configRoot,
             preserveLive: true,
             onFailure: () => {
               createLogger('resource-diagnostics').warn('resource journal unavailable')

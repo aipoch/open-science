@@ -75,6 +75,59 @@ afterEach(async () => {
 })
 
 describe('resource correlation recorder', () => {
+  it('releases only its process listeners across recording stop/start cycles', async () => {
+    const child = Object.assign(new EventEmitter(), { pid: 10 }) as ChildProcess
+    const ownerExit = vi.fn()
+    const ownerError = vi.fn()
+    child.on('exit', ownerExit)
+    child.on('error', ownerError)
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const { recorder } = await setup({
+        sampleWindowsResources: vi.fn(),
+        readWindowsResourceBirth: () => '100'
+      })
+      observeResourceProcess(child, { runtimeId: 'long-lived' }, () => true)
+      expect(child.listenerCount('exit')).toBe(2)
+      expect(child.listenerCount('error')).toBe(2)
+      installResourceRecorder(undefined)
+      await recorder.close(true)
+      expect(child.listeners('exit')).toEqual([ownerExit])
+      expect(child.listeners('error')).toEqual([ownerError])
+    }
+    child.emit('exit', 0, null)
+    child.emit('error', new Error('owner handles this'))
+    expect(ownerExit).toHaveBeenCalledOnce()
+    expect(ownerError).toHaveBeenCalledOnce()
+  })
+
+  it('releases both diagnostic listeners after exit while retaining exit evidence', async () => {
+    const { read } = await setup({
+      sampleWindowsResources: vi.fn(),
+      readWindowsResourceBirth: () => '100'
+    })
+    const child = Object.assign(new EventEmitter(), { pid: 10 }) as ChildProcess
+    observeResourceProcess(child, { runtimeId: 'exited' }, () => false)
+    child.emit('exit', 1, null)
+    expect(child.listenerCount('exit')).toBe(0)
+    expect(child.listenerCount('error')).toBe(0)
+    expect((await read()).filter((row) => row.event === 'process-exited')).toHaveLength(1)
+  })
+
+  it('releases a failed spawn on close without fabricating an exit', async () => {
+    const { read } = await setup({
+      sampleWindowsResources: vi.fn(),
+      readWindowsResourceBirth: vi.fn()
+    })
+    const child = new EventEmitter() as ChildProcess
+    observeResourceProcess(child, { runtimeId: 'failed-spawn' }, () => false)
+    child.emit('error', new Error('spawn failed'))
+    child.emit('close', -1, null)
+    expect(child.eventNames()).toEqual([])
+    const records = await read()
+    expect(records.filter((row) => row.event === 'process-error')).toHaveLength(1)
+    expect(records.filter((row) => row.event === 'process-exited')).toHaveLength(0)
+  })
+
   it('sleeps through slow-sample backoff rather than waking at every normal interval', async () => {
     vi.useFakeTimers()
     const activity = new ResourceActivity()
