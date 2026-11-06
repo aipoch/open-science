@@ -479,16 +479,18 @@ class KernelProcessLifecycleOwner {
     for (const name of names) {
       const path = join(this.directory, name)
       if (name.includes('.pending.')) {
+        let pendingRecord: KernelProcessRecord | undefined
+        try {
+          pendingRecord = decodeRecord(readFileSync(path, 'utf8'))
+        } catch (error) {
+          // The host may have atomically promoted this intent after the directory snapshot.
+          // Its active receipt still fences exact process admission in beginSpawn().
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
+          pendingRecord = undefined
+        }
+        const pendingRecordMatchesName =
+          pendingRecord !== undefined && name.startsWith(`${recordFilePrefix(pendingRecord)}.`)
         if (options.allowUnverifiedReceipts) {
-          let pendingRecord: KernelProcessRecord | undefined
-          try {
-            pendingRecord = decodeRecord(readFileSync(path, 'utf8'))
-          } catch (error) {
-            // The host may have atomically promoted this intent after the directory snapshot.
-            // Its active receipt still fences exact process admission in beginSpawn().
-            if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-            pendingRecord = undefined
-          }
           if (!pendingRecord || !name.startsWith(`${recordFilePrefix(pendingRecord)}.`)) {
             blocked.push(name)
             continue
@@ -509,6 +511,9 @@ class KernelProcessLifecycleOwner {
         try {
           renameSync(path, cancelledPath)
           rmSync(cancelledPath, { force: true })
+          if (pendingRecordMatchesName) {
+            removeWindowsProcessTreeProof(pendingRecord?.windowsProcessTreeProof)
+          }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
         }
