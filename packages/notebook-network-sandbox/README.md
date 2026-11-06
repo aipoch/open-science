@@ -12,7 +12,7 @@ are not a supported public package API.
 The package provides:
 
 - forced network routing on macOS and Linux, plus optional protected routing on Windows;
-- exact-domain, wildcard-domain, and optional port allow/deny rules;
+- HTTPS domain access by default and exact protocol/host/port exceptions for HTTP or literal IPs;
 - a per-process callback for an application-owned “allow this destination?” interaction;
 - live policy updates without restarting the proxy;
 - command wrapping, denial annotations, readiness checks, and cleanup;
@@ -23,9 +23,8 @@ The package provides:
 - ownership-tracked, idempotent Windows removal for uninstall and repair.
 
 The implementation contains no generic configuration loader, user credential injection, AWS
-signing or general request-body inspection. The public HTTPS read channel does terminate TLS
-using a per-command local CA to inspect GET/HEAD requests; ordinary approved tunnels retain
-their separate routing behavior.
+signing or general request-body inspection. The optional low-level public-read inspection channel remains available to other callers. Notebook
+HTTPS domain traffic uses ordinary tunnels, with the client performing normal TLS certificate checks.
 
 ## Architecture
 
@@ -33,15 +32,13 @@ See [safety and integration](#safety-and-integration) for the limits of these co
 
 ```text
 Settings > Network
-  ├─ built-in automatic-access groups
-  ├─ custom public domains
-  └─ trusted private services (protocol + exact hostname/IP + port)
+  └─ trusted unsafe networks (protocol + exact hostname/IP + port; manual and persistent grants)
             │
             ▼
-buildNotebookNetworkPolicy() ── public approval policy + private-service grants
+buildNotebookNetworkPolicy() ── HTTPS domains + scoped unsafe network exceptions
             │
             ▼
-request_network_access       ── conversation approval / next-command grant / persist allowlist
+request_network_access       ── conversation approval / explicit retry / scoped persistence
             │
             ▼
 NotebookNetworkSandboxOwner ── consumes command-scoped grants
@@ -79,40 +76,33 @@ module.
 
 Policy is evaluated in this order:
 
-1. malformed hosts and explicit deny rules are rejected;
-2. only HTTPS domain requests continue through the ordinary allow/ask chain. HTTP requests and
-   literal IP destinations are hard-denied unless an exact trusted private-service rule matches the
-   protocol, hostname and port. DNS answers are used only to choose a route address; public/private,
-   loopback, metadata and host-interface classification is not performed;
-3. enabled built-in groups and custom public domains allow ordinary HTTPS requests. Turning off a
-   built-in rule requires approval; it does not create a hard deny, and an exact custom grant can
-   override it;
-4. unknown public destinations can use the gateway's restricted HTTPS GET/HEAD path on port 443
-   during an active execution. Request bodies, authentication/custom headers and other methods
-   require broader approval. Explicit-ask rules do not receive that read exception;
-5. the Agent may call `request_network_access` for public access. An approved one-time grant is
-   consumed by the next matching execution; an always grant is persisted and hot-applied.
+1. malformed hosts and low-level explicit deny rules are rejected;
+2. exact trusted exceptions match protocol, normalized hostname/IP, and port;
+3. HTTPS domains are allowed without approval, including localhost and domains resolving to
+   loopback, private, or mixed public/private addresses. DNS answers select routing addresses only;
+   no address classification or address-set change check grants or revokes authority;
+4. HTTP or literal IPv4/IPv6 destinations without matching authority generate a trusted blocked
+   record. Only the application can present an approval card for that record;
+5. one-time authorization is consumed on an explicit matching retry; project/global grants persist
+   in their original scope. A decision never replays the failed request automatically.
 
-“Allow once” and “Always allow” apply to HTTPS domain authorization only. A stored public hostname is
-not proof of connectivity, credentials or TLS trust.
+CONNECT and SOCKS have no URL scheme. The gateway acknowledges the proxy handshake, buffers a
+bounded application preface, and classifies HTTP versus TLS before opening an upstream socket.
+Port 80 does not imply HTTP, and port 443 does not imply HTTPS. Unsupported traffic is rejected.
 
 ### Shell approvals and recovery
 
-For an active `bash_execute` Run, the application persists a destination approval before publishing
-its existing permission card. The proxy holds the connection until a decision; an approved HTTPS
-request (including authentication headers and a body) is forwarded over that same connection.
-Restricted public reads remain unchanged. Repeated requests to the same host and port in one Run
-share a decision. Probes without a Run identity do not prompt.
+For active Notebook execution, the application persists destination approval before publishing
+its existing permission card. Requests bind to their originating session and execution. HTTPS
+domains do not create cards. HTTP/IP approval returns a retry-required outcome; the Agent must
+explicitly retry after considering prior side effects. The original request is not replayed.
 
-The application excludes approval time from its Shell execution budget and keeps MCP progress
-notifications active. A client can still impose its own timeout or end its process. In that case the
-application waits for the decision before returning the tool result, but cannot restore the socket
-or undo earlier side effects. It never automatically replays the command. Global allowlist changes
-invalidate existing proxy connections, so they may also require an explicit retry.
+Persistent settings changes reset active proxy connections. Removing a grant prevents subsequent
+connections, while one-time grants never appear in Settings' persistent list.
 
 Approval authority lives in the optional, versioned `Session.runtimeContext.networkApprovals`
 collection, separately from provider tool approvals. Records bind the Session, Agent Frame,
-Message Branch, prompt, execution, command SHA-256, hostname and port. They contain no shell text,
+Message Branch, prompt, execution, command SHA-256, protocol, hostname and port. They contain no shell text,
 request URL, headers or body. The existing `pending` and `continuing` states represent a human wait
 and an approved explicit retry respectively; no new Session status or SQL migration is introduced.
 A one-time recovered grant is consumed only by the same command and destination on its original
@@ -124,29 +114,24 @@ rather than reviving its authority; downgrading does not preserve pending networ
 Clients that bypass the proxy still fail closed on enforced platforms; native Windows standard
 mode retains its documented advisory protection boundary.
 
-### Trusted private services
+### Trusted unsafe networks
 
-Only the local Settings flow can review and save private services. A rule records a protocol, exact
-hostname or literal IP and port; HTTP rules are explicit exceptions to the HTTPS default. DNS is not
-resolved during Settings review and a later DNS answer change does not revoke the rule. Concurrent
-private editors use a baseline check, while public allowlist updates retain their existing delta
-merge. Removing a rule works offline. Policy changes reset active gateway connections and invalidate
-pending decisions.
+The local Settings page shows manual rules and session-approved persistent project/global grants
+in one list. Each row retains its protocol, host, port, and scope. One-time grants are not listed.
+Only application-owned Settings operations and authenticated user approval decisions may mutate
+trusted settings; Agent tools and sandbox code receive no settings-write capability. Manual edits
+use baseline conflict checks, and revocation works offline.
 
-Settings persists the optional `notebookNetwork.trustedPrivateDestinations` array as
-`{ protocol, hostname, port, approvedAddresses }` in the existing local `settings.json` transaction.
-Missing protocol values are treated as HTTPS for compatibility. `approvedAddresses` is retained for
-old settings and grant records but is not an authorization condition. Missing means no private grants.
-Existing public entries are never promoted; no database migration or settings version bump is required.
-Session packages and data-folder relocation do not transfer Settings.
-Manually copying the whole configuration also copies its trust grants: review or remove private
-rules before using that configuration on another machine/network. This is endpoint trust, not
-cryptographic service identity; HTTPS certificate checks still apply, and raw HTTP services remain
-the user's explicit trust decision.
+The existing `trustedPrivateDestinations` and `destinationGrants` storage fields remain compatible.
+Missing protocols mean HTTPS, never HTTP. Legacy HTTPS domain entries leave the exception list;
+explicit HTTP and IP grants retain their scopes and provenance. Obsolete pending HTTPS domain cards
+are removed on recovery. `approvedAddresses` remains readable as historical evidence but is not an
+authorization condition or an empty UI field. IPv6 hosts use brackets in keys and displayed URLs.
 
-Private rules do not authorize conversation-link previews/icons, model endpoints, Connectors, remote
-Compute hosts or agent-native tools outside the application-owned execution boundary. Rules do not
-enable Windows protection; standard execution remains outside enforcement until protection is set up.
+HTTPS certificate validation remains the client's responsibility. A trusted HTTP endpoint does not
+provide TLS identity or confidentiality. Link previews, icons, model endpoints, Connectors, remote
+Compute hosts, and agent-native tools retain their independent permission policies. Existing public
+domain preferences are preserved for those callers but no longer configure Notebook egress.
 
 ## Security behavior
 

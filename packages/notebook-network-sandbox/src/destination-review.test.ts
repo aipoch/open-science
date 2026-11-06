@@ -26,12 +26,10 @@ it('reviews trusted service shape without resolving DNS', async () => {
 })
 
 it('defaults legacy trusted service entries to HTTPS without resolving DNS', async () => {
-  await expect(
-    reviewPrivateDestination({ hostname: 'service.internal.example', port: 443 })
-  ).resolves.toEqual({
+  await expect(reviewPrivateDestination({ hostname: '127.0.0.1', port: 443 })).resolves.toEqual({
     ok: true,
     destination: {
-      hostname: 'service.internal.example',
+      hostname: '127.0.0.1',
       port: 443,
       protocol: 'https',
       approvedAddresses: []
@@ -71,8 +69,8 @@ it('reviews bracketed IPv6 and localhost without DNS validation', async () => {
   await expect(
     reviewPrivateDestination({ hostname: 'localhost', port: 80, protocol: 'https' })
   ).resolves.toMatchObject({
-    ok: true,
-    destination: { hostname: 'localhost', port: 80, protocol: 'https' }
+    ok: false,
+    reason: 'ineligible'
   })
   expect(lookup).not.toHaveBeenCalled()
 })

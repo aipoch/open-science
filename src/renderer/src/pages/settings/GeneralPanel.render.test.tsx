@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { fireEvent, within } from '@testing-library/react'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,7 +8,9 @@ import { useUpdateStore } from '@/stores/update-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { i18next } from '@/i18n'
+import { AppearancePanel } from './AppearancePanel'
 import { GeneralPanel } from './GeneralPanel'
+import { NotificationsPanel } from './NotificationsPanel'
 
 vi.mock('@/assets/logo.png', () => ({ default: 'logo.png' }))
 vi.mock('@/assets/logo-dark.png', () => ({ default: 'logo-dark.png' }))
@@ -57,6 +60,25 @@ const switchTo = (language: string): void => {
     void i18next.changeLanguage(language)
   })
 }
+
+it('opens the existing export dialog from Settings without requiring an active session', async () => {
+  const inspectDiagnostics = vi.fn().mockResolvedValue({ items: [] })
+  Object.assign(window.api, {
+    sessions: {
+      inspectDiagnostics,
+      exportDiagnostics: vi.fn(),
+      cancelDiagnostics: vi.fn().mockResolvedValue(undefined)
+    }
+  })
+  await act(async () => root.render(<GeneralPanel />))
+  await flush()
+  await act(async () => fireEvent.click(findButton(/^Export diagnostics…$/)!))
+  expect(inspectDiagnostics).toHaveBeenCalledWith({
+    scope: 'application',
+    operationId: expect.any(String)
+  })
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Export diagnostics')
+})
 
 beforeEach(() => {
   switchTo('en')
@@ -252,7 +274,7 @@ describe('GeneralPanel command line tool', () => {
   })
 })
 
-describe('GeneralPanel About', () => {
+describe('GeneralPanel app information', () => {
   it('keeps app identity and resources at the top of General settings', async () => {
     await act(async () => {
       root.render(<GeneralPanel />)
@@ -262,16 +284,17 @@ describe('GeneralPanel About', () => {
     // The dialog header bar is the single panel title; the panel itself starts with sections.
     expect(container.querySelector('[data-slot="settings-panel-header"]')).toBeNull()
     expect(container.querySelector('h2')).toBeNull()
+    expect(container.querySelector('[data-settings-anchor="general.about"] h3')).toBeNull()
 
     const sections = Array.from(container.querySelectorAll('[data-slot="settings-section"]'))
-    expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('About')
+    expect(sections.at(0)?.querySelector('h3')?.textContent).toBe('Window behavior')
   })
 })
 
-describe('GeneralPanel notifications', () => {
+describe('NotificationsPanel', () => {
   it('toggles task notifications off via the settings API', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -293,7 +316,7 @@ describe('GeneralPanel notifications', () => {
 
   it('keeps task content private by default and can verify native delivery', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -319,7 +342,7 @@ describe('GeneralPanel notifications', () => {
 
   it('reserves the test-notification feedback slot so a result causes no layout shift', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<NotificationsPanel />)
     })
     await flush()
 
@@ -339,13 +362,25 @@ describe('GeneralPanel notifications', () => {
   })
 })
 
-describe('GeneralPanel appearance', () => {
+describe('AppearancePanel', () => {
+  it('renders appearance controls in their own settings panel', async () => {
+    await act(async () => {
+      root.render(<AppearancePanel />)
+    })
+    await flush()
+
+    expect(
+      container.querySelector('[data-settings-anchor="appearance.preferences"]')
+    ).not.toBeNull()
+    expect(container.textContent).toContain('Language')
+  })
+
   it('sets the theme preference from the segmented control and reflects it on <html>', async () => {
     useThemeStore.getState().setPreference('light')
     document.documentElement.classList.remove('dark')
 
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -382,13 +417,27 @@ describe('GeneralPanel appearance', () => {
     window.api.platform = 'darwin'
 
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
     expect(container.textContent).toContain('The Dock icon follows the resolved theme.')
     expect(document.body.querySelector('[role="radiogroup"][aria-label="App icon"]')).toBeNull()
     expect(settingsApi.listAppIcons).not.toHaveBeenCalled()
+  })
+})
+
+describe('NotificationsPanel', () => {
+  it('renders notification controls in their own settings panel', async () => {
+    await act(async () => {
+      root.render(<NotificationsPanel />)
+    })
+    await flush()
+
+    expect(
+      container.querySelector('[data-settings-anchor="notifications.preferences"]')
+    ).not.toBeNull()
+    expect(container.textContent).toContain('Task notifications')
   })
 })
 
@@ -423,11 +472,32 @@ describe('GeneralPanel close behavior', () => {
 })
 
 describe('GeneralPanel diagnostics', () => {
+  it('omits the main log filename so JSON argument lists stay empty', async () => {
+    await act(async () => root.render(<GeneralPanel />))
+    await flush()
+    await act(async () => findButton(/^open$/i)!.click())
+    await flush()
+    await act(async () => findButton(/^show in folder$/i)!.click())
+    await flush()
+    // Web RPC serializes positional arguments: [undefined] becomes [null], not [].
+    expect(
+      JSON.parse(
+        JSON.stringify({
+          open: vi.mocked(window.api.logs.openFile).mock.calls,
+          reveal: vi.mocked(window.api.logs.revealInFolder).mock.calls
+        })
+      )
+    ).toEqual({ open: [[]], reveal: [[]] })
+  })
+
   it('keeps the log file path focusable for keyboard scrolling', async () => {
     await act(async () => root.render(<GeneralPanel />))
     await flush()
 
     const logPath = container.querySelector<HTMLElement>('[aria-label="Log file path"]')!
+    const location = logPath.closest('details')!
+    expect(location.open).toBe(false)
+    location.open = true
     expect(logPath.tabIndex).toBe(0)
     logPath.focus()
     expect(document.activeElement).toBe(logPath)
@@ -469,7 +539,7 @@ describe('GeneralPanel diagnostics', () => {
       expect(getStatus).toHaveBeenCalledTimes(2)
       expect(diagnostics.querySelector('[role="alert"]')).toBeNull()
       expect(findButton(/^open$/i)?.disabled).toBe(false)
-      expect(findButton(/^reveal$/i)?.disabled).toBe(false)
+      expect(findButton(/^show in folder$/i)?.disabled).toBe(false)
     }
   )
 
@@ -524,7 +594,9 @@ describe('GeneralPanel diagnostics', () => {
         lastWriteSucceeded: false,
         lastFailureCategory: 'append'
       })
-      const button = findButton(new RegExp(`^${action}$`, 'i'))!
+      const button = findButton(
+        new RegExp(`^${action === 'reveal' ? 'Show in folder' : action}$`, 'i')
+      )!
       await act(async () => button.click())
       await flush()
       expect.soft(getStatus).toHaveBeenCalledTimes(2)
@@ -565,14 +637,14 @@ describe('GeneralPanel diagnostics', () => {
       'The app could not write to the log file during its most recent attempt.'
     )
     expect(findButton(/^open$/i)?.disabled).toBe(false)
-    expect(findButton(/^reveal$/i)?.disabled).toBe(false)
+    expect(findButton(/^show in folder$/i)?.disabled).toBe(false)
   })
 })
 
-describe('GeneralPanel app icon', () => {
+describe('AppearancePanel app icon', () => {
   it('renders a preview tile per variant and switches the icon on click', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -602,7 +674,7 @@ describe('GeneralPanel app icon', () => {
 
   it('uses one App icon Tab stop and selects with ArrowRight', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -635,10 +707,10 @@ describe('GeneralPanel app icon', () => {
   })
 })
 
-describe('GeneralPanel appearance scale', () => {
+describe('AppearancePanel scale', () => {
   it('renders the interface scale control in Appearance', async () => {
     await act(async () => {
-      root.render(<GeneralPanel />)
+      root.render(<AppearancePanel />)
     })
     await flush()
 
@@ -651,4 +723,40 @@ describe('GeneralPanel appearance scale', () => {
       'Adjust the size of text and controls across the app. Changes apply immediately.'
     )
   })
+})
+
+it('selects a historical startup log for both Open and Reveal and retains it on refresh', async () => {
+  const name = 'desktop-backend-42-1700000000000.log'
+  vi.mocked(window.api.logs.getStatus).mockResolvedValue({
+    configured: true,
+    path: '/logs/main.log',
+    existing: true,
+    lastWriteSucceeded: false,
+    lastFailureCategory: 'append',
+    startupFiles: [{ name, path: `/config/logs/${name}`, startedAt: 1700000000000 }]
+  })
+  await act(async () => root.render(<GeneralPanel />))
+  await flush()
+  const select = within(container).getByRole('combobox', { name: 'Log file' })
+  await act(async () => fireEvent.click(select))
+  await act(async () =>
+    fireEvent.click(within(document.body).getByRole('option', { name: /desktop-backend-42/ }))
+  )
+  expect(select.textContent).toContain(name)
+  expect(select.textContent).toContain(new Date(1700000000000).toLocaleString())
+  expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe(
+    `/config/logs/${name}`
+  )
+  expect(container.textContent).not.toContain(
+    'The app could not write to the log file during its most recent attempt.'
+  )
+  await act(async () => findButton(/^open$/i)!.click())
+  await flush()
+  await act(async () => findButton(/^show in folder$/i)!.click())
+  await flush()
+  expect(window.api.logs.openFile).toHaveBeenCalledWith(name)
+  expect(window.api.logs.revealInFolder).toHaveBeenCalledWith(name)
+  expect(container.querySelector('[aria-label="Log file path"]')?.textContent).toBe(
+    `/config/logs/${name}`
+  )
 })

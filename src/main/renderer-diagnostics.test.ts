@@ -9,6 +9,156 @@ import {
 } from './renderer-diagnostics'
 
 describe('createRendererFailureReporter', () => {
+  it('records repeated save recovery cycles independently from failure-report deduplication', () => {
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() }
+    const reporter = createRendererFailureReporter({ log, maxReportsPerWindow: 1 })
+    const report = (event: 'retained' | 'resolved', attempt: number): unknown => ({
+      source: 'handled-error',
+      surface: 'workspace',
+      context: 'session-save',
+      errorCategory: 'unknown',
+      sessionWrite: {
+        target: 'session',
+        sessionId: 'session-1',
+        projectId: 'project-1',
+        code: 'desktop-runtime-disconnected',
+        epoch: 4,
+        phase: 'result-unknown',
+        recovery: { event, attempt, runtimePhase: 'connected' }
+      }
+    })
+
+    for (const attempt of [1, 2]) {
+      expect(reporter.report('renderer', report('retained', attempt))).toBe('recorded')
+      expect(reporter.report('renderer', report('resolved', attempt))).toBe('recorded')
+    }
+    expect(log.warn).toHaveBeenCalledTimes(2)
+    expect(log.info).toHaveBeenCalledTimes(2)
+    expect(log.info).toHaveBeenCalledWith(
+      'session storage recovery',
+      expect.objectContaining({
+        sessionWrite: expect.objectContaining({
+          recovery: expect.objectContaining({ event: 'resolved', attempt: 2 })
+        })
+      })
+    )
+    expect(log.error).not.toHaveBeenCalled()
+    expect(
+      reporter.report('renderer', {
+        source: 'window-error',
+        surface: 'workspace',
+        errorCategory: 'type'
+      })
+    ).toBe('recorded')
+    expect(log.error).toHaveBeenCalledOnce()
+  })
+
+  it('keeps distinct Session targets and classified outcomes in diagnostics', () => {
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() } })
+    const report = (
+      sessionId: string,
+      code: 'session-size-limit' | 'desktop-runtime-disconnected'
+    ): RendererFailureReport => ({
+      source: 'handled-error',
+      surface: 'workspace',
+      context: 'session-save',
+      errorCategory: 'unknown',
+      fingerprint: '811c9dc5',
+      sessionWrite: {
+        target: 'session',
+        sessionId,
+        projectId: 'project-1',
+        code,
+        epoch: 4,
+        phase: code === 'desktop-runtime-disconnected' ? 'result-unknown' : 'rejected'
+      }
+    })
+    expect(reporter.report('renderer', report('session-1', 'session-size-limit'))).toBe('recorded')
+    expect(reporter.report('renderer', report('session-2', 'session-size-limit'))).toBe('recorded')
+    expect(reporter.report('renderer', report('session-1', 'desktop-runtime-disconnected'))).toBe(
+      'recorded'
+    )
+    expect(reporter.report('renderer', report('session-1', 'session-size-limit'))).toBe(
+      'suppressed'
+    )
+    expect(error).toHaveBeenCalledTimes(3)
+  })
+
+  it.each([
+    { sessionId: 'D:\\private\\session.json' },
+    { projectId: 'private research title' },
+    { code: 'secret message' },
+    { epoch: -1 },
+    { phase: 'raw stack' },
+    { content: 'patient record' },
+    { cause: new Error('secret') },
+    { recovery: { event: 'retained', title: 'private title' } },
+    { recovery: { event: 'retained', reason: 'private failure detail' } },
+    { recovery: { event: 'retained', elapsedMs: -1 } },
+    { recovery: { event: 'retained', attempt: Number.POSITIVE_INFINITY } },
+    { recovery: { event: 'retained', runtimePhase: 'private runtime detail' } }
+  ])('rejects unreviewed Session write metadata: %j', (extra) => {
+    const error = vi.fn()
+    const reporter = createRendererFailureReporter({ log: { error, warn: vi.fn() } })
+    expect(
+      reporter.report('renderer', {
+        source: 'handled-error',
+        surface: 'workspace',
+        context: 'session-save',
+        errorCategory: 'unknown',
+        sessionWrite: {
+          target: 'session',
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          code: 'unknown',
+          epoch: 1,
+          phase: 'rejected',
+          ...extra
+        }
+      })
+    ).toBe('rejected')
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('bounds recovery records separately and reports suppression after the window expires', () => {
+    let now = 0
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn() }
+    const reporter = createRendererFailureReporter({
+      log,
+      now: () => now,
+      maxRecoveryReportsPerWindow: 2
+    })
+    const report = {
+      source: 'handled-error',
+      surface: 'workspace',
+      context: 'session-save',
+      errorCategory: 'unknown',
+      sessionWrite: {
+        target: 'session',
+        sessionId: 'session-1',
+        code: 'desktop-runtime-disconnected',
+        epoch: 4,
+        phase: 'result-unknown',
+        recovery: { event: 'retry-started', attempt: 1 }
+      }
+    }
+    expect(reporter.report('renderer', report)).toBe('recorded')
+    expect(reporter.report('renderer', report)).toBe('recorded')
+    expect(reporter.report('renderer', report)).toBe('suppressed')
+    expect(log.info).toHaveBeenCalledTimes(2)
+    expect(log.warn).toHaveBeenCalledWith('session storage recovery rate limit reached', {
+      windowMs: 60_000,
+      maxReportsPerWindow: 2
+    })
+    now = 60_001
+    expect(reporter.report('renderer', report)).toBe('recorded')
+    expect(log.warn).toHaveBeenCalledWith('session storage recovery reports suppressed', {
+      suppressedCount: 1,
+      windowMs: 60_000
+    })
+  })
+
   it.each(['workspace', 'marketplace'])(
     'records a validated %s failure without retaining extra renderer data',
     (surface) => {

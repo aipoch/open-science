@@ -60,7 +60,7 @@ it('serves a real stdio run/poll/artifact workflow through authenticated HTTP an
     stderr += data.toString()
   })
   await client.connect(transport)
-  expect((await client.listTools()).tools).toHaveLength(15)
+  expect((await client.listTools()).tools).toHaveLength(27)
   expect(requests).toHaveLength(0)
   const started = await client.callTool({
     name: 'start_run',

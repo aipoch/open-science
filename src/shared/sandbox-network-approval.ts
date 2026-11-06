@@ -1,3 +1,4 @@
+import { requiresNetworkException, normalizeNetworkHostname } from './notebook-network-settings'
 import type { NetworkBlockEvidence } from './network-destination-grants'
 import type { AcpPermissionRequest } from './acp-permission-contract'
 import {
@@ -24,6 +25,14 @@ export type SandboxNetworkApproval = Readonly<{
   agentFrameId: string
   messageBranchId: string
   createdAt: number
+}>
+
+export type NetworkApprovalRecordStatus = Readonly<{
+  status: 'pending' | 'approved' | 'denied'
+  hostname: string
+  port: number
+  protocol: 'http' | 'https'
+  scope: 'once' | 'project' | 'global'
 }>
 
 export const sandboxNetworkApprovalRequest = (
@@ -91,6 +100,10 @@ export const activeSandboxNetworkApprovals = (
   const messages = resolveActiveConversationMessages(graph)
   return (session.runtimeContext?.networkApprovals ?? []).filter(
     (approval) =>
+      requiresNetworkException(
+        normalizeNetworkHostname(approval.hostname) ?? approval.hostname,
+        approval.protocol
+      ) &&
       approval.sessionId === session.id &&
       approval.agentFrameId === frame.id &&
       approval.messageBranchId === frame.activeBranchId &&

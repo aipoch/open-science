@@ -11,6 +11,7 @@ import * as acp from '@agentclientprotocol/sdk'
 
 import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
+import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
 import { opencodeFramework } from '../agent-framework'
 import { createOpenCodeImmediateHandoffRuntime } from './opencode-immediate-handoff'
 import {
@@ -224,13 +225,25 @@ describe('OpenCode immediate handoff production path', () => {
     )
     let boundSpecialistId: string | undefined = 'specialist-old'
     const handoffRuntime = createOpenCodeImmediateHandoffRuntime({
-      runtime,
+      runtime: {
+        getSessionFramework: (id) => runtime.getSessionFramework(id),
+        capturePromptForHandoff: (id) => runtime.capturePromptForHandoff(id),
+        cancelPrompt: async ({ sessionId }) => {
+          await runtime.stopPromptForHandoff(sessionId)
+          return runtime.getState()
+        },
+        waitForPromptOwnershipRelease: (id) => runtime.waitForPromptOwnershipRelease(id),
+        switchSpecialist: (id, specialistId) => runtime.switchSpecialist(id, specialistId),
+        startContinuation: (request) => runtime.startContinuation(request)
+      },
       resolveSpecialistId: () => boundSpecialistId,
       reportHandoffFailure: async (error) => {
         throw error
       }
     })
-    const completionCoordinator = new CompletionGateCoordinator(handoffRuntime)
+    const completionCoordinator = new CompletionGateCoordinator(
+      withApprovedHandoffOutcome(runtime, handoffRuntime)
+    )
     const approvalGateway: ApprovalGateway = {
       decide: vi.fn(async () => ({ status: 'approved' as const }))
     }

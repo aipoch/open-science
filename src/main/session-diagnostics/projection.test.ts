@@ -3,6 +3,61 @@ import { describe, expect, it } from 'vitest'
 import { projectDiagnosticLog, projectDiagnosticSession } from './projection'
 
 describe('diagnostic log projection', () => {
+  it.each(['never-started', 'started-and-reaped', 'termination-unknown'])(
+    'preserves the recorded Notebook process state %s',
+    (processState) => {
+      expect(
+        projectDiagnosticLog({ scope: 'notebook:network-sandbox', data: { processState } })
+      ).toEqual({ scope: 'notebook:network-sandbox', diagnostics: { processState } })
+    }
+  )
+
+  it('keeps absent, invalid and unrelated Notebook lifecycle evidence out of the export', () => {
+    expect(projectDiagnosticLog({ scope: 'notebook:runtime', data: {} })).toEqual({
+      scope: 'notebook:runtime'
+    })
+    expect(
+      projectDiagnosticLog({
+        scope: 'notebook:network-sandbox',
+        data: {
+          runtime: 'PRIVATE_RUNTIME',
+          stage: 'PRIVATE_STAGE',
+          terminationReason: 'PRIVATE_REASON',
+          cleanupState: 'PRIVATE_STATE',
+          processState: 'PRIVATE_PROCESS_STATE',
+          executionReference: '/private/execution',
+          parentOperationId: 'private operation',
+          processesTerminated: 'false',
+          networkClosed: 1,
+          temporaryResourcesRemoved: null,
+          incompleteStageCount: 4,
+          temporaryCleanupErrorCode: 'EBUSY /private/path',
+          exitCode: '0'
+        }
+      })
+    ).toEqual({ scope: 'notebook:network-sandbox' })
+    expect(
+      projectDiagnosticLog({
+        scope: 'unrelated',
+        data: {
+          runtime: 'powershell',
+          stage: 'execution',
+          terminationReason: 'cancel',
+          cleanupState: 'complete',
+          processState: 'never-started',
+          executionReference: 'execution-1',
+          parentOperationId: 'operation-1',
+          processesTerminated: true,
+          networkClosed: false,
+          temporaryResourcesRemoved: true,
+          incompleteStageCount: 1,
+          temporaryCleanupErrorCode: 'EBUSY',
+          exitCode: null
+        }
+      })
+    ).toEqual({ scope: 'unrelated' })
+  })
+
   it.each(['specialist-resolution', 'acp-provider-session-adoption'])(
     'retains bounded Specialist checkpoints for %s without exporting configuration',
     (operation) => {
@@ -320,6 +375,37 @@ it('retains bounded runtime failure context and omits private or unknown diagnos
       }
     })
   ).toEqual({})
+})
+
+it('retains recovery evidence but excludes transient credential inventory diagnostics', () => {
+  const event = {
+    scope: 'desktop-runtime-recovery',
+    msg: 'desktop runtime recovery failed',
+    data: {
+      startupStage: 'credentials',
+      credentialReason: 'windows-profile-key-unavailable',
+      pid: 42,
+      crashesInWindow: 1,
+      timedOut: false,
+      error: { message: 'startup failed', cause: { code: 'EACCES' } },
+      credentialDiagnostic: { code: 'dpapi-unprotect-failed', osStatus: 5 }
+    }
+  }
+  expect(projectDiagnosticLog(event)).toMatchObject({ diagnostics: event.data })
+  expect(
+    projectDiagnosticLog({
+      ...event,
+      data: {
+        ...event.data,
+        credentialDiagnostic: {
+          code: 'inventory-failed',
+          source: 'cookies',
+          stage: 'read-files',
+          reason: 'operation-failed'
+        }
+      }
+    }).diagnostics
+  ).not.toHaveProperty('credentialDiagnostic')
 })
 
 it('preserves permission trace classifications and rejects spoofed raw identity fields', () => {

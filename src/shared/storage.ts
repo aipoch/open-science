@@ -10,6 +10,8 @@ export const STORAGE_USAGE_CATEGORY_KEYS = [
   'runtime',
   'notebooks',
   'models',
+  'research-video-jobs',
+  'research-video-presentations',
   'pdf-structure',
   'execution-file-evidence',
   'workspaces'

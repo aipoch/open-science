@@ -1,22 +1,12 @@
 import { Notice } from '@/components/notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import {
-  Check,
-  CircleAlert,
-  ExternalLink,
-  FolderOpen,
-  Globe,
-  Terminal,
-  TriangleAlert
-} from 'lucide-react'
+import { ExternalLink, FolderOpen, Globe, Terminal } from 'lucide-react'
 import type { TFunction } from 'i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { DiagnosticDetails } from '@/components/diagnostic-details'
-import { LanguageSelect } from '@/components/LanguageControls'
-import { ThemeSegmentedControl } from '@/components/ThemeControls'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -27,25 +17,16 @@ import {
   SelectValue
 } from '@/components/ui/select'
 import { errorDetail } from '@/lib/error-detail'
-import {
-  INTERFACE_SCALE_OPTIONS,
-  isDesktopRenderer,
-  type InterfaceScale
-} from '@/lib/interface-scale'
-import { cn } from '@/lib/utils'
+import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import { useSettingsStore } from '@/stores/settings-store'
-import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
 import type { CloseActionPreference } from '../../../../shared/window-controls'
 import type { CliLauncherStatus } from '../../../../shared/cli'
 import type { LogFileStatus, LogWriteFailureCategory } from '../../../../shared/logs'
 import { APP } from '../../../../shared/app-config'
-import type {
-  NotificationDesktopAvailability,
-  NotificationTestResult
-} from '../../../../shared/notifications'
-import { AppIconSection } from './AppIconSection'
 import { AppVersionSection } from './AppVersionSection'
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import { SettingsRow, SettingsSection } from './SettingsLayout'
+import { SessionDiagnosticsDialog } from '../workspace/SessionDiagnosticsDialog'
+import { ResourceRecordingRow } from './ResourceRecordingRow'
 
 // Community entry links (Discord, X) share the GitHub badge's compact look so the row reads as one
 // set of "connect with the project" actions.
@@ -103,8 +84,9 @@ const XMark = ({ className }: { className?: string }): React.JSX.Element => (
 // file stays on this device and is never transmitted by the app.
 const GeneralPanel = (): React.JSX.Element => {
   const { t } = useTranslation()
-  const isMac = window.api.platform === 'darwin'
-  const [logStatus, setLogStatus] = useState<LogFileStatus | null>(null)
+  const [exportDiagnostics, setExportDiagnostics] = useState(false)
+  const [selectedLog, setSelectedLog] = useState('main')
+  const [sinkStatus, setLogStatus] = useState<LogFileStatus | null>(null)
   const [isCheckingLog, setIsCheckingLog] = useState(true)
   const [logStatusError, setLogStatusError] = useState<string>()
   const logStatusRequest = useRef(0)
@@ -147,19 +129,8 @@ const GeneralPanel = (): React.JSX.Element => {
   const [cli, setCli] = useState<CliLauncherStatus | null>(null)
   const [isUpdatingCli, setIsUpdatingCli] = useState(false)
   const [cliError, setCliError] = useState<GeneralActionError | undefined>(undefined)
-  const [notificationAvailability, setNotificationAvailability] =
-    useState<NotificationDesktopAvailability>('unavailable')
-  const [notificationTestResult, setNotificationTestResult] = useState<NotificationTestResult>()
-  const [isTestingNotification, setIsTestingNotification] = useState(false)
-  const notificationsEnabled = useSettingsStore((state) => state.notificationsEnabled)
-  const setNotificationsEnabled = useSettingsStore((state) => state.setNotificationsEnabled)
-  const showNotificationContent = useSettingsStore((state) => state.showNotificationContent)
-  const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
-  const interfaceScale = useInterfaceScaleStore((state) => state.scale)
-  const setInterfaceScale = useInterfaceScaleStore((state) => state.setScale)
-  const showInterfaceScale = isDesktopRenderer()
 
   const checkCliStatus = async (): Promise<void> => {
     setIsUpdatingCli(true)
@@ -178,33 +149,21 @@ const GeneralPanel = (): React.JSX.Element => {
     void window.api.cli.getStatus().then(setCli, (error) => {
       setCliError({ action: 'cli-status', detail: errorDetail(error) })
     })
-    const getAvailability = window.api.notifications.getDesktopAvailability
-    if (getAvailability) {
-      void getAvailability()
-        .then(setNotificationAvailability)
-        .catch(() => {
-          setNotificationAvailability('unavailable')
-        })
-    }
   }, [])
 
+  const startupFiles = sinkStatus?.startupFiles ?? []
+  const selectedStartup = startupFiles.find((file) => file.name === selectedLog)
+  const selectedName = selectedStartup?.name
+  const logStatus = selectedStartup
+    ? {
+        path: selectedStartup.path,
+        existing: true,
+        lastWriteSucceeded: null,
+        lastFailureCategory: null
+      }
+    : sinkStatus
   const logPath = logStatus?.path ?? null
   const logExists = logStatus?.existing === true
-
-  const handleTestNotification = async (): Promise<void> => {
-    const sendTest = window.api.notifications.sendTest
-    if (!sendTest) return
-
-    setIsTestingNotification(true)
-    setNotificationTestResult(undefined)
-    try {
-      setNotificationTestResult(await sendTest())
-    } catch {
-      setNotificationTestResult('failed')
-    } finally {
-      setIsTestingNotification(false)
-    }
-  }
 
   const handleCli = async (action: 'install' | 'uninstall'): Promise<void> => {
     setIsUpdatingCli(true)
@@ -226,7 +185,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.openFile()
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.openFile()
+          : await window.api.logs.openFile(selectedName)
 
       if (!result.opened) {
         setMessage({ action: 'open-log', detail: result.error })
@@ -243,7 +205,10 @@ const GeneralPanel = (): React.JSX.Element => {
     setMessage(undefined)
 
     try {
-      const result = await window.api.logs.revealInFolder()
+      const result =
+        selectedName === undefined
+          ? await window.api.logs.revealInFolder()
+          : await window.api.logs.revealInFolder(selectedName)
 
       if (!result.revealed) {
         setMessage({ action: 'reveal-log', detail: result.error })
@@ -257,70 +222,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
   return (
     <div className="space-y-5 p-5">
-      <div data-settings-anchor="general.about">
-        <AppVersionSection />
-      </div>
-
-      <SettingsSection
-        data-settings-anchor="general.appearance"
-        title={t('Appearance')}
-        aria-label={t('Appearance')}
-      >
-        <SettingsRow
-          label={t('Theme')}
-          description={
-            isMac
-              ? t(
-                  'Follow the system setting, or force light or dark. The Dock icon follows the resolved theme.'
-                )
-              : t('Follow the system setting, or force light or dark.')
-          }
-
-          className="pt-0"
-        >
-          <ThemeSegmentedControl />
-        </SettingsRow>
-
-        {showInterfaceScale ? (
-          <SettingsRow
-            label={t('Interface scale')}
-            description={t(
-              'Adjust the size of text and controls across the app. Changes apply immediately.'
-            )}
-          >
-            <Select
-              value={String(interfaceScale)}
-              onValueChange={(value) => {
-                const nextScale = Number(value)
-                if (INTERFACE_SCALE_OPTIONS.includes(nextScale as InterfaceScale)) {
-                  setInterfaceScale(nextScale as InterfaceScale)
-                }
-              }}
-            >
-              <SelectTrigger className="w-28" aria-label={t('Interface scale')}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {INTERFACE_SCALE_OPTIONS.map((scale) => (
-                  <SelectItem key={scale} value={String(scale)}>
-                    {Math.round(scale * 100)}%
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingsRow>
-        ) : null}
-
-        <SettingsRow
-          data-settings-anchor="general.language"
-          label={t('Language')}
-          description={t(
-            'Follow the system setting, or pick a language. System is detected once at startup, so a change to your device language takes effect the next time the app opens.'
-          )}
-        >
-          <LanguageSelect />
-        </SettingsRow>
-      </SettingsSection>
+      <AppVersionSection />
 
       {window.api.platform === 'win32' && window.api.window?.onCloseConfirmRequest ? (
         <SettingsSection
@@ -366,118 +268,62 @@ const GeneralPanel = (): React.JSX.Element => {
       ) : null}
 
       <SettingsSection
-        data-settings-anchor="general.notifications"
-        title={t('Notifications')}
-        description={t(
-          "Get a desktop notification when a task finishes, fails, or waits for your approval while you're away from the app."
-        )}
-        aria-label={t('Notifications')}
-      >
-        <SettingsRow
-          label={t('Task notifications')}
-          description={t(
-            'Selecting a notification brings {{appName}} back to the front and opens the task.',
-            {
-              appName: APP.name
-            }
-          )}
-          className="pt-0"
-        >
-          <SettingsToggle
-            enabled={notificationsEnabled}
-            aria-label={t('Toggle task notifications')}
-            onToggle={() => void setNotificationsEnabled(!notificationsEnabled)}
-          />
-        </SettingsRow>
-
-        <SettingsRow
-          label={t('Show task content in system notifications')}
-          description={t(
-            'Include task names and request details. Provider errors are always hidden.'
-          )}
-        >
-          <SettingsToggle
-            enabled={showNotificationContent}
-            disabled={!notificationsEnabled}
-            aria-label={t('Toggle task content in system notifications')}
-            onToggle={() => void setShowNotificationContent(!showNotificationContent)}
-          />
-        </SettingsRow>
-
-        <SettingsRow
-          label={t('System notification status')}
-          description={
-            notificationAvailability === 'supported'
-              ? t('System notifications are supported on this device.')
-              : t('System notifications are unavailable on this device.')
-          }
-        >
-          <div className="flex w-full flex-col items-end">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={notificationAvailability !== 'supported' || isTestingNotification}
-              onClick={() => void handleTestNotification()}
-            >
-              {isTestingNotification ? t('Sending test…') : t('Send test notification')}
-            </Button>
-            {/* Reserved feedback slot: constant height, idle state only hidden, so a result
-                appearing or toggling tone never shifts the button or the row. */}
-            <div className="flex min-h-[30px] w-full items-start justify-end pt-1.5">
-              <span
-                role="status"
-                className={cn(
-                  'inline-flex items-center gap-[5px] rounded-lg border px-2 py-[3px] text-xs leading-[18px] font-medium whitespace-nowrap',
-                  notificationTestResult === undefined
-                    ? 'invisible'
-                    : notificationTestResult === 'shown'
-                      ? 'border-status-success-accent/30 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface dark:text-status-success-dark-foreground'
-                      : notificationTestResult === 'unconfirmed'
-                        ? 'border-status-warning-foreground/30 bg-status-warning-surface text-status-warning-foreground dark:border-status-warning-dark-foreground/30 dark:bg-status-warning-dark-surface dark:text-status-warning-dark-foreground'
-                        : 'border-status-failure-border bg-status-failure-surface text-status-failure-foreground dark:border-status-failure-dark-border dark:bg-status-failure-dark-surface dark:text-status-failure-dark-foreground'
-                )}
-              >
-                {notificationTestResult === 'shown' || notificationTestResult === undefined ? (
-                  <Check className="size-3.5" aria-hidden="true" />
-                ) : notificationTestResult === 'unconfirmed' ? (
-                  <TriangleAlert className="size-3.5" aria-hidden="true" />
-                ) : (
-                  <CircleAlert className="size-3.5" aria-hidden="true" />
-                )}
-                {notificationTestResult === 'failed'
-                  ? t('Test notification failed.')
-                  : notificationTestResult === 'unconfirmed'
-                    ? t('Test notification sent, but display could not be confirmed.')
-                    : notificationTestResult === 'unavailable'
-                      ? t('System notifications are unavailable on this device.')
-                      : t('Test notification shown.')}
-              </span>
-            </div>
-          </div>
-        </SettingsRow>
-
-        <p className="mt-1 text-xs text-muted-foreground">
-          {t(
-            "Notifications only appear while you're using another app. Tasks you cancel and failures the app retries automatically stay silent. Your operating system may ask for notification permission the first time one appears."
-          )}
-        </p>
-      </SettingsSection>
-
-      {/* macOS uses the adaptive build/icon.icon for the installed app and binds its live Dock icon
-          to Theme. Hiding the independent picker prevents two controls from racing each other. */}
-      {!isMac ? <AppIconSection /> : null}
-
-      <SettingsSection
         data-settings-anchor="general.diagnostics"
         title={t('Diagnostics')}
-        description={t(
-          "View this device's runtime log — it records what the app is doing so problems can be diagnosed."
-        )}
+        action={
+          sessionDiagnosticsAvailable() ? (
+            <Button type="button" variant="outline" onClick={() => setExportDiagnostics(true)}>
+              {t('Export diagnostics…')}
+            </Button>
+          ) : undefined
+        }
         aria-label={t('Diagnostics')}
       >
-        <SettingsRow label={t('Log file')} className="pt-0">
-          <div className="flex items-center gap-2">
+        {sessionDiagnosticsAvailable() &&
+          window.api.platform === 'win32' &&
+          window.api.resourceRecording && <ResourceRecordingRow />}
+
+        <SettingsRow
+          label={t('Log file')}
+          className="pt-0 sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-4"
+          controlClassName="w-full"
+        >
+          <div className="flex w-full min-w-0 items-center gap-2">
+            <Select
+              value={selectedName ?? 'main'}
+              onValueChange={(value) => {
+                setSelectedLog(value)
+                setMessage(undefined)
+              }}
+            >
+              <SelectTrigger className="min-w-0 flex-1" aria-label={t('Log file')}>
+                <SelectValue>
+                  {selectedStartup
+                    ? `${new Date(selectedStartup.startedAt).toLocaleString()} · ${selectedStartup.name}`
+                    : 'main.log'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent className="w-[var(--radix-select-trigger-width)] min-w-64 max-w-[calc(100vw-2rem)]">
+                <SelectItem value="main">{'main.log'}</SelectItem>
+                {startupFiles.map((file) => (
+                  <SelectItem
+                    key={file.name}
+                    value={file.name}
+                    textValue={`${new Date(file.startedAt).toLocaleString()} ${file.name}`}
+                    className="py-2 [&>span:first-child]:min-w-0"
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-[13px] font-medium">
+                        {new Date(file.startedAt).toLocaleString()}
+                      </span>{' '}
+                      <span className="truncate font-mono text-[11px] text-muted-foreground">
+                        {file.name}
+                      </span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="outline"
@@ -485,7 +331,7 @@ const GeneralPanel = (): React.JSX.Element => {
               disabled={!logExists}
             >
               <FolderOpen className="size-4" aria-hidden="true" />
-              {t('Reveal')}
+              {t('Show in folder')}
             </Button>
             <Button
               type="button"
@@ -499,18 +345,30 @@ const GeneralPanel = (): React.JSX.Element => {
           </div>
         </SettingsRow>
 
-        <pre
-          className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
-          aria-label={t('Log file path')}
-          tabIndex={0}
-        >
-          {logPath ??
-            (isCheckingLog
-              ? t('Loading…')
-              : logStatusError !== undefined
-                ? '—'
-                : t('Not available yet.'))}
-        </pre>
+        {exportDiagnostics && (
+          <SessionDiagnosticsDialog
+            identity={{ scope: 'application' }}
+            onClose={() => setExportDiagnostics(false)}
+          />
+        )}
+
+        <details className="mt-1 min-w-0 text-xs text-muted-foreground">
+          <summary className="w-fit cursor-pointer rounded-sm py-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2">
+            {t('Log file path')}
+          </summary>
+          <pre
+            className="mt-1 overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
+            aria-label={t('Log file path')}
+            tabIndex={0}
+          >
+            {logPath ??
+              (isCheckingLog
+                ? t('Loading…')
+                : logStatusError !== undefined
+                  ? '—'
+                  : t('Not available yet.'))}
+          </pre>
+        </details>
 
         {logStatus &&
         logPath &&
@@ -561,18 +419,9 @@ const GeneralPanel = (): React.JSX.Element => {
           </Notice>
         ) : null}
 
-        <p className="mt-3 text-xs text-muted-foreground">
-          {/* Trans clones each component and injects the translated text as its children, so the
-              empty string here is only satisfying the required prop — it never renders. */}
-          <Trans
-            i18nKey="Something not working? <docsLink>Open an issue on GitHub</docsLink> and attach the log above. It stays on this device and is never sent automatically; it may contain local file paths, so review it before sharing."
-            components={{
-              // Named docsLink, not link: <link> is a void HTML element, so the parser Trans uses
-              // self-closes it and the label would render as a sibling of an empty anchor.
-              docsLink: <ExternalTextLink href={APP.links.githubIssues}>{''}</ExternalTextLink>
-            }}
-          />
-        </p>
+        <div className="mt-3 text-xs">
+          <ExternalTextLink href={APP.links.githubIssues}>{t('Report an issue')}</ExternalTextLink>
+        </div>
       </SettingsSection>
 
       <SettingsSection
@@ -604,7 +453,7 @@ const GeneralPanel = (): React.JSX.Element => {
 
         {cli?.installed ? (
           <pre
-            className="overflow-x-auto rounded-lg border border-border bg-muted/60 px-3 py-2.5 font-mono text-xs text-foreground"
+            className="overflow-x-auto font-mono text-xs leading-5 text-muted-foreground"
             aria-label={t('Command line tool path')}
           >
             {cli.target}

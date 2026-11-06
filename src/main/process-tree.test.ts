@@ -77,6 +77,7 @@ const setPlatform = (value: string): void => {
 afterEach(() => {
   setPlatform(originalPlatform)
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   vi.clearAllMocks()
   vi.useRealTimers()
 })
@@ -84,6 +85,8 @@ afterEach(() => {
 describe('terminateProcessTree (win32)', () => {
   it('kills the whole tree via taskkill and resolves when taskkill exits cleanly', async () => {
     setPlatform('win32')
+    vi.stubEnv('SystemRoot', 'C:\\Windows')
+    vi.stubEnv('PATH', 'C:\\fixture')
     const killer = new EventEmitter()
     spawnMock.mockReturnValueOnce(killer)
     const child = new FakeChild(4321)
@@ -91,7 +94,7 @@ describe('terminateProcessTree (win32)', () => {
     const pending = terminateProcessTree(child as never)
 
     expect(spawnMock).toHaveBeenCalledWith(
-      'taskkill',
+      'C:\\Windows\\System32\\taskkill.exe',
       ['/pid', '4321', '/T', '/F'],
       expect.objectContaining({ windowsHide: true })
     )

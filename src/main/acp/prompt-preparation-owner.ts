@@ -16,6 +16,7 @@ import {
 } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest } from '../../shared/acp'
 import type { ArtifactReference, FileReference } from '../../shared/artifacts'
+import type { ShellRuntimeBinding } from '../../shared/notebook'
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { NotebookPromptInput } from '../../shared/notebook'
 import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
@@ -53,6 +54,7 @@ type NotebookTurnInputs = Readonly<{
   references: FileReference[]
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
+  shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
   classificationImages: Pick<AcpClassificationImageLoader, 'load'>
   imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
@@ -362,6 +364,9 @@ class AcpPromptPreparationOwner {
           ? {
               codebuddy: {
                 root: codeBuddySkillRuntimeRoot(input.backend.session.options),
+                ...(this.options.shellRuntimeBindingFor
+                  ? { shellRuntime: this.options.shellRuntimeBindingFor(input.request.sessionId) }
+                  : {}),
                 selectorAvailable: input.bridgeSkillsAvailable,
                 selectSkills,
                 signal: input.signal,

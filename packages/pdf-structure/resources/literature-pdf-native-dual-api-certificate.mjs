@@ -107,3 +107,124 @@ export function completeScopedNativeDualApiPacket(packet, certificate) {
   }
   return packet
 }
+
+const ligatureCertificates = new WeakMap()
+
+// Separate from the one-glyph micro-sign contract. Both complete native API
+// values stay unchanged; this relation only chooses the physical cursor length.
+export function verifyNativeLigatureApiCertificate(page, context, evidence) {
+  const a = evidence?.defaultContent,
+    b = evidence?.rawContent,
+    p = evidence?.renderContext
+  if (
+    evidence?.schema !== 'same-pdfjs-page-dual-api-capture-v1' ||
+    evidence.pdfjsVersion !== version ||
+    !same(evidence.apiDefaultOptions, {}) ||
+    !same(evidence.apiRawOptions, { disableNormalization: true }) ||
+    evidence.pageNumber !== page?.pageNumber ||
+    context?.pageNumber !== page.pageNumber ||
+    p?.pageNumber !== page.pageNumber ||
+    evidence.sourceSha256 !== context.sourceSha256 ||
+    p.sourceSha256 !== context.sourceSha256 ||
+    !/^[a-f\d]{64}$/u.test(context.sourceSha256) ||
+    !Array.isArray(a?.items) ||
+    !a.items.length ||
+    a.items.length > 4096 ||
+    !Array.isArray(b?.items) ||
+    a.items.length !== b.items.length ||
+    a.items.length !== context.content?.items?.length ||
+    !same(a.styles, b.styles) ||
+    !same(a.styles, context.content.styles) ||
+    !same(a.styles, p.content?.styles)
+  )
+    return
+  const viewport = { ...context.viewport }
+  delete viewport.convertToViewportPoint
+  if (
+    !same(p.viewport, viewport) ||
+    !same(p.operators, context.operators) ||
+    !same(p.glyphBounds, context.glyphBounds) ||
+    !same(p.opaqueRasterImages, context.opaqueRasterImages) ||
+    !same(p.graphicsBounds, context.graphicsBounds) ||
+    !same(page.graphicsBounds, p.graphicsBounds)
+  )
+    return
+  const am = { ...a },
+    bm = { ...b }
+  delete am.items
+  delete bm.items
+  if (!same(am, bm)) return
+  const pairs = new Map()
+  for (let index = 0; index < a.items.length; index++) {
+    const x = { ...a.items[index] },
+      y = { ...b.items[index] },
+      z = { ...context.content.items[index] },
+      paint = { ...p.content.items[index] },
+      normal = x.str,
+      raw = y.str
+    delete z.sourceItem
+    if (!same(x, z) || !same(x, paint)) return
+    delete x.str
+    delete y.str
+    if (!same(x, y) || typeof normal !== 'string' || typeof raw !== 'string') return
+    if (normal === raw) continue
+    // These are the two observed PDF.js expansion relationships, never a
+    // replacement string written to either content API or a Source item.
+    if (!/[ﬁﬂ]/u.test(raw) || raw.replace(/[ﬁﬂ]/gu, (c) => (c === 'ﬁ' ? 'fi' : 'fl')) !== normal)
+      return
+    pairs.set(index, Object.freeze({ normal, raw }))
+  }
+  if (!pairs.size) return
+  ligatureCertificates.set(pairs, [...pairs])
+  return pairs
+}
+
+export function nativeLigatureCertificateData(certificate) {
+  const pairs = ligatureCertificates.get(certificate)
+  return pairs &&
+    certificate.size === pairs.length &&
+    pairs.every(([index, pair]) => certificate.get(index) === pair)
+    ? certificate
+    : undefined
+}
+
+export function completeNativeLigatureApiPacket(packet, certificate) {
+  const pairs = nativeLigatureCertificateData(certificate)
+  if (!packet || !pairs || packet.records.some((r) => !r.advanceComplete)) return
+  const owners = new Map()
+  for (const record of packet.records)
+    for (const glyph of new Set(record.part.map((p) => p.g))) {
+      if (owners.has(glyph)) return
+      owners.set(glyph, record)
+    }
+  for (const [index, pair] of pairs) {
+    const record = packet.records.find((r) => r.index === index)
+    if (!record || record.r.str !== pair.normal) return
+    const glyphs = [...new Set(record.part.map((p) => p.g))],
+      ligatures = glyphs.filter((g) => /[ﬁﬂ]/u.test(g.text))
+    if (
+      !ligatures.length ||
+      record.part.map((p) => p.c).join('') !== pair.raw.normalize('NFD').replace(/\s/gu, '')
+    )
+      return
+    for (const glyph of ligatures) {
+      const rawGlyph = packet.o.argsArray[glyph.i]?.[0]?.filter(
+        (g) => g && typeof g === 'object' && typeof g.unicode === 'string'
+      )[glyph.show.glyphs.indexOf(glyph)]
+      if (
+        !['ﬁ', 'ﬂ'].includes(glyph.text) ||
+        glyph.rendererSkipped ||
+        !Number.isSafeInteger(rawGlyph?.originalCharCode) ||
+        rawGlyph.originalCharCode < 0 ||
+        typeof rawGlyph.fontChar !== 'string' ||
+        !rawGlyph.fontChar ||
+        !(rawGlyph.width > 0) ||
+        !Number.isFinite(rawGlyph.width) ||
+        !glyph.advance?.every(Number.isFinite) ||
+        glyph.advance[2] <= glyph.advance[0]
+      )
+        return
+    }
+  }
+  return packet
+}

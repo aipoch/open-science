@@ -1241,7 +1241,8 @@ export class AgentRuntimeManager {
   }
 
   async probeOpencodeVersion(executablePath: string): Promise<string | undefined> {
-    return this.opencodeDetectDeps.getVersion(executablePath).catch(() => undefined)
+    const probe = this.opencodeDetectDeps.probeVersion ?? this.opencodeDetectDeps.getVersion
+    return probe(executablePath)
   }
 
   async resolveCodeBuddyExecutable(storedPath: string | undefined): Promise<string> {

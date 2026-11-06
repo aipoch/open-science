@@ -1,4 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
+import { recordResourceEvent } from '../resource-diagnostics/recorder'
 import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -83,6 +84,11 @@ const composeAcpRuntimePromptOwners = (
   const endPromptTurn = (sessionId: string, turnToken: string): void => {
     if (startedPromptTurns.get(turnToken) !== sessionId) return
     startedPromptTurns.delete(turnToken)
+    recordResourceEvent('prompt-ended', {
+      runtimeId: base.resourceRuntimeId,
+      sessionId,
+      turnId: turnToken
+    })
     for (const cleanup of [
       () => session.sessionUpdateProjector.clearAssistantOutput(sessionId),
       () => host.onPromptEnded?.(sessionId, turnToken),
@@ -185,6 +191,8 @@ const composeAcpRuntimePromptOwners = (
   }
 
   const promptPreparation = new AcpPromptPreparationOwner({
+    shellRuntimeBindingFor: (sessionId) =>
+      base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,
@@ -482,11 +490,23 @@ const composeAcpRuntimePromptOwners = (
             )
           },
           assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
-            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId),
+          waitForRuntimeSessionTerminalWrites: (sessionId: string, signal: AbortSignal) =>
+            options.runtimeSessions!.waitForTerminalWrites(sessionId, signal)
         }
       : {}),
     onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
       startedPromptTurns.set(turnToken, sessionId)
+      const scope = base.sessionInteractions.current(sessionId)
+      const provenance = scope?.kind === 'prompt' ? scope.provenanceContext : undefined
+      recordResourceEvent('prompt-started', {
+        runtimeId: base.resourceRuntimeId,
+        epoch: base.connectionResources.epoch,
+        sessionId,
+        turnId: turnToken,
+        frameId: provenance?.agentFrameId ?? provenance?.rootFrameId,
+        activeBranchId: provenance?.messageBranchId
+      })
       callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
     },
     emitState

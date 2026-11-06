@@ -133,7 +133,7 @@ for (const mobile of [false, true]) {
     await expect(confirmation).toBeVisible()
     await confirmation.getByRole('button', { name: 'Discard changes' }).click()
     await expect(body).toBeHidden()
-    await expect(settings.locator('[data-settings-anchor="general.language"]')).toBeFocused()
+    await expect(settings.locator('[data-settings-anchor="appearance.language"]')).toBeFocused()
     if (mobile) await settings.getByRole('button', { name: 'Open settings navigation' }).click()
     await expect(search).toHaveValue('')
   })

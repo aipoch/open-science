@@ -1,12 +1,176 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { mkdtemp, mkdir, writeFile, rm, realpath, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { inspectInstallationProcessesAsync } from './installation-occupancy'
+import { inspectInstallationAvailability } from './installation-protection'
+
+const scannerFixture = vi.hoisted(() => ({
+  preload: '',
+  command: '',
+  timeoutMs: undefined as number | undefined
+}))
+vi.mock('./verification-process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./verification-process')>()
+  return {
+    ...actual,
+    runVerificationProcess: (
+      ...[command, args, options]: Parameters<typeof actual.runVerificationProcess>
+    ) =>
+      actual.runVerificationProcess(
+        scannerFixture.command || command,
+        scannerFixture.preload ? ['--require', scannerFixture.preload, ...args] : args,
+        scannerFixture.preload ? { ...options, timeoutMs: scannerFixture.timeoutMs } : options
+      )
+  }
+})
+
+it.runIf(process.platform === 'win32')(
+  'runs the native scanner under Electron in Node mode',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-electron-scan-'))
+    try {
+      await writeFile(join(root, 'fixture.txt'), 'fixture')
+      scannerFixture.command = createRequire(__filename)('electron') as string
+      await expect(inspectInstallationProcessesAsync(root)).resolves.toEqual([])
+    } finally {
+      scannerFixture.command = ''
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
+it.runIf(process.platform === 'win32')(
+  'retains the caller but excludes the exited scanner from executable occupants',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-scan-identity-'))
+    const pidPath = join(root, 'pid.json')
+    const preload = join(root, 'identity.cjs')
+    try {
+      await writeFile(
+        preload,
+        `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, JSON.stringify(process.pid))`
+      )
+      scannerFixture.preload = preload
+      const pids = await inspectInstallationProcessesAsync(process.execPath)
+      const scannerPid = JSON.parse(await readFile(pidPath, 'utf8'))
+      expect(pids).toContain(process.pid)
+      expect(pids).not.toContain(scannerPid)
+      expect(() => process.kill(scannerPid, 0)).toThrow()
+    } finally {
+      scannerFixture.preload = ''
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
+
+describe.runIf(process.platform === 'win32')('interrupting a blocked installation scanner', () => {
+  it.each([
+    ['enumeration', 'cancel'],
+    ['native', 'cancel'],
+    ['enumeration', 'timeout'],
+    ['native', 'timeout']
+  ])(
+    'reaps %s on %s while caller timers remain responsive',
+    async (phase, action) => {
+      const root = await mkdtemp(join(tmpdir(), 'installation-scan-interrupt-'))
+      const readyPath = join(root, 'ready.json')
+      const preload = join(root, 'block-scan.cjs')
+      const controller = new AbortController()
+      let ticks = 0
+      const timer = setInterval(() => ticks++, 10)
+      let pending: Promise<number[]> | undefined
+      try {
+        await writeFile(
+          preload,
+          `
+        const fs = require('node:fs')
+        const block = () => {
+          fs.writeFileSync(${JSON.stringify(readyPath)}, JSON.stringify({pid: process.pid}))
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000)
+          throw new Error('Scanner was not interrupted')
+        }
+        if (${JSON.stringify(phase)} === 'enumeration') fs.readdirSync = block
+        else {
+          const Module = require('node:module')
+          const load = Module._load
+          Module._load = function(id, ...args) {
+            const actual = load.call(this, id, ...args)
+            return id.endsWith('process_tree_native.node')
+              ? {...actual, listWindowsInstallationOccupants: block} : actual
+          }
+        }
+      `
+        )
+        scannerFixture.preload = preload
+        scannerFixture.timeoutMs = action === 'timeout' ? 5_000 : 120_000
+        pending = inspectInstallationProcessesAsync(root, controller.signal)
+        void pending.catch(() => {})
+        let pid = 0
+        await vi.waitFor(
+          async () => {
+            pid = JSON.parse(await readFile(readyPath, 'utf8')).pid
+            expect(pid).toBeGreaterThan(0)
+          },
+          { timeout: 4_000, interval: 20 }
+        )
+        expect(ticks).toBeGreaterThan(0)
+        const started = Date.now()
+        if (action === 'cancel') {
+          controller.abort(new Error('explicit scan cancellation'))
+          await expect(pending).rejects.toThrow('explicit scan cancellation')
+          expect(Date.now() - started).toBeLessThan(5_000)
+        } else {
+          await expect(pending).rejects.toMatchObject({
+            reason: 'installation-busy',
+            cause: expect.objectContaining({
+              message: 'Installation verification exceeded its time limit.'
+            })
+          })
+        }
+        // The native call is still blocked: rejection alone must not leave its process running.
+        expect(() => process.kill(pid, 0)).toThrow()
+      } finally {
+        controller.abort()
+        await pending?.catch(() => {})
+        clearInterval(timer)
+        scannerFixture.preload = ''
+        scannerFixture.timeoutMs = undefined
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+    15_000
+  )
+})
+
+it.runIf(process.platform === 'win32')(
+  'verifies installation availability without PowerShell on PATH',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-minimal-path-'))
+    const installationRoot = join(root, 'Science')
+    const originalPath = process.env.PATH
+    try {
+      await mkdir(installationRoot)
+      await writeFile(join(installationRoot, 'fixture.txt'), 'fixture')
+      process.env.PATH = root
+      await expect(
+        inspectInstallationAvailability({ installationRoot, stateRoot: join(root, 'state') })
+      ).resolves.toBeUndefined()
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH
+      else process.env.PATH = originalPath
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30_000
+)
 
 it.runIf(process.platform === 'darwin')(
-  'detects an actual installation file handle without a matching command line',
+  'ignores processes that only hold ordinary file descriptors on installation files',
   async () => {
     const root = await mkdtemp(join(tmpdir(), 'installation-handle-'))
     const installation = join(root, 'Science.app')
@@ -34,6 +198,39 @@ it.runIf(process.platform === 'darwin')(
         child.once('exit', () => reject(new Error('Fixture exited before opening file')))
       })
       child.send(file)
+      await ready
+      expect(await inspectInstallationProcessesAsync(installation)).not.toContain(child.pid)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  30000
+)
+
+it.runIf(process.platform === 'darwin')(
+  'detects processes whose command line mentions the installation path',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installation-argv-'))
+    const installationPath = join(root, 'Science.app')
+    await mkdir(installationPath)
+    const installation = await realpath(installationPath)
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        `process.once('message', () => { process.send('ready'); setInterval(() => {}, 1000); });`,
+        installation
+      ],
+      { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }
+    )
+    try {
+      const ready = new Promise<void>((resolve, reject) => {
+        child.once('message', () => resolve())
+        child.once('error', reject)
+        child.once('exit', () => reject(new Error('Fixture exited before ready')))
+      })
+      child.send('start')
       await ready
       expect(await inspectInstallationProcessesAsync(installation)).toContain(child.pid)
       const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))

@@ -18,7 +18,9 @@
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.test.ts",
     "src/main/session-diagnostics/projection.ts",
-    "src/main/session-diagnostics/worker-entry.ts"
+    "src/main/session-diagnostics/worker-entry.ts",
+    "src/main/session-diagnostics/resources.ts",
+    "src/main/session-diagnostics/resources.test.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/session-diagnostics.ts",
@@ -32,7 +34,8 @@
     "src/main/session-diagnostics/notebook.ts",
     "src/main/session-diagnostics/projection.ts",
     "src/main/session-diagnostics/worker-entry.ts",
-    "src/shared/session-diagnostics.ts"
+    "src/shared/session-diagnostics.ts",
+    "src/main/session-diagnostics/resources.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -48,7 +51,8 @@
       "src/main/session-diagnostics/environment.test.ts",
       "src/main/session-diagnostics/notebook.test.ts",
       "src/main/session-diagnostics/projection.test.ts",
-      "src/main/session-diagnostics/desktop-log-paths.test.ts"
+      "src/main/session-diagnostics/desktop-log-paths.test.ts",
+      "src/main/session-diagnostics/resources.test.ts"
     ],
     "contract": [
       "src/main/data-content-application-commands.test.ts",
@@ -128,5 +132,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Opt-in resource journal export adds a filesystem snapshot owner beyond the reviewed diagnostics boundary; retain complete CI validation until the expanded sources and application export contracts are reviewed and reclassified."
 }

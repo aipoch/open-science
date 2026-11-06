@@ -1,96 +1,44 @@
 import { spawnSync } from 'node:child_process'
-import { readFileSync, readlinkSync, readdirSync, realpathSync } from 'node:fs'
+import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, sep } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  listWindowsProcesses,
+  splitWindowsCommandLine,
+  windowsParentProcessId,
+  windowsProcessCommandLine
+} from '../windows-process-query'
 
 const requireNative = createRequire(__filename)
 
-// Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
-// process-name matching, or termination authority is granted by the returned PIDs.
-// https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
-function windowsInstallationQuery(installationRoot: string): string[] {
-  const root = Buffer.from(installationRoot, 'utf8').toString('base64')
-  const script = `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-Add-Type -TypeDefinition @'
-using System; using System.Text; using System.Linq; using System.Collections.Generic; using System.Runtime.InteropServices;
-public static class OpenScienceInstallationResources {
-  [StructLayout(LayoutKind.Sequential)] public struct UniqueProcess { public uint Pid; public System.Runtime.InteropServices.ComTypes.FILETIME Started; }
-  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct ProcessInfo {
-    public UniqueProcess Process;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=256)] public string AppName;
-    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=64)] public string ServiceName;
-    public uint ApplicationType; public uint Status; public uint SessionId;
-    [MarshalAs(UnmanagedType.Bool)] public bool Restartable;
-  }
-  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern uint RmStartSession(out uint session, uint flags, StringBuilder key);
-  [DllImport("rstrtmgr.dll", CharSet=CharSet.Unicode)] static extern uint RmRegisterResources(uint session, uint count, string[] files, uint apps, IntPtr processes, uint services, IntPtr names);
-  [DllImport("rstrtmgr.dll")] static extern uint RmGetList(uint session, out uint needed, ref uint count, [In, Out] ProcessInfo[] processes, out uint reasons);
-  [DllImport("rstrtmgr.dll")] static extern uint RmEndSession(uint session);
-  static void Check(uint result) { if (result != 0) throw new InvalidOperationException("Installation resource query failed: " + result); }
-  public static uint[] Query(string[] files) {
-    if (files.Length == 0) return new uint[0];
-    uint session; Check(RmStartSession(out session, 0, new StringBuilder(33)));
-    try {
-      for (int offset=0; offset<files.Length; offset+=256) {
-        string[] batch = files.Skip(offset).Take(256).ToArray();
-        Check(RmRegisterResources(session, (uint)batch.Length, batch, 0, IntPtr.Zero, 0, IntPtr.Zero));
-      }
-      uint count=0, needed=0, reasons;
-      for (int retry=0; retry<3; retry++) {
-        ProcessInfo[] rows = count == 0 ? null : new ProcessInfo[count];
-        uint result = RmGetList(session, out needed, ref count, rows, out reasons);
-        if (result == 234) { count=needed; continue; }
-        Check(result);
-        return rows == null ? new uint[0] : rows.Take((int)count).Select(row => row.Process.Pid).Distinct().ToArray();
-      }
-      throw new InvalidOperationException("Installation resource occupants kept changing.");
-    } finally { Check(RmEndSession(session)); }
-  }
-}
-'@
-$root = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${root}'))
-$item = Get-Item -LiteralPath $root -Force
-$files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | ForEach-Object { $_.FullName }) } else { @($item.FullName) }
-$users = @([OpenScienceInstallationResources]::Query([string[]]$files))
-$processes = @(Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath)
-ConvertTo-Json -InputObject @{resourcePids=$users;processes=$processes} -Depth 4 -Compress
-`
-  return ['-NoProfile', '-NonInteractive', '-Command', script]
-}
-
-function parseWindowsInstallationQuery(stdout: string, root: string): number[] {
-  const data: unknown = JSON.parse(stdout)
-  if (
-    !data ||
-    typeof data !== 'object' ||
-    !('resourcePids' in data) ||
-    !Array.isArray(data.resourcePids) ||
-    !('processes' in data) ||
-    !Array.isArray(data.processes)
-  )
-    throw new Error('Incomplete installation resource inspection.')
+function windowsInstallationOccupants(resourcePids: readonly number[], root: string): number[] {
   const pids = new Set<number>()
-  for (const pid of data.resourcePids) {
+  for (const pid of resourcePids) {
     if (!Number.isSafeInteger(pid) || pid <= 0)
       throw new Error('Invalid installation resource PID.')
     pids.add(pid)
   }
   root = root.toLowerCase().replace(/[\\/]+$/, '')
-  for (const row of data.processes) {
-    if (!row || typeof row !== 'object') throw new Error('Invalid installation process row.')
-    const path = typeof row.ExecutablePath === 'string' ? row.ExecutablePath.toLowerCase() : ''
+  for (const row of listWindowsProcesses()) {
+    const path = row.executablePath?.toLowerCase() ?? ''
     if (path === root || path.startsWith(root + '\\') || path.startsWith(root + '/')) {
-      const pid = Number(row.ProcessId)
-      if (!Number.isSafeInteger(pid) || pid <= 0)
+      if (!Number.isSafeInteger(row.pid) || row.pid <= 0)
         throw new Error('Invalid installation executable PID.')
-      pids.add(pid)
+      pids.add(row.pid)
     }
   }
   return [...pids]
+}
+
+function windowsInspectionFailure(cause: unknown): UpdateLifecycleError {
+  return new UpdateLifecycleError(
+    'installation-busy',
+    'Installation process occupancy could not be inspected.',
+    undefined,
+    { cause }
+  )
 }
 
 // Node can rewrite argv, hiding its installation from ps. procfs retains the executable identity.
@@ -118,7 +66,7 @@ function isLinuxInstallationExecutable(pid: number, installationRoot: string): b
   }
 }
 
-function isLinuxInstallationFileUser(pid: number, root: string): boolean {
+function isLinuxInstallationMappingUser(pid: number, root: string): boolean {
   const belongs = (path: string): boolean => {
     path = path.replace(/ \(deleted\)$/, '')
     return path === root || path.startsWith(root + '/')
@@ -138,24 +86,20 @@ function isLinuxInstallationFileUser(pid: number, root: string): boolean {
     const path = /^\S+\s+\S+\s+\S+\s+\S+\s+\d+\s+(.+)$/.exec(line)?.[1]
     if (path && belongs(path.replace(/\\012/g, '\n'))) return true
   }
-  for (const fd of inspect(() => readdirSync(`/proc/${pid}/fd`)) ?? []) {
-    const path = inspect(() => readlinkSync(`/proc/${pid}/fd/${fd}`))
-    if (path && belongs(path)) return true
-  }
   // This helper runs only after argv/exe yielded no installation candidate. An unrelated user's
   // protected process cannot make every ordinary Linux update permanently unavailable. Record
-  // the coverage limitation rather than claim whole-machine absence of file users. A registered
+  // the coverage limitation rather than claim whole-machine absence of mapping users. A registered
   // or path-matched installation candidate remains an occupant in the caller regardless of this
   // optional supplement. Complete cross-user evidence is still a platform acceptance gap.
   if (unknown && ['EACCES', 'EPERM'].includes((unknown as NodeJS.ErrnoException).code ?? '')) {
-    createLogger('update').warn('Linux installation file scan coverage limited', {
+    createLogger('update').warn('Linux installation mapping scan coverage limited', {
       pid,
       code: (unknown as NodeJS.ErrnoException).code
     })
   } else if (unknown)
     throw new UpdateLifecycleError(
       'installation-busy',
-      `Installation file use could not be verified for process ${pid}. Retry the occupancy check or cancel this update.`,
+      `Installation mapping use could not be verified for process ${pid}. Retry the occupancy check or cancel this update.`,
       undefined,
       { cause: unknown }
     )
@@ -170,29 +114,12 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
   } catch {
     /* The installation may already have moved. */
   }
-  if (process.platform === 'win32') {
-    const result = spawnSync('powershell.exe', windowsInstallationQuery(installationRoot), {
-      encoding: 'utf8',
-      timeout: 15_000,
-      maxBuffer: 16 * 1024 * 1024,
-      windowsHide: true
-    })
-    if (result.status !== 0)
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.'
-      )
-    try {
-      return parseWindowsInstallationQuery(result.stdout, installationRoot)
-    } catch (cause) {
-      throw new UpdateLifecycleError(
-        'installation-busy',
-        'Installation process occupancy could not be inspected.',
-        undefined,
-        { cause }
-      )
-    }
-  }
+  if (process.platform === 'win32')
+    // A cold Restart Manager scan can take 70 seconds, so it is never run on this thread.
+    // Windows callers use inspectInstallationProcessesAsync, which bounds it in a worker process.
+    throw windowsInspectionFailure(
+      new Error('Windows installation occupancy requires the bounded asynchronous scanner.')
+    )
   const result = spawnSync('/bin/ps', ['-axo', 'pid=,command='], {
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024
@@ -210,14 +137,14 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
       (match[2].includes(installationRoot) ||
         (process.platform === 'linux' &&
           (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationFileUser(Number(match[1]), installationRoot))))
+            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
     )
       pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
-    // Inspect ordinary open files as well as executable mappings, including processes whose
-    // command line does not mention the installation (for example a loaded helper file).
-    const mappings = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-Fpn'], {
+    // Inspect executable and mapped files (dylib, asar mmap), not ordinary open descriptors.
+    // Only `txt` mappings can block a rename replacement or survive it.
+    const mappings = spawnSync('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'], {
       encoding: 'utf8',
       maxBuffer: 32 * 1024 * 1024
     })
@@ -226,34 +153,101 @@ export function inspectInstallationProcesses(installationRoot: string): number[]
         'installation-busy',
         'Mapped installation files could not be inspected.'
       )
-    let pid = 0
-    for (const line of mappings.stdout.split('\n')) {
-      if (line.startsWith('p')) pid = Number(line.slice(1))
-      if (
-        line.startsWith('n') &&
-        (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
-      )
-        pids.add(pid)
-    }
+    for (const pid of parseDarwinLsofMappings(mappings.stdout, installationRoot)) pids.add(pid)
   }
   return [...pids]
+}
+
+function parseDarwinLsofMappings(lsofOutput: string, installationRoot: string): number[] {
+  const pids: number[] = []
+  let pid = 0
+  let isTextMapping = false
+  for (const line of lsofOutput.split('\n')) {
+    if (line.startsWith('p')) {
+      pid = Number(line.slice(1))
+      isTextMapping = false
+    } else if (line.startsWith('f')) {
+      isTextMapping = line === 'ftxt'
+    } else if (
+      line.startsWith('n') &&
+      isTextMapping &&
+      (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
+    ) {
+      pids.push(pid)
+      isTextMapping = false
+    }
+  }
+  return pids
 }
 
 export async function inspectInstallationProcessesAsync(
   installationRoot: string,
   signal?: AbortSignal
 ): Promise<number[]> {
-  try {
-    installationRoot = realpathSync(installationRoot) || installationRoot
-  } catch {
-    /* The installation may already have moved. */
-  }
+  signal?.throwIfAborted()
   const { runVerificationProcess } = await import('./verification-process')
   const run = (command: string, args: string[]): ReturnType<typeof runVerificationProcess> =>
     runVerificationProcess(command, args, { signal, timeoutMs: 15_000 })
   if (process.platform === 'win32') {
-    const { stdout } = await run('powershell.exe', windowsInstallationQuery(installationRoot))
-    return parseWindowsInstallationQuery(stdout, installationRoot)
+    // Query the actual files as Restart Manager resources. This is read-only: no RmShutdown,
+    // process-name matching, or termination authority is granted by the returned PIDs.
+    // https://learn.microsoft.com/windows/win32/api/restartmanager/nf-restartmanager-rmgetlist
+    // A cold Restart Manager scan can take 70 seconds. Keep enumeration and the native call in
+    // an owned process: abort/timeout must reap the scan, not just abandon a libuv work item.
+    const started = Date.now()
+    try {
+      // Load the unpacked Node-API binary directly: plain Node cannot resolve an ASAR archive.
+      const nativePath = requireNative
+        .resolve('@aipoch/process-tree-native/build/Release/process_tree_native.node')
+        .replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2')
+      const { stdout } = await runVerificationProcess(
+        process.execPath,
+        [
+          '-e',
+          String.raw`
+          const fs = require('node:fs')
+          const { join } = require('node:path')
+          const native = require(process.argv[1])
+          let root = process.argv[2]
+          try { root = fs.realpathSync(root) } catch { /* The installation may have moved. */ }
+          const files = fs.statSync(root).isDirectory()
+            ? fs.readdirSync(root, { recursive: true, withFileTypes: true })
+                .filter(entry => entry.isFile()).map(entry => join(entry.parentPath, entry.name))
+            : [root]
+          // Only this short-lived scanner is exempt; the parent and other occupants remain.
+          const pids = native.listWindowsInstallationOccupants(files).filter(pid => pid !== process.pid)
+          process.stdout.write(JSON.stringify({ root, pids }))
+        `,
+          nativePath,
+          installationRoot
+        ],
+        { signal, timeoutMs: 120_000, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+      )
+      signal?.throwIfAborted()
+      const result: unknown = JSON.parse(stdout)
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('root' in result) ||
+        typeof result.root !== 'string' ||
+        !('pids' in result) ||
+        !Array.isArray(result.pids)
+      )
+        throw new Error('Invalid installation resource scan result.')
+      return windowsInstallationOccupants(result.pids, result.root)
+    } catch (cause) {
+      if (signal?.aborted) throw cause
+      createLogger('update').warn('Windows installation occupancy inspection failed', {
+        durationMs: Date.now() - started,
+        message: cause instanceof Error ? cause.message : 'Unknown inspection error'
+      })
+      throw windowsInspectionFailure(cause)
+    }
+  }
+  try {
+    installationRoot = realpathSync(installationRoot) || installationRoot
+  } catch {
+    /* The installation may already have moved. */
   }
   const { stdout } = await run('/bin/ps', ['-axo', 'pid=,command='])
   const pids = new Set<number>()
@@ -265,23 +259,51 @@ export async function inspectInstallationProcessesAsync(
       (match[2].includes(installationRoot) ||
         (process.platform === 'linux' &&
           (isLinuxInstallationExecutable(Number(match[1]), installationRoot) ||
-            isLinuxInstallationFileUser(Number(match[1]), installationRoot))))
+            isLinuxInstallationMappingUser(Number(match[1]), installationRoot))))
     )
       pids.add(Number(match[1]))
   }
   if (process.platform === 'darwin') {
-    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpn'])
-    let pid = 0
-    for (const line of maps.stdout.split('\n')) {
-      if (line.startsWith('p')) pid = Number(line.slice(1))
-      if (
-        line.startsWith('n') &&
-        (line.slice(1) === installationRoot || line.slice(1).startsWith(`${installationRoot}/`))
-      )
-        pids.add(pid)
-    }
+    const maps = await run('/usr/sbin/lsof', ['-n', '-P', '-Fpfn'])
+    for (const pid of parseDarwinLsofMappings(maps.stdout, installationRoot)) pids.add(pid)
   }
   return [...pids]
+}
+
+// macOS `ps -o comm=` prints the full executable path; show the executable name only.
+export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
+  const names = new Map<number, string>()
+  for (const line of psOutput.split('\n')) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line)
+    const name = match?.[2].trim().split('/').pop()
+    if (match && name) names.set(Number(match[1]), name)
+  }
+  return names
+}
+
+/** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
+export function inspectProcessNames(pids: number[]): Map<number, string> {
+  const names = new Map<number, string>()
+  if (pids.length === 0) return names
+  if (process.platform === 'darwin') {
+    const result = spawnSync('/bin/ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024
+    })
+    if (result.status === 0)
+      for (const [pid, name] of parseDarwinProcessNames(result.stdout)) names.set(pid, name)
+  } else if (process.platform === 'linux') {
+    for (const pid of pids) {
+      try {
+        const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
+        if (comm) names.set(pid, comm)
+      } catch {
+        // Process exited or inaccessible; diagnostic only, no occupancy impact.
+      }
+    }
+  }
+  return names
 }
 
 /** AppImage extract-and-run keeps its runtime parent alive until Electron exits.
@@ -448,68 +470,27 @@ function inspectOwnedWindowsCrashpadProcesses(options: {
     return []
   // Parse with Windows' own argv rules: quoted profile paths and annotation values must not be
   // inferred with substring matching. Only current direct children are even considered.
-  const script = [
-    '$ErrorActionPreference = "Stop"',
-    '[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)',
-    '$rows = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = ' +
-      process.pid +
-      '" | Where-Object { $_.CommandLine -like "*--type=crashpad-handler*" })',
-    'if ($rows.Count -eq 0) { Write-Output "[]"; exit 0 }',
-    "Add-Type -TypeDefinition @'",
-    'using System; using System.Runtime.InteropServices;',
-    'public static class OpenScienceCrashpadArguments {',
-    '  [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern IntPtr CommandLineToArgvW(string value, out int count);',
-    '  [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);',
-    '  public static string[] Parse(string value) {',
-    '    int count; IntPtr pointer = CommandLineToArgvW(value, out count);',
-    '    if (pointer == IntPtr.Zero) throw new InvalidOperationException("Cannot parse process arguments");',
-    '    try { string[] result = new string[count]; for (int i = 0; i < count; i++) result[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, i * IntPtr.Size)); return result; }',
-    '    finally { LocalFree(pointer); }',
-    '  }',
-    '}',
-    "'@",
-    '$result = @($rows | ForEach-Object { @{ProcessId=$_.ProcessId;ParentProcessId=$_.ParentProcessId;ExecutablePath=$_.ExecutablePath;Arguments=[OpenScienceCrashpadArguments]::Parse($_.CommandLine)} })',
-    'ConvertTo-Json -InputObject $result -Depth 4 -Compress'
-  ].join('\n')
-  const result = spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', script],
-    {
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 5_000,
-      maxBuffer: 16 * 1024 * 1024
-    }
-  )
   try {
-    if (result.status !== 0) throw result.error ?? new Error('Process query failed')
-    const rows: unknown = JSON.parse(result.stdout)
-    if (!Array.isArray(rows)) throw new Error('Invalid process query result')
-    return rows.flatMap((row) => {
-      if (
-        !row ||
-        !Number.isSafeInteger(row.ProcessId) ||
-        row.ProcessId <= 0 ||
-        row.ParentProcessId !== process.pid ||
-        typeof row.ExecutablePath !== 'string' ||
-        canonical(row.ExecutablePath) !== executable ||
-        !Array.isArray(row.Arguments) ||
-        !row.Arguments.every((arg: unknown) => typeof arg === 'string')
-      )
-        return []
-      const args: string[] = row.Arguments
+    return listWindowsProcesses().flatMap((row) => {
+      if (row.ppid !== process.pid || row.pid <= 0 || !Number.isSafeInteger(row.pid)) return []
+      if (!row.executablePath || canonical(row.executablePath) !== executable) return []
+      const commandLine = windowsProcessCommandLine(row.pid)
+      if (!commandLine?.includes('--type=crashpad-handler')) return []
+      const args = splitWindowsCommandLine(commandLine)
       const values = (key: string): string[] =>
         args.filter((arg) => arg.startsWith(key + '=')).map((arg) => arg.slice(key.length + 1))
       const types = values('--type')
       const databases = values('--database')
       const instances = values('--annotation=openScienceInstance')
+      // Re-read the parent so a PID reused after the snapshot cannot borrow this exemption.
       return types.length === 1 &&
         types[0] === 'crashpad-handler' &&
         databases.length === 1 &&
         canonical(databases[0]) === database &&
         instances.length === 1 &&
-        instances[0] === options.instanceId
-        ? [row.ProcessId]
+        instances[0] === options.instanceId &&
+        windowsParentProcessId(row.pid) === process.pid
+        ? [row.pid]
         : []
     })
   } catch (cause) {

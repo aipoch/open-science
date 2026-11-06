@@ -1,4 +1,11 @@
+import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import { agentUserChoiceOutcomes, USER_CHOICE_SKIP_GUIDANCE } from './elicitation-owner'
+import {
+  registerResourceObservation,
+  recordResourceEvent,
+  recordResourceSnapshot,
+  type ResourceFacts
+} from '../resource-diagnostics/recorder'
 import type {
   ActiveSession,
   ClientConnection,
@@ -335,6 +342,7 @@ class AcpRuntime {
   >()
   private cancellationTeardown: Promise<AcpStateSnapshot> | undefined
   private readonly repeatedToolFailureGuard = new RepeatedToolFailureGuard()
+  private readonly resourceRuntimeId: string
 
   // Wires runtime dependencies and forwards permission prompts into the event stream.
   constructor(
@@ -343,6 +351,7 @@ class AcpRuntime {
     session: AcpRuntimeSessionOwners
   ) {
     this.spawnAgent = options.spawnAgent
+    this.resourceRuntimeId = base.resourceRuntimeId
     this.artifactOptions = options.artifacts
     this.snapshotOwner = base.snapshotOwner
     this.connectionAdapter = base.connectionAdapter
@@ -512,6 +521,39 @@ class AcpRuntime {
     this.sessionReplacement = providerSessions.sessionReplacement
     this.sessionDeletion = providerSessions.sessionDeletion
     session.bindToolFailureObserver((failure) => this.handleToolFailure(failure))
+    registerResourceObservation(this, this.resourceRuntimeId)
+  }
+
+  resourceDiagnosticSnapshot(): ResourceFacts {
+    const sessions = this.sessionRegistry.entries(true)
+    const interactions = this.sessionInteractions.snapshot()
+    return {
+      epoch: this.connectionResources.epoch,
+      framework: this.framework.id,
+      status: this.snapshotOwner.status,
+      ...this.generationActivity.diagnosticSnapshot(),
+      ...this.connectionTransitions.diagnosticSnapshot(),
+      sessions: sessions.slice(0, 256).map(({ appSessionId, attachment, aggregate }) => ({
+        sessionId: appSessionId,
+        providerSessionId: attachment?.providerSessionId,
+        generation: attachment?.generation,
+        projectId: aggregate.snapshot().projectId
+      })),
+      interactions: interactions.slice(0, 256).map(({ sessionId, kind }) => {
+        const scope = this.sessionInteractions.current(sessionId)
+        const provenance = scope?.kind === 'prompt' ? scope.provenanceContext : undefined
+        return {
+          sessionId,
+          kind,
+          sequence: scope?.sequence,
+          turnId: scope?.kind === 'prompt' ? scope.turnToken : undefined,
+          frameId: provenance?.agentFrameId ?? provenance?.rootFrameId,
+          activeBranchId: provenance?.messageBranchId
+        }
+      }),
+      inFlight: this.getInFlightSessionIds().slice(0, 256),
+      truncated: sessions.length > 256 || interactions.length > 256
+    }
   }
 
   private handleToolFailure(failure: AcpToolFailureDiagnostic): void {
@@ -549,6 +591,10 @@ class AcpRuntime {
 
   private get connection(): ClientConnection | undefined {
     return this.connectionResources.connection
+  }
+
+  get cleanupConfirmed(): boolean {
+    return this.connectionResources.cleanupConfirmed
   }
 
   private get reconnectBarrier(): Promise<void> | undefined {
@@ -1246,11 +1292,14 @@ class AcpRuntime {
 
   // Tears down every local session route and closes the underlying agent process.
   async disconnect(emitClosedStatus = true): Promise<AcpStateSnapshot> {
+    const epoch = this.connectionResources.epoch
+    recordResourceSnapshot(this.resourceRuntimeId, this, 'teardown-started')
     this.clearAllPlanDeliveryClaimRetries()
     try {
       return await this.connectionClose.disconnect(emitClosedStatus)
     } finally {
       this.clearAllPlanDeliveryClaimRetries()
+      recordResourceEvent('teardown-ended', { runtimeId: this.resourceRuntimeId, epoch })
     }
   }
 
@@ -1302,6 +1351,13 @@ class AcpRuntime {
     await this.connectionClose.requestRetirement()
   }
 
+  // Retain a bounded idle connection briefly; expiry releases physical resources.
+  // Active workflows defer release; subsequent cold turns use ordinary Session resume.
+  requestIdleRelease(): void {
+    recordResourceSnapshot(this.resourceRuntimeId, this, 'idle-release-requested')
+    if (this.snapshotOwner.status === 'connected') this.connectionTransitions.requestIdleRelease()
+  }
+
   // Applies an active-provider change without interrupting the user. The agent bakes its provider env in
   // at spawn, so a new provider needs a reconnect — but if a prompt is running we defer the reconnect
   // until the session goes idle. Because every provider shares one config dir, the reconnect resumes the
@@ -1315,7 +1371,19 @@ class AcpRuntime {
     _options: AcpRuntimeActivityOptions,
     work: (runtime: AcpRuntimeActivity) => Promise<T>
   ): Promise<T> {
-    return this.generationActivity.withActivity(() => work(this))
+    return this.generationActivity.withActivity(async () => {
+      try {
+        return await work(this)
+      } finally {
+        this.requestIdleRelease()
+      }
+    })
+  }
+
+  // Coordinator admission precedes Runtime prompt startup. Protect that gap from idle release
+  // without blocking provider reconnect, whose barrier the admitted prompt may need to await.
+  withPromptAdmission<T>(work: () => Promise<T>): Promise<T> {
+    return this.generationActivity.withOperation(work)
   }
 
   private withOperationLease<T>(work: () => Promise<T>): Promise<T> {
@@ -1375,29 +1443,21 @@ class AcpRuntime {
       onProcessExit: (code, signal, context) => this.handleAgentProcessExit(code, signal, context),
       onConnectionClosed: () => this.connectionClose.handleUnexpectedClose(),
       reportCleanupFailure: (stage, error, framework, epoch) => {
-        if (stage === 'bridge-lease') {
-          safeLogError('responses bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'anthropic-bridge-lease') {
-          safeLogError('Anthropic bridge lease release failed', errorLogFields(error))
-          return
-        }
-        if (stage === 'provider-transport-lease') {
-          safeLogError('provider transport lease release failed', errorLogFields(error))
-          return
-        }
         safeLogError(`unattached ACP ${stage} cleanup failed`, {
           ...diagnosticErrorFields(error),
           ...this.diagnosticContext(framework, epoch)
         })
-      },
-      reportProcessTreeError: (message, error) => log.error(message, error)
+      }
     }
 
     return this.connectionAdapter.open(
       {
         epoch: identity.epoch,
+        resourceRuntimeId: this.resourceRuntimeId,
+        resourceExitExpected: (child) => {
+          const disposition = this.processEventDisposition(child, identity.epoch)
+          return disposition === 'stale' ? undefined : disposition === 'expected'
+        },
         resolveBackend: async () => {
           let grantedLocalRoots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[] = []
           try {
@@ -1425,6 +1485,8 @@ class AcpRuntime {
         prepareBackend: (backend) => this.backendGeneration.prepare(identity, backend),
         isCurrent: () => identity.epoch === this.connectionGeneration,
         isShuttingDown: () => this.connectionResources.isShuttingDown,
+        cleanupUnattached: (resource, onFailure) =>
+          this.connectionResources.cleanupUnattached(resource, onFailure),
         ...(this.spawnAgent ? { spawnAgent: this.spawnAgent } : {}),
         ...(this.options.spawnProcess ? { spawnProcess: this.options.spawnProcess } : {}),
         ...(this.options.registerOpenCodeStoreRelease
@@ -1479,6 +1541,7 @@ class AcpRuntime {
         ? {
             codebuddy: {
               root: codeBuddySkillRuntimeRoot(this.backendGeneration.current.session.options),
+              shellRuntime: this.sessionCapabilities.shellRuntimeBindingFor(request.sessionId),
               selectorAvailable: this.connectionResources.bridgeSkillsAvailable,
               selectSkills: async (text, catalog, signal, observeUsage) =>
                 (await this.connectionResources.selectBridgeSkills(
@@ -2106,11 +2169,9 @@ class AcpRuntime {
         answers: response.answers,
         retryContinuation: response.retryContinuation,
         continuePrepared: !response.prepareContinuation && continuePrepared,
-        recovery: {
-          error:
-            response.continuationFailure?.slice(0, 4_000) ??
-            'The task could not continue. Your response is saved.'
-        }
+        ...(response.continuationFailure !== undefined
+          ? { recovery: { error: response.continuationFailure.slice(0, 4_000) } }
+          : {})
       })
       return this.getSnapshot()
     }
@@ -2124,7 +2185,7 @@ class AcpRuntime {
         .some(({ requestId }) => requestId === response.requestId)
     ) {
       const request = response.request
-      if (this.sessionInteractions.current(request.sessionId)) {
+      if (this.sessionInteractions.has(request.sessionId)) {
         throw new Error('Wait for the current Agent run to finish before ending this wait.')
       }
       const projectId =
@@ -2781,6 +2842,7 @@ class AcpRuntime {
       this.emitState()
     } finally {
       if (continuation.onUnaccepted) {
+        let recoveryPhase = 'preflight'
         try {
           const code =
             continuationError &&
@@ -2794,8 +2856,21 @@ class AcpRuntime {
             !providerDispatched &&
             typeof code === 'string' &&
             ['EAGAIN', 'EBUSY', 'ECONNREFUSED', 'EAI_AGAIN'].includes(code)
+          if (!providerDispatched) {
+            await this.options.runtimeSessions?.assertAdmissionAvailable(sessionId)
+          }
+          recoveryPhase = 'rearm'
           await continuation.onUnaccepted(continuationError, retryable)
         } catch (error) {
+          try {
+            log.warn('App continuation recovery failed', {
+              sessionId,
+              phase: recoveryPhase,
+              ...diagnosticErrorFields(error)
+            })
+          } catch (loggingError) {
+            void loggingError
+          }
           this.pushEvent({
             kind: 'error',
             level: 'error',
@@ -2968,7 +3043,7 @@ class AcpRuntime {
     projectId: string,
     sessionId: string,
     recordId: string
-  ): Promise<'pending' | 'approved' | 'denied' | undefined> {
+  ): Promise<NetworkApprovalRecordStatus | undefined> {
     return this.sandboxNetworkApprovalOwner.recordStatus(projectId, sessionId, recordId)
   }
 

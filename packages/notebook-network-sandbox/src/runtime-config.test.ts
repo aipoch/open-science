@@ -126,7 +126,12 @@ describe('Notebook runtime configuration updates', () => {
       allowedDomains: [],
       deniedDomains: [],
       trustedPrivateDestinations: [
-        { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+        {
+          hostname: 'lab.internal.example',
+          protocol: 'http' as const,
+          port: 8443,
+          approvedAddresses: ['10.32.0.7']
+        }
       ]
     }
     const next = createRuntimeConfig({
@@ -136,7 +141,9 @@ describe('Notebook runtime configuration updates', () => {
     NotebookNetworkRuntime.updateConfig(next)
     dnsLookup.mockResolvedValue([{ address: '10.32.0.7', family: 4 }])
     const decide = vi.mocked(CommandGateway.open).mock.calls[0]![0].decide
-    await expect(decide('lab.internal.example', 8443)).resolves.toMatchObject({
+    await expect(
+      decide('lab.internal.example', 8443, 'block', undefined, 'http')
+    ).resolves.toMatchObject({
       allowed: true,
       address: '10.32.0.7'
     })
@@ -147,15 +154,17 @@ describe('Notebook runtime configuration updates', () => {
           resolve = done
         })
     )
-    const pending = decide('lab.internal.example', 8443)
+    const pending = decide('lab.internal.example', 8443, 'block', undefined, 'http')
     NotebookNetworkRuntime.updateConfig({ ...next, trustedPrivateDestinations: [] })
     resolve([{ address: '10.32.0.7', family: 4 }])
     await expect(pending).resolves.toMatchObject({ allowed: false })
-    await expect(decide('lab.internal.example', 8443)).resolves.toMatchObject({ allowed: false })
+    await expect(
+      decide('lab.internal.example', 8443, 'block', undefined, 'http')
+    ).resolves.toMatchObject({ allowed: false })
     expect(gateway.resetConnections).toHaveBeenCalledTimes(2)
   })
 
-  it('routes disabled overlapping domains through approval after a live policy update', async () => {
+  it('keeps HTTPS default access independent from obsolete domain groups', async () => {
     const policy = {
       allowedDomains: ['*.example.org'],
       askDomains: ['rest.example.org'],
@@ -165,7 +174,7 @@ describe('Notebook runtime configuration updates', () => {
       createRuntimeConfig({ resources: { root: '/resources' }, policy: value })
     NotebookNetworkRuntime.updateConfig(next(policy))
     const decide = vi.mocked(CommandGateway.open).mock.calls[0]![0].decide
-    await expect(decide('rest.example.org', 443)).resolves.toMatchObject({ allowed: false })
+    await expect(decide('rest.example.org', 443)).resolves.toMatchObject({ allowed: true })
     await expect(decide('www.example.org', 443)).resolves.toMatchObject({ allowed: true })
     NotebookNetworkRuntime.updateConfig(
       next({ ...policy, allowedDomains: ['*.example.org', 'rest.example.org'] })

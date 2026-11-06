@@ -5,6 +5,102 @@ type LinkFixture = {
   literatureRecovery: { commands: Array<{ kind: string }> }
 }
 
+for (const [url, reference, label] of [
+  ['https://pubmed.ncbi.nlm.nih.gov/35486828/', 'pmid:35486828', 'PMID'],
+  ['https://pmc.ncbi.nlm.nih.gov/articles/PMC12345/', 'pmcid:PMC12345', 'PMCID']
+] as const) {
+  test(`reviews a ${label} article using its identifier label`, async ({ page }) => {
+    await page.goto('/literature-recovery.html?mode=links')
+    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
+    await page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true }).fill(url)
+    await page.getByRole('button', { name: 'Find reference', exact: true }).click()
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references))
+      .toEqual([reference])
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
+    await expect(
+      page
+        .getByRole('dialog', { name: 'Review reference details' })
+        .getByText(`Retrieved via ${label}.`, { exact: true })
+    ).toBeVisible()
+  })
+}
+
+for (const foreign of [false, true]) {
+  test(`pasted DOI and PubMed identifiers reach selection review before any commit (foreign=${foreign})`, async ({
+    page
+  }) => {
+    await page.goto(`/literature-recovery.html?mode=links${foreign ? '&foreign-metadata=1' : ''}`)
+    await page.getByRole('button', { name: 'All references', exact: true }).click()
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
+    const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
+    await input.fill('10.1234/paper\ninvalid\nhttps://pubmed.ncbi.nlm.nih.gov/35486828/')
+    await input.press('ControlOrMeta+Enter')
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+      )
+      .toBe(1)
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
+    await expect
+      .poll(() =>
+        page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
+      )
+      .toBe(2)
+    await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(1))
+    await expect(page.getByText('invalid', { exact: true })).toBeVisible()
+    if (!foreign) {
+      await page.setViewportSize({ width: 375, height: 812 })
+      const table = page.getByRole('table', { name: 'Lookup results' })
+      const title = table.getByRole('cell').first().locator('span').first()
+      expect(await title.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true
+      )
+      await title.hover()
+      await expect(page.getByRole('tooltip')).toHaveText(await title.innerText())
+      await page
+        .getByRole('heading', { name: 'Add from identifiers or links', exact: true })
+        .hover()
+      const input = table.getByRole('rowheader').last().locator('span').first()
+      expect(await input.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(
+        true
+      )
+      await input.focus()
+      await expect(page.getByRole('tooltip')).toHaveText(await input.innerText())
+      await input.press('Tab')
+    }
+    const readImports = (): Promise<Array<{ mode?: string; items?: unknown[] }>> =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            literatureFiles: { requests: Array<{ mode?: string; items?: unknown[] }> }
+          }
+        ).literatureFiles.requests.filter((request) => request.mode)
+      )
+    expect(await readImports()).toEqual([])
+    await page.getByRole('button', { name: 'Review references', exact: true }).click()
+    const commit = page.getByRole('button', { name: 'Import references', exact: true })
+    await expect(commit).toBeEnabled()
+    const previews = await readImports()
+    expect(previews.map((request) => request.mode)).toEqual(['preview'])
+    expect(previews[0].items).toHaveLength(2)
+    if (foreign) {
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+      expect((await readImports()).map((request) => request.mode)).toEqual(['preview'])
+    } else {
+      await commit.click()
+      await expect
+        .poll(async () => (await readImports()).map((request) => request.mode))
+        .toEqual(['preview', 'commit'])
+      await page.getByRole('button', { name: 'Done', exact: true }).click()
+    }
+    await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeFocused()
+  })
+}
+
 test('linked reference keyboard flow ignores composing Enter and late results after Escape', async ({
   page
 }) => {
@@ -13,26 +109,35 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   const add = page.getByRole('button', { name: 'Add', exact: true })
   await add.focus()
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
-  const input = page.getByLabel('DOI or arXiv link', { exact: true })
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
+  const input = page.getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
   await expect(input).toBeFocused()
   await input.fill('10.1234/paper')
   // This exercises Chromium composition events; it does not emulate a system IME.
-  await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', isComposing: true })
+  await input.dispatchEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    ctrlKey: true,
+    isComposing: true
+  })
   expect(
     await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references)
   ).toEqual([])
-  await input.press('Enter')
+  await input.press('ControlOrMeta+Enter')
   await expect(page.getByRole('button', { name: 'Searching…', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(add).toBeFocused()
   await page.evaluate(() => (window as unknown as LinkFixture).literatureLink.completeLookup(0))
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
   await expect(input).toBeFocused()
   await input.fill('10.1234/paper')
-  await input.press('Enter')
+  await input.press('ControlOrMeta+Enter')
   await expect
     .poll(() =>
       page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
@@ -51,9 +156,11 @@ test('linked reference keyboard flow ignores composing Enter and late results af
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(add).toBeFocused()
   await add.press('Enter')
-  await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).press('Enter')
+  await page
+    .getByRole('menuitem', { name: 'Add from identifiers or links', exact: true })
+    .press('Enter')
   await input.fill('10.1234/paper')
-  await input.press('Enter')
+  await input.press('ControlOrMeta+Enter')
   await expect
     .poll(() =>
       page.evaluate(() => (window as unknown as LinkFixture).literatureLink.references.length)
@@ -99,14 +206,14 @@ for (const viewport of [
     await page.getByRole('button', { name: 'All references', exact: true }).click()
     const add = page.getByRole('button', { name: 'Add', exact: true })
     await add.click()
-    await page.getByRole('menuitem', { name: 'Add from DOI or link', exact: true }).click()
-    const lookup = page.getByRole('dialog', { name: 'Add from DOI or link' })
+    await page.getByRole('menuitem', { name: 'Add from identifiers or links', exact: true }).click()
+    const lookup = page.getByRole('dialog', { name: 'Add from identifiers or links' })
     const lookupWidth = await lookup.evaluate((element) =>
       parseFloat(getComputedStyle(element).width)
     )
     expect(lookupWidth).toBe(Math.min(640, viewport.width - 32))
     await page
-      .getByLabel('DOI or arXiv link', { exact: true })
+      .getByLabel('DOI, arXiv, PMID, PMCID or links', { exact: true })
       .fill('https://arxiv.org/abs/2401.12345v2')
     await expect(page.getByText('Versioned arXiv links use the latest metadata.')).toBeVisible()
     await page.getByRole('button', { name: 'Find reference', exact: true }).click()

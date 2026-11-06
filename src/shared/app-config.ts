@@ -38,3 +38,6 @@ export const APP = {
 // translated homepages use a locale subdirectory. Callers supply the already-resolved app locale.
 export const getDocumentationUrl = (locale: Locale): string =>
   `${APP.links.docs}${locale === DEFAULT_LOCALE ? '' : `${locale}/`}`
+
+export const getInstallationDocumentationUrl = (locale: Locale): string =>
+  `${getDocumentationUrl(locale)}guides/installation/#manual-update`

@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { EventEmitter } from 'node:events'
 
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
-import { resolveWindowsPowerShellExecutable } from '../windows-powershell'
+import { windowsProcessCommandLine, windowsProcessStartTicks } from '../windows-process-query'
 import { bootTokenProvesReboot, isValidBootToken, readBootToken } from '@aipoch/environment'
 
 type ShellProcessOwnershipRecord = Readonly<{
@@ -103,23 +103,17 @@ const ownedTreeExists = (record: ShellProcessOwnershipRecord): boolean => {
 }
 
 const processStartIdentity = (pid: number, platform: NodeJS.Platform): string | undefined => {
-  const result =
-    platform === 'win32'
-      ? spawnSync(
-          resolveWindowsPowerShellExecutable(),
-          [
-            '-NoLogo',
-            '-NoProfile',
-            '-NonInteractive',
-            '-Command',
-            `(Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks`
-          ],
-          { encoding: 'utf8', windowsHide: true }
-        )
-      : spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
-          encoding: 'utf8',
-          windowsHide: true
-        })
+  if (platform === 'win32') {
+    try {
+      return windowsProcessStartTicks(pid)
+    } catch {
+      return undefined
+    }
+  }
+  const result = spawnSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+    encoding: 'utf8',
+    windowsHide: true
+  })
   if (result.status !== 0) return undefined
   const identity = result.stdout.trim()
   return identity.length > 0 ? identity : undefined
@@ -422,33 +416,29 @@ class ShellProcessOwnershipRegistry {
     }
     const exists = this.options.processExists ?? processExists
     if (exists(pid)) {
-      const result = spawnSync(
-        resolveWindowsPowerShellExecutable(),
-        [
-          '-NoLogo',
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          // Load the in-box identity provider directly, without discovering host module trees.
-          'Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1" -ErrorAction Stop; ' +
-            `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" -ErrorAction Stop).CommandLine`
-        ],
-        { encoding: 'utf8', windowsHide: true, timeout: 5000 }
-      )
-      if (result.status !== 0 || !result.stdout?.includes(record.receiptId)) {
+      let commandLine: string | undefined
+      let queryError: unknown
+      try {
+        commandLine = windowsProcessCommandLine(pid)?.trim()
+      } catch (error) {
+        queryError = error
+      }
+      if (!commandLine) {
         if (exists(pid)) {
-          const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code
-          // Command lines and stderr can contain secrets; retain only query outcome diagnostics.
+          // Command lines can contain secrets; retain only query outcome diagnostics.
           throw new ShellProcessRecoveryBlockedError(record.runId, {
             cause: new Error(
-              `Windows host identity query failed: status=${result.status}, code=${errorCode ?? 'none'}, receiptMatched=${Boolean(result.stdout?.includes(record.receiptId))}`
+              `Windows host identity query failed: ${queryError instanceof Error ? queryError.message : 'command line unavailable'}`
             )
           })
         }
-      } else {
+      } else if (commandLine.includes(record.receiptId)) {
         const stopped = await terminateProcessTree(recoveryHandle({ pid, platform: 'win32' }))
         if (!stopped.reaped) throw new ShellProcessRecoveryBlockedError(record.runId)
       }
+      // A readable identity without this host's launch marker proves the recorded PID now names
+      // another process. Retire only the stale receipt, as with version-1 start-identity mismatch;
+      // never signal that unrelated process. Empty/inaccessible identities remain blocked above.
     }
     await rm(`${path}.${pid}.tmp`, { force: true })
     await unlink(path)

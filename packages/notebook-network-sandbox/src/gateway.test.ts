@@ -92,7 +92,10 @@ const runResetTunnelChild = (
           throw new Error('Gateway tunnel did not open.')
         }
         if (${JSON.stringify(resetPoint)} === 'client') client.resetAndDestroy()
-        else (await originConnection).resetAndDestroy()
+        else {
+          client.write(Buffer.from([0x16, 0x03, 0x03]))
+          ;(await originConnection).resetAndDestroy()
+        }
       }
 
       setTimeout(async () => {
@@ -442,7 +445,7 @@ describe('Notebook command gateway', () => {
   })
 
   it('brokers authenticated local RPC without consulting the external domain policy', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'notebook-rpc-broker-'))
+    const directory = await mkdtemp(join(tmpdir(), 'rpc-'))
     const socketPath =
       process.platform === 'win32'
         ? `\\\\.\\pipe\\open-science-notebook-rpc-${process.pid}-${randomUUID()}`
@@ -508,7 +511,7 @@ describe('Notebook command gateway', () => {
     const gateway = await CommandGateway.open({
       decide: async (host, port, _purpose, _canResume, protocol) => {
         decisions.push({ host, port, protocol })
-        return protocol === 'http'
+        return protocol === 'https'
           ? { allowed: true, address: '127.0.0.1' }
           : { allowed: false, source: 'unknown' }
       },
@@ -550,16 +553,14 @@ describe('Notebook command gateway', () => {
     gateway.resetConnections()
     await closed
 
-    expect(decisions).toEqual([
-      { host: 'localhost', port: echo.port, protocol: 'https' },
-      { host: 'localhost', port: echo.port, protocol: 'http' }
-    ])
+    expect(decisions).toEqual([{ host: 'localhost', port: echo.port, protocol: 'https' }])
   })
 
   it('rejects plaintext bytes inside an HTTPS CONNECT tunnel', async () => {
     const echo = await listen((socket) => socket.pipe(socket))
     const gateway = await CommandGateway.open({
-      decide: async () => ({ allowed: true, address: '127.0.0.1' }),
+      decide: async (_host, _port, _purpose, _alive, protocol) =>
+        protocol === 'https' ? { allowed: true, address: '127.0.0.1' } : { allowed: false },
       credentials
     })
     closeTasks.push(() => gateway.close())
@@ -602,8 +603,107 @@ describe('Notebook command gateway', () => {
     await expect(readHttpHeader(socket)).resolves.toContain('200 Connection Established')
     socket.write(payload)
     await expect(readBytes(socket, payload.length)).resolves.toEqual(payload)
-    expect(protocols).toEqual(['https', 'http'])
+    expect(protocols).toEqual(['http'])
   })
+
+  it.each([
+    ['CONNECT', 'http', 8080],
+    ['CONNECT', 'https', 80],
+    ['SOCKS', 'http', 8080],
+    ['SOCKS', 'https', 80]
+  ] as const)(
+    'matches %s %s on port %s without cross-protocol fallback',
+    async (transport, protocol, port) => {
+      const parentTargets: string[] = []
+      const parent = await listen((socket) => {
+        socket.once('data', (chunk) => {
+          parentTargets.push(chunk.toString().split('\r\n')[0]!)
+          socket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+          socket.pipe(socket)
+        })
+      })
+      const decide = vi.fn(
+        async (
+          _host: string,
+          _port: number,
+          _purpose: unknown,
+          _alive: unknown,
+          actual: unknown
+        ) =>
+          actual === protocol
+            ? { allowed: true as const, address: '127.0.0.1' }
+            : { allowed: false as const }
+      )
+      const gateway = await CommandGateway.open({
+        credentials,
+        decide,
+        parentProxy: {
+          http: `http://127.0.0.1:${parent.port}`,
+          https: `http://127.0.0.1:${parent.port}`
+        }
+      })
+      closeTasks.push(() => gateway.close())
+      const open = async (preface = Buffer.alloc(0)): Promise<Socket> => {
+        const socket = connect(gateway.port, '127.0.0.1')
+        await once(socket, 'connect')
+        if (transport === 'CONNECT') {
+          socket.write(
+            Buffer.concat([
+              Buffer.from(
+                `CONNECT [::1]:${port} HTTP/1.1\r\nHost: [::1]:${port}\r\nProxy-Authorization: ${authorization}\r\n\r\n`
+              ),
+              preface
+            ])
+          )
+          expect(await readHttpHeader(socket)).toContain('200 Connection Established')
+        } else {
+          socket.write(Buffer.from([5, 1, 2]))
+          expect(await readBytes(socket, 2)).toEqual(Buffer.from([5, 2]))
+          const user = Buffer.from(credentials.username),
+            password = Buffer.from(credentials.password)
+          socket.write(
+            Buffer.concat([
+              Buffer.from([1, user.length]),
+              user,
+              Buffer.from([password.length]),
+              password
+            ])
+          )
+          expect(await readBytes(socket, 2)).toEqual(Buffer.from([1, 0]))
+          const address = Buffer.alloc(16)
+          address[15] = 1
+          const portBytes = Buffer.alloc(2)
+          portBytes.writeUInt16BE(port)
+          socket.write(Buffer.concat([Buffer.from([5, 1, 0, 4]), address, portBytes]))
+          expect((await readBytes(socket, 10))[1]).toBe(0)
+        }
+        return socket
+      }
+      const http = Buffer.from('GET / HTTP/1.1\r\nHost: [::1]\r\n\r\n')
+      const tls = Buffer.from([0x16, 0x03, 0x03, 0, 1, 1])
+      const payload = protocol === 'http' ? http : tls
+      // Include a partial CONNECT head before waiting for the proxy handshake.
+      const accepted = await open(transport === 'CONNECT' ? payload.subarray(0, 1) : undefined)
+      if (transport === 'SOCKS') accepted.write(payload.subarray(0, 1))
+      accepted.write(payload.subarray(1))
+      expect(await readBytes(accepted, payload.length)).toEqual(payload)
+      expect(decide).toHaveBeenCalledExactlyOnceWith(
+        '::1',
+        port,
+        'block',
+        expect.any(Function),
+        protocol
+      )
+      accepted.destroy()
+      const rejected = await open()
+      const closed = once(rejected, 'close')
+      rejected.write(protocol === 'http' ? tls : http)
+      await closed
+      expect(decide).toHaveBeenCalledTimes(2)
+      expect(decide.mock.calls[1]?.[4]).toBe(protocol === 'http' ? 'https' : 'http')
+      expect(parentTargets).toEqual([`CONNECT 127.0.0.1:${port} HTTP/1.1`])
+    }
+  )
 
   it('connects to the address approved by policy instead of resolving the hostname again', async () => {
     const origin = await listen((socket) => {
@@ -755,6 +855,8 @@ describe('Notebook command gateway', () => {
         `CONNECT packages.example.org:443 HTTP/1.1\r\nHost: packages.example.org:443\r\nProxy-Authorization: ${authorization}\r\n\r\n`
       )
       const response = await readBytes(socket, 'HTTP/1.1 200 Connection Established\r\n\r\n'.length)
+      socket.write(Buffer.from([0x16, 0x03, 0x03]))
+      await vi.waitFor(() => expect(parentRequest).toContain('CONNECT 203.0.113.1:443 HTTP/1.1'))
       socket.destroy()
 
       expect(response.toString('latin1')).toBe('HTTP/1.1 200 Connection Established\r\n\r\n')

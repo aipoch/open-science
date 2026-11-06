@@ -1,8 +1,13 @@
+import { ResourceRecorder, installResourceRecorder } from './resource-diagnostics/recorder'
+import { ResourceLogStore } from './resource-diagnostics/store'
+import { resourceActivity } from './resource-diagnostics/activity'
+import { ResourceRecording, installResourceRecording } from './resource-diagnostics/recording'
 import {
   configureMainAgentProcessOwnership,
   closeMainAgentProcessOwnership
 } from './acp/main-agent-process-ownership'
 import { DelegatedProcessOwnership } from './delegation/process-ownership'
+import { inspectRuntimeWindowsProcessIds } from './process-tree-windows'
 import {
   createLocalServiceLifetime,
   LOCAL_SERVICE_STOP_BUDGET_MS,
@@ -140,7 +145,41 @@ async function main(): Promise<void> {
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
   // Credential preflight can fail before full application diagnostics are initialized.
-  initLogger({ logDir: join(configRoot, 'logs') })
+  initLogger({
+    logDir: join(configRoot, 'logs'),
+    consoleFormat: process.stdout.isTTY ? 'text' : 'json'
+  })
+  const resourceRecording = new ResourceRecording(
+    process.platform === 'win32'
+      ? async () => {
+          const store = new ResourceLogStore({
+            directory: join(configRoot, 'logs', 'resources'),
+            rootDirectory: configRoot,
+            preserveLive: true,
+            onFailure: () => {
+              createLogger('resource-diagnostics').warn('resource journal unavailable')
+              resourceRecording.fail()
+            }
+          })
+          await store.flush()
+          if (store.status.failed) {
+            await store.close(false)
+            throw new Error('Resource journal unavailable')
+          }
+          const recorder = new ResourceRecorder({ runId: randomUUID(), store })
+          installResourceRecorder(recorder)
+          return {
+            settled: () => recorder.settled(),
+            close: async (clean: boolean) => {
+              installResourceRecorder(undefined)
+              await recorder.close(clean)
+            }
+          }
+        }
+      : undefined,
+    (state) => broadcastToRenderers('resource-recording:changed', state)
+  )
+  installResourceRecording(resourceRecording)
   try {
     await configureMainAgentProcessOwnership(
       new DelegatedProcessOwnership(configRoot, 'main-agent-process-ownership')
@@ -170,6 +209,7 @@ async function main(): Promise<void> {
   let stopRequested = false
   let profilePath: string | undefined
   let credentialFailure: CredentialIdentityError | undefined
+  let startupExitCode: number | undefined
   let finishStartup!: () => void
   const startupFinished = new Promise<void>((resolve) => {
     finishStartup = resolve
@@ -244,12 +284,17 @@ async function main(): Promise<void> {
         await writeRuntimeExit(configRoot, {
           generation,
           pid: process.pid,
-          outcome: failed || credentialFailure ? 'failed' : 'clean'
+          outcome: failed || credentialFailure || startupExitCode ? 'failed' : 'clean'
         })
       } catch {
         failed = true
       }
       // A failed child-process drain must not release ownership while this process remains alive.
+      await resourceRecording
+        .close(!failed && !credentialFailure && !startupExitCode)
+        .catch(() => undefined)
+      installResourceRecording(undefined)
+      installResourceRecorder(undefined)
       if (!failed) {
         try {
           await ownership.close()
@@ -270,8 +315,9 @@ async function main(): Promise<void> {
           }
         }
       }
-      process.exitCode = failed || credentialFailure ? 1 : 0
-      if (restartRequested && !desktopWillRestart && !failed) {
+      const exitCode = failed || credentialFailure ? 1 : (startupExitCode ?? 0)
+      process.exitCode = exitCode
+      if (restartRequested && !desktopWillRestart && exitCode === 0) {
         const { spawn } = await import('node:child_process')
         const child = spawn(process.execPath, process.argv.slice(1), {
           detached: true,
@@ -285,13 +331,14 @@ async function main(): Promise<void> {
         child.unref()
       }
       clearTimeout(deadline)
-      process.exit(failed || credentialFailure ? 1 : 0)
+      process.exit(exitCode)
     }))
   }
   const lifetime = await createLocalServiceLifetime({
     configRoot,
     generation,
     explicitStart: !process.argv.includes('--desktop'),
+    deferFirstConnectionTimeout: true,
     onStoppingAdmission: () => runtime?.applicationCommands.beginStopping(),
     stop: (_reason, deadlineAt) => {
       // Cancellation must be visible before an already-resolving startup await resumes.
@@ -479,6 +526,7 @@ async function main(): Promise<void> {
       ...(passwordStore ? { passwordStore } : {})
     }
     desktop = await startDesktopRuntimeTransport({
+      onResourceActivity: (state) => resourceActivity.setDesktop(state),
       lifetime,
       version: metadata.version,
       generation,
@@ -529,6 +577,7 @@ async function main(): Promise<void> {
         commandNames: () => [
           'desktop:update-gate',
           'desktop:update-inspect',
+          'desktop:update-owned-processes',
           'desktop:update-abort',
           'desktop:open-session',
           'locale:snapshot',
@@ -548,6 +597,7 @@ async function main(): Promise<void> {
           if (channel === 'locale:snapshot') return localeOwner.snapshot()
           if (!runtime) throw new Error('The runtime is still starting.')
           if (channel === 'desktop:update-inspect') return runtime.inspectDesktopUpdate()
+          if (channel === 'desktop:update-owned-processes') return inspectRuntimeWindowsProcessIds()
           if (channel === 'desktop:update-gate')
             return runtime.prepareDesktopUpdate(
               z
@@ -625,7 +675,10 @@ async function main(): Promise<void> {
         notificationDelivery?.disconnect()
         runtime?.notificationInbox.configureDesktop()
       },
-      onControllerDisconnect: () => runtime?.abortDesktopUpdate(),
+      onControllerDisconnect: () => {
+        void resourceRecording.stop().catch(() => undefined)
+        runtime?.abortDesktopUpdate()
+      },
       onNotificationView: async (state) => {
         if (state.reason === 'view')
           await runtime?.notificationInbox.syncViewState({
@@ -660,6 +713,8 @@ async function main(): Promise<void> {
       }
     )
     abortStartupIfStopping()
+    // The first-App deadline begins only once Desktop can discover and attach to this runtime.
+    lifetime.startFirstConnectionTimeout()
     startupReporter.phase('database')
     const state = await databaseStartup.start()
     abortStartupIfStopping()
@@ -797,6 +852,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const cancelled = stopRequested
     if (credentialFailure || !cancelled) {
+      startupExitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1
       startupReporter.failed(credentialFailure ?? error)
       // stop() exits the process; record the failure before it flushes logs and releases resources.
       reportStartupError(credentialFailure ?? error)

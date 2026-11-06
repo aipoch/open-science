@@ -394,8 +394,25 @@ const prepareShellLaunchOptions = async (
   }
 
   const platform = hostPlatform
+  // Probe PATH-controlled executables only inside the workload sandbox. The ordinary backend
+  // Node is also the packaged client Node; Electron's executable is not an npm interpreter.
+  const fallbackNodeDirectory =
+    options.processSandbox &&
+    runtimeBinding.kind === 'native-posix' &&
+    !process.versions.electron &&
+    process.allowedNodeEnvironmentFlags.has('--use-env-proxy')
+      ? dirname(process.execPath)
+      : undefined
+  let launchCommand = options.launchCommand ?? options.command
+  if (fallbackNodeDirectory) {
+    const quotedDirectory = `'${fallbackNodeDirectory.replaceAll("'", "'\\''")}'`
+    launchCommand =
+      `if ! node -e 'process.exit(process.allowedNodeEnvironmentFlags.has("--use-env-proxy") ? 0 : 1)' >/dev/null 2>&1; then\n` +
+      `  export PATH=${quotedDirectory}:"$PATH"\n` +
+      `fi\n${launchCommand}`
+  }
   const invocation = resolveShellProcessInvocation(
-    options.launchCommand ?? options.command,
+    launchCommand,
     runtimeBinding,
     options.runtimeRoot,
     hostPlatform,
@@ -433,6 +450,7 @@ const prepareShellLaunchOptions = async (
           filesystem: {
             readOnlyRoots: [
               options.runtimeRoot,
+              ...(fallbackNodeDirectory ? [fallbackNodeDirectory] : []),
               ...(runtimeBinding.kind === 'powershell' && runtimeBinding.version === '7.6'
                 ? [dirname(resolveWindowsNotebookRuntime().node)]
                 : []),

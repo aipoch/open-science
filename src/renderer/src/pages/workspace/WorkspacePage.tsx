@@ -21,8 +21,8 @@ import {
   useWorkspaceElicitation
 } from '@/lib/acp/useWorkspaceElicitation'
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import {
-  deleteSession,
   hydratePersistedSessionIfPresent,
   loadPersistedSession,
   retryPendingArtifactFinalization,
@@ -97,6 +97,7 @@ import { SessionNotebookDialog } from './SessionNotebookDialog'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import { PdfAnnotationsProvider } from './pdf-annotations/PdfAnnotationsProvider'
 import { JobDetailModal } from '@/components/JobDetailModal'
+import { ErrorNotice } from '@/components/error-notice'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { ProjectFormDialog } from '../home/ProjectFormDialog'
@@ -121,6 +122,8 @@ type WorkspacePageProps = {
   isSessionPersistenceHydrated: boolean
   isSessionPersistenceReady: boolean
   persistenceBlockedSessionIds?: readonly string[]
+  persistenceWriteIssues?: readonly SessionWriteIssue[]
+  onReviewPersistence?: () => void
   onSessionSizeLimit?: (sessionId: string) => void
   canDeleteConversations: boolean
   isPreviewPresentationActive?: boolean
@@ -150,6 +153,8 @@ const WorkspacePage = ({
   isSessionPersistenceHydrated,
   isSessionPersistenceReady,
   persistenceBlockedSessionIds = [],
+  persistenceWriteIssues = [],
+  onReviewPersistence,
   onSessionSizeLimit = () => undefined,
   canDeleteConversations,
   isPreviewPresentationActive = true
@@ -301,11 +306,15 @@ const WorkspacePage = ({
     sendPreparationInFlightSessionIds = [],
     saveAsSkillInFlightSessionIds = [],
     nativeContextCompactionSessionIds,
+    sessionCleanups,
     compactContext,
     respondToPermission,
     setPermissionProfile,
     revokePermissionGrant
   } = runtime
+  const projectSessionCleanups = Object.values(sessionCleanups).filter(
+    (cleanup) => cleanup.projectId === scopedProjectId
+  )
   const { respondToElicitation } = useWorkspaceElicitation(
     runtime.resolveSessionRuntimeSelection,
     onSessionSizeLimit
@@ -451,7 +460,7 @@ const WorkspacePage = ({
     beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
     settleSessionDeletion: (sessionId, deleted) =>
       composer.lifecycle.settleSessionDeletion(sessionId, deleted),
-    deleteSession,
+    deleteSession: runtime.deleteSession,
     onSessionSizeLimit
   })
   const deleteSessionProjectName = useProjectStore(
@@ -1550,8 +1559,41 @@ const WorkspacePage = ({
     <main
       ref={previewFocusFallbackRef}
       tabIndex={-1}
-      className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
+      className="grid h-[100dvh] grid-rows-[auto_minmax(0,1fr)] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
     >
+      <div
+        className={
+          projectSessionCleanups.length > 0
+            ? 'mb-2 max-h-[30vh] space-y-2 overflow-y-auto'
+            : undefined
+        }
+      >
+        {projectSessionCleanups.map((cleanup) => (
+          <ErrorNotice
+            key={cleanup.sessionId}
+            title={t('Session cleanup needs attention')}
+            description={
+              cleanup.result.status === 'deleted'
+                ? t('The Session was deleted, but some cleanup could not be completed.')
+                : t(
+                    'An unsent Session could not be cleaned up. Retry cleanup to finish removing it.'
+                  )
+            }
+            errorCode={[cleanup.sessionId, cleanup.error].filter(Boolean).join('\n')}
+            diagnosticsLabel={t('Details')}
+            primaryButton={{
+              label: t('Retry cleanup'),
+              onClick: () =>
+                void runtime.retrySessionCleanup({
+                  projectId: cleanup.projectId,
+                  sessionId: cleanup.sessionId
+                }),
+              disabled: !canDeleteConversations || !isSessionPersistenceReady,
+              loading: cleanup.retrying
+            }}
+          />
+        ))}
+      </div>
       <BookmarksProvider
         projectId={bookmarkSession?.projectId}
         sessionId={bookmarkSession?.id}
@@ -1802,6 +1844,9 @@ const WorkspacePage = ({
                   persistenceBlocked: persistenceBlockedSessionIds.includes(
                     activeSession?.id ?? ''
                   ),
+                  persistenceIssue: persistenceWriteIssues.find(
+                    ({ sessionId }) => sessionId === activeSession?.id
+                  ),
                   actionError: visibleActionError,
                   authenticationRecovery,
                   sideChatDisabledReason,
@@ -1901,6 +1946,7 @@ const WorkspacePage = ({
                 }}
                 sessionTools={{
                   newConversation: openNewConversation,
+                  reviewPersistence: onReviewPersistence,
                   menuBindings: createSessionActionBindings({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,

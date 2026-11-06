@@ -64,6 +64,38 @@ const button = (name: string): HTMLButtonElement =>
   [...document.querySelectorAll('button')].find((item) => item.textContent === name)!
 const checkbox = (name: string): HTMLButtonElement =>
   document.querySelector<HTMLButtonElement>(`[role="checkbox"][aria-label^="${name}"]`)!
+it('requires explicit resource consent and reuses the dialog for application-only export', async () => {
+  inspectDiagnostics.mockResolvedValue({
+    items: [
+      {
+        id: 'resource-logs',
+        name: 'logs/resources',
+        kind: 'resource-log',
+        available: true,
+        sizeBytes: 1234
+      }
+    ]
+  })
+  await act(async () =>
+    root.render(<SessionDiagnosticsDialog identity={{ scope: 'application' }} onClose={onClose} />)
+  )
+  expect(inspectDiagnostics.mock.calls[0][0]).toEqual({
+    scope: 'application',
+    operationId: expect.any(String)
+  })
+  const resource = checkbox('Resource diagnostics')
+  expect(resource.getAttribute('aria-checked')).toBe('false')
+  expect(document.body.textContent).toContain('Originals remain on this device')
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.calls[0][0].selectedItems).toEqual([])
+  await act(async () => fireEvent.click(resource))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.calls[1][0]).toEqual({
+    scope: 'application',
+    operationId: expect.any(String),
+    selectedItems: ['resource-logs']
+  })
+})
 it('exports only selected available items, opts into historical logs and reports partial success', async () => {
   await render()
   const revealInFolder = vi.fn().mockResolvedValue(undefined)
@@ -114,6 +146,31 @@ it('exports only selected available items, opts into historical logs and reports
   expect(exportDiagnostics).toHaveBeenLastCalledWith(
     expect.objectContaining({ selectedItems: ['session', 'database', 'log:main.1.log'] })
   )
+})
+
+it('selects desktop and backend startup logs by default and allows opting out by group', async () => {
+  const ids = [
+    'log:main.log',
+    'desktop-log:main.log',
+    'desktop-log:main.1.log',
+    'desktop-legacy-log:main.log',
+    'backend-log:desktop-backend-42-1700000000000.log'
+  ]
+  inspectDiagnostics.mockResolvedValue({
+    items: ids.map((id) => ({ id, name: id, kind: 'log', available: true }))
+  })
+  await render()
+  expect(checkbox('Desktop logs').getAttribute('aria-checked')).toBe('true')
+  expect(checkbox('Earlier desktop logs').getAttribute('aria-checked')).toBe('false')
+  expect(checkbox('Backend startup logs').getAttribute('aria-checked')).toBe('true')
+  expect(checkbox('Historical log 2')).toBeNull()
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0].selectedItems).toEqual(
+    ids.filter((id) => !id.startsWith('desktop-legacy-log:'))
+  )
+  await act(async () => fireEvent.click(checkbox('Backend startup logs')))
+  await act(async () => fireEvent.click(button('Export')))
+  expect(exportDiagnostics.mock.lastCall?.[0].selectedItems).toEqual(ids.slice(0, 3))
 })
 
 it('groups only available notebook sources under one execution selection', async () => {

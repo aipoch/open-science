@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
+import { ResourceActivity } from '../resource-diagnostics/activity'
 
 const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
   let resolve!: () => void
@@ -11,6 +12,28 @@ const createDeferred = (): { promise: Promise<void>; resolve: () => void } => {
 }
 
 describe('AcpGenerationActivityOwner', () => {
+  it('observes real operation and activity lifetimes without changing reconnect blockers', async () => {
+    const activity = new ResourceActivity()
+    const owner = new AcpGenerationActivityOwner({
+      activityChanged: vi.fn(),
+      hasActivePrompts: () => false,
+      hasActiveReviewerSessions: () => false,
+      observeWork: () => activity.begin()
+    })
+    const pending = createDeferred()
+    const work = owner.withOperation(() => pending.promise)
+    expect(activity.state.sampling).toBe(true)
+    expect(owner.blockers()).toEqual({ reconnect: false, retirement: true })
+    await expect(
+      owner.withActivity(async () => {
+        throw new Error('cancelled')
+      })
+    ).rejects.toThrow('cancelled')
+    expect(activity.state.sampling).toBe(true)
+    pending.resolve()
+    await work
+    expect(activity.state.sampling).toBe(false)
+  })
   it('holds immutable reconnect and retirement blockers for a balanced activity scope', async () => {
     const activityChanged = vi.fn()
     const owner = new AcpGenerationActivityOwner({
@@ -31,7 +54,7 @@ describe('AcpGenerationActivityOwner', () => {
 
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: false })
     expect(owner.blocksLiveEffortChange()).toBe(false)
-    expect(activityChanged).toHaveBeenCalledOnce()
+    expect(activityChanged).toHaveBeenCalledTimes(2)
   })
 
   it('blocks only retirement during an operation and releases the lease when work throws', async () => {
@@ -55,7 +78,7 @@ describe('AcpGenerationActivityOwner', () => {
     await expect(operation).rejects.toBe(boom)
 
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: false })
-    expect(activityChanged).toHaveBeenCalledOnce()
+    expect(activityChanged).toHaveBeenCalledTimes(2)
   })
 
   it('keeps nested activity scopes blocked until the final release', async () => {
@@ -78,7 +101,7 @@ describe('AcpGenerationActivityOwner', () => {
     releaseOuter.resolve()
     await outer
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: false })
-    expect(activityChanged).toHaveBeenCalledTimes(2)
+    expect(activityChanged).toHaveBeenCalledTimes(4)
   })
 
   it('acquires and releases an opaque startup blocker exactly once', () => {
@@ -163,11 +186,11 @@ describe('AcpGenerationActivityOwner', () => {
     })
 
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: true })
-    expect(activityChanged).toHaveBeenCalledOnce()
+    expect(activityChanged).toHaveBeenCalledTimes(2)
 
     releaseOtherOperation.resolve()
     await otherOperation
     expect(owner.blockers()).toEqual({ reconnect: false, retirement: false })
-    expect(activityChanged).toHaveBeenCalledTimes(2)
+    expect(activityChanged).toHaveBeenCalledTimes(3)
   })
 })

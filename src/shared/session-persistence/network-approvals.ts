@@ -40,8 +40,7 @@ export const sanitizeSandboxNetworkApprovals = (
       return undefined
     const hostname =
       typeof entry.hostname === 'string' ? normalizeNetworkHostname(entry.hostname) : undefined
-    if (!hostname || (!entry.evidence && !hostname.includes('.') && hostname !== 'localhost'))
-      return undefined
+    if (!hostname) return undefined
     if (entry.protocol !== undefined && entry.protocol !== 'http' && entry.protocol !== 'https')
       return undefined
     if (

@@ -687,27 +687,39 @@ describe('session store', () => {
     })
   })
 
-  it('allows a failed creation to retry and change Agent configuration without unlocking branches', () => {
-    const failed = { status: 'error' as const, isPending: true }
-    expect(projectSessionActionability(failed).actions).toMatchObject({
-      startTurn: { allowed: true },
-      changeAgentControls: { allowed: true },
-      changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
-      changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
-      changeMemory: { allowed: false, disabledReason: 'session-pending' },
-      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
-    })
-    for (const facts of [
-      { hasRunningWork: true },
-      { rootPermissionPending: true },
-      { credentialPending: true },
-      { elicitationPending: true },
-      { planPending: true }
-    ]) {
-      const projection = projectSessionActionability(failed, facts)
-      expect(projection.actions.startTurn.allowed).toBe(false)
-      expect(projection.actions.changeAgentControls.allowed).toBe(false)
+  it.each(['error', 'idle'] as const)(
+    'allows a retryable creation in %s to retry and change Agent configuration without unlocking branches',
+    (status) => {
+      const failed = { status, isPending: true, pendingRetryable: true as const }
+      expect(projectSessionActionability(failed).actions).toMatchObject({
+        startTurn: { allowed: true },
+        changeAgentControls: { allowed: true },
+        changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
+        changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
+        changeMemory: { allowed: false, disabledReason: 'session-pending' },
+        branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+      })
+      for (const facts of [
+        { hasRunningWork: true },
+        { rootPermissionPending: true },
+        { credentialPending: true },
+        { elicitationPending: true },
+        { planPending: true }
+      ]) {
+        const projection = projectSessionActionability(failed, facts)
+        expect(projection.actions.startTurn.allowed).toBe(false)
+        expect(projection.actions.changeAgentControls.allowed).toBe(false)
+      }
     }
+  )
+
+  it('does not infer pending creation retryability from an error status', () => {
+    expect(projectSessionActionability({ status: 'error', isPending: true }).actions).toMatchObject(
+      {
+        startTurn: { allowed: false, disabledReason: 'session-pending' },
+        changeAgentControls: { allowed: false, disabledReason: 'session-pending' }
+      }
+    )
   })
 
   it('keeps replay-independent Session actions available while history replay is pending', () => {
@@ -7628,6 +7640,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-session-cleanup-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-lifecycle-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-memory-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
@@ -7756,6 +7769,7 @@ describe('session store public contract', () => {
       sessions: state.sessions.map((session) => ({
         ...session,
         isPending: true,
+        pendingRetryable: true,
         pendingBindingSessionId: 'durable-seed',
         unsavedTitle: true,
         interrupted: true,
@@ -7801,6 +7815,7 @@ describe('session store public contract', () => {
     expect(durable.messages[0]).not.toHaveProperty('sortIndex')
     for (const transientKey of [
       'isPending',
+      'pendingRetryable',
       'pendingBindingSessionId',
       'unsavedTitle',
       'interrupted',

@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { execFileSync } from 'node:child_process'
 const require = createRequire(__filename)
 
 /** Kernel birth identity; PID and command lines are never sufficient identity evidence. */
@@ -22,17 +21,11 @@ export function processBirthIdentity(pid: number): string | undefined {
       return start && /^\d+$/.test(start) ? `linux-proc-starttime:${start}` : undefined
     }
     if (process.platform === 'win32') {
-      const value = execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          `$p = Get-Process -Id ${pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`
-        ],
-        { encoding: 'utf8', timeout: 2000, windowsHide: true }
-      ).trim()
-      return /^\d+$/.test(value) ? `windows-creation-time:${value}` : undefined
+      const native =
+        require('@aipoch/process-tree-native') as typeof import('@aipoch/process-tree-native')
+      // Kernel creation FILETIME, the same value PowerShell's StartTime.ToFileTimeUtc() reported.
+      const value = native.getWindowsProcessCreationTime(pid)
+      return value && /^\d+$/.test(value) ? `windows-creation-time:${value}` : undefined
     }
   } catch {
     /* Inability to inspect is not proof of death or ownership. */

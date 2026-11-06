@@ -116,9 +116,11 @@ test('session Resume continues an approved feedback execution despite the origin
     await expect.poll(async () => Boolean((await snapshot(page)).activeRun)).toBe(false)
     await page.getByRole('textbox', { name: 'Respond to Plan' }).fill(FEEDBACK)
     await page.getByRole('button', { name: 'Send Plan feedback' }).click()
-    await expect(
-      page.getByText('Revised feedback recovery Plan', { exact: true }).first()
-    ).toBeVisible()
+    // The tool-call arguments appear before the replacement review card is committed.
+    const revisedPlan = page.getByRole('article').filter({
+      hasText: 'Revised feedback recovery Plan'
+    })
+    await expect(revisedPlan).toBeVisible()
     await expect.poll(async () => Boolean((await snapshot(page)).activeRun)).toBe(true)
     const reviewed = await snapshot(page)
     const feedback = reviewed.messages.find(
@@ -133,7 +135,7 @@ test('session Resume continues an approved feedback execution despite the origin
       )
     ).toBe(true)
 
-    await page.getByRole('button', { name: 'Approve', exact: true }).first().click()
+    await revisedPlan.getByRole('button', { name: 'Approve', exact: true }).click()
     await expect(page.getByText(RUNNING, { exact: false })).toBeVisible()
     await expect
       .poll(async () => (await snapshot(page)).activeRun?.promptMessageId)

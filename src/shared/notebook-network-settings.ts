@@ -50,24 +50,9 @@ export type NotebookNetworkPolicy = Readonly<{
   deniedDomainReasons: Readonly<Record<string, string>>
 }>
 
-/** Canonical host form shared by settings, grants and the renderer. IPv6 is unbracketed in storage. */
-export const normalizeNetworkHostname = (value: string): string | undefined => {
-  const trimmed = value.trim().toLowerCase().replace(/\.$/, '')
-  if (!trimmed || /[\s/\\@?#%]/.test(trimmed)) return undefined
-  if (
-    (trimmed.startsWith('[') && !trimmed.endsWith(']')) ||
-    (!trimmed.startsWith('[') && trimmed.endsWith(']'))
-  )
-    return undefined
-  try {
-    const authority = trimmed.includes(':') && !trimmed.startsWith('[') ? `[${trimmed}]` : trimmed
-    const hostname = new URL(`https://${authority}`).hostname.replace(/^\[|\]$/g, '')
-    return hostname && hostname.length <= 253 ? hostname : undefined
-  } catch {
-    return undefined
-  }
-}
-
-/** IPv6 is bracketed wherever a host is rendered as part of an authority or key. */
-export const formatNetworkHostname = (hostname: string): string =>
-  hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
+export {
+  normalizeNetworkHostname,
+  formatNetworkHostname,
+  isNetworkIpLiteral,
+  requiresNetworkException
+} from '@aipoch/notebook-network-sandbox/network-address'

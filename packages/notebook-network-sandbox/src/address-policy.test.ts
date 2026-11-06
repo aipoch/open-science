@@ -23,33 +23,34 @@ describe('Notebook destination policy', () => {
     })
   })
 
-  it('keeps exact and wildcard domain rules distinct', async () => {
+  it('allows HTTPS domains independently of old exact and wildcard rules', async () => {
     const policy = new DestinationPolicy({
       allowedDomains: ['example.com', '*.allowed.example'],
       deniedDomains: []
     })
     await expect(policy.inspect('example.com', 443)).resolves.toMatchObject({ kind: 'allow' })
-    await expect(policy.inspect('sub.example.com', 443)).resolves.toMatchObject({ kind: 'ask' })
-    await expect(policy.inspect('allowed.example', 443)).resolves.toMatchObject({ kind: 'ask' })
+    await expect(policy.inspect('sub.example.com', 443)).resolves.toMatchObject({ kind: 'allow' })
+    await expect(policy.inspect('allowed.example', 443)).resolves.toMatchObject({ kind: 'allow' })
     await expect(policy.inspect('sub.allowed.example', 443)).resolves.toMatchObject({
       kind: 'allow'
     })
   })
 
-  it('denies HTTP domain requests before approval', async () => {
+  it('requests authorization for HTTP domains', async () => {
     const policy = new DestinationPolicy({ allowedDomains: ['example.com'], deniedDomains: [] })
     await expect(policy.inspect('example.com', 80, 'http')).resolves.toEqual({
-      kind: 'deny',
-      reason: 'only HTTPS destinations are allowed by default',
-      configurable: false
+      kind: 'ask',
+      source: 'explicit',
+      host: 'example.com',
+      address: '93.184.216.34',
+      addresses: ['93.184.216.34']
     })
   })
 
-  it('denies literal IP destinations by default', async () => {
+  it('requests authorization for literal IP destinations', async () => {
     const policy = new DestinationPolicy({ allowedDomains: [], deniedDomains: [] })
     await expect(policy.inspect('8.8.8.8', 443)).resolves.toMatchObject({
-      kind: 'deny',
-      configurable: false
+      kind: 'ask'
     })
     expect(lookup).not.toHaveBeenCalled()
   })
@@ -91,15 +92,13 @@ describe('Notebook destination policy', () => {
       const policy = new DestinationPolicy({
         allowedDomains: [],
         deniedDomains: [],
-        trustedPrivateDestinations: [
-          { hostname: 'service.example', port, protocol, approvedAddresses: [] }
-        ]
+        trustedPrivateDestinations: [{ hostname: '::1', port, protocol, approvedAddresses: [] }]
       })
-      await expect(policy.inspect('service.example', port, protocol)).resolves.toMatchObject({
+      await expect(policy.inspect('::1', port, protocol)).resolves.toMatchObject({
         kind: 'allow'
       })
       await expect(
-        policy.inspect('service.example', port, protocol === 'http' ? 'https' : 'http')
+        policy.inspect('::1', port, protocol === 'http' ? 'https' : 'http')
       ).resolves.not.toMatchObject({ kind: 'allow' })
     }
   )
@@ -131,8 +130,10 @@ describe('Notebook destination policy', () => {
         { hostname: 'localhost', port: 8080, protocol: 'http', approvedAddresses: [] }
       ]
     })
-    await expect(policy.inspect('localhost', 8080, 'https')).resolves.toMatchObject({ kind: 'ask' })
-    await expect(policy.inspect('localhost', 8081, 'http')).resolves.toMatchObject({ kind: 'deny' })
+    await expect(policy.inspect('localhost', 8080, 'https')).resolves.toMatchObject({
+      kind: 'allow'
+    })
+    await expect(policy.inspect('localhost', 8081, 'http')).resolves.toMatchObject({ kind: 'ask' })
   })
 
   it('keeps hard denies ahead of trusted exceptions', async () => {
@@ -149,3 +150,22 @@ describe('Notebook destination policy', () => {
     })
   })
 })
+
+it.each(['localhost', 'mixed.example', 'unknown.example'])(
+  'allows HTTPS domain %s without a domain grant on port 80',
+  async (host) => {
+    const policy = new DestinationPolicy({
+      allowedDomains: [],
+      askDomains: [host],
+      deniedDomains: []
+    })
+    await expect(policy.inspect(host, 80, 'https')).resolves.toMatchObject({ kind: 'allow' })
+  }
+)
+it.each(['127.0.0.1', '::1', 'unknown.example'])(
+  'requests exact HTTP authorization for %s on port 8080',
+  async (host) => {
+    const policy = new DestinationPolicy({ allowedDomains: ['*'], deniedDomains: [] })
+    await expect(policy.inspect(host, 8080, 'http')).resolves.toMatchObject({ kind: 'ask' })
+  }
+)

@@ -53,6 +53,7 @@ const log = createLogger('application-events')
 // signals and generated Web-only channels stay on their existing transports until their owner moves
 // them deliberately.
 export type ApplicationEventMap = {
+  'resource-recording:changed': import('../shared/resource-recording').ResourceRecordingState
   'sessions:package-operation-changed': PackageOperationSnapshot
   'acp:state': AcpStateUpdate
   'acp:event': readonly AcpRuntimeEvent[]

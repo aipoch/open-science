@@ -6,9 +6,210 @@ import { x as extract } from 'tar'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
 import { submitPromptViaUi } from './fixtures/conversation'
+import { openGeneralSettings } from './fixtures/settings-preferences'
 
 // Real native IPC + bundled worker; only the operating-system save picker is substituted.
 test.use({ windowMode: 'hidden' })
+
+test('records only with consent, pauses when idle, and stays off after restart with logs preserved', async ({
+  app
+}, testInfo) => {
+  test.skip(process.platform !== 'win32', 'Resource sampling is Windows-only.')
+  await app.completeOnboarding()
+  const application = (app as unknown as { application: ElectronApplication }).application
+  const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
+  const journal = join(configRoot, 'logs/resources')
+  expect(await app.page.evaluate(() => window.api.resourceRecording!.getState())).toBe('off')
+  await expect(readdir(journal)).rejects.toMatchObject({ code: 'ENOENT' })
+  const settings = await openGeneralSettings(app.page)
+  const diagnostics = settings.getByRole('region', { name: 'Diagnostics', exact: true })
+  await diagnostics.scrollIntoViewIfNeeded()
+  await diagnostics.screenshot({ path: testInfo.outputPath('diagnostics-off.png') })
+  await settings.getByRole('button', { name: 'Start recording…', exact: true }).click()
+  const confirmation = app.page.getByRole('alertdialog', { name: 'Record resource usage?' })
+  await expect(confirmation).toBeVisible()
+  await confirmation.screenshot({ path: testInfo.outputPath('recording-confirmation.png') })
+  await expect(readdir(journal)).rejects.toMatchObject({ code: 'ENOENT' })
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click()
+  expect(await app.page.evaluate(() => window.api.resourceRecording!.getState())).toBe('off')
+  await settings.getByRole('button', { name: 'Start recording…', exact: true }).click()
+  await confirmation.getByRole('button', { name: 'Start recording', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Stop recording', exact: true })).toBeVisible()
+  const sampleCount = async (): Promise<number> => {
+    const names = await readdir(journal)
+    const contents = await Promise.all(
+      names
+        .filter((name) => name.endsWith('.jsonl'))
+        .map((name) => readFile(join(journal, name), 'utf8'))
+    )
+    return contents
+      .join('\n')
+      .split('\n')
+      .filter((line) => line.includes('"event":"sample-start"')).length
+  }
+  // A final queued write may settle after hiding; subsequent whole sampling intervals must be silent.
+  const expectQuiet = async (): Promise<void> => {
+    await app.page.waitForTimeout(2500)
+    const count = await sampleCount()
+    await app.page.waitForTimeout(11_000)
+    expect(await sampleCount()).toBe(count)
+  }
+  await expectQuiet()
+  await diagnostics.screenshot({ path: testInfo.outputPath('diagnostics-paused.png') })
+  const beforeFocus = await sampleCount()
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.show()
+    window.focus()
+  })
+  await expect
+    .poll(() =>
+      application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some((window) => window.isFocused())
+      )
+    )
+    .toBe(true)
+  await expect.poll(sampleCount).toBeGreaterThan(beforeFocus)
+  await diagnostics.screenshot({ path: testInfo.outputPath('diagnostics-recording.png') })
+  // Simulate the Electron notification only; never suspend or wake the user's machine.
+  await application.evaluate(({ powerMonitor }) => powerMonitor.emit('suspend'))
+  await expectQuiet()
+  await application.evaluate(({ BrowserWindow, powerMonitor }) => {
+    BrowserWindow.getAllWindows()[0].hide()
+    powerMonitor.emit('resume')
+  })
+  await expectQuiet()
+  const beforeResume = await sampleCount()
+  await application.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    window.show()
+    window.focus()
+  })
+  await expect.poll(sampleCount).toBeGreaterThan(beforeResume)
+  await settings.getByRole('button', { name: 'Stop recording', exact: true }).click()
+  await expect(settings.getByText('Not recording', { exact: true })).toBeVisible()
+  const files = (await readdir(journal)).filter((name) => name.endsWith('.jsonl'))
+  const saved = await Promise.all(files.map((name) => readFile(join(journal, name), 'utf8')))
+  expect(saved.join('')).toContain('system-sample')
+  await app.page.screenshot({ path: testInfo.outputPath('resource-recording-stopped.png') })
+  await application.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].hide())
+  await app.restart()
+  const reopened = await openGeneralSettings(app.page)
+  await expect(reopened.getByText('Not recording', { exact: true })).toBeVisible()
+  expect(await app.page.evaluate(() => window.api.resourceRecording!.getState())).toBe('off')
+  expect(await Promise.all(files.map((name) => readFile(join(journal, name), 'utf8')))).toEqual(
+    saved
+  )
+  await reopened.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
+  const resourceChoice = app.page.getByRole('checkbox', {
+    name: 'Resource diagnostics',
+    exact: true
+  })
+  await expect(resourceChoice).toBeEnabled()
+  await expect(resourceChoice).not.toBeChecked()
+})
+
+test('exports retained resource records from Settings only after consent, without a session', async ({
+  app
+}, testInfo) => {
+  await app.completeOnboarding()
+  const page = app.page
+  const application = (app as unknown as { application: ElectronApplication }).application
+  const configRoot = await application.evaluate(() => process.env.OPEN_SCIENCE_CONFIG_ROOT!)
+  const journal = join(configRoot, 'logs/resources')
+  await mkdir(journal, { recursive: true })
+  const name = 'incident-99999999.jsonl'
+  const evidence =
+    JSON.stringify({
+      schema: 1,
+      runId: 'before-fixture-failure',
+      event: 'process-sample',
+      sequence: 1,
+      time: 1700000000000,
+      elapsedMs: 1,
+      data: { pid: 42, birth: '123', privateBytes: 4096 }
+    }) + '\n'
+  await writeFile(join(journal, name), evidence)
+  const archivePath = testInfo.outputPath('application-resources.tar.gz')
+  await mkdir(testInfo.outputPath(), { recursive: true })
+  await application.evaluate(({ dialog }, path) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: path })
+  }, archivePath)
+  const settings = await openGeneralSettings(page)
+  await settings.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
+  const resources = dialog.getByRole('checkbox', {
+    name: 'Resource diagnostics',
+    exact: true
+  })
+  await expect(resources).toBeEnabled()
+  await expect(resources).not.toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: 'Session state', exact: true })).toHaveCount(0)
+  const selected = dialog.getByRole('checkbox', { checked: true })
+  while (await selected.count()) await selected.first().uncheck()
+  await resources.check()
+  await page.screenshot({ path: testInfo.outputPath('settings-resource-consent.png') })
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect(
+    dialog.getByText(/Diagnostic package (exported successfully|partially exported)/)
+  ).toBeVisible({ timeout: 45_000 })
+  const extracted = testInfo.outputPath('unpacked-resources')
+  await mkdir(extracted)
+  await extract({ file: archivePath, cwd: extracted })
+  expect(JSON.parse(await readFile(join(extracted, 'logs/resources', name), 'utf8'))).toEqual(
+    JSON.parse(evidence)
+  )
+  expect(await readFile(join(journal, name), 'utf8')).toBe(evidence)
+  const manifest = JSON.parse(await readFile(join(extracted, 'manifest.json'), 'utf8'))
+  expect(manifest.scope).toBe('application')
+  expect(manifest.sessionId).toBeUndefined()
+  expect(manifest.items.filter((item: { selected: boolean }) => item.selected)).toEqual([
+    expect.objectContaining({ id: 'resource-logs', selected: true, scope: 'global' })
+  ])
+  await dialog.locator('button[aria-label="Close"]').click()
+  await expect(settings).toBeVisible()
+})
+
+test('keeps diagnostic actions accessible in a compact localized layout', async ({
+  app
+}, testInfo) => {
+  test.skip(process.platform !== 'win32', 'Resource recording controls are Windows-only.')
+  await app.completeOnboarding()
+  await openGeneralSettings(app.page)
+  await app.showMainWindow()
+  await app.setMainWindowSize(900, 720)
+  const diagnostics = app.page.locator('[data-settings-anchor="general.diagnostics"]')
+  for (const locale of ['en', 'zh-Hans', 'de'] as const) {
+    await app.page.evaluate((preference) => window.api.locale.setPreference({ preference }), locale)
+    await expect(app.page.locator('html')).toHaveAttribute('lang', locale)
+    await diagnostics.scrollIntoViewIfNeeded()
+    await expect(diagnostics).toBeVisible()
+    expect(await diagnostics.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+    const bounds = await diagnostics.boundingBox()
+    for (const button of await diagnostics.getByRole('button').all()) {
+      const box = await button.boundingBox()
+      expect(box!.x).toBeGreaterThanOrEqual(bounds!.x - 1)
+      expect(box!.x + box!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1)
+    }
+    await diagnostics.screenshot({
+      path: testInfo.outputPath('diagnostics-' + locale + '-compact.png')
+    })
+  }
+  await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+  const location = diagnostics.locator('details')
+  await expect(location).not.toHaveAttribute('open')
+  await location.locator('summary').focus()
+  await app.page.keyboard.press('Enter')
+  await expect(location).toHaveAttribute('open', '')
+  await expect(location.getByLabel('Log file path')).toBeVisible()
+  const start = diagnostics.getByRole('button', { name: 'Start recording…', exact: true })
+  await start.click()
+  await expect(app.page.getByRole('alertdialog')).toBeVisible()
+  await app.page.keyboard.press('Escape')
+  await expect(start).toBeFocused()
+  expect(await app.page.evaluate(() => window.api.resourceRecording!.getState())).toBe('off')
+})
 
 test('exports selected diagnostics without changing the persisted session', async ({
   app

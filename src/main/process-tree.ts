@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
+import { win32 } from 'node:path'
 
 import type { DarwinProcessIdentity, DarwinProcessTable } from '@aipoch/process-tree-native'
 
@@ -934,7 +935,9 @@ const terminateWindowsTree = async (
 
   let killer: ChildProcess
   try {
-    killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
+    const windowsRoot = process.env.SystemRoot || process.env.WINDIR
+    const taskkill = windowsRoot ? win32.join(windowsRoot, 'System32', 'taskkill.exe') : 'taskkill'
+    killer = spawn(taskkill, ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true })
   } catch (error) {
     log?.error('taskkill failed to launch; falling back to direct kill', error)
     killDirectChild(child, signal)

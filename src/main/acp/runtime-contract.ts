@@ -88,6 +88,8 @@ export type AcpRuntimeOptions = {
   // Disposable framework homes must retain the same read protection as app-owned config roots.
   additionalProtectedReadRoots?: readonly string[]
   callbacks?: AcpRuntimeCallbacks
+  // Restricted inference classifies operational notices; ordinary chat keeps its presentation.
+  separateProviderNotices?: boolean
   auxiliaryUsage?: Readonly<{
     projectIdForSession: (sessionId: string) => Promise<string | undefined>
     record: (

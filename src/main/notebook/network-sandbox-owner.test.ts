@@ -34,6 +34,7 @@ const backend = vi.hoisted(() => ({
   request: undefined as
     | ((request: {
         host: string
+        protocol?: 'http' | 'https'
         port?: number
         purpose?: 'probe' | 'block'
         canResume?: () => boolean
@@ -169,6 +170,7 @@ beforeEach(() => {
       onNetworkAccessRequest: (request: {
         host: string
         port?: number
+        protocol?: 'http' | 'https'
         purpose?: 'probe' | 'block'
         addresses?: readonly string[]
         policyAllowed?: boolean
@@ -194,9 +196,10 @@ beforeEach(() => {
           ) => backend.cleanup(outcome)
         }
       const controller = new AbortController()
-      backend.request = ({ host, port, purpose, canResume, addresses, policyAllowed }) =>
+      backend.request = ({ host, port, protocol, purpose, canResume, addresses, policyAllowed }) =>
         command.onNetworkAccessRequest({
           host,
+          protocol,
           addresses,
           policyAllowed,
           purpose,
@@ -1557,303 +1560,11 @@ describe('NotebookNetworkSandboxOwner', () => {
     expect(requestDecision).not.toHaveBeenCalled()
     await expect(
       owner.requestNetworkAccess({ ...request, sessionId: 'other-session' })
-    ).resolves.toMatchObject({ status: 'denied' })
-    expect(requestDecision).toHaveBeenCalledOnce()
+    ).resolves.toMatchObject({ status: 'alreadyAllowed' })
+    expect(requestDecision).not.toHaveBeenCalled()
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
     expect(backend.updatePolicy).not.toHaveBeenCalled()
     await owner.dispose()
-  })
-
-  it('applies allow-once to every matching connection in the next command only', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const persistAlwaysAllow = vi.fn()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision,
-      platform: 'linux'
-    })
-
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: 'C:\\Windows\\System32' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    expect(wrapped).toMatchObject({
-      executable: '/sandbox/sh',
-      args: ['-c', 'wrapped'],
-      env: { HTTPS_PROXY: 'http://127.0.0.1:4567' }
-    })
-    expect(backend.wrap).toHaveBeenCalledWith(
-      expect.objectContaining({
-        env: expect.objectContaining({
-          TMPDIR: expect.stringContaining('open-science-notebook'),
-          TEMP: expect.stringContaining('open-science-notebook'),
-          TMP: expect.stringContaining('open-science-notebook')
-        }),
-        filesystem: expect.objectContaining({
-          readWriteRoots: expect.arrayContaining([expect.stringContaining('open-science-notebook')])
-        })
-      })
-    )
-    await owner.initialize()
-    expect(backend.initialize).toHaveBeenCalledOnce()
-
-    const blockedExecution = wrapped.beginExecution?.()
-    expect(backend.setExecutionActive).toHaveBeenLastCalledWith(true)
-    await expect(
-      backend.request?.({ host: 'auto.example.org', port: 443, purpose: 'probe' })
-    ).resolves.toBe(false)
-    requestDecision.mockResolvedValueOnce('deny')
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'auto.example.org',
-        reason: 'No actual block occurred.'
-      })
-    ).resolves.toMatchObject({ status: 'denied' })
-    expect(requestDecision).toHaveBeenCalledWith(expect.objectContaining({ allowOnce: false }))
-    requestDecision.mockClear()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-    expect(backend.resetNetworkConnections).toHaveBeenCalledTimes(2)
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        runtime: 'python',
-        reason: 'Download the requested dataset.'
-      })
-    )
-
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    const endExecution = wrapped.beginExecution?.()
-    const first = backend.request?.({ host: 'data.example.org', port: 443 })
-    const second = backend.request?.({ host: 'data.example.org', port: 443 })
-    await expect(first).resolves.toBe(true)
-    await expect(second).resolves.toBe(true)
-    expect(requestDecision).toHaveBeenCalledOnce()
-
-    await expect(backend.request?.({ host: 'hooks.slack.com', port: 443 })).resolves.toBe(false)
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'hooks.slack.com',
-        reason: 'Post the requested result.',
-        runtime: 'python',
-        command: 'python loop.py'
-      })
-    ).resolves.toEqual({ hostname: 'hooks.slack.com', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledTimes(2)
-    endExecution?.()
-    expect(backend.resetNetworkConnections).toHaveBeenCalledTimes(4)
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-
-    const nextExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    nextExecution?.()
-    // A live interpreter must charge a grant to the actual cell, not its original launch command.
-    const changedCell = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    changedCell?.()
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Retry the next cell.',
-        runtime: 'python',
-        command: 'next cell'
-      })
-    ).resolves.toMatchObject({ status: 'allowedOnce' })
-    const unrelatedCell = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    unrelatedCell?.()
-    const retryCell = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
-    retryCell?.()
-    const afterRetry = wrapped.beginExecution?.({ commandText: 'next cell' })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    afterRetry?.()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-
-    const nextCommand = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['next.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python next.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    await nextCommand.cleanup('exit', { processesTerminated: true })
-    const commandTempRoot = backend.wrap.mock.calls[0]?.[0].env.TMPDIR as string
-    await vi.waitFor(() => expect(existsSync(commandTempRoot)).toBe(false))
-    await owner.dispose()
-  })
-
-  it.each(['user-decision', 'aborted'] as const)(
-    'preserves the actual denial reason without granting access: %s',
-    async (decisionSource) => {
-      const requestDecision = vi.fn().mockResolvedValue('deny')
-      const persistAlwaysAllow = vi.fn()
-      const owner = new NotebookNetworkSandboxOwner({
-        resourceRoot: '/resources',
-        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-        persistAlwaysAllow,
-        requestDecision,
-        platform: 'linux'
-      })
-      const commandText = 'curl data.example.org/a'
-      let wrapped: Awaited<ReturnType<typeof owner.wrap>> | undefined
-      try {
-        wrapped = await owner.wrap({
-          executable: '/usr/bin/bash',
-          args: [],
-          env: {},
-          cwd: '/workspace',
-          commandText,
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          runtime: 'bash',
-          filesystem: {
-            readOnlyRoots: [],
-            readWriteRoots: ['/workspace'],
-            deniedReadRoots: [],
-            deniedWriteRoots: []
-          }
-        })
-        const finishBlockedExecution = wrapped.beginExecution?.()
-        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-          false
-        )
-        finishBlockedExecution?.()
-        const cancellation = new AbortController()
-        if (decisionSource === 'aborted') cancellation.abort()
-        const result = await owner.requestNetworkAccess({
-          sessionId: 'session-1',
-          projectId: 'project-1',
-          hostname: 'data.example.org',
-          reason: 'Download the dataset.',
-          runtime: 'bash',
-          command: commandText,
-          signal: cancellation.signal
-        })
-        expect(result).toMatchObject({
-          hostname: 'data.example.org',
-          status: 'denied',
-          decisionSource,
-          message: expect.any(String)
-        })
-        expect(requestDecision).toHaveBeenCalledTimes(decisionSource === 'user-decision' ? 1 : 0)
-        expect(persistAlwaysAllow).not.toHaveBeenCalled()
-        const end = wrapped.beginExecution?.()
-        await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-          false
-        )
-        end?.()
-      } finally {
-        await wrapped?.cleanup('exit', { processesTerminated: true })
-        await owner.dispose()
-      }
-    }
-  )
-
-  it('returns unavailable without creating a grant when no approval client is connected', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('unavailable')
-    const { logger, records } = createCapturingLogger()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/private/resources/notebook-sandbox',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux',
-      logger
-    })
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/Users/example/private-study',
-      commandText: 'python private-patient-analysis.py --token secret-value',
-      sessionId: 'private-session-id',
-      projectId: 'private-project-id',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/Users/example/private-study'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const endExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endExecution?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'private-session-id',
-        projectId: 'private-project-id',
-        hostname: 'data.example.org',
-        reason: 'Download private patient data.'
-      })
-    ).resolves.toEqual({
-      hostname: 'data.example.org',
-      status: 'unavailable',
-      decisionSource: 'approval-surface-unavailable',
-      message: expect.any(String)
-    })
-    expect(requestDecision).toHaveBeenCalledOnce()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-
-    const serialized = JSON.stringify(records)
-    expect(serialized).toContain('approval-surface-unavailable')
-    expect(serialized).toContain('"runtime":"python"')
-    for (const privateValue of [
-      'data.example.org',
-      'private-patient-analysis.py',
-      'secret-value',
-      'private patient data',
-      'private-session-id',
-      'private-project-id',
-      '/Users/example/private-study',
-      '/private/resources/notebook-sandbox'
-    ]) {
-      expect(serialized).not.toContain(privateValue)
-    }
   })
 
   it('records only a fixed error category when sandbox initialization fails', async () => {
@@ -2080,191 +1791,6 @@ describe('NotebookNetworkSandboxOwner', () => {
       prepare.mockRestore()
       await owner.dispose()
     }
-  })
-
-  it('fails closed instead of giving an ambiguous approval to the wrong runtime', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux'
-    })
-    const invocation = {
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python' as const,
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    }
-    const python = await owner.wrap(invocation)
-    const pythonRequest = backend.request!
-    const bash = await owner.wrap({
-      ...invocation,
-      executable: '/bin/sh',
-      args: ['-c', 'curl https://data.example.org'],
-      commandText: 'curl https://data.example.org',
-      runtime: 'bash'
-    })
-    const bashRequest = backend.request!
-
-    const endPython = python.beginExecution?.()
-    await expect(pythonRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endPython?.()
-    const endBash = bash.beginExecution?.()
-    await expect(bashRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endBash?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.',
-        runtime: 'bash'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ hostname: 'data.example.org', runtime: 'bash' })
-    )
-
-    await python.cleanup('exit', { processesTerminated: true })
-    await bash.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
-
-  it('binds a bash allow-once grant to the exact failed command', async () => {
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn().mockResolvedValue('allowOnce'),
-      platform: 'linux'
-    })
-    const invocation = {
-      executable: '/bin/sh',
-      args: ['-c', 'curl https://data.example.org/a'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'curl https://data.example.org/a',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'bash' as const,
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    }
-    const first = await owner.wrap(invocation)
-    const firstRequest = backend.request!
-    const second = await owner.wrap({
-      ...invocation,
-      args: ['-c', 'curl https://data.example.org/b'],
-      commandText: 'curl https://data.example.org/b'
-    })
-    const secondRequest = backend.request!
-
-    const endFirst = first.beginExecution?.()
-    await expect(firstRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endFirst?.()
-    const endSecond = second.beginExecution?.()
-    await expect(secondRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endSecond?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.',
-        runtime: 'bash',
-        command: invocation.commandText
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'allowedOnce' })
-
-    const unrelated = await owner.wrap({
-      ...invocation,
-      args: ['-c', 'curl https://data.example.org/b'],
-      commandText: 'curl https://data.example.org/b'
-    })
-    const unrelatedRequest = backend.request!
-    const endUnrelated = unrelated.beginExecution?.()
-    await expect(unrelatedRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    endUnrelated?.()
-
-    const retry = await owner.wrap(invocation)
-    const retryRequest = backend.request!
-    const endRetry = retry.beginExecution?.()
-    await expect(retryRequest({ host: 'data.example.org', port: 443 })).resolves.toBe(true)
-    endRetry?.()
-
-    await first.cleanup('exit', { processesTerminated: true })
-    await second.cleanup('exit', { processesTerminated: true })
-    await unrelated.cleanup('exit', { processesTerminated: true })
-    await retry.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
-
-  it('persists and hot-applies an always-allow decision', async () => {
-    const persistAlwaysAllow = vi.fn(async (hostname: string) => ({
-      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      allowedDomains: [hostname]
-    }))
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision: vi.fn().mockResolvedValue('alwaysAllow'),
-      platform: 'linux'
-    })
-    await owner.initialize()
-
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const blockedExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 'session-1',
-        projectId: 'project-1',
-        hostname: 'data.example.org',
-        reason: 'Download the requested dataset.'
-      })
-    ).resolves.toEqual({ hostname: 'data.example.org', status: 'alwaysAllowed' })
-    expect(persistAlwaysAllow).toHaveBeenCalledWith('data.example.org')
-    expect(backend.updatePolicy).toHaveBeenCalledWith(
-      expect.objectContaining({ allowedDomains: expect.arrayContaining(['data.example.org']) })
-    )
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
   })
 
   it('returns stable status reasons instead of backend prose', async () => {
@@ -2941,211 +2467,61 @@ describe('NotebookNetworkSandboxOwner', () => {
     await wrapped.cleanup('exit', { processesTerminated: true })
     await owner.dispose()
   })
-
-  it('cancels a pending explicit decision with its RPC signal', async () => {
-    let decisionSignal: AbortSignal | undefined
-    const requestDecision = vi.fn(
-      ({ signal }: { signal: AbortSignal }) =>
-        new Promise<'deny'>((resolve) => {
-          decisionSignal = signal
-          signal.addEventListener('abort', () => resolve('deny'), { once: true })
-        })
-    )
-    const persistAlwaysAllow = vi.fn()
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision,
-      platform: 'linux'
-    })
-
-    const cancellation = new AbortController()
-    const wrapped = await owner.wrap({
-      executable: '/usr/bin/python',
-      args: ['loop.py'],
-      env: { PATH: '/usr/bin' },
-      cwd: '/workspace',
-      commandText: 'python loop.py',
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      runtime: 'python',
-      filesystem: {
-        readOnlyRoots: ['/usr/bin'],
-        readWriteRoots: ['/workspace'],
-        deniedReadRoots: [],
-        deniedWriteRoots: []
-      }
-    })
-    const blockedExecution = wrapped.beginExecution?.()
-    await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(false)
-    blockedExecution?.()
-    const result = owner.requestNetworkAccess({
-      sessionId: 'session-1',
-      projectId: 'project-1',
-      hostname: 'data.example.org',
-      reason: 'Download the requested dataset.',
-      signal: cancellation.signal
-    })
-    await vi.waitFor(() => expect(requestDecision).toHaveBeenCalledOnce())
-    cancellation.abort(new Error('Notebook tool ended.'))
-    expect(decisionSignal?.aborted).toBe(true)
-    await expect(result).resolves.toEqual({
-      hostname: 'data.example.org',
-      status: 'denied',
-      decisionSource: 'aborted',
-      message: expect.any(String)
-    })
-    expect(persistAlwaysAllow).not.toHaveBeenCalled()
-    await wrapped.cleanup('exit', { processesTerminated: true })
-    await owner.dispose()
-  })
 })
 
-describe('explicit network approval without a preceding failure', () => {
-  it('offers a card without command context instead of treating it as a user denial', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('alwaysAllow')
-    const settings = { ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, allowedDomains: ['data.example.org'] }
-    const persistAlwaysAllow = vi.fn().mockResolvedValue(settings)
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit user approval'
+describe('explicit access without a trusted block record', () => {
+  it.each(['localhost', 'unknown.example', 'private.internal'])(
+    'allows HTTPS %s without approval',
+    async (hostname) => {
+      const requestDecision = vi.fn()
+      const persistAlwaysAllow = vi.fn()
+      const owner = new NotebookNetworkSandboxOwner({
+        resourceRoot: '/resources',
+        platform: 'linux',
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision,
+        persistAlwaysAllow
       })
-    ).resolves.toMatchObject({ status: 'alwaysAllowed' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ allowOnce: false, hostname: 'data.example.org' })
-    )
-    expect(persistAlwaysAllow).toHaveBeenCalledWith('data.example.org')
-    await owner.dispose()
-  })
-
-  it('binds a proactive one-time approval to only the supplied command and session', async () => {
-    const requestDecision = vi.fn().mockResolvedValue('allowOnce')
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision,
-      platform: 'linux'
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Upload synthetic data',
-        runtime: 'bash',
-        command: 'curl --data marker https://data.example.org'
-      })
-    ).resolves.toMatchObject({ status: 'allowedOnce' })
-    expect(requestDecision).toHaveBeenCalledWith(
-      expect.objectContaining({ allowOnce: true, runtime: 'bash' })
-    )
-    for (const [sessionId, commandText, expected] of [
-      ['other', 'curl --data marker https://data.example.org', false],
-      ['s', 'different command', false],
-      ['s', 'curl --data marker https://data.example.org', true],
-      ['s', 'curl --data marker https://data.example.org', false]
-    ] as const) {
-      const wrapped = await owner.wrap({
-        executable: '/bin/sh',
-        args: ['-c', commandText],
-        env: {},
-        cwd: '/workspace',
-        commandText,
-        sessionId,
-        projectId: 'p',
-        runtime: 'bash',
-        filesystem: {
-          readOnlyRoots: [],
-          readWriteRoots: ['/workspace'],
-          deniedReadRoots: [],
-          deniedWriteRoots: []
-        }
-      })
-      const end = wrapped.beginExecution?.()
-      await expect(backend.request?.({ host: 'data.example.org', port: 443 })).resolves.toBe(
-        expected
-      )
-      end?.()
-      await wrapped.cleanup('exit', { processesTerminated: true })
+      expect(
+        await owner.requestNetworkAccess({
+          hostname,
+          port: 80,
+          protocol: 'https',
+          projectId: 'p',
+          sessionId: 's',
+          reason: 'test'
+        })
+      ).toMatchObject({ hostname, port: 80, protocol: 'https', status: 'alreadyAllowed' })
+      expect(requestDecision).not.toHaveBeenCalled()
+      expect(persistAlwaysAllow).not.toHaveBeenCalled()
     }
-    await owner.dispose()
-  })
-
-  it('cannot turn an invalid once selection without command context into a grant', async () => {
+  )
+  it.each([
+    ['localhost', 'http'],
+    ['127.0.0.1', 'https'],
+    ['[::1]', 'https']
+  ] as const)('cannot create proactive authority for %s %s', async (hostname, protocol) => {
+    const requestDecision = vi.fn()
     const persistAlwaysAllow = vi.fn()
     const owner = new NotebookNetworkSandboxOwner({
       resourceRoot: '/resources',
+      platform: 'linux',
       getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow,
-      requestDecision: vi.fn().mockResolvedValue('allowOnce')
+      requestDecision,
+      persistAlwaysAllow
     })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
+    expect(
+      await owner.requestNetworkAccess({
+        hostname,
+        port: 8080,
+        protocol,
         projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit approval'
+        sessionId: 's',
+        reason: 'test'
       })
-    ).resolves.toMatchObject({ status: 'unavailable' })
+    ).toMatchObject({ port: 8080, protocol, status: 'blocked' })
+    expect(requestDecision).not.toHaveBeenCalled()
     expect(persistAlwaysAllow).not.toHaveBeenCalled()
-    await owner.dispose()
-  })
-  it.each(['python', 'r', 'repl'] as const)(
-    'does not offer proactive once for caller-supplied %s source code',
-    async (runtime) => {
-      const requestDecision = vi.fn().mockResolvedValue('deny')
-      const owner = new NotebookNetworkSandboxOwner({
-        resourceRoot: '/resources',
-        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-        persistAlwaysAllow: vi.fn(),
-        requestDecision
-      })
-      await expect(
-        owner.requestNetworkAccess({
-          sessionId: 's',
-          projectId: 'p',
-          hostname: 'data.example.org',
-          reason: 'Explicit approval',
-          runtime,
-          command: 'source code is not a kernel command'
-        })
-      ).resolves.toMatchObject({ status: 'denied' })
-      expect(requestDecision).toHaveBeenCalledWith(
-        expect.objectContaining({ allowOnce: false, runtime })
-      )
-      await owner.dispose()
-    }
-  )
-
-  it('rejects an invalid once selection for unrecognized Kernel command context', async () => {
-    const owner = new NotebookNetworkSandboxOwner({
-      resourceRoot: '/resources',
-      getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
-      persistAlwaysAllow: vi.fn(),
-      requestDecision: vi.fn().mockResolvedValue('allowOnce')
-    })
-    await expect(
-      owner.requestNetworkAccess({
-        sessionId: 's',
-        projectId: 'p',
-        hostname: 'data.example.org',
-        reason: 'Explicit approval',
-        runtime: 'python',
-        command: 'print(1)'
-      })
-    ).resolves.toMatchObject({ status: 'unavailable' })
-    await owner.dispose()
   })
 })
 
@@ -5018,7 +4394,48 @@ it.each([false, true])(
   }
 )
 
-it('explains that existing public policy is not private-service admission', async () => {
+it('reports the manual HTTP rule scope and standard port without treating it as HTTPS', async () => {
+  const owner = new NotebookNetworkSandboxOwner({
+    resourceRoot: '/resources',
+    platform: 'linux',
+    persistAlwaysAllow: vi.fn(),
+    requestDecision: vi.fn(),
+    getSettings: async () => ({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [
+        { hostname: 'localhost', protocol: 'http', port: 80, approvedAddresses: [] }
+      ]
+    })
+  })
+  await expect(
+    owner.requestNetworkAccess({
+      sessionId: 'session',
+      projectId: 'project',
+      hostname: 'localhost',
+      protocol: 'http',
+      reason: 'Read the local service'
+    })
+  ).resolves.toMatchObject({
+    status: 'alreadyAllowed',
+    hostname: 'localhost',
+    protocol: 'http',
+    port: 80,
+    scope: 'global'
+  })
+  await expect(
+    owner.requestNetworkAccess({
+      sessionId: 'session',
+      projectId: 'project',
+      hostname: 'localhost',
+      protocol: 'http',
+      port: 8080,
+      reason: 'Read another service'
+    })
+  ).resolves.toMatchObject({ status: 'blocked', protocol: 'http', port: 8080 })
+  await owner.dispose()
+})
+
+it('allows HTTPS domains independently of preview domain preferences', async () => {
   const requestDecision = vi.fn()
   const persistAlwaysAllow = vi.fn()
   const owner = new NotebookNetworkSandboxOwner({
@@ -5040,9 +4457,7 @@ it('explains that existing public policy is not private-service admission', asyn
     })
   ).resolves.toMatchObject({
     status: 'alreadyAllowed',
-    message: expect.stringContaining(
-      'For private-network access, review the service and port in Settings'
-    )
+    message: expect.stringContaining('HTTPS domain access does not require approval')
   })
   expect(requestDecision).not.toHaveBeenCalled()
   expect(persistAlwaysAllow).not.toHaveBeenCalled()
@@ -5059,7 +4474,7 @@ describe('trusted gateway destination records', () => {
     owner: NotebookNetworkSandboxOwner
     wrapped: Awaited<ReturnType<NotebookNetworkSandboxOwner['wrap']>>
     requestDecision: Mock<(request: DecisionRequest) => Promise<NotebookNetworkDecision>>
-    connect: (addresses?: string[], port?: number) => Promise<boolean>
+    connect: (addresses?: string[], port?: number, protocol?: 'http' | 'https') => Promise<boolean>
     end: () => void
     setSettings: (value: NotebookNetworkSettings) => Promise<void>
   }
@@ -5105,8 +4520,12 @@ describe('trusted gateway destination records', () => {
       executionReference: 'execution-1',
       commandText: 'request fixture'
     })
-    const connect = (addresses = ['127.0.0.1'], port = 8443): Promise<boolean> =>
-      backend.request!({ host: 'local.test', port, purpose: 'block', addresses })
+    const connect = (
+      addresses = ['127.0.0.1'],
+      port = 8443,
+      protocol: 'http' | 'https' = 'http'
+    ): Promise<boolean> =>
+      backend.request!({ host: 'local.test', port, protocol, purpose: 'block', addresses })
     return {
       root,
       owner,
@@ -5131,6 +4550,7 @@ describe('trusted gateway destination records', () => {
       projectId: 'project-1',
       sessionId: 'session-1',
       hostname: 'local.test',
+      protocol: 'http' as const,
       port: 8443,
       evidence: {
         addresses: ['127.0.0.1'],
@@ -5169,6 +4589,71 @@ describe('trusted gateway destination records', () => {
     await f.owner.dispose()
   })
 
+  it.each(['project', 'global'] as const)(
+    'returns committed %s scope when queried before approval completes',
+    async (scope) => {
+      const f = await setup()
+      const pending = Promise.withResolvers<NotebookNetworkDecision>()
+      f.requestDecision.mockReturnValueOnce(pending.promise)
+      const connection = f.connect([], 8080)
+      // Empty DNS evidence cannot create a record; retry with actual gateway evidence.
+      expect(await connection).toBe(false)
+      const blocked = f.connect(['127.0.0.1'], 8080)
+      await vi.waitFor(() => expect(f.requestDecision).toHaveBeenCalledOnce())
+      const recordId = f.requestDecision.mock.calls[0]![0].evidence!.recordId
+      const request = {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        recordId,
+        hostname: '',
+        reason: 'query'
+      }
+      const query = f.owner.requestNetworkAccess(request)
+      const grant = {
+        id: recordId,
+        recordId,
+        hostname: 'local.test',
+        port: 8080,
+        protocol: 'http' as const,
+        scope,
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        approvedAddresses: [],
+        createdAt: 1
+      }
+      await f.setSettings({ ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS, destinationGrants: [grant] })
+      pending.resolve('retryRequired')
+      expect(await blocked).toBe(false)
+      expect(await query).toMatchObject({
+        hostname: 'local.test',
+        port: 8080,
+        protocol: 'http',
+        scope,
+        status: scope === 'project' ? 'projectAllowed' : 'alwaysAllowed'
+      })
+      await f.setSettings({
+        ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        destinationGrants: [{ ...grant, revokedAt: 2 }]
+      })
+      expect(await f.owner.requestNetworkAccess(request)).toMatchObject({
+        status: 'denied',
+        protocol: 'http',
+        port: 8080,
+        scope
+      })
+      f.end()
+      await f.owner.dispose()
+    }
+  )
+
+  it('allows HTTPS localhost/domain evidence without opening an approval even on port 80', async () => {
+    const f = await setup()
+    expect(await f.connect(['127.0.0.1', '8.8.8.8'], 80, 'https')).toBe(true)
+    expect(f.requestDecision).not.toHaveBeenCalled()
+    f.end()
+    await f.owner.dispose()
+  })
+
   it('uses full access as the existing explicit exemption, including sensitive addresses', async () => {
     const f = await setup(true)
     expect(await f.connect()).toBe(true)
@@ -5187,6 +4672,7 @@ describe('trusted gateway destination records', () => {
       recordId: 'source-record',
       createdAt: 1,
       hostname: 'local.test',
+      protocol: 'http' as const,
       port: 8443,
       approvedAddresses: ['127.0.0.1', '10.0.0.1']
     }

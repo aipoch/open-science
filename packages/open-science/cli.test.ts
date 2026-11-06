@@ -100,7 +100,8 @@ describe('CLI help', () => {
     'session',
     'settings',
     'plan',
-    'artifacts'
+    'artifacts',
+    'literature'
   ])(
     'recognizes help flags for the %s group without consuming them as subcommands',
     async (command) => {
@@ -1167,6 +1168,91 @@ describe('task CLI', () => {
     expect(client.listArtifacts).toHaveBeenCalledWith('session-1')
     expect(client.downloadArtifact).toHaveBeenCalledWith('artifact-1')
     expect(writeDownload).toHaveBeenCalledWith(expect.any(Response), 'report.md')
+  })
+
+  it('routes read-only literature commands and scopes their options', async () => {
+    const client = {
+      listProjects: vi.fn().mockResolvedValue([{ id: 'project-1', name: 'First review' }]),
+      searchLiterature: vi.fn().mockResolvedValue({
+        entries: [{ id: 'item-1', item: { title: 'Atlas' } }],
+        nextOffset: 20
+      }),
+      formatReferences: vi.fn().mockResolvedValue({
+        references: [{ itemId: 'item-1', reference: 'Doe (2020). Atlas.', inText: '(Doe, 2020)' }],
+        exports: { bibtex: '@article{}', ris: 'TY  - JOUR' }
+      })
+    }
+    const log = vi.fn()
+    const deps = { connect: vi.fn().mockResolvedValue(client), log }
+
+    await runTaskCommand(
+      parseCliArgs(['literature', 'search', 'cell', 'atlas', '--project', 'First review']),
+      deps
+    )
+    await runTaskCommand(
+      parseCliArgs(['literature', 'format', 'item-1', 'item-2', '--style', 'apa']),
+      deps
+    )
+
+    expect(client.searchLiterature).toHaveBeenCalledWith({
+      query: 'cell atlas',
+      projectId: 'project-1'
+    })
+    expect(client.formatReferences).toHaveBeenCalledWith({
+      itemIds: ['item-1', 'item-2'],
+      styleId: 'apa',
+      locale: 'en-US'
+    })
+    expect(log.mock.calls.map(([line]) => line)).toEqual([
+      'item-1\tAtlas',
+      'More results: --offset 20',
+      'Doe (2020). Atlas.'
+    ])
+    expect(() => parseCliArgs(['literature', 'search', '--limit', '101'])).toThrow('Invalid limit')
+    expect(() => parseCliArgs(['literature', 'show', 'item-1', '--style', 'apa'])).toThrow(
+      '--style and --locale require literature format.'
+    )
+    expect(() => parseCliArgs(['project', 'list', '--offset', '1'])).toThrow(
+      '--limit and --offset require literature search.'
+    )
+  })
+
+  it('previews literature imports unless committed and maps trash to the lifecycle state', async () => {
+    const client = {
+      importLiterature: vi.fn().mockResolvedValue({
+        entries: [{ index: 0, status: 'ready', title: 'Atlas' }],
+        errors: [],
+        truncated: false
+      }),
+      setLiteratureLifecycle: vi.fn().mockResolvedValue({ itemIds: ['i1'], state: 'deleted' })
+    }
+    const log = vi.fn()
+    const deps = {
+      connect: vi.fn().mockResolvedValue(client),
+      log,
+      readStdin: vi.fn().mockResolvedValue('@article{a}')
+    }
+
+    await runTaskCommand(parseCliArgs(['literature', 'import', '-']), deps)
+    await runTaskCommand(parseCliArgs(['literature', 'trash', 'i1', '--json']), deps)
+
+    expect(client.importLiterature).toHaveBeenCalledWith({
+      mode: 'preview',
+      content: '@article{a}'
+    })
+    expect(log).toHaveBeenCalledWith(
+      'Preview only; nothing was saved. Re-run with --commit to import.'
+    )
+    expect(client.setLiteratureLifecycle).toHaveBeenCalledWith(['i1'], 'deleted')
+    expect(() => parseCliArgs(['literature', 'import', 'refs.bib', '--project', 'p1'])).toThrow(
+      '--project requires literature import --commit.'
+    )
+    expect(() =>
+      parseCliArgs(['literature', 'import', 'refs.bib', '--duplicates', 'reuse'])
+    ).toThrow('--duplicates and --collection require literature import --commit.')
+    expect(() => parseCliArgs(['literature', 'search', '--commit'])).toThrow(
+      '--commit requires literature import.'
+    )
   })
 
   it('preserves an existing artifact output when the download stream fails', async () => {

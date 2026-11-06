@@ -76,16 +76,19 @@ it.each(
       })
       return
     }
+    // String extraction from readLines lacks atomic input proof; the reported
+    // join also lacks proof that its inputs cannot dispatch methods.
     expect(
       facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
       JSON.stringify(facts)
-    ).toEqual(['3', '6', '7'].includes(runId) ? ['opaque-call'] : [])
+    ).toEqual(['0', '3', '4', '6', '7'].includes(runId) ? ['opaque-call'] : [])
     const access = await analyzeNotebookSourceFileAccess('r', script, context)
     expect(access, JSON.stringify(access)).toMatchObject({
-      readState: ['3', '4', '6', '7'].includes(runId) ? 'partial' : 'complete',
-      writeState: ['3', '6', '7'].includes(runId) ? 'partial' : 'complete',
-      externalState: ['3', '6', '7'].includes(runId) ? 'partial' : 'complete'
+      readState: ['0', '3', '4', '6', '7'].includes(runId) ? 'partial' : 'complete',
+      writeState: ['0', '3', '4', '6', '7'].includes(runId) ? 'partial' : 'complete',
+      externalState: ['0', '3', '4', '6', '7'].includes(runId) ? 'partial' : 'complete'
     })
+    if (runId === '0') expect(access.reads).toContain('inputs/expression-matrix-444444444444.csv')
   } finally {
     await rm(root, { recursive: true, force: true })
   }

@@ -1,5 +1,6 @@
 import { diagnosticText, projectDiagnosticError, type DiagnosticTextOptions } from './detail'
 import { AGENT_FRAMEWORK_ID_VALUES, isAgentFrameworkId } from '../../shared/agent-framework-id'
+import { credentialDiagnosticSchema } from '../credential-identity/diagnostic'
 
 /** Diagnostic projections keep only known evidence fields and bounded redacted error text. */
 type ObjectValue = Record<string, unknown>
@@ -314,9 +315,20 @@ const diagnosticStringFields = [
   'launch',
   'control',
   'generation',
+  'failureGeneration',
+  'startupStage',
+  'credentialReason',
   'step',
   'result'
 ] as const
+
+const notebookLogStates: Record<string, readonly string[]> = {
+  runtime: ['python', 'r', 'repl', 'bash', 'powershell', 'native-posix', 'wsl2-bash'],
+  stage: ['sandbox-prepare', 'execution'],
+  terminationReason: ['cleanup-incomplete', 'cancel', 'timeout', 'exit'],
+  cleanupState: ['complete', 'incomplete'],
+  processState: ['never-started', 'started-and-reaped', 'termination-unknown']
+}
 
 // Permission traces carry fixed product classifications and hashed correlation identities only.
 const permissionLogStates: Record<string, readonly string[]> = {
@@ -382,6 +394,32 @@ export function projectDiagnosticLog(
   if (typeof source.msg === 'string') result.event = diagnosticText(source.msg, options, 2_000)
   const data = object(source.data)
   const diagnostic = fields(data, options)
+  if (source.scope === 'notebook:runtime' || source.scope === 'notebook:network-sandbox') {
+    for (const [key, allowed] of Object.entries(notebookLogStates))
+      if (allowed.includes(data[key] as string)) diagnostic[key] = data[key]
+    for (const key of ['executionReference', 'parentOperationId'])
+      if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
+    for (const key of ['processesTerminated', 'networkClosed', 'temporaryResourcesRemoved'])
+      if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
+    if (
+      Number.isInteger(data.incompleteStageCount) &&
+      Number(data.incompleteStageCount) >= 0 &&
+      Number(data.incompleteStageCount) <= 3
+    )
+      diagnostic.incompleteStageCount = data.incompleteStageCount
+    if (
+      typeof data.temporaryCleanupErrorCode === 'string' &&
+      /^(?:E[A-Z0-9_]{1,40}|unknown)$/.test(data.temporaryCleanupErrorCode)
+    )
+      diagnostic.temporaryCleanupErrorCode = data.temporaryCleanupErrorCode
+    // No ordinary exit is different from a zero exit or an older log with no exit evidence.
+    if (data.exitCode === null) diagnostic.exitCode = null
+  }
+  if (source.scope === 'desktop-runtime-recovery') {
+    const credential = credentialDiagnosticSchema.safeParse(data.credentialDiagnostic)
+    if (credential.success && credential.data.code !== 'inventory-failed')
+      diagnostic.credentialDiagnostic = credential.data
+  }
   if (source.scope === 'permission' && source.msg === 'permission decision trace') {
     for (const [key, allowed] of Object.entries(permissionLogStates)) {
       delete diagnostic[key]
@@ -428,7 +466,12 @@ export function projectDiagnosticLog(
   }
   if (data.authorityStatus === 'missing' || data.authorityStatus === 'unreadable')
     diagnostic.authorityStatus = data.authorityStatus
-  for (const key of ['hydrationAvailable', 'startupCleanupEligible', 'metadataComplete'])
+  for (const key of [
+    'hydrationAvailable',
+    'startupCleanupEligible',
+    'metadataComplete',
+    'timedOut'
+  ])
     if (typeof data[key] === 'boolean') diagnostic[key] = data[key]
   for (const key of ['sessionId', 'messageId', 'operationId', 'requestId', 'cachedProjectId'])
     if (identifier(data[key])) diagnostic[key] = diagnosticText(data[key], options, 200)
@@ -463,7 +506,10 @@ export function projectDiagnosticLog(
     'bufferedBytes',
     'byteBudget',
     'frameBudget',
-    'runtimePid'
+    'runtimePid',
+    'pid',
+    'failurePid',
+    'crashesInWindow'
   ])
     if (typeof data[key] === 'number' && Number.isFinite(data[key])) diagnostic[key] = data[key]
   if (typeof data.wasUnresponsive === 'boolean') diagnostic.wasUnresponsive = data.wasUnresponsive

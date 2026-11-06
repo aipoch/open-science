@@ -64,7 +64,6 @@ const NetworkPanel = ({
   const { t } = useTranslation()
   const packageMirror = useSettingsStore((state) => state.packageMirror)
   const networkProxy = useSettingsStore((state) => state.networkProxy)
-  const notebookNetwork = useSettingsStore((state) => state.notebookNetwork)
   const setPackageMirror = useSettingsStore((state) => state.setPackageMirror)
   const isOnline = useNetworkStore((state) => state.isOnline)
   // End-to-end reachability is owned by the network store (probed on startup, recovery,
@@ -304,7 +303,7 @@ const NetworkPanel = ({
         <SettingsSection
           title={t('Notebook network access')}
           description={t(
-            'Manage public domains and trusted private services for protected Notebook and Shell execution.'
+            'HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.'
           )}
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
@@ -312,18 +311,9 @@ const NetworkPanel = ({
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">
-                  {t('Public domains and private services')}
-                </p>
+                <p className="text-sm text-foreground">{t('Trusted unsafe networks')}</p>
                 <p className="text-xs text-muted-foreground">
-                  {t('{{count}} custom domains allowed', {
-                    count: notebookNetwork.allowedDomains.length,
-                    defaultValue_one: '{{count}} custom domain allowed'
-                  })}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {t('Trusted private services')}{' '}
-                  {notebookNetwork.trustedPrivateDestinations?.length ?? 0}
+                  {t('Authorize HTTP or direct IP access to an exact protocol, host and port.')}
                 </p>
               </div>
               <Button

@@ -3,6 +3,7 @@ import type { DownloadProgress } from '@aipoch/resilient-download'
 import {
   OPEN_SCIENCE_DOMAIN_GROUP_IDS,
   formatNetworkHostname,
+  requiresNetworkException,
   normalizeNetworkHostname,
   type OpenScienceDomainGroupId,
   type OpenScienceDomainGroup,
@@ -222,7 +223,7 @@ export const notebookNetworkSettingsAllowDomain = (
   hostname: string
 ): boolean => {
   const normalized = hostname.toLowerCase().replace(/\.$/, '')
-  const policy = buildNotebookNetworkPolicy(settings)
+  const policy = buildLinkPreviewDomainPolicy(settings)
   return (
     policy.allowedDomains.includes(normalized) ||
     (!policy.askDomains.some((pattern) => domainPatternMatches(pattern, normalized)) &&
@@ -337,7 +338,11 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
 
   return {
     ...(Array.isArray(record.destinationGrants)
-      ? { destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants) }
+      ? {
+          destinationGrants: normalizeNetworkDestinationGrants(record.destinationGrants).filter(
+            (entry) => requiresNetworkException(entry.hostname, entry.protocol)
+          )
+        }
       : {}),
     ...(Array.isArray(record.trustedPrivateDestinations)
       ? {
@@ -352,9 +357,7 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
   }
 }
 
-export const buildNotebookNetworkPolicy = (
-  settings: NotebookNetworkSettings
-): NotebookNetworkPolicy => {
+const buildLinkPreviewDomainPolicy = (settings: NotebookNetworkSettings): NotebookNetworkPolicy => {
   const disabledGroups = new Set(settings.disabledOpenScienceDomainGroups)
   const disabledDomains = new Set(settings.disabledOpenScienceDomains)
   const askDomains = uniqueSorted(
@@ -388,6 +391,18 @@ export const buildNotebookNetworkPolicy = (
     deniedDomainReasons: {}
   }
 }
+// Notebook HTTPS admission is independent from link-preview and icon consent.
+export const buildNotebookNetworkPolicy = (
+  settings: NotebookNetworkSettings
+): NotebookNetworkPolicy => ({
+  ...(settings.trustedPrivateDestinations?.length
+    ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
+    : {}),
+  allowedDomains: [],
+  askDomains: [],
+  deniedDomains: [],
+  deniedDomainReasons: {}
+})
 import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'
 
 // Shape validation only. Trusted entries are explicit protocol/host exceptions;
@@ -416,6 +431,7 @@ export const normalizeTrustedPrivateDestinations = (
       (managedGrantId !== undefined && !hasManagedId)
     )
       continue
+    if (!requiresNetworkException(host.hostname, protocol)) continue
     const key = `${protocol ?? 'https'}://${formatNetworkHostname(host.hostname)}:${port}:${hasManagedId ? managedGrantId : 'manual'}`
     // Duplicate records must never combine into a wider grant.
     if (entries.has(key)) return []

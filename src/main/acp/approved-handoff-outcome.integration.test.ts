@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
@@ -27,7 +27,9 @@ import { UploadRepository } from '../uploads/repository'
 import { ManagedFileIndexRepository } from '../project-files/repository'
 import { initDataRoot } from '../storage-root'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { AcpRuntime } from './runtime.test-utils'
+import { AcpRuntime, shortenIdleReleaseWindow } from './runtime.test-utils'
+
+beforeEach(shortenIdleReleaseWindow)
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { withApprovedHandoffOutcome } from './approved-handoff-outcome'
 import {
@@ -130,7 +132,7 @@ describe('production approved Handoff outcome composition', () => {
           .onRequest(acp.methods.agent.session.new, () => ({ sessionId: context.sessionId }))
           .onRequest(acp.methods.agent.session.resume, (ctx) => {
             resumedProviderIds.push(ctx.params.sessionId)
-            if (failResume && resumedProviderIds.length === 2)
+            if (failResume && promptCalls === 3 && resumedProviderIds.length === 3)
               throw new Error('Temporary provider resume failure')
             return {}
           })
@@ -190,7 +192,7 @@ describe('production approved Handoff outcome composition', () => {
             ...(repeat
               ? {
                   resolveSpecialistIdentity: async () => ({
-                    append: 'Approved Specialist',
+                    append: '',
                     prefix: 'Approved Specialist'
                   }),
                   resolveSpecialistSkills: async () => ({
@@ -333,7 +335,8 @@ describe('production approved Handoff outcome composition', () => {
                 reportHandoffFailure: async () => undefined
               })
             : createClaudeCodeCompletionGateRuntime({
-                sessionFramework: () => 'claude-code',
+                sessionFramework: (sessionId) =>
+                  runtime.getSessionFramework(sessionId) ? 'claude-code' : undefined,
                 cancelPrompt: ({ sessionId }) => runtime.stopPromptForHandoff(sessionId),
                 waitForPromptOwnershipRelease: (id) => runtime.waitForPromptOwnershipRelease(id),
                 resolveSpecialistId: () => approvedBinding,
@@ -375,6 +378,7 @@ describe('production approved Handoff outcome composition', () => {
         await request
         if (repeat) {
           await runtime.waitForPromptOwnershipRelease(context.sessionId)
+          await vi.waitFor(() => expect(runtime.getSnapshot().sessionIds).toEqual([]))
           await persistence.mutateRuntimeSession(
             { projectId: 'project-1', sessionId: context.sessionId },
             (session) =>
@@ -395,6 +399,13 @@ describe('production approved Handoff outcome composition', () => {
                 }
               ])
           )
+          await runtime.resumeSession({
+            sessionId: context.sessionId,
+            cwd: '/workspace',
+            projectId: 'project-1',
+            previousFrameworkId: framework,
+            specialistId: approvedBinding
+          })
           const secondRequest = runtime.sendPrompt({
             sessionId: context.sessionId,
             text: 'Return to Main Agent',
@@ -455,6 +466,7 @@ describe('production approved Handoff outcome composition', () => {
           await expect(
             runtime.sendPrompt({ sessionId: context.sessionId, text: 'Rejected new send' })
           ).rejects.toThrow('Handoff must finish first')
+          await vi.waitFor(() => expect(runtime.getSnapshot().sessionIds).toEqual([]))
           shouldFail = false
           const retried = await lifecycle.retry(context)
           expect(retried.stage).toBe('continued')
@@ -479,7 +491,7 @@ describe('production approved Handoff outcome composition', () => {
             expect(processes.length).toBeGreaterThanOrEqual(3)
             expect(backendSkillScopes).toContainEqual(['disabled-skill'])
             expect(backendSkillScopes.at(-1)).toEqual([])
-            expect(resumedProviderIds).toEqual(Array(failResume ? 3 : 2).fill(context.sessionId))
+            expect(resumedProviderIds).toEqual(Array(failResume ? 4 : 3).fill(context.sessionId))
           }
         }
       } finally {

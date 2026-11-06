@@ -116,6 +116,8 @@ export type NotebookNetworkAccessDecisionRequest = Readonly<{
   sessionId: string
   projectId: string
   hostname: string
+  port?: number
+  protocol?: 'http' | 'https'
   reason: string
   runtime?: NotebookSandboxInvocation['runtime']
   command?: string

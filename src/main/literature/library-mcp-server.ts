@@ -27,6 +27,8 @@ const LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME = 'format_references'
 const LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME = 'format_citation_document'
 const LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME = 'prepare_latex_bundle'
 const LITERATURE_LIBRARY_SAVE_TOOL_NAME = 'save_to_inbox'
+const LITERATURE_SAVE_ARGUMENT_RECOVERY =
+  'Correct the reported input and retry save_to_inbox; do not repeat unchanged arguments. Reuse retrieved metadata rather than re-extracting PDFs or troubleshooting runtimes to fix argument formatting.'
 const LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT = 20
 const LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS = 38_000
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS = 1_200
@@ -373,7 +375,12 @@ const resolveSaveCandidates = async (
     (value) => value !== undefined
   ).length
   if (inputCount !== 1) {
-    throw new Error('SAVE_INPUT_REQUIRED: Pass exactly one of refs, candidates, or filename.')
+    throw new Error(
+      'SAVE_INPUT_REQUIRED: Pass exactly one of refs, candidates, or filename. ' +
+        'Prefer refs for existing DOI/PMID identifiers; otherwise use candidates with item and source. ' +
+        'No records were saved by this call. ' +
+        LITERATURE_SAVE_ARGUMENT_RECOVERY
+    )
   }
   if (request.refs) {
     if (!handler.resolveSaveReferences) {
@@ -406,13 +413,28 @@ const resolveSaveCandidates = async (
     )
   }
   signal?.throwIfAborted()
+  let decoded: unknown
   try {
-    return literatureDiscoveryBatchSchema.parse(JSON.parse(content)).candidates
+    decoded = JSON.parse(content)
   } catch (error) {
-    throw new Error('INVALID_CANDIDATE_FILE: The candidate file is not valid Literature JSON.', {
-      cause: error
-    })
+    throw new Error(
+      'INVALID_CANDIDATE_FILE: The candidate file must contain valid JSON with the shape {"candidates":[{"item":{...},"source":{...}}]}. ' +
+        'No records were saved by this call. Fix the file JSON or pass existing records directly with candidates or refs. ' +
+        LITERATURE_SAVE_ARGUMENT_RECOVERY,
+      { cause: error }
+    )
   }
+  const parsed = literatureDiscoveryBatchSchema.safeParse(decoded)
+  if (!parsed.success) {
+    throw new Error(
+      'INVALID_CANDIDATE_FILE: Candidate fields do not match the save_to_inbox candidates schema:\n' +
+        z.prettifyError(parsed.error).slice(0, 2_000) +
+        '\nNo records were saved by this call. Fix the indicated fields in the file or pass corrected candidates or existing DOI/PMID refs directly. ' +
+        LITERATURE_SAVE_ARGUMENT_RECOVERY,
+      { cause: parsed.error }
+    )
+  }
+  return parsed.data.candidates
 }
 
 const createLiteratureLibraryMcpServer = (
@@ -698,7 +720,9 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Save literature discoveries',
       description:
-        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open-Science supplies the trusted current Project and Session origin; do not include origin fields. Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows. Prefer refs with pmid:<id> or doi:<id> so Open-Science can retrieve the metadata. Use candidates only for records without a supported identifier. filename remains available for a prepared Notebook batch.',
+        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open-Science supplies the trusted current Project and Session origin; do not include origin fields. Pass exactly one of refs, candidates, or filename. Prefer refs with pmid:<id> or doi:<id> so Open-Science can retrieve the metadata without Notebook execution. Use candidates only for records without a supported identifier. filename accepts a prepared candidate JSON batch, not a PDF or ZIP. For input validation errors: ' +
+        LITERATURE_SAVE_ARGUMENT_RECOVERY +
+        ' Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows.',
       inputSchema: {
         refs: z
           .array(z.string().trim().min(1).max(512))
@@ -706,9 +730,16 @@ const createLiteratureLibraryMcpServer = (
           .max(10)
           .optional()
           .describe(
-            'Preferred compact input, for example ["pmid:35486828", "doi:10.1016/j.cell.2011.03.019"].'
+            'An array of 1–10 DOI/PMID references, not a single string. For example ["pmid:35486828", "doi:10.1016/j.cell.2011.03.019"]. Do not also pass candidates or filename.'
           ),
-        candidates: z.array(literatureDiscoverySchema).min(1).max(10).optional(),
+        candidates: z
+          .array(literatureDiscoverySchema)
+          .min(1)
+          .max(10)
+          .optional()
+          .describe(
+            'An array of 1–10 records, each with item (bibliographic metadata, including itemType and title) and source (provider and rawMetadata). Reuse retrieved metadata; do not invent missing fields. Do not also pass refs or filename.'
+          ),
         filename: z
           .string()
           .trim()
@@ -716,7 +747,7 @@ const createLiteratureLibraryMcpServer = (
           .max(2_000)
           .optional()
           .describe(
-            'Filename of a Notebook-owned JSON file containing {"candidates":[...]}. Use this for batches to avoid regenerating a large tool payload; do not construct a workspace prefix.'
+            'Filename of an existing Notebook-owned JSON file containing {"candidates":[...]}, using the same record schema as candidates. Not a PDF, ZIP, bare array, or JSON string passed inline. Do not also pass refs or candidates, and do not construct a workspace prefix.'
           )
       }
     },

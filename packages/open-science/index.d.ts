@@ -492,6 +492,47 @@ export type Artifact = {
   sha256?: string
 }
 
+/** Service-owned Literature records; the schema follows the running service version. */
+export type LiteratureItem = { id: string; item: Record<string, unknown> } & Record<string, unknown>
+
+export type LiteratureSearchPage = {
+  entries: LiteratureItem[]
+  totalCount?: number
+  nextOffset?: number
+}
+
+export type CitationStyle = {
+  id: string
+  title: string
+  source: 'built-in' | 'custom'
+  summary?: string
+  rights?: string
+}
+
+export type CitationLocale = 'en-US' | 'zh-CN'
+
+export type LiteratureDuplicatePolicy = 'reuse' | 'separate' | 'fill-missing'
+
+export type LiteratureReadingStatus = 'unread' | 'reading' | 'read'
+
+export type LiteratureReceipt = { kind: 'item' | 'collection' | 'candidate'; id: string } & Record<
+  string,
+  unknown
+>
+
+export type LiteratureImportResult = {
+  format: 'bibtex' | 'ris' | 'nbib' | 'items'
+  entries: Array<{ index: number; title: string; status: string } & Record<string, unknown>>
+  errors: Array<{ preview: string; error: string }>
+  truncated: boolean
+  imported?: { itemIds: string[]; createdCount: number; reusedCount: number }
+} & Record<string, unknown>
+
+export type FormattedReferences = {
+  references: Array<{ itemId: string; reference: string; inText: string }>
+  exports: { bibtex: string; ris: string }
+}
+
 export class OpenScienceApiError extends Error {
   code: string
   status?: number
@@ -661,6 +702,62 @@ export class OpenScienceClient {
     }
   ): Promise<Run>
   listArtifacts(sessionId: string, options?: RequestOptions): Promise<Artifact[]>
+  /** Searches the global Literature library, optionally limited to one Project. */
+  searchLiterature(
+    request?: { query?: string; projectId?: string; offset?: number; limit?: number },
+    options?: RequestOptions
+  ): Promise<LiteratureSearchPage>
+  getLiteratureItem(itemId: string, options?: RequestOptions): Promise<LiteratureItem>
+  listCitationStyles(options?: RequestOptions): Promise<CitationStyle[]>
+  formatReferences(
+    request: { itemIds: string[]; styleId: string; locale: CitationLocale },
+    options?: RequestOptions
+  ): Promise<FormattedReferences>
+  /** Resolves a DOI, pmid:, pmcid: or arxiv: identifier through the service without saving it. */
+  getReferenceMetadata(
+    identifier: string,
+    options?: RequestOptions
+  ): Promise<Record<string, unknown>>
+  /** Preview never saves. Commit links imported records to projectId after import when supplied. */
+  importLiterature(
+    request: { mode: 'preview' | 'commit'; selectedItemIndexes?: number[] } & (
+      { content: string; items?: never } | { items: Record<string, unknown>[]; content?: never }
+    ) & {
+        duplicatePolicy?: LiteratureDuplicatePolicy
+        collectionId?: string
+        projectId?: string
+      },
+    options?: RequestOptions
+  ): Promise<LiteratureImportResult>
+  /** Resolves metadata, then adds or reuses the matching library record. */
+  createLiteratureItem(identifier: string, options?: RequestOptions): Promise<LiteratureReceipt>
+  setProjectLiterature(
+    projectId: string,
+    itemIds: string[],
+    included: boolean,
+    options?: RequestOptions
+  ): Promise<{ projectId: string; itemIds: string[]; included: boolean }>
+  createLiteratureCollection(
+    request: { name: string; description?: string; parentId?: string },
+    options?: RequestOptions
+  ): Promise<LiteratureReceipt>
+  setCollectionLiterature(
+    collectionId: string,
+    itemIds: string[],
+    included: boolean,
+    options?: RequestOptions
+  ): Promise<{ collectionId: string; itemIds: string[]; included: boolean }>
+  setLiteratureReadingStatus(
+    itemIds: string[],
+    readingStatus: LiteratureReadingStatus,
+    options?: RequestOptions
+  ): Promise<{ itemIds: string[]; readingStatus: LiteratureReadingStatus }>
+  /** `deleted` moves records to the trash; `active` restores them. */
+  setLiteratureLifecycle(
+    itemIds: string[],
+    state: 'active' | 'deleted',
+    options?: RequestOptions
+  ): Promise<{ itemIds: string[]; state: 'active' | 'deleted' }>
   downloadArtifact(artifactId: string, options?: RequestOptions): Promise<Response>
   events(options?: {
     idleTimeoutMs?: number

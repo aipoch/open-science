@@ -3746,12 +3746,17 @@ export function usePdfTranslationDocument(
     }
   }, [admitted, original, artifact, beforeReady, request, useArtifact, selected, snapshot])
   // Batch at page boundaries, never cancel a running generation for incoming paragraphs.
-  // Keep errors explicit so a failed rebuild cannot turn into an automatic retry loop.
+  // A failed early snapshot may be superseded once translation stops. Only
+  // different ready-page content can retry automatically; unchanged errors stay explicit.
   const latestSnapshot = useMemo(
     () => (results ? partialPdfSnapshot(results) : undefined),
     [results]
   )
   useEffect(() => {
+    const recoverNewResults =
+      state.status === 'error' &&
+      !translating &&
+      ['timeout', 'worker-failed'].includes(state.failure.code)
     if (
       !admitted ||
       artifact ||
@@ -3759,8 +3764,7 @@ export function usePdfTranslationDocument(
       !selected ||
       !snapshot ||
       !latestSnapshot ||
-      state.status !== 'ready' ||
-      !canDisplay
+      (!(state.status === 'ready' && canDisplay) && !recoverNewResults)
     )
       return
     const readyPages = new Set(latestSnapshot.readyPages)
@@ -3787,7 +3791,8 @@ export function usePdfTranslationDocument(
     selected,
     snapshot,
     latestSnapshot,
-    state.status,
+    state,
+    translating,
     canDisplay,
     displayed
   ])

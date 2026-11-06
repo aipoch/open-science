@@ -27,10 +27,14 @@ const useRevealLabel = (installer: UpdateInstaller | null): string => {
 
 export const ManualUpdateLinks = ({
   manual,
-  align = 'end'
+  align = 'end',
+  showGuide = true,
+  showDownload = true
 }: {
   manual: ManualUpdate
   align?: 'start' | 'end'
+  showGuide?: boolean
+  showDownload?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const revealLabel = useRevealLabel(manual.installer)
@@ -51,20 +55,24 @@ export const ManualUpdateLinks = ({
             {revealLabel}
           </button>
         ) : null}
-        <ExternalTextLink
-          href={APP.update.downloadPage}
-          className="min-h-8 text-xs font-normal text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {t('Download from website')}
-        </ExternalTextLink>
-        <button
-          type="button"
-          className={cn(textLink, 'min-h-8')}
-          onClick={manual.openGuide}
-          data-manual-update-origin={`${manual.originId}-links`}
-        >
-          {t('Installation instructions')}
-        </button>
+        {showDownload ? (
+          <ExternalTextLink
+            href={APP.update.downloadPage}
+            className="min-h-8 text-xs font-normal text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {t('Download from website')}
+          </ExternalTextLink>
+        ) : null}
+        {showGuide ? (
+          <button
+            type="button"
+            className={cn(textLink, 'min-h-8')}
+            onClick={manual.openGuide}
+            data-manual-update-origin={`${manual.originId}-links`}
+          >
+            {t('Installation instructions')}
+          </button>
+        ) : null}
       </div>
       {manual.feedback ? (
         <ErrorNotice inline role="alert" description={manual.feedback} className="mt-1 text-xs" />

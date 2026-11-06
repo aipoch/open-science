@@ -163,18 +163,20 @@ describe('Auto operation completeness against real tool registrations', () => {
         // Strict inputs, allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
           'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
+        // Reviewed: Inbox input descriptions and file-validation errors explain correction/retry.
+        // Accepted inputs, pre-save validation, trusted origin and allow-once disposition are unchanged.
         'literature/library-mcp-server.ts':
-          'f6eddd996e4651c56586435e7c0845a437dd7d3b8c18dfe0ff634eb0e8bbefd6',
+          'b50bd708d22d75792dc680915d1b78ea7f8a61b005289497969e21bc62d2b4f8',
         // Reviewed: linked-PDF reading order is resolved automatically from logical structure
         // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          '01d43ef955ccb78cb4f5a0d1a5899b972221752055a822e18b2004d6cd1e74d9',
-        // Reviewed: Windows Bioconductor installer guidance, plus non-blank patterns on required
-        // ask_user_question strings that only narrow accepted inputs; handlers and Auto operation
-        // dispositions are unchanged.
+          '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
+        // Reviewed: the runtime descriptions explain default selection, and failed foreground
+        // Shell executions set the MCP error flag. Network recovery requires a trusted block record;
+        // it cannot add trust settings or replay code. Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '569a48cdac3f06533a30cc5f13232b576fed9a3a09333e3b1de3f5d7f7914049',
+          '71e92e3d69280a0a725023e7093eb152377cee3343a11bdd15f03b044229f22d',
         // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
         // call, its result and the Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

@@ -1119,6 +1119,22 @@ export function proveNativePeerScalarLeafHeader(table, items, captions, rules, r
 // even when a detector invents a lane or merges the last two leaves. Each
 // field is literal native ink; neither column widths nor header names supply
 // missing body values.
+const closedLeafHeaderWordGaps = new WeakMap()
+
+// Rich runs for this exact proved leaf must use the same native word gaps as
+// its plain header. Keep the generic record spacing for every other owner.
+export function nativeClosedLeafHeaderWordGap(items) {
+  const proof = closedLeafHeaderWordGaps.get(items)
+  if (
+    !proof ||
+    JSON.stringify(
+      items.map(({ text, rect, height, baseline }) => ({ text, rect, height, baseline }))
+    ) !== proof.sources
+  )
+    return
+  return proof.gap
+}
+
 export function proveNativeClosedLeafHeader(table, items, captions, rules, runs = []) {
   if (!table.cropRect) return
   const [left, top, right, bottom] = table.cropRect
@@ -1235,6 +1251,13 @@ export function proveNativeClosedLeafHeader(table, items, captions, rules, runs 
       )
   )
   if (texts.some((t) => !t)) return
+  for (const g of leaves)
+    closedLeafHeaderWordGaps.set(g, {
+      gap: h * 0.14,
+      sources: JSON.stringify(
+        g.map(({ text, rect, height, baseline }) => ({ text, rect, height, baseline }))
+      )
+    })
   const headerCells = leaves.map((g, column) => ({
     row: 0,
     column,

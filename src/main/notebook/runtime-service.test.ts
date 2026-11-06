@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, posix, win32 } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
+import { resourceActivity } from '../resource-diagnostics/activity'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { EnvironmentLeaseManager } from '@aipoch/environment'
 import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
@@ -4099,6 +4100,7 @@ describe('notebook runtime service', () => {
       }
 
       const receipt = await service.executeShellBackground(request)
+      expect(resourceActivity.state.sampling).toBe(true)
       expect(receipt).toMatchObject({
         executionType: 'shell-command',
         sessionId: request.sessionId,
@@ -4116,6 +4118,7 @@ describe('notebook runtime service', () => {
 
       releaseExecution.resolve()
       await service.waitForBackgroundRun(receipt.runId)
+      expect(resourceActivity.state.sampling).toBe(false)
       await expect(
         service.getBackgroundRun({ ...request, submissionIdentity: request.executionInvocationId })
       ).resolves.toMatchObject({
@@ -12483,10 +12486,14 @@ describe('v4 runtime bindings & agent tools', () => {
       }
     )
 
-    it.each(['explicit', 'implicit'] as const)(
-      'Ask waits once before %s binding and resumes without another environment approval',
-      async (entry) => {
-        const h = await makeApprovalHarness()
+    it.each(
+      (['explicit', 'implicit'] as const).flatMap((entry) =>
+        [false, true].map((multiple) => ({ entry, multiple }))
+      )
+    )(
+      'Ask waits once before $entry binding with multiple=$multiple and resumes without another environment approval',
+      async ({ entry, multiple }) => {
+        const h = await makeApprovalHarness(multiple)
         const pending = waitingApproval()
         h.service.setRuntimeBindingApproval(pending.approve)
         const codeApproval = vi.fn(async () => false)
@@ -12525,6 +12532,67 @@ describe('v4 runtime bindings & agent tools', () => {
       expect(approval).toHaveBeenCalledTimes(1)
       expect(legacy).not.toHaveBeenCalled()
     })
+
+    it.each(['disabled', 'unrunnable', 'repair-required'] as const)(
+      'does not prefer a %s default over multiple other enabled runtimes',
+      async (condition) => {
+        const h = await makeApprovalHarness(true)
+        const additional = {
+          ...h.external,
+          envId: `${h.external.envId}-other`,
+          interpreterPath: `${h.external.interpreterPath}-other`
+        }
+        h.discovered.push(additional)
+        h.enablement.enabled[additional.envId] = true
+        if (condition === 'disabled') h.enablement.enabled[h.managed.envId] = false
+        if (condition === 'unrunnable') h.managed.runnable = false
+        if (condition === 'repair-required') {
+          addRepairRequired(
+            getRuntimeRoot(h.root),
+            language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+            'protected-identity-change'
+          )
+        }
+        const approval = vi.fn(async () => true)
+        h.service.setRuntimeBindingApproval(approval)
+        await expect(h.service.execute({ ...h.request, code: h.code })).rejects.toThrow(
+          `Several ${language} environments`
+        )
+        expect(approval).not.toHaveBeenCalled()
+        expect(h.executions).toEqual([])
+        expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+      }
+    )
+
+    it.each([false, true])(
+      'preserves an existing external binding when the default is ready (unavailable=%s)',
+      async (unavailable) => {
+        const h = await makeApprovalHarness(true)
+        await h.service.bindRuntime({ ...h.request, runtimeId: h.external.envId })
+        if (unavailable) {
+          h.enablement.enabled[h.external.envId] = false
+          await h.service.revokeRuntime(language, h.external.envId)
+        }
+        const approval = vi.fn(async () => true)
+        h.service.setRuntimeBindingApproval(approval)
+        const operation = h.service.execute({ ...h.request, code: h.code })
+        if (unavailable) {
+          expect(await operation).toMatchObject({ status: 'failed', kernelDispatched: false })
+          expect(h.executions).toEqual([])
+        } else {
+          expect(await operation).toMatchObject({ status: 'completed' })
+          expect(h.executions).toHaveLength(1)
+          expect(h.executions[0].resolvedInterpreter?.command).toBe(
+            language === 'r' ? '/usr/local/bin/Rscript' : h.external.interpreterPath
+          )
+        }
+        expect(approval).not.toHaveBeenCalled()
+        expect((await h.service.listRuntimes(h.request)).bindings[language]).toMatchObject({
+          runtimeId: h.external.envId,
+          status: unavailable ? 'unavailable' : 'active'
+        })
+      }
+    )
 
     it('reuses a live and persisted binding without persistence, approval or kernel stop', async () => {
       const h = await makeApprovalHarness()

@@ -87,6 +87,7 @@ test('persists project destination consent, retries explicitly, and revokes afte
         scope: 'project',
         hostname: '127.0.0.1',
         port: address.port,
+        protocol: 'http',
         approvedAddresses: ['127.0.0.1']
       })
     ])
@@ -103,14 +104,10 @@ test('persists project destination consent, retries explicitly, and revokes afte
     expect(requests).toBe(2)
     const settingsPage = await openSettingsPage(page, 'Network')
     await settingsPage.getByRole('button', { name: 'Manage access', exact: true }).click()
-    await expect(
-      settingsPage.getByText('Approved network destinations', { exact: true })
-    ).toBeVisible()
+    await expect(settingsPage.getByText('Trusted unsafe networks', { exact: true })).toBeVisible()
     await expect(settingsPage).toContainText('127.0.0.1')
     await settingsPage.getByRole('button', { name: 'Revoke', exact: true }).click()
-    await expect(
-      settingsPage.getByText('Approved network destinations', { exact: true })
-    ).toHaveCount(0)
+    await expect(settingsPage.getByRole('button', { name: 'Revoke', exact: true })).toHaveCount(0)
     await settingsPage.getByRole('button', { name: 'Close settings' }).click()
     await submitPromptViaUi(page, prompt)
     const deniedCard = page.getByTestId('permission-card')

@@ -1,3 +1,8 @@
+import type { OverviewBatchRequest, OverviewBatch } from '../../shared/literature-overview-batch'
+import type {
+  LiteratureOverviewRequest,
+  LiteratureOverviewResult
+} from '../../shared/literature-overview'
 import { type JournalRequest, type JournalResult } from '@aipoch/journal-catalog/contracts'
 import {
   type LiteraturePublicationCheckRequest,
@@ -66,6 +71,11 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  overviewBatch(request: OverviewBatchRequest, signal?: AbortSignal): Promise<OverviewBatch | null>
+  studySnapshot(
+    request: LiteratureOverviewRequest,
+    signal?: AbortSignal
+  ): Promise<LiteratureOverviewResult>
   getCandidateStates(
     request: LiteratureCandidateStatesRequest
   ): Promise<LiteratureCandidateStatesResult>
@@ -184,6 +194,16 @@ const literatureApplicationCommands = Object.freeze({
     readonly [string],
     LiteratureItemInput
   >('literature:lookup-metadata', literatureApplicationCommandContracts.lookupMetadata),
+  overviewBatch: defineApplicationCommand<
+    'literature:overview-batch',
+    readonly [OverviewBatchRequest],
+    OverviewBatch | null
+  >('literature:overview-batch', literatureApplicationCommandContracts.overviewBatch),
+  studySnapshot: defineApplicationCommand<
+    'literature:study-snapshot',
+    readonly [LiteratureOverviewRequest],
+    LiteratureOverviewResult
+  >('literature:study-snapshot', literatureApplicationCommandContracts.studySnapshot),
   completeMetadata: defineApplicationCommand<
     'literature:complete-metadata',
     readonly [LiteratureMetadataCompletionRequest],
@@ -255,6 +275,8 @@ const literatureApplicationCommandGroup = defineApplicationCommandGroup('literat
   literatureApplicationCommands.supplementAttachmentProgress,
   literatureApplicationCommands.lookupMetadata,
   literatureApplicationCommands.completeMetadata,
+  literatureApplicationCommands.studySnapshot,
+  literatureApplicationCommands.overviewBatch,
   literatureApplicationCommands.citationStyles,
   literatureApplicationCommands.formatReferences,
   literatureApplicationCommands.formatDocument,
@@ -329,6 +351,18 @@ const registerLiteratureApplicationCommands = (
         ),
       'literature:full-text': ({ args }) => run(() => owner.fullText(args[0])),
       'literature:lookup-metadata': ({ args }) => run(() => owner.lookupMetadata(args[0])),
+      'literature:study-snapshot': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.studySnapshot(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
+      'literature:overview-batch': ({ args, callerLease }) =>
+        run(
+          () =>
+            owner.overviewBatch(args[0], AbortSignal.any([callerLease.signal, lifetime.signal])),
+          false
+        ),
       'literature:complete-metadata': ({ args }) => run(() => owner.completeMetadata(args[0])),
       'literature:citation-styles': ({ args }) => run(() => owner.citationStyles(args[0])),
       'literature:format-references': ({ args }) => run(() => owner.formatReferences(args[0])),

@@ -229,12 +229,18 @@ test('failed provider attachment exposes original details and exports real diagn
   await error.getByRole('button', { name: 'Export diagnostics…', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
   await expect(dialog.getByRole('checkbox', { name: 'Current log', exact: true })).toBeChecked()
+  await expect(
+    dialog.getByRole('checkbox', { name: 'Backend startup logs', exact: true })
+  ).toBeChecked()
   await page.screenshot({ path: info.outputPath('resume-diagnostics-dialog.png'), fullPage: true })
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
-  await expect(dialog.getByText(/^Diagnostic package exported successfully/)).toBeVisible({
+  const exportResult = dialog.getByText(
+    /^Diagnostic package (?:exported successfully|partially exported)/
+  )
+  await expect(exportResult).toBeVisible({
     timeout: 60_000
   })
-  await dialog.getByText(/^Diagnostic package exported successfully/).scrollIntoViewIfNeeded()
+  await exportResult.scrollIntoViewIfNeeded()
   await page.screenshot({
     path: info.outputPath('resume-diagnostics-exported.png'),
     fullPage: true
@@ -242,6 +248,15 @@ test('failed provider attachment exposes original details and exports real diagn
   const unpacked = info.outputPath('unpacked')
   await mkdir(unpacked, { recursive: true })
   await extract({ file: archive, cwd: unpacked })
+  const manifest = JSON.parse(await readFile(join(unpacked, 'manifest.json'), 'utf8')) as {
+    items: { id: string; selected: boolean; status: string }[]
+  }
+  const backendLogs = manifest.items.filter(({ id }) => id.startsWith('backend-log:'))
+  expect(backendLogs.length).toBeGreaterThan(0)
+  for (const item of backendLogs) {
+    expect(item.selected).toBe(true)
+    expect(['exported', 'partial']).toContain(item.status)
+  }
   const log = await readFile(join(unpacked, 'logs/main.log'), 'utf8')
   expect(log).toContain('acp:resume-session failed')
   expect(log).toContain('Resume acceptance attachment failed')

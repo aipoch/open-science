@@ -165,7 +165,11 @@
     "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
     "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.tsx",
     "src/renderer/src/pages/literature/imports/LiteratureLinkReview.tsx",
-    "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx"
+    "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverview.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.tsx",
+    "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",
@@ -223,7 +227,9 @@
       "src/renderer/src/pages/literature/workflows/useLiteratureScreeningExport.test.tsx",
       "src/renderer/src/pages/literature/detail/LiteraturePublicationCheck.test.tsx",
       "src/renderer/src/pages/literature/LiteratureZoteroDialog.test.tsx",
-      "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx"
+      "src/renderer/src/pages/literature/imports/LiteratureLinkImportDialog.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureOverview.test.tsx",
+      "src/renderer/src/pages/literature/detail/LiteratureOverviewBatch.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",

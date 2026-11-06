@@ -1,38 +1,36 @@
-# Sandbox network grant synchronization
+# Notebook unsafe network authorization
 
 ## Scope
 
-Extend the existing in-session Notebook network approval flow so HTTPS domain grants remain in the
-ordinary destination-grant chain, while HTTP and literal IP access require an explicit trusted
-private-service rule. Preserve exact hostname, port, and protocol matching, explicit retry,
-single-use approval, full-access exemption, and the existing conversation permission card.
+HTTPS domains, including localhost and names resolving to private, loopback, or mixed addresses,
+are allowed without approval. DNS is used only for routing; address classification and address-set
+changes are not authorization conditions. Normal TLS certificate checks remain enabled.
 
-## Data model
+Only HTTP or literal IPv4/IPv6 connections require exact protocol, normalized host, and port
+exceptions. CONNECT/SOCKS classify application bytes before connecting; ports never select protocol.
 
-`TrustedPrivateDestination` gains an optional protocol (`http` or `https`) and keeps optional
-backend metadata for compatibility. Manual private-service rules remain Settings-owned. Global
-destination grants retain their project/session/record provenance and optional protocol.
+## Persistence and recovery
 
-## Trusted backend lifecycle
+One-time consent requires an explicit retry and is consumed atomically by one matching execution.
+Project/global grants retain scope and session provenance across persistence, restore, and tool
+results. Persistent writes remain pending until committed. Revoked grants cannot report success.
 
-`NotebookNetworkSettingsOwner` remains the only writer for trusted private-service rules. A global
-approval persists as a destination grant; it does not project ordinary HTTPS approvals into the
-trusted private-service list. Revoked global grants remain as tombstones.
+Legacy missing protocols mean HTTPS. HTTPS domain exceptions and obsolete pending cards are removed;
+HTTP/IP exceptions retain scope. No migration converts HTTPS into HTTP. Recovery without remaining
+waits returns to idle, not a fictitious running execution.
 
-Existing managed metadata is retained only for backwards-compatible cleanup. Manual rules for the
-same target remain owned by Settings. Trusted rules may include HTTP, localhost, and literal IP
-targets. DNS answers are used only to route a request; public/private classification, approved
-address-set matching, and DNS revalidation are not authorization conditions.
+## Settings and ownership
 
-## UI and boundaries
+The single “Trusted unsafe networks” list combines manual entries and persistent session grants,
+with scope and revoke actions. One-time grants are absent. Notebook public-domain groups and custom
+domain controls are removed; link preview/icon permissions remain independent.
 
-Settings shows protocol-scoped trusted service entries and keeps their persistence behind the
-Settings owner. Agent and sandbox paths receive no private-service mutation capability; the trusted
-settings backend owns the synchronization and cascade.
+Only trusted application code handles user Settings edits and approval decisions. Agent and sandbox
+code cannot modify trust settings. No inbox or automatic request replay is introduced.
 
 ## Validation
 
-Add owner/repository tests for project-only grants, protocol-scoped global grants, manual trusted
-service persistence, forged metadata, duplicates, denial, single-use and cancellation races.
-Update renderer tests and all eight locale catalogs. Run focused Vitest suites, the i18n guard,
-package type checks, and the available gateway/integration coverage.
+Cover HTTP 8080, HTTPS 80, localhost, IPv4/IPv6 normalization, mixed DNS, CONNECT/SOCKS protocol
+boundaries and partial prefaces, approval persistence/recovery, migration, revocation, scope
+isolation, and concurrent one-time consumption. Run relevant unit/process integration tests,
+Settings rendering, all locale guards, type checks, and the isolated Electron approval journey.

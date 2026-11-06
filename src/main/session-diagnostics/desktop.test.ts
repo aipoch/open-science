@@ -93,6 +93,21 @@ function setup(
 }
 
 describe('isolated diagnostic desktop lifecycle', () => {
+  it('passes an explicit application target to the worker and save dialog without session identities', async () => {
+    const { owner, inputs, chooseDestination } = setup()
+    expect(
+      await owner.export({
+        scope: 'application',
+        operationId: 'app-export',
+        selectedItems: ['resource-logs']
+      })
+    ).toMatchObject({ status: 'exported' })
+    expect(inputs[0]).toMatchObject({ scope: 'application', selectedItems: ['resource-logs'] })
+    expect(inputs[0].projectId).toBeUndefined()
+    expect(inputs[0].sessionId).toBeUndefined()
+    expect(chooseDestination.mock.calls[0][0]).toMatch(/^application-.*\.tar\.gz$/)
+    await owner.close()
+  })
   it('survives StrictMode setup-cleanup-setup before the first worker starts', async () => {
     const { owner, inputs } = setup()
     const first = owner.inspect(request)

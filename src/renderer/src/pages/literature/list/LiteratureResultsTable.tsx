@@ -80,7 +80,7 @@ export function LiteratureResultsTable({
     [t]
   )
   return (
-    <div className="isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-300/80 bg-bg-000">
+    <div className="@container/literature-results isolate flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border-300/80 bg-bg-000">
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <LiteratureTableScrollArea
           viewportRef={tableScrollRef}
@@ -155,13 +155,13 @@ export function LiteratureResultsTable({
                 ))}
                 <th
                   scope="col"
-                  className="sticky right-12 z-30 w-28 min-w-28 max-w-28 border-l border-transparent bg-bg-200 group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-2 py-2.5 text-center text-[11px] whitespace-nowrap before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 group-data-[overflow-right=true]/journal-scroll:before:opacity-100"
+                  className="@min-[640px]/literature-results:sticky right-12 z-30 w-28 min-w-28 max-w-28 border-l border-transparent bg-bg-200 @min-[640px]/literature-results:group-data-[overflow-right=true]/journal-scroll:border-border-300/60 px-2 py-2.5 text-center text-[11px] whitespace-nowrap before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-2 before:bg-linear-to-l before:from-foreground/5 before:to-transparent before:opacity-0 @min-[640px]/literature-results:group-data-[overflow-right=true]/journal-scroll:before:opacity-100"
                 >
                   {t('Attachment')}
                 </th>
                 <th
                   scope="col"
-                  className="sticky right-0 z-30 w-12 min-w-12 max-w-12 bg-bg-200 px-2 py-2.5 text-right"
+                  className="@min-[640px]/literature-results:sticky right-0 z-30 w-12 min-w-12 max-w-12 bg-bg-200 px-2 py-2.5 text-right"
                 >
                   <span className="sr-only">{t('Actions')}</span>
                 </th>

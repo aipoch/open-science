@@ -1,3 +1,8 @@
+import {
+  requiresNetworkException,
+  normalizeNetworkHostname
+} from '../../shared/notebook-network-settings'
+import type { NetworkApprovalRecordStatus } from '../../shared/sandbox-network-approval'
 import { type NetworkDestinationGrant } from '../../shared/network-destination-grants'
 import { randomUUID } from 'node:crypto'
 import type { AcpPermissionResponse } from '../../shared/acp'
@@ -46,7 +51,7 @@ export class SandboxNetworkApprovalOwner {
   constructor(
     private readonly sessions?: PermissionWaitSessions,
     private readonly publish?: PublishPermissionWaitSession,
-    private readonly allowDomain?: (
+    _allowDomain?: (
       hostname: string,
       assertCurrent?: () => Promise<void>,
       finalize?: () => Promise<void>
@@ -89,7 +94,7 @@ export class SandboxNetworkApprovalOwner {
     const graph = session.conversationGraph
     const frame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
     if (!frame) return undefined
-    let approval: SandboxNetworkApproval = {
+    const approval: SandboxNetworkApproval = {
       ...network,
       version: 1,
       kind: 'sandbox-network',
@@ -106,7 +111,7 @@ export class SandboxNetworkApprovalOwner {
       candidate.commandFingerprint === network.commandFingerprint &&
       candidate.hostname === network.hostname &&
       candidate.port === network.port &&
-      candidate.protocol === network.protocol &&
+      (candidate.protocol ?? 'https') === (network.protocol ?? 'https') &&
       (!network.evidence ? !candidate.evidence : Boolean(candidate.evidence))
     const grant = activeSandboxNetworkApprovals(session).find(
       (candidate) =>
@@ -252,20 +257,31 @@ export class SandboxNetworkApprovalOwner {
     projectId: string,
     sessionId: string,
     recordId: string
-  ): Promise<'pending' | 'approved' | 'denied' | undefined> {
+  ): Promise<NetworkApprovalRecordStatus | undefined> {
     if (!this.sessions) return undefined
     const session = await this.sessions.loadSessionForContinuation(projectId, sessionId)
     if (session.projectId !== projectId || session.id !== sessionId) return undefined
     const record = activeSandboxNetworkApprovals(session).find(
       (entry) => entry.evidence?.recordId === recordId
     )
-    return !record
-      ? undefined
-      : record.state === 'pending'
-        ? 'pending'
-        : record.decision === 'deny'
+    if (!record) return undefined
+    return {
+      status:
+        record.decision === 'deny'
           ? 'denied'
-          : 'approved'
+          : record.state === 'pending' || persistentDecision(record.decision)
+            ? 'pending'
+            : 'approved',
+      hostname: record.hostname,
+      port: record.port,
+      protocol: record.protocol ?? 'https',
+      scope:
+        record.decision === 'project-allow'
+          ? 'project'
+          : record.decision === 'always-allow'
+            ? 'global'
+            : 'once'
+    }
   }
 
   async respondRestored(response: AcpPermissionResponse, projectId: string): Promise<boolean> {
@@ -330,13 +346,24 @@ export class SandboxNetworkApprovalOwner {
 
   // Called by host Session hydration, without creating a provider connection or replaying a tool.
   async recoverSession(session: PersistedChatSession): Promise<PersistedChatSession> {
-    if (
-      !this.sessions ||
-      !session.runtimeContext?.networkApprovals?.some(
-        (approval) => approval.state === 'continuing' && persistentDecision(approval.decision)
+    if (!this.sessions) return session
+    const obsolete = (approval: SandboxNetworkApproval): boolean =>
+      !requiresNetworkException(
+        normalizeNetworkHostname(approval.hostname) ?? approval.hostname,
+        approval.protocol
+      ) &&
+      !this.liveRequests.has(approval.requestId) &&
+      !this.globalDecisions.has(approval.requestId)
+    if (session.runtimeContext?.networkApprovals?.some(obsolete)) {
+      // Recovery removes obsolete waits without claiming an execution is running.
+      await this.patch(
+        session.projectId,
+        session.id,
+        (context) => (context.networkApprovals ?? []).filter((approval) => !obsolete(approval)),
+        undefined,
+        true
       )
-    )
-      return session
+    }
     const context = await this.sessions.readSessionRuntimeContext(session.projectId, session.id)
     for (const approval of context.networkApprovals ?? []) {
       if (approval.state !== 'continuing' || !persistentDecision(approval.decision)) continue
@@ -470,30 +497,28 @@ export class SandboxNetworkApprovalOwner {
     recovering: boolean
   ): Promise<void> {
     const decision = approval.decision === 'project-allow' ? 'project-allow' : 'always-allow'
-    const persist = approval.evidence
-      ? (assertCurrent: () => Promise<void>, finalize: () => Promise<void>) => {
-          if (!this.allowDestination) throw new Error('Network settings are unavailable.')
-          return this.allowDestination(
-            {
-              id: approval.requestId,
-              hostname: approval.hostname,
-              port: approval.port,
-              protocol: approval.protocol ?? 'https',
-              approvedAddresses: approval.evidence!.addresses,
-              scope: decision === 'project-allow' ? 'project' : 'global',
-              projectId,
-              sessionId: approval.sessionId,
-              recordId: approval.evidence!.recordId,
-              createdAt: approval.createdAt
-            },
-            assertCurrent,
-            finalize
-          )
-        }
-      : (assertCurrent: () => Promise<void>, finalize: () => Promise<void>) => {
-          if (!this.allowDomain) throw new Error('Network settings are unavailable.')
-          return this.allowDomain(approval.hostname, assertCurrent, finalize)
-        }
+    const persist = (
+      assertCurrent: () => Promise<void>,
+      finalize: () => Promise<void>
+    ): Promise<unknown> => {
+      if (!this.allowDestination) throw new Error('Network settings are unavailable.')
+      return this.allowDestination(
+        {
+          id: approval.requestId,
+          hostname: approval.hostname,
+          port: approval.port,
+          protocol: approval.protocol ?? 'https',
+          approvedAddresses: approval.evidence?.addresses ?? [],
+          scope: decision === 'project-allow' ? 'project' : 'global',
+          projectId,
+          sessionId: approval.sessionId,
+          recordId: approval.evidence?.recordId ?? approval.requestId,
+          createdAt: approval.createdAt
+        },
+        assertCurrent,
+        finalize
+      )
+    }
     // A recovery resumes saved consent; a live response first claims an unanswered request.
     if (!recovering)
       await this.patch(

@@ -101,13 +101,93 @@ const cases = [
   ['list_artifacts', { sessionId: 's/1' }, '/api/v1/sessions/s%2F1/artifacts', 'GET', undefined]
 ] as const
 
+const rpcCases = [
+  [
+    'search_literature',
+    { query: 'atlas', projectId: 'p1' },
+    'literature:search',
+    [{ scope: 'library', query: 'atlas', projectId: 'p1', limit: 20 }]
+  ],
+  ['get_literature_item', { itemId: 'i1' }, 'literature:get', ['i1']],
+  ['list_citation_styles', {}, 'literature:citation-styles', [{ kind: 'list' }]],
+  [
+    'format_references',
+    { itemIds: ['i1'], styleId: 'apa' },
+    'literature:format-references',
+    [{ itemIds: ['i1'], styleId: 'apa', locale: 'en-US' }]
+  ],
+  ['get_reference_metadata', { identifier: 'pmid:123' }, 'literature:lookup-metadata', ['pmid:123']]
+] as const
+
+const writeRpcCases = [
+  [
+    'import_literature',
+    { mode: 'preview', content: '@article{a}' },
+    'literature:import-records',
+    [{ mode: 'preview', content: '@article{a}' }]
+  ],
+  [
+    'update_project_literature',
+    { projectId: 'p1', itemIds: ['i1', 'i1'], included: false },
+    'literature:transact',
+    [
+      {
+        kind: 'set-project-items',
+        projectId: 'p1',
+        itemIds: ['i1'],
+        included: false,
+        source: 'library'
+      }
+    ]
+  ],
+  [
+    'create_literature_collection',
+    { name: 'Methods' },
+    'literature:transact',
+    [{ kind: 'create-collection', name: 'Methods' }]
+  ],
+  [
+    'update_collection_items',
+    { collectionId: 'c1', itemIds: ['i1'], included: true },
+    'literature:transact',
+    [{ kind: 'set-collection-item', collectionId: 'c1', itemId: 'i1', included: true }]
+  ],
+  [
+    'set_reading_status',
+    { itemIds: ['i1'], readingStatus: 'read' },
+    'literature:transact',
+    [{ kind: 'set-reading-status', itemIds: ['i1'], readingStatus: 'read' }]
+  ],
+  [
+    'set_literature_lifecycle',
+    { itemIds: ['i1'], state: 'deleted' },
+    'literature:transact',
+    [{ kind: 'set-item-lifecycle', itemIds: ['i1'], state: 'deleted' }]
+  ]
+] as const
+
+const rpcFetch = (
+  respond: (channel: string, args: unknown[]) => unknown = () => ({})
+): ReturnType<typeof vi.fn<(url: string, init: RequestInit) => Promise<Response>>> =>
+  vi.fn(async (url: string, init: RequestInit) => {
+    const channel = decodeURIComponent(url.split('/rpc/')[1])
+    const result = respond(channel, JSON.parse(init.body as string).args)
+    return result instanceof Response ? result : Response.json({ ok: true, result })
+  })
+
 describe('research MCP tools', () => {
   it('discovers descriptive snake_case tools without contacting the service', async () => {
     const connect = vi.fn()
     const { client } = await harness(connect)
     const { tools } = await client.listTools()
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      [...new Set(cases.map(([name]) => name))].sort()
+      [
+        ...new Set(
+          [...cases, ...rpcCases, ...writeRpcCases, ['create_literature_item']].map(
+            ([name]) => name
+          )
+        )
+      ].sort()
     )
     for (const tool of tools) {
       expect(tool.name).toMatch(/^[a-z]+(?:_[a-z]+)*$/)
@@ -153,6 +233,114 @@ describe('research MCP tools', () => {
     )
   })
 
+  it.each(rpcCases)('%s is a read-only Web RPC call', async (name, args, channel, rpcArgs) => {
+    const fetch = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+      Response.json({ ok: true, result: { styles: [], id: 'i1' } })
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const { tools } = await client.listTools()
+    expect(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true)
+    const response = await client.callTool({ name, arguments: args })
+    expect(response.isError).not.toBe(true)
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:44100/rpc/${encodeURIComponent(channel)}`)
+    expect(JSON.parse(fetch.mock.calls[0][1].body as string)).toEqual({
+      protocolVersion: 1,
+      args: rpcArgs
+    })
+  })
+
+  it.each(writeRpcCases)('%s writes through Web RPC', async (name, args, channel, rpcArgs) => {
+    const fetch = rpcFetch()
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const { tools } = await client.listTools()
+    const annotations = tools.find((tool) => tool.name === name)?.annotations
+    expect(annotations).toMatchObject({ readOnlyHint: false, openWorldHint: false })
+    const response = await client.callTool({ name, arguments: args })
+    expect(response.isError).not.toBe(true)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch.mock.calls[0][0]).toBe(`http://127.0.0.1:44100/rpc/${encodeURIComponent(channel)}`)
+    expect(JSON.parse(fetch.mock.calls[0][1].body as string).args).toEqual(rpcArgs)
+  })
+
+  it('creates an item from resolved metadata', async () => {
+    const item = { itemType: 'article-journal', title: 'Atlas' }
+    const fetch = rpcFetch((channel) =>
+      channel === 'literature:lookup-metadata' ? item : { kind: 'item', id: 'i1' }
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({
+      name: 'create_literature_item',
+      arguments: { identifier: '10.1000/atlas' }
+    })
+    expect(response.structuredContent).toEqual({ result: { kind: 'item', id: 'i1' } })
+    expect(JSON.parse(fetch.mock.calls[1][1].body as string).args).toEqual([
+      { kind: 'create-item', item }
+    ])
+  })
+
+  it('links committed imports to a project and reports committed IDs when linking fails', async () => {
+    const fetch = rpcFetch((channel) =>
+      channel === 'literature:import-records'
+        ? { entries: [], imported: { itemIds: ['i1', 'i2'], createdCount: 2, reusedCount: 0 } }
+        : Response.json(
+            { ok: false, error: { code: 'command-failed', message: 'x' } },
+            { status: 500 }
+          )
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({
+      name: 'import_literature',
+      arguments: { mode: 'commit', content: '@article{a}', projectId: 'p1' }
+    })
+    expect(response.isError).toBe(true)
+    expect(JSON.parse((response.content as Array<{ text: string }>)[0].text).error).toMatchObject({
+      code: 'literature_project_link_failed',
+      itemIds: ['i1', 'i2']
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('identifies a missing item after a redacted formatter failure', async () => {
+    const fetch = vi.fn<(url: string) => Promise<Response>>(async (url) =>
+      url.endsWith(encodeURIComponent('literature:format-references'))
+        ? Response.json(
+            { ok: false, error: { code: 'command-failed', message: 'Internal' } },
+            { status: 500 }
+          )
+        : Response.json({ ok: true })
+    )
+    const sdk = new OpenScienceClient({ baseUrl: 'http://127.0.0.1:44100', token: 't', fetch })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({
+      name: 'format_references',
+      arguments: { itemIds: ['gone', 'gone'], styleId: 'apa' }
+    })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response)).toContain('literature_item_not_found')
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports older services without Literature commands as unsupported', async () => {
+    const sdk = new OpenScienceClient({
+      baseUrl: 'http://127.0.0.1:44100',
+      token: 't',
+      fetch: async () =>
+        Response.json(
+          { ok: false, error: { code: 'method_not_found', message: 'SECRET' } },
+          { status: 404 }
+        )
+    })
+    const { client } = await harness(vi.fn(async () => sdk))
+    const response = await client.callTool({ name: 'list_citation_styles', arguments: {} })
+    expect(response.isError).toBe(true)
+    expect(JSON.stringify(response)).toContain('unsupported_capability')
+    expect(JSON.stringify(response)).not.toContain('SECRET')
+  })
+
   it.each([
     ['get_session', {}],
     ['get_session', { sessionId: 's1', arbitrary: true }],
@@ -172,6 +360,11 @@ describe('research MCP tools', () => {
     ],
     ['start_run', { projectId: 'p1', prompt: ' ' }],
     ['start_run', { projectId: 'p1', prompt: 'Go', permissionProfile: 'unknown' }],
+    ['search_literature', { limit: 21 }],
+    ['format_references', { itemIds: [], styleId: 'apa' }],
+    ['import_literature', { mode: 'commit' }],
+    ['import_literature', { mode: 'preview', content: 'x', projectId: 'p1' }],
+    ['set_literature_lifecycle', { itemIds: ['i1'], state: 'purged' }],
     ['execute', { command: 'stop' }]
   ])('rejects invalid %s requests before connecting', async (name, args) => {
     const connect = vi.fn()

@@ -74,7 +74,11 @@ export const renderMoleculeStructure = async (
   // returns empty. A SMILES-parsed molecule computes descriptors reliably, so if the direct
   // formula comes back empty, recompute it from the canonical SMILES.
   const canonicalSmiles = molecule.toSmiles()
-  const canonicalMolfile = molecule.toMolfile()
+  // V2000 uses three-digit atom/bond counts; OpenChemLib writes '?' on overflow.
+  const canonicalMolfile =
+    molecule.getAllAtoms() > 999 || molecule.getAllBonds() > 999
+      ? molecule.toMolfileV3()
+      : molecule.toMolfile()
   const heavyAtomCount = countHeavyAtoms(molecule)
 
   let formula = molecule.getMolecularFormula()

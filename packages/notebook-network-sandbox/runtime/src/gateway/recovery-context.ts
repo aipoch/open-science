@@ -4,7 +4,7 @@ export const NETWORK_APPROVAL_REQUIRED =
   'OPEN_SCIENCE_NETWORK_DOMAIN_BLOCKED: Destination approval is required. ' +
   'Call the open-science-notebook request_network_access tool with the trusted recordId from OPEN_SCIENCE_NETWORK_BLOCK_RECORD and the access purpose. ' +
   'This opens a user approval card. Do not ask the user to manually edit the allowed domains list as the first recovery step. ' +
-  'Retry explicitly on a new connection only after allowedOnce, alwaysAllowed, or alreadyAllowed. ' +
+  'Retry explicitly on a new connection only after allowedOnce, projectAllowed, alwaysAllowed, or alreadyAllowed. ' +
   'If denied, stop; if unavailable, report that approval could not be presented. Do not bypass the sandbox.'
 
 export const NETWORK_POLICY_BLOCKED =

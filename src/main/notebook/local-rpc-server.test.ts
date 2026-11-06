@@ -123,6 +123,53 @@ afterEach(async () => {
 })
 
 describe('notebook local RPC server', () => {
+  it('retries failed delegated lane cleanup without restoring its revoked capability', async () => {
+    const root = await createStorageRoot()
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'project',
+      repository: new NotebookRunRepository(root)
+    })
+    const shutdown = vi.spyOn(service, 'shutdown').mockRejectedValueOnce(new Error('not reaped'))
+    const server = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    try {
+      const child = await server.issueDelegatedNotebookConnection({
+        projectId: 'project',
+        sessionId: 'session',
+        rootFrameId: 'root',
+        agentFrameId: 'child',
+        attemptId: 'attempt',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment',
+        promptMessageId: 'prompt',
+        workspaceCwd: root,
+        isAttemptWritable: () => true
+      })
+      await expect(child.revoke()).rejects.toThrow('not reaped')
+      await expect(child.revoke()).resolves.toBeUndefined()
+      expect(shutdown).toHaveBeenCalledTimes(2)
+      expect(shutdown.mock.calls[1][0]).toMatchObject({
+        sessionId: 'session',
+        delegatedWorkAttemptId: 'attempt',
+        provenanceContext: { agentFrameId: 'child' }
+      })
+      const response = await fetchLocalRpc(
+        child,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${child.token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ method: 'state', params: { sessionId: 'session' } })
+        },
+        'revoked delegated cleanup test'
+      )
+      expect(response.status).toBe(401)
+    } finally {
+      await server.close()
+      await service.shutdownAll()
+    }
+  })
+
   it('does not recreate a missing data root before empty-folder acceptance', async () => {
     const parentRoot = await createStorageRoot()
     const missingDataRoot = join(parentRoot, 'missing-data-root')
@@ -5816,4 +5863,30 @@ describe('real ACP / RPC / Runtime approval wiring', () => {
     expect(provisioner.provisionPython).not.toHaveBeenCalled()
     expect(h.emitted).toHaveLength(0)
   })
+})
+
+it('rejects research generation through a conversation Artifact capability', async () => {
+  const root = await createStorageRoot()
+  const runtime = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project-1',
+    repository: new NotebookRunRepository(root)
+  })
+  const server = new NotebookLocalRpcServer(runtime, { transport: 'tcp' })
+  const connection = await server.ensureStarted()
+  const token = server.issueArtifactRunCapability(artifactCapabilityBinding)
+  try {
+    const response = await fetch(connection.endpoint, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ method: 'researchVideoGenerate', params: { specPath: 'video.json' } })
+    })
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({
+      error: 'Unknown notebook RPC method: researchVideoGenerate'
+    })
+  } finally {
+    await server.close()
+  }
 })

@@ -282,6 +282,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    pendingRetryable,
     pendingBindingSessionId,
     firstPromptDraft,
     wslSetup,
@@ -317,6 +318,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void pendingRetryable
   void firstPromptDraft
   void pendingBindingSessionId
   void wslSetup
@@ -521,6 +523,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    pendingRetryable: source.pendingRetryable,
     firstPromptDraft: source.firstPromptDraft,
     pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,

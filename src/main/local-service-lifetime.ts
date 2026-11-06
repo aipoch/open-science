@@ -56,6 +56,7 @@ export async function readServiceLifetime(
 
 export type LocalServiceLifetime = {
   snapshot(): ServiceLifetimeSnapshot
+  startFirstConnectionTimeout(): void
   preservesService(appId: string, connectionId: string): boolean
   connect(appId: string, connectionId: string): void
   disconnect(appId: string, connectionId: string): void
@@ -82,6 +83,7 @@ export async function createLocalServiceLifetime(options: {
   report(error: unknown): void
   disconnectGraceMs?: number
   firstConnectionMs?: number
+  deferFirstConnectionTimeout?: boolean
 }): Promise<LocalServiceLifetime> {
   const previous = await readServiceLifetime(options.configRoot).catch(async (error) => {
     // A new service already owns Config Root. Invalid historical intent is evidence, not a live
@@ -114,6 +116,7 @@ export async function createLocalServiceLifetime(options: {
   const apps = new Map<string, Set<string>>()
   let timer: ReturnType<typeof setTimeout> | undefined
   let closed = false
+  let awaitingTransport = options.deferFirstConnectionTimeout ?? false
   let noAppsDeadline = Date.now() + (options.firstConnectionMs ?? LOCAL_SERVICE_FIRST_CONNECTION_MS)
   let reservation: (AppLeaveAttempt & { appId: string; connectionId: string }) | undefined
   const preservedLeaves = new Map<string, string>()
@@ -245,6 +248,7 @@ export async function createLocalServiceLifetime(options: {
     clearTimeout(timer)
     if (
       closed ||
+      awaitingTransport ||
       uncertainWrite ||
       stopAdmissionRetired ||
       reservation ||
@@ -267,6 +271,13 @@ export async function createLocalServiceLifetime(options: {
   grace(options.firstConnectionMs ?? LOCAL_SERVICE_FIRST_CONNECTION_MS)
   return {
     snapshot,
+    startFirstConnectionTimeout(): void {
+      if (!awaitingTransport || closed || record.stopping || stopAdmissionRetired) return
+      awaitingTransport = false
+      const milliseconds = options.firstConnectionMs ?? LOCAL_SERVICE_FIRST_CONNECTION_MS
+      noAppsDeadline = Date.now() + milliseconds
+      grace(milliseconds)
+    },
     preservesService,
     connect(appId: string, connectionId: string): void {
       assertCertain()
@@ -278,6 +289,7 @@ export async function createLocalServiceLifetime(options: {
       const connections = apps.get(appId) ?? new Set<string>()
       connections.add(connectionId)
       apps.set(appId, connections)
+      awaitingTransport = false
       clearTimeout(timer)
     },
     disconnect(appId: string, connectionId: string): void {

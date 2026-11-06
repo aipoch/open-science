@@ -1,5 +1,6 @@
 import { createComputeExecution } from '@aipoch/compute/node'
 import { describe, expect, it, vi } from 'vitest'
+import { resourceActivity } from '../resource-diagnostics/activity'
 
 import type { JobPollerDeps } from '@aipoch/compute/node'
 import type { ComputeJob } from '../../shared/compute'
@@ -146,8 +147,10 @@ describe('createComputeJobRuntime', () => {
     const automatic = pollerDeps.harvestScheduler!.schedule(job)
     const manual = retry(request)
     await vi.waitFor(() => expect(harvest).toHaveBeenCalledOnce())
+    expect(resourceActivity.state.sampling).toBe(true)
     release()
     await Promise.all([automatic, manual])
+    expect(resourceActivity.state.sampling).toBe(false)
     expect(harvest).toHaveBeenCalledOnce()
     job.harvested_at = 123
     await retry(request)

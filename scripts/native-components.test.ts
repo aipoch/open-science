@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { spawnSync } from 'node:child_process'
 import { copyFile, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -237,6 +238,59 @@ it('keeps dry-run compilation on the same producer without signing or publishing
   expect(job.steps.find((s) => s.name === 'Record verified artifacts').run).toContain('--dry-run')
 })
 
+it('verifies fresh published bytes on every native target without a producer fallback', async () => {
+  const workflow = load(
+    await readFile('.github/workflows/native-components-download-check.yml', 'utf8')
+  ) as {
+    on: Record<string, unknown>
+    permissions: Record<string, string>
+    jobs: {
+      verify: {
+        strategy: { matrix: { include: Array<{ target: string; runner: string }> } }
+        steps: Array<Step & { uses?: string; with?: Record<string, unknown> }>
+      }
+    }
+  }
+  expect(Object.keys(workflow.on).sort()).toEqual(['pull_request', 'workflow_dispatch'])
+  expect(workflow.on.pull_request).toEqual({
+    paths: [
+      'build/native-components-lock.json',
+      '.github/workflows/native-components-download-check.yml',
+      'scripts/native-components.mjs',
+      'scripts/native-components.test.ts',
+      'build/native-components.json',
+      '.github/workflows/native-components.yml',
+      'scripts/produce-native-components.mjs',
+      'scripts/verify-native-component-signatures.ps1',
+      'packages/credential-identity-probe-native/**',
+      'packages/process-tree-native/**',
+      'packages/safe-file-publisher-native/**'
+    ]
+  })
+  expect(workflow.permissions).toEqual({ contents: 'read' })
+  const job = workflow.jobs.verify
+  expect(job.strategy.matrix.include.map(({ target }) => target).sort()).toEqual(
+    [...spec.targets].sort()
+  )
+  expect(job.steps.find(({ uses }) => uses?.startsWith('actions/setup-node@'))?.with).toEqual({
+    'node-version': spec.node,
+    'package-manager-cache': false
+  })
+  const install = job.steps.find(({ name }) => name === 'Install verification dependencies only')!
+  const download = job.steps.find(({ name }) => name === 'Verify fresh CDN downloads')!
+  const test = job.steps.find(({ name }) => name === 'Test downloaded native interfaces')!
+  expect(install.run).toContain('--ignore-scripts')
+  expect(download.run).toContain('test ! -d node_modules/.cache/native-components')
+  expect(download.run).toContain('process.env.EXPECTED_TARGET')
+  expect(download.run).toContain('node scripts/native-components.mjs')
+  expect(job.steps.indexOf(install)).toBeLessThan(job.steps.indexOf(download))
+  expect(job.steps.indexOf(download)).toBeLessThan(job.steps.indexOf(test))
+  expect(test.run).toContain('packages/process-tree-native/test/*.cjs')
+  expect(job.steps.map(({ run }) => run ?? '').join('\n')).not.toMatch(
+    /produce-native-components|build:native-source|node-gyp|\bpublish\b/
+  )
+})
+
 it('verifies both packaged copies and rejects a byte changed by a later signing pass', async () => {
   const { directory, catalog } = await fixture()
   catalog['linux-x64'].source = await sourceFingerprint()
@@ -353,4 +407,108 @@ it('the installed Electron rebuilder skips linked first-party gyp sources', asyn
     await symlink(source, join(directory, 'node_modules/@aipoch', name), 'junction')
   }
   await expect(rebuildElectronDependencies(directory)).resolves.toBeUndefined()
+})
+
+// Exercise the actual workflow conditions: a missing/failed proof must not suppress downloads.
+type DownloadWorkflow = {
+  concurrency: { group: string; 'cancel-in-progress': boolean }
+  jobs: Record<
+    string,
+    {
+      if?: string
+      needs?: string | string[]
+      outputs?: Record<string, string>
+      steps: Array<
+        Step & {
+          id?: string
+          if?: string
+          uses?: string
+          env?: Record<string, string>
+          with?: Record<string, unknown>
+        }
+      >
+    }
+  >
+}
+
+const downloadWorkflow = async (): Promise<DownloadWorkflow> =>
+  load(
+    await readFile('.github/workflows/native-components-download-check.yml', 'utf8')
+  ) as DownloadWorkflow
+
+it.each([
+  ['pull_request', 'true', false],
+  ['pull_request', 'false', true],
+  ['pull_request', '', true],
+  ['pull_request', undefined, true],
+  ['workflow_dispatch', 'true', true],
+  ['workflow_dispatch', '', true]
+])('routes %s with verified=%s to fresh downloads=%s', async (event, verified, expected) => {
+  const { jobs } = await downloadWorkflow()
+  expect(jobs.verify.needs).toBe('plan')
+  expect(
+    runInNewContext(jobs.verify.if!, {
+      github: { event_name: event },
+      needs: { plan: { outputs: { verified } } }
+    })
+  ).toBe(expected)
+})
+
+it.each(['success', 'failure', 'cancelled', 'skipped'])(
+  'records only successful five-target results (%s)',
+  async (result) => {
+    const { jobs } = await downloadWorkflow()
+    expect(jobs.remember.needs).toEqual(['plan', 'verify'])
+    for (const event of ['pull_request', 'workflow_dispatch']) {
+      expect(
+        runInNewContext(jobs.remember.if!, {
+          github: { event_name: event },
+          needs: { verify: { result } }
+        })
+      ).toBe(event === 'pull_request' && result === 'success')
+    }
+  }
+)
+
+it('keys success receipts by exact native inputs in the same PR without caching executable bytes', async () => {
+  const { jobs, concurrency } = await downloadWorkflow()
+  expect(concurrency['cancel-in-progress']).toBe(false)
+  expect(concurrency.group).toContain('github.event.pull_request.number')
+  const input = jobs.plan.steps.find((s) => s.id === 'inputs')!
+  const key = input.env!.VERIFICATION_KEY
+  expect(key).toContain('github.event.pull_request.number')
+  expect(key).not.toContain('github.sha')
+  for (const path of [
+    'package.json',
+    'package-lock.json',
+    '.npmrc',
+    'build/native-components*.json',
+    '.github/workflows/native-components*.yml',
+    'scripts/native-components.mjs',
+    'scripts/native-components.test.ts',
+    'scripts/produce-native-components.mjs',
+    'scripts/verify-native-component-signatures.ps1',
+    ...Object.keys(spec.packages).map((name) => 'packages/' + name + '/**')
+  ])
+    expect(key).toContain("'" + path + "'")
+  expect(key).not.toContain('src/renderer')
+  const restore = jobs.plan.steps.find((s) => s.id === 'verified')!
+  expect(restore.uses).toMatch(/^actions\/cache\/restore@[a-f0-9]{40}$/)
+  expect(restore.if).toBe("github.event_name == 'pull_request'")
+  expect(restore.with).toEqual({
+    path: '.native-download-verified',
+    key: '${{ steps.inputs.outputs.key }}',
+    'lookup-only': true
+  })
+  expect(jobs.plan.outputs).toEqual({
+    key: '${{ steps.inputs.outputs.key }}',
+    verified: '${{ steps.verified.outputs.cache-hit }}'
+  })
+  const save = jobs.remember.steps.find((s) => s.uses?.startsWith('actions/cache/save@'))!
+  expect(save.with).toEqual({
+    path: '.native-download-verified',
+    key: '${{ needs.plan.outputs.key }}'
+  })
+  expect(jobs.verify.steps.some((s) => s.uses?.startsWith('actions/cache/'))).toBe(false)
+  expect(jobs.plan.steps.some((s) => s.uses?.startsWith('actions/cache/save'))).toBe(false)
 })

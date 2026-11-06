@@ -21,7 +21,7 @@ export const createEngineAt = (
         .update(JSON.stringify(options.modelRecipe))
       const require = createRequire(pathToFileURL(join(resources, 'host.mjs')))
       hash.update(JSON.stringify(sharp.versions))
-      for (const dependency of ['pdfjs-dist', '@napi-rs/canvas']) {
+      for (const dependency of ['pdfjs-dist', '@napi-rs/canvas', 'tesseract.js']) {
         hash
           .update(dependency)
           .update(await readFile(require.resolve(`${dependency}/package.json`)))
@@ -59,8 +59,11 @@ export const createEngineAt = (
         child.once('error', (error) => {
           failure = error
         })
-        child.once('close', (code) => {
-          if (code !== 0 && !failure) failure = new Error(stderr.trim() || 'PDF extraction failed.')
+        child.once('close', (code, signal) => {
+          if (code !== 0 && !failure) {
+            const message = stderr.trim() || 'PDF extraction failed.'
+            failure = new Error(`${message} (exitCode=${code}, signal=${signal})`)
+          }
           resolve()
         })
       })
@@ -103,7 +106,8 @@ export const createEngineAt = (
           output,
           assets: dirname(runtime.path),
           runtime: runtime.path,
-          pages: request.identity.requestedPages
+          pages: request.identity.requestedPages,
+          ...(request.ocr ? { ocr: request.ocr } : {})
         }) + '\n'
       )
       if (request.signal.aborted) abort()

@@ -28,6 +28,11 @@ import {
   literatureCatalogCommandSchema
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+import {
+  literatureOverviewSource,
+  type LiteratureOverview
+} from '../../../../shared/literature-overview'
+import type { OverviewBatch } from '../../../../shared/literature-overview-batch'
 import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
@@ -437,6 +442,11 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          overviewBatch: vi.fn().mockResolvedValue(null),
+          studySnapshot: vi.fn(async (request: { expectedSourceKey: string }) => ({
+            sourceKey: request.expectedSourceKey,
+            issue: 'not-generated' as const
+          })),
           related: vi.fn(),
           publicationCheck: vi.fn(
             async (request: { itemId: string; expectedMetadataRevision: number }) => ({
@@ -590,6 +600,209 @@ describe('LiteratureLibraryPage', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe('older')
     }
   )
+
+  it.each([
+    ['matching source and language', undefined, 'en', true],
+    ['obsolete source', 'obsolete-source', 'en', false],
+    ['another language', undefined, 'fr', false]
+  ] as const)(
+    'refreshes a mounted detail only for its saved batch result: %s',
+    async (_name, otherSource, language, shouldRefresh) => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      const sourceKey = literatureOverviewSource(libraryItem).key
+      const wave = Promise.withResolvers<void>()
+      const job: OverviewBatch = {
+        id: '00000000-0000-4000-8000-000000000000',
+        paused: true,
+        rows: [
+          {
+            request: {
+              itemId: libraryItem.id,
+              expectedSourceKey: otherSource ?? sourceKey,
+              language
+            },
+            status: 'pending'
+          }
+        ]
+      }
+      const saved: LiteratureOverview = {
+        sourceKey: otherSource ?? sourceKey,
+        model: 'test',
+        coverage: 'abstract',
+        sections: {
+          question: 'Saved by the batch without another inference',
+          population: null,
+          methods: null,
+          results: null,
+          limitations: null
+        }
+      }
+      let stored: LiteratureOverview | undefined
+      const overviewRequest = vi.fn<typeof window.api.literature.studySnapshot>(async (request) =>
+        request.mode === 'read'
+          ? stored &&
+            request.language === language &&
+            request.expectedSourceKey === stored.sourceKey
+            ? stored
+            : { sourceKey: request.expectedSourceKey, issue: 'not-generated' }
+          : saved
+      )
+      window.api.literature.studySnapshot = overviewRequest
+      vi.mocked(window.api.literature.overviewBatch).mockImplementation(async (request) => {
+        if (request.action === 'resume') job.paused = false
+        if (request.action === 'advance') {
+          await wave.promise
+          stored = saved
+          job.rows[0].status = 'succeeded'
+        }
+        return structuredClone(job)
+      })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const row = await screen.findByRole('button', { name: libraryItem.item.title })
+      fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
+      const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
+      fireEvent.click(within(batch).getByRole('button', { name: 'Continue remaining' }))
+      await waitFor(() =>
+        expect(window.api.literature.overviewBatch).toHaveBeenCalledWith({
+          action: 'advance',
+          jobId: job.id
+        })
+      )
+      fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
+      fireEvent.click(row)
+      const overview = await screen.findByRole('region', { name: 'Paper overview' })
+      await waitFor(() => expect(overviewRequest).toHaveBeenCalledTimes(1))
+      if (shouldRefresh) {
+        const generating = within(overview).getByRole('button', { name: 'Generating overview…' })
+        expect(generating).toHaveProperty('disabled', true)
+        expect(overview.getAttribute('aria-busy')).toBe('true')
+        fireEvent.click(generating)
+        expect(overviewRequest.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+      } else {
+        expect(within(overview).getByRole('button', { name: 'Generate overview' })).toBeTruthy()
+        expect(overview.getAttribute('aria-busy')).toBe('false')
+      }
+
+      await act(async () => {
+        wave.resolve()
+        await wave.promise
+      })
+      await waitFor(() =>
+        expect(window.api.literature.overviewBatch).toHaveBeenCalledWith({
+          action: 'advance',
+          jobId: job.id
+        })
+      )
+
+      expect(screen.getByRole('region', { name: 'Paper overview' })).toBe(overview)
+      if (shouldRefresh) {
+        await within(overview).findByText('Saved by the batch without another inference')
+        expect(overviewRequest).toHaveBeenCalledTimes(2)
+        expect(within(overview).getByRole('button', { name: 'Regenerate' })).toBeTruthy()
+        expect(overview.getAttribute('aria-busy')).toBe('false')
+      } else {
+        expect(
+          within(overview).queryByText('Saved by the batch without another inference')
+        ).toBeNull()
+        expect(overviewRequest).toHaveBeenCalledTimes(1)
+      }
+      expect(overviewRequest.mock.calls.every(([request]) => request.mode === 'read')).toBe(true)
+    }
+  )
+
+  it.each(['failed', 'pending'] as const)(
+    'restores the manual overview action after an observed running batch reference becomes %s',
+    async (status) => {
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+        request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] }
+      )
+      get.mockResolvedValue(libraryItem)
+      const job: OverviewBatch = {
+        id: '00000000-0000-4000-8000-000000000000',
+        paused: true,
+        rows: [
+          {
+            request: {
+              itemId: libraryItem.id,
+              expectedSourceKey: literatureOverviewSource(libraryItem).key,
+              language: 'en'
+            },
+            status: 'running'
+          }
+        ]
+      }
+      vi.mocked(window.api.literature.overviewBatch).mockImplementation(async () =>
+        structuredClone(job)
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      fireEvent.click(await screen.findByRole('button', { name: libraryItem.item.title }))
+      const overview = await screen.findByRole('region', { name: 'Paper overview' })
+      expect(
+        await within(overview).findByRole('button', { name: 'Generating overview…' })
+      ).toHaveProperty('disabled', true)
+      job.rows[0].status = status
+      expect(
+        await within(overview).findByRole(
+          'button',
+          { name: 'Generate overview' },
+          { timeout: 2500 }
+        )
+      ).toHaveProperty('disabled', false)
+      expect(overview.getAttribute('aria-busy')).toBe('false')
+    }
+  )
+
+  it('keeps batch details in a dialog and generation in the selection menu', async () => {
+    const records = Array.from({ length: 5 }, (_, index) => createLibraryItem(index))
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) =>
+      request.scope === 'library' ? { entries: records } : { entries: [] }
+    )
+    get.mockImplementation(async (id) => records.find((item) => item.id === id))
+    vi.mocked(window.api.literature.overviewBatch).mockResolvedValue({
+      id: '00000000-0000-4000-8000-000000000000',
+      paused: true,
+      rows: records.map((item, index) => ({
+        request: { itemId: item.id, expectedSourceKey: item.id, language: 'en' },
+        status: index === 0 ? 'failed' : 'succeeded',
+        issue: index === 0 ? 'source-unavailable' : undefined
+      }))
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('button', { name: records[0].item.title })
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: 'Batch overviews' }))
+    const batch = screen.getByRole('dialog', { name: 'Batch overviews' })
+    expect(within(batch).getAllByRole('listitem')).toHaveLength(5)
+    expect(within(batch).getAllByRole('button', { name: 'View details' })).toHaveLength(4)
+    expect(
+      within(batch).getByText('Add an abstract or readable full-text PDF to generate an overview.')
+    ).toBeTruthy()
+    expect(batch.closest('[data-slot="literature-action-rail"]')).toBeNull()
+    fireEvent.click(within(batch).getAllByRole('button', { name: 'Close' })[0])
+    fireEvent.click(screen.getByLabelText(`Select ${records[0].item.title}`))
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    const toolbar = screen
+      .getByRole('button', { name: 'Clear selection' })
+      .closest('[data-slot="literature-selection-toolbar"]') as HTMLElement
+    fireEvent.click(within(toolbar).getByRole('button', { name: 'More actions' }))
+    const generate = await screen.findByRole('button', { name: 'Generate overviews' })
+    expect(generate).toHaveProperty('disabled', false)
+    expect(generate.closest('[data-slot="literature-selection-toolbar"]')).toBeNull()
+    fireEvent.click(generate)
+    await screen.findByRole('dialog', { name: 'Batch overviews' })
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Close' })[0])
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.queryByRole('button', { name: 'Generate overviews' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Batch overviews' }))
+    expect(within(screen.getByRole('dialog')).getAllByRole('listitem')).toHaveLength(5)
+  })
 
   describe('reading status', () => {
     const filterUnread = async (): Promise<void> => {
@@ -3844,6 +4057,62 @@ describe('LiteratureLibraryPage', () => {
     ).toContain('shrink-0')
   })
 
+  it('adapts navigation to its container until the user chooses a sidebar state', () => {
+    let width = 420
+    const resize: (() => void)[] = []
+    const disconnected = vi.fn()
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return { width: this.tagName === 'MAIN' ? width : 0 } as DOMRect
+      })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        private main = false
+        constructor(private callback: () => void) {}
+        observe(element: Element): void {
+          if (element.tagName === 'MAIN') {
+            this.main = true
+            resize.push(this.callback)
+          }
+        }
+        unobserve(): void {
+          // The production observers disconnect their entire observation set.
+        }
+        disconnect(): void {
+          if (this.main) disconnected()
+        }
+      }
+    )
+    try {
+      const view = render(<LiteratureLibraryPage />)
+      const sidebar = screen.getByRole('complementary')
+      expect(sidebar.className).toContain('w-14')
+      expect(window.innerWidth).toBeGreaterThan(width)
+      const resizeTo = (nextWidth: number): void => {
+        width = nextWidth
+        act(() => resize.forEach((callback) => callback()))
+      }
+      resizeTo(1100)
+      expect(sidebar.className).toContain('w-60')
+      resizeTo(420)
+      expect(sidebar.className).toContain('w-14')
+      fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar panel' }))
+      resizeTo(1100)
+      resizeTo(420)
+      expect(sidebar.className).toContain('w-60')
+      fireEvent.keyDown(window, { key: 'b', metaKey: true })
+      expect(sidebar.className).toContain('w-14')
+      resizeTo(1100)
+      expect(sidebar.className).toContain('w-14')
+      view.unmount()
+      expect(disconnected).toHaveBeenCalledTimes(1)
+    } finally {
+      measure.mockRestore()
+    }
+  })
+
   it('collapses the Literature navigation into an icon rail', async () => {
     render(<LiteratureLibraryPage />)
 
@@ -4150,7 +4419,7 @@ describe('LiteratureLibraryPage', () => {
     })
     expect(await screen.findByRole('dialog', { name: 'Import PDF' })).not.toBeNull()
     expect(stageLocalFile).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     fireEvent.drop(zone, {
       dataTransfer: {
@@ -7777,7 +8046,9 @@ describe('LiteratureLibraryPage', () => {
     expect(referenceRow?.className).toContain('hover:bg-bg-200')
     expect(referenceRow?.className).toContain('bg-bg-000')
     expect(referenceRow?.className).not.toContain('transition-colors')
-    const stickyRowCells = Array.from(referenceRow?.querySelectorAll('td.sticky') ?? [])
+    const stickyRowCells = Array.from(referenceRow?.querySelectorAll('td') ?? []).filter((cell) =>
+      cell.classList.contains('@min-[640px]/literature-results:sticky')
+    )
     expect(stickyRowCells).toHaveLength(2)
     for (const cell of stickyRowCells) {
       expect(cell.className).toContain('bg-inherit')
@@ -11424,6 +11695,75 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('status')).not.toBeNull()
   })
 
+  it.each(['success', 'failure'] as const)(
+    'keeps a cancelled native preview closed after a late %s',
+    async (outcome) => {
+      let resolve!: (value: unknown) => void
+      let reject!: (error: Error) => void
+      importRecords.mockImplementationOnce(
+        () =>
+          new Promise((yes, no) => {
+            resolve = yes
+            reject = no
+          })
+      )
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await openMenu(screen.getByRole('button', { name: 'Add' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
+        target: { value: '10.1234/paper\nPMID:35486828' }
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Review references' }))
+      await waitFor(() => expect(importRecords).toHaveBeenCalledTimes(1))
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByRole('dialog')).toBeNull()
+      await act(async () => {
+        if (outcome === 'failure') reject(new Error('Late failure'))
+        else
+          resolve({
+            format: 'items',
+            items: [libraryItem.item],
+            entries: [],
+            errors: [],
+            scannedEntries: 1,
+            truncated: false
+          })
+      })
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(importRecords.mock.calls.some(([request]) => request.mode === 'commit')).toBe(false)
+    }
+  )
+
+  it('previews pasted identifiers before committing the selected batch', async () => {
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await openMenu(screen.getByRole('button', { name: 'Add' }))
+    const addLink = screen.getByRole('menuitem', { name: 'Add from identifiers or links' })
+    expect(
+      within(addLink).getByText('Add from identifiers or links', { exact: true })
+    ).not.toBeNull()
+    expect(
+      within(addLink).getByText('DOI, arXiv, PMID, PMCID or links', { exact: true })
+    ).not.toBeNull()
+    fireEvent.click(addLink)
+    expect(screen.getByRole('dialog', { name: 'Add from identifiers or links' })).not.toBeNull()
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
+      target: { value: '10.1234/paper\nPMID:35486828' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Review references' }))
+    await waitFor(() =>
+      expect(importRecords).toHaveBeenCalledWith({ mode: 'preview', items: expect.any(Array) })
+    )
+    const items = importRecords.mock.calls[0][0].items
+    expect(items).toHaveLength(2)
+    expect(importRecords.mock.calls.some(([request]) => request.mode === 'commit')).toBe(false)
+    fireEvent.click(await screen.findByRole('button', { name: 'Import references' }))
+    await waitFor(() => expect(importRecords).toHaveBeenCalledWith({ mode: 'commit', items }))
+  })
+
   it.each([
     {
       destination: 'library',
@@ -11482,8 +11822,8 @@ describe('LiteratureLibraryPage', () => {
         await screen.findByRole('heading', { name: 'Retrieval research' })
       }
       await openMenu(screen.getByRole('button', { name: 'Add' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-      fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: reference }
       })
       fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11596,8 +11936,8 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     const lookup = async (): Promise<HTMLElement> => {
       await openMenu(screen.getByRole('button', { name: 'Add' }))
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-      fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
+      fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
         target: { value: '10.1234/linked-paper' }
       })
       fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11672,8 +12012,8 @@ describe('LiteratureLibraryPage', () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await openMenu(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-    fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))
@@ -11731,8 +12071,8 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Retrieval research/ }))
     await screen.findByRole('heading', { name: 'Retrieval research' })
     await openMenu(screen.getByRole('button', { name: 'Add' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from DOI or link' }))
-    fireEvent.change(screen.getByLabelText('DOI or arXiv link'), {
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Add from identifiers or links' }))
+    fireEvent.change(screen.getByLabelText('DOI, arXiv, PMID, PMCID or links'), {
       target: { value: '10.1234/linked-paper' }
     })
     fireEvent.click(screen.getByRole('button', { name: 'Find reference' }))

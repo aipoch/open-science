@@ -1,6 +1,9 @@
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
-import { domainToASCII } from 'node:url'
+import {
+  normalizeNetworkHostname as normalizeRequestedHost,
+  formatNetworkHostname
+} from '../../../src/network-address.js'
 
 type Rule = Readonly<{
   suffix: string
@@ -80,26 +83,6 @@ const ruleAccepts = (rule: Rule, host: string, port: number): boolean => {
   return rule.subdomains ? host.endsWith(`.${rule.suffix}`) : host === rule.suffix
 }
 
-const normalizeRequestedHost = (input: string): string | undefined => {
-  const unwrapped = input.startsWith('[') && input.endsWith(']') ? input.slice(1, -1) : input
-  if (isIP(unwrapped) === 4) return unwrapped
-  if (isIP(unwrapped) === 6)
-    return new URL(`http://[${unwrapped}]/`).hostname.slice(1, -1).toLowerCase()
-  const ascii = domainToASCII(unwrapped.trim().replace(/\.$/, '').toLowerCase())
-  if (!ascii || ascii.length > 253) return undefined
-  const labels = ascii.split('.')
-  if (
-    labels.some(
-      (label) => !label || label.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label)
-    )
-  )
-    return undefined
-  return ascii
-}
-
-const formatNetworkHostname = (hostname: string): string =>
-  hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname
-
 const canonicalAddress = (address: string): string => {
   const unscoped = address.split('%', 1)[0]!
   return isIP(unscoped) === 6 ? new URL(`http://[${unscoped}]/`).hostname.slice(1, -1) : unscoped
@@ -134,6 +117,7 @@ const reviewPrivateDestination = async (request: {
   const hostname = normalizeRequestedHost(request.hostname)
   if (!hostname || !validPrivateService({ hostname, port: request.port }))
     return { ok: false, reason: 'invalid' }
+  if (request.protocol !== 'http' && !isIP(hostname)) return { ok: false, reason: 'ineligible' }
   return {
     ok: true,
     destination: {
@@ -147,8 +131,6 @@ const reviewPrivateDestination = async (request: {
 
 class DestinationPolicy {
   readonly #trusted: readonly TrustedPrivateDestination[]
-  readonly #allowed: readonly Rule[]
-  readonly #asked: readonly Rule[]
   readonly #denied: readonly Readonly<{ raw: string; rule: Rule }>[]
   readonly #reasons: Readonly<Record<string, string>>
 
@@ -160,8 +142,6 @@ class DestinationPolicy {
         hostname: normalizeRequestedHost(entry.hostname)!,
         protocol: entry.protocol ?? 'https'
       }))
-    this.#allowed = options.allowedDomains.map(parseRule)
-    this.#asked = (options.askDomains ?? []).map(parseRule)
     this.#denied = options.deniedDomains.map((raw) => ({ raw, rule: parseRule(raw) }))
     this.#reasons = options.deniedDomainReasons ?? {}
   }
@@ -195,31 +175,11 @@ class DestinationPolicy {
     if (!addresses.length)
       return { kind: 'deny', reason: 'host did not resolve', configurable: false }
     if (trusted) return { kind: 'allow', address: addresses[0]! }
-    if (isIP(host))
-      return {
-        kind: 'deny',
-        reason: 'literal IP destinations require a trusted private service rule',
-        configurable: false
-      }
-    if (protocol !== 'https')
-      return {
-        kind: 'deny',
-        reason: 'only HTTPS destinations are allowed by default',
-        configurable: false
-      }
     const address = addresses[0]!
-    const needsApproval = this.#asked.some((rule) => ruleAccepts(rule, host, port))
-    if (
-      this.#allowed.some(
-        (rule) =>
-          ruleAccepts(rule, host, port) &&
-          (!needsApproval || (!rule.subdomains && !rule.labels && !rule.all))
-      )
-    )
-      return { kind: 'allow', address }
+    if (protocol === 'https' && !isIP(host)) return { kind: 'allow', address }
     return {
       kind: 'ask',
-      source: needsApproval ? 'explicit' : 'unknown',
+      source: 'explicit',
       host,
       address,
       addresses: [...new Set(addresses.map(canonicalAddress))].sort()

@@ -567,6 +567,15 @@ const defaultPathMapper =
     })
   }
 
+export const mapWsl2Path = (
+  target: Wsl2Target,
+  path: string,
+  signal?: AbortSignal
+): Promise<string> => {
+  validateTarget(target)
+  return defaultPathMapper(target)(path, signal)
+}
+
 const defaultCleanupGuest: Wsl2GuestCleanup = ({ distro, user, receipt, token }) =>
   new Promise((resolve) => {
     execFile(

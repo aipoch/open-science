@@ -115,11 +115,20 @@ describe('Literature Library MCP server', () => {
     const client = await connect(server)
 
     expect(LITERATURE_LIBRARY_MCP_SERVER_NAME).toBe('open-science-library')
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual([
+    const tools = (await client.listTools()).tools
+    expect(tools.map((tool) => tool.name)).toEqual([
       'search_library',
       'read_library_abstract',
       'read_library_pdf',
       'save_to_inbox'
+    ])
+    const saveTool = tools.find((tool) => tool.name === 'save_to_inbox')!
+    expect(saveTool.description).toContain('Pass exactly one of refs, candidates, or filename')
+    expect(saveTool.description).toContain('retry save_to_inbox')
+    expect(Object.keys(saveTool.inputSchema.properties!)).toEqual([
+      'refs',
+      'candidates',
+      'filename'
     ])
 
     const searched = await client.callTool({
@@ -396,10 +405,93 @@ describe('Literature Library MCP server', () => {
       arguments: { refs: ['pmid:35486828'], candidates: [discovery] }
     })
     expect(ambiguous.isError).toBe(true)
+    expect(JSON.stringify(ambiguous.content)).toContain('No records were saved by this call')
+    expect(JSON.stringify(ambiguous.content)).toContain('retry save_to_inbox')
     expect(resolveSaveReferences).toHaveBeenCalledTimes(1)
 
     await client.close()
     await server.close()
+  })
+
+  it.each([
+    ['invalid JSON', '{', 'valid JSON'],
+    [
+      'invalid candidate fields',
+      JSON.stringify({ candidates: [{ ...discovery, item: { ...discovery.item, title: 42 } }] }),
+      'candidates[0].item.title'
+    ]
+  ])('explains %s in a candidate file and accepts a corrected save', async (_, content, detail) => {
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    const readCandidateFile = vi.fn(async () => content)
+    const server = createLiteratureLibraryMcpServer({
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      readCandidateFile,
+      saveToInbox
+    })
+    const client = await connect(server)
+    try {
+      const failed = await client.callTool({
+        name: 'save_to_inbox',
+        arguments: { filename: 'records.json' }
+      })
+      const feedback = JSON.stringify(failed.content)
+      expect(failed.isError).toBe(true)
+      expect(feedback).toContain('INVALID_CANDIDATE_FILE')
+      expect(feedback).toContain(detail)
+      expect(feedback).toContain('No records were saved by this call')
+      expect(feedback).toContain('retry save_to_inbox')
+      expect(saveToInbox).not.toHaveBeenCalled()
+
+      readCandidateFile.mockResolvedValueOnce(JSON.stringify({ candidates: [discovery] }))
+      const saved = await client.callTool({
+        name: 'save_to_inbox',
+        arguments: { filename: 'records.json' }
+      })
+      expect(saved.isError).not.toBe(true)
+      expect(saveToInbox).toHaveBeenCalledExactlyOnceWith({
+        candidates: [discovery],
+        signal: expect.any(AbortSignal)
+      })
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('keeps inline validation field paths and accepts a corrected candidate', async () => {
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    const server = createLiteratureLibraryMcpServer({
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox
+    })
+    const client = await connect(server)
+    try {
+      const failed = await client.callTool({
+        name: 'save_to_inbox',
+        arguments: { candidates: [{ ...discovery, item: { ...discovery.item, title: 42 } }] }
+      })
+      expect(failed.isError).toBe(true)
+      expect(JSON.stringify(failed.content)).toContain('candidates[0].item.title')
+      expect(JSON.stringify(failed.content)).toContain('expected string')
+      expect(saveToInbox).not.toHaveBeenCalled()
+
+      const saved = await client.callTool({
+        name: 'save_to_inbox',
+        arguments: { candidates: [discovery] }
+      })
+      expect(saved.isError).not.toBe(true)
+      expect(saveToInbox).toHaveBeenCalledExactlyOnceWith({
+        candidates: [discovery],
+        signal: expect.any(AbortSignal)
+      })
+    } finally {
+      await client.close()
+      await server.close()
+    }
   })
 
   it('returns twenty records per page when the Agent omits a limit', async () => {

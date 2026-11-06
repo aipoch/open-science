@@ -211,8 +211,8 @@ describe('NotebookNetworkSettingsOwner', () => {
   })
   const privateRule = {
     hostname: 'lab.internal.example',
+    protocol: 'http' as const,
     port: 8443,
-    protocol: 'https' as const,
     approvedAddresses: ['10.32.0.7']
   }
   it('reviews shape without revalidating DNS addresses before saving', async () => {
@@ -347,6 +347,7 @@ describe('exact destination grants', () => {
     const grant = {
       id: 'grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -379,6 +380,7 @@ describe('exact destination grants', () => {
     const grant = {
       id: 'project-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -399,6 +401,7 @@ describe('exact destination grants', () => {
     const grant = {
       id: 'global-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -420,6 +423,7 @@ describe('exact destination grants', () => {
     const grant = {
       id: 'public-global-grant',
       hostname: 'public.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['93.184.216.34'],
       projectId: 'project',
@@ -438,12 +442,14 @@ describe('exact destination grants', () => {
   it('revokes only the managed rule and preserves a manual rule for the same target', async () => {
     const manual = {
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.8']
     }
     const global = {
       id: 'global-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -481,6 +487,7 @@ describe('exact destination grants', () => {
     const global = {
       id: 'global-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -491,6 +498,7 @@ describe('exact destination grants', () => {
     }
     const managed = {
       hostname: global.hostname,
+      protocol: global.protocol,
       port: global.port,
       approvedAddresses: global.approvedAddresses,
       managedGrantId: global.id,
@@ -519,6 +527,7 @@ describe('exact destination grants', () => {
     const global = {
       id: 'global-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -540,6 +549,7 @@ describe('exact destination grants', () => {
     const global = {
       id: 'global-grant',
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       projectId: 'project',
@@ -582,6 +592,7 @@ describe('exact destination grants', () => {
     const state = createHarness()
     const managed = {
       hostname: 'private.example',
+      protocol: 'http' as const,
       port: 443,
       approvedAddresses: ['10.32.0.7'],
       managedGrantId: 'forged-grant',

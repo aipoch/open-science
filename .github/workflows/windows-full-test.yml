@@ -16,10 +16,15 @@ on:
         default: full
         options:
           - full
+          - portable
           - notebook-sandbox
           - notebook-mutation
           - regressions
           - scheduled-fixes
+      native_source_base:
+        description: Optional full ancestor SHA for portable process-tree source validation before publication
+        type: string
+        default: ''
       test_name_pattern:
         description: Optional Vitest test-name regex for the regressions dry-run only
         type: string
@@ -58,13 +63,13 @@ jobs:
 
   windows_notebook_runtime:
     needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
     uses: ./.github/workflows/windows-notebook-runtime.yml
 
   windows_dependencies:
     name: Prepare Windows test dependencies
     needs: [plan, windows_notebook_runtime]
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
     timeout-minutes: 20
     outputs:
@@ -75,14 +80,62 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Setup Node
         id: node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: 24
           package-manager-cache: false
+      # Source-only tests preserve the normal signed baseline install. Never use this path for
+      # packaged acceptance or allow dependency/install inputs to drift between revisions.
+      - name: Validate and select native source baseline
+        if: ${{ inputs.native_source_base != '' }}
+        shell: bash
+        env:
+          SOURCE_BASE: ${{ inputs.native_source_base }}
+          SOURCE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_MODE" == portable ]]
+          [[ "$SOURCE_BASE" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git merge-base --is-ancestor "$SOURCE_BASE" "$GITHUB_SHA"
+          git diff --exit-code "$SOURCE_BASE" "$GITHUB_SHA" -- \
+            package.json package-lock.json .nvmrc .npmrc patches prisma \
+            'packages/*/package.json' \
+            build/native-components.json build/native-components-lock.json \
+            .github/workflows/native-components.yml \
+            scripts/ci/npm-ci.mjs scripts/produce-native-components.mjs \
+            scripts/native-components.mjs scripts/install-native-components.mjs \
+            scripts/verify-native-component-signatures.ps1 scripts/prepare-shadcn-patch.mjs \
+            scripts/check-claude-acp-patch.mjs scripts/fix-electron-path.cjs \
+            packages/credential-identity-probe-native packages/safe-file-publisher-native
+          git checkout --detach "$SOURCE_BASE"
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Restore candidate source
+        if: ${{ inputs.native_source_base != '' }}
+        shell: bash
+        run: git checkout --detach "$GITHUB_SHA"
+      - name: Setup native producer Node
+        if: ${{ inputs.native_source_base != '' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.3
+          package-manager-cache: false
+      - name: Build candidate process-tree source
+        if: ${{ inputs.native_source_base != '' }}
+        run: node node_modules/node-gyp/bin/node-gyp.js rebuild --directory packages/process-tree-native
+      - name: Restore test Node
+        if: ${{ inputs.native_source_base != '' }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ steps.node.outputs.node-version }}
+          package-manager-cache: false
+      - name: Rebuild candidate packages
+        if: ${{ inputs.native_source_base != '' }}
+        run: npm run build:packages -- --clean
       - name: Build Windows sandbox native host
         # The checked-in host can predate current lifecycle and ACL contracts. Both portable
         # process tests and controlled mutations must consume this revision's native source.
@@ -111,7 +164,7 @@ jobs:
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/8)
     needs: [plan, windows_dependencies]
-    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'portable' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -142,7 +195,7 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs restore-dependencies "$RUNNER_TEMP/windows-dependencies"
 
       - name: Test complete suite shard
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'portable' }}
         # SQLite-heavy integration suites contend heavily for Windows disk I/O when Vitest uses
         # every available core, and hosted-runner disk latency occasionally exceeds the default
         # per-test/hook budgets. Keep files serial and use bounded 60-second budgets; individual
