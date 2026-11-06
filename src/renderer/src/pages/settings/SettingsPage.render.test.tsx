@@ -38,6 +38,11 @@ const { createRoot } = createLiteratureTestRenderer({
   onRecovered: () => () => {}
 })
 
+// ConnectMobilePanel owns its own remote-access calls; it has dedicated coverage in
+// ConnectMobileWindow.test.tsx and would otherwise skew the panel's call-count assertions.
+vi.mock('@/pages/connect-mobile/ConnectMobileWindow', () => ({
+  ConnectMobilePanel: () => null
+}))
 vi.mock('../workspace/FilePreviewDialog', () => ({
   FilePreviewDialog: ({
     item,

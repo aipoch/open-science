@@ -8,6 +8,15 @@ import { parseStored, RemoteAccessRepository } from './repository'
 
 const roots: string[] = []
 
+// parseStored normalizes LAN and Pinggy preferences; toEqual ignores undefined optional fields.
+const parsedOff = {
+  version: 6,
+  mode: 'off',
+  pinggyRegion: 'auto',
+  pinggyDisclosureAccepted: false,
+  trustedBrowsers: []
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
@@ -23,7 +32,7 @@ describe('RemoteAccessRepository', () => {
     )
 
     await expect(new RemoteAccessRepository(root).load()).resolves.toMatchObject({
-      version: 5,
+      version: 6,
       mode: 'remoteit'
     })
     await expect(readdir(root)).resolves.toEqual(['remote-access.json'])
@@ -34,13 +43,13 @@ describe('RemoteAccessRepository', () => {
     roots.push(root)
     const repository = new RemoteAccessRepository(root)
     expect(await repository.load()).toEqual({
-      version: 5,
+      version: 6,
       mode: 'off',
       trustedBrowsers: []
     })
 
     await repository.save({
-      version: 5,
+      version: 6,
       mode: 'remoteit',
       remoteItAppServiceId: 'service-1',
       trustedBrowsers: [
@@ -72,29 +81,63 @@ describe('RemoteAccessRepository', () => {
         enabled: true,
         trustedBrowsers: []
       })
-    ).toEqual({ version: 5, mode: 'off', trustedBrowsers: [] })
+    ).toEqual(parsedOff)
     expect(
       parseStored({
         version: 3,
         mode: 'removed-provider-mode',
         trustedBrowsers: []
       })
-    ).toEqual({ version: 5, mode: 'off', trustedBrowsers: [] })
+    ).toEqual(parsedOff)
   })
 
-  it.each([1, 2, 3, 4, 5])('accepts supported configuration version %i', (version) => {
-    expect(parseStored({ version, mode: 'off', trustedBrowsers: [] })).toEqual({
-      version: 5,
-      mode: 'off',
-      trustedBrowsers: []
+  it.each([1, 2, 3, 4, 5, 6])('accepts supported configuration version %i', (version) => {
+    expect(parseStored({ version, mode: 'off', trustedBrowsers: [] })).toEqual(parsedOff)
+  })
+
+  it('keeps LAN and Pinggy preferences from version 6', () => {
+    expect(
+      parseStored({
+        version: 6,
+        mode: 'pinggy',
+        lanAddress: '192.168.1.20',
+        pinggyRegion: 'eu',
+        pinggyDisclosureAccepted: true,
+        trustedBrowsers: []
+      })
+    ).toMatchObject({
+      version: 6,
+      mode: 'pinggy',
+      lanAddress: '192.168.1.20',
+      pinggyRegion: 'eu',
+      pinggyDisclosureAccepted: true
     })
+  })
+
+  it('drops version 5 trusted browsers that lack a stored expiration', () => {
+    expect(
+      parseStored({
+        version: 5,
+        mode: 'off',
+        trustedBrowsers: [
+          {
+            id: 'browser-1',
+            browser: 'Safari',
+            platform: 'iOS/iPadOS',
+            tokenHash: 'a'.repeat(64),
+            createdAt: 10,
+            lastSeenAt: 20
+          }
+        ]
+      }).trustedBrowsers
+    ).toEqual([])
   })
 
   it.each([
     ['malformed JSON', '{'],
     [
       'a future schema version',
-      JSON.stringify({ version: 6, mode: 'remoteit-public', trustedBrowsers: [] })
+      JSON.stringify({ version: 7, mode: 'remoteit-public', trustedBrowsers: [] })
     ]
   ])('rejects %s instead of treating it as first-run state', async (_case, contents) => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-repository-invalid-'))
@@ -121,7 +164,7 @@ describe('RemoteAccessRepository', () => {
         trustedBrowsers: []
       })
     ).toMatchObject({
-      version: 5,
+      version: 6,
       mode: 'remoteit',
       remoteItAppServiceId: 'service-1'
     })
@@ -144,7 +187,7 @@ describe('RemoteAccessRepository', () => {
         ]
       })
     ).toMatchObject({
-      version: 5,
+      version: 6,
       trustedBrowsers: [{ id: 'browser-1', expiresAt: 15_552_000_010 }]
     })
   })
@@ -160,7 +203,7 @@ describe('RemoteAccessRepository', () => {
         trustedBrowsers: []
       })
     ).toMatchObject({
-      version: 5,
+      version: 6,
       mode: 'remoteit-public',
       remoteItAppServiceId: 'app-service',
       remoteItBrowserServiceId: 'browser-service',
@@ -176,11 +219,11 @@ describe('RemoteAccessRepository', () => {
     const repository = new RemoteAccessRepository(configRoot)
 
     await expect(
-      repository.save({ version: 5, mode: 'remoteit', trustedBrowsers: [] })
+      repository.save({ version: 6, mode: 'remoteit', trustedBrowsers: [] })
     ).rejects.toThrow()
 
     await rm(configRoot)
-    await repository.save({ version: 5, mode: 'remoteit-public', trustedBrowsers: [] })
+    await repository.save({ version: 6, mode: 'remoteit-public', trustedBrowsers: [] })
 
     await expect(repository.load()).resolves.toMatchObject({ mode: 'remoteit-public' })
   })

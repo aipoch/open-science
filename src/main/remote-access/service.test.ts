@@ -15,6 +15,7 @@ import type {
   ensureRemoteItConnectLink
 } from './remoteit'
 import { RemoteAccessRepository } from './repository'
+import * as lan from './lan'
 import { normalizeRemoteItPublicUrl, RemoteAccessService } from './service'
 
 const roots: string[] = []
@@ -129,6 +130,42 @@ const createReadyDeps = (): {
 }
 
 describe('RemoteAccessService', () => {
+  it('repairs the LAN route when refreshing after the Web service stops', async () => {
+    const addresses = vi.spyOn(lan, 'lanAddresses').mockReturnValue(['192.168.1.20'])
+    const service = await RemoteAccessService.create({
+      repository: await createRepository(),
+      ...createReadyDeps(),
+      broadcast: vi.fn()
+    })
+    let stopped: (() => void) | undefined
+    const controller = {
+      ...webController(),
+      listenExternal: vi.fn().mockResolvedValue(43127),
+      stopExternal: vi.fn().mockResolvedValue(undefined),
+      onStopped: vi.fn((listener: () => void) => {
+        stopped = listener
+        return vi.fn()
+      })
+    }
+    service.attachWebController(controller)
+    try {
+      const initial = await service.setMode('lan')
+      expect(initial).toMatchObject({ enabled: true, lifecycle: 'running' })
+      const previousOffer = initial.offer?.url
+
+      stopped?.()
+      expect(service.snapshot(true)).toMatchObject({ enabled: false, lifecycle: 'error' })
+      const recovered = await service.refreshOffer()
+      expect(recovered).toMatchObject({ enabled: true, lifecycle: 'running' })
+      expect(recovered.offer?.url).toBeDefined()
+      expect(recovered.offer?.url).not.toBe(previousOffer)
+      expect(controller.listenExternal).toHaveBeenCalledTimes(2)
+    } finally {
+      await service.shutdown()
+      addresses.mockRestore()
+    }
+  })
+
   it('disconnects all selected browsers before the batch save finishes and preserves other connections', async () => {
     const repository = await createRepository()
     const now = Date.now()

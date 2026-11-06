@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -72,6 +73,155 @@ const response = (): CapturedResponse => {
 const cookiePair = (header: string): string => header.split(';', 1)[0]
 
 describe('RemoteSessionPairingManager', () => {
+  it('redeems a LAN QR code once, lists the temporary device, and revokes its access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-lan-'))
+    roots.push(root)
+    const manager = await RemoteSessionPairingManager.create({
+      repository: new RemoteAccessRepository(root),
+      isEnabled: () => true,
+      isAllowedRemoteHost: (hostname) => hostname === '192.168.91.94',
+      route: () => ({ mode: 'lan', origin: 'http://192.168.91.94:43127' }),
+      onChanged: vi.fn()
+    })
+    const lanRequest = (path: string, cookie?: string): IncomingMessage => {
+      const value = request(path, {
+        host: '192.168.91.94:43127',
+        ...(cookie ? { cookie } : {})
+      })
+      Object.assign(value.socket, { localAddress: '192.168.91.94' })
+      return value
+    }
+    try {
+      const offer = manager.issueOffer('lan', 300_000)
+      const path = `/pair?token=${offer.token}`
+      const paired = response()
+      expect(
+        await manager.webAccess.authorizeHttp(
+          lanRequest(path),
+          paired.response,
+          new URL(path, 'http://192.168.91.94:43127')
+        )
+      ).toBe('handled')
+      expect(paired.status()).toBe(302)
+      const cookies = paired.headers.get('set-cookie') as string[]
+      const sessionCookie = cookiePair(cookies[0])
+      expect(cookies[0]).not.toContain('Secure')
+      expect(manager.connectedViews()).toEqual([
+        expect.objectContaining({ browser: 'Safari', platform: 'iOS/iPadOS', route: 'lan' })
+      ])
+
+      const bootstrapRequest = lanRequest('/api/bootstrap', sessionCookie)
+      const authorization = await manager.webAccess.authorizeHttp(
+        bootstrapRequest,
+        response().response,
+        new URL('http://192.168.91.94:43127/api/bootstrap')
+      )
+      expect(authorization).toMatchObject({ principalId: manager.connectedViews()[0].id })
+      expect(
+        authorization !== 'denied' && authorization !== 'handled' && authorization.isCurrent()
+      ).toBe(true)
+
+      const reused = response()
+      expect(
+        await manager.webAccess.authorizeHttp(
+          lanRequest(path),
+          reused.response,
+          new URL(path, 'http://192.168.91.94:43127')
+        )
+      ).toBe('handled')
+      expect(reused.status()).toBe(410)
+
+      await manager.revoke(manager.connectedViews()[0].id)
+      expect(manager.connectedViews()).toHaveLength(0)
+      expect(
+        authorization !== 'denied' && authorization !== 'handled' && authorization.isCurrent()
+      ).toBe(false)
+      expect(
+        await manager.webAccess.authorizeHttp(
+          bootstrapRequest,
+          response().response,
+          new URL('http://192.168.91.94:43127/api/bootstrap')
+        )
+      ).toBe('denied')
+    } finally {
+      manager.dispose()
+    }
+  })
+
+  it('accepts a same-origin Pinggy password form and rejects foreign or null Origins', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-remote-pinggy-'))
+    roots.push(root)
+    const host = 'example.run.pinggy-free.link'
+    const origin = `https://${host}`
+    const manager = await RemoteSessionPairingManager.create({
+      repository: new RemoteAccessRepository(root),
+      isEnabled: () => true,
+      isAllowedRemoteHost: (hostname) => hostname === host,
+      route: () => ({ mode: 'pinggy', origin }),
+      onChanged: vi.fn()
+    })
+    try {
+      const offer = manager.issueOffer('pinggy', 60_000)
+      const path = `/pair?token=${offer.token}`
+      const pairing = response()
+      expect(
+        await manager.webAccess.authorizeHttp(
+          request(path, { host }),
+          pairing.response,
+          new URL(path, origin)
+        )
+      ).toBe('handled')
+      // `no-referrer` would make browsers send `Origin: null` on the form POST.
+      expect(pairing.headers.get('referrer-policy')).toBe('same-origin')
+      const pairingCookie = cookiePair(pairing.headers.get('set-cookie') as string)
+
+      for (const badOrigin of ['https://other.example', 'null']) {
+        const rejected = request(
+          '/pair/verify',
+          {
+            host,
+            origin: badOrigin,
+            cookie: pairingCookie
+          },
+          'POST'
+        )
+        expect(
+          await manager.webAccess.authorizeHttp(
+            rejected,
+            response().response,
+            new URL('/pair/verify', origin)
+          )
+        ).toBe('denied')
+      }
+
+      const form = Object.assign(Readable.from([`password=${offer.password}`]), {
+        method: 'POST',
+        url: '/pair/verify',
+        headers: { host, origin, cookie: pairingCookie },
+        socket: { remoteAddress: '203.0.113.10' }
+      }) as unknown as IncomingMessage
+      const verified = response()
+      expect(
+        await manager.webAccess.authorizeHttp(
+          form,
+          verified.response,
+          new URL('/pair/verify', origin)
+        )
+      ).toBe('handled')
+      expect(verified.status()).toBe(302)
+
+      const sessionCookie = cookiePair((verified.headers.get('set-cookie') as string[])[0])
+      const authorization = await manager.webAccess.authorizeHttp(
+        request('/', { host, cookie: sessionCookie }),
+        response().response,
+        new URL('/', origin)
+      )
+      expect(authorization).toMatchObject({ kind: 'authorized' })
+    } finally {
+      manager.dispose()
+    }
+  })
+
   it('persists a selected batch once, fails closed while saving, and retries without partial deletion', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-remote-batch-'))
     roots.push(root)

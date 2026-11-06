@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteAccessSnapshot } from '../../../../shared/remote-access'
 import { RemoteControlPanel } from './RemoteControlPanel'
 
+// The embedded mobile pairing panel owns its own snapshot and default-mode effect; it is covered
+// separately so these tests exercise only the remote browser access controls.
+vi.mock('@/pages/connect-mobile/ConnectMobileWindow', () => ({
+  ConnectMobilePanel: () => <div data-testid="connect-mobile-panel" />
+}))
+
 let container: HTMLDivElement
 let root: Root
 

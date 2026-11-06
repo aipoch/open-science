@@ -2024,7 +2024,10 @@
         "src/main/remote-access/remoteit.ts",
         "src/main/remote-access/repository.ts",
         "src/main/remote-access/service.ts",
-        "src/main/remote-access/command-port.ts"
+        "src/main/remote-access/command-port.ts",
+        "src/main/remote-access/lan.ts",
+        "src/main/remote-access/pair-token.ts",
+        "src/main/remote-access/pinggy.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -2033,6 +2036,7 @@
         "src/main/remote-access/ipc.test.ts",
         "src/main/remote-access/pairing-page.test.ts",
         "src/main/remote-access/pairing.test.ts",
+        "src/main/remote-access/pinggy.test.ts",
         "src/main/remote-access/remoteit.test.ts",
         "src/main/remote-access/repository.test.ts",
         "src/main/remote-access/service.test.ts",
@@ -2048,6 +2052,7 @@
         "node:crypto",
         "node:fs",
         "node:fs/promises",
+        "node:os",
         "node:path",
         "node:util"
       ],
@@ -9269,6 +9274,7 @@
     },
     "settings_remote_presentation": {
       "sources": [
+        "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.tsx",
         "src/renderer/src/pages/settings/RemoteControlPanel.tsx",
         "src/renderer/src/pages/settings/RepairFrameworkDialog.tsx"
       ],
@@ -9276,6 +9282,7 @@
       "sourceLayers": {},
       "consumerModules": [],
       "requiredTests": [
+        "src/renderer/src/pages/connect-mobile/ConnectMobileWindow.test.tsx",
         "src/renderer/src/pages/settings/RemoteControlPanel.render.test.tsx",
         "src/renderer/src/pages/settings/RepairFrameworkDialog.render.test.tsx",
         "src/main/host-layer-dependencies.architecture.test.ts"

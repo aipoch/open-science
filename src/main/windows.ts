@@ -189,6 +189,54 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
   return window
 }
 
+let connectMobileWindow: BrowserWindow | undefined
+let quitting = false
+let quitListenerInstalled = false
+
+const openConnectMobileWindow = (): void => {
+  if (connectMobileWindow && !connectMobileWindow.isDestroyed()) {
+    connectMobileWindow.show()
+    connectMobileWindow.focus()
+    return
+  }
+  if (!quitListenerInstalled) {
+    quitListenerInstalled = true
+    app.once('before-quit', () => {
+      quitting = true
+    })
+  }
+  const window = createAppWindow({
+    width: 440,
+    height: 640,
+    minWidth: 440,
+    minHeight: 640,
+    maxWidth: 440,
+    maxHeight: 640,
+    resizable: false,
+    title: 'Connect mobile device'
+  })
+  connectMobileWindow = window
+  window.on('close', (event) => {
+    if (!quitting) {
+      event.preventDefault()
+      window.hide()
+    }
+  })
+  window.on('closed', () => {
+    if (connectMobileWindow === window) connectMobileWindow = undefined
+  })
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const url = new URL(process.env['ELECTRON_RENDERER_URL'])
+    url.searchParams.set('connect-mobile', '1')
+    void window.loadURL(url.toString())
+  } else {
+    void window.loadFile(rendererEntry, { query: { 'connect-mobile': '1' } })
+  }
+}
+
+const isConnectMobileWindow = (window: BrowserWindow): boolean =>
+  connectMobileWindow === window && !window.isDestroyed()
+
 // How the main window resolves a close: classifyClose decides synchronously at close time
 // ('close' = let it close, 'hide' = minimize to tray, 'quit' = retain the renderer while app quit
 // flushes it, 'confirm' = ask via resolveCloseAction).
@@ -631,5 +679,11 @@ const createMainWindow = (
   return window
 }
 
-export { configureMainWindow, createMainWindow, isMainWindow }
+export {
+  configureMainWindow,
+  createMainWindow,
+  isMainWindow,
+  isConnectMobileWindow,
+  openConnectMobileWindow
+}
 export type { MainWindowCloseOptions }

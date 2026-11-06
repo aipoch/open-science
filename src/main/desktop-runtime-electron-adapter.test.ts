@@ -26,7 +26,7 @@ beforeEach(() => {
 })
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function setup() {
+function setup(allowSecondary = false) {
   const client = {
     notificationAction: vi.fn(),
     notificationView: vi.fn(),
@@ -44,12 +44,17 @@ function setup() {
   }
   const mainFrame = {}
   const sender = { id: 7, mainFrame, isDestroyed: () => false }
+  const secondaryFrame = {}
+  const secondarySender = { id: 8, mainFrame: secondaryFrame, isDestroyed: () => false }
   const registry = new ApplicationCallerLeaseRegistry()
   const lease = registry.acquire(createElectronCallerContext(7))
   const event = { sender, senderFrame: mainFrame } as IpcMainInvokeEvent
   bindCallerLeaseToEvent(event, lease.lease)
-  const installed = installDesktopRuntimeElectronAdapter(client, (value) => value === event.sender)
-  return { client, event, lease, registry, installed }
+  const installed = installDesktopRuntimeElectronAdapter(
+    client,
+    (value) => value === event.sender || (allowSecondary && value === secondarySender)
+  )
+  return { client, event, lease, registry, installed, secondarySender, secondaryFrame }
 }
 
 describe('Electron adapter for the Node runtime', () => {
@@ -101,6 +106,27 @@ describe('Electron adapter for the Node runtime', () => {
       } as IpcMainInvokeEvent)
     ).rejects.toThrow('main application frame')
     expect(value.client.invoke).not.toHaveBeenCalled()
+  })
+
+  it('accepts a registered secondary window main frame and rejects its child frames', async () => {
+    const value = setup(true)
+    const secondaryEvent = {
+      sender: value.secondarySender,
+      senderFrame: value.secondaryFrame
+    } as IpcMainInvokeEvent
+    const secondaryLease = value.registry.acquire(createElectronCallerContext(8))
+    bindCallerLeaseToEvent(secondaryEvent, secondaryLease.lease)
+    await expect(handlers.get('projects:list')!(secondaryEvent)).resolves.toEqual({
+      ok: true,
+      result: []
+    })
+    await expect(
+      handlers.get('projects:list')!({ ...secondaryEvent, senderFrame: {} } as IpcMainInvokeEvent)
+    ).resolves.toMatchObject({ ok: false })
+    expect(value.client.invoke).toHaveBeenCalledTimes(1)
+    secondaryLease.release()
+    value.lease.release()
+    value.installed.uninstall()
   })
 
   it('retains structured domain errors expected by preload', async () => {

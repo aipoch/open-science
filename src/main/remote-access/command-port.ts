@@ -8,6 +8,10 @@ export type RemoteAccessCommandPort = {
   snapshot(canManage: boolean, canManagePairing?: boolean): RemoteAccessSnapshot
   probe(): Promise<RemoteAccessSnapshot>
   detect(): Promise<RemoteAccessSnapshot>
+  refreshOffer(): Promise<RemoteAccessSnapshot>
+  selectLanAddress(address: string): Promise<RemoteAccessSnapshot>
+  setPinggyToken(token: string | null): Promise<RemoteAccessSnapshot>
+  setPinggyRegion(region: 'auto' | 'ap' | 'us' | 'eu'): Promise<RemoteAccessSnapshot>
   setMode(
     mode: RemoteAccessMode,
     options?: {
