@@ -541,7 +541,8 @@ const wrap = async (
           ...windowsSupervisedLaunch({
             ...launchRequest,
             cwd: request.cwd,
-            hostPath: config.windowsHostPath
+            hostPath: config.windowsHostPath,
+            ownershipRoot: config.windowsOwnershipRoot
           }),
           ...spawnAdmission
         }
