@@ -592,11 +592,23 @@ describe('EnvironmentStateTracker', () => {
       await tracker.prepareRun(probeTarget)
       expect(probe).toHaveBeenCalledTimes(5)
 
+      // Any probe environment variable can move library roots (for example R_LIBS_SITE).
+      process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT = 'changed'
+      try {
+        await tracker.prepareRun(probeTarget)
+      } finally {
+        delete process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT
+      }
+      expect(probe).toHaveBeenCalledTimes(6)
+      await tracker.prepareRun(probeTarget)
+      await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(8)
+
       // A PATH-resolved command can select another interpreter without any observed path changing.
       const bareTarget = { ...probeTarget, command: language === 'r' ? 'Rscript' : 'python' }
       for (let run = 0; run < 3; run++) await tracker.prepareRun(bareTarget)
       // First run probes before and after its inventory scan; later runs probe once each.
-      expect(probe).toHaveBeenCalledTimes(9)
+      expect(probe).toHaveBeenCalledTimes(12)
     }
   )
 

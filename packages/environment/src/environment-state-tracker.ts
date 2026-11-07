@@ -744,6 +744,9 @@ const PYTHON_FINGERPRINT_SCRIPT = [
   'import os, pathlib, platform, site, sys',
   'print("RUNTIME\\t" + platform.python_version())',
   'print("WATCH\\t" + sys.executable)',
+  'print("WATCH\\t" + os.path.join(sys.prefix, "pyvenv.cfg"))',
+  'for name in os.listdir(os.path.dirname(sys.executable)):',
+  '    if name.endswith("._pth"): print("WATCH\\t" + os.path.join(os.path.dirname(sys.executable), name))',
   'if site.ENABLE_USER_SITE and not os.path.isdir(site.getusersitepackages()):',
   '    print("WATCH\\t" + site.getusersitepackages())',
   'for raw in dict.fromkeys(filter(None, sys.path)):',
@@ -767,6 +770,7 @@ const PYTHON_FINGERPRINT_SCRIPT = [
 const R_FINGERPRINT_SCRIPT = [
   'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\n", sep="")',
   'cat("WATCH\\t", file.path(R.home("bin"), if (.Platform$OS.type == "windows") "R.dll" else file.path("exec", "R")), "\\n", sep="")',
+  'cat("WATCH\\t", file.path(R.home("etc"), "Renviron"), "\\n", sep="")',
   'for (candidate in path.expand(unlist(strsplit(c(Sys.getenv("R_LIBS"), Sys.getenv("R_LIBS_USER")), .Platform$path.sep, fixed=TRUE)))) if (nzchar(candidate) && !dir.exists(candidate)) cat("WATCH\\t", candidate, "\\n", sep="")',
   'for (root in unique(.libPaths())) {',
   '  info <- file.info(root)',
@@ -974,15 +978,6 @@ type FingerprintObservation = {
 }
 
 const MAX_FINGERPRINT_OBSERVATIONS = 64
-// Interpreter search paths read these variables at startup, so a change must re-run the probe.
-const SEARCH_PATH_VARIABLES = [
-  'PATH',
-  'PYTHONHOME',
-  'PYTHONPATH',
-  'R_HOME',
-  'R_LIBS',
-  'R_LIBS_USER'
-]
 const ABSENT_PATH_ERROR_CODES = new Set(['ENOENT', 'ENOTDIR'])
 
 const fingerprintProbePaths = (stdout: string): FingerprintObservation['paths'] | undefined => {
@@ -1035,7 +1030,8 @@ const fingerprintObservationSignature = async (
 ): Promise<string> => {
   const hash = createHash('sha256')
   hash.update(`${target.language}\n${await statToken(target.command)}\n`)
-  hash.update(JSON.stringify(SEARCH_PATH_VARIABLES.map((name) => environment[name] ?? null)))
+  // The whole probe environment: any variable (R_LIBS_SITE, PYTHONUSERBASE, ...) can move roots.
+  hash.update(JSON.stringify(Object.entries(environment).sort(([a], [b]) => (a < b ? -1 : 1))))
   for (const watched of paths.watched)
     hash.update(`\nWATCH\t${watched}\t${await statToken(watched)}`)
   for (const root of paths.roots) {
