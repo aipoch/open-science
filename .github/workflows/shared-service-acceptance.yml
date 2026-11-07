@@ -4,8 +4,15 @@ on:
     branches: [test/shared-service-update-acceptance]
 permissions:
   contents: read
+  actions: read
 jobs:
   exercise:
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [release-reconnect, patched-reconnect, release-no-reconnect]
+    env:
+      SCENARIO: ${{ matrix.scenario }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -21,9 +28,13 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/feed" "$HOME/Applications" evidence
-          gh release download v1.0.8 -p '*-mac-arm64.zip' -D "$RUNNER_TEMP/source"
+          if [[ "$SCENARIO" == patched-reconnect ]]; then
+            gh run download 42375796952 -n macos-arm64 -D "$RUNNER_TEMP/source"
+          else
+            gh release download v1.0.8 -p '*-mac-arm64.zip' -D "$RUNNER_TEMP/source"
+          fi
           gh release download v1.1.0 -p '*-mac-arm64.zip' -p 'arm64-mac.yml' -D "$RUNNER_TEMP/feed"
-          ditto -x -k "$RUNNER_TEMP"/source/*.zip "$HOME/Applications"
+          ditto -x -k "$(find "$RUNNER_TEMP/source" -name '*-mac-arm64.zip' -print -quit)" "$HOME/Applications"
           codesign --verify --deep --strict "$HOME/Applications/Open-Science.app"
           npm install --prefix scripts/shared-service-acceptance --no-save playwright@$(node -p 'require("./package-lock.json").packages["node_modules/playwright"].version')
           cp "$RUNNER_TEMP/feed/arm64-mac.yml" "$RUNNER_TEMP/feed/latest-mac.yml"
@@ -34,5 +45,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shared-service-evidence
+          name: shared-service-${{ matrix.scenario }}
           path: evidence

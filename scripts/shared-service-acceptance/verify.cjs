@@ -20,6 +20,15 @@ const wait = async (label,check,ms=60000) => {
   while(Date.now()<end){try {const value=await check(); if(value) return value} catch(e){last=e} await new Promise(r=>setTimeout(r,550))}
   throw new Error(label+' timed out'+(last?' ('+String(last.message).slice(0,200)+')':''))
 }
+const scenario=process.env.SCENARIO
+function crashReporters(step){
+  const lines=execFileSync('/bin/ps',['-axo','pid=,ppid=,command='],{encoding:'utf8'})
+  const reporters=lines.split('\n').filter(l=>l.trim().split(/\s+/).slice(2).join(' ').startsWith(bundle+'/Contents/Frameworks/') && l.includes('/chrome_crashpad_handler ')).map(l=>({
+    pid:Number(l.trim().split(/\s+/)[0]),ppid:Number(l.trim().split(/\s+/)[1]),
+    launchId:l.match(/--annotation=openScienceInstance=([a-z0-9-]+)/)?.[1]
+  }))
+  record(step,{reporters})
+}
 let app, page, browser
 const launch = async () => {
   app=await electron.launch({executablePath,args:['--lang=en-US'],timeout:90000})
@@ -38,6 +47,8 @@ async function run(){
   assert.equal(started.result,'already-running')
   assert.equal(old.lifetime.explicit,true)
   assert.equal(old.lifetime.apps,1)
+  crashReporters('first launch crash reporters')
+  if(scenario !== 'release-no-reconnect'){
   const proc=app.process()
   await app.evaluate(({app})=>{setTimeout(()=>app.quit(),10)})
   await wait('last Desktop exits',()=>proc.exitCode!==null || proc.signalCode!==null)
@@ -52,6 +63,8 @@ async function run(){
   assert.equal(attached.pid,old.pid)
   assert.equal(attached.lifetime.generation,old.lifetime.generation)
   assert.equal(attached.lifetime.apps,1)
+  }
+  crashReporters('pre-update crash reporters')
   browser=await chromium.launch({channel:'chrome'})
   const web=await browser.newPage()
   let connected=false,disconnected=false
@@ -62,10 +75,12 @@ async function run(){
   })
   await web.goto(cli('url'),{waitUntil:'domcontentloaded'})
   await wait('authenticated external event stream',()=>connected)
-  await app.evaluate(()=>{
+  await app.evaluate((_,patched)=>{
     const r=process.getBuiltinModule('module').createRequire(process.resourcesPath+'/app.asar/package.json')
-    r('electron-updater').autoUpdater.setFeedURL({provider:'generic',url:'http://127.0.0.1:18765'})
-  })
+    const updater=r('electron-updater').autoUpdater
+    if(patched) updater.currentVersion=new updater.currentVersion.constructor('1.0.8')
+    updater.setFeedURL({provider:'generic',url:'http://127.0.0.1:18765'})
+  },scenario==='patched-reconnect')
   const state=()=>page.evaluate(()=>window.api.update.getStatus())
   await page.evaluate(()=>window.api.update.check())
   await wait('available target',async()=>{const s=await state();return s.latest==='1.1.0' && s.state==='available'})
@@ -83,13 +98,14 @@ async function run(){
     if(!page.isClosed()){
       const s=await state().catch(()=>null)
       if(s?.reason && s.reason!=='user-cancelled' && !global.reported){
-        global.reported=true;record('update gate response',{reason:s.reason, detail:s.recovery?.detail, blockers:s.recovery?.blockingProcesses})
+        crashReporters('crash reporters at preflight refusal');global.reported=true;record('update gate response',{reason:s.reason, detail:s.recovery?.detail, blockers:s.recovery?.blockingProcesses})
         await page.screenshot({path:'evidence/update-gate.png'}).catch(()=>{})
       }
     }
+    if(!page.isClosed()) return false
     const s=status()
-    return s.appVersion==='1.1.0' && s.lifetime.apps===1 && s
-  },180000)
+    return s.appVersion==='1.1.0' && s.pid!==old.pid && s.lifetime.apps===1 && s
+  },90000)
   record('successor attached',snapshot(target))
   assert.notEqual(target.pid,old.pid)
   assert.notEqual(target.lifetime.generation,old.lifetime.generation)
