@@ -818,47 +818,37 @@ describe('KernelProcessLifecycleOwner', () => {
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {
-    it('verifies a real command identity and taskkills its complete process tree', async () => {
+    it('keeps a legacy proofless receipt fenced after the host exits', async () => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-recovery-'))
+      const probe = vi.fn().mockResolvedValue('unknown' as const)
+      const terminate = vi.fn().mockResolvedValue({ reaped: false })
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
-        ownerInstanceId: 'owner-a'
+        ownerInstanceId: 'owner-a',
+        platform: 'win32',
+        controller: { probe, terminate }
       })
       await first.ensureReady()
-      const ownerToken = first.createOwnerToken()
-      const marker = `open-science-kernel-${ownerToken}`
       const intent = first.beginSpawn(
         {
           laneKey: '["project-1","session-1","root",null,null]',
           processKey: 'repl',
           kernelEpochId: 'epoch-windows'
         },
-        ownerToken
+        'owner-token-a'
       )
-      const child = spawn(
-        process.execPath,
-        [
-          '-e',
-          "require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)']); setInterval(()=>{},1000)",
-          marker
-        ],
-        { windowsHide: true, env: { ...process.env, ...first.environment(ownerToken) } }
-      )
-      await new Promise<void>((resolve, reject) => {
-        child.once('spawn', resolve)
-        child.once('error', reject)
-      })
-      const pid = child.pid!
-      first.recordSpawned(intent, { pid, commandIdentityMarker: marker })
+      first.recordSpawned(intent, { pid: 4242 })
 
       const restarted = new KernelProcessLifecycleOwner({
         storageRoot: root,
-        ownerInstanceId: 'owner-b'
+        ownerInstanceId: 'owner-b',
+        platform: 'win32',
+        controller: { probe, terminate }
       })
-      await restarted.ensureReady()
 
-      await vi.waitFor(() => expect(processIsAlive(pid)).toBe(false), { timeout: 5_000 })
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
-    }, 20_000)
+      await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+      expect(terminate).not.toHaveBeenCalled()
+    })
   })
 })

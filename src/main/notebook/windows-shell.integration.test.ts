@@ -64,7 +64,8 @@ const fixtureSandbox = (
             'packages/notebook-network-sandbox/vendor/windows',
             process.arch,
             'notebook-appcontainer-host.exe'
-          )
+          ),
+          ownershipRoot: root
         })
       : { argv: [process.execPath, '-e', code], env: invocation.env }
     return {
