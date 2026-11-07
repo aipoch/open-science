@@ -119,7 +119,7 @@ import {
 import { NotebookExportReader } from './export-reader'
 import type { NotebookKernelExecutorOptions } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
-import { notebookLaneKey, notebookLaneScope } from './lane-identity'
+import { createRootNotebookLane, notebookLaneKey, notebookLaneScope } from './lane-identity'
 import type { ProbeDeps } from './mirror-probe'
 import {
   NotebookPackageOperations,
@@ -2198,6 +2198,15 @@ class NotebookRuntimeService {
   // ensureSession(), load run.json, discover runtimes, or create an executor.
   peekHandoffContext(sessionId: string): NotebookHandoffContext | undefined {
     return this.sessionReadModel.peekHandoffContext(sessionId)
+  }
+
+  // Missing live ownership proves old bindings are unavailable; an epoch alone cannot prove
+  // that a particular variable survived. Never restore history or start a kernel for this peek.
+  isReplNamespaceUnavailable(projectId: string, sessionId: string, rootFrameId?: string): boolean {
+    const lane = rootFrameId
+      ? createRootNotebookLane(projectId, sessionId, rootFrameId)
+      : this.sessionLifecycle.rootLane(sessionId, projectId)
+    return this.sessions.get(lane)?.currentKernelEpochId('repl') === undefined
   }
 
   async runIndex(request: NotebookSessionRequest): Promise<ReplayRunIndex[]> {

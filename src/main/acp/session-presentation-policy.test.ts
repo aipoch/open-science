@@ -5,6 +5,7 @@ import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codexFramework } from '../agent-framework/codex'
 import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { opencodeFramework } from '../agent-framework/opencode'
+import { harnessFramework } from '../agent-framework/harness'
 import { NOTEBOOK_SYSTEM_PROMPT_APPEND } from '../notebook/mcp-server'
 import { shellRuntimeAgentContract } from '../notebook/shell-runtime'
 import { SKILL_IMPORT_SYSTEM_PROMPT_APPEND } from '../skills/mcp-server'
@@ -89,22 +90,53 @@ const specialistSkillScope = (names: readonly string[]): string =>
   ].join('\n')
 
 describe('ACP Session presentation policy', () => {
-  it.each([claudeCodeFramework, codexFramework, opencodeFramework, codeBuddyFramework])(
-    'requires fresh directory discovery when creating or restoring a $id session',
-    (framework) => {
-      const setup = new AcpSessionPresentationPolicy().buildSessionSetup({
-        framework,
-        tooling: { artifacts: true, notebook: true, skillImport: false },
-        persistentSystemPrompt: 'Existing provider instructions.'
-      })
-      expect(setup.promptPrefix).toContain(
-        'Before the first local file operation after session creation or resume'
-      )
-      expect(setup.promptPrefix).toContain('restored history')
-    }
-  )
+  it.each([
+    claudeCodeFramework,
+    codexFramework,
+    opencodeFramework,
+    codeBuddyFramework,
+    harnessFramework
+  ])('requires fresh directory discovery when creating or restoring a $id session', (framework) => {
+    const setup = new AcpSessionPresentationPolicy().buildSessionSetup({
+      framework,
+      tooling: { artifacts: true, notebook: true, skillImport: false },
+      persistentSystemPrompt: 'Existing provider instructions.'
+    })
+    expect(setup.promptPrefix).toContain(
+      'Before the first local file operation after session creation or resume'
+    )
+    expect(setup.promptPrefix).toContain('restored history')
+    expect(setup.promptPrefix).toContain('Pure in-memory computation needs no directory query')
+  })
 
   const policy = new AcpSessionPresentationPolicy()
+  it.each([
+    claudeCodeFramework,
+    codexFramework,
+    opencodeFramework,
+    codeBuddyFramework,
+    harnessFramework
+  ])('emits application instructions once when the $id backend also carries them', (framework) => {
+    const tooling = { artifacts: true, notebook: true, skillImport: true }
+    const application = policy.applicationSystemPromptAppends(tooling)
+    const input = {
+      framework,
+      tooling,
+      extraSystemPromptAppends: ['Session scope.'],
+      backendSystemPromptAppends: ['Connector contract.']
+    }
+    const expected = policy.buildSessionSetup(input)
+    const repeated = policy.buildSessionSetup({
+      ...input,
+      backendSystemPromptAppends: [...application, 'Connector contract.']
+    })
+    expect(repeated).toEqual(expected)
+    const wire = JSON.stringify(repeated.metaArg) + (repeated.promptPrefix ?? '')
+    expect(wire.split('<open_science_agent_behavior>')).toHaveLength(2)
+    expect(wire).toContain('Never bypass a denied permission')
+    expect(wire).toContain('Connector contract.')
+    expect(wire.indexOf('Connector contract.')).toBeLessThan(wire.indexOf('Session scope.'))
+  })
   it('isolates explicit Claude file-tool denials at the session metadata boundary', () => {
     const tooling = { artifacts: true, notebook: true, skillImport: false }
     const frameworks = [claudeCodeFramework, opencodeFramework, codexFramework, codeBuddyFramework]
@@ -473,7 +505,7 @@ describe('ACP Session presentation policy', () => {
     ).toEqual({
       metaArg: {},
       promptPrefix:
-        'One-off Session guidance.\n\nBefore the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.',
+        'One-off Session guidance.\n\nBefore the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules. Pure in-memory computation needs no directory query.',
       persistentSystemPrompt: 'Baked Codex developer instructions.'
     })
   })

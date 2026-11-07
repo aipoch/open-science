@@ -45,6 +45,8 @@ describe('Vitest discovery boundaries', () => {
     '**/.worktrees/**',
     '**/.worktree/**',
     'docs/internal/**',
+    '.scratch/**',
+    'test-results/**',
     'packages/credential-identity-probe-native/test/**'
   ])('excludes %s from recursive test discovery', (pattern) => {
     expect(VITEST_EXCLUDE_PATTERNS).toContain(pattern)

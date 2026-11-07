@@ -56,8 +56,12 @@ describe('native shell policy', () => {
   })
 
   it('keeps the app-owned Notebook shell available to every framework', () => {
-    expect(listAgentFrameworks()).toHaveLength(5)
-    expect(listAgentFrameworks().every((framework) => framework.acceptsStdioMcp)).toBe(true)
+    expect(listAgentFrameworks()).toHaveLength(6)
+    expect(
+      listAgentFrameworks()
+        .filter((framework) => !framework.acceptsStdioMcp)
+        .map(({ id }) => id)
+    ).toEqual(['open-science-agent'])
     expect(NOTEBOOK_RPC_TOOLS).toContainEqual(
       expect.objectContaining({ name: 'bash_execute', method: 'executeShell' })
     )

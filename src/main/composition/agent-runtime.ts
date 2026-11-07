@@ -166,6 +166,8 @@ export async function composeAgentRuntime({
       canOwnRuntimeBindingDecision: (request) =>
         notebookService.canOwnRuntimeBindingDecision(request),
       peekNotebookHandoffContext: (sessionId) => notebookService.peekHandoffContext(sessionId),
+      isReplNamespaceUnavailable: (projectId, sessionId, rootFrameId) =>
+        notebookService.isReplNamespaceUnavailable(projectId, sessionId, rootFrameId),
       authorizeSkillImportReferencedUploads: (projectId, sessionId, paths) =>
         conversationSkillImporter.authorizeReferencedUploads(projectId, sessionId, paths),
       settingsService,

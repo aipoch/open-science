@@ -8058,7 +8058,7 @@ describe('ACP runtime session management', () => {
       [
         {
           type: 'text',
-          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.\n\nsummarize without context'
+          text: 'Before the first local file operation after session creation or resume, call mcp__open-science-notebook__list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules. Pure in-memory computation needs no directory query.\n\nsummarize without context'
         }
       ]
     ])
@@ -32907,4 +32907,87 @@ describe('Session deletion with an unanswered native selector', () => {
       }
     }
   )
+})
+
+it('connects the optional built-in harness through the host runtime and releases its generation', async () => {
+  const { createServer } = await import('node:http')
+  const { createHarnessAcpAgent } = await import('../harness-acp/agent')
+  const { harnessFramework } = await import('../agent-framework/harness')
+  const root = await mkdtemp(join(tmpdir(), 'harness-host-runtime-'))
+  const requests: { messages: { role: string; content: unknown }[] }[] = []
+  const http = createServer(async (request, response) => {
+    const chunks: Buffer[] = []
+    for await (const chunk of request) chunks.push(Buffer.from(chunk))
+    requests.push(JSON.parse(Buffer.concat(chunks).toString()))
+    response.writeHead(200, { 'content-type': 'text/event-stream' })
+    response.end(
+      'data: ' +
+        JSON.stringify({
+          choices: [{ index: 0, delta: { content: 'done' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 10 }
+        }) +
+        '\n\ndata: [DONE]\n\n'
+    )
+  })
+  const process = new FakeAgentProcess()
+  const owner = createHarnessAcpAgent(join(root, 'sessions'))
+  owner.app.connect(
+    acp.ndJsonStream(
+      Writable.toWeb(process.stdout),
+      Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>
+    )
+  )
+  const release = vi.fn(async () => undefined)
+  let runtime: AcpRuntime | undefined
+  try {
+    await new Promise<void>((resolve) => http.listen(0, '127.0.0.1', resolve))
+    const address = http.address() as import('node:net').AddressInfo
+    const config = harnessFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        model: 'fixture-model',
+        agentProviderId: 'host-fixture',
+        contextWindow: 32768
+      },
+      {
+        storageRoot: root,
+        executablePath: join(root, 'main.cjs'),
+        responsesConnection: { baseUrl: `http://127.0.0.1:${address.port}`, token: 'local-fixture' }
+      }
+    )
+    runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: root,
+      resolveBackend: () => ({
+        framework: { ...harnessFramework, spawn: () => asAgentProcess(process) },
+        backendId: 'open-science-agent:fixture',
+        modelRoute: 'open-science-agent',
+        providerId: 'fixture',
+        executablePath: join(root, 'main.cjs'),
+        env: {},
+        ...config,
+        systemPromptAppends: ['Stable host context'],
+        providerTransportLease: { setTarget: () => false, release }
+      })
+    })
+    const session = await runtime.createSession({ cwd: root })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'first fact' })
+    await runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+    expect(requests).toHaveLength(2)
+    expect(requests[1].messages.filter((m) => m.role === 'user')).toHaveLength(2)
+    expect(requests[0].messages[0]).toEqual(requests[1].messages[0])
+    expect(JSON.stringify(requests[0].messages)).toContain('Stable host context')
+    await runtime.requestProviderReconnect()
+    await vi.waitFor(() => expect(release).toHaveBeenCalledOnce())
+    expect(process.killed).toBe(true)
+  } finally {
+    await runtime?.shutdownForQuit()
+    await owner.dispose()
+    process.stdin.destroy()
+    process.stdout.destroy()
+    process.stderr.destroy()
+    http.closeAllConnections()
+    await new Promise<void>((resolve) => http.close(() => resolve()))
+    await rm(root, { recursive: true, force: true })
+  }
 })

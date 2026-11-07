@@ -361,6 +361,7 @@ export class AcpSessionCapabilityOwner {
   private readonly literatureEnabledSessionIds = new Set<string>()
   private readonly descriptors = new Map<string, EffectiveSessionCapabilityDescriptor>()
   private readonly piOwnedSkillServers = new WeakMap<object, McpServer>()
+  private readonly skillRuntimeReleases = new Map<string, () => void>()
   private readonly shellRuntimeBindings = new Map<string, ShellRuntimeBinding>()
   private readonly committedSessionIds = new Set<string>()
   private readonly bridgeMcpSessionKeys = new Map<string, string>()
@@ -470,6 +471,8 @@ export class AcpSessionCapabilityOwner {
     let provisionalCleanupComplete = false
     let preparedSetupSessionId: string | undefined
     let bridgeMcpSessionKey: string | undefined
+    let skillRuntimeRelease: (() => void) | undefined
+    let skillRuntimeRoutingId: string | undefined
 
     return Object.freeze({
       mcpServers: built.mcpServers,
@@ -506,6 +509,22 @@ export class AcpSessionCapabilityOwner {
         }
         const skillServer = servers.find((server) => server.name === SKILL_RUNTIME_MCP_SERVER_NAME)
         if (skillServer && isOwnedSkillRuntimeAcpServer(skillServer)) ownedSkillServer = skillServer
+
+        if (
+          (!request.framework.acceptsStdioMcp || built.descriptor.transport === 'http') &&
+          ownedSkillServer &&
+          servers.includes(ownedSkillServer)
+        ) {
+          const host = this.options.mcpHttpHost
+          if (!host) throw new Error('Skill HTTP host is unavailable')
+          const converted = host.registerSkillRuntime(ownedSkillServer)
+          skillRuntimeRoutingId = converted.routingId
+          skillRuntimeRelease?.()
+          skillRuntimeRelease = converted.release
+          servers = servers.map((server) =>
+            server === ownedSkillServer ? converted.server : server
+          )
+        }
 
         const modelFacingNames = [...built.descriptor.modelFacingMcpServerNames, ...addedNames]
         if (new Set(modelFacingNames).size !== modelFacingNames.length) {
@@ -570,6 +589,7 @@ export class AcpSessionCapabilityOwner {
         if (terminal) return
         const ownsRoutingIds = this.ownsProvisionalRoutingIds(routingIds, routingOwner)
         if (provisionGeneration !== this.provisionalGeneration) {
+          skillRuntimeRelease?.()
           this.revokeProvisional({
             capabilityTokens,
             routingIds: [
@@ -606,6 +626,7 @@ export class AcpSessionCapabilityOwner {
           throw new Error('ACP session capability provision was superseded.')
         }
         if (!ownsRoutingIds) {
+          skillRuntimeRelease?.()
           this.revokeProvisional({
             capabilityTokens,
             routingIds: [],
@@ -659,9 +680,31 @@ export class AcpSessionCapabilityOwner {
           skillImportRelease,
           planRelease
         })
+        if (request.framework.id === 'open-science-agent') {
+          for (const [kind, routingId] of [
+            ['notebook', routingIds.notebook],
+            ['artifact', routingIds.artifact],
+            ['skill-import', routingIds.skillImport],
+            ['plan', routingIds.plan],
+            ['host-message', routingIds.sideChat],
+            ['literature', routingIds.literature],
+            ['library', routingIds.literature],
+            ['skills', skillRuntimeRoutingId]
+          ] as const) {
+            if (routingId)
+              this.options.mcpHttpHost?.registerReceiptScope(
+                routingId,
+                JSON.stringify([request.projectId, appSessionId, kind]),
+                kind
+              )
+          }
+        }
         if (ownedSkillServer && isOwnedSkillRuntimeAcpServer(ownedSkillServer)) {
           this.piOwnedSkillServers.set(built.descriptor, ownedSkillServer)
         }
+        this.skillRuntimeReleases.get(appSessionId)?.()
+        this.skillRuntimeReleases.delete(appSessionId)
+        if (skillRuntimeRelease) this.skillRuntimeReleases.set(appSessionId, skillRuntimeRelease)
         if (request.setupSessionToken) {
           this.options.wslSetupSessions?.commitBinding?.(request.setupSessionToken, appSessionId)
         }
@@ -670,6 +713,7 @@ export class AcpSessionCapabilityOwner {
       },
       release: (ownershipFacts: SessionCapabilityOwnershipFacts): void | Promise<void> => {
         if (terminal) return
+        skillRuntimeRelease?.()
         terminal = true
         const setupRollback = preparedSetupSessionId
           ? request.setupSessionToken && this.options.wslSetupSessions?.rollbackBinding
@@ -1194,6 +1238,8 @@ export class AcpSessionCapabilityOwner {
     this.releaseCommittedNotebookCapability(appSessionId)
     this.releaseCommittedSkillImportCapability(appSessionId)
     this.releaseCommittedPlanCapability(appSessionId)
+    this.skillRuntimeReleases.get(appSessionId)?.()
+    this.skillRuntimeReleases.delete(appSessionId)
   }
 
   forgetSetupSession(appSessionId: string): Promise<void> | undefined {
@@ -1217,6 +1263,7 @@ export class AcpSessionCapabilityOwner {
       ...this.notebookCapabilityReleases.keys(),
       ...this.skillImportCapabilityReleases.keys(),
       ...this.planCapabilityReleases.keys(),
+      ...this.skillRuntimeReleases.keys(),
       ...this.mcpServers.keys(),
       ...this.descriptors.keys(),
       ...this.committedSessionIds
@@ -1232,6 +1279,7 @@ export class AcpSessionCapabilityOwner {
       this.releaseCommittedNotebookCapability(sessionId)
       this.releaseCommittedSkillImportCapability(sessionId)
       this.releaseCommittedPlanCapability(sessionId)
+      this.skillRuntimeReleases.get(sessionId)?.()
     }
     this.sessionCapabilityTokens.clear()
     this.artifactRoutingIds.clear()
@@ -1243,6 +1291,7 @@ export class AcpSessionCapabilityOwner {
     this.notebookCapabilityReleases.clear()
     this.skillImportCapabilityReleases.clear()
     this.planCapabilityReleases.clear()
+    this.skillRuntimeReleases.clear()
     this.mcpServers.clear()
     this.literatureEnabledSessionIds.clear()
     this.descriptors.clear()

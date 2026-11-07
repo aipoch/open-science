@@ -31,7 +31,8 @@ import {
 
 const DEFAULT_PORT = 44100
 const START_TIMEOUT_MS = 30_000
-const STOP_TIMEOUT_MS = 22_000
+// Cover the service's 40s authentication-aware stop budget plus exit-record observation.
+const STOP_TIMEOUT_MS = 42_000
 const MAX_DOWNLOAD_SYMLINK_HOPS = 40
 
 const usage = `Usage: open-science <command> [options]
@@ -121,7 +122,7 @@ Options:
   --no-memory            Disable Memory for this Session
   --specialist <id-or-name>  Bind a new Session to a Specialist
   --delegation <policy>  allow or deny new delegated children
-  --framework <id>       claude-code, opencode, codex, codebuddy, or pi
+  --framework <id>       open-science-agent, claude-code, opencode, codex, codebuddy, or pi
   --reviewer-inherit | --reviewer-provider <id> --reviewer-model <id> [--reviewer-effort <effort>]
   --subagent-inherit | --subagent-provider <id> --subagent-model <id> [--subagent-effort <effort>]
   --clear-provider | --clear-approval-profile | --clear-auto-review | --clear-memory
@@ -474,7 +475,9 @@ export const parseCliArgs = (argv) => {
   }
   if (
     options.framework !== undefined &&
-    !['claude-code', 'opencode', 'codex', 'codebuddy', 'pi'].includes(options.framework)
+    !['open-science-agent', 'claude-code', 'opencode', 'codex', 'codebuddy', 'pi'].includes(
+      options.framework
+    )
   ) {
     throw new CliUsageError(`Invalid framework: ${options.framework}`)
   }

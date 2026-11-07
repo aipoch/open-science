@@ -7876,13 +7876,16 @@
     "{{count}} failed overviews_other": "개요 {{count}}개 생성 실패",
     "Could not load the overview. Try again.": "개요를 불러오지 못했습니다. 다시 시도하세요.",
     "Could not save network rules. Reopen this page and try again.": "네트워크 규칙을 저장하지 못했습니다. 이 페이지를 다시 열고 재시도하세요.",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "localhost 및 사설 네트워크를 포함한 HTTPS 도메인은 승인 없이 접근할 수 있습니다. HTTP 및 IP 주소 직접 연결에는 승인이 필요합니다.",
-    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "HTTPS 도메인은 예외 없이 사용할 수 있습니다. HTTP 또는 IP 주소를 사용하세요.",
-    "Trusted unsafe networks": "신뢰하는 안전하지 않은 네트워크",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "정확한 프로토콜, 호스트 및 포트에 대한 HTTP 또는 IP 주소 직접 접근을 승인합니다.",
-    "Configure unsafe network exceptions in the local desktop app.": "로컬 데스크톱 앱에서 안전하지 않은 네트워크 예외를 설정하세요.",
-    "No trusted unsafe networks.": "신뢰하는 안전하지 않은 네트워크가 없습니다.",
-    "Review unsafe network access": "안전하지 않은 네트워크 접근 검토",
-    "Add network exception": "네트워크 예외 추가"
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "localhost와 사설 네트워크를 포함한 HTTPS 도메인은 승인 없이 허용됩니다. HTTP 및 직접 IP 연결에는 승인이 필요합니다.",
+    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "HTTPS 도메인은 이미 예외 없이 작동합니다. HTTP 또는 IP 주소를 사용하세요.",
+    "Trusted unsafe networks": "신뢰할 수 있는 안전하지 않은 네트워크",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "정확한 프로토콜, 호스트 및 포트에 대한 HTTP 또는 직접 IP 액세스를 승인합니다.",
+    "Configure unsafe network exceptions in the local desktop app.": "로컬 데스크톱 앱에서 안전하지 않은 네트워크 예외를 구성하세요.",
+    "No trusted unsafe networks.": "신뢰할 수 있는 안전하지 않은 네트워크가 없습니다.",
+    "Review unsafe network access": "안전하지 않은 네트워크 액세스 검토",
+    "Add network exception": "네트워크 예외 추가",
+    "Built-in experimental agent. Uses your API account and managed tools.": "기본 제공 실험적 에이전트입니다. API 계정과 관리 도구를 사용합니다.",
+    "Check the interrupted tool result": "중단된 도구 결과 확인",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "도구가 파일이나 외부 서비스를 변경했을 수 있습니다. 계속하기 전에 실제 결과를 확인하세요. 진단을 내보내 호출을 확인한 다음 검증된 상태로 새 대화를 시작하세요. 이 대화에서는 결과가 불확실한 작업을 반복하지 않습니다."
   }
 }

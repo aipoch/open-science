@@ -46,7 +46,7 @@ export type RuntimeSetupState = {
   isDetectingOpencode: boolean
   isDetectingCodex: boolean
   isDetectingCodeBuddy: boolean
-  installStates: Record<AgentFrameworkId, RuntimeInstallState>
+  installStates: Record<Exclude<AgentFrameworkId, 'open-science-agent'>, RuntimeInstallState>
 }
 
 export type RuntimeSetupActions = {
@@ -69,7 +69,7 @@ export type RuntimeSetupActions = {
   uninstallCodeBuddy: () => Promise<void>
   uninstallPi: () => Promise<void>
   uninstallCodex: () => Promise<void>
-  clearInstallLogs: (runtime?: AgentFrameworkId) => void
+  clearInstallLogs: (runtime?: Exclude<AgentFrameworkId, 'open-science-agent'>) => void
 }
 
 export type RuntimeSetupSlice = RuntimeSetupState & RuntimeSetupActions
@@ -194,7 +194,7 @@ const updateInstallStates = <Store extends RuntimeSetupHost>(
 
 const patchInstallState = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   patch: Partial<RuntimeInstallState>
 ): void =>
   updateInstallStates(set, (installStates) => ({
@@ -204,7 +204,7 @@ const patchInstallState = <Store extends RuntimeSetupHost>(
 
 const snapshotRuntimePath = (
   snapshot: SettingsSnapshot,
-  runtime: AgentFrameworkId
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>
 ): string | undefined => {
   if (runtime === 'claude-code') return snapshot.claude.resolvedPath
   if (runtime === 'opencode') return snapshot.opencode.resolvedPath
@@ -214,7 +214,7 @@ const snapshotRuntimePath = (
 
 const clearRuntimeInstallDiagnosticsIfMissing = <Store extends RuntimeSetupHost>(
   set: StoreApi<Store>['setState'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   snapshot: SettingsSnapshot
 ): void => {
   if (snapshotRuntimePath(snapshot, runtime)) return
@@ -230,7 +230,7 @@ const runRuntimeInstall = async <Store extends RuntimeSetupHost>(
   get: StoreApi<Store>['getState'],
   getCommands: () => RuntimeSetupCommands,
   reconcileSnapshot: RuntimeSetupSliceOptions<Store>['reconcileSnapshot'],
-  runtime: AgentFrameworkId,
+  runtime: Exclude<AgentFrameworkId, 'open-science-agent'>,
   invoke: (commands: RuntimeSetupCommands) => Promise<ClaudeInstallResult>
 ): Promise<ClaudeInstallResult> => {
   // Install events are broadcast without a runtime id. The synchronous global guard guarantees that
@@ -523,7 +523,7 @@ export const createRuntimeSetupSlice = <Store extends RuntimeSetupHost>({
 
   clearInstallLogs: (runtime) =>
     updateInstallStates(set, (current) => {
-      const runtimes: AgentFrameworkId[] = runtime
+      const runtimes: Exclude<AgentFrameworkId, 'open-science-agent'>[] = runtime
         ? [runtime]
         : ['claude-code', 'opencode', 'codex', 'codebuddy', 'pi']
       const installStates = { ...current }

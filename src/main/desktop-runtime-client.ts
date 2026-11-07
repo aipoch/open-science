@@ -8,6 +8,7 @@ import {
   readServiceLifetime,
   serviceStopDeadline,
   LOCAL_SERVICE_STOP_ESCALATION_MS,
+  LOCAL_SERVICE_STOP_BUDGET_MS,
   type ServiceLifetimeSnapshot,
   type ServiceStopOptions
 } from './local-service-lifetime'
@@ -619,7 +620,7 @@ export async function connectDesktopRuntime(options: {
   const waitForStoppedEvidence = (
     signal?: AbortSignal,
     requireCleanExit = !runtimeInfo.lifetime,
-    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000,
+    timeoutMs = runtimeInfo.lifetime ? LOCAL_SERVICE_STOP_BUDGET_MS : 15_000,
     deadlineAt = Date.now() + timeoutMs
   ): Promise<RuntimeDirectoryLease> => {
     return waitForRuntimeStopped({
@@ -661,7 +662,7 @@ export async function connectDesktopRuntime(options: {
   const waitForStopped = async (
     signal?: AbortSignal,
     requireCleanExit = !runtimeInfo.lifetime,
-    timeoutMs = runtimeInfo.lifetime ? 20_000 : 15_000
+    timeoutMs = runtimeInfo.lifetime ? LOCAL_SERVICE_STOP_BUDGET_MS : 15_000
   ): Promise<RuntimeDirectoryLease> => {
     if (!runtimeInfo.lifetime) return waitForStoppedEvidence(signal, requireCleanExit, timeoutMs)
     const deadlineAt = serviceStopDeadline(Date.now() + timeoutMs)

@@ -7877,14 +7877,17 @@
     "{{done}} of {{total}} finished": "{{total}} 件中 {{done}} 件を処理済み",
     "{{count}} failed overviews_other": "{{count}} 件の概要の生成に失敗",
     "Could not load the overview. Try again.": "概要を読み込めませんでした。もう一度お試しください。",
-    "Could not save network rules. Reopen this page and try again.": "ネットワークルールを保存できませんでした。このページを開き直して再試行してください。",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "HTTPS ドメインは localhost やプライベートネットワークを含め、承認なしでアクセスできます。HTTP および IP アドレスへの直接接続には承認が必要です。",
-    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "HTTPS ドメインは例外なしで利用できます。HTTP または IP アドレスを使用してください。",
-    "Trusted unsafe networks": "信頼する安全でないネットワーク",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "プロトコル、ホスト、ポートを指定して HTTP または IP アドレスへの直接アクセスを許可します。",
-    "Configure unsafe network exceptions in the local desktop app.": "安全でないネットワークの例外はローカルのデスクトップアプリで設定してください。",
-    "No trusted unsafe networks.": "信頼する安全でないネットワークはありません。",
+    "Could not save network rules. Reopen this page and try again.": "ネットワークルールを保存できませんでした。このページを開き直して、もう一度お試しください。",
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "HTTPS ドメインは localhost やプライベートネットワークを含め、承認なしで許可されます。HTTP と IP への直接接続には承認が必要です。",
+    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "HTTPS ドメインはすでに例外なしで機能します。HTTP または IP アドレスを使用してください。",
+    "Trusted unsafe networks": "信頼済みの安全でないネットワーク",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "指定したプロトコル、ホスト、ポートへの HTTP または IP 直接アクセスを承認します。",
+    "Configure unsafe network exceptions in the local desktop app.": "ローカルデスクトップアプリで安全でないネットワークの例外を設定します。",
+    "No trusted unsafe networks.": "信頼済みの安全でないネットワークはありません。",
     "Review unsafe network access": "安全でないネットワークアクセスを確認",
-    "Add network exception": "ネットワークの例外を追加"
+    "Add network exception": "ネットワーク例外を追加",
+    "Built-in experimental agent. Uses your API account and managed tools.": "組み込みの実験的エージェント。API アカウントと管理ツールを使用します。",
+    "Check the interrupted tool result": "中断されたツール結果を確認",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "ツールがファイルまたは外部サービスを変更した可能性があります。続行する前に実際の結果を確認してください。診断情報をエクスポートして呼び出しを特定し、確認済みの状態で新しい会話を開始してください。この会話では結果が不確かな操作を繰り返しません。"
   }
 }

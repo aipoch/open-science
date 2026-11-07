@@ -9,6 +9,8 @@ import type { FileReference } from '../../shared/artifacts'
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { codexFramework } from '../agent-framework/codex'
+import { opencodeFramework } from '../agent-framework/opencode'
+import { harnessFramework } from '../agent-framework/harness'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import type { ContextWindowTurnHandle } from './context-usage-tracker'
 import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
@@ -34,6 +36,7 @@ type Fixture = {
   authorizeReferencedUploads: Mock
   releaseGrant: Mock
   registerTurnInputs: Mock
+  isReplNamespaceUnavailable: Mock
   promptClose: Mock
 }
 
@@ -94,6 +97,7 @@ const setup = (
   const releaseGrant = vi.fn()
   const authorizeReferencedUploads = vi.fn(async () => releaseGrant)
   const registerTurnInputs = vi.fn(async () => undefined)
+  const isReplNamespaceUnavailable = vi.fn(() => false)
   const owner = new AcpPromptPreparationOwner({
     promptContent,
     classificationImages,
@@ -106,6 +110,7 @@ const setup = (
     memory,
     isMemoryEnabledForSession,
     notebook: {
+      isReplNamespaceUnavailable,
       peekHandoffContext: vi.fn(() => ({
         executionCount: 1,
         cells: [],
@@ -179,11 +184,94 @@ const setup = (
     authorizeReferencedUploads,
     releaseGrant,
     registerTurnInputs,
+    isReplNamespaceUnavailable,
     promptClose
   }
 }
 
 describe('AcpPromptPreparationOwner', () => {
+  it.each([
+    { framework: harnessFramework, bridge: false },
+    { framework: claudeCodeFramework, bridge: false },
+    { framework: opencodeFramework, bridge: false },
+    { framework: codexFramework, bridge: false },
+    { framework: codexFramework, bridge: true }
+  ])(
+    'projects missing REPL state into the current turn for $framework.id / bridge=$bridge',
+    async ({ framework, bridge }) => {
+      const fixture = setup()
+      fixture.isReplNamespaceUnavailable.mockReturnValue(true)
+      const backend = {
+        framework,
+        session: { modelRequired: false },
+        prompt: { systemPromptAppends: [], persistentSystemPrompt: 'stable system' },
+        context: { window: 100_000, supportsImageInput: true },
+        adapter: { nativeMcpEnabled: !bridge, bridgeMcpAliasesEnabled: bridge }
+      }
+      const handle = await fixture.prepare({ backend, request: request() })
+      const text = fixture.promptContent.prepare.mock.calls[0][0].text
+      expect(text).toContain('<open_science_repl_state>')
+      expect(text).toContain('Previous JavaScript variables are unavailable')
+      expect(text).toContain('does not invalidate prior results or saved files')
+      expect(text.indexOf('<open_science_repl_state>')).toBeLessThan(text.indexOf('prepared task'))
+      expect(backend.prompt.persistentSystemPrompt).toBe('stable system')
+      expect(fixture.isReplNamespaceUnavailable).toHaveBeenCalledWith(
+        'project-1',
+        'session-1',
+        undefined
+      )
+      handle.close()
+
+      fixture.isReplNamespaceUnavailable.mockReturnValue(false)
+      const next = await fixture.prepare({ backend, request: request({ contextReset: true }) })
+      expect(fixture.promptContent.prepare.mock.calls[1][0].text).not.toContain(
+        '<open_science_repl_state>'
+      )
+      next.close()
+    }
+  )
+
+  it('reads continuity for the requested root Frame', async () => {
+    const fixture = setup()
+    const handle = await fixture.prepare({
+      request: request({
+        provenanceContext: {
+          rootFrameId: 'root-2',
+          agentFrameId: 'root-2',
+          messageBranchId: 'branch-2',
+          runtimeSegmentId: 'segment-2',
+          promptMessageId: 'prompt-2'
+        }
+      })
+    })
+    expect(fixture.isReplNamespaceUnavailable).toHaveBeenCalledWith(
+      'project-1',
+      'session-1',
+      'root-2'
+    )
+    handle.close()
+  })
+
+  it.each(['reviewer', 'side-chat', 'delegate'])(
+    'does not read root REPL state for %s',
+    async (role) => {
+      const fixture = setup()
+      fixture.isReplNamespaceUnavailable.mockReturnValue(true)
+      const handle = await fixture.prepare({ role })
+      expect(fixture.isReplNamespaceUnavailable).not.toHaveBeenCalled()
+      handle.close()
+    }
+  )
+
+  it('does not query REPL state when tools are absent or preparation was cancelled', async () => {
+    const fixture = setup()
+    const handle = await fixture.prepare({
+      tooling: { artifacts: false, notebook: false, skillImport: false }
+    })
+    handle.close()
+    await fixture.prepare({ cancellationCheckpoint: async () => 'cancelled' })
+    expect(fixture.isReplNamespaceUnavailable).not.toHaveBeenCalled()
+  })
   it('uses the optional reading classifier only for an ambiguous active linked PDF request', async () => {
     const classifyReadingRoute = vi.fn(async ({ text }: { text: string }) => {
       expect(text).toBe('What are the main contributions?')

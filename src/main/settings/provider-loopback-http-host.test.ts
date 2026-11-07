@@ -72,6 +72,16 @@ describe('ProviderLoopbackHttpHost', () => {
 
     const secondConnection = await host.start()
     expect(secondConnection.token).not.toBe(firstConnection.token)
+    const response = await fetch(`${secondConnection.baseUrl}/echo`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${secondConnection.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ restarted: true })
+    })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ restarted: true })
   })
 
   it('records the loopback listener lifecycle without exposing its credential', async () => {

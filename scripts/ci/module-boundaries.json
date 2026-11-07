@@ -808,6 +808,79 @@
       ],
       "externalImports": ["node:net"]
     },
+    "agent_harness": {
+      "sources": [
+        "packages/agent-harness/src/mcp.ts",
+        "packages/agent-harness/src/tool-validation.ts",
+        "packages/agent-harness/src/chat-completions.ts",
+        "packages/agent-harness/src/memory-store.ts",
+        "packages/agent-harness/src/tool-execution.ts",
+        "packages/agent-harness/package.json",
+        "packages/agent-harness/src/index.ts",
+        "packages/agent-harness/src/compaction.ts",
+        "packages/agent-harness/tsc.cjs",
+        "packages/agent-harness/tsconfig.dev.json",
+        "packages/agent-harness/tsconfig.json",
+        "packages/agent-harness/tsconfig.test.json",
+        "packages/agent-harness/vitest.config.ts",
+        "packages/agent-harness/src/session.ts",
+        "packages/agent-harness/src/session-state.ts",
+        "packages/agent-harness/src/session-types.ts",
+        "packages/agent-harness/src/file-store.ts",
+        "packages/agent-harness/src/responses.ts",
+        "packages/agent-harness/src/messages.ts",
+        "packages/agent-harness/src/journal-store.ts",
+        "packages/agent-harness/src/delegation.ts",
+        "packages/agent-harness/src/media.ts",
+        "packages/agent-harness/src/tool-results.ts"
+      ],
+      "layer": "package",
+      "sourceLayers": {},
+      "consumerModules": [
+        "settings_service_facade",
+        "notebook_application",
+        "harness_acp",
+        "agent_harness_delivery"
+      ],
+      "requiredTests": [
+        "scripts/agent-harness-journal-crash.integration.test.ts",
+        "scripts/agent-harness-recovery.integration.test.ts",
+        "packages/agent-harness/src/mcp.test.ts",
+        "src/main/notebook/harness-mcp-turn.integration.test.ts",
+        "packages/agent-harness/src/chat-completions.test.ts",
+        "packages/agent-harness/src/chat-completions.integration.test.ts",
+        "packages/agent-harness/src/protocol-adapters.test.ts",
+        "packages/agent-harness/src/performance-benchmark.test.ts",
+        "packages/agent-harness/src/long-session-benchmark.test.ts",
+        "packages/agent-harness/src/session.test.ts",
+        "packages/agent-harness/src/tool-execution.test.ts",
+        "scripts/agent-harness-smoke.test.ts",
+        "packages/agent-harness/src/index.test.ts",
+        "packages/agent-harness/src/compaction.test.ts",
+        "src/main/settings/harness-session-owner.test.ts",
+        "src/main/settings/harness-session-lifecycle.integration.test.ts",
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "packages/agent-harness/src/journal-store.test.ts",
+        "packages/agent-harness/src/delegation.test.ts",
+        "scripts/agent-harness-acceptance.test.ts",
+        "packages/agent-harness/src/native-media.test.ts",
+        "packages/agent-harness/src/tool-results.test.ts"
+      ],
+      "externalImports": [
+        "node:crypto",
+        "typescript/lib/tsc.js",
+        "vitest/config",
+        "node:fs/promises",
+        "node:path",
+        "node:string_decoder"
+      ],
+      "resourcePaths": [
+        "packages/agent-harness/README.md",
+        "packages/agent-harness/LICENSE",
+        "packages/agent-harness/SUPPORT.md"
+      ],
+      "resourceTests": ["scripts/agent-harness-acceptance.test.ts"]
+    },
     "durable_files": {
       "note": "Filesystem fault injection and child-process crash recovery are explicit contracts.",
       "sources": [
@@ -1471,7 +1544,9 @@
         "src/main/agent-framework/opencode.ts",
         "src/main/agent-framework/registry.ts",
         "src/main/agent-framework/resolved-agent-backend-leases.ts",
-        "src/main/agent-framework/types.ts"
+        "src/main/agent-framework/types.ts",
+        "src/main/agent-framework/harness.ts",
+        "src/main/harness-acp/config.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {},
@@ -1494,7 +1569,8 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/agent-framework/harness.test.ts"
       ],
       "externalImports": [
         "@agentclientprotocol/sdk",
@@ -1502,7 +1578,8 @@
         "node:child_process",
         "node:crypto",
         "node:fs/promises",
-        "node:path"
+        "node:path",
+        "zod"
       ],
       "resourcePaths": ["src/main/agent-framework/codex-native-model-instructions.md"],
       "resourceImports": ["src/main/agent-framework/codex-native-model-instructions.md"],
@@ -5544,6 +5621,7 @@
       "sourceLayers": {},
       "consumerModules": ["project_lifecycle"],
       "requiredTests": [
+        "src/main/settings/harness-turn-usage.test.ts",
         "src/renderer/src/hooks/useLifecycleSync.test.tsx",
         "src/main/session-persistence/coordinator.architecture.test.ts",
         "src/main/session-persistence/coordinator.test.ts",
@@ -6354,6 +6432,12 @@
     },
     "settings_service_facade": {
       "sources": [
+        "src/main/settings/harness-turn.ts",
+        "src/main/settings/harness-context.ts",
+        "src/main/settings/harness-turn-journal.ts",
+        "src/main/settings/harness-turn-usage.ts",
+        "src/main/settings/harness-model-request.ts",
+        "src/main/settings/harness-session-owner.ts",
         "src/main/settings/service.ts",
         "src/main/settings/network-proxy-settings-owner.ts",
         "src/main/settings/settings-snapshot-commit-owner.ts",
@@ -6370,6 +6454,13 @@
       "sourceLayers": {},
       "consumerModules": ["workspace_runtime"],
       "requiredTests": [
+        "src/main/notebook/harness-tools.integration.test.ts",
+        "src/main/settings/harness-turn-journal.test.ts",
+        "src/main/settings/harness-turn-usage.test.ts",
+        "scripts/agent-harness-smoke.test.ts",
+        "src/main/settings/harness-session-owner.test.ts",
+        "src/main/settings/harness-model-request.test.ts",
+        "src/main/settings/harness-session-lifecycle.integration.test.ts",
         "src/renderer/src/stores/settings-runtime-slice.test.ts",
         "src/renderer/src/stores/settings-store.test.ts",
         "src/main/settings/settings-backend.architecture.test.ts",
@@ -6399,6 +6490,7 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": [
+        "@aipoch/agent-harness",
         "@aipoch/diagnostics/node",
         "@aipoch/providers",
         "@aipoch/providers/client",
@@ -11499,6 +11591,40 @@
         "src/main/host-layer-dependencies.architecture.test.ts"
       ],
       "externalImports": ["node:crypto", "node:util"]
+    },
+    "harness_acp": {
+      "sources": [
+        "src/main/harness-acp/agent.ts",
+        "src/main/harness-acp/mcp.ts",
+        "src/main/harness-acp/entry.ts",
+        "src/main/harness-acp/tool-receipts.ts",
+        "src/main/harness-acp/storage-cleanup.ts"
+      ],
+      "layer": "host-owner",
+      "sourceLayers": {},
+      "consumerModules": ["desktop_composition", "acp_runtime"],
+      "requiredTests": [
+        "src/main/harness-acp/agent.integration.test.ts",
+        "src/main/harness-acp/tool-receipts.test.ts",
+        "src/main/harness-acp/storage-cleanup.test.ts",
+        "src/main/composition/project-lifecycle.test.ts",
+        "src/main/host-layer-dependencies.architecture.test.ts"
+      ],
+      "externalImports": [
+        "@agentclientprotocol/sdk",
+        "@aipoch/agent-harness",
+        "@aipoch/agent-harness/chat-completions",
+        "@aipoch/agent-harness/mcp",
+        "@modelcontextprotocol/sdk/client/index.js",
+        "@modelcontextprotocol/sdk/client/streamableHttp.js",
+        "@modelcontextprotocol/sdk/validation/ajv",
+        "@modelcontextprotocol/sdk/types.js",
+        "zod",
+        "node:crypto",
+        "node:fs/promises",
+        "node:path",
+        "node:stream"
+      ]
     }
   }
 }

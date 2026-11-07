@@ -149,6 +149,9 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
     AcpRuntimeOptions['notebook']
   >['canOwnRuntimeBindingDecision']
   peekNotebookHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: NonNullable<
+    AcpRuntimeOptions['notebook']
+  >['isReplNamespaceUnavailable']
   authorizeSkillImportReferencedUploads: (
     projectId: string,
     sessionId: string,
@@ -272,6 +275,7 @@ const createAcpRuntime = ({
   getShellRuntimeBinding,
   canOwnRuntimeBindingDecision,
   peekNotebookHandoffContext,
+  isReplNamespaceUnavailable,
   authorizeSkillImportReferencedUploads,
   settingsService,
   grantedRootsRepository,
@@ -492,7 +496,9 @@ const createAcpRuntime = ({
         ...(spawnAgent ? { spawnAgent } : {}),
         ...(spawnProcess ? { spawnProcess } : {}),
         ...(registerOpenCodeStoreRelease ? { registerOpenCodeStoreRelease } : {}),
-        mcpHttpHost: new AgentMcpHttpHost(),
+        mcpHttpHost: new AgentMcpHttpHost({
+          receiptDirectory: join(dataRoot, 'open-science-agent', 'tool-receipts')
+        }),
         wslSetupSessions,
         ...(literatureReader && literatureAttachments && sessionPersistenceCoordinator
           ? {
@@ -846,7 +852,8 @@ const createAcpRuntime = ({
                   notebookRpcServer.prepareNotebookTurnInputs(request),
                 registerTurnInputs: (request) =>
                   notebookRpcServer.registerNotebookTurnInputs(request),
-                peekHandoffContext: peekNotebookHandoffContext
+                peekHandoffContext: peekNotebookHandoffContext,
+                isReplNamespaceUnavailable
               })
         },
         ...(delegatedNotebookConnection

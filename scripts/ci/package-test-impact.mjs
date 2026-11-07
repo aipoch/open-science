@@ -29,6 +29,7 @@ export const dedicatedPackageTestRoots = [
 
 // These are consumer scenarios, not another dependency graph. Prerequisites come from the registry.
 export const verificationFamilies = [
+  { script: 'check:agent-harness-package', packages: ['agent-harness'] },
   { script: 'check:test-impact-package', packages: ['test-impact'] },
   { script: 'check:providers-package', packages: ['providers'] },
   { script: 'check:resilient-download-package', packages: ['resilient-download'] },

@@ -315,19 +315,22 @@ describe('notebook MCP server config', () => {
   })
 
   it('directs agents to concise Host SDK help without prefetching every topic', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Main/root agents')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain("await host.help('delegate')")
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('role-aware catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('field descriptions')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/do not prefetch.*topics/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('Delegate agents should use the same catalog')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('unavailable root-only topics remain visible')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('call forms in `repl_execute`')
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('role-aware catalog')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.sendFrameMessage(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('host.send_message(')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('{task')
 
-    expect(REPL_EXECUTE_DOC).toContain("await host.help('delegate')")
+    expect(REPL_EXECUTE_DOC).toContain("host.help('delegate')")
     expect(REPL_EXECUTE_DOC).toMatch(/do not prefetch.*topics/i)
+    expect(REPL_EXECUTE_DOC).toContain("return JSON.stringify(await host.help('topic'))")
+    expect(REPL_EXECUTE_DOC).toContain('catalog visibility does not grant access')
+    expect(REPL_EXECUTE_DOC).toContain('Restored conversation history does not restore variables')
+    expect(REPL_EXECUTE_DOC).toContain(
+      'never probe old variable names or replay side-effecting calls'
+    )
+    expect(REPL_EXECUTE_DOC).toContain('host.viewImage({ path: "plot.png" })')
+    expect(REPL_EXECUTE_DOC).toContain('Omit profile to inherit the parent')
   })
 
   it('does not inject a 4000-character output instruction into agent guidance', () => {
@@ -746,10 +749,10 @@ describe('notebook MCP server config', () => {
     const toolNames = NOTEBOOK_RPC_TOOLS.map((tool) => tool.name)
     expect(toolNames).toContain('manage_environments')
 
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('manage_environments')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('./handoff/')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND.toLowerCase()).toContain('separate')
+    const environment = NOTEBOOK_RPC_TOOLS.find((tool) => tool.name === 'manage_environments')
+    expect(environment?.description).toContain('separate')
+    expect(REPL_EXECUTE_DOC).toContain('process.env.OPEN_SCIENCE_HANDOFF_DIR')
+    expect(REPL_EXECUTE_DOC).not.toContain('./handoff/')
   })
 })
 
@@ -1498,11 +1501,13 @@ describe('repl_execute tool', () => {
     // The control-plane repl takes no language/cellId — it is distinct from notebook_execute.
     expect(Object.keys(tool?.inputSchema ?? {})).toEqual(['code', 'background', 'timeoutMs'])
     expect(tool?.description).toMatch(/background:true/u)
-    expect(tool?.description).toMatch(/background-safe/iu)
     expect(tool?.description).toMatch(
-      /host\.mcp.*host\.compute.*host\.llm.*host\.delegate.*host\.viewImage/u
+      /background:true supports host\.mcp, host\.compute, host\.llm, host\.delegate/u
     )
-    expect(tool?.description).toMatch(/host\.agents\.switch.*unsafe/u)
+    expect(tool?.description).toMatch(
+      /Foreground.*host\.viewImage, host\.agents\.switch and user input/u
+    )
+    expect(tool?.description).toContain('BACKGROUND_HOST_METHOD_UNSAFE requires foreground')
   })
 
   it('maps background REPL execution to the shared compact receipt', () => {
@@ -1614,7 +1619,7 @@ describe('repl_execute tool', () => {
     expect(tool?.description).toContain('role-aware catalog')
     expect(tool?.description).toContain('field descriptions')
     expect(tool?.description).toMatch(/do not prefetch.*topics/i)
-    expect(tool?.description).toContain('Delegate agents should use the same catalog')
+    expect(tool?.description).toContain('Delegate agents cannot delegate')
     expect(tool?.description).not.toContain('host.sendFrameMessage(')
     expect(tool?.description).not.toContain('host.send_message(')
   })

@@ -317,6 +317,8 @@ const acceptTestMainContinuation = async (
     finalizeArtifacts: async () => []
   })
   await owner.begin(scope)
+  // Admission can advance the logical clock beyond wall time; fixture events belong to this run.
+  const startedAt = durable.activeRun!.startedAt
   // Main's accepted continuation releases the legacy recovery aliases alongside admission.
   durable = {
     ...durable,
@@ -328,7 +330,7 @@ const acceptTestMainContinuation = async (
   owner.accept(
     createEvent({
       id: crypto.randomUUID(),
-      timestamp: Date.now(),
+      timestamp: Math.max(Date.now(), startedAt),
       kind: 'raw',
       sessionId,
       promptMessageId,
@@ -340,7 +342,7 @@ const acceptTestMainContinuation = async (
     await owner.commitTerminal(
       createEvent({
         id: crypto.randomUUID(),
-        timestamp: Date.now(),
+        timestamp: Math.max(Date.now(), startedAt),
         sessionId,
         promptMessageId,
         ...terminal
@@ -2130,7 +2132,13 @@ describe('workspace durable elicitation', () => {
     ['Claude Code', 'claude-code', 'claude-code:anthropic', 'claude-code'],
     ['OpenCode', 'opencode', 'opencode:provider-1', 'opencode'],
     ['Codex Responses', 'codex', 'codex:responses-provider', 'codex-response'],
-    ['Codex Bridge', 'codex', 'codex:bridge-provider', 'codex-bridge']
+    ['Codex Bridge', 'codex', 'codex:bridge-provider', 'codex-bridge'],
+    [
+      'Built-in harness',
+      'open-science-agent',
+      'open-science-agent:provider-1',
+      'open-science-agent'
+    ]
   ])(
     'reattaches a restored session before submitting its durable answer through %s',
     async (_path, frameworkId, backendId, historyReplayTarget) => {
@@ -9689,7 +9697,11 @@ describe('resuming an interrupted session on demand', () => {
     expect(session.interrupted).toBeUndefined()
   })
 
-  it('auto-reviews a resumed turn when the refresh precedes its lifecycle event', async () => {
+  it('auto-reviews a resumed turn when the refresh precedes its lifecycle event', async ({
+    onTestFinished
+  }) => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000)
+    onTestFinished(() => clock.mockRestore())
     const store = useSessionStore.getState()
     store.appendUserMessage({
       sessionId: 'session-1',

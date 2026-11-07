@@ -95,6 +95,7 @@ export type AgentModelRoute =
   | 'opencode-openai'
   | 'codebuddy-openai'
   | 'pi'
+  | 'open-science-agent'
   | 'codex-responses'
   | 'codex-responses-compatibility'
   | 'codex-bridge'

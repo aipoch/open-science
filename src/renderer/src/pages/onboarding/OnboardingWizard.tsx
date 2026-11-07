@@ -302,10 +302,13 @@ const OnboardingWizard = ({
         isSupportedCodexCliVersion(codexNativeVersion) &&
         (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
       codebuddy: preflight.codebuddyReady,
+      'open-science-agent': preflight.openScienceAgentReady === true,
       pi: preflight.piReady === true
     }
     if (ready[agentFrameworkId]) return
-    const installed = agentFrameworks.find((framework) => ready[framework.id])
+    const installed = agentFrameworks.find(
+      (framework) => framework.id !== 'open-science-agent' && ready[framework.id]
+    )
     if (!installed) return
 
     didSelectInitialAgent.current = true

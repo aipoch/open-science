@@ -74,7 +74,7 @@ const permissionRequest = (
 const observe = (
   context: AcpPermissionContext,
   notification: SessionNotification,
-  framework: 'codex' | 'opencode' | 'claude-code' | 'codebuddy'
+  framework: 'codex' | 'opencode' | 'claude-code' | 'codebuddy' | 'open-science-agent'
 ): void => {
   context.observeToolCall(notification, {
     sessionId: notification.sessionId,
@@ -84,7 +84,85 @@ const observe = (
 }
 
 describe('ACP permission context', () => {
-  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+  it('binds built-in harness MCP approval to the observed call and releases host admission', async () => {
+    const emit = vi.fn()
+    const authorized = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: emit,
+      onNotebookExecutionAuthorized: authorized,
+      routing: permissionRouting({
+        sessionSnapshot: () => ({
+          cwd: '/workspace',
+          frameworkId: 'open-science-agent',
+          permissionProfile: { selectedProfile: 'ask' }
+        }),
+        capturePrompt: () => ({
+          sequence: 1,
+          promptMessageId: 'prompt-1',
+          isCancellationAccepted: () => false
+        }),
+        currentInteractionSequence: () => 1
+      })
+    })
+    const title = 'mcp__open_science_notebook__repl_execute'
+    const rawInput = { code: `eval("console.log('ok')")` }
+    try {
+      const request = permissionRequest('session-1', 'call-1', {
+        title,
+        rawInput,
+        _meta: { toolName: title }
+      })
+      const restoreContext = {
+        sessionId: 'session-1',
+        framework: 'open-science-agent',
+        mcpServerNames: NOTEBOOK_SERVERS,
+        isCancelled: () => false
+      }
+      expect(
+        trustedMcpToolIdentity((await context.restoreToolCall(request, restoreContext))!)
+      ).toBeUndefined()
+      observe(
+        context,
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call',
+            toolCallId: 'call-1',
+            rawInput,
+            _meta: { toolName: title },
+            title,
+            kind: 'other',
+            status: 'pending'
+          }
+        },
+        'open-science-agent'
+      )
+      const foreign = permissionRequest('session-1', 'another-call', { title, rawInput })
+      expect(
+        trustedMcpToolIdentity((await context.restoreToolCall(foreign, restoreContext))!)
+      ).toBeUndefined()
+      expect(await context.handleProviderRequest(request)).toEqual({
+        outcome: { outcome: 'selected', optionId: 'allow-once' }
+      })
+      expect(emit).not.toHaveBeenCalled()
+      expect(authorized).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          sessionId: 'session-1',
+          toolCallId: 'call-1',
+          promptMessageId: 'prompt-1',
+          method: 'executeControl',
+          executionInput: rawInput
+        })
+      )
+      expect(
+        trustedMcpToolIdentity((await context.restoreToolCall(request, restoreContext))!)
+      ).toBeUndefined()
+    } finally {
+      context.dispose()
+    }
+  })
+
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'open-science-agent'] as const)(
     'defers verified Notebook execution to host admission without a language grant for %s',
     async (frameworkId) => {
       const emit = vi.fn()

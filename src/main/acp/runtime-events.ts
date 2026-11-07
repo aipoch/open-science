@@ -249,22 +249,33 @@ const projectContextCompactionUpdate = (
   update: ToolCallUpdate
 ): Pick<
   Extract<AcpRuntimeEvent, { kind: 'compaction' }>,
-  'kind' | 'status' | 'title' | 'toolCallId'
+  'kind' | 'status' | 'title' | 'toolCallId' | 'compactionReason'
 > => {
+  const marker = update._meta?.contextCompaction
+  const details = isRecord(marker) && marker.version === 1 ? marker : undefined
+  const reason = details?.reason
   const status =
-    update.status ?? (update.sessionUpdate === 'tool_call_update' ? 'completed' : 'in_progress')
+    details?.cancelled === true && update.status === 'failed'
+      ? 'cancelled'
+      : (update.status ??
+        (update.sessionUpdate === 'tool_call_update' ? 'completed' : 'in_progress'))
   const title =
-    status === 'completed'
-      ? 'Context compacted'
-      : status === 'failed'
-        ? 'Context compaction failed'
-        : 'Compacting context'
+    status === 'cancelled'
+      ? 'Context compaction cancelled'
+      : status === 'completed'
+        ? 'Context compacted'
+        : status === 'failed'
+          ? 'Context compaction failed'
+          : 'Compacting context'
 
   return {
     kind: 'compaction',
     status,
     title,
-    toolCallId: update.toolCallId
+    toolCallId: update.toolCallId,
+    ...(['automatic', 'manual', 'overflow-recovery'].includes(reason as string)
+      ? { compactionReason: reason as AcpRuntimeEvent['compactionReason'] }
+      : {})
   }
 }
 

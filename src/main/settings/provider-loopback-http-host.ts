@@ -123,7 +123,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private startPromise: Promise<Connection> | undefined
   private closePromise: Promise<void> | undefined
   private closingStartPromise: Promise<Connection> | undefined
-  private lifecycle: { expectedClose: boolean } | undefined
+  private lifecycle: { expectedClose: boolean; abort: AbortController } | undefined
 
   constructor(private readonly options: ProviderLoopbackHttpHostOptions<Connection>) {}
 
@@ -169,7 +169,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
     const diagnostics = this.options.diagnostics ?? defaultDiagnostics
     const bridgeId = randomUUID()
     const startedAt = Date.now()
-    const lifecycle = { expectedClose: false }
+    const lifecycle = { expectedClose: false, abort: new AbortController() }
     let port: number | undefined
     const diagnosticFields = (): Record<string, unknown> => ({
       bridge: this.options.diagnosticName,
@@ -177,7 +177,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
       ...(port === undefined ? {} : { port })
     })
     const server = createServer((request, response) => {
-      void this.serve(request, response, token).catch((error: unknown) => {
+      void this.serve(request, response, token, lifecycle.abort.signal).catch((error: unknown) => {
         if (response.destroyed || response.writableEnded) return
         try {
           this.options.onError(error, response)
@@ -240,7 +240,11 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
     const lifecycle = this.lifecycle
     this.server = undefined
     this.connection = undefined
-    if (lifecycle) lifecycle.expectedClose = true
+    if (lifecycle) {
+      lifecycle.expectedClose = true
+      // Socket close callbacks can lag server.close; fence dispatch before releasing the listener.
+      lifecycle.abort.abort()
+    }
     if (server) await closeServer(server)
     if (this.lifecycle === lifecycle) this.lifecycle = undefined
   }
@@ -253,7 +257,8 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
   private async serve(
     request: IncomingMessage,
     response: ServerResponse,
-    token: string
+    token: string,
+    lifecycleSignal: AbortSignal
   ): Promise<void> {
     const bearerAccepted = request.headers.authorization === `Bearer ${token}`
     const apiKeyAccepted =
@@ -277,6 +282,8 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
 
     let body: Promise<ProviderLoopbackJsonObject> | undefined
     try {
+      const signal = AbortSignal.any([controller.signal, lifecycleSignal])
+      signal.throwIfAborted()
       const path = request.url ?? '/'
       await this.options.handle(
         Object.freeze({
@@ -284,7 +291,7 @@ class ProviderLoopbackHttpHost<Connection extends ProviderLoopbackConnection> {
           path,
           url: new URL(path, 'http://127.0.0.1'),
           headers: request.headers,
-          signal: controller.signal,
+          signal,
           readJsonObject: () => (body ??= readJsonObject(request, response))
         }),
         response

@@ -60,6 +60,8 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
   // This native addon owns its node:test runner; Vitest cannot collect those suites.
   'packages/credential-identity-probe-native/test/**',
   'docs/internal/**',
+  '.scratch/**',
+  'test-results/**',
   '**/.claude/**',
   '**/.codex/**',
   '**/.pnpm-store/**',

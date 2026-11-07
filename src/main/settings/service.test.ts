@@ -38,6 +38,7 @@ import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
 import { SkillMarketplaceService } from '../skill-marketplace/service'
+import { ProviderTransportOwner } from './provider-transport-owner'
 import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
@@ -345,6 +346,76 @@ afterEach(async () => {
   vi.unstubAllEnvs()
   await makeTreeWritable(storageRoot)
   await rm(storageRoot, { recursive: true, force: true })
+})
+
+describe('SettingsService: harness session ownership', () => {
+  it('binds account edits and service shutdown to live harness sessions', async () => {
+    const releases: ReturnType<typeof vi.fn>[] = []
+    type TransportWithXai = {
+      getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
+    }
+    let getXaiOAuthAccessTokenCallback: TransportWithXai['getXaiOAuthAccessToken']
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const getXaiOAuthAccessToken = vi
+      .spyOn(ProviderAccountsModule.prototype, 'getXaiOAuthAccessToken')
+      .mockResolvedValue('xai-token')
+    const acquire = vi
+      .spyOn(ProviderTransportOwner.prototype, 'acquireHarness')
+      .mockImplementation(async function (this: TransportWithXai, target) {
+        getXaiOAuthAccessTokenCallback = this.getXaiOAuthAccessToken
+        const release = vi.fn(async () => undefined)
+        releases.push(release)
+        return {
+          route: {
+            id: String(releases.length),
+            providerId: target.providerId,
+            configRevision: target.configRevision!,
+            model: target.effectiveModel!,
+            protocol: 'chat-completions'
+          },
+          connection: { baseUrl: 'http://127.0.0.1:1234', token: 'fixture' },
+          release
+        }
+      })
+    const service = createService()
+    try {
+      await repository.upsertProvider({
+        id: 'open-science-agent',
+        type: 'custom',
+        name: 'Harness',
+        baseUrl: 'https://fixture.invalid',
+        model: 'm',
+        apiEndpoints: ['chat-completions']
+      })
+      const request = { providerId: 'open-science-agent', model: 'm', maxSteps: 3 }
+      const session = await service.openHarnessSession(request, new AbortController().signal)
+      expect(getXaiOAuthAccessTokenCallback).toBeTypeOf('function')
+      await getXaiOAuthAccessTokenCallback!(true)
+      expect(getXaiOAuthAccessToken).toHaveBeenCalledWith(true)
+      await service.upsertProvider({
+        id: 'open-science-agent',
+        type: 'custom',
+        name: 'Changed',
+        baseUrl: 'https://new.invalid',
+        key: 'fixture-key',
+        model: 'm',
+        apiEndpoints: ['chat-completions']
+      })
+      expect(session.signal.aborted).toBe(true)
+      await session.dispose()
+      const next = await service.openHarnessSession(request, new AbortController().signal)
+      await service.dispose()
+      expect(next.signal.aborted).toBe(true)
+      for (const release of releases) expect(release).toHaveBeenCalledTimes(1)
+      await expect(
+        service.openHarnessSession(request, new AbortController().signal)
+      ).rejects.toThrow('disposed')
+    } finally {
+      await service.dispose()
+      acquire.mockRestore()
+      getXaiOAuthAccessToken.mockRestore()
+    }
+  })
 })
 
 describe('SettingsService: Marketplace installation projection', () => {
@@ -2472,6 +2543,7 @@ describe('SettingsService: preflight & spawn config', () => {
       codexReady: false,
       codebuddyReady: false,
       piReady: false,
+      openScienceAgentReady: true,
       agentFrameworkId: 'claude-code',
       agentReady: true,
       activeProviderReady: true,
@@ -5479,6 +5551,21 @@ describe('SettingsService: skills', () => {
 })
 
 describe('installClaude (app-managed source)', () => {
+  it('keeps the reversible authentication barrier behind the settings facade', async () => {
+    const { ProviderAccountsModule } = await import('./provider-accounts')
+    const lease = { settled: Promise.resolve(), release: vi.fn() }
+    const quiesce = vi
+      .spyOn(ProviderAccountsModule.prototype, 'quiesceAuthentication')
+      .mockReturnValue(lease)
+    const service = createService()
+    try {
+      expect(service.quiesceAuthentication()).toBe(lease)
+      expect(quiesce).toHaveBeenCalledOnce()
+    } finally {
+      quiesce.mockRestore()
+      await service.dispose()
+    }
+  })
   it('drains authentication cleanup before reporting an installation disposal failure', async () => {
     const { AgentRuntimeManager } = await import('./agent-runtime-manager')
     const { ProviderAccountsModule } = await import('./provider-accounts')
@@ -5865,6 +5952,7 @@ describe('checkEnvironment', () => {
 
     const agentRows = result.checks.filter((check) => check.id === 'agent')
     expect(agentRows.map((row) => row.label)).toEqual([
+      'Open-Science Agent runtime',
       'Claude Code runtime',
       'OpenCode runtime',
       'Codex native CLI',
@@ -5872,6 +5960,7 @@ describe('checkEnvironment', () => {
       'CodeBuddy runtime'
     ])
     expect(agentRows.map((row) => row.status)).toEqual([
+      'passed',
       'passed',
       'passed',
       'warning',
@@ -5911,6 +6000,7 @@ describe('checkEnvironment', () => {
 
     const agentRows = result.checks.filter((check) => check.id === 'agent')
     expect(agentRows.map((row) => `${row.label}:${row.status}`)).toEqual([
+      'Open-Science Agent runtime:passed',
       'Claude Code runtime:passed',
       'OpenCode runtime:failed',
       'Codex native CLI:warning',
@@ -5938,7 +6028,8 @@ describe('SettingsService: managed-runtime flags', () => {
       { id: 'opencode', supportsDelegatedWork: true },
       { id: 'codex', supportsDelegatedWork: true },
       { id: 'codebuddy', supportsDelegatedWork: true },
-      { id: 'pi', supportsDelegatedWork: true }
+      { id: 'pi', supportsDelegatedWork: true },
+      { id: 'open-science-agent', supportsDelegatedWork: true }
     ])
   })
 

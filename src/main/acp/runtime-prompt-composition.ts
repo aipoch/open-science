@@ -212,6 +212,7 @@ const composeAcpRuntimePromptOwners = (
       ? {
           notebook: {
             peekHandoffContext: options.notebook.peekHandoffContext,
+            isReplNamespaceUnavailable: options.notebook.isReplNamespaceUnavailable,
             registerTurnInputs: options.notebook.registerTurnInputs
           }
         }

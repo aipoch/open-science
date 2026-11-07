@@ -8218,13 +8218,16 @@
     "{{count}} failed overviews_other": "{{count}} aperçus en échec",
     "Could not load the overview. Try again.": "Impossible de charger la synthèse. Réessayez.",
     "Could not save network rules. Reopen this page and try again.": "Impossible d’enregistrer les règles réseau. Rouvrez cette page et réessayez.",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Les domaines HTTPS sont autorisés sans approbation, y compris localhost et les réseaux privés. HTTP et les connexions directes par IP nécessitent une autorisation.",
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Les domaines HTTPS sont autorisés sans approbation, y compris localhost et les réseaux privés. Les connexions HTTP et directes par IP nécessitent une autorisation.",
     "HTTPS domains already work without an exception. Use HTTP or an IP address.": "Les domaines HTTPS fonctionnent déjà sans exception. Utilisez HTTP ou une adresse IP.",
-    "Trusted unsafe networks": "Réseaux non sécurisés de confiance",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Autoriser l’accès HTTP ou direct par IP pour un protocole, un hôte et un port précis.",
-    "Configure unsafe network exceptions in the local desktop app.": "Configurez les exceptions réseau non sécurisées dans l’application de bureau locale.",
-    "No trusted unsafe networks.": "Aucun réseau non sécurisé de confiance.",
+    "Trusted unsafe networks": "Réseaux non sécurisés approuvés",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Autoriser l’accès HTTP ou direct par IP à un protocole, un hôte et un port précis.",
+    "Configure unsafe network exceptions in the local desktop app.": "Configurez les exceptions de réseau non sécurisé dans l’application de bureau locale.",
+    "No trusted unsafe networks.": "Aucun réseau non sécurisé approuvé.",
     "Review unsafe network access": "Examiner l’accès réseau non sécurisé",
-    "Add network exception": "Ajouter une exception réseau"
+    "Add network exception": "Ajouter une exception réseau",
+    "Built-in experimental agent. Uses your API account and managed tools.": "Agent expérimental intégré. Utilise votre compte API et des outils gérés.",
+    "Check the interrupted tool result": "Vérifier le résultat de l’outil interrompu",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "L’outil a peut-être modifié des fichiers ou un service externe. Vérifiez son résultat réel avant de continuer. Exportez les diagnostics pour identifier l’appel, puis démarrez une nouvelle conversation avec l’état vérifié. Cette conversation ne répétera pas l’opération au résultat incertain."
   }
 }

@@ -173,6 +173,8 @@ class AcpRuntimeCoordinator {
     NonNullable<Parameters<AcpRuntime['resumeSession']>[1]>
   >()
   private readonly retiredRuntimes = new Set<AcpRuntime>()
+  private skillsReloadGeneration = 0
+  private configurationGeneration = 0
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
   private readonly fullAccessSubscriptions = new Map<string, Set<() => void>>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
@@ -738,8 +740,11 @@ class AcpRuntimeCoordinator {
   private async performSessionResume(
     request: AcpResumeSessionRequest,
     pinnedRuntime?: AcpRuntime,
-    admissionCurrent?: () => boolean
+    admissionCurrent?: () => boolean,
+    remainingSkillReloads = 2
   ): Promise<AcpCreateSessionResponse> {
+    const skillsGeneration = this.skillsReloadGeneration
+    const configurationGeneration = this.configurationGeneration
     const resumeGeneration = this.initializationGeneration
     await this.waitForInitialization()
     if (admissionCurrent && !admissionCurrent()) {
@@ -909,10 +914,20 @@ class AcpRuntimeCoordinator {
           !this.runtimes.has(runtime) ||
           (this.retiredRuntimes.has(runtime) && !pinnedRuntime)))
     ) {
+      // Catalog notifications can arrive again while session/new is attaching. Retry only this
+      // uncommitted admission after releasing its writer; never retry an admitted prompt or tool.
+      const retrySkills =
+        remainingSkillReloads > 0 &&
+        !pinnedRuntime &&
+        !admissionCurrent &&
+        resumeGeneration === this.initializationGeneration &&
+        configurationGeneration === this.configurationGeneration &&
+        skillsGeneration !== this.skillsReloadGeneration &&
+        !this.sessionResumeOperations.get(request.sessionId)?.invalidated &&
+        (this.retiredRuntimes.has(runtime) || !this.runtimes.has(runtime))
       if (
         pendingAdoption &&
-        admissionCurrent &&
-        !admissionCurrent() &&
+        (retrySkills || (admissionCurrent && !admissionCurrent())) &&
         this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption
       ) {
         const release = runtime.captureSessionResumeCleanup(response)
@@ -926,6 +941,15 @@ class AcpRuntimeCoordinator {
           }
         }
         await pendingAdoption.cleanup()
+        if (retrySkills) {
+          if (
+            resumeGeneration !== this.initializationGeneration ||
+            configurationGeneration !== this.configurationGeneration ||
+            this.sessionResumeOperations.get(request.sessionId)?.invalidated
+          )
+            throw new Error('ACP session resume was superseded.')
+          return this.performSessionResume(request, undefined, undefined, remainingSkillReloads - 1)
+        }
       } else if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
       }
@@ -1091,7 +1115,16 @@ class AcpRuntimeCoordinator {
     specialistId: string | undefined
   ): Promise<{ contextReset: boolean }> {
     await this.waitForInitialization()
-    const runtime = this.runtimeForSession(sessionId)
+    // A cold Session has no runtime facts. Its durable binding is applied on normal resume;
+    // allocating the default runtime here loses the saved project/model identity.
+    const runtime =
+      this.findRuntimeForSession(sessionId) ??
+      [...this.runtimes].find(
+        (candidate) =>
+          !this.retiredRuntimes.has(candidate) &&
+          candidate.getSessionFramework(sessionId) !== undefined
+      )
+    if (!runtime) return { contextReset: false }
     return runtime.switchSpecialist(sessionId, specialistId)
   }
 
@@ -1730,6 +1763,12 @@ class AcpRuntimeCoordinator {
       operation === 'sendAppContinuation' && request.provenanceContext?.promptMessageId
         ? this.getLatestUserPrompt(request.sessionId, request.provenanceContext.promptMessageId)
         : undefined
+    if (origin?.provenanceContext) {
+      request = {
+        ...request,
+        provenanceContext: { ...origin.provenanceContext, ...request.provenanceContext }
+      }
+    }
     if (origin?.permissionPrompts) {
       request = { ...request, permissionPrompts: origin.permissionPrompts }
     }
@@ -2134,13 +2173,13 @@ class AcpRuntimeCoordinator {
   // default generation whose selected backend changed.
   async requestAgentFrameworkSwitch(frameworkId?: AgentFrameworkId): Promise<void> {
     if (!frameworkId) {
-      await this.retireRuntimeGenerations(this.runtimes)
+      await this.retireRuntimeGenerations(this.runtimes, 'global-invalidation')
       return
     }
 
     const affected = new Set(this.runtimeGenerationsForFramework(frameworkId))
     if (this.activeRuntime) affected.add(this.activeRuntime)
-    await this.retireRuntimeGenerations(affected)
+    await this.retireRuntimeGenerations(affected, 'scoped-invalidation')
   }
 
   // Provider edits reconnect the default generation only when it uses the affected default, plus every
@@ -2168,14 +2207,14 @@ class AcpRuntimeCoordinator {
   async requestSkillsReload(): Promise<void> {
     // Skills and connector tools are captured by every runtime generation, including generations
     // pinned to an explicit Session target.
-    await this.retireRuntimeGenerations(this.runtimes)
+    await this.retireRuntimeGenerations(this.runtimes, 'skills')
   }
 
   async requestShellCapabilityRefresh(): Promise<void> {
     // Shell binding, tool documentation, RPC routing and permission qualifiers are captured by every
     // generation, including explicit provider/model targets. Retire them as one global capability
     // epoch so a prompt admitted immediately after this Promise settles cannot use the old backend.
-    await this.retireRuntimeGenerations(this.runtimes)
+    await this.retireRuntimeGenerations(this.runtimes, 'shell-capabilities')
   }
 
   async requestProjectAgentContextReload(projectId: string): Promise<void> {
@@ -2193,14 +2232,17 @@ class AcpRuntimeCoordinator {
     for (const pending of this.pendingSessionCreations) {
       if (pending.projectId === projectId) affected.add(pending.runtime)
     }
-    await this.retireRuntimeGenerations(affected)
+    await this.retireRuntimeGenerations(affected, 'project-context')
   }
 
   async requestSkillsReloadForFramework(frameworkId: AgentFrameworkId): Promise<void> {
     // A framework-scoped derived asset must not rotate an unrelated backend generation. An empty
     // generation has no session holding stale assets; its first Session will provision from the
     // current source of truth without an explicit reload.
-    await this.retireRuntimeGenerations(this.runtimeGenerationsForFramework(frameworkId))
+    await this.retireRuntimeGenerations(
+      this.runtimeGenerationsForFramework(frameworkId),
+      'framework-skills'
+    )
   }
 
   async applyReasoningEffortChange(effort: ResolvedReasoningEffort): Promise<boolean> {
@@ -2724,6 +2766,10 @@ class AcpRuntimeCoordinator {
     ) {
       return
     }
+    log.info('unused targeted runtime retiring', {
+      runtimeId: this.runtimeIds.get(runtime),
+      sessionIds: runtime.getSnapshot().sessionIds
+    })
     this.retiredRuntimes.add(runtime)
     await runtime.requestRetirement()
   }
@@ -2741,12 +2787,24 @@ class AcpRuntimeCoordinator {
     )
   }
 
-  private async retireRuntimeGenerations(runtimes: Iterable<AcpRuntime>): Promise<void> {
+  private async retireRuntimeGenerations(
+    runtimes: Iterable<AcpRuntime>,
+    reason: string
+  ): Promise<void> {
+    if (reason === 'skills') this.skillsReloadGeneration += 1
+    else this.configurationGeneration += 1
     const retiring = [...new Set(runtimes)].filter(
       (runtime) => this.runtimes.has(runtime) && !this.retiredRuntimes.has(runtime)
     )
     if (retiring.length === 0) return
 
+    log.info('runtime generations retiring', {
+      reason,
+      runtimes: retiring.map((runtime) => ({
+        id: this.runtimeIds.get(runtime),
+        sessionIds: runtime.getSnapshot().sessionIds
+      }))
+    })
     for (const runtime of retiring) this.retiredRuntimes.add(runtime)
     if (this.activeRuntime && retiring.includes(this.activeRuntime)) this.rotateActiveRuntime()
     this.emitState()

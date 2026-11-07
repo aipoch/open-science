@@ -8218,13 +8218,16 @@
     "{{count}} failed overviews_other": "{{count}} resúmenes fallidos",
     "Could not load the overview. Try again.": "No se pudo cargar el resumen. Inténtelo de nuevo.",
     "Could not save network rules. Reopen this page and try again.": "No se pudieron guardar las reglas de red. Vuelva a abrir esta página e inténtelo de nuevo.",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Los dominios HTTPS se permiten sin aprobación, incluidos localhost y las redes privadas. HTTP y las conexiones directas por IP requieren autorización.",
-    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "Los dominios HTTPS ya funcionan sin excepciones. Utilice HTTP o una dirección IP.",
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Los dominios HTTPS se permiten sin aprobación, incluidos localhost y las redes privadas. Las conexiones HTTP y directas a IP requieren autorización.",
+    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "Los dominios HTTPS ya funcionan sin una excepción. Use HTTP o una dirección IP.",
     "Trusted unsafe networks": "Redes inseguras de confianza",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Autorizar el acceso HTTP o directo por IP para un protocolo, host y puerto exactos.",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Autorizar el acceso HTTP o directo a una IP para un protocolo, host y puerto exactos.",
     "Configure unsafe network exceptions in the local desktop app.": "Configure las excepciones de red inseguras en la aplicación de escritorio local.",
     "No trusted unsafe networks.": "No hay redes inseguras de confianza.",
     "Review unsafe network access": "Revisar el acceso a redes inseguras",
-    "Add network exception": "Añadir excepción de red"
+    "Add network exception": "Agregar excepción de red",
+    "Built-in experimental agent. Uses your API account and managed tools.": "Agente experimental integrado. Usa su cuenta de API y herramientas administradas.",
+    "Check the interrupted tool result": "Comprobar el resultado de la herramienta interrumpida",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Es posible que la herramienta haya modificado archivos o un servicio externo. Compruebe el resultado real antes de continuar. Exporte los diagnósticos para identificar la llamada y, después, inicie una conversación nueva con el estado verificado. Esta conversación no repetirá la operación cuyo resultado sea incierto."
   }
 }

@@ -57,9 +57,10 @@ class AcpSessionEnvironmentPolicy {
 
   systemPromptAppends(skillGuidance?: string): readonly string[] {
     const backend = this.options.backendGeneration.current
+    const application = this.applicationSystemPromptAppends()
     return Object.freeze([
-      ...this.applicationSystemPromptAppends(),
-      ...backend.prompt.systemPromptAppends,
+      ...application,
+      ...backend.prompt.systemPromptAppends.filter((append) => !application.includes(append)),
       ...(skillGuidance ? [skillGuidance] : [])
     ])
   }

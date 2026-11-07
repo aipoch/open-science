@@ -8364,13 +8364,16 @@
     "{{count}} failed overviews_other": "Не удалось создать {{count}} обзора",
     "Could not load the overview. Try again.": "Не удалось загрузить обзор. Попробуйте ещё раз.",
     "Could not save network rules. Reopen this page and try again.": "Не удалось сохранить сетевые правила. Откройте эту страницу заново и повторите попытку.",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Домены HTTPS доступны без разрешения, включая localhost и частные сети. HTTP и прямые подключения по IP требуют разрешения.",
-    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "Домены HTTPS уже доступны без исключения. Используйте HTTP или IP-адрес.",
-    "Trusted unsafe networks": "Доверенные небезопасные сети",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Разрешить доступ по HTTP или напрямую по IP для конкретного протокола, хоста и порта.",
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "Домены HTTPS разрешены без подтверждения, включая localhost и частные сети. Для HTTP и прямых IP-подключений требуется разрешение.",
+    "HTTPS domains already work without an exception. Use HTTP or an IP address.": "Домены HTTPS уже работают без исключения. Используйте HTTP или IP-адрес.",
+    "Trusted unsafe networks": "Надёжные небезопасные сети",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "Разрешить HTTP или прямой IP-доступ к точному протоколу, хосту и порту.",
     "Configure unsafe network exceptions in the local desktop app.": "Настройте исключения для небезопасных сетей в локальном настольном приложении.",
-    "No trusted unsafe networks.": "Нет доверенных небезопасных сетей.",
-    "Review unsafe network access": "Проверить небезопасный сетевой доступ",
-    "Add network exception": "Добавить сетевое исключение"
+    "No trusted unsafe networks.": "Нет надёжных небезопасных сетей.",
+    "Review unsafe network access": "Проверить доступ к небезопасной сети",
+    "Add network exception": "Добавить сетевое исключение",
+    "Built-in experimental agent. Uses your API account and managed tools.": "Встроенный экспериментальный агент. Использует вашу учётную запись API и управляемые инструменты.",
+    "Check the interrupted tool result": "Проверить результат прерванного инструмента",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Инструмент мог изменить файлы или внешний сервис. Проверьте фактический результат перед продолжением. Экспортируйте диагностику, чтобы определить вызов, затем начните новый диалог с проверенным состоянием. Этот диалог не повторит операцию с неопределённым результатом."
   }
 }

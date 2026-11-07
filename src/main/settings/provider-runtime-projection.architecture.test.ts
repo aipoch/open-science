@@ -95,6 +95,7 @@ describe('Provider runtime projection ownership', () => {
       'resolveActiveModel',
       'resolveProvider',
       'resolveProviderApiEndpoints',
+      'resolveProviderTarget',
       'resolveRuntimeModelCatalog',
       'resolveRuntimeReasoningEffortProfile',
       'resolveRuntimeTarget',
@@ -119,8 +120,9 @@ describe('Provider runtime projection ownership', () => {
     ])
   })
 
-  it('keeps the internal owner behind ProviderAccountsModule and in its impact set', () => {
+  it('keeps projection behind account and harness owners and in its impact set', () => {
     expect(productionSources().filter(importsOwner).map(portablePath)).toEqual([
+      'src/main/settings/harness-session-owner.ts',
       'src/main/settings/provider-accounts.ts'
     ])
     const manifest = loadModuleImpactManifest(manifestPath)

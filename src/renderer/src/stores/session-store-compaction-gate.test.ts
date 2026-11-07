@@ -5,6 +5,7 @@ import {
   projectCompactionFinished
 } from './session-store-run-terminal-helpers'
 import { createInitialSessionState, useSessionStore } from './session-store'
+import { copySnapshotMessage } from './session-store-message-graph-helpers'
 
 const sourceSession = (): ChatSession =>
   hydrateSession({
@@ -37,6 +38,39 @@ const sourceSession = (): ChatSession =>
   })
 
 describe('compaction command gate', () => {
+  it('copies harness evidence independently and retains its historical origin', () => {
+    const source = sourceSession().messages[0]
+    source.role = 'agent'
+    source.harnessTurn = {
+      schemaVersion: 1,
+      status: 'interrupted',
+      attemptedRequests: 0,
+      requests: [],
+      scope: {
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        agentFrameId: 'frame',
+        messageBranchId: 'branch',
+        promptMessageId: 'prompt',
+        messageId: source.id,
+        generation: 'generation',
+        route: {
+          id: 'route',
+          providerId: 'provider',
+          configRevision: 1,
+          model: 'model',
+          protocol: 'chat-completions'
+        }
+      }
+    }
+    source.harnessTurnInvalid = true
+    const copied = copySnapshotMessage(source, 0, 'session-1')
+    expect(copied.harnessTurn).toEqual(source.harnessTurn)
+    expect(copied.harnessTurnInvalid).toBe(true)
+    expect(copied.usageOrigin).toEqual({ sessionId: 'session-1', messageId: source.id })
+    copied.harnessTurn!.scope.generation = 'modified-copy'
+    expect(source.harnessTurn.scope.generation).toBe('generation')
+  })
   it('retains the Main terminal outcome and transcript across a failed control command', () => {
     const source = sourceSession()
     const started = projectCompactionStarted(source)

@@ -88,6 +88,9 @@
         ".github/actions/source-regression/**",
         ".github/workflows/source-regression.yml",
         "scripts/backend-dependencies.mjs",
+        "scripts/agent-harness-acceptance.mjs",
+        "scripts/check-agent-harness-package.mjs",
+        "scripts/fixtures/agent-harness/**",
         "scripts/package-verification-plan.mjs",
         "scripts/package-verification-plan.test.ts",
         "scripts/build-backend.mjs",
@@ -361,7 +364,10 @@
         "src/main/update/installation-occupancy.ts",
         "src/main/update/installation-protection.ts",
         "src/main/update/installation-reboot-recovery.ts",
-        "src/main/update/verification-process.ts"
+        "src/main/update/verification-process.ts",
+        "src/main/agent-framework/harness.ts",
+        "src/main/harness-acp/tool-receipts.ts",
+        "src/main/harness-acp/storage-cleanup.ts"
       ],
       "capabilities": ["windows_sensitive"]
     },
@@ -532,6 +538,7 @@
         "e2e/runtime-approval.spec.ts",
         "e2e/network-destination-approval.spec.ts",
         "e2e/pi-harness.spec.ts",
+        "e2e/builtin-harness.spec.ts",
         "e2e/session-wait-status.spec.ts",
         "e2e/settings-error-transport.spec.ts",
         "e2e/desktop-runtime-startup.spec.ts",

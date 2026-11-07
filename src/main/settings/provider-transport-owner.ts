@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
+import { preferredEndpoint } from '../../shared/settings'
 import type {
   ProviderFailureObservation,
   ProviderFailureObserver
@@ -161,6 +162,18 @@ type ProviderTransportOwnerOptions = {
   nextGenerationId?: () => string
 }
 
+export type HarnessProviderLease = Readonly<{
+  route: Readonly<{
+    id: string
+    providerId: string
+    configRevision: number
+    model: string
+    protocol: 'chat-completions' | 'responses' | 'messages'
+  }>
+  connection: Readonly<{ baseUrl: string; token: string }>
+  release: () => Promise<void>
+}>
+
 class ProviderTransportOwner {
   private readonly onProviderFailure: ProviderTransportOwnerOptions['onProviderFailure']
   private readonly createResponsesToChatCompletionsBridge: (
@@ -219,6 +232,120 @@ class ProviderTransportOwner {
       options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
     this.getXaiOAuthAccessToken = options.getXaiOAuthAccessToken
+  }
+
+  // The signal covers acquisition; the host owns release after active requests settle.
+  async acquireHarness(
+    target: ProviderRuntimeTarget,
+    signal: AbortSignal
+  ): Promise<HarnessProviderLease> {
+    signal.throwIfAborted()
+    const snapshot = structuredClone(target)
+    const { provider, providerId, configRevision } = snapshot
+    const model = snapshot.effectiveModel ?? provider.model
+    const usesXaiOAuth = snapshot.providerType === 'xai-subscription'
+    const wire = preferredEndpoint(snapshot.apiEndpoints, [
+      'responses',
+      'chat-completions',
+      'messages'
+    ])
+    if (
+      !['custom', 'official', 'xai-subscription'].includes(snapshot.providerType) ||
+      !['custom', 'official', 'xai-subscription'].includes(provider.type) ||
+      usesXaiOAuth !== (provider.type === 'xai-subscription') ||
+      snapshot.disconnectedAt !== undefined ||
+      !providerId.trim() ||
+      configRevision === undefined ||
+      !Number.isSafeInteger(configRevision) ||
+      configRevision < 0 ||
+      !model?.trim() ||
+      !wire
+    ) {
+      throw new Error('Harness requires a connected, versioned provider target.')
+    }
+    const endpoint = usesXaiOAuth
+      ? undefined
+      : wire === 'chat-completions'
+        ? resolveChatCompletionsUrl(provider)
+        : wire === 'responses'
+          ? `${resolveResponsesBaseUrl(provider)}/responses`
+          : `${normalizeMessagesRootUrl(provider.baseUrl ?? '')}/v1/messages`
+    if (!usesXaiOAuth) {
+      if (!endpoint) throw new Error('Harness provider endpoint is unavailable.')
+      const url = new URL(endpoint)
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password)
+        throw new Error(
+          'Harness provider endpoint must be an HTTP URL without embedded credentials.'
+        )
+    }
+    const route = Object.freeze({
+      id: this.nextGenerationId(),
+      providerId,
+      configRevision,
+      model,
+      protocol: wire
+    })
+    const bridge = usesXaiOAuth
+      ? this.createXaiOAuthProviderBridge(
+          [{ id: route.id, model }],
+          route.id,
+          wire,
+          this.getXaiOAuthAccessToken
+        )
+      : wire === 'messages'
+        ? this.createMessagesBridge(
+            [
+              {
+                ...this.healthObservation(snapshot),
+                id: route.id,
+                baseUrl: normalizeMessagesRootUrl(provider.baseUrl ?? ''),
+                key: provider.key,
+                model,
+                useApiKeyHeader:
+                  provider.vendorId === 'anthropic' ||
+                  (!!provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId))
+              }
+            ],
+            route.id
+          )
+        : this.createProtocolForwardingBridge(
+            [
+              {
+                ...this.healthObservation(snapshot),
+                id: route.id,
+                wire,
+                endpoint: endpoint!,
+                key: provider.key,
+                model
+              }
+            ],
+            route.id
+          )
+    let releasePromise: Promise<void> | undefined
+    const release = (): Promise<void> =>
+      (releasePromise ??= Promise.resolve().then(() => bridge.close()))
+    try {
+      const connection = await bridge.start()
+      signal.throwIfAborted()
+      return Object.freeze({
+        route,
+        connection: Object.freeze({
+          baseUrl: connection.baseUrl,
+          token: connection.token
+        }),
+        release
+      })
+    } catch (error) {
+      try {
+        await release()
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Harness transport acquisition and cleanup failed.'
+        )
+      }
+      throw error
+    }
   }
 
   async acquire(input: ProviderTransportRequest): Promise<ProviderTransportGeneration> {
