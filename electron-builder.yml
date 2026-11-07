@@ -152,6 +152,9 @@ nsis:
   license: LICENSE
   include: build/installer-license.nsh
 mac:
+  extraResources:
+    - from: out/desktop-service-launcher
+      to: backend/desktop-service-launcher
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:
     - ext: science
