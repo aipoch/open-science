@@ -146,22 +146,37 @@ export const spawnWindowsOwnedProcess = (
     Object.assign(child, { killed: true })
     return true
   }
-  const poll = setInterval(() => {
-    const code = native.windowsOwnedProcessExitCode(launched.handle)
-    if (code === null) return
-    clearInterval(poll)
-    Object.assign(child, { exitCode: code })
-    exited = true
-    child.stdin.destroy()
-    child.emit('exit', code, null)
-    maybeClose()
-  }, 25)
+  let fallbackPoll: NodeJS.Timeout | undefined
+  const waitForExit = (): Promise<number> => {
+    if (typeof native.windowsOwnedProcessExitCodeAsync === 'function') {
+      return Promise.resolve().then(() => native.windowsOwnedProcessExitCodeAsync(launched.handle))
+    }
+    return new Promise((resolve) => {
+      fallbackPoll = setInterval(() => {
+        const code = native.windowsOwnedProcessExitCode(launched.handle)
+        if (code === null) return
+        clearInterval(fallbackPoll)
+        fallbackPoll = undefined
+        resolve(code)
+      }, 25)
+    })
+  }
+  void waitForExit().then(
+    (code) => {
+      Object.assign(child, { exitCode: code })
+      exited = true
+      child.stdin.destroy()
+      child.emit('exit', code, null)
+      maybeClose()
+    },
+    (error: unknown) => child.emit('error', error)
+  )
   child.unref = () => {
-    poll.unref()
+    fallbackPoll?.unref()
     streams.forEach((stream) => stream.unref())
   }
   child.ref = () => {
-    poll.ref()
+    fallbackPoll?.ref()
     streams.forEach((stream) => stream.ref())
   }
   queueMicrotask(() => child.emit('spawn'))
