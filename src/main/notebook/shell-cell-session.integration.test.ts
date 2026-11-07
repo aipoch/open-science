@@ -453,6 +453,7 @@ console.log(JSON.stringify(result))
                   process.arch,
                   'notebook-appcontainer-host.exe'
                 ),
+                ownershipRoot: invocation.cwd,
                 gatewayPort: 49700,
                 gatewayCredentials: { username: 'unused', password: 'unused' },
                 env: invocation.env,

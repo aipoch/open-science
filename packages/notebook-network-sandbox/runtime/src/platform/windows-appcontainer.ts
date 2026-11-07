@@ -99,7 +99,9 @@ type WindowsStandardLaunchRequest = Readonly<
 >
 
 type WindowsSupervisedLaunchRequest = Readonly<
-  WindowsStandardLaunchRequest & Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'>
+  WindowsStandardLaunchRequest &
+    Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'> &
+    Pick<WindowsLaunchRequest, 'ownershipRoot'>
 >
 
 type ProcessTreeTerminationProof = Readonly<{
@@ -637,15 +639,9 @@ const setWindowsRuntimeAccess = async (
   return result
 }
 
-const createProcessTreeTerminationProof = (
-  env: NodeJS.ProcessEnv,
-  cwd: string
-): ProcessTreeTerminationProof => {
+const createProcessTreeTerminationProof = (proofRoot: string): ProcessTreeTerminationProof => {
   const token = randomUUID()
-  const path = join(
-    env.TEMP ?? env.TMP ?? cwd,
-    `.open-science-process-tree-terminated-${token}.proof`
-  )
+  const path = join(proofRoot, `.open-science-process-tree-terminated-${token}.proof`)
   const requestPath = `${path}.request`
   let requestSent = false
   let terminalState: WindowsProcessState | undefined
@@ -769,7 +765,7 @@ const windowsLaunch = (
   })
   const policyInvocation = { ...directInvocation, args: [...policyArguments] }
   const layout = normalizeFilesystemLayout(request.filesystem)
-  const proof = createProcessTreeTerminationProof(request.env, request.cwd)
+  const proof = createProcessTreeTerminationProof(request.ownershipRoot)
   const specification = Buffer.from(
     JSON.stringify({
       executable: policyInvocation.executable,
@@ -868,7 +864,7 @@ const windowsSupervisedLaunch = (
   const direct = windowsStandardLaunch(request)
   const [executable, ...args] = direct.argv
   if (!executable) throw new Error('Windows supervisor received an empty command.')
-  const proof = createProcessTreeTerminationProof(direct.env, request.cwd)
+  const proof = createProcessTreeTerminationProof(request.ownershipRoot)
   const specification = Buffer.from(
     JSON.stringify({
       executable,

@@ -67,7 +67,8 @@ describe('notebook shell process behavior', () => {
                     'packages/notebook-network-sandbox/vendor/windows',
                     process.arch,
                     'notebook-appcontainer-host.exe'
-                  )
+                  ),
+                  ownershipRoot: portableRuntimeRoot
                 })
                 return {
                   executable: launch.argv[0],

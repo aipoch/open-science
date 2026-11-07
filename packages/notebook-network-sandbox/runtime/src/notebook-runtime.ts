@@ -1,6 +1,6 @@
 import { NETWORK_APPROVAL_REQUIRED, NETWORK_POLICY_BLOCKED } from './gateway/recovery-context.js'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 
@@ -418,6 +418,9 @@ const wrap = async (
       username: `notebook-${request.commandId}`,
       password: randomBytes(32).toString('base64url')
     }
+    if (process.platform === 'win32') {
+      await mkdir(config.windowsOwnershipRoot, { recursive: true, mode: 0o700 })
+    }
     let assertWindowsSpawnAdmission: (() => void) | undefined
     let windowsGatewayPort = windowsProtectedGatewayPort
     if (process.platform === 'win32' && request.windowsProtectionRequired !== undefined) {
@@ -546,7 +549,8 @@ const wrap = async (
         const launch = windowsSupervisedLaunch({
           ...launchRequest,
           cwd: request.cwd,
-          hostPath: config.windowsHostPath
+          hostPath: config.windowsHostPath,
+          ownershipRoot: config.windowsOwnershipRoot
         })
         context.releaseProcessTreeProof = launch.releaseProcessTreeProof
         return {
