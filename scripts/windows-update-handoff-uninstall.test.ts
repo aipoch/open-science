@@ -69,11 +69,13 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           schema: 1,
           operationId,
           parentPid:
-            scenario === 'active' || scenario === 'reused-parent'
-              ? process.pid
-              : scenario === 'reused-uninstaller-parent'
-                ? 2001
-                : 2147483647,
+            scenario === 'active'
+              ? 2001
+              : scenario === 'reused-parent'
+                ? process.pid
+                : scenario === 'reused-uninstaller-parent'
+                  ? 2001
+                  : 2147483647,
           ...(scenario === 'reused-helper' ? { helperPid: process.pid } : {}),
           ...(scenario === 'reused-successor' ? { successorPid: process.pid } : {}),
           applicationPath: join(
@@ -100,13 +102,19 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       )
       expect(redirected).not.toBe(script)
       const target = join(root, 'uninstall.ps1')
+      // The cleanup script excludes its own ancestor chain. Model an active owner with a
+      // non-ancestor WMI record so this fixture continues to exercise the active guard.
       const processInventory =
-        scenario === 'reused-uninstaller-parent'
+        scenario === 'active'
           ? `@(
+  [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = '${process.execPath.replaceAll("'", "''")}' }
+)`
+          : scenario === 'reused-uninstaller-parent'
+            ? `@(
   [pscustomobject]@{ ProcessId = $PID; ParentProcessId = 2001; ExecutablePath = $null }
   [pscustomobject]@{ ProcessId = 2001; ParentProcessId = 0; ExecutablePath = $null }
 )`
-          : undefined
+            : undefined
       writeFileSync(
         target,
         scenario === 'no-storage'
