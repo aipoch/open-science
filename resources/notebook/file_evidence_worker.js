@@ -2298,6 +2298,12 @@ if (process.argv.includes('--serve')) {
   // that root for the request only; every operation still verifies the bound directory identity.
   // Returning to the neutral launch directory keeps no evidence directory open between requests.
   const neutralDirectory = process.cwd()
+  const rejectOversized = () => {
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, error: 'File-evidence worker request is too large.' })}\n`
+    )
+    process.exit(1)
+  }
   let buffered = ''
   process.stdin.on('data', (chunk) => {
     buffered += chunk
@@ -2305,6 +2311,8 @@ if (process.argv.includes('--serve')) {
     while ((newline = buffered.indexOf('\n')) >= 0) {
       const line = buffered.slice(0, newline)
       buffered = buffered.slice(newline + 1)
+      // Same bound as one-shot mode, checked before the request is parsed or dispatched.
+      if (Buffer.byteLength(line) > MAX_REQUEST_BYTES) return rejectOversized()
       let response
       try {
         const { root, request } = JSON.parse(line)
@@ -2319,12 +2327,7 @@ if (process.argv.includes('--serve')) {
       }
       process.stdout.write(`${JSON.stringify(response)}\n`)
     }
-    if (Buffer.byteLength(buffered) > MAX_REQUEST_BYTES) {
-      process.stdout.write(
-        `${JSON.stringify({ ok: false, error: 'File-evidence worker request is too large.' })}\n`
-      )
-      process.exit(1)
-    }
+    if (Buffer.byteLength(buffered) > MAX_REQUEST_BYTES) rejectOversized()
   })
 } else {
   let requestText = ''
