@@ -1250,6 +1250,18 @@ it('retains complete generic Extended Data figure labels', async () => {
   }
 })
 
+it('does not retain a prose sentence that only mentions an Extended Data figure', async () => {
+  const f = await genericFigureWithoutSourceItems('Extended Data Fig. 1 shows the assay.')
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    expect(
+      result.source.units.filter((unit) => unit.sourceOnly && ['alpha', 'beta'].includes(unit.id))
+    ).toEqual([])
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
 it('restores only a complete isolated plot caption from reference carryover', async () => {
   const f = await isolatedPlotCaption()
   try {

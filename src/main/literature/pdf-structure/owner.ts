@@ -382,6 +382,20 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       if (!/^[a-f0-9]{64}$/.test(baseRecipe.fingerprint) || !baseRecipe.modelRevision) {
         throw new Error('PDF engine recipe is invalid.')
       }
+      const baseCacheKey = {
+        sourceChecksum: source.checksum,
+        sourceSizeBytes: source.sizeBytes,
+        engineFingerprint: baseRecipe.fingerprint,
+        requestedPages
+      }
+      const baseCached = await withWriter(async () => {
+        controller.signal.throwIfAborted()
+        const result = await cache.read(baseCacheKey)
+        if (result) await dependencies.sources.reauthorize(sourceRequest, source)
+        controller.signal.throwIfAborted()
+        return result
+      })
+      if (baseCached) return baseCached
       unclaimedOcr = await acquirePdfStructureOcr(dependencies.ocrModels)
       const recipe = {
         ...baseRecipe,
@@ -544,13 +558,27 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       admit()
       signal?.throwIfAborted()
       const recipe = await dependencies.engine.describe()
-      const ocr = await acquirePdfStructureOcr(dependencies.ocrModels)
-      const engineFingerprint = pdfStructureOcrFingerprint(recipe.fingerprint, ocr)
+      const source = await withWriter(() => dependencies.sources.resolve(sourceRequest))
+      let ocr: PdfStructureOcrUse | undefined
       try {
+        const baseValue = await withWriter(() =>
+          read({
+            sourceChecksum: source.checksum,
+            sourceSizeBytes: source.sizeBytes,
+            engineFingerprint: recipe.fingerprint,
+            requestedPages
+          })
+        )
+        if (baseValue) {
+          await dependencies.sources.reauthorize(sourceRequest, source)
+          signal?.throwIfAborted()
+          return baseValue
+        }
+        ocr = await acquirePdfStructureOcr(dependencies.ocrModels)
+        const engineFingerprint = pdfStructureOcrFingerprint(recipe.fingerprint, ocr)
         return await withWriter(async () => {
           admit()
           signal?.throwIfAborted()
-          const source = await dependencies.sources.resolve(sourceRequest)
           const value = await read({
             sourceChecksum: source.checksum,
             sourceSizeBytes: source.sizeBytes,

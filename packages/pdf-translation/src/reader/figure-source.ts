@@ -255,10 +255,7 @@ export async function preservePdfFigureSources<T extends Pick<PdfTranslationExtr
       signal.throwIfAborted()
       const { images, vectors, rules = [] } = await graphicRegions(page, operators, signal)
       const captions = units
-        .filter(
-          (unit) =>
-            isFigureCaption(unit.source) && isPdfTranslationCaption(unit.source)
-        )
+        .filter((unit) => isFigureCaption(unit.source) && isPdfTranslationCaption(unit.source))
         .flatMap((unit) => unit.fragments.filter((f) => f.pageNumber === number))
       const regions = [
         ...images,
@@ -491,6 +488,7 @@ export async function applyCachedPdfFigureSources({
           figure.sourceItems?.length ||
           !figure.caption ||
           !isFigureCaption(figure.caption.text) ||
+          !isPdfTranslationCaption(figure.caption.text) ||
           !figure.thumbnailId ||
           figure.regions.length !== 1 ||
           figure.issues.some((issue) => !/^native-(?:raster|vector)-/u.test(issue.code)) ||

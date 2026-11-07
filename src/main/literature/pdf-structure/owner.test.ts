@@ -337,7 +337,12 @@ describe('shared PDF parsing lifecycle', () => {
     expect(second.request.ocr).toBeUndefined()
     expect(second.request.identity.engineFingerprint).toBe(fingerprint)
     second.output.resolve(resultFor(second.request.identity))
-    await expect(task.result).resolves.toMatchObject({ engineFingerprint: fingerprint })
+    const parsed = await task.result
+    expect(parsed).toMatchObject({ engineFingerprint: fingerprint })
+    expect(await test.owner.readCached(reading, [1])).toEqual(parsed)
+    const cached = test.owner.acquire(reading, [1])
+    await expect(cached.result).resolves.toEqual(parsed)
+    cached.release()
     expect(test.runs).toHaveLength(2)
   })
 
@@ -860,7 +865,7 @@ describe('shared PDF parsing lifecycle', () => {
     run.output.resolve(resultFor(run.request.identity))
     await expect(handle.result).resolves.toMatchObject({ sourceChecksum: checksum })
     expect(test.writers()).toBe(0)
-    expect(test.acquireWriter).toHaveBeenCalledTimes(3) // source, cache lookup, then model use
+    expect(test.acquireWriter).toHaveBeenCalledTimes(4) // source, base-cache probe, cache lookup, then model use
     await expect(test.owner.acquire(reading, [1]).result).rejects.toThrow('Migration is pending')
   })
 
