@@ -328,6 +328,7 @@ describe('Windows AppContainer launch', () => {
   it('supervises standard-mode commands without requiring AppContainer setup', () => {
     const root = mkdtempSync(join(tmpdir(), 'os-proof-supervised-'))
     const ownershipRoot = join(root, 'ownership')
+    const proofRoot = join(root, '.open-science-process-proofs')
     vi.stubEnv('SystemRoot', 'C:\\Windows')
     vi.stubEnv('PATH', '')
     const request = {
@@ -353,7 +354,8 @@ describe('Windows AppContainer launch', () => {
         terminationProofToken: string
       }
 
-      expect(existsSync(ownershipRoot)).toBe(true)
+      expect(existsSync(ownershipRoot)).toBe(false)
+      expect(existsSync(proofRoot)).toBe(true)
       expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
       expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
       expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
@@ -361,9 +363,10 @@ describe('Windows AppContainer launch', () => {
         executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
         arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
         cwd: request.cwd,
-        terminationProofPath: expect.stringContaining(ownershipRoot),
+        terminationProofPath: expect.stringContaining(root),
         terminationProofToken: expect.any(String)
       })
+      expect(specification.terminationProofPath).not.toContain(ownershipRoot)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
