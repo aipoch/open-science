@@ -1373,7 +1373,6 @@
     "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "安全儲存無法使用。此作業的命令、路徑和輸出可能會以未加密形式儲存。",
     "Could not stop background processes before updating. Please try again.": "更新前無法停止背景程序。請重試。",
     "Could not switch to this folder.": "無法切換到該資料夾。",
-    "Could not switch to {{name}}": "無法切換到 {{name}}",
     "Could not test the provider connection.": "無法測試模型服務商連線。",
     "Could not delete the provider.": "無法刪除模型服務商。",
     "Could not refresh models from the vendor.": "無法重新整理模型服務商的模型。",

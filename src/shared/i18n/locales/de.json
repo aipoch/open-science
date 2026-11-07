@@ -1259,7 +1259,6 @@
     "Could not submit this approval. Try again.": "Diese Freigabe konnte nicht übermittelt werden. Versuchen Sie es erneut.",
     "Could not stop background processes before updating. Please try again.": "Hintergrundprozesse konnten vor der Aktualisierung nicht gestoppt werden. Bitte versuchen Sie es erneut.",
     "Could not switch to this folder.": "Zu diesem Ordner konnte nicht gewechselt werden.",
-    "Could not switch to {{name}}": "Konnte nicht zu {{name}} wechseln",
     "Could not test the provider connection.": "Die Verbindung zum Anbieter konnte nicht getestet werden.",
     "Could not delete the provider.": "Der Anbieter konnte nicht gelöscht werden.",
     "Could not refresh models from the vendor.": "Die Modelle des Anbieters konnten nicht aktualisiert werden.",
