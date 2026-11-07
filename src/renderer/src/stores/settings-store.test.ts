@@ -308,7 +308,7 @@ beforeEach(() => {
   }
   ;(globalThis as { window?: unknown }).window = { api: { settings: api, acp } }
   useSettingsStore.getState().clearSettingsWriteError()
-  useSettingsStore.setState(createInitialSettingsState())
+  useSettingsStore.setState({ ...createInitialSettingsState(), agentFrameworkId: 'claude-code' })
 })
 
 afterEach(() => {
@@ -1884,7 +1884,7 @@ describe('settings store: connectors slice', () => {
 
 describe('settings store: setAgentFramework', () => {
   beforeEach(() => {
-    useSettingsStore.setState(createInitialSettingsState())
+    useSettingsStore.setState({ ...createInitialSettingsState(), agentFrameworkId: 'claude-code' })
   })
 
   it('switches, then live-detects the selected framework and refreshes preflight', async () => {

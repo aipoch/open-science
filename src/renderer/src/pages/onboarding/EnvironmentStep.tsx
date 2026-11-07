@@ -16,15 +16,11 @@ import { EnvironmentSetupCard } from './EnvironmentSetupCard'
 
 type EnvironmentStepProps = {
   onContinue: () => void
-  isSelectingAgent?: boolean
 }
 
 // First step: confirm the host meets the core requirements (system, storage, secure storage,
 // network). The agent runtime is set up on the next step.
-const EnvironmentStep = ({
-  onContinue,
-  isSelectingAgent = false
-}: EnvironmentStepProps): React.JSX.Element => {
+const EnvironmentStep = ({ onContinue }: EnvironmentStepProps): React.JSX.Element => {
   const { t } = useTranslation()
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const environmentCheckError = useSettingsStore((state) => state.environmentCheckError)
@@ -32,15 +28,20 @@ const EnvironmentStep = ({
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
 
+  const builtInReady = useSettingsStore((state) => state.preflight.openScienceAgentReady === true)
+
   // Agent and Notebook setup belong to later steps. An installed but incompatible agent can
   // make both ready and canAutoInstall false, so inspect host failures directly here.
   const hostReady =
     !isCheckingEnvironment &&
-    !isSelectingAgent &&
     environmentCheck !== undefined &&
     environmentCheck.agentFrameworkId === agentFrameworkId &&
     environmentCheck.checks.every(
-      (check) => check.id === 'agent' || check.id === 'python' || check.status !== 'failed'
+      (check) =>
+        check.id === 'agent' ||
+        check.id === 'python' ||
+        (check.id === 'install-network' && builtInReady) ||
+        check.status !== 'failed'
     )
 
   return (
@@ -57,7 +58,7 @@ const EnvironmentStep = ({
             variant="outline"
             size="sm"
             onClick={() => void checkEnvironment()}
-            disabled={isCheckingEnvironment || isSelectingAgent}
+            disabled={isCheckingEnvironment}
           >
             <RefreshCw className={cn(isCheckingEnvironment && 'animate-spin')} aria-hidden="true" />
             {isCheckingEnvironment ? t('Checking…') : t('Check again')}

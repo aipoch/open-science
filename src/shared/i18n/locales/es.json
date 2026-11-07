@@ -1340,7 +1340,6 @@
     "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "El almacenamiento seguro no está disponible. El comando, las rutas y la salida de este trabajo pueden almacenarse sin cifrar.",
     "Could not stop background processes before updating. Please try again.": "No se pudieron detener los procesos en segundo plano antes de la actualización. Inténtelo de nuevo.",
     "Could not switch to this folder.": "No se pudo cambiar a esta carpeta.",
-    "Could not switch to {{name}}": "No se pudo cambiar a {{name}}",
     "Could not test the provider connection.": "No se pudo probar la conexión del proveedor.",
     "Could not delete the provider.": "No se pudo eliminar el proveedor.",
     "Could not refresh models from the vendor.": "No se pudieron actualizar los modelos del proveedor.",

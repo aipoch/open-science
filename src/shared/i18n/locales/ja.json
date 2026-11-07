@@ -1287,7 +1287,6 @@
     "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "安全なストレージを利用できません。このジョブのコマンド、パス、出力は暗号化されずに保存される可能性があります。",
     "Could not stop background processes before updating. Please try again.": "アップデート前にバックグラウンドプロセスを停止できませんでした。もう一度お試しください。",
     "Could not switch to this folder.": "このフォルダーに切り替えられませんでした。",
-    "Could not switch to {{name}}": "{{name}} に切り替えられませんでした",
     "Could not test the provider connection.": "プロバイダー接続をテストできませんでした。",
     "Could not delete the provider.": "プロバイダーを削除できませんでした。",
     "Could not refresh models from the vendor.": "プロバイダーのモデルを更新できませんでした。",

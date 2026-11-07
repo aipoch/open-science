@@ -1338,7 +1338,6 @@
     "Could not submit this approval. Try again.": "Не удалось отправить решение о разрешении. Попробуйте снова.",
     "Secure storage is unavailable. This job's command, paths, and output may be stored without encryption.": "Безопасное хранилище недоступно. Команда, пути и вывод этого задания могут сохраняться без шифрования.",
     "Could not switch to this folder.": "Не удалось переключиться на эту папку.",
-    "Could not switch to {{name}}": "Не удалось переключиться на {{name}}",
     "Could not test the provider connection.": "Не удалось протестировать соединение с поставщиком.",
     "Could not delete the provider.": "Не удалось удалить поставщика.",
     "Could not refresh models from the vendor.": "Не удалось обновить модели поставщика.",
