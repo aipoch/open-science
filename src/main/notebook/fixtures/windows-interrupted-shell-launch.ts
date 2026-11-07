@@ -1,3 +1,5 @@
+/* c8 ignore file */
+// Windows-only crash fixture; portable CI cannot execute it.
 // Run in a disposable Windows process: the harmless workload deliberately ends its owning application.
 import { join } from 'node:path'
 import { NotebookShellProcessAdapter } from '../shell-process'
