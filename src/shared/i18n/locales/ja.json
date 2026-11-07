@@ -7888,6 +7888,12 @@
     "Add network exception": "ネットワーク例外を追加",
     "Built-in experimental agent. Uses your API account and managed tools.": "組み込みの実験的エージェント。API アカウントと管理ツールを使用します。",
     "Check the interrupted tool result": "中断されたツール結果を確認",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "ツールがファイルまたは外部サービスを変更した可能性があります。続行する前に実際の結果を確認してください。診断情報をエクスポートして呼び出しを特定し、確認済みの状態で新しい会話を開始してください。この会話では結果が不確かな操作を繰り返しません。"
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "ツールがファイルまたは外部サービスを変更した可能性があります。続行する前に実際の結果を確認してください。診断情報をエクスポートして呼び出しを特定し、確認済みの状態で新しい会話を開始してください。この会話では結果が不確かな操作を繰り返しません。",
+    "Read tool result": "ツール結果を読む",
+    "Shutdown notebook": "Notebook を終了",
+    "Notebook shut down.": "Notebook を終了しました。",
+    "Inspect packages": "パッケージを確認",
+    "Captured at": "取得日時",
+    "Manage environments": "環境を管理"
   }
 }

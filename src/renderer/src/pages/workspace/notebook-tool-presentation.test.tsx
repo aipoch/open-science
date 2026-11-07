@@ -103,6 +103,43 @@ it.each([
   expect(html).not.toContain('<details open')
 })
 
+it('renders summaries for the remaining built-in notebook control tools', () => {
+  const cases = [
+    {
+      identity: 'mcp__open-science-notebook__notebook_shutdown',
+      result: { sessionId: 'session-1', status: 'shutdown' },
+      title: 'Shutdown notebook',
+      field: { label: 'Status', value: 'Completed' }
+    },
+    {
+      identity: 'mcp__open_science_notebook__inspect_packages',
+      result: {
+        language: 'python',
+        environmentName: 'analysis',
+        runtimeSource: 'managed',
+        packages: [{ name: 'numpy', version: '2.0.0', status: 'installed' }]
+      },
+      title: 'Inspect packages',
+      field: { label: 'Environment', value: 'analysis' }
+    },
+    {
+      identity: 'open-science-notebook/manage_environments',
+      result: {
+        offset: 0,
+        environments: [{ name: 'analysis', language: 'python', ready: true, isDefault: true }]
+      },
+      title: 'Manage environments',
+      field: { label: 'Offset', value: '0' }
+    }
+  ] as const
+
+  for (const entry of cases) {
+    const summary = buildNotebookToolSummary(entry.identity, {}, entry.result)!
+    expect(summary.title).toBe(entry.title)
+    expect(summary.fields).toContainEqual(entry.field)
+  }
+})
+
 it('keeps lookalike servers on generic details', () => {
   const details = buildToolActivityDetails(
     activity({ title: 'mcp__open-science-notebook-staging__notebook_state', rawOutput: restart })

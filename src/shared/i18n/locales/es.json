@@ -8228,6 +8228,12 @@
     "Add network exception": "Agregar excepción de red",
     "Built-in experimental agent. Uses your API account and managed tools.": "Agente experimental integrado. Usa su cuenta de API y herramientas administradas.",
     "Check the interrupted tool result": "Comprobar el resultado de la herramienta interrumpida",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Es posible que la herramienta haya modificado archivos o un servicio externo. Compruebe el resultado real antes de continuar. Exporte los diagnósticos para identificar la llamada y, después, inicie una conversación nueva con el estado verificado. Esta conversación no repetirá la operación cuyo resultado sea incierto."
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Es posible que la herramienta haya modificado archivos o un servicio externo. Compruebe el resultado real antes de continuar. Exporte los diagnósticos para identificar la llamada y, después, inicie una conversación nueva con el estado verificado. Esta conversación no repetirá la operación cuyo resultado sea incierto.",
+    "Read tool result": "Leer el resultado de la herramienta",
+    "Shutdown notebook": "Apagar Notebook",
+    "Notebook shut down.": "Notebook apagado.",
+    "Inspect packages": "Inspeccionar paquetes",
+    "Captured at": "Capturado el",
+    "Manage environments": "Administrar entornos"
   }
 }

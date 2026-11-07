@@ -8054,6 +8054,12 @@
     "Add network exception": "Netzwerkausnahme hinzufügen",
     "Built-in experimental agent. Uses your API account and managed tools.": "Integrierter experimenteller Agent. Verwendet Ihr API-Konto und verwaltete Tools.",
     "Check the interrupted tool result": "Ergebnis des unterbrochenen Tool-Aufrufs prüfen",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Das Tool hat möglicherweise Dateien oder einen externen Dienst geändert. Prüfen Sie das tatsächliche Ergebnis, bevor Sie fortfahren. Exportieren Sie die Diagnosedaten, um den Aufruf zu identifizieren, und beginnen Sie dann eine neue Konversation mit dem bestätigten Stand. Diese Konversation wiederholt den Vorgang mit ungewissem Ergebnis nicht."
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Das Tool hat möglicherweise Dateien oder einen externen Dienst geändert. Prüfen Sie das tatsächliche Ergebnis, bevor Sie fortfahren. Exportieren Sie die Diagnosedaten, um den Aufruf zu identifizieren, und beginnen Sie dann eine neue Konversation mit dem bestätigten Stand. Diese Konversation wiederholt den Vorgang mit ungewissem Ergebnis nicht.",
+    "Read tool result": "Toolergebnis lesen",
+    "Shutdown notebook": "Notebook herunterfahren",
+    "Notebook shut down.": "Notebook wurde heruntergefahren.",
+    "Inspect packages": "Pakete prüfen",
+    "Captured at": "Erfasst am",
+    "Manage environments": "Umgebungen verwalten"
   }
 }

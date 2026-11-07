@@ -7888,6 +7888,12 @@
     "Add network exception": "添加网络例外",
     "Built-in experimental agent. Uses your API account and managed tools.": "内置实验性智能体。使用您的 API 账户和受管工具。",
     "Check the interrupted tool result": "核对中断的工具调用结果",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "工具可能已更改文件或外部服务。请先核对实际结果。导出诊断信息以确定具体调用，然后在新会话中说明已核实的状态。本会话不会重复执行结果不确定的操作。"
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "工具可能已更改文件或外部服务。请先核对实际结果。导出诊断信息以确定具体调用，然后在新会话中说明已核实的状态。本会话不会重复执行结果不确定的操作。",
+    "Read tool result": "读取工具结果",
+    "Shutdown notebook": "关闭 Notebook",
+    "Notebook shut down.": "Notebook 已关闭。",
+    "Inspect packages": "检查软件包",
+    "Captured at": "采集时间",
+    "Manage environments": "管理运行环境"
   }
 }

@@ -7886,6 +7886,12 @@
     "Add network exception": "네트워크 예외 추가",
     "Built-in experimental agent. Uses your API account and managed tools.": "기본 제공 실험적 에이전트입니다. API 계정과 관리 도구를 사용합니다.",
     "Check the interrupted tool result": "중단된 도구 결과 확인",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "도구가 파일이나 외부 서비스를 변경했을 수 있습니다. 계속하기 전에 실제 결과를 확인하세요. 진단을 내보내 호출을 확인한 다음 검증된 상태로 새 대화를 시작하세요. 이 대화에서는 결과가 불확실한 작업을 반복하지 않습니다."
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "도구가 파일이나 외부 서비스를 변경했을 수 있습니다. 계속하기 전에 실제 결과를 확인하세요. 진단을 내보내 호출을 확인한 다음 검증된 상태로 새 대화를 시작하세요. 이 대화에서는 결과가 불확실한 작업을 반복하지 않습니다.",
+    "Read tool result": "도구 결과 읽기",
+    "Shutdown notebook": "Notebook 종료",
+    "Notebook shut down.": "Notebook이 종료되었습니다.",
+    "Inspect packages": "패키지 검사",
+    "Captured at": "수집 시각",
+    "Manage environments": "환경 관리"
   }
 }

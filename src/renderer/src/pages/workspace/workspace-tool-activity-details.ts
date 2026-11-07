@@ -126,6 +126,7 @@ const TRANSLATABLE_TOOL_DETAIL_COPY = new Set([
   'Output',
   'Packages',
   'Prompt',
+  'Read tool result',
   'Request',
   'Result',
   'Reading',
@@ -288,6 +289,16 @@ const stringifyRaw = (value: unknown): string | undefined => {
 // Prefers the explicit provider tool name, falling back to a readable tool-kind label.
 const getToolDisplayName = (activity: ToolActivity): string => {
   const provider = trimDetail(activity.providerToolName)
+
+  // The harness exposes its intrinsic result-reader as a bare name, while MCP bridges may
+  // namespace the same call. Keep both forms on the shared card surface instead of leaking the
+  // transport-specific identity into the transcript.
+  if (
+    [provider, trimDetail(activity.title)].some((value) =>
+      value ? /(?:^|__|[./_])read_tool_result$/iu.test(value) : false
+    )
+  )
+    return 'Read tool result'
 
   if (provider) return provider
   if (activity.toolKind) return TOOL_KIND_LABELS[activity.toolKind] ?? 'Tool'
