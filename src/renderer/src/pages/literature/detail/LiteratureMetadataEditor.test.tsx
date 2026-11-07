@@ -38,6 +38,25 @@ describe('LiteratureMetadataEditor', () => {
     )
   })
 
+  it('keeps identifier-only creation disabled for empty normalized identifiers', () => {
+    const onSave = vi.fn()
+    render(
+      <LiteratureMetadataEditor
+        item={{
+          ...emptyLiteratureItem(),
+          identifiers: [{ scheme: 'pmid', value: 'PMID:', isPrimary: true }]
+        }}
+        allowIdentifierOnly
+        saving={false}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Save' }).matches(':disabled')).toBe(true)
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
   it('locks every editable control while saving and retains the draft after failure', () => {
     const item = literatureItemInputSchema.parse({
       itemType: 'journalArticle',

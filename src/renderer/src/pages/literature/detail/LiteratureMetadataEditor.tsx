@@ -239,7 +239,9 @@ const LiteratureMetadataEditor = ({
   }
 
   const submit = (): void => {
-    const identifiers = draft.identifiers.filter(({ value }) => value.trim())
+    const identifiers = draft.identifiers.filter(({ scheme, value }) =>
+      normalizeLiteratureIdentifierValue(scheme, value).trim()
+    )
     const title =
       draft.title.trim() ||
       (allowIdentifierOnly && identifiers[0]
@@ -318,7 +320,9 @@ const LiteratureMetadataEditor = ({
     })
   }
 
-  const hasIdentifier = draft.identifiers.some(({ value }) => value.trim())
+  const hasIdentifier = draft.identifiers.some(({ scheme, value }) =>
+    normalizeLiteratureIdentifierValue(scheme, value).trim()
+  )
 
   return (
     <div className={cn('flex min-h-0 min-w-0 max-h-[70vh] flex-col text-sm', className)}>
