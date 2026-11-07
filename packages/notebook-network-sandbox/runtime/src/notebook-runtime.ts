@@ -418,7 +418,7 @@ const wrap = async (
       username: `notebook-${request.commandId}`,
       password: randomBytes(32).toString('base64url')
     }
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && config.windowsOwnershipRoot) {
       await mkdir(config.windowsOwnershipRoot, { recursive: true, mode: 0o700 })
     }
     let assertWindowsSpawnAdmission: (() => void) | undefined
