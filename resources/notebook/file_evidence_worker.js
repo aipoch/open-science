@@ -2263,34 +2263,26 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
-const dispatch = (request) =>
-  request.operation === 'compact-history'
-    ? compactHistory(request)
-    : request.operation === 'begin'
-      ? begin(request)
-      : request.operation === 'ensure-capture'
-        ? ensureCapture(request)
-        : request.operation === 'ensure-project'
-          ? ensureProject(request)
-          : request.operation === 'persist'
-            ? persist(request)
-            : request.operation === 'recover-published'
-              ? recoverPublished(request)
-              : request.operation === 'complete'
-                ? complete(request)
-                : request.operation === 'cleanup'
-                  ? cleanup(request)
-                  : request.operation === 'delete-project'
-                    ? deleteProject(request)
-                    : request.operation === 'reconcile-compute-project'
-                      ? reconcileComputeProject(request)
-                      : request.operation === 'reconcile'
-                        ? reconcile(request)
-                        : request.operation === 'reconcile-legacy-notebook'
-                          ? reconcileLegacyNotebook(request)
-                          : (() => {
-                              throw new Error('Unsupported file-evidence worker operation.')
-                            })()
+const operationHandlers = new Map([
+  ['compact-history', compactHistory],
+  ['begin', begin],
+  ['ensure-capture', ensureCapture],
+  ['ensure-project', ensureProject],
+  ['persist', persist],
+  ['recover-published', recoverPublished],
+  ['complete', complete],
+  ['cleanup', cleanup],
+  ['delete-project', deleteProject],
+  ['reconcile-compute-project', reconcileComputeProject],
+  ['reconcile', reconcile],
+  ['reconcile-legacy-notebook', reconcileLegacyNotebook]
+])
+
+const dispatch = (request) => {
+  const handler = operationHandlers.get(request.operation)
+  if (!handler) throw new Error('Unsupported file-evidence worker operation.')
+  return handler(request)
+}
 
 process.stdin.setEncoding('utf8')
 if (process.argv.includes('--serve')) {
