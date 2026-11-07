@@ -8060,6 +8060,7 @@
     "Notebook shut down.": "Notebook wurde heruntergefahren.",
     "Inspect packages": "Pakete prüfen",
     "Captured at": "Erfasst am",
-    "Manage environments": "Umgebungen verwalten"
+    "Manage environments": "Umgebungen verwalten",
+    "Action": "Aktion"
   }
 }

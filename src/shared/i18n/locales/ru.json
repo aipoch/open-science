@@ -8380,6 +8380,7 @@
     "Notebook shut down.": "Работа Notebook завершена.",
     "Inspect packages": "Проверить пакеты",
     "Captured at": "Получено",
-    "Manage environments": "Управлять средами"
+    "Manage environments": "Управлять средами",
+    "Action": "Действие"
   }
 }

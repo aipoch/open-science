@@ -7894,6 +7894,7 @@
     "Notebook shut down.": "Notebook を終了しました。",
     "Inspect packages": "パッケージを確認",
     "Captured at": "取得日時",
-    "Manage environments": "環境を管理"
+    "Manage environments": "環境を管理",
+    "Action": "操作"
   }
 }

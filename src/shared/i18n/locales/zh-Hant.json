@@ -7894,6 +7894,7 @@
     "Notebook shut down.": "Notebook 已關閉。",
     "Inspect packages": "檢查套件",
     "Captured at": "擷取時間",
-    "Manage environments": "管理執行環境"
+    "Manage environments": "管理執行環境",
+    "Action": "操作"
   }
 }

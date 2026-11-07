@@ -36,7 +36,17 @@ export const readNotebookToolResult = (
   const item = record(value)
   if (!item) return undefined
   if (
-    ['kernelStatus', 'runtimes', 'bound', 'bindingChanged'].some((key) => key in item) ||
+    [
+      'kernelStatus',
+      'runtimes',
+      'bound',
+      'bindingChanged',
+      'status',
+      'packages',
+      'environments',
+      'created',
+      'removed'
+    ].some((key) => key in item) ||
     text(item.error)
   )
     return item
@@ -207,6 +217,15 @@ export const buildNotebookToolSummary = (
         .join(' ')
   } else if (tool === 'manage_environments') {
     summary.title = t('Manage environments')
+    if (approval) {
+      field(t('Action'), input.action)
+      field(t('Environment'), input.name)
+      field(t('Language'), language(input.language))
+      if (Array.isArray(input.packages)) {
+        const packages = input.packages.filter((pkg): pkg is string => typeof pkg === 'string')
+        if (packages.length) field(t('Packages'), packages.join(', '))
+      }
+    }
     const created = record(result?.created)
     const removed = record(result?.removed)
     if (created) {

@@ -8234,6 +8234,7 @@
     "Notebook shut down.": "Notebook arrêté.",
     "Inspect packages": "Inspecter les paquets",
     "Captured at": "Capturé le",
-    "Manage environments": "Gérer les environnements"
+    "Manage environments": "Gérer les environnements",
+    "Action": "Action"
   }
 }

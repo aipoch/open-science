@@ -7894,6 +7894,7 @@
     "Notebook shut down.": "Notebook 已关闭。",
     "Inspect packages": "检查软件包",
     "Captured at": "采集时间",
-    "Manage environments": "管理运行环境"
+    "Manage environments": "管理运行环境",
+    "Action": "操作"
   }
 }

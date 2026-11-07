@@ -7892,6 +7892,7 @@
     "Notebook shut down.": "Notebook이 종료되었습니다.",
     "Inspect packages": "패키지 검사",
     "Captured at": "수집 시각",
-    "Manage environments": "환경 관리"
+    "Manage environments": "환경 관리",
+    "Action": "작업"
   }
 }
