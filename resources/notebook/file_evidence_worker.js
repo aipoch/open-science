@@ -2263,49 +2263,84 @@ const deleteProject = (request) => {
   return { ok: true, removedProjectEntries: removed ? 1 : 0 }
 }
 
-let requestText = ''
+const dispatch = (request) =>
+  request.operation === 'compact-history'
+    ? compactHistory(request)
+    : request.operation === 'begin'
+      ? begin(request)
+      : request.operation === 'ensure-capture'
+        ? ensureCapture(request)
+        : request.operation === 'ensure-project'
+          ? ensureProject(request)
+          : request.operation === 'persist'
+            ? persist(request)
+            : request.operation === 'recover-published'
+              ? recoverPublished(request)
+              : request.operation === 'complete'
+                ? complete(request)
+                : request.operation === 'cleanup'
+                  ? cleanup(request)
+                  : request.operation === 'delete-project'
+                    ? deleteProject(request)
+                    : request.operation === 'reconcile-compute-project'
+                      ? reconcileComputeProject(request)
+                      : request.operation === 'reconcile'
+                        ? reconcile(request)
+                        : request.operation === 'reconcile-legacy-notebook'
+                          ? reconcileLegacyNotebook(request)
+                          : (() => {
+                              throw new Error('Unsupported file-evidence worker operation.')
+                            })()
+
 process.stdin.setEncoding('utf8')
-process.stdin.on('data', (chunk) => {
-  requestText += chunk
-  if (Buffer.byteLength(requestText) > MAX_REQUEST_BYTES) {
-    fail('File-evidence worker request is too large.')
-    process.stdin.destroy()
-  }
-})
-process.stdin.on('end', () => {
-  if (process.exitCode) return
-  try {
-    const request = JSON.parse(requestText)
-    const result =
-      request.operation === 'compact-history'
-        ? compactHistory(request)
-        : request.operation === 'begin'
-          ? begin(request)
-          : request.operation === 'ensure-capture'
-            ? ensureCapture(request)
-            : request.operation === 'ensure-project'
-              ? ensureProject(request)
-              : request.operation === 'persist'
-                ? persist(request)
-                : request.operation === 'recover-published'
-                  ? recoverPublished(request)
-                  : request.operation === 'complete'
-                    ? complete(request)
-                    : request.operation === 'cleanup'
-                      ? cleanup(request)
-                      : request.operation === 'delete-project'
-                        ? deleteProject(request)
-                        : request.operation === 'reconcile-compute-project'
-                          ? reconcileComputeProject(request)
-                          : request.operation === 'reconcile'
-                            ? reconcile(request)
-                            : request.operation === 'reconcile-legacy-notebook'
-                              ? reconcileLegacyNotebook(request)
-                              : (() => {
-                                  throw new Error('Unsupported file-evidence worker operation.')
-                                })()
-    process.stdout.write(`${JSON.stringify(result)}\n`)
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error))
-  }
-})
+if (process.argv.includes('--serve')) {
+  // Resident mode: one JSON request per line, each carrying its evidence root. The worker binds
+  // that root for the request only; every operation still verifies the bound directory identity.
+  // Returning to the neutral launch directory keeps no evidence directory open between requests.
+  const neutralDirectory = process.cwd()
+  let buffered = ''
+  process.stdin.on('data', (chunk) => {
+    buffered += chunk
+    let newline
+    while ((newline = buffered.indexOf('\n')) >= 0) {
+      const line = buffered.slice(0, newline)
+      buffered = buffered.slice(newline + 1)
+      let response
+      try {
+        const { root, request } = JSON.parse(line)
+        process.chdir(root)
+        try {
+          response = dispatch(request)
+        } finally {
+          process.chdir(neutralDirectory)
+        }
+      } catch (error) {
+        response = { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+      process.stdout.write(`${JSON.stringify(response)}\n`)
+    }
+    if (Buffer.byteLength(buffered) > MAX_REQUEST_BYTES) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: false, error: 'File-evidence worker request is too large.' })}\n`
+      )
+      process.exit(1)
+    }
+  })
+} else {
+  let requestText = ''
+  process.stdin.on('data', (chunk) => {
+    requestText += chunk
+    if (Buffer.byteLength(requestText) > MAX_REQUEST_BYTES) {
+      fail('File-evidence worker request is too large.')
+      process.stdin.destroy()
+    }
+  })
+  process.stdin.on('end', () => {
+    if (process.exitCode) return
+    try {
+      process.stdout.write(`${JSON.stringify(dispatch(JSON.parse(requestText)))}\n`)
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+    }
+  })
+}

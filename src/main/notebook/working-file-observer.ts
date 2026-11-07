@@ -2,6 +2,7 @@ import { matchesWriteScope } from '@aipoch/notebook-analysis'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { nodeRuntimeEnvironment } from '../node-process-host'
@@ -476,94 +477,156 @@ const resolveEvidenceWorkerPath = (): string => {
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[candidates.length - 1]!
 }
 
+// One resident worker serves the serialized evidence queue, avoiding a process launch per request.
+// It launches outside any evidence directory and binds each request's root itself. Any failure,
+// timeout, abort or oversized output discards the process, so the next request starts clean.
+const EVIDENCE_WORKER_IDLE_MS = 30_000
+
+type ResidentEvidenceWorker = {
+  child: ReturnType<typeof spawn>
+  stdout: string
+  stderr: string
+  waiting?: (line: string) => void
+}
+
+let residentEvidenceWorker: ResidentEvidenceWorker | undefined
+let residentEvidenceQueue: Promise<unknown> = Promise.resolve()
+let residentEvidenceIdle: ReturnType<typeof setTimeout> | undefined
+
+const setResidentEvidenceWorkerActive = (worker: ResidentEvidenceWorker, active: boolean): void => {
+  const method = active ? 'ref' : 'unref'
+  worker.child[method]()
+  for (const stream of [worker.child.stdin, worker.child.stdout, worker.child.stderr]) {
+    ;(stream as unknown as { [key: string]: (() => void) | undefined } | null)?.[method]?.()
+  }
+}
+
+const discardResidentEvidenceWorker = (worker: ResidentEvidenceWorker): void => {
+  if (residentEvidenceWorker === worker) residentEvidenceWorker = undefined
+  worker.child.kill('SIGKILL')
+}
+
+const launchResidentEvidenceWorker = (): ResidentEvidenceWorker => {
+  const child = spawn(process.execPath, [resolveEvidenceWorkerPath(), '--serve'], {
+    cwd: tmpdir(),
+    env: { ...process.env, ...nodeRuntimeEnvironment() },
+    windowsHide: true,
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
+  const worker: ResidentEvidenceWorker = { child, stdout: '', stderr: '' }
+  child.stdout!.on('data', (chunk: Buffer) => {
+    worker.stdout += chunk.toString('utf8')
+    if (Buffer.byteLength(worker.stdout) > MAX_WORKER_OUTPUT_BYTES) {
+      worker.waiting?.('')
+      discardResidentEvidenceWorker(worker)
+      return
+    }
+    const newline = worker.stdout.indexOf('\n')
+    if (newline < 0) return
+    const line = worker.stdout.slice(0, newline)
+    worker.stdout = worker.stdout.slice(newline + 1)
+    worker.waiting?.(line)
+  })
+  child.stderr!.on('data', (chunk: Buffer) => {
+    worker.stderr = (worker.stderr + chunk.toString('utf8')).slice(-64 * 1024)
+  })
+  const exited = (): void => {
+    if (residentEvidenceWorker === worker) residentEvidenceWorker = undefined
+    worker.waiting?.('')
+  }
+  child.once('exit', exited)
+  child.once('error', exited)
+  child.stdin!.on('error', exited)
+  return worker
+}
+
+const runResidentEvidenceWorker = async (
+  evidenceRoot: string,
+  request: EvidenceWorkerRequest,
+  signal?: AbortSignal
+): Promise<EvidenceWorkerResult> => {
+  signal?.throwIfAborted()
+  clearTimeout(residentEvidenceIdle)
+  const worker = residentEvidenceWorker ?? launchResidentEvidenceWorker()
+  residentEvidenceWorker = worker
+  setResidentEvidenceWorkerActive(worker, true)
+  let failed = true
+  try {
+    const line = await new Promise<string>((resolveLine, rejectLine) => {
+      const settle = (value: string | Error): void => {
+        worker.waiting = undefined
+        clearTimeout(timeout)
+        signal?.removeEventListener('abort', abort)
+        if (value instanceof Error) rejectLine(value)
+        else resolveLine(value)
+      }
+      const abort = (): void => settle(signal?.reason ?? new Error('File-evidence worker aborted.'))
+      const timeout = setTimeout(
+        () => settle(new Error('File-evidence worker timed out.')),
+        EVIDENCE_WORKER_TIMEOUT_MS
+      )
+      timeout.unref()
+      worker.waiting = (value) =>
+        settle(
+          value
+            ? value
+            : new Error(
+                Buffer.byteLength(worker.stdout) > MAX_WORKER_OUTPUT_BYTES
+                  ? 'File-evidence worker output exceeded its limit.'
+                  : `File-evidence worker exited: ${worker.stderr.trim()}`
+              )
+        )
+      signal?.addEventListener('abort', abort, { once: true })
+      if (signal?.aborted) return abort()
+      worker.child.stdin!.write(`${JSON.stringify({ root: evidenceRoot, request })}\n`)
+    })
+    let result: EvidenceWorkerResult | { ok: false; error?: string }
+    try {
+      result = JSON.parse(line) as EvidenceWorkerResult | { ok: false; error?: string }
+    } catch {
+      throw new Error(`File-evidence worker returned invalid output: ${worker.stderr.trim()}`)
+    }
+    if (!result.ok) throw new Error(result.error)
+    failed = false
+    return result
+  } finally {
+    if (failed) discardResidentEvidenceWorker(worker)
+    else if (residentEvidenceWorker === worker) {
+      setResidentEvidenceWorkerActive(worker, false)
+      residentEvidenceIdle = setTimeout(() => {
+        if (residentEvidenceWorker !== worker) return
+        residentEvidenceWorker = undefined
+        worker.child.stdin!.end()
+      }, EVIDENCE_WORKER_IDLE_MS)
+      residentEvidenceIdle.unref()
+    }
+  }
+}
+
+// Lets fault-injection tests launch the next request in a process that sees their environment.
+export const closeResidentEvidenceWorker = async (): Promise<void> => {
+  const worker = residentEvidenceWorker
+  if (!worker) return
+  residentEvidenceWorker = undefined
+  clearTimeout(residentEvidenceIdle)
+  await new Promise<void>((resolveExit) => {
+    worker.child.once('exit', () => resolveExit())
+    worker.child.stdin!.end()
+  })
+}
+
 export const runEvidenceWorker = async (
   evidenceRoot: string,
   request: EvidenceWorkerRequest,
   signal?: AbortSignal
-): Promise<EvidenceWorkerResult> =>
-  new Promise((resolveResult, rejectResult) => {
-    signal?.throwIfAborted()
-    const child = spawn(process.execPath, [resolveEvidenceWorkerPath()], {
-      cwd: evidenceRoot,
-      env: { ...process.env, ...nodeRuntimeEnvironment() },
-      windowsHide: true,
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
-    let stdout = ''
-    let stderr = ''
-    let outputExceeded = false
-    let settled = false
-    const cleanup = (): void => {
-      clearTimeout(timeout)
-      signal?.removeEventListener('abort', abort)
-    }
-    const rejectOnce = (error: unknown): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      rejectResult(error)
-    }
-    const resolveOnce = (result: EvidenceWorkerResult): void => {
-      if (settled) return
-      settled = true
-      cleanup()
-      resolveResult(result)
-    }
-    const append = (current: string, chunk: Buffer): string => {
-      const next = current + chunk.toString('utf8')
-      if (Buffer.byteLength(next) > MAX_WORKER_OUTPUT_BYTES) {
-        outputExceeded = true
-        child.kill('SIGKILL')
-      }
-      return next
-    }
-    child.stdout.on('data', (chunk: Buffer) => {
-      stdout = append(stdout, chunk)
-    })
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr = append(stderr, chunk)
-    })
-    const abort = (): void => {
-      child.kill('SIGKILL')
-      rejectOnce(signal?.reason ?? new Error('File-evidence worker aborted.'))
-    }
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL')
-      rejectOnce(new Error('File-evidence worker timed out.'))
-    }, EVIDENCE_WORKER_TIMEOUT_MS)
-    timeout.unref()
-    child.once('error', rejectOnce)
-    child.stdin.once('error', rejectOnce)
-    child.once('close', (code) => {
-      if (settled) return
-      if (signal?.aborted) {
-        rejectOnce(signal.reason)
-        return
-      }
-      if (outputExceeded) {
-        rejectOnce(new Error('File-evidence worker output exceeded its limit.'))
-        return
-      }
-      let result: EvidenceWorkerResult | { ok: false; error?: string }
-      try {
-        result = JSON.parse(stdout.trim()) as EvidenceWorkerResult | { ok: false; error?: string }
-      } catch {
-        rejectOnce(new Error(`File-evidence worker returned invalid output: ${stderr.trim()}`))
-        return
-      }
-      if (code !== 0 || !result.ok) {
-        rejectOnce(new Error(!result.ok ? result.error : stderr.trim()))
-        return
-      }
-      resolveOnce(result)
-    })
-    signal?.addEventListener('abort', abort, { once: true })
-    if (signal?.aborted) {
-      abort()
-      return
-    }
-    child.stdin.end(JSON.stringify(request))
-  })
+): Promise<EvidenceWorkerResult> => {
+  // The resident process handles one request at a time, including direct (unqueued) callers.
+  const run = residentEvidenceQueue
+    .catch(() => undefined)
+    .then(() => runResidentEvidenceWorker(evidenceRoot, request, signal))
+  residentEvidenceQueue = run
+  return run
+}
 
 type WorkingFileEvidenceLocation = {
   storageRoot: string
@@ -575,6 +638,9 @@ const receiptNameForActivity = (activityId: string): string => `receipt-${activi
 const finalNameForActivity = (activityId: string): string => `activity-${activityId}`
 
 const ensureProjectPromises = new Map<string, Promise<void>>()
+// Ownership verified in this process. Deletion or any failed evidence request drops it, so the next
+// Activity re-verifies the Project receipt in the worker.
+const ensuredEvidenceProjects = new Set<string>()
 let evidenceMutationTail = Promise.resolve()
 
 const waitForEvidenceMutationTurn = async (
@@ -632,7 +698,11 @@ const runSerializedEvidenceWorker = async (
   try {
     await waitForEvidenceMutationTurn(previous, signal, timeoutMs)
     return await worker(evidenceRoot, request, signal)
+  } catch (error) {
+    ensuredEvidenceProjects.clear()
+    throw error
   } finally {
+    if (request.operation === 'delete-project') ensuredEvidenceProjects.clear()
     release()
     if (evidenceMutationTail === tail) evidenceMutationTail = Promise.resolve()
   }
@@ -725,6 +795,7 @@ const ensureWorkingFileEvidenceProject = async (
     join(storageRoot, EXECUTION_FILE_EVIDENCE_DIR)
   )
   const key = `${evidenceRoot.path}\0${projectId}`
+  if (ensuredEvidenceProjects.has(key)) return
   const existing = ensureProjectPromises.get(key)
   if (existing) return existing
   const ensuring = runSerializedEvidenceWorker(worker, evidenceRoot.path, {
@@ -735,6 +806,7 @@ const ensureWorkingFileEvidenceProject = async (
     if (!('projectOwned' in result)) {
       throw new Error('File-evidence Project ownership returned an invalid result.')
     }
+    ensuredEvidenceProjects.add(key)
   })
   ensureProjectPromises.set(key, ensuring)
   try {
