@@ -119,6 +119,7 @@ type SettingsStoreData = RuntimeSetupState &
     providers: ProviderView[]
     // Selected agent backend and the frameworks available to choose from.
     agentFrameworkId: AgentFrameworkId
+    needsInitialAgentSelection?: boolean
     agentFrameworks: AgentFrameworkView[]
     // Detected opencode executable, for the framework-aware detection card.
     opencode: OpencodeInfo
@@ -260,6 +261,7 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   defaultPermissionProfile: getDefaultPermissionProfile(snapshot),
 
   agentFrameworkId: snapshot.agentFrameworkId,
+  needsInitialAgentSelection: snapshot.needsInitialAgentSelection === true,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
   codex: snapshot.codex ?? {},

@@ -600,6 +600,8 @@ export type SettingsSnapshot = {
   providers: ProviderView[]
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
+  /** The first-run wizard may choose a runtime until the user has a stored selection. */
+  needsInitialAgentSelection?: boolean
   agentFrameworks: AgentFrameworkView[]
   // Whether each framework's detected runtime is the app-managed install (binary in the app's data
   // dir), which is the only case an in-app uninstall is offered — a PATH/npm binary we didn't install

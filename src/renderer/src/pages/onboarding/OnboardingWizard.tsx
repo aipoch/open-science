@@ -182,6 +182,7 @@ const OnboardingWizard = ({
   const isCheckingEnvironment = useSettingsStore((state) => state.isCheckingEnvironment)
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
+  const needsInitialAgentSelection = useSettingsStore((state) => state.needsInitialAgentSelection)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const preflight = useSettingsStore((state) => state.preflight)
   const codexVersion = useSettingsStore((state) => state.codex.version)
@@ -278,11 +279,11 @@ const OnboardingWizard = ({
       return
     }
     if (
+      !needsInitialAgentSelection ||
       didSelectInitialAgent.current ||
       isCheckingEnvironment ||
       !environmentCheck ||
       environmentCheck.agentFrameworkId !== agentFrameworkId ||
-      environmentCheck.runtime.found ||
       !['system', 'storage'].every((id) =>
         environmentCheck.checks.some((check) => check.id === id && check.status === 'passed')
       ) ||
@@ -305,10 +306,11 @@ const OnboardingWizard = ({
       'open-science-agent': preflight.openScienceAgentReady === true,
       pi: preflight.piReady === true
     }
-    if (ready[agentFrameworkId]) return
-    const installed = agentFrameworks.find(
-      (framework) => framework.id !== 'open-science-agent' && ready[framework.id]
-    )
+    const builtIn = ready['open-science-agent']
+      ? agentFrameworks.find((framework) => framework.id === 'open-science-agent')
+      : undefined
+    if (!builtIn && (environmentCheck.runtime.found || ready[agentFrameworkId])) return
+    const installed = builtIn ?? agentFrameworks.find((framework) => ready[framework.id])
     if (!installed) return
 
     didSelectInitialAgent.current = true
@@ -333,6 +335,7 @@ const OnboardingWizard = ({
     })
   }, [
     step,
+    needsInitialAgentSelection,
     isCheckingEnvironment,
     environmentCheck,
     agentFrameworkId,

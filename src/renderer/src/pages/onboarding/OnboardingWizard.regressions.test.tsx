@@ -109,6 +109,7 @@ const configureUnavailableRegistries = async (
   }
   useSettingsStore.setState({
     agentFrameworkId: selected,
+    needsInitialAgentSelection: true,
     codex: { version: '1.6.2', nativeVersion: '0.157.1' },
     environmentCheck,
     agentFrameworks: frameworks.map(({ id, label }) => ({
@@ -137,6 +138,30 @@ const configureUnavailableRegistries = async (
 }
 
 describe('Onboarding navigation regressions', () => {
+  it.each([true, false])(
+    'prefers the built-in runtime only for an unset choice (%s)',
+    async (unset) => {
+      await configureUnavailableRegistries()
+      const state = useSettingsStore.getState()
+      useSettingsStore.setState({
+        needsInitialAgentSelection: unset,
+        environmentCheck: { ...state.environmentCheck!, runtime: { found: true } },
+        preflight: { ...state.preflight, claudeReady: true, openScienceAgentReady: true },
+        agentFrameworks: [
+          ...state.agentFrameworks,
+          {
+            id: 'open-science-agent',
+            displayName: 'Open-Science Agent',
+            supportsSkills: true
+          }
+        ]
+      })
+      await renderWizard()
+      if (unset) expect(state.setAgentFramework).toHaveBeenCalledWith('open-science-agent')
+      else expect(state.setAgentFramework).not.toHaveBeenCalled()
+    }
+  )
+
   it.each(['claude-code', 'codex', 'codebuddy'] as const)(
     'checks the installed %s alternative before continuing',
     async (alternative) => {

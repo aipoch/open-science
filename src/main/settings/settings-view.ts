@@ -87,6 +87,8 @@ export const buildSettingsSnapshot = (
     defaultPermissionProfile: preferences.defaultPermissionProfile,
 
     agentFrameworkId: settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID,
+    needsInitialAgentSelection:
+      settings.onboardingCompletedAt === undefined && settings.agentFrameworkId === undefined,
     agentFrameworks: listAgentFrameworks().map((framework) => ({
       id: framework.id,
       displayName: framework.displayName,
