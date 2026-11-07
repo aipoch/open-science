@@ -269,25 +269,25 @@ const defaultController = (
     if (platform === 'win32') {
       try {
         if (!windowsProcessIsAlive(record.pid)) {
-          return record.windowsProcessTreeProof &&
-            (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-            ? 'dead'
-            : 'unknown'
+          return record.windowsProcessTreeProof
+            ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
+              ? 'dead'
+              : 'unknown'
+            : 'dead'
         }
       } catch {
-        // Fall back to the portable PID probe. An unreadable native query must not authorize
-        // clearing or killing a receipt that may still refer to a live process.
+        // Fall back to the portable PID probe. A proofless standard-mode receipt remains eligible
+        // for the relaxed PID recovery policy when that probe also confirms the host is gone.
       }
-      // A missing host PID does not prove that its descendant tree was reaped. Keep the receipt
-      // fenced until recovery has a process-tree proof rather than admitting a concurrent kernel.
     }
     const alive = pidIsAlive(record.pid)
     if (platform === 'win32') {
       if (!alive) {
-        return record.windowsProcessTreeProof &&
-          (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
-          ? 'dead'
-          : 'unknown'
+        return record.windowsProcessTreeProof
+          ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
+            ? 'dead'
+            : 'unknown'
+          : 'dead'
       }
     }
     if (platform !== 'win32') {

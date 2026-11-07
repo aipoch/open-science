@@ -853,7 +853,6 @@ const windowsSupervisedLaunch = (
 ): {
   argv: string[]
   env: NodeJS.ProcessEnv
-  processTreeProof: ProcessTreeProofMetadata
   confirmProcessTreeTermination: () => Promise<boolean>
   requestProcessTreeTermination: () => Promise<boolean>
   confirmProcessState: () => Promise<WindowsProcessState>
@@ -886,7 +885,6 @@ const windowsSupervisedLaunch = (
   return {
     argv: [request.hostPath, 'supervise', specification],
     env: direct.env,
-    processTreeProof: { path: proof.path, token: proof.token, requestPath: proof.requestPath },
     confirmProcessTreeTermination: proof.confirm,
     requestProcessTreeTermination: proof.request,
     confirmProcessState: proof.confirmState,

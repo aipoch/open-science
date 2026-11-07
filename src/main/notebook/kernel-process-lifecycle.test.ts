@@ -445,7 +445,7 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(kill).not.toHaveBeenCalledWith(-process.pid, 0)
   })
 
-  it('keeps a Windows receipt fenced when only the native host process has exited', async () => {
+  it('relaxes a proofless Windows receipt when only the native host process has exited', async () => {
     windowsProcessIsAlive.mockReturnValueOnce(false)
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true)
 
@@ -462,7 +462,7 @@ describe('KernelProcessLifecycleOwner', () => {
         kernelEpochId: 'epoch-a',
         pid: 4242
       })
-    ).resolves.toBe('unknown')
+    ).resolves.toBe('dead')
 
     expect(kill).not.toHaveBeenCalled()
   })
@@ -818,9 +818,9 @@ describe('KernelProcessLifecycleOwner', () => {
   })
 
   describe.skipIf(process.platform !== 'win32')('Windows startup recovery', () => {
-    it('keeps a legacy proofless receipt fenced after the host exits', async () => {
+    it('clears a legacy proofless receipt after the host exits', async () => {
       root = await mkdtemp(join(tmpdir(), 'kernel-process-windows-recovery-'))
-      const probe = vi.fn().mockResolvedValue('unknown' as const)
+      const probe = vi.fn().mockResolvedValue('dead' as const)
       const terminate = vi.fn().mockResolvedValue({ reaped: false })
       const first = new KernelProcessLifecycleOwner({
         storageRoot: root,
@@ -846,8 +846,8 @@ describe('KernelProcessLifecycleOwner', () => {
         controller: { probe, terminate }
       })
 
-      await expect(restarted.ensureReady()).rejects.toThrow('KERNEL_STARTUP_FENCE')
-      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toHaveLength(1)
+      await expect(restarted.ensureReady()).resolves.toBeUndefined()
+      expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toEqual([])
       expect(terminate).not.toHaveBeenCalled()
     })
   })
