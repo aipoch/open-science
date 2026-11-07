@@ -282,6 +282,7 @@ describe('ComposerModelPicker', () => {
 
   it('lists both Claude subscription Providers for an existing Session', async () => {
     useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
       providers: [
         provider({
           id: CLAUDE_SHARED_PROVIDER_ID,
