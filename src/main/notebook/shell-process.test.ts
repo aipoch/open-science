@@ -31,12 +31,20 @@ import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sand
 import { ViolationLog } from '../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
 
 let portableRuntimeRoot: string
+let nodeRuntimeResolver: {
+  mockRestore: () => void
+  mockReturnValue: (value: { root: string; node: string }) => unknown
+}
 
 beforeEach(async () => {
   portableRuntimeRoot = await mkdtemp(join(tmpdir(), 'os-shell-portable-runtime-'))
+  nodeRuntimeResolver = vi
+    .spyOn(windowsRuntime, 'resolveWindowsNotebookNodeRuntime')
+    .mockReturnValue({ root: 'D:\\bundled', node: 'D:\\bundled\\node.exe' })
 })
 
 afterEach(async () => {
+  nodeRuntimeResolver.mockRestore()
   vi.unstubAllEnvs()
   await rm(portableRuntimeRoot, { recursive: true, force: true })
 })
@@ -133,7 +141,7 @@ describe('notebook shell process behavior', () => {
       [false, true].map((aliased) => ({ version, aliased }))
     )
   )(
-    'requires the bundled Node read grant only for PowerShell $version (aliased storage: $aliased)',
+    'grants the bundled Node directory for PowerShell $version (aliased storage: $aliased)',
     async ({ version, aliased }) => {
       const alias = join(portableRuntimeRoot, 'alias')
       if (aliased)
@@ -148,6 +156,7 @@ describe('notebook shell process behavior', () => {
         node: join(nodeRoot, 'node.exe'),
         powershell: join(root, 'powershell', 'pwsh.exe')
       })
+      nodeRuntimeResolver.mockReturnValue({ root, node: join(nodeRoot, 'node.exe') })
       const admission = vi
         .spyOn(processTree, 'assertProcessTreeSupport')
         .mockImplementation(() => {})
@@ -183,8 +192,10 @@ describe('notebook shell process behavior', () => {
           )
           expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
         }
-        if (version === '7.6') expect(filesystem.readOnlyRoots).toContain(nodeRoot)
-        else expect(filesystem.readOnlyRoots).not.toContain(nodeRoot)
+        const pathEntries = env.PATH?.split(';') ?? []
+        expect(pathEntries[0]).toBe(nodeRoot)
+        expect(pathEntries.indexOf(env.NPM_CONFIG_PREFIX ?? '')).toBeGreaterThan(0)
+        expect(filesystem.readOnlyRoots).toContain(nodeRoot)
         expect(filesystem.readOnlyRoots).not.toContain(hostTools)
         expect(filesystem.optionalReadOnlyRoots).toContain(hostTools)
       } finally {
@@ -795,46 +806,54 @@ describe('notebook shell process behavior', () => {
 
     it('keeps Windows shell runtime variables while excluding host secrets', () => {
       const runtimeRoot = 'D:\\OpenScience\\runtime'
-      const env = buildShellEnv(
-        '/notebook/handoff',
-        'win32',
-        {
-          PATH: 'C:\\Windows\\System32',
+      nodeRuntimeResolver.mockReturnValue({
+        root: 'D:\\bundled',
+        node: 'D:\\bundled\\node\\node.exe'
+      })
+      try {
+        const env = buildShellEnv(
+          '/notebook/handoff',
+          'win32',
+          {
+            PATH: 'C:\\Windows\\System32',
+            ProgramFiles: 'C:\\Program Files',
+            SystemRoot: 'C:\\Windows',
+            WINDIR: 'C:\\Windows',
+            ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+            PATHEXT: '.COM;.EXE;.BAT;.CMD',
+            USERPROFILE: 'C:\\Users\\Ada',
+            PSModulePath: 'C:\\host\\third-party-modules',
+            OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
+            OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
+          },
+          runtimeRoot,
+          undefined,
+          { kind: 'powershell', version: '5.1' }
+        )
+        const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
+
+        expect(env).toMatchObject({
+          PATH: 'D:\\bundled\\node;C:\\Windows\\System32',
           ProgramFiles: 'C:\\Program Files',
           SystemRoot: 'C:\\Windows',
           WINDIR: 'C:\\Windows',
           ComSpec: 'C:\\Windows\\System32\\cmd.exe',
           PATHEXT: '.COM;.EXE;.BAT;.CMD',
-          USERPROFILE: 'C:\\Users\\Ada',
-          PSModulePath: 'C:\\host\\third-party-modules',
-          OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
-          OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
-        },
-        runtimeRoot,
-        undefined,
-        { kind: 'powershell', version: '5.1' }
-      )
-      const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
-
-      expect(env).toMatchObject({
-        PATH: 'C:\\Windows\\System32',
-        ProgramFiles: 'C:\\Program Files',
-        SystemRoot: 'C:\\Windows',
-        WINDIR: 'C:\\Windows',
-        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
-        PATHEXT: '.COM;.EXE;.BAT;.CMD',
-        PSModulePath:
-          'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
-        OPEN_SCIENCE_PSMODULEPATH:
-          'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
-        OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff',
-        OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
-        PIP_CACHE_DIR: join(cacheRoot, 'pip'),
-        HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
-        TORCH_HOME: join(cacheRoot, 'torch')
-      })
-      expect(env.USERPROFILE).toBeUndefined()
-      expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
+          PSModulePath:
+            'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+          OPEN_SCIENCE_PSMODULEPATH:
+            'C:\\Program Files\\WindowsPowerShell\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+          OPEN_SCIENCE_HANDOFF_DIR: '/notebook/handoff',
+          OPEN_SCIENCE_NOTEBOOK_CACHE_DIR: cacheRoot,
+          PIP_CACHE_DIR: join(cacheRoot, 'pip'),
+          HF_HUB_CACHE: join(cacheRoot, 'huggingface', 'hub'),
+          TORCH_HOME: join(cacheRoot, 'torch')
+        })
+        expect(env.USERPROFILE).toBeUndefined()
+        expect(env.OPEN_SCIENCE_TEST_SECRET).toBeUndefined()
+      } finally {
+        nodeRuntimeResolver.mockReturnValue({ root: 'D:\\bundled', node: 'D:\\bundled\\node.exe' })
+      }
     })
 
     it('waits for process-tree termination before settling a timed-out shell command', async () => {

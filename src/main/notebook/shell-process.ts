@@ -53,6 +53,8 @@ import {
 } from './shell-runtime'
 import {
   resolveWindowsNotebookRuntime,
+  resolveWindowsNotebookNodeRuntime,
+  windowsNotebookNodeEnvironment,
   windowsNotebookRuntimeEnvironment
 } from './windows-notebook-runtime'
 
@@ -100,7 +102,8 @@ const buildShellEnv = (
   sourceEnv: NodeJS.ProcessEnv = process.env,
   runtimeRoot?: string,
   workloadCacheEnv?: NodeJS.ProcessEnv,
-  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform)
+  binding: ShellRuntimeBinding = defaultShellRuntimeBinding(platform),
+  hostPlatform: NodeJS.Platform = platform
 ): NodeJS.ProcessEnv => {
   const env = buildShellProcessEnvironment(
     platform,
@@ -112,9 +115,10 @@ const buildShellEnv = (
   if (runtimeRoot) {
     Object.assign(env, workloadCacheEnv ?? notebookWorkloadCacheEnv(runtimeRoot))
   }
-  return binding.kind === 'powershell' && binding.version === '7.6'
+  if (hostPlatform !== 'win32' || binding.kind !== 'powershell') return env
+  return binding.version === '7.6'
     ? windowsNotebookRuntimeEnvironment(env, resolveWindowsNotebookRuntime())
-    : env
+    : windowsNotebookNodeEnvironment(env, resolveWindowsNotebookNodeRuntime())
 }
 
 const POWERSHELL_CLIXML_BLOCK = /#< CLIXML\r?\n<Objs\b[\s\S]*?<\/Objs>(?:\r?\n)?/gu
@@ -376,13 +380,26 @@ const prepareShellLaunchOptions = async (
           process.env,
           options.runtimeRoot,
           workloadCacheEnv,
-          runtimeBinding
+          runtimeBinding,
+          hostPlatform
         )
+    if (options.environment && hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     // Resolve host npm before injecting the workload-writable global bin into PATH.
     if (options.processSandbox && runtimeBinding.kind === 'native-posix') {
       npmReadRoots = shellNpmReadRoots(shellEnv, runtimePlatform)
     }
     shellEnv = prepareShellNpmEnvironment(options.runtimeRoot, runtimePlatform, shellEnv)
+    if (hostPlatform === 'win32' && runtimeBinding.kind === 'powershell') {
+      shellEnv =
+        runtimeBinding.version === '7.6'
+          ? windowsNotebookRuntimeEnvironment(shellEnv, resolveWindowsNotebookRuntime())
+          : windowsNotebookNodeEnvironment(shellEnv, resolveWindowsNotebookNodeRuntime())
+    }
     if (options.inputRoot) shellEnv.OPEN_SCIENCE_INPUT_DIR = options.inputRoot
     else delete shellEnv.OPEN_SCIENCE_INPUT_DIR
   } catch (error) {
@@ -419,6 +436,15 @@ const prepareShellLaunchOptions = async (
     Boolean(options.processSandbox)
   )
   const baseEnv = shellEnv
+  const bundledNodeRoot =
+    hostPlatform === 'win32' && runtimeBinding.kind === 'powershell'
+      ? dirname(
+          (runtimeBinding.version === '7.6'
+            ? resolveWindowsNotebookRuntime()
+            : resolveWindowsNotebookNodeRuntime()
+          ).node
+        )
+      : undefined
   let sandboxed: Awaited<ReturnType<NotebookProcessSandbox['wrap']>> | undefined
   try {
     sandboxed = options.processSandbox
@@ -451,9 +477,7 @@ const prepareShellLaunchOptions = async (
             readOnlyRoots: [
               options.runtimeRoot,
               ...(fallbackNodeDirectory ? [fallbackNodeDirectory] : []),
-              ...(runtimeBinding.kind === 'powershell' && runtimeBinding.version === '7.6'
-                ? [dirname(resolveWindowsNotebookRuntime().node)]
-                : []),
+              ...(bundledNodeRoot ? [bundledNodeRoot] : []),
               ...(options.inputRoot ? [options.inputRoot] : []),
               ...(runtimeBinding.kind === 'wsl2-bash'
                 ? []
@@ -1122,7 +1146,8 @@ class NotebookShellProcessAdapter implements NotebookShellProcess {
       process.env,
       request.runtimeRoot,
       prepareNotebookWorkloadCache(request.runtimeRoot),
-      binding
+      binding,
+      this.platform
     )
   }
 

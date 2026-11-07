@@ -4024,11 +4024,18 @@ describe('notebook runtime service', () => {
           node: 'C:\\fixture-runtime\\node\\node.exe',
           powershell: 'C:\\fixture-runtime\\powershell\\pwsh.exe'
         })
+      const resolveNode = vi
+        .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookNodeRuntime')
+        .mockReturnValue({
+          root: 'C:\\fixture-runtime\\node',
+          node: 'C:\\fixture-runtime\\node\\node.exe'
+        })
       const environment = vi
         .spyOn(windowsNotebookRuntime, 'windowsNotebookRuntimeEnvironment')
         .mockImplementation((environment) => ({ ...environment }))
       restoreWindowsRuntimeMocks.push(() => {
         environment.mockRestore()
+        resolveNode.mockRestore()
         resolve.mockRestore()
       })
     }
@@ -4481,6 +4488,7 @@ describe('notebook runtime service', () => {
     })
 
     it('rejects an idempotent Shell retry that changes its captured runtime', async () => {
+      mockWindowsShellRuntime()
       const root = await createStorageRoot()
       const execute = vi
         .fn<NotebookShellProcess['execute']>()
