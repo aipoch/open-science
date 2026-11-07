@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, writeFile, rm, realpath, readFile, copyFile } from 'node:fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  writeFile,
+  rm,
+  realpath,
+  readFile,
+  copyFile,
+  chmod
+} from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it, vi } from 'vitest'
@@ -216,6 +225,7 @@ it.runIf(process.platform === 'darwin')(
     try {
       const executable = join(installation, 'sleep')
       await copyFile('/bin/sleep', executable)
+      await chmod(executable, 0o755)
       const child = spawn(executable, ['60'])
       await new Promise<void>((resolve, reject) => {
         child.once('spawn', resolve)
