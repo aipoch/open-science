@@ -279,9 +279,11 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
       // Parsing the result and delivering it only happens after confirmed process teardown.
       await stop()
       job.controller.signal.throwIfAborted()
+      const thumbnails = worker?.thumbnails
+      if (!thumbnails) throw new Error('PDF worker returned no thumbnail inventory.')
       const result = await cache.publish(
         parsePdfStructureResult(output, job.identity),
-        worker.thumbnails,
+        thumbnails,
         job.controller.signal
       )
       job.accepting = false

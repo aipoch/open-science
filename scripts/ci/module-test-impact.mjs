@@ -456,7 +456,10 @@ export function collectCodeGraphTests(
 
 function changesFromGit(base, head, { cwd = process.cwd(), execute = execFileSync } = {}) {
   const mergeBase = execute('git', ['merge-base', base, head], { cwd, encoding: 'utf8' }).trim()
-  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
+  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], {
+    cwd,
+    maxBuffer: 64 * 1024 * 1024
+  })
   return parseNameStatus(diff.toString('utf8'))
 }
 

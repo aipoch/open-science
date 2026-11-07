@@ -63,7 +63,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const files = [
     ...new Set(
       execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
-        encoding: 'utf8'
+        encoding: 'utf8',
+        maxBuffer: 128 * 1024 * 1024
       })
         .split('\0')
         .filter((path) => Boolean(path) && existsSync(path))
