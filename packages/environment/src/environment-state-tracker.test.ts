@@ -558,6 +558,60 @@ describe('EnvironmentStateTracker', () => {
     }
   )
 
+  it.each(['python', 'r'] as const)(
+    'skips the %s fingerprint probe while its library metadata is unchanged',
+    async (language) => {
+      dataRoot = await mkdtemp(join(tmpdir(), 'fingerprint-observer-'))
+      const library = join(dataRoot, 'library')
+      const userLibrary = join(dataRoot, 'user-library')
+      const packageDir = (name: string): string =>
+        join(library, language === 'python' ? `${name}-1.0.dist-info` : name)
+      await mkdir(packageDir('demo'), { recursive: true })
+      const probe = vi.fn(async () => ({
+        stdout: `RUNTIME\t1\nWATCH\t${userLibrary}\nROOT\t${library}\t1\t1\n`,
+        stderr: ''
+      }))
+      const tracker = new EnvironmentStateTracker({
+        dataRoot,
+        execFile: probe,
+        inspectInstalled: async () => ({ packages: [] })
+      })
+      const probeTarget = { ...target, language, command: join(dataRoot, 'bin', 'interpreter') }
+      const fingerprints = []
+      for (let run = 0; run < 4; run++) {
+        fingerprints.push((await tracker.prepareRun(probeTarget)).fingerprint)
+      }
+      // The first run re-probes after its inventory scan, which confirms the observation.
+      expect(probe).toHaveBeenCalledTimes(2)
+      expect(new Set(fingerprints).size).toBe(1)
+
+      await mkdir(packageDir('added'))
+      for (let run = 0; run < 3; run++) await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(4)
+      await mkdir(userLibrary)
+      await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(5)
+
+      // Any probe environment variable can move library roots (for example R_LIBS_SITE).
+      process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT = 'changed'
+      try {
+        await tracker.prepareRun(probeTarget)
+      } finally {
+        delete process.env.OPEN_SCIENCE_TEST_LIBRARY_INPUT
+      }
+      expect(probe).toHaveBeenCalledTimes(6)
+      await tracker.prepareRun(probeTarget)
+      await tracker.prepareRun(probeTarget)
+      expect(probe).toHaveBeenCalledTimes(8)
+
+      // A PATH-resolved command can select another interpreter without any observed path changing.
+      const bareTarget = { ...probeTarget, command: language === 'r' ? 'Rscript' : 'python' }
+      for (let run = 0; run < 3; run++) await tracker.prepareRun(bareTarget)
+      // First run probes before and after its inventory scan; later runs probe once each.
+      expect(probe).toHaveBeenCalledTimes(12)
+    }
+  )
+
   it('merges equivalent live Python release spellings', async () => {
     dataRoot = await mkdtemp(join(tmpdir(), 'python-equivalent-version-'))
     const tracker = new EnvironmentStateTracker({
