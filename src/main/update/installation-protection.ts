@@ -9,7 +9,8 @@ import { DatabaseSync } from 'node:sqlite'
 import {
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync,
-  inspectProcessNames
+  inspectProcessNames,
+  inspectProcessNamesAsync
 } from './installation-occupancy'
 import { UpdateLifecycleError, type UpdateRecoveryStatus } from '../../shared/update'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
@@ -428,12 +429,13 @@ export function installationRecoveryStatus(record: InstallationUpdateRecord): Up
 }
 function createInstallationBusyError(
   otherRuntimePids: readonly number[],
-  foreignProcessPids: readonly number[]
+  foreignProcessPids: readonly number[],
+  processNames?: ReadonlyMap<number, string>
 ): UpdateLifecycleError {
   const detail =
     foreignProcessPids.length && !otherRuntimePids.length ? 'foreign-process' : 'other-runtime'
   const blockingPids = [...otherRuntimePids, ...foreignProcessPids]
-  const processNames = inspectProcessNames(blockingPids)
+  const names = processNames ?? inspectProcessNames(blockingPids)
   const message =
     detail === 'foreign-process'
       ? 'Another process is using installation files.'
@@ -446,8 +448,19 @@ function createInstallationBusyError(
     canRecover: false,
     canRetryInstall: false,
     detail,
-    blockingProcesses: blockingPids.map((pid) => ({ pid, name: processNames.get(pid) }))
+    blockingProcesses: blockingPids.map((pid) => ({ pid, name: names.get(pid) }))
   })
+}
+async function createInstallationBusyErrorAsync(
+  otherRuntimePids: readonly number[],
+  foreignProcessPids: readonly number[],
+  signal?: AbortSignal
+): Promise<UpdateLifecycleError> {
+  const processNames = await inspectProcessNamesAsync(
+    [...otherRuntimePids, ...foreignProcessPids],
+    signal
+  )
+  return createInstallationBusyError(otherRuntimePids, foreignProcessPids, processNames)
 }
 export function beginInstallationUpdate(
   options: InstallationLocation & {
@@ -700,12 +713,37 @@ export async function beginInstallationUpdateAsync(
       ? await options.allowedProcessIds()
       : options.allowedProcessIds
   signal?.throwIfAborted()
-  return beginInstallationUpdate({
-    ...options,
-    allowedProcessIds,
-    currentManifest,
-    inspectProcesses: () => processIds
-  })
+  try {
+    return beginInstallationUpdate({
+      ...options,
+      allowedProcessIds,
+      currentManifest,
+      inspectProcesses: () => processIds
+    })
+  } catch (cause) {
+    if (
+      process.platform !== 'darwin' ||
+      !(cause instanceof UpdateLifecycleError) ||
+      !cause.recovery?.blockingProcesses?.length
+    )
+      throw cause
+    const processNames = await inspectProcessNamesAsync(
+      cause.recovery.blockingProcesses.map(({ pid }) => pid),
+      signal
+    )
+    throw new UpdateLifecycleError(
+      cause.reason,
+      cause.message,
+      {
+        ...cause.recovery,
+        blockingProcesses: cause.recovery.blockingProcesses.map(({ pid }) => ({
+          pid,
+          name: processNames.get(pid)
+        }))
+      },
+      { cause }
+    )
+  }
 }
 
 export async function verifyInstallationManifestAsync(
@@ -869,7 +907,7 @@ export async function advanceInstallationUpdateAsync(
       const record = inspectInstallationUpdate(location)
       if (!record || record.operationId !== operationId)
         throw new UpdateLifecycleError('install-failed', 'The installation operation has changed.')
-      const processNames = inspectProcessNames(foreignProcesses)
+      const processNames = await inspectProcessNamesAsync(foreignProcesses, options.signal)
       throw new UpdateLifecycleError(
         'installation-busy',
         'Another process is using this installation.',
@@ -925,6 +963,7 @@ export async function inspectInstallationAvailability(
       ? await options.allowedProcessIds()
       : options.allowedProcessIds
   signal?.throwIfAborted()
+  let conflict: { otherRuntimePids: number[]; foreignProcessPids: number[] } | undefined
   coordinated(options, (directory) => {
     const bootstrap = (
       globalThis as typeof globalThis & {
@@ -968,12 +1007,18 @@ export async function inspectInstallationAvailability(
         !allowedProcessIds?.includes(pid)
     )
     if (others.length || foreignProcesses.length) {
-      throw createInstallationBusyError(
-        others.map(({ pid }) => pid),
-        foreignProcesses
-      )
+      conflict = {
+        otherRuntimePids: others.map(({ pid }) => pid),
+        foreignProcessPids: foreignProcesses
+      }
     }
   })
+  if (conflict)
+    throw await createInstallationBusyErrorAsync(
+      conflict.otherRuntimePids,
+      conflict.foreignProcessPids,
+      signal
+    )
 }
 
 export function bindInstallationExecutor(
