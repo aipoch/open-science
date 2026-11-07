@@ -142,6 +142,7 @@ export function LiteratureCreateItemDialog({
             />
           ) : (
             <LiteratureMetadataEditor
+              allowIdentifierOnly={!dialogItemEditor?.file && !dialogItemEditor?.linkSource}
               onDirtyChange={trackNewMetadataDirty}
               className="min-h-0"
               beforeFields={
