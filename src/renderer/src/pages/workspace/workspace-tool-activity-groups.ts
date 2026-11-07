@@ -8,7 +8,6 @@ import {
 } from './workspace-conversation-items'
 import {
   buildToolActivityDetails,
-  getToolDisplayName,
   translateToolDetailCopy,
   isEditActivity,
   isSkillActivity,
@@ -380,7 +379,9 @@ const formatActivityGroupPresentationTitle = (
     const notebookControlTool =
       matchNotebookControlTool(current.activity.providerToolName) ??
       matchNotebookControlTool(current.activity.title)
-    if (details?.displayName === getToolDisplayName(current.activity) && notebookControlTool)
+    // Keep the group header at the stable Notebook category even when the expanded card uses a
+    // specific control title such as "Inspect packages" or "Manage environments".
+    if (notebookControlTool)
       // Canonicalize provider spellings before reusing the existing chip-name mapping.
       return formatActivityTitle(
         {
