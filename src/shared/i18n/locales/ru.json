@@ -8373,6 +8373,13 @@
     "Add network exception": "Добавить сетевое исключение",
     "Built-in experimental agent. Uses your API account and managed tools.": "Встроенный экспериментальный агент. Использует вашу учётную запись API и управляемые инструменты.",
     "Check the interrupted tool result": "Проверить результат прерванного инструмента",
-    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Инструмент мог изменить файлы или внешний сервис. Проверьте фактический результат перед продолжением. Экспортируйте диагностику, чтобы определить вызов, затем начните новый диалог с проверенным состоянием. Этот диалог не повторит операцию с неопределённым результатом."
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "Инструмент мог изменить файлы или внешний сервис. Проверьте фактический результат перед продолжением. Экспортируйте диагностику, чтобы определить вызов, затем начните новый диалог с проверенным состоянием. Этот диалог не повторит операцию с неопределённым результатом.",
+    "Read tool result": "Прочитать результат инструмента",
+    "Shutdown notebook": "Завершить работу Notebook",
+    "Notebook shut down.": "Работа Notebook завершена.",
+    "Inspect packages": "Проверить пакеты",
+    "Captured at": "Получено",
+    "Manage environments": "Управлять средами",
+    "Action": "Действие"
   }
 }

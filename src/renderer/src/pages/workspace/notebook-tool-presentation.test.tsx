@@ -103,6 +103,81 @@ it.each([
   expect(html).not.toContain('<details open')
 })
 
+it('renders summaries for the remaining built-in notebook control tools', () => {
+  const cases = [
+    {
+      identity: 'mcp__open-science-notebook__notebook_shutdown',
+      result: { sessionId: 'session-1', status: 'shutdown' },
+      title: 'Shutdown notebook',
+      field: { label: 'Status', value: 'Completed' }
+    },
+    {
+      identity: 'mcp__open_science_notebook__inspect_packages',
+      result: {
+        language: 'python',
+        environmentName: 'analysis',
+        runtimeSource: 'managed',
+        packages: [{ name: 'numpy', version: '2.0.0', status: 'installed' }]
+      },
+      title: 'Inspect packages',
+      field: { label: 'Environment', value: 'analysis' }
+    },
+    {
+      identity: 'open-science-notebook/manage_environments',
+      result: {
+        offset: 0,
+        environments: [{ name: 'analysis', language: 'python', ready: true, isDefault: true }]
+      },
+      title: 'Manage environments',
+      field: { label: 'Offset', value: '0' }
+    }
+  ] as const
+
+  for (const entry of cases) {
+    const summary = buildNotebookToolSummary(entry.identity, {}, entry.result)!
+    expect(summary.title).toBe(entry.title)
+    expect(summary.fields).toContainEqual(entry.field)
+  }
+})
+
+it('retains built-in notebook results from the real MCP result envelope', () => {
+  const cases = [
+    {
+      identity: 'mcp__open-science-notebook__notebook_shutdown',
+      result: { sessionId: 'session-1', status: 'shutdown' },
+      field: { label: 'Status', value: 'Completed' }
+    },
+    {
+      identity: 'mcp__open-science-notebook__inspect_packages',
+      result: {
+        language: 'python',
+        environmentName: 'analysis',
+        packages: [{ name: 'numpy', version: '2.0.0', status: 'installed' }]
+      },
+      field: { label: 'Environment', value: 'analysis' }
+    },
+    {
+      identity: 'mcp__open-science-notebook__manage_environments',
+      result: { removed: { name: 'analysis' } },
+      field: { label: 'Environment', value: 'analysis' }
+    }
+  ] as const
+
+  for (const entry of cases) {
+    const item = activity({
+      title: entry.identity,
+      rawOutput: {
+        result: { content: [{ type: 'text', text: JSON.stringify(entry.result) }] }
+      }
+    })
+    const details = buildToolActivityDetails(item)!
+    const section = details.sections.find((candidate) => candidate.kind === 'summary')
+    expect(section).toMatchObject({ kind: 'summary' })
+    if (!section || section.kind !== 'summary') throw new Error('Expected a summary')
+    expect(section.summary.fields).toContainEqual(entry.field)
+  }
+})
+
 it('keeps lookalike servers on generic details', () => {
   const details = buildToolActivityDetails(
     activity({ title: 'mcp__open-science-notebook-staging__notebook_state', rawOutput: restart })
@@ -125,6 +200,37 @@ it('does not invent a successful restart from malformed or failed output', () =>
   })
   expect(JSON.stringify(details)).not.toContain('Run history preserved')
 })
+
+it.each([
+  {
+    identity: 'open-science-notebook/notebook_shutdown',
+    result: { status: 'shutdown' },
+    forbidden: 'Notebook shut down.'
+  },
+  {
+    identity: 'open-science-notebook/manage_environments',
+    result: { created: { name: 'analysis', language: 'python', runnable: true } },
+    forbidden: 'analysis'
+  }
+])(
+  'does not show a successful mutation receipt for failed tool %s',
+  ({ identity, result, forbidden }) => {
+    const details = buildToolActivityDetails(
+      activity({
+        title: identity,
+        status: 'failed',
+        rawOutput: {
+          result: { content: [{ type: 'text', text: JSON.stringify(result) }] }
+        }
+      })
+    )!
+    const section = details.sections.find((candidate) => candidate.kind === 'summary')
+    expect(section).toMatchObject({ kind: 'summary', summary: { error: 'Failed' } })
+    if (!section || section.kind !== 'summary') throw new Error('Expected a summary')
+    expect(section.summary.note).toBeUndefined()
+    expect(JSON.stringify(section.summary)).not.toContain(forbidden)
+  }
+)
 
 it('shows runtime pagination, bindings and availability without fetching more results', () => {
   const summary = buildNotebookToolSummary(
@@ -238,6 +344,24 @@ describe('permission summaries', () => {
     expect(html).not.toContain('Run history preserved.')
     if (tool === 'notebook_restart') expect(html).toContain('Clears in-memory variables')
     if (tool === 'notebook_bind_runtime') expect(html).toContain('/long/runtime/bin/R')
+  })
+
+  it.each([
+    [
+      { action: 'create', name: 'analysis', language: 'python', packages: ['numpy'] },
+      ['create', 'analysis', 'python', 'numpy']
+    ],
+    [{ action: 'remove', name: 'analysis' }, ['remove', 'analysis']]
+  ] as const)('shows manage_environments approval targets: %o', (rawInput, visibleValues) => {
+    const html = renderToStaticMarkup(
+      <PermissionApprovalControls
+        requests={[permission('manage_environments', rawInput)]}
+        onRespond={vi.fn()}
+      />
+    )
+
+    expect(html).toContain('tool-summary-card')
+    for (const value of visibleValues) expect(html).toContain(value)
   })
 })
 
