@@ -1,7 +1,7 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { access, readFile, rm, writeFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { constants, mkdirSync } from 'node:fs'
 import { createServer, type Server } from 'node:net'
 import { join, win32 } from 'node:path'
 
@@ -856,6 +856,7 @@ const windowsSupervisedLaunch = (
   const direct = windowsStandardLaunch(request)
   const [executable, ...args] = direct.argv
   if (!executable) throw new Error('Windows supervisor received an empty command.')
+  if (request.ownershipRoot) mkdirSync(request.ownershipRoot, { recursive: true })
   const proof = createProcessTreeTerminationProof(
     request.ownershipRoot ? { ...direct.env, TEMP: request.ownershipRoot } : direct.env,
     request.cwd

@@ -326,39 +326,47 @@ describe('Windows AppContainer launch', () => {
   })
 
   it('supervises standard-mode commands without requiring AppContainer setup', () => {
+    const root = mkdtempSync(join(tmpdir(), 'os-proof-supervised-'))
+    const ownershipRoot = join(root, 'ownership')
     vi.stubEnv('SystemRoot', 'C:\\Windows')
     vi.stubEnv('PATH', '')
     const request = {
       command: 'Write-Output ready',
       cwd: 'C:\\workspace',
       hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
-      ownershipRoot: 'C:\\ownership',
+      ownershipRoot,
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: {}
     }
 
-    const launch = windowsSupervisedLaunch(request)
-    const specification = JSON.parse(
-      Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
-    ) as {
-      executable: string
-      arguments: string[]
-      cwd: string
-      terminationProofPath: string
-      terminationProofToken: string
-    }
+    try {
+      expect(existsSync(ownershipRoot)).toBe(false)
+      const launch = windowsSupervisedLaunch(request)
+      const specification = JSON.parse(
+        Buffer.from(launch.argv.at(-1)!, 'base64url').toString('utf8')
+      ) as {
+        executable: string
+        arguments: string[]
+        cwd: string
+        terminationProofPath: string
+        terminationProofToken: string
+      }
 
-    expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
-    expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
-    expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
-    expect(specification).toMatchObject({
-      executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-      arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
-      cwd: request.cwd,
-      terminationProofPath: expect.stringContaining('C:\\ownership'),
-      terminationProofToken: expect.any(String)
-    })
+      expect(existsSync(ownershipRoot)).toBe(true)
+      expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
+      expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
+      expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
+      expect(specification).toMatchObject({
+        executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+        arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
+        cwd: request.cwd,
+        terminationProofPath: expect.stringContaining(ownershipRoot),
+        terminationProofToken: expect.any(String)
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('retries a termination request after its temporary directory becomes available', async () => {
