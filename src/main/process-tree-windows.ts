@@ -156,6 +156,7 @@ export const spawnWindowsOwnedProcess = (
         fallbackPoll = undefined
         resolve(code)
       }, 25)
+      if (!referenced) fallbackPoll.unref()
     })
   const waitForExit = (): Promise<number> => {
     if (typeof native.windowsOwnedProcessExitCodeAsync !== 'function') return pollForExit()
