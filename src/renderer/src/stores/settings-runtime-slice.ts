@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
 import type { StoreApi } from 'zustand'
 
 import type {
@@ -132,7 +133,7 @@ const createInitialPreflight = (): Preflight => ({
   codexReady: false,
   piReady: false,
   codebuddyReady: false,
-  agentFrameworkId: 'claude-code',
+  agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
   agentReady: false,
   activeProviderReady: false
 })

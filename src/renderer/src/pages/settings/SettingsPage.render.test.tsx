@@ -1971,6 +1971,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
+    useSettingsStore.setState({ agentFrameworkId: 'claude-code' })
     useSettingsStore.getState().openSettingsToPanel('model')
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
