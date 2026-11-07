@@ -1,5 +1,4 @@
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
 import {
   Select,
   SelectContent,
@@ -68,7 +67,7 @@ export type ReplayPanelProps = {
   expanded?: boolean
   onToggleExpanded?: () => void
   onViewChange?: (state: ReplayViewState) => void
-  onAskStep: (context: SessionDiscussionCapture) => void
+  onAskStep?: (context: SessionDiscussionCapture) => void
   onOpenEvidence: (resource: ReplayResource | undefined, step: ReplayStep) => void
   readResource?: ReplayResourceReader
   readNotebookRun?: ReplayNotebookRunReader
@@ -480,37 +479,14 @@ const ReplayPanelContent = ({
     return unsubscribe
   }, [replayDocument, seek])
 
-  // Keep an accessor to the visible frame; capture evidence only when a message is sent.
-  const captureCurrent = useRef(() =>
-    captureDiscussionStep(replayDocument, scene, runDetails, resources)
-  )
-  useLayoutEffect(() => {
-    captureCurrent.current = () =>
-      captureDiscussionStep(replayDocument, scene, runDetails, resources)
-  })
-  const hasStep = !!scene.step
-  useEffect(() => {
-    if (!active || !hasStep) return
-    const playhead = {
-      projectId: replayDocument.source.projectId,
-      sourceSessionId: replayDocument.source.sessionId,
-      capture: () => captureCurrent.current()
-    }
-    useSessionReplayStore.setState({ playhead })
-    return () => {
-      if (useSessionReplayStore.getState().playhead === playhead)
-        useSessionReplayStore.setState({ playhead: undefined })
-    }
-  }, [active, hasStep, replayDocument])
-
   const ask = (): void => {
     pause()
-    if (scene.step) onAskStep(captureDiscussionStep(replayDocument, scene, runDetails, resources))
+    if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
   const askSession = (): void => {
     pause()
     const context = captureDiscussionSession(replayDocument)
-    if (context) onAskStep({ ...context, stepTitle: t('Entire research') })
+    if (context) onAskStep?.({ ...context, stepTitle: t('Entire research') })
   }
   const toggle = (): void => {
     if (!branch?.steps.length) return
@@ -636,24 +612,26 @@ const ReplayPanelContent = ({
             </PopoverContent>
           </Popover>
         </div>
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={askSession}
-                disabled={!replayDocument.branches.some((item) => item.steps.length)}
-                aria-label={t('Ask about this research')}
-              >
-                <MessageSquare size={16} aria-hidden="true" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" align="end" collisionBoundary={tooltipBoundary}>
-              {t('Ask about this research')}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {onAskStep && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={askSession}
+                  disabled={!replayDocument.branches.some((item) => item.steps.length)}
+                  aria-label={t('Ask about this research')}
+                >
+                  <MessageSquare size={16} aria-hidden="true" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="end" collisionBoundary={tooltipBoundary}>
+                {t('Ask about this research')}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         {replayDocument.branches.length > 1 ? (
           <Select
             value={scene.branchId}
@@ -994,7 +972,7 @@ const ReplayPanelContent = ({
         }
         onSeek={seek}
         onSpeed={setSpeed}
-        onAsk={ask}
+        onAsk={onAskStep ? ask : undefined}
       />
     </div>
   )

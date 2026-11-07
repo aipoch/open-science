@@ -636,6 +636,7 @@ describe('Session persistence coordinator architecture', () => {
         'computeJobs',
         'fileIndex',
         'log',
+        'notifyDiscussionDetached',
         'notifyFilesChanged',
         'notifySessionsDeleted',
         'preparePackageDeletion',

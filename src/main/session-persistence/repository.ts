@@ -1270,6 +1270,61 @@ class SessionRepository {
     )
   }
 
+  // Package recovery calls this only for a validated historical deletion intent.
+  async recoverDeletedDiscussionChildren(projectId: string, sessionId: string): Promise<void> {
+    if (!sessionId.startsWith('import-') || !this.projection) return
+    await this.operationScheduler.runProject(projectId, async () => {
+      if (!(await this.projection!.isDeleted(projectId, sessionId))) return
+      const parent = await this.loadSessionWithDiagnostics(projectId, sessionId, {
+        mode: 'read-only'
+      })
+      if (parent.status === 'missing') await this.detachDiscussionChildren(projectId, sessionId)
+    })
+  }
+
+  // Caller holds the repository's project lane (or startup's global barrier). Keep the
+  // parent's pending delete until every child file and summary has committed, so crash
+  // recovery retries the remaining children without inferring deletion from absence.
+  private async detachDiscussionChildren(projectId: string, parentId: string): Promise<void> {
+    if (!parentId.startsWith('import-')) return
+    let ids: string[]
+    if (this.projection && (await this.projection.isInitialized())) {
+      ids = await this.projection.discussionChildren(projectId, parentId)
+    } else {
+      const catalog = await this.loadProjectWithDiagnostics(projectId, { mode: 'read-only' })
+      if (!catalog.isComplete)
+        throw new Error('Cannot verify the child discussions in this Project.')
+      ids = catalog.sessions
+        .filter((session) => session.parentSessionId === parentId)
+        .map(({ id }) => id)
+    }
+    for (const id of ids) {
+      const loaded = await this.loadSessionWithDiagnostics(projectId, id, {
+        mode: 'read-only',
+        preserveRuntimeState: true
+      })
+      if (loaded.status === 'unreadable') throw new Error('Cannot detach an unreadable discussion.')
+      if (loaded.status !== 'found' || loaded.session.parentSessionId !== parentId) continue
+      await this.saveSessionNow(
+        {
+          ...loaded.session,
+          parentSessionId: undefined,
+          deletedDiscussionSourceId: parentId,
+          ...(loaded.session.runtimeContext?.sessionContext
+            ? {
+                runtimeContext: {
+                  ...loaded.session.runtimeContext,
+                  sessionContext: undefined,
+                  revision: loaded.session.runtimeContext.revision + 1
+                }
+              }
+            : {})
+        },
+        sessionRevision(loaded.session)
+      )
+    }
+  }
+
   private async deleteSessionNow(projectId: string, sessionId: string): Promise<void> {
     const safeProjectId = assertSafeSegment(projectId)
     const safeSessionId = assertSafeSegment(sessionId)
@@ -1279,71 +1334,58 @@ class SessionRepository {
     }
     await this.removeBindingRepairBackups(safeProjectId, safeSessionId)
     const revisionKey = `${safeProjectId}:${safeSessionId}`
-    if (diagnostic.status === 'missing') {
-      this.sessionRevisions.delete(revisionKey)
+    if (!this.projectionWritesSuspended) {
+      await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
+    }
+
+    if (diagnostic.status === 'found') {
+      // The valid primary proves matching temps/quarantines are authority covered by this
+      // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
+      // place and the operation safely retryable; only then remove the current primary.
+      const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
+      const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
+      for (const entry of entries) {
+        if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
+          await this.dependencies.remove(join(this.projectDir(safeProjectId), entry.name), {
+            force: true,
+            recursive: false
+          })
+        }
+      }
+      for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
+        await this.dependencies.remove(`${primaryPath}${suffix}`, {
+          force: true,
+          recursive: false
+        })
+      }
+      const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
+      if (!quarantines.isComplete) {
+        throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
+      }
+      for (const fileName of quarantines.names) {
+        await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
+          force: true,
+          recursive: false
+        })
+      }
+      await this.dependencies.remove(primaryPath, {
+        force: true,
+        recursive: false
+      })
+    }
+    this.sessionRevisions.delete(revisionKey)
+    try {
+      await this.detachDiscussionChildren(safeProjectId, safeSessionId)
       if (this.projectionWritesSuspended) {
         this.suspendedProjectionSessionWrites.set(revisionKey, {
           projectId: safeProjectId,
           sessionId: safeSessionId
         })
       } else {
-        await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
-        await this.projection
-          ?.commitDelete(safeProjectId, safeSessionId)
-          .catch((error: unknown) => {
-            throw new SessionDeletionCommittedError(error)
-          })
+        await this.projection?.commitDelete(safeProjectId, safeSessionId)
       }
-      return
-    }
-
-    if (!this.projectionWritesSuspended) {
-      await this.projection?.markPending(safeProjectId, safeSessionId, 'delete')
-    }
-
-    // The valid primary proves matching temps/quarantines are authority covered by this
-    // explicit Session deletion. Remove every candidate first so any failure leaves that proof in
-    // place and the operation safely retryable; only then remove the current primary.
-    const primaryPath = this.sessionFilePath(safeProjectId, safeSessionId)
-    const entries = await this.dependencies.readDirectoryEntries(this.projectDir(safeProjectId))
-    for (const entry of entries) {
-      if (entry.isFile() && temporarySessionPrimaryName(entry.name) === basename(primaryPath)) {
-        await this.dependencies.remove(join(this.projectDir(safeProjectId), entry.name), {
-          force: true,
-          recursive: false
-        })
-      }
-    }
-    for (const suffix of [PRE_S2_BACKUP_SUFFIX, PRE_SUBAGENT_MODEL_BACKUP_SUFFIX]) {
-      await this.dependencies.remove(`${primaryPath}${suffix}`, {
-        force: true,
-        recursive: false
-      })
-    }
-    const quarantines = await this.listQuarantinedSessionFiles(safeProjectId, safeSessionId)
-    if (!quarantines.isComplete) {
-      throw new Error('Cannot delete a Session whose quarantine directory is unreadable.')
-    }
-    for (const fileName of quarantines.names) {
-      await this.dependencies.remove(join(this.projectDir(safeProjectId), fileName), {
-        force: true,
-        recursive: false
-      })
-    }
-    await this.dependencies.remove(primaryPath, {
-      force: true,
-      recursive: false
-    })
-    this.sessionRevisions.delete(revisionKey)
-    if (this.projectionWritesSuspended) {
-      this.suspendedProjectionSessionWrites.set(revisionKey, {
-        projectId: safeProjectId,
-        sessionId: safeSessionId
-      })
-    } else {
-      await this.projection?.commitDelete(safeProjectId, safeSessionId).catch((error: unknown) => {
-        throw new SessionDeletionCommittedError(error)
-      })
+    } catch (cause) {
+      throw new SessionDeletionCommittedError(cause)
     }
   }
 

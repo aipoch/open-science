@@ -72,6 +72,19 @@ export const replayAnnotationTarget = (
   }
 }
 
+// Only the first user message of a new discussion establishes its sidebar parent.
+export const discussionParentForFirstMessage = (
+  projectId: string | undefined,
+  annotations: readonly Annotation[] | undefined
+): string | undefined => {
+  const source = annotations?.map(replayAnnotationTarget).find((target) => target?.contextId)
+  return source &&
+    source.projectId === projectId &&
+    /^import-[a-zA-Z0-9-]+$/.test(source.sourceSessionId)
+    ? source.sourceSessionId
+    : undefined
+}
+
 // A local reference travels as ordinary, readable MessagePart text. It adds no .science fields.
 // Source Project identity travels with new references; bare legacy UUIDs use the message Project.
 export type ReplayReferenceTextPart =

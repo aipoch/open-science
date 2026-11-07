@@ -10,16 +10,17 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { replayAnnotationTarget } from '../../../../shared/replay-reference'
-import type { SessionReadingContext } from '../../../../shared/session-reading'
-import type { ComposerSendSnapshot } from './composer-contract'
+import type { ComposerSendSnapshot, ComposerSessionContext } from './composer-contract'
 import {
+  availableDraftAnnotations,
   composerDraftStorageFailed,
   readComposerDraft,
   registerComposerDraftWriter,
   removeComposerDrafts,
+  subscribeDraftSourceDeletion,
   writeComposerDraft
 } from './composer-draft-storage'
-import { captureDiscussionSendContext } from './discussion-send-context'
+import { discussionDraftAnnotations } from './discussion-send-context'
 export { type ComposerSendSnapshot } from './composer-contract'
 export { useWorkspaceComposerController, type WorkspaceComposerController }
 
@@ -33,7 +34,6 @@ import {
 import type { Annotation } from '../../../../shared/annotation-contract'
 import { validateAnnotations, type AnnotationValidationError } from '../../../../shared/annotations'
 import type {
-  MessagePdfContextSnapshot,
   SessionPdfBinding,
   SessionPdfContext,
   SessionPdfContextSource
@@ -44,7 +44,6 @@ import {
 } from '../../../../shared/session-persistence'
 import type { LiteratureReference } from '../../../../shared/session-message-contract'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { PersistedConversationGraph } from '../../../../shared/conversation-graph'
 import {
   pdfProseReadingSelectionsFromContext,
   type PdfProseReadingSelection,
@@ -80,19 +79,6 @@ type ComposerHistoryNavigation = {
   entries: ComposerHistoryEntry[]
   cursorId: string
   scratch: ComposerDoc
-}
-
-type ComposerSessionContext = {
-  id: string
-  projectId: string
-  isPending?: boolean
-  conversationGraph?: PersistedConversationGraph
-  messages?: readonly { id: string; pdfContext?: MessagePdfContextSnapshot }[]
-  runtimeContext?: {
-    revision: number
-    pdfContext?: SessionPdfContext
-    sessionContext?: SessionReadingContext
-  }
 }
 
 type ComposerReadingContextBinding =
@@ -330,6 +316,7 @@ type WorkspaceComposerController = {
     dismissAutomaticReading: () => void
   }
   lifecycle: {
+    discussionDraftConflict: (projectId: string, sourceId: string) => boolean
     captureSend: (includeReadingContext?: boolean) => ComposerSendSnapshot
     consumePdfProseReading: (snapshot: ComposerSendSnapshot) => void
     preserveAdmissionContext: (snapshot: ComposerSendSnapshot) => void
@@ -451,7 +438,9 @@ const useWorkspaceComposerController = ({
     setQueuedEdit(intent)
   }, [])
   const [doc, setDoc] = useState<ComposerDoc>(initialDraft.doc)
-  const [annotations, setAnnotations] = useState<Annotation[]>(initialDraft.annotations)
+  const [annotations, setAnnotations] = useState<Annotation[]>(() =>
+    availableDraftAnnotations(initialDraft.annotations)
+  )
   const [historyBrowsingKey, setHistoryBrowsingKey] = useState<string>()
   const [historyStatus, setHistoryStatus] = useState('')
   const [skillCatalogReady, setSkillCatalogReady] = useState(historyPolicy.skillCatalogReady)
@@ -550,9 +539,18 @@ const useWorkspaceComposerController = ({
   }, [])
 
   const setActiveAnnotations = useCallback((next: Annotation[]): void => {
-    annotationsRef.current = next
-    setAnnotations(next)
+    const retained = availableDraftAnnotations(next)
+    annotationsRef.current = retained
+    setAnnotations(retained)
   }, [])
+
+  useLayoutEffect(
+    () =>
+      subscribeDraftSourceDeletion(() => {
+        setActiveAnnotations(annotationsRef.current)
+      }),
+    [setActiveAnnotations]
+  )
 
   const setActiveAutomaticReadingEnabled = useCallback((enabled: boolean): void => {
     automaticReadingEnabledRef.current = enabled
@@ -1516,20 +1514,17 @@ const useWorkspaceComposerController = ({
         proseSources,
         pdfProseRegionsByBindingId ?? {}
       )
+      const turnAnnotations = discussionDraftAnnotations(
+        includeReadingContext ? activeSession : undefined,
+        annotationsRef.current
+      )
       const snapshot = {
         retrySessionOwner: retrySessionOwnerRef.current,
         setupSessionToken: setupSessionTokenRef.current,
         draftKey: activeDraftKeyRef.current,
         version: versionsRef.current[activeDraftKeyRef.current] ?? 0,
         doc: docRef.current,
-        annotations: [...annotationsRef.current],
-        discussionFocus: captureDiscussionSendContext(
-          annotationsRef.current,
-          includeReadingContext
-            ? activeSession?.runtimeContext?.sessionContext?.bindings.at(-1)
-            : undefined,
-          activeSession?.id
-        ),
+        annotations: [...turnAnnotations],
         attachments,
         queuedEdit: queuedEditRef.current,
         automaticReadingEnabled: automaticReadingEnabledRef.current,
@@ -1852,18 +1847,23 @@ const useWorkspaceComposerController = ({
   const addAnnotation = useCallback(
     (annotation: Annotation): AnnotationValidationError | undefined => {
       const source = replayAnnotationTarget(annotation)
+      if (
+        source &&
+        (activeSession?.parentSessionId
+          ? source.projectId !== activeSession.projectId ||
+            source.sourceSessionId !== activeSession.parentSessionId
+          : annotationsRef.current.some((item) => {
+              const previous = replayAnnotationTarget(item)
+              return (
+                previous &&
+                (previous.projectId !== source.projectId ||
+                  previous.sourceSessionId !== source.sourceSessionId)
+              )
+            }))
+      )
+        return 'invalid'
       const retained = source
-        ? annotationsRef.current.filter((item) => {
-            const previous = replayAnnotationTarget(item)
-            return (
-              !previous ||
-              (previous.projectId === source.projectId &&
-                previous.sourceSessionId === source.sourceSessionId &&
-                previous.scope !== 'session' &&
-                source.scope !== 'session' &&
-                (previous.branchId !== source.branchId || previous.stepId !== source.stepId))
-            )
-          })
+        ? annotationsRef.current.filter((item) => !replayAnnotationTarget(item))
         : annotationsRef.current
       const next = [...retained, annotation]
       const validation = validateAnnotations(next, docToText(docRef.current))
@@ -1875,7 +1875,14 @@ const useWorkspaceComposerController = ({
       setActiveAnnotations(next)
       return undefined
     },
-    [captureUndo, clearHistory, clearPastedTextUndo, markChanged, setActiveAnnotations]
+    [
+      activeSession,
+      captureUndo,
+      clearHistory,
+      clearPastedTextUndo,
+      markChanged,
+      setActiveAnnotations
+    ]
   )
 
   const admissionProjectionActive =
@@ -2001,6 +2008,23 @@ const useWorkspaceComposerController = ({
       dismissAutomaticReading
     },
     lifecycle: {
+      discussionDraftConflict: (projectId, sourceId) => {
+        const targets = annotationsRef.current.map(replayAnnotationTarget).filter(Boolean)
+        if (targets.length)
+          return targets.some(
+            (target) => target!.projectId !== projectId || target!.sourceSessionId !== sourceId
+          )
+        const media = captureDraftAttachments()
+        return (
+          docRef.current.nodes.some((node) => node.type !== 'text' || node.text.length > 0) ||
+          annotationsRef.current.length > 0 ||
+          media.attachments.length > 0 ||
+          media.attachmentTransfers.length > 0 ||
+          Boolean(
+            queuedEditRef.current || retrySessionOwnerRef.current || setupSessionTokenRef.current
+          )
+        )
+      },
       captureSend,
       consumePdfProseReading,
       preserveAdmissionContext,

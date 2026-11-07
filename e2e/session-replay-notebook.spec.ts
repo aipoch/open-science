@@ -15,7 +15,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   const projectName = 'Standalone Notebook research'
   const projectId = await createProject(page, projectName)
   const source: PersistedChatSession = {
-    id: 'imported-standalone-notebook',
+    id: 'import-standalone-notebook',
     projectId,
     title: 'Archived standalone Notebook',
     // Native package import deliberately removes the originating machine's workspace path.
@@ -132,10 +132,6 @@ test('asks about a standalone Notebook input and restores its exact step offset 
   const stepId = await replay.locator('[data-replay-active]').getAttribute('data-replay-step')
   const branchId = await page.getByTestId('replay-stage').getAttribute('data-replay-branch')
   await replay.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  await page
-    .getByRole('dialog', { name: 'Ask in a conversation' })
-    .getByRole('button', { name: 'New conversation', exact: true })
-    .click()
   const editor = page.getByRole('textbox', { name: 'Ask anything', exact: true })
   await expect(page.locator('[data-session-discussion-source]')).toContainText(source.title)
   await expect(editor).not.toContainText('#session-replay:')
@@ -166,6 +162,7 @@ test('asks about a standalone Notebook input and restores its exact step offset 
       ),
     projectId
   )
+  expect(target?.parentSessionId).toBe(source.id)
   const user = target!.messages.find((message) => message.role === 'user')!
   expect(user.content).not.toContain('#session-replay:')
   const contextId = target!.runtimeContext!.sessionContext!.bindings[0].contextId
@@ -254,7 +251,8 @@ test('renders archived research with shared workspace messages, grouped tools an
     }
   })
   const source: PersistedChatSession = {
-    id: 'imported-tool-presentation',
+    id: 'import-tool-presentation',
+    number: 1,
     projectId,
     title: 'Archived plot',
     cwd: '',

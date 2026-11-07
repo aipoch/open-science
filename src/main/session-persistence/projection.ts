@@ -455,6 +455,7 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
 
   return {
     summary: {
+      ...(session.parentSessionId ? { parentSessionId: session.parentSessionId } : {}),
       id: session.id,
       projectId: session.projectId,
       title: session.title,
@@ -495,6 +496,7 @@ const sessionData = (
   number,
   id: projection.summary.id,
   projectId: projection.summary.projectId,
+  parentSessionId: projection.summary.parentSessionId ?? null,
   title: projection.summary.title,
   status: projection.summary.status,
   presentedStatus: projection.summary.presentedStatus,
@@ -554,6 +556,7 @@ const replaceChildren = async (
 }
 
 const toSummary = (row: {
+  parentSessionId: string | null
   number: number
   id: string
   projectId: string
@@ -574,6 +577,7 @@ const toSummary = (row: {
   number: row.number,
   id: row.id,
   projectId: row.projectId,
+  ...(row.parentSessionId ? { parentSessionId: row.parentSessionId } : {}),
   title: row.title,
   status: row.status as PersistedSessionStatus,
   presentedStatus: row.presentedStatus as PersistedSessionStatus,
@@ -643,6 +647,32 @@ export class SessionProjectionRepository {
     return client.session.findMany({ select: { id: true, number: true } })
   }
 
+  async discussionChildren(projectId: string, parentSessionId: string): Promise<string[]> {
+    const client = await this.client()
+    // An interrupted child save can leave its parent only in JSON until reconciliation.
+    const [children, pending] = await Promise.all([
+      client.session.findMany({
+        where: { projectId, parentSessionId, deletedAtMs: null },
+        select: { id: true }
+      }),
+      client.pendingSessionReconciliation.findMany({
+        where: { projectId, operation: 'save' },
+        select: { sessionId: true }
+      })
+    ])
+    return [
+      ...new Set([...children.map(({ id }) => id), ...pending.map(({ sessionId }) => sessionId)])
+    ]
+  }
+
+  async isDeleted(projectId: string, id: string): Promise<boolean> {
+    const client = await this.client()
+    return !!(await client.session.findFirst({
+      where: { projectId, id, deletedAtMs: { not: null } },
+      select: { id: true }
+    }))
+  }
+
   async prepareSave(session: PersistedChatSession): Promise<PreparedSessionSave> {
     const client = await this.client()
     const projection = buildSessionProjection(session)
@@ -654,6 +684,23 @@ export class SessionProjectionRepository {
       })
       if (!project) throw new Error('Cannot save a Session for a deleted Project.')
       const existing = await tx.session.findUnique({ where: { id: session.id } })
+      if (session.parentSessionId && existing?.parentSessionId !== session.parentSessionId) {
+        const parentId = session.parentSessionId
+        if (
+          await tx.session.findFirst({
+            where: { id: parentId, projectId: session.projectId, deletedAtMs: { not: null } },
+            select: { id: true }
+          })
+        )
+          throw new Error('The discussion source was permanently deleted.')
+        if (
+          await tx.pendingSessionReconciliation.findFirst({
+            where: { sessionId: parentId, projectId: session.projectId, operation: 'delete' },
+            select: { sessionId: true }
+          })
+        )
+          throw new Error('The discussion source is being deleted.')
+      }
       if (existing && existing.deletedAtMs !== null)
         throw new Error('Cannot save a deleted Session.')
       if (existing && existing.projectId !== session.projectId) {

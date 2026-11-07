@@ -62,7 +62,13 @@ export const readLinkedSession = async (
   const request = optionsSchema.parse(options ?? {})
   const receiving = await dependencies.readSession(context.projectId, context.sessionId)
   const binding = receiving?.runtimeContext?.sessionContext?.bindings.at(-1)
-  if (!binding || (targetId !== undefined && binding.sessionId !== targetId))
+  if (
+    !binding ||
+    (receiving?.parentSessionId &&
+      (binding.sessionId !== receiving.parentSessionId ||
+        binding.projectId !== receiving.projectId)) ||
+    (targetId !== undefined && binding.sessionId !== targetId)
+  )
     throw new Error('This Session is not linked to the current conversation.')
   const positions = sessionReadingPositions(binding)
   const [source, snapshots] = await Promise.all([

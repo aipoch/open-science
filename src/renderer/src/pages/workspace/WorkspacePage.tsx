@@ -83,6 +83,7 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { DISCUSSION_DRAFT_CONFLICT } from './workspace-session-actions'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import { useConversationSubmissions } from './use-conversation-submissions'
 import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
@@ -576,9 +577,14 @@ const WorkspacePage = ({
     uploads: window.api.uploads,
     onSessionSizeLimit
   })
-  const { doc: draftDoc, error: attachmentError } = composer.view
+  const { doc: draftDoc, error: composerError } = composer.view
+  const attachmentError = composerError === DISCUSSION_DRAFT_CONFLICT ? null : composerError
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
-  useWorkspaceSessionDiscussion({ composer, draftKey: currentDraftKey, editable: canEditDraft })
+  const savingDiscussion = useWorkspaceSessionDiscussion({
+    composer,
+    draftKey: currentDraftKey,
+    editable: canEditDraft
+  })
   const delegationControl = useWorkspaceSessionDelegationControlOwner({
     activeSession,
     selectedSessionId,
@@ -737,7 +743,8 @@ const WorkspacePage = ({
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
     isReviewing: isReviewBusy,
-    isTurnAdmissionBlocked: isReviewHistoryUnavailable || authenticationRecovery.required,
+    isTurnAdmissionBlocked:
+      savingDiscussion || isReviewHistoryUnavailable || authenticationRecovery.required,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,

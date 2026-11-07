@@ -663,6 +663,85 @@ describe('Session projection', () => {
     ).resolves.toBe(0)
   })
 
+  it('replays a committed parent deletion and detaches only its surviving children, including archived children', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-discussion-delete-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const index = new SessionProjectionRepository(async () => client!)
+    const open = (): SessionRepository => new SessionRepository(storageRoot!, {}, index)
+    const files = open()
+    await files.ensureSessionProjection(() => files.loadAll())
+    const parent = await files.saveSession(session('import-source'))
+    const binding = {
+      projectId: parent.projectId,
+      sessionId: parent.id,
+      contextId: 'snapshot-1',
+      branchId: 'main',
+      title: parent.title,
+      promptMessageId: 'question'
+    }
+    const child = await files.saveSession({
+      ...session('child'),
+      parentSessionId: parent.id,
+      runtimeContext: {
+        version: 1,
+        revision: 4,
+        sessionContext: { version: 1, bindings: [binding] }
+      }
+    })
+    const archived = await files.saveSession({
+      ...child,
+      id: 'archived-child',
+      number: undefined,
+      archivedAt: 50
+    })
+    await files.saveSession({ ...session('unrelated'), parentSessionId: 'import-other' })
+    // A missing file alone never authorizes detachment.
+    await rm(join(storageRoot, 'sessions', parent.projectId, parent.id + '.json'))
+    await files.recoverDeletedDiscussionChildren(parent.projectId, parent.id)
+    expect((await files.loadSession(parent.projectId, child.id))?.parentSessionId).toBe(parent.id)
+    await index.markPending(parent.projectId, parent.id, 'delete')
+    await expect(
+      files.saveSession({ ...session('racing-child'), parentSessionId: parent.id })
+    ).rejects.toThrow('being deleted')
+    await open().reconcilePendingSessionProjection()
+    for (const before of [child, archived]) {
+      const after = await open().loadSession(parent.projectId, before.id)
+      expect(after?.parentSessionId).toBeUndefined()
+      expect(after?.runtimeContext?.sessionContext).toBeUndefined()
+      expect(after?.deletedDiscussionSourceId).toBe(parent.id)
+      expect(after?.runtimeContext?.revision).toBe(5)
+      expect(after?.messages).toEqual(before.messages)
+      expect(after?.archivedAt).toBe(before.archivedAt)
+    }
+    expect(await index.discussionChildren(parent.projectId, parent.id)).toEqual([])
+    expect((await files.loadSession(parent.projectId, 'unrelated'))?.parentSessionId).toBe(
+      'import-other'
+    )
+    await expect(
+      files.saveSession({ ...session('late-child'), parentSessionId: parent.id })
+    ).rejects.toThrow('permanently deleted')
+  })
+
+  it('restores the discussion parent from Session JSON and from the cold startup index', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-discussion-parent-'))
+    initDataRoot(storageRoot)
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+    const open = (): SessionRepository =>
+      new SessionRepository(storageRoot!, {}, new SessionProjectionRepository(async () => client!))
+    const initial = open()
+    await initial.ensureSessionProjection(() => initial.loadAll())
+    await initial.saveSession({ ...session('child'), parentSessionId: 'import-source' })
+    expect(
+      (await open().loadSessionSummaries()).find((row) => row.id === 'child')?.parentSessionId
+    ).toBe('import-source')
+    expect((await open().loadSession('project-1', 'child'))?.parentSessionId).toBe('import-source')
+  })
+
   it('does not replace Session authority when an invalid projection integer rejects the save', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-session-save-validation-'))
     initDataRoot(storageRoot)

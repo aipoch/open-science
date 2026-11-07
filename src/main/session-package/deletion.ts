@@ -7,6 +7,7 @@ import {
   sessionPackageRequestSchema,
   type SessionPackageReceipt
 } from '../../shared/session-package'
+import { SessionProjectionRepository } from '../session-persistence/projection'
 import { SessionRepository } from '../session-persistence/repository'
 import { writeDurableJsonFile } from '@aipoch/durable-files'
 import { defaultFileDurability as durability } from '@aipoch/durable-files'
@@ -162,22 +163,33 @@ export class SessionPackageDeletion {
           const journal = journalSchema.parse(await readPackageJson(join(root, name)))
           if (name !== `${journal.importId}.json`)
             throw new Error('Cleanup journal identity mismatch.')
+          if (
+            !journal.retainOnly &&
+            (!journal.identities.includes(journal.sessionId) ||
+              journal.directories.some(
+                (directory) => !journal.identities.includes(directory.sessionId)
+              ))
+          )
+            throw new Error('Cleanup journal scope mismatch.')
+          // Older releases kept children linked after deletion. A cleanup intent plus a
+          // committed tombstone proves permanent deletion, including for retain-only packages.
+          const repository = new SessionRepository(
+            this.options.configRoot,
+            {},
+            new SessionProjectionRepository(this.options.getClient)
+          )
+          await repository.recoverDeletedDiscussionChildren(journal.projectId, journal.sessionId)
           // Never infer ownership later from absent rows or paths for an unverifiable package.
           if (journal.retainOnly) {
             counts.retained += 1
             counts.unverifiedOwnership += 1
             continue
           }
-          if (
-            !journal.identities.includes(journal.sessionId) ||
-            journal.directories.some(
-              (directory) => !journal.identities.includes(directory.sessionId)
-            )
+          const session = await repository.loadSessionWithDiagnostics(
+            journal.projectId,
+            journal.sessionId,
+            { mode: 'read-only' }
           )
-            throw new Error('Cleanup journal scope mismatch.')
-          const session = await new SessionRepository(
-            this.options.configRoot
-          ).loadSessionWithDiagnostics(journal.projectId, journal.sessionId, { mode: 'read-only' })
           // A failed/interrupted deletion must never turn into deletion of a still-live Session.
           if (session.status !== 'missing') {
             counts.sessionPresentOrUnreadable += 1

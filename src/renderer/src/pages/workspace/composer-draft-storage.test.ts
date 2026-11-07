@@ -9,6 +9,7 @@ import {
   flushComposerDrafts,
   preserveComposerDraftsForRecovery
 } from './composer-draft-storage'
+import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import type { ComposerDraft } from './workspace-composer-upload-controller'
 const draft = (text: string): ComposerDraft => ({
   doc: { nodes: [{ type: 'text', text }] },
@@ -119,6 +120,53 @@ describe('composer refresh storage', () => {
     removeComposerDrafts('p')
     writeComposerDraft('p', 'new:p', draft('late'))
     expect(flushComposerDrafts().count).toBe(0)
+  })
+  it('removes deleted replay steps from parked and recovery drafts, even after a late write', () => {
+    configureComposerDraftStorage('scope', 'profile')
+    const step = (
+      projectId: string,
+      sourceSessionId: string
+    ): ComposerDraft['annotations'][number] =>
+      createSessionDiscussionAnnotation(
+        {
+          projectId,
+          sourceSessionId,
+          sourceTitle: 'Research',
+          stepTitle: 'Selected step',
+          branchId: 'main',
+          stepId: 'step',
+          stepOffsetMs: 0,
+          fingerprint: 'fp',
+          excerpt: 'Selected evidence',
+          evidence: [{ kind: 'message', id: 'msg', projectId, sessionId: sourceSessionId }]
+        },
+        'snapshot'
+      )!
+    const deleted = step('p', 'import-a')
+    const other = step('p', 'import-b')
+    const foreign = step('q', 'import-a')
+    const saved = draft('Keep my question')
+    saved.annotations = [deleted, other, foreign]
+    saved.attachmentTransfers.push({
+      transferId: 'file',
+      name: 'data.csv',
+      totalBytes: 8,
+      receivedBytes: 1,
+      status: 'uploading'
+    })
+    writeComposerDraft('p', 'new:p', saved)
+    writeComposerDraft('p', 'only-step', { ...draft(''), annotations: [deleted] })
+    preserveComposerDraftsForRecovery()
+    removeComposerDrafts('p', 'import-a')
+    writeComposerDraft('p', 'new:p', saved)
+    expect(readComposerDraft('p', 'new:p', 'retry')?.annotations).toEqual([other, foreign])
+    configureComposerDraftStorage('scope', 'profile')
+    expect(readComposerDraft('p', 'only-step', 'retry')).toBeUndefined()
+    expect(readComposerDraft('p', 'new:p', 'retry')).toMatchObject({
+      doc: saved.doc,
+      annotations: [other, foreign],
+      attachmentTransfers: [expect.objectContaining({ name: 'data.csv' })]
+    })
   })
   it('retains exportable text when storage refuses writes', () => {
     configureComposerDraftStorage('scope')

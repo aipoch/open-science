@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import {
+  availableDraftAnnotations,
+  configureComposerDraftStorage,
+  revokeComposerDraftStorage
+} from './composer-draft-storage'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import {
@@ -87,6 +92,43 @@ afterEach(() => {
 })
 
 describe('durable step-scoped Ask snapshots', () => {
+  it.each(['missing', 'deleted'] as const)(
+    'checks a restored draft before sending when the source is %s',
+    async (sourceStatus) => {
+      configureComposerDraftStorage('scope')
+      try {
+        const sourceSessionId = 'import-removed'
+        const annotation = createSessionDiscussionAnnotation(
+          { ...context, sourceSessionId },
+          'snapshot'
+        )!
+        const lookup = deferred<{ sourceStatus: typeof sourceStatus }>()
+        const get = vi.fn(() => lookup.promise)
+        vi.stubGlobal('api', { sessionReplay: { get } })
+        const { result } = renderHook(() =>
+          useWorkspaceSessionDiscussion({
+            draftKey: 'new:p',
+            editable: true,
+            composer: {
+              lifecycle: { discussionDraftConflict: () => false },
+              view: { doc: doc('Keep my question'), annotations: [annotation] },
+              actions: { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+            }
+          })
+        )
+        expect(result.current).toBe(true)
+        expect(get).toHaveBeenCalledWith({ projectId: 'p', sourceSessionId })
+        await act(async () => lookup.resolve({ sourceStatus }))
+        expect(result.current).toBe(false)
+        expect(availableDraftAnnotations([annotation])).toEqual(
+          sourceStatus === 'deleted' ? [] : [annotation]
+        )
+      } finally {
+        revokeComposerDraftStorage()
+      }
+    }
+  )
+
   it('clears an unavailable-evidence error after a successful retry without replacing the draft', async () => {
     const saveSelectionSnapshot = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
@@ -96,7 +138,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: draft, annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: draft, annotations: [] },
+          actions
+        }
       })
     )
     act(() => useSessionReplayStore.getState().ask({ ...context, evidence: [] }, destination))
@@ -118,7 +164,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Why?'), annotations: [] },
+          actions
+        }
       })
     )
     act(() =>
@@ -142,22 +192,28 @@ describe('durable step-scoped Ask snapshots', () => {
     const saveSelectionSnapshot = vi.fn().mockReturnValue(gate.promise)
     vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
     const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
-    const { rerender } = renderHook(
+    const { rerender, result } = renderHook(
       ({ text }) =>
         useWorkspaceSessionDiscussion({
           draftKey: 'target',
           editable: true,
-          composer: { view: { doc: doc(text), annotations: [] }, actions }
+          composer: {
+            lifecycle: { discussionDraftConflict: () => false },
+            view: { doc: doc(text), annotations: [] },
+            actions
+          }
         }),
       { initialProps: { text: 'Why?' } }
     )
     act(() => useSessionReplayStore.getState().ask(context, destination))
     await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledTimes(1))
+    expect(result.current).toBe(true)
     expect(saveSelectionSnapshot.mock.calls[0][0].context.evidence).toHaveLength(108)
     expect(actions.addAnnotation).not.toHaveBeenCalled()
     rerender({ text: 'Why? Preserve my newer explanation.' })
     await act(async () => gate.resolve())
     await waitFor(() => expect(actions.addAnnotation).toHaveBeenCalledTimes(1))
+    expect(result.current).toBe(false)
     const annotation = actions.addAnnotation.mock.calls[0][0]
     expect(replayAnnotationTarget(annotation)?.contextId).toBe(
       saveSelectionSnapshot.mock.calls[0][0].context.id
@@ -184,7 +240,11 @@ describe('durable step-scoped Ask snapshots', () => {
         useWorkspaceSessionDiscussion({
           draftKey: 'target',
           editable: true,
-          composer: { view: { doc: doc('Explain this'), annotations: [] }, actions }
+          composer: {
+            lifecycle: { discussionDraftConflict: () => false },
+            view: { doc: doc('Explain this'), annotations: [] },
+            actions
+          }
         })
       )
       act(() => useSessionReplayStore.getState().ask(context, destination))
@@ -211,7 +271,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Why?'), annotations: [] },
+          actions
+        }
       })
     )
     act(() => useSessionReplayStore.getState().ask(context, destination))
@@ -234,7 +298,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Why?'), annotations: [] },
+          actions
+        }
       })
     )
     const annotation = createSessionDiscussionAnnotation(context, 'context-id')!
@@ -258,7 +326,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: doc('Why?'), annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Why?'), annotations: [] },
+          actions
+        }
       })
     )
     const annotation = createSessionDiscussionAnnotation(context, 'context-id')!
@@ -270,7 +342,8 @@ describe('durable step-scoped Ask snapshots', () => {
       expect.objectContaining({
         projectId: 'target-project',
         replaySourceProjectId: 'p',
-        replaySourceSessionId: 'source'
+        replaySourceSessionId: 'source',
+        title: context.sourceTitle
       })
     )
     expect(consumeReplaySeek('p', 'source')).toMatchObject({
@@ -306,7 +379,11 @@ describe('durable step-scoped Ask snapshots', () => {
       useWorkspaceSessionDiscussion({
         draftKey: 'target',
         editable: true,
-        composer: { view: { doc: doc('Keep my draft'), annotations: [] }, actions }
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Keep my draft'), annotations: [] },
+          actions
+        }
       })
     )
     act(() => useSessionReplayStore.getState().ask(context, destination))
@@ -338,6 +415,7 @@ describe('durable step-scoped Ask snapshots', () => {
         draftKey: 'new:target-project',
         editable: true,
         composer: {
+          lifecycle: { discussionDraftConflict: () => false },
           view: { doc: { nodes: [{ type: 'text', text: 'Already typing' }] }, annotations: [] },
           actions
         }

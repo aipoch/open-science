@@ -14,11 +14,6 @@ export type SessionDiscussionDestination = {
 }
 
 type SessionReplayStore = {
-  playhead?: {
-    projectId: string
-    sourceSessionId: string
-    capture: () => SessionDiscussionCapture
-  }
   snapshots: Record<string, SessionReplaySnapshot>
   pendingDiscussion?: SessionDiscussionCapture
   discussionDestination?: SessionDiscussionDestination

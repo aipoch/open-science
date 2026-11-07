@@ -1,6 +1,5 @@
 import { createLinearConversationGraph } from '../../../../../shared/conversation-graph'
 import { buildReplayDocument } from '@/lib/replay/timeline'
-import { useSessionReplayStore } from '@/stores/session-replay-store'
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -337,31 +336,6 @@ describe('research replay interaction', () => {
       expect(screen.getByTestId('replay-stage').textContent).toContain('private-run')
       expect(screen.queryByRole('status')).toBeNull()
     })
-  })
-
-  it('exposes the visible playhead during playback and captures its latest position on demand', () => {
-    const props = callbacks()
-    const document = makeDocument()
-    const { rerender, unmount } = render(<ReplayPanel document={document} {...props} />)
-    const playhead = useSessionReplayStore.getState().playhead!
-    expect(playhead.capture().stepId).toBe('one')
-    fireEvent.click(screen.getByLabelText('Play replay'))
-    expect(useSessionReplayStore.getState().playhead).toBe(playhead)
-    fireEvent.click(screen.getByLabelText('Pause replay'))
-    const track = screen.getByTestId('replay-progress-track')
-    vi.spyOn(track, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 1000, 32))
-    track.setPointerCapture = vi.fn()
-    track.hasPointerCapture = () => true
-    track.releasePointerCapture = vi.fn()
-    fireEvent.pointerDown(track, { clientX: 800, button: 0 })
-    fireEvent.pointerUp(track, { clientX: 800, button: 0 })
-    expect(playhead.capture()).toMatchObject({ stepId: 'three', stepNumber: 3 })
-    act(() => requestReplaySeek({ ...playhead.capture(), stepId: 'one', stepOffsetMs: 0 }))
-    expect(playhead.capture().stepId).toBe('one')
-    expect(useSessionReplayStore.getState().playhead).toBe(playhead)
-    rerender(<ReplayPanel document={document} {...props} active={false} />)
-    expect(useSessionReplayStore.getState().playhead).toBeUndefined()
-    unmount()
   })
 
   it('starts a whole-research discussion without selecting the current playback step', () => {
