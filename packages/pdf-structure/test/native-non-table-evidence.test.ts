@@ -90,6 +90,23 @@ it('retains an uncaptained payoff matrix with explicit row labels', () => {
   expect(hasTableEvidence(t, undefined, tokens, [])).toBe(true)
 })
 
+it('retains formula-valued records whose numeric column is not an equation ordinal', () => {
+  const t = table([
+    ['x = 1', '12'],
+    ['y = 2', '24'],
+    ['z = 3', '36']
+  ])
+  const tokens = [
+    item('x = 1', 60, 100, 60),
+    item('12', 220, 100, 20),
+    item('y = 2', 60, 120, 60),
+    item('24', 220, 120, 20),
+    item('z = 3', 60, 140, 60),
+    item('36', 220, 140, 20)
+  ]
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(true)
+})
+
 it('rejects an uncaptained multi-row equation system split into detector columns', () => {
   const t = table([
     ['u(x) >= psi(x)', 'x in Omega', ''],

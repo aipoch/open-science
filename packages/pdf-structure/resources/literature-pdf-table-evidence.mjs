@@ -2261,7 +2261,10 @@ function isCaptionlessEquationBand(table, items, rules = []) {
     .filter(Boolean)
   if (values.length < 4) return false
   const mathValues = values.filter((text) => /[=∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(text))
-  const ordinals = values.filter((text) => /^\(?\d+(?:\.\d+)*\)?$/u.test(text))
+  // A bare integer is common in sample-count and index columns. Treat only a
+  // parenthesized equation label as display-equation evidence; otherwise a
+  // legitimate formula-valued table can be discarded as an uncaptioned band.
+  const ordinals = values.filter((text) => /^\(\d+(?:\.\d+)*\)$/u.test(text))
   const proseLabels = values.filter(
     (text) =>
       /\b(?:leader|follower|pauses|advances|method|content|attribute|benchmark|task|total)\b/iu.test(
