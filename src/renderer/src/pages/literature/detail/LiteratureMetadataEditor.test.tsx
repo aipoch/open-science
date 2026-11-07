@@ -7,10 +7,37 @@ import {
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from './LiteratureMetadataEditor'
+import { emptyLiteratureItem } from '../imports/useLiteratureImport'
 
 afterEach(cleanup)
 
 describe('LiteratureMetadataEditor', () => {
+  it('allows identifier-only creation with a generated title', () => {
+    const onSave = vi.fn()
+    render(
+      <LiteratureMetadataEditor
+        item={{
+          ...emptyLiteratureItem(),
+          identifiers: [{ scheme: 'pmid', value: '41553823', isPrimary: true }]
+        }}
+        allowIdentifierOnly
+        saving={false}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save.matches(':disabled')).toBe(false)
+    fireEvent.click(save)
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'PMID: 41553823',
+        identifiers: [{ scheme: 'pmid', value: '41553823', isPrimary: true }]
+      })
+    )
+  })
+
   it('locks every editable control while saving and retains the draft after failure', () => {
     const item = literatureItemInputSchema.parse({
       itemType: 'journalArticle',
