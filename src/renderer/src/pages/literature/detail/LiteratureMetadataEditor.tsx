@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils'
 import {
   LITERATURE_IDENTIFIER_SCHEMES,
   LITERATURE_ITEM_TYPES,
+  normalizeLiteratureIdentifierValue,
   normalizeLiteratureIdentifierPreferences,
   type LiteratureCreatorInput,
   type LiteratureIdentifierInput,
@@ -242,7 +243,10 @@ const LiteratureMetadataEditor = ({
     const title =
       draft.title.trim() ||
       (allowIdentifierOnly && identifiers[0]
-        ? `${identifiers[0].scheme.toUpperCase()}: ${identifiers[0].value.trim()}`
+        ? `${identifiers[0].scheme.toUpperCase()}: ${normalizeLiteratureIdentifierValue(
+            identifiers[0].scheme,
+            identifiers[0].value
+          )}`
         : '')
     if (locked || saveDisabled || !title) return
     if (year && !/^\d{1,4}$/u.test(year)) {

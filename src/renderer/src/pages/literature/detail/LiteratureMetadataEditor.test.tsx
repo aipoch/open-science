@@ -18,7 +18,7 @@ describe('LiteratureMetadataEditor', () => {
       <LiteratureMetadataEditor
         item={{
           ...emptyLiteratureItem(),
-          identifiers: [{ scheme: 'pmid', value: '41553823', isPrimary: true }]
+          identifiers: [{ scheme: 'pmid', value: 'PMID: 41553823', isPrimary: true }]
         }}
         allowIdentifierOnly
         saving={false}
@@ -33,7 +33,7 @@ describe('LiteratureMetadataEditor', () => {
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'PMID: 41553823',
-        identifiers: [{ scheme: 'pmid', value: '41553823', isPrimary: true }]
+        identifiers: [{ scheme: 'pmid', value: 'PMID: 41553823', isPrimary: true }]
       })
     )
   })
