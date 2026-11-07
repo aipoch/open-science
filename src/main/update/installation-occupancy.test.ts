@@ -281,8 +281,8 @@ describe.each(['sync', 'async'] as const)('%s installation occupancy', (mode) =>
   it('includes macOS text mappings without accepting similarly prefixed bundles', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
     output(
-      '10 /Applications/Science.app/node\n',
-      'p10\nftxt\nn/Applications/Science.app/node\np11\nftxt\nn/Applications/Science.app\np12\nftxt\nn/Applications/Science.app/Contents/node\np13\nftxt\nn/Applications/Science.app-old/node\n'
+      '10 /Applications/Science.app/node\n14 /Applications/Science.app-old/node\n',
+      'p11\nftxt\nn/Applications/Science.app\np12\nftxt\nn/Applications/Science.app/Contents/node\np13\nftxt\nn/Applications/Science.app-old/node\n'
     )
     expect(await inspect('/Applications/Science.app')).toEqual([10, 11, 12])
   })
