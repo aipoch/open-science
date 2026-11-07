@@ -14,7 +14,22 @@ if (process.platform === 'win32') {
 }
 
 let worker, request, interval, deadline
+let lastPhase = 'startup'
+let heapLimitDetected = false
+let heapLimitReported = false
 let stopping
+const isHeapLimitError = (message) =>
+  /(?:JavaScript|JS) heap out of memory|reached heap limit|reaching memory limit/i.test(message)
+const reportWorkerError = (message) => {
+  if (isHeapLimitError(message)) {
+    heapLimitDetected = true
+    if (heapLimitReported) return
+    heapLimitReported = true
+    console.error(`PDF execution resource limit exceeded. Last phase: ${lastPhase}`)
+    return
+  }
+  console.error(message)
+}
 const stop = (code, orphan = false) => {
   stopping ??= (async () => {
     clearInterval(interval)
@@ -62,16 +77,31 @@ process.stdin.on('data', (chunk) => {
       resourceLimits: { maxOldGenerationSizeMb: 512 }
     })
     worker.stdout.pipe(process.stdout)
-    worker.stderr.pipe(process.stderr)
+    worker.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString('utf8').split(/\r?\n/u)) {
+        const match = line.match(/\{"phase":"([^"]+)"/u)
+        if (match) lastPhase = match[1]
+      }
+    })
+    worker.stderr.on('data', (chunk) => {
+      const message = chunk.toString('utf8')
+      if (isHeapLimitError(message)) heapLimitDetected = true
+      process.stderr.write(chunk)
+    })
     worker.once('error', (error) => {
-      console.error(error.message)
+      reportWorkerError(heapLimitDetected ? 'JavaScript heap out of memory' : error.message)
       void stop(1)
     })
     worker.once('exit', (code) => {
-      if (!stopping) void stop(code)
+      if (!stopping) {
+        if (code && heapLimitDetected) {
+          reportWorkerError('JavaScript heap out of memory')
+        }
+        void stop(code)
+      }
     })
     deadline = setTimeout(() => {
-      console.error('PDF execution deadline exceeded.')
+      console.error(`PDF execution deadline exceeded. Last phase: ${lastPhase}`)
       void stop(1)
     }, 120000)
     let inspecting = false
@@ -85,7 +115,7 @@ process.stdin.on('data', (chunk) => {
           process.memoryUsage().rss > 2 * 1024 ** 3 ||
           (await inspectScratch(request.output)) > 256 * 1024 ** 2
         ) {
-          console.error('PDF execution resource limit exceeded.')
+          console.error(`PDF execution resource limit exceeded. Last phase: ${lastPhase}`)
           void stop(1)
         }
       } catch (error) {

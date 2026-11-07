@@ -51,7 +51,10 @@ function requireCommit(value, name) {
 }
 
 function changesFromGit(base, head, { cwd = process.cwd(), execute = execFileSync } = {}) {
-  const diff = execute('git', ['diff', '--name-status', '-z', base, head], { cwd })
+  const diff = execute('git', ['diff', '--name-status', '-z', base, head], {
+    cwd,
+    maxBuffer: 64 * 1024 * 1024
+  })
   return parseNameStatus(diff.toString('utf8'))
 }
 

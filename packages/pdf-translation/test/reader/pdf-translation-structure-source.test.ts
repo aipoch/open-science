@@ -1083,6 +1083,186 @@ async function isolatedPlotCaption(referenceContext = false, networkCaption = fa
   }
 }
 
+async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic panel') {
+  const pdf = await PDFDocument.create()
+  pdf.registerFontkit(fontkit)
+  const font = await pdf.embedFont(
+    await readFile(
+      path.join(
+        path.dirname(createRequire(import.meta.url).resolve('pdfjs-dist/package.json')),
+        'standard_fonts/LiberationSans-Regular.ttf'
+      )
+    )
+  )
+  const page = pdf.addPage([400, 500])
+  page.drawRectangle({ x: 30, y: 170, width: 220, height: 200, borderWidth: 1 })
+  page.drawText('Alpha', { x: 50, y: 350, size: 10, font })
+  page.drawText('Beta', { x: 120, y: 350, size: 10, font })
+  page.drawText(captionText, { x: 50, y: 90, size: 10, font })
+  const bytes = await pdf.save(),
+    loading = getDocument({
+      data: bytes.slice(),
+      fontExtraProperties: true,
+      isEvalSupported: false
+    }),
+    document = await loading.promise,
+    native = await document.getPage(1),
+    content = await native.getTextContent(),
+    viewport = native.getViewport({ scale: 1 }),
+    text = content.items.filter((item): item is TextItem => 'str' in item && item.str.trim()),
+    index = (value: string) =>
+      content.items.findIndex((item) => 'str' in item && item.str === value),
+    alpha = index('Alpha'),
+    beta = index('Beta'),
+    caption = index(captionText),
+    rect = (item: number) =>
+      nativeLabelRegion(
+        content.items[item] as TextItem,
+        content.styles[(content.items[item] as TextItem).fontName],
+        viewport,
+        1
+      )!
+  expect(text.map((item) => item.str)).toEqual(['Alpha', 'Beta', captionText])
+  const figureRect = { page: 1, x: 0.08, y: 0.2, width: 0.5, height: 0.35 },
+    captionRect = rect(caption),
+    source = createPdfTranslationSource({
+      resourceRequestKey: 'generic-figure',
+      fingerprint: document.fingerprints[0],
+      pages: [{ width: 400, height: 500 }],
+      units: [
+        ...[
+          ['alpha', alpha, 'Alpha'],
+          ['beta', beta, 'Beta']
+        ].map(([id, item, value]) => ({
+          id: id as string,
+          source: value as string,
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: rect(item as number),
+              items: [{ index: item as number, text: value as string }]
+            }
+          ]
+        })),
+        {
+          id: 'caption',
+          source: captionText,
+          sourceOnly: true as const,
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: captionRect,
+              items: [{ index: caption, text: captionText }]
+            }
+          ]
+        }
+      ]
+    }),
+    extraction = {
+      source,
+      coverage: {
+        pageCount: 1,
+        textItemCount: text.length,
+        includedItemCount: text.length,
+        excludedItemCount: 0,
+        pagesWithoutText: [],
+        exclusions: [],
+        warnings: []
+      }
+    } as PdfTranslationExtraction,
+    cached = {
+      schemaVersion: 1,
+      extractionId: 'generic-figure',
+      engineFingerprint: 'b'.repeat(64),
+      sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+      sourceSizeBytes: bytes.length,
+      pageCount: 1,
+      requestedPages: [1],
+      processedPages: [1],
+      pages: [{ page: 1, width: 400, height: 500, rotation: 0 }],
+      elements: [
+        {
+          id: 'generic',
+          kind: 'figure' as const,
+          issues: [],
+          thumbnailId: 'generic',
+          regions: [figureRect],
+          caption: { text: captionText, regions: [{ page: 1, ...captionRect }] }
+        }
+      ],
+      thumbnails: [
+        {
+          id: 'generic',
+          mimeType: 'image/png' as const,
+          width: 200,
+          height: 140,
+          sizeBytes: 1,
+          sha256: 'c'.repeat(64)
+        }
+      ],
+      navigation: [],
+      issues: []
+    },
+    args = {
+      extraction,
+      document,
+      sourceId: source.resourceRequestKey!,
+      sourceIdentity: {
+        sourceChecksum: createHash('sha256').update(bytes).digest('hex'),
+        sourceSizeBytes: bytes.length
+      },
+      nativeDocumentFactory: getDocument,
+      signal: new AbortController().signal,
+      readCached: async () => cached
+    }
+  return { loading, args, extraction }
+}
+
+it('retains complete generic figure labels only when the crop owns every native text item', async () => {
+  const f = await genericFigureWithoutSourceItems()
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    expect(result.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.id)).toEqual([
+      'alpha',
+      'beta',
+      'caption'
+    ])
+    expect(result.source.originalRegions).toHaveLength(1)
+    expect(result.source.originalRegions![0]).toMatchObject({ pageNumber: 1 })
+    expect(result.source.originalRegions![0].rect).toMatchObject({ x: 0.08, y: 0.2 })
+    expect(result.source.originalRegions![0].rect.width).toBeCloseTo(0.5)
+    expect(result.source.originalRegions![0].rect.height).toBeCloseTo(0.35)
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('retains complete generic Extended Data figure labels', async () => {
+  const f = await genericFigureWithoutSourceItems('Extended Data Fig. 1: Generic panel')
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    expect(result.source.units.filter((unit) => unit.sourceOnly).map((unit) => unit.id)).toEqual([
+      'alpha',
+      'beta',
+      'caption'
+    ])
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
+it('does not retain a prose sentence that only mentions an Extended Data figure', async () => {
+  const f = await genericFigureWithoutSourceItems('Extended Data Fig. 1 shows the assay.')
+  try {
+    const result = await applyCachedPdfFigureSources(f.args)
+    expect(
+      result.source.units.filter((unit) => unit.sourceOnly && ['alpha', 'beta'].includes(unit.id))
+    ).toEqual([])
+  } finally {
+    await f.loading.destroy()
+  }
+})
+
 it('restores only a complete isolated plot caption from reference carryover', async () => {
   const f = await isolatedPlotCaption()
   try {

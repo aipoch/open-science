@@ -18,7 +18,8 @@ const manifest = loadModuleImpactManifest(resolve('scripts/ci/module-impact.json
 const files = [
   ...new Set(
     execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: 128 * 1024 * 1024
     })
       .split('\0')
       .filter((path) => Boolean(path) && existsSync(path))
