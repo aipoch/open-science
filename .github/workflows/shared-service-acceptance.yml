@@ -7,12 +7,6 @@ permissions:
   actions: read
 jobs:
   exercise:
-    strategy:
-      fail-fast: false
-      matrix:
-        scenario: [release-reconnect, patched-reconnect, release-no-reconnect]
-    env:
-      SCENARIO: ${{ matrix.scenario }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -28,14 +22,14 @@ jobs:
         run: |
           set -eu
           mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/feed" "$HOME/Applications" evidence
-          if [[ "$SCENARIO" == patched-reconnect ]]; then
-            gh run download 42375796952 -n macos-arm64 -D "$RUNNER_TEMP/source"
-          else
-            gh release download v1.0.8 -p '*-mac-arm64.zip' -D "$RUNNER_TEMP/source"
-          fi
+          gh run download 42383836649 -n macos-arm64 -D "$RUNNER_TEMP/source"
           gh release download v1.1.0 -p '*-mac-arm64.zip' -p 'arm64-mac.yml' -D "$RUNNER_TEMP/feed"
           ditto -x -k "$(find "$RUNNER_TEMP/source" -name '*-mac-arm64.zip' -print -quit)" "$HOME/Applications"
-          codesign --verify --deep --strict "$HOME/Applications/Open-Science.app"
+          app="$HOME/Applications/Open-Science.app"
+          codesign --verify --deep --strict "$app"
+          spctl --assess --type execute -vv "$app"
+          codesign -dvv "$app/Contents/Resources/backend/desktop-service-launcher" 2>&1 | grep -Fx 'TeamIdentifier=87G9WFU9H3'
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$app/Contents/Info.plist")" = 1.0.9
           npm install --prefix scripts/shared-service-acceptance --no-save playwright@$(node -p 'require("./package-lock.json").packages["node_modules/playwright"].version')
           cp "$RUNNER_TEMP/feed/arm64-mac.yml" "$RUNNER_TEMP/feed/latest-mac.yml"
       - name: Exercise Desktop, CLI, Web and native update
@@ -45,5 +39,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shared-service-${{ matrix.scenario }}
+          name: signed-shared-service-upgrade
           path: evidence

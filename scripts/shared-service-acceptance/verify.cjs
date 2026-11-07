@@ -20,7 +20,6 @@ const wait = async (label,check,ms=60000) => {
   while(Date.now()<end){try {const value=await check(); if(value) return value} catch(e){last=e} await new Promise(r=>setTimeout(r,550))}
   throw new Error(label+' timed out'+(last?' ('+String(last.message).slice(0,200)+')':''))
 }
-const scenario=process.env.SCENARIO
 function crashReporters(step){
   const lines=execFileSync('/bin/ps',['-axo','pid=,ppid=,command='],{encoding:'utf8'})
   const reporters=lines.split('\n').filter(l=>l.trim().split(/\s+/).slice(2).join(' ').startsWith(bundle+'/Contents/Frameworks/') && l.includes('/chrome_crashpad_handler ')).map(l=>({
@@ -28,6 +27,7 @@ function crashReporters(step){
     launchId:l.match(/--annotation=openScienceInstance=([a-z0-9-]+)/)?.[1]
   }))
   record(step,{reporters})
+  return reporters
 }
 let app, page, browser
 const launch = async () => {
@@ -47,8 +47,10 @@ async function run(){
   assert.equal(started.result,'already-running')
   assert.equal(old.lifetime.explicit,true)
   assert.equal(old.lifetime.apps,1)
-  crashReporters('first launch crash reporters')
-  if(scenario !== 'release-no-reconnect'){
+  assert.equal(old.appVersion,'1.0.9')
+  const initial=crashReporters('first launch crash reporters')
+  assert.equal(initial.length,1)
+  assert.ok(initial[0].launchId)
   const proc=app.process()
   await app.evaluate(({app})=>{setTimeout(()=>app.quit(),10)})
   await wait('last Desktop exits',()=>proc.exitCode!==null || proc.signalCode!==null)
@@ -57,14 +59,20 @@ async function run(){
   assert.equal(detached.pid,old.pid)
   assert.equal(detached.lifetime.generation,old.lifetime.generation)
   assert.equal(detached.lifetime.apps,0)
+  await wait('old Crashpad exits while backend stays up',()=>{
+    try {process.kill(initial[0].pid,0);return false} catch(e){return e.code==='ESRCH'}
+  },15000)
+  process.kill(old.pid,0)
+  record('original Crashpad exited independently',{reporter:initial[0].pid,service:old.pid})
   await launch()
   const attached=status()
   record('Desktop reattached',snapshot(attached))
   assert.equal(attached.pid,old.pid)
   assert.equal(attached.lifetime.generation,old.lifetime.generation)
   assert.equal(attached.lifetime.apps,1)
-  }
-  crashReporters('pre-update crash reporters')
+  const current=crashReporters('pre-update crash reporters')
+  assert.equal(current.length,1)
+  assert.notEqual(current[0].launchId,initial[0].launchId)
   browser=await chromium.launch({channel:'chrome'})
   const web=await browser.newPage()
   let connected=false,disconnected=false
@@ -75,12 +83,11 @@ async function run(){
   })
   await web.goto(cli('url'),{waitUntil:'domcontentloaded'})
   await wait('authenticated external event stream',()=>connected)
-  await app.evaluate((_,patched)=>{
+  await app.evaluate(()=>{
     const r=process.getBuiltinModule('module').createRequire(process.resourcesPath+'/app.asar/package.json')
     const updater=r('electron-updater').autoUpdater
-    if(patched) updater.currentVersion=new updater.currentVersion.constructor('1.0.8')
     updater.setFeedURL({provider:'generic',url:'http://127.0.0.1:18765'})
-  },scenario==='patched-reconnect')
+  })
   const state=()=>page.evaluate(()=>window.api.update.getStatus())
   await page.evaluate(()=>window.api.update.check())
   await wait('available target',async()=>{const s=await state();return s.latest==='1.1.0' && s.state==='available'})
@@ -92,6 +99,7 @@ async function run(){
   const text=await dialog.innerText()
   record('visible before update',{text:text.split(/What.s new/i)[0],buttons:await dialog.locator('button:visible').allTextContents()})
   await dialog.screenshot({path:'evidence/before-update.png'})
+  assert.match(text,/temporarily disconnects CLI and web clients/)
   assert.equal(disconnected,false)
   await dialog.getByRole('button',{name:/^(Update|Restart to update)$/}).click()
   const target=await wait('successor Desktop and backend',async()=>{
