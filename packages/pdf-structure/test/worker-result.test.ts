@@ -99,6 +99,34 @@ describe('worker result boundary', () => {
       detail: 'TABLE 1 Unbounded scan'
     })
   })
+  it('retains a captioned math table as review-only without inventing cells', async () => {
+    const table = rawTable()
+    Object.assign(table, {
+      caption: {
+        text: 'Table 3: Incremental posterior covariance updates.',
+        rect: [60, 80, 540, 120]
+      },
+      grid: [],
+      cells: [],
+      unassigned: [],
+      issues: ['no-source-cell-grid']
+    })
+    await save({ ...raw(), figures: [], tables: [table] })
+    const result = await readWorkerResult(root, identity, new Map()),
+      element = result.elements[0]
+    expect(element).toMatchObject({
+      kind: 'table',
+      caption: { text: 'Table 3: Incremental posterior covariance updates.' },
+      issues: [{ code: 'no-source-cell-grid', detail: 'no-source-cell-grid' }]
+    })
+    expect('table' in element).toBe(false)
+    expect(result.issues).toContainEqual({
+      code: 'candidate-results',
+      detail:
+        'Candidate extraction can miss figures, tables, captions or cell content. Verify against the PDF.'
+    })
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+  })
   it.each(['bounded', 'legacy', 'outside-viewport'] as const)(
     'decodes independent table-part crops without deriving them from cells: %s',
     async (mode) => {

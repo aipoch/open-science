@@ -6,6 +6,7 @@ import { createEngineAt } from '../src/engine.js'
 import { createPdfStructureEngine } from '../src/index.js'
 const modelRecipe = { revision: 'test' }
 import { readWorkerResult } from '../src/worker-result.js'
+import { isPdfStructureResourceLimitError } from '../src/errors.js'
 
 vi.mock('../src/worker-result.js', () => ({ readWorkerResult: vi.fn() }))
 const roots: string[] = []
@@ -168,6 +169,54 @@ it.each([
   expect((error as Error).stack).toContain('(exitCode=37, signal=null)')
   expect(message).not.toContain('discarded-head:')
   expect(readWorkerResult).not.toHaveBeenCalled()
+})
+
+it('classifies a host resource-limit failure for an explicit retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-resource-limit-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'host.mjs'),
+    'process.stdin.once("data", () => process.stderr.write("PDF execution resource limit exceeded.", () => process.exit(1)))'
+  )
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
+  const error = await job.result.catch((value: unknown) => value)
+  await job.stop()
+  expect(isPdfStructureResourceLimitError(error)).toBe(true)
+  expect(error).toMatchObject({ code: 'PDF_RESOURCE_LIMIT' })
+  expect((error as Error).message).toContain('PDF execution resource limit exceeded.')
+})
+
+it('classifies a host deadline failure for an explicit retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-deadline-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'host.mjs'),
+    'process.stdin.once("data", () => process.stderr.write("PDF execution deadline exceeded. Last phase: onnx", () => process.exit(1)))'
+  )
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
+  const error = await job.result.catch((value: unknown) => value)
+  await job.stop()
+  expect(isPdfStructureResourceLimitError(error)).toBe(true)
+  expect(error).toMatchObject({ code: 'PDF_RESOURCE_LIMIT' })
+  expect((error as Error).message).toContain('PDF execution deadline exceeded.')
+})
+
+it('classifies a worker JavaScript heap-limit failure for an explicit retry', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pdf-engine-heap-limit-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'host.mjs'),
+    'process.stdin.once("data", () => process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory", () => process.exit(1)))'
+  )
+  await writeFile(join(root, 'scratch.mjs'), 'export async function inspectScratch() { return 0 }')
+  const job = createEngineAt(root, { modelRecipe }).start(requestAt(root))
+  const error = await job.result.catch((value: unknown) => value)
+  await job.stop()
+  expect(isPdfStructureResourceLimitError(error)).toBe(true)
+  expect(error).toMatchObject({ code: 'PDF_RESOURCE_LIMIT' })
+  expect((error as Error).message).toContain('JavaScript heap out of memory')
 })
 
 it('retains an actual nullable exit code and signal from the owned runtime close', async () => {

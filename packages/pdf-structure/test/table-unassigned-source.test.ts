@@ -24,6 +24,12 @@ const { recoverStrictSingletonSourceGaps } = await import(
 const { recoverUnassignedAggregateRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
+const { recoverNativeProseContinuation } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
+const { recoverNativeMathCellFragments } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
 const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids', `${name}.jsonl`))
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
@@ -36,6 +42,84 @@ type SourceToken = {
   height: number
   horizontal: boolean
 }
+
+it('recovers a uniquely aligned prose continuation inside a native cell', () => {
+  const rows = [{ rect: [0, 0, 300, 45] }]
+  const cells = [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [100, 0, 300, 45] }]
+  const prefix: SourceToken = {
+    text: 'The proof is established by following the deferred parts',
+    rect: [110, 5, 260, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const continuation: SourceToken = {
+    text: 'including deferred parts. Empty if the paper gives no proof.',
+    rect: [110, 20, 270, 30],
+    baseline: 30,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[prefix, cells[0]]])
+  const repairs: string[] = []
+  expect(
+    recoverNativeProseContinuation({
+      items: [prefix, continuation],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs
+    })
+  ).toBe(true)
+  expect(assignments.get(continuation)).toBe(cells[0])
+  expect(cells[0].rect[3]).toBe(45)
+  expect(repairs).toContain('prose-continuation-recovered')
+})
+
+it('recovers short math fragments that straddle a native cell edge', () => {
+  const rows = [{ rect: [0, 0, 200, 20] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [0, 0, 100, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [100, 0, 200, 20] }
+  ]
+  const anchor: SourceToken = {
+    text: '√',
+    rect: [120, 8, 128, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  }
+  const fragment: SourceToken = {
+    text: '4',
+    rect: [130, 19, 138, 29],
+    baseline: 29,
+    height: 10,
+    horizontal: true
+  }
+  const sibling: SourceToken = {
+    text: 'L',
+    rect: [139, 19, 147, 29],
+    baseline: 29,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[anchor, cells[1]]])
+  const repairs: string[] = []
+  expect(
+    recoverNativeMathCellFragments({
+      items: [anchor, fragment, sibling],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs
+    })
+  ).toBe(2)
+  expect(assignments.get(fragment)).toBe(cells[1])
+  expect(assignments.get(sibling)).toBe(cells[1])
+  expect(repairs).toContain('native-math-fragments-recovered')
+})
 
 it('recovers only a uniquely supported Route header gap', () => {
   const rows = [{ rect: [0, 0, 300, 20] }, { rect: [0, 20, 300, 40] }, { rect: [0, 40, 300, 60] }]
