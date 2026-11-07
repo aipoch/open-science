@@ -481,6 +481,33 @@ describe('macOS process names', () => {
   })
 })
 
+describe('Windows process names', () => {
+  it('maps blocker PIDs to executable names without failing occupancy diagnostics', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    mocks.windows.listWindowsProcesses.mockReturnValue([
+      { pid: 321, ppid: 1, executablePath: 'C:\\Windows\\System32\\sh.exe' },
+      { pid: 45, ppid: 1, executablePath: 'C:\\Apps\\Open-Science\\open-science.exe' },
+      { pid: 99, ppid: 1, executablePath: null }
+    ])
+
+    expect(inspectProcessNames([321, 45, 99, 404])).toEqual(
+      new Map([
+        [321, 'sh.exe'],
+        [45, 'open-science.exe']
+      ])
+    )
+  })
+
+  it('keeps diagnostics empty when the Windows process snapshot is unavailable', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    mocks.windows.listWindowsProcesses.mockImplementation(() => {
+      throw new Error('snapshot unavailable')
+    })
+
+    expect(inspectProcessNames([321])).toEqual(new Map())
+  })
+})
+
 describe('current macOS Crashpad ownership', () => {
   const root = join('/Applications', 'Open Science.app')
   const executable = join(

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync, readlinkSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { dirname, join, sep } from 'node:path'
+import { dirname, join, sep, win32 } from 'node:path'
 import { UpdateLifecycleError } from '../../shared/update'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
@@ -285,6 +285,19 @@ export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
 export function inspectProcessNames(pids: number[]): Map<number, string> {
   const names = new Map<number, string>()
   if (pids.length === 0) return names
+  if (process.platform === 'win32') {
+    try {
+      const wanted = new Set(pids)
+      for (const row of listWindowsProcesses()) {
+        if (!wanted.has(row.pid) || !row.executablePath) continue
+        const name = win32.basename(row.executablePath)
+        if (name) names.set(row.pid, name)
+      }
+    } catch {
+      // Process names are diagnostic only; an unavailable snapshot must not change occupancy.
+    }
+    return names
+  }
   if (process.platform === 'linux') {
     for (const pid of pids) {
       try {
