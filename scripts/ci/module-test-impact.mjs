@@ -363,6 +363,14 @@ function isPortableVitestFile(path) {
   )
 }
 
+function hasC8FileIgnore(path, cwd = process.cwd()) {
+  try {
+    return /^\s*\/\*\s*c8 ignore file\s*\*\//u.test(readFileSync(resolve(cwd, path), 'utf8'))
+  } catch {
+    return false
+  }
+}
+
 // PR and queue full plans defer the complete portable suite to scheduled acceptance. They still
 // run the declared closure of each owned change, so a full marker or a global input cannot remove
 // its owner, contract and consumer tests before merge. Deleted paths and paths that only resolve
@@ -606,13 +614,19 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
     : []
   const coveragePaths = sorted(
     coverageChanges
-      .filter(({ path, status }) => status !== 'deleted' && /^src\/.*\.tsx?$/.test(path))
+      .filter(
+        ({ path, status }) =>
+          status !== 'deleted' &&
+          /^src\/.*\.tsx?$/.test(path) &&
+          !hasC8FileIgnore(path, options.cwd ?? process.cwd())
+      )
       .map(({ path }) => path)
   )
+  const collectChangedCoverage = coverageChanged && coveragePaths.length > 0
   return executeModuleTestPlan(plan, {
     ...options,
-    environment,
-    testArguments: coverageChanged
+    environment: collectChangedCoverage ? environment : options.environment,
+    testArguments: collectChangedCoverage
       ? [
           '--coverage',
           ...(coveragePaths.length > 0 ? coveragePaths : ['__no_changed_sources__']).map(

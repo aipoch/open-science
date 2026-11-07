@@ -624,7 +624,8 @@ describe('Notebook runtime configuration updates', () => {
     expect(windowsSupervisedLaunch).toHaveBeenCalledOnce()
     expect(windowsSupervisedLaunch).toHaveBeenCalledWith(
       expect.objectContaining({
-        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef'
+        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef',
+        ownershipRoot: 'C:\\ownership'
       })
     )
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)

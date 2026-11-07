@@ -1,9 +1,9 @@
 import { spawn, type SpawnOptions } from 'node:child_process'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { access, readFile, rm, writeFile } from 'node:fs/promises'
-import { constants } from 'node:fs'
+import { constants, mkdirSync } from 'node:fs'
 import { createServer, type Server } from 'node:net'
-import { join, win32 } from 'node:path'
+import { dirname, join, win32 } from 'node:path'
 
 import { proxyEnvironment } from './proxy-environment.js'
 import { normalizeFilesystemLayout, type FilesystemLayoutInput } from './filesystem-layout.js'
@@ -99,7 +99,9 @@ type WindowsStandardLaunchRequest = Readonly<
 >
 
 type WindowsSupervisedLaunchRequest = Readonly<
-  WindowsStandardLaunchRequest & Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'>
+  WindowsStandardLaunchRequest &
+    Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'> &
+    Partial<Pick<WindowsLaunchRequest, 'ownershipRoot'>>
 >
 
 type ProcessTreeTerminationProof = Readonly<{
@@ -854,7 +856,14 @@ const windowsSupervisedLaunch = (
   const direct = windowsStandardLaunch(request)
   const [executable, ...args] = direct.argv
   if (!executable) throw new Error('Windows supervisor received an empty command.')
-  const proof = createProcessTreeTerminationProof(direct.env, request.cwd)
+  const proofRoot = request.ownershipRoot
+    ? join(dirname(request.ownershipRoot), '.open-science-process-proofs')
+    : undefined
+  if (proofRoot) mkdirSync(proofRoot, { recursive: true })
+  const proof = createProcessTreeTerminationProof(
+    proofRoot ? { ...direct.env, TEMP: proofRoot } : direct.env,
+    request.cwd
+  )
   const specification = Buffer.from(
     JSON.stringify({
       executable,
