@@ -25,12 +25,13 @@ const launch = async () => {
   app=await electron.launch({executablePath,args:['--lang=en-US'],timeout:90000})
   page=await app.firstWindow()
   await page.waitForFunction(async()=> (await window.api?.databaseStartup?.getState())?.phase==='ready',null,{timeout:90000})
-  await page.evaluate(()=>window.api.settings.markOnboardingComplete())
+  await wait('settings IPC readiness',async()=>{await page.evaluate(()=>window.api.settings.markOnboardingComplete());return true},90000)
   await page.reload({waitUntil:'domcontentloaded'})
   await page.waitForFunction(async()=> (await window.api?.desktopRuntime?.getState())?.phase==='connected')
 }
 async function run(){
   await launch()
+  record('desktop ready',{version:await app.evaluate(({app})=>app.getVersion()), pid:JSON.parse(fs.readFileSync(path.join(os.homedir(),'.open-science/runtime-owner.json'))).pid})
   const started=JSON.parse(cli('start','--no-open','--json'))
   const old=status()
   record('CLI start',{result:started.result,...snapshot(old)})
@@ -98,4 +99,4 @@ async function run(){
   execFileSync('codesign',['--verify','--deep','--strict',bundle])
   record('signed replacement verified')
 }
-run().then(()=>process.exit(0)).catch(e=>{console.error(e.message.replace(/token=[^ &]+/gi,'token=<redacted>'));process.exit(1)})
+run().then(()=>process.exit(0)).catch(async e=>{if(page && !page.isClosed()){await page.screenshot({path:'evidence/failure.png',timeout:5000}).catch(()=>{});console.log('UI:', (await page.locator('body').innerText({timeout:3000}).catch(()=>'' )).slice(0,1800))}console.error(e.message.replace(/token=[^ &]+/gi,'token=<redacted>'));process.exit(1)})
