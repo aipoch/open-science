@@ -172,6 +172,7 @@
     "packages/pdf-structure/resources/scratch.mjs",
     "packages/pdf-structure/src/bounded-read.ts",
     "packages/pdf-structure/src/engine.ts",
+    "packages/pdf-structure/src/errors.ts",
     "packages/pdf-structure/src/index.ts",
     "packages/pdf-structure/src/node-runtime.ts",
     "packages/pdf-structure/src/result.ts",

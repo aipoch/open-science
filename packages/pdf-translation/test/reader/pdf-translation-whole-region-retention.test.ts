@@ -1912,12 +1912,15 @@ it.each([
   expect(structuredClone(f.context.extraction)).toEqual(before)
 })
 
-function captionedMathWithExternalReferenceCaption() {
+function captionedMathWithExternalReferenceCaption(caption = 'Figure 1: Caption') {
   const f = captionedAdvanceOverlapMath(),
     first = f.native.content.items.length
+  const separator = caption.indexOf(':'),
+    label = caption.slice(0, separator + 1),
+    body = caption.slice(separator + 1).trim()
   for (const [str, x] of [
-    ['Figure 1:', 20],
-    ['Caption', 60]
+    [label, 20],
+    [body, 60]
   ] as const) {
     const item = {
       ...f.native.content.items[0],
@@ -1965,7 +1968,7 @@ function captionedMathWithExternalReferenceCaption() {
         ...old.source.units,
         {
           id: 'external-reference',
-          source: 'Figure 1: Caption',
+          source: caption,
           sourceOnly: true,
           preserve: 'reference',
           fragments: [
@@ -1988,12 +1991,24 @@ function captionedMathWithExternalReferenceCaption() {
     issues: [],
     regions: [{ page: 1, x: 0.6, y: 0.6, width: 0.1, height: 0.05 }],
     caption: {
-      text: 'Figure 1: Caption',
+      text: caption,
       regions: [{ page: 1, x: 0.1, y: 172 / 220, width: 68 / 200, height: 8 / 220 }]
     }
   })
   return f
 }
+
+it('restores an Extended Data figure reference caption', async () => {
+  const f = captionedMathWithExternalReferenceCaption('Extended Data Fig. 1: Caption')
+  let reachedReferenceRestore = false
+  f.document.getPage.mockImplementation(async () => {
+    reachedReferenceRestore = true
+    return f.page
+  })
+  const out = await applyCachedPdfFigureSources(f.context)
+  expect(reachedReferenceRestore).toBe(true)
+  expect(out.source.units.find((u) => u.id === 'external-reference')?.sourceOnly).toBe(true)
+})
 
 it.each(['stable', 'font', 'outline', 'native Source'])(
   'rechecks only the new math permission after outer reference restoration awaits: %s',

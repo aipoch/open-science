@@ -7,6 +7,12 @@ import sharp from 'sharp'
 import type { PdfStructureEngine, PdfStructureEngineOptions } from './types.js'
 import { nodeProcessRuntime } from './node-runtime.js'
 import { readWorkerResult } from './worker-result.js'
+import { PDF_STRUCTURE_RESOURCE_LIMIT_CODE } from './errors.js'
+
+const isPdfResourceLimitMessage = (message: string): boolean =>
+  message.includes('PDF execution resource limit exceeded.') ||
+  message.includes('PDF execution deadline exceeded.') ||
+  /(?:JavaScript|JS) heap out of memory|reached heap limit|reaching memory limit/i.test(message)
 
 // Internal resource override is used only by package lifecycle tests.
 export const createEngineAt = (
@@ -62,7 +68,10 @@ export const createEngineAt = (
         child.once('close', (code, signal) => {
           if (code !== 0 && !failure) {
             const message = stderr.trim() || 'PDF extraction failed.'
-            failure = new Error(`${message} (exitCode=${code}, signal=${signal})`)
+            const error = new Error(`${message} (exitCode=${code}, signal=${signal})`)
+            if (isPdfResourceLimitMessage(message))
+              Object.assign(error, { code: PDF_STRUCTURE_RESOURCE_LIMIT_CODE })
+            failure = error
           }
           resolve()
         })

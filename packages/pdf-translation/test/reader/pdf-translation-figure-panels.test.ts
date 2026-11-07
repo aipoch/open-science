@@ -12,7 +12,10 @@ import { applyCachedPdfFigureSources } from '../../src/reader/figure-source.js'
 import { nativeFigurePanels, retainNativeFigurePanels } from '../../src/reader/figure-panels.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
 
-async function fixture(fault = ''): Promise<{
+async function fixture(
+  fault = '',
+  captionText = 'Figure 1. Prompt panels with instructions and examples for separate tasks and complete outcomes.'
+): Promise<{
   task: ReturnType<typeof getDocument>
   sourceIdentity: { sourceChecksum: string; sourceSizeBytes: number }
 }> {
@@ -73,16 +76,7 @@ async function fixture(fault = ''): Promise<{
           ...panels,
           ...(fault === 'gap-text' ? [text('Unrelated explanation.', 90, 615)] : []),
           ...(fault === 'gap-paint' ? ['0.5 w 100 615 m 200 615 l S'] : []),
-          ...(fault === 'caption'
-            ? []
-            : [
-                text(
-                  'Figure 1. Prompt panels with instructions and examples for separate tasks and complete outcomes.',
-                  80,
-                  285,
-                  9
-                )
-              ])
+          ...(fault === 'caption' ? [] : [text(captionText, 80, 285, 9)])
         ].join('\n')
       )
     )
@@ -197,6 +191,36 @@ it.each([
       .find((g) => g?.unicode === 'P')
     changed.width += 1
     expect(proof!.current()).toBe(false)
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('keeps captioned Extended Data panels atomic with complete native evidence', async () => {
+  const { task, sourceIdentity } = await fixture(
+    'none',
+    'Extended Data Fig. 1. Prompt panels with instructions and examples for separate tasks and complete outcomes.'
+  )
+  try {
+    const document = await task.promise,
+      page = await document.getPage(1),
+      signal = new AbortController().signal,
+      raw = await extractPdfTranslationSource({
+        document,
+        signal,
+        resourceRequestKey: 'anonymous-extended-data-panels'
+      }),
+      proof = await nativeFigurePanels(raw.source.units, page, 1)
+    expect(proof?.regions).toHaveLength(3)
+    const result = await applyCachedPdfFigureSources({
+      extraction: raw,
+      document,
+      sourceIdentity,
+      sourceId: 'anonymous-extended-data',
+      signal,
+      readCached: async () => undefined
+    })
+    expect(result.source.units.filter((u) => u.figure)).toHaveLength(21)
   } finally {
     await task.destroy()
   }
