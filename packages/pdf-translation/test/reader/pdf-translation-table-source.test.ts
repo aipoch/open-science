@@ -1203,7 +1203,7 @@ describe('cached PDF table source ownership', () => {
     ]
     const figures = await applyCachedPdfFigureSources(f.context)
     expect(figures.source.units).toEqual([
-      { ...f.extraction.source.units[0], sourceOnly: true },
+      { ...f.extraction.source.units[0], sourceOnly: true, figure: true },
       f.extraction.source.units[1]
     ])
     expect(figures.coverage).toEqual(f.context.extraction.coverage)
@@ -1797,7 +1797,7 @@ describe('cached PDF table source ownership', () => {
       ]
       const result = await applyCachedPdfFigureSources(fixture.context)
       expect(result.source.units).toEqual([
-        { ...fixture.extraction.source.units[0], sourceOnly: true },
+        { ...fixture.extraction.source.units[0], sourceOnly: true, figure: true },
         fixture.extraction.source.units[1]
       ])
       expect(result.coverage).toEqual(fixture.extraction.coverage)

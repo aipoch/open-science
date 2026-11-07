@@ -16,7 +16,8 @@ import * as auxiliaryModule from '../../src/reader/auxiliary-native-ink.js'
 
 async function fixture(
   fault = '',
-  shared = false
+  shared = false,
+  captionText = 'Figure 1: A bounded example.'
 ): Promise<Awaited<ReturnType<typeof extractPdfTranslationSource>>['source']['units'][number][]> {
   const pdf = await PDFDocument.create()
   pdf.registerFontkit(fontkit)
@@ -79,7 +80,7 @@ async function fixture(
     )
   if (fault === 'foreign-paint') stream.push('70 190 m 340 190 l S')
   if (fault === 'foreign-text') text('A normal explanatory sentence.', 70, 170)
-  text('Figure 1: A bounded example.', 110, shared ? 140 : 150)
+  text(captionText, 110, shared ? 140 : 150)
   page.node.set(
     PDFName.of('Contents'),
     pdf.context.register(pdf.context.flateStream(stream.join('\n')))
@@ -188,6 +189,12 @@ it('preserves complete native variable keys independently of the original crop',
   expect(selected.map((u) => u.source).join(' ')).toContain('first input')
   expect(selected.map((u) => u.source).join(' ')).toContain('missing outcome')
   expect(selected.some((u) => u.source.startsWith('Figure'))).toBe(false)
+})
+
+it('retains complete native variable keys for an Extended Data figure caption', async () => {
+  const selected = await fixture('', false, 'Extended Data Fig. 1: A bounded example.')
+  expect(selected.map((u) => u.source).join(' ')).toContain('first input')
+  expect(selected.map((u) => u.source).join(' ')).toContain('missing outcome')
 })
 
 it('retains one shared key for two complete native components including variable references in definitions', async () => {

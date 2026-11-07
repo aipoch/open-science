@@ -2242,6 +2242,42 @@ function isNativeContinuousMathDisplay(table, caption, items, rules) {
   )
 }
 
+function isCaptionlessEquationBand(table, items, rules = []) {
+  if (!table?.cropRect || table.grid.length < 2 || table.grid.length > 4) return false
+  if (
+    rules.some(
+      (rule) =>
+        rule[1] === rule[3] &&
+        rule[0] < table.cropRect[2] &&
+        rule[2] > table.cropRect[0] &&
+        rule[1] >= table.cropRect[1] &&
+        rule[1] <= table.cropRect[3]
+    )
+  )
+    return false
+  const values = table.grid
+    .flat()
+    .map((text) => text.trim())
+    .filter(Boolean)
+  if (values.length < 4) return false
+  const mathValues = values.filter((text) => /[=∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(text))
+  // A bare integer is common in sample-count and index columns. Treat only a
+  // parenthesized equation label as display-equation evidence; otherwise a
+  // legitimate formula-valued table can be discarded as an uncaptioned band.
+  const ordinals = values.filter((text) => /^\(\d+(?:\.\d+)*\)$/u.test(text))
+  const proseLabels = values.filter(
+    (text) =>
+      /\b(?:leader|follower|pauses|advances|method|content|attribute|benchmark|task|total)\b/iu.test(
+        text
+      ) || /^[A-Za-z]{3,}\s+[A-Za-z]{3,}/u.test(text)
+  )
+  if (mathValues.length < 3 || ordinals.length === 0 || proseLabels.length > 0) return false
+  const source = (items ?? []).filter((item) => item.text?.trim() && inside(table.cropRect, item))
+  return (
+    source.length > 0 && source.filter((item) => /[=∈≤≥∑∫∇√∞⋆−+*\/^]/u.test(item.text)).length >= 3
+  )
+}
+
 // A neighboring affiliation column can lend its raised ordinals to a model
 // bibliography crop. The external institutional line proves those numbers
 // have a different owner; genuinely measured reference tables remain eligible.
@@ -4124,6 +4160,7 @@ export function hasTableEvidence(
   if (isNativeAssignedMatrixDisplay(table, caption, pageItems, sourceRules)) return false
   if (isNativeFormulaSystem(table, caption)) return false
   if (isNativeContinuousMathDisplay(table, caption, pageItems, sourceRules ?? [])) return false
+  if (!caption && isCaptionlessEquationBand(table, pageItems, sourceRules ?? [])) return false
   if (
     isDamagedNativeFormulaLayout(table, caption) &&
     !hasOnlyRuledFooterDamage(table, caption, pageItems, sourceRules)
@@ -4345,6 +4382,25 @@ export function hasTableEvidence(
     table.issues?.includes('text-crosses-crop-boundary') &&
     numberedCitationRows >= 2 &&
     numberedCitationRows === table.grid.length
+  )
+    return false
+  // A short detector crop can begin at the tail of a bibliography entry and
+  // split its DOI across two cells.  With no caption, no measured values, and
+  // only a page ordinal left unresolved, this is citation prose rather than a
+  // data table.  Keep the guard narrow so a real URL-bearing table with a
+  // caption or assigned numeric records remains eligible.
+  if (
+    !caption &&
+    table.grid.length <= 4 &&
+    table.grid.every((row) => row.length <= 2 && !row.some(measurement)) &&
+    (table.unassigned ?? []).length > 0 &&
+    (table.unassigned ?? []).every((text) => /^\d{1,3}$/.test(String(text).trim())) &&
+    /(?:doi\.org\/|https?:\/\/|doi\s*:\s*10\.)/i.test(cropText) &&
+    /\b(?:19|20)\d{2}\b/u.test(cropText) &&
+    (referenceHeading ||
+      /\b(?:Journal|Proceedings|Nature|Science|et al\.)\b/i.test(cropText) ||
+      /(?:r?nal)\s+of\s+[A-Z]/u.test(cropText) ||
+      /\b[A-Z][a-z]+,\s*[A-Z]\./u.test(cropText))
   )
     return false
   // Multi-column review questions often resemble a sparse table because each

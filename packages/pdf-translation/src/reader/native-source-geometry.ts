@@ -927,7 +927,7 @@ export async function nativeIsolatedPlotCaptionScope(
       !second ||
       !('str' in first) ||
       !('str' in second) ||
-      !/^Figure\s+[1-9]\d*:$/.test(first.str) ||
+      !/^(?:(?:Extended Data\s+)?(?:Figure|Fig\.)\s+[1-9]\d*):$/u.test(first.str) ||
       !/^[A-Z][\p{Script=Latin}\p{M}\d\s(),.'’-]+[.!?]$/u.test(second.str) ||
       (second.str.match(/\p{L}{2,}/gu)?.length ?? 0) < 5 ||
       first.dir !== 'ltr' ||

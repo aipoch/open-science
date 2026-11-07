@@ -10386,21 +10386,21 @@ function continuousBodyWrap(
 const terminal = (text: string): boolean => /[.!?:;][”’"')\]]?$/.test(text.trim())
 const wordCount = (text: string): number => text.trim().split(/\s+/).length
 const boundedFigureProseReference = (text: string): boolean =>
-  /^(?:Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?\s+tests\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\d+)\s+\p{L}/iu.test(
+  /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d+(?:\s*\([a-z]\))?\s+tests\s+(?:the|this|that|these|those|a|an|our|their|its|both|each|some|several|multiple|one|two|\d+)\s+\p{L}/iu.test(
     text
   ) ||
-  /^(?:Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?\s+on\s+the\s+(?:(?:upper|lower)\s+)?(?:left|right)\s+(?:(?:also|further)\s+)?(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu.test(
+  /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d+(?:\s*\([a-z]\))?\s+on\s+the\s+(?:(?:upper|lower)\s+)?(?:left|right)\s+(?:(?:also|further)\s+)?(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu.test(
     text
   )
 export const isPdfTranslationCaption = (text: string): boolean =>
   !boundedFigureProseReference(text) &&
-  /^(?:Table|Tab\.|Figure|Fig\.)\s*\d/i.test(text) &&
+  /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d/i.test(text) &&
   // A sentence referring to a figure/table is body prose. Only exclude an
   // explicit finite verb without the punctuation that introduces a caption.
-  !/^(?:Table|Tab\.|Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?(?:\s+and\s+(?:Table|Tab\.|Figure|Fig\.)\s*\d+(?:\s*\([a-z]\))?)?\s+(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu.test(
+  !/^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+(?:\s*\([a-z]\))?(?:\s+and\s+(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+(?:\s*\([a-z]\))?)?\s+(?:shows?|illustrates?|depicts?|presents?|summari[sz]es?|reports?|provides?|flips|clarifies|assesses|compares?|demonstrates?|contains?|lists?|is|are)\b/iu.test(
     text
   )
-const captionLabel = /^(?:Table|Tab\.|Figure|Fig\.)\s*\d+[.:]\s/iu
+const captionLabel = /^(?:Table|Tab\.|(?:(?:Extended Data\s+)?(?:Figure|Fig\.)))\s*\d+[.:]\s/iu
 // Some PDF text maps expand formula glyphs into repeated `ffi` ligature text or
 // paired Latin-1 delimiters. The visual formula is still present, but its source
 // string cannot be safely matched to PDFium text objects for replacement.

@@ -58,6 +58,55 @@ it('rejects a centered display equation and its right-hand equation ordinal', ()
   expect(hasTableEvidence(t, { lines: ['Table 4. Native formulas.'] }, tokens)).toBe(true)
 })
 
+it('rejects an uncaptained equation band that the detector split into table columns', () => {
+  const t = table([
+    ['(4.5)', 's21(u) = f(u)d1(u),', 's22(u) = d2(u) + f(u)d1(u)e12(u),'],
+    ['(4.6)', 's31(u) = g(u)d1(u),', 's32(u) = b(u)d2(u) + g(u)d1(u)e12(u),']
+  ])
+  const tokens = [
+    item('(4.5)', 60, 100, 30),
+    item('s21(u) = f(u)d1(u),', 140, 100, 120),
+    item('s22(u) = d2(u) + f(u)d1(u)e12(u),', 300, 100, 180),
+    item('(4.6)', 60, 120, 30),
+    item('s31(u) = g(u)d1(u),', 140, 120, 120),
+    item('s32(u) = b(u)d2(u) + g(u)d1(u)e12(u),', 300, 120, 180)
+  ]
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(false)
+})
+
+it('retains an uncaptained payoff matrix with explicit row labels', () => {
+  const t = table([
+    ['leader pauses', '(C_A, C_B)', '(S_A, T_B)'],
+    ['leader advances', '(T_A, S_B)', '(R_A, R_B)']
+  ])
+  const tokens = [
+    item('leader pauses', 60, 100, 100),
+    item('(C_A, C_B)', 220, 100, 70),
+    item('(S_A, T_B)', 360, 100, 70),
+    item('leader advances', 60, 120, 120),
+    item('(T_A, S_B)', 220, 120, 70),
+    item('(R_A, R_B)', 360, 120, 70)
+  ]
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(true)
+})
+
+it('retains formula-valued records whose numeric column is not an equation ordinal', () => {
+  const t = table([
+    ['x = 1', '12'],
+    ['y = 2', '24'],
+    ['z = 3', '36']
+  ])
+  const tokens = [
+    item('x = 1', 60, 100, 60),
+    item('12', 220, 100, 20),
+    item('y = 2', 60, 120, 60),
+    item('24', 220, 120, 20),
+    item('z = 3', 60, 140, 60),
+    item('36', 220, 140, 20)
+  ]
+  expect(hasTableEvidence(t, undefined, tokens, [])).toBe(true)
+})
+
 it('rejects an uncaptained multi-row equation system split into detector columns', () => {
   const t = table([
     ['u(x) >= psi(x)', 'x in Omega', ''],
