@@ -74,6 +74,9 @@ const resolvePackagedWindowsNotebookNodeRuntime = (
     : [
         packagedRoot,
         hostPackagedRoot,
+        // Standalone archives keep node-runtime beside backend/, while this module runs from
+        // backend/out/backend.
+        join(moduleDirectory, '../../../node-runtime'),
         join(moduleDirectory, '../..', relative),
         join(moduleDirectory, '../../..', relative),
         // Source-only fixtures are produced by the Windows runtime preparation workflow. They
