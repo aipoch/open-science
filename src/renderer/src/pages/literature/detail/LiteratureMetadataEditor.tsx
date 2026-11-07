@@ -28,6 +28,7 @@ type LiteratureMetadataEditorProps = Readonly<{
   beforeFields?: React.ReactNode
   saveNotice?: React.ReactNode
   saveLabel?: string
+  allowIdentifierOnly?: boolean
   onDirtyChange?: (dirty: boolean) => void
   onRetry?: () => void
   onCancel: () => void
@@ -98,6 +99,7 @@ const LiteratureMetadataEditor = ({
   beforeFields,
   saveNotice,
   saveLabel,
+  allowIdentifierOnly = false,
   onDirtyChange,
   onRetry,
   onCancel,
@@ -236,7 +238,13 @@ const LiteratureMetadataEditor = ({
   }
 
   const submit = (): void => {
-    if (locked || saveDisabled || !draft.title.trim()) return
+    const identifiers = draft.identifiers.filter(({ value }) => value.trim())
+    const title =
+      draft.title.trim() ||
+      (allowIdentifierOnly && identifiers[0]
+        ? `${identifiers[0].scheme.toUpperCase()}: ${identifiers[0].value.trim()}`
+        : '')
+    if (locked || saveDisabled || !title) return
     if (year && !/^\d{1,4}$/u.test(year)) {
       setInvalidField('year')
       yearRef.current?.focus()
@@ -295,10 +303,9 @@ const LiteratureMetadataEditor = ({
             ]
           : []
     )
-    const identifiers = draft.identifiers.filter(({ value }) => value.trim())
     onSave({
       ...draft,
-      title: draft.title.trim(),
+      title,
       creators,
       identifiers,
       issuedYear,
@@ -306,6 +313,8 @@ const LiteratureMetadataEditor = ({
       accessedAt
     })
   }
+
+  const hasIdentifier = draft.identifiers.some(({ value }) => value.trim())
 
   return (
     <div className={cn('flex min-h-0 min-w-0 max-h-[70vh] flex-col text-sm', className)}>
@@ -742,7 +751,11 @@ const LiteratureMetadataEditor = ({
         <Button
           type="button"
           aria-busy={busy}
-          disabled={saving || (!onRetry && (saveDisabled || !draft.title.trim()))}
+          disabled={
+            saving ||
+            (!onRetry &&
+              (saveDisabled || (!draft.title.trim() && !(allowIdentifierOnly && hasIdentifier))))
+          }
           onClick={onRetry ?? submit}
         >
           {busy ? (
