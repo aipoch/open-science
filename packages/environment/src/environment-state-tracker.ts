@@ -26,6 +26,7 @@ import {
   type RuntimeDiagnosticLogger
 } from '@aipoch/diagnostics/node'
 import { EnvironmentLockCaptureOwner, type EnvironmentLockWorkspace } from './environment-lock'
+import { EnvironmentFingerprintObserver } from './environment-fingerprint-observer'
 
 type EnvironmentExecFile = (
   command: string,
@@ -738,12 +739,18 @@ const rInlineScript = (script: string): string => script.replace(/\r?\n/gu, ';')
 // enumerating and parsing every installed distribution, but still notice added/removed package
 // directories and metadata replacements made outside the app's package-manager journal.
 // Preserve search-path order: reordering the same libraries can select a different package.
+// WATCH lines name search-path candidates that do not exist yet (for example a user site or
+// personal R library created by a later install). They are excluded from the fingerprint hash.
 const PYTHON_FINGERPRINT_SCRIPT = [
-  'import os, pathlib, platform, sys',
+  'import os, pathlib, platform, site, sys',
   'print("RUNTIME\\t" + platform.python_version())',
+  'if site.ENABLE_USER_SITE and not os.path.isdir(site.getusersitepackages()):',
+  '    print("WATCH\\t" + site.getusersitepackages())',
   'for raw in dict.fromkeys(filter(None, sys.path)):',
   '    root = pathlib.Path(raw)',
-  '    if not root.is_dir(): continue',
+  '    if not root.is_dir():',
+  '        print("WATCH\\t" + str(root))',
+  '        continue',
   '    try:',
   '        st = root.stat()',
   '        print("ROOT\\t%s\\t%d\\t%d" % (root, st.st_mtime_ns, st.st_size))',
@@ -759,6 +766,7 @@ const PYTHON_FINGERPRINT_SCRIPT = [
 
 const R_FINGERPRINT_SCRIPT = [
   'cat("RUNTIME\\t", paste(R.version$major, R.version$minor, sep="."), "\\n", sep="")',
+  'for (candidate in path.expand(unlist(strsplit(c(Sys.getenv("R_LIBS"), Sys.getenv("R_LIBS_USER")), .Platform$path.sep, fixed=TRUE)))) if (nzchar(candidate) && !dir.exists(candidate)) cat("WATCH\\t", candidate, "\\n", sep="")',
   'for (root in unique(.libPaths())) {',
   '  info <- file.info(root)',
   '  if (is.na(info$mtime)) { cat("UNWATCHABLE\\t", root, "\\n", sep=""); next }',
@@ -920,11 +928,11 @@ const inspectInstalledDefault = async (
   return parseInventory(target.language, stdout)
 }
 
-const captureFingerprintDefault = async (
+const runFingerprintProbe = async (
   target: EnvironmentCaptureTarget,
   platform: NodeJS.Platform = process.platform,
   execute: EnvironmentExecFile = execFileAsync
-): Promise<string | undefined> => {
+): Promise<string> => {
   const args = [
     ...(target.args ?? []),
     ...(target.language === 'python'
@@ -937,12 +945,24 @@ const captureFingerprintDefault = async (
     maxBuffer: 8 * 1024 * 1024,
     env: environmentCaptureProcessEnv(target, process.env, platform)
   })
+  return stdout
+}
+
+const fingerprintFromProbe = (
+  target: EnvironmentCaptureTarget,
+  stdout: string
+): string | undefined => {
   if (stdout.includes('UNWATCHABLE\t')) return undefined
+  // WATCH lines only feed the stat observer; keep historical fingerprints byte-compatible.
+  const evidence = stdout
+    .split('\n')
+    .filter((line) => !line.startsWith('WATCH\t'))
+    .join('\n')
   // Cached inventories must be refreshed when the reader gains new evidence fields, even
   // when the installed files are unchanged. Do not rewrite historical manifest snapshots.
   const inventoryScript =
     target.language === 'python' ? PYTHON_INVENTORY_SCRIPT : R_INVENTORY_SCRIPT
-  return sha256(`${target.language}\n${sha256(inventoryScript)}\n${stdout}`)
+  return sha256(`${target.language}\n${sha256(inventoryScript)}\n${evidence}`)
 }
 
 class EnvironmentStateTracker {
@@ -961,6 +981,7 @@ class EnvironmentStateTracker {
   private readonly execute: EnvironmentExecFile
   private readonly targetQueues = new Map<string, Promise<void>>()
   private readonly environmentLockCapture = new EnvironmentLockCaptureOwner()
+  private readonly fingerprintObserver = new EnvironmentFingerprintObserver()
 
   constructor(private readonly options: EnvironmentStateTrackerOptions) {
     this.platform = options.platform ?? process.platform
@@ -979,7 +1000,17 @@ class EnvironmentStateTracker {
         ))
     this.captureFingerprint =
       options.captureFingerprint ??
-      ((target) => captureFingerprintDefault(target, this.platform, execute))
+      ((target) =>
+        this.fingerprintObserver.capture(
+          this.fingerprintObservationKey(target),
+          {
+            language: target.language,
+            executable: target.command,
+            environment: environmentCaptureProcessEnv(target, process.env, this.platform)
+          },
+          () => runFingerprintProbe(target, this.platform, execute),
+          (stdout) => fingerprintFromProbe(target, stdout)
+        ))
     this.now = options.now ?? (() => new Date())
     this.operationLogLimits = options.operationLogLimits ?? {
       maxEntries: MAX_OPERATION_LOG_ENTRIES,
@@ -1283,6 +1314,7 @@ class EnvironmentStateTracker {
     intent: PackageMutationIntent
   ): Promise<void> {
     await this.serializeTarget(target, async () => {
+      this.fingerprintObserver.forget(this.fingerprintObservationKey(target))
       const cache = await this.readBinding(target)
       let beforeInventoryChecksum = cache.inventoryChecksum
       if (beforeInventoryChecksum) {
@@ -1338,6 +1370,7 @@ class EnvironmentStateTracker {
     outcome: PackageMutationOutcome
   ): Promise<PackageMutationVerification> {
     return this.serializeTarget(target, async () => {
+      this.fingerprintObserver.forget(this.fingerprintObservationKey(target))
       const cache = await this.readBinding(target)
       const operation = await this.readOperation(target, outcome.operationId)
       const beforeInventoryChecksum = operation?.beforeInventoryChecksum ?? cache.inventoryChecksum
@@ -1484,6 +1517,10 @@ class EnvironmentStateTracker {
       await this.writeBinding(target, cache)
       return verification
     })
+  }
+
+  private fingerprintObservationKey(target: EnvironmentCaptureTarget): string {
+    return JSON.stringify([this.targetKey(target), target.condaPrefix ?? null])
   }
 
   private targetKey(target: EnvironmentCaptureTarget): string {

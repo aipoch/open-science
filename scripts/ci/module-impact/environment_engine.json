@@ -1,6 +1,7 @@
 {
   "ownerPaths": [
     "packages/environment/src/environment-state-tracker.ts",
+    "packages/environment/src/environment-fingerprint-observer.ts",
     "packages/environment/src/package-mutation.ts",
     "packages/environment/src/environment-discovery.ts",
     "packages/environment/src/environment-lease-manager.ts",
