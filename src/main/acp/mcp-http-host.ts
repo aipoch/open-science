@@ -1,5 +1,19 @@
+import {
+  HarnessToolReceipts,
+  HARNESS_RECEIPTS,
+  HARNESS_INVOCATION,
+  HARNESS_RECEIPT_METHOD,
+  receiptQuerySchema
+} from '../harness-acp/tool-receipts'
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { McpServer } from '@agentclientprotocol/sdk'
+import {
+  createSkillRuntimeMcpServer,
+  environmentFromProcess,
+  isOwnedSkillRuntimeAcpServer,
+  type SkillRuntimeEnvironment
+} from '../skills/runtime-mcp-server'
 
 import type { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -46,6 +60,7 @@ const SERVER_KINDS = [
   'artifact',
   'notebook',
   'skill-import',
+  'skills',
   'plan',
   'host-message',
   'library',
@@ -58,6 +73,8 @@ const isServerKind = (value: string): value is ServerKind =>
 
 // The per-session environment registered for each kind, used to build a fresh MCP server per request.
 type SessionEntry = {
+  receiptScopes?: Partial<Record<ServerKind, string>>
+  skills?: SkillRuntimeEnvironment
   artifact?: ArtifactMcpEnvironment
   notebook?: NotebookMcpEnvironment
   skillImport?: SkillImportMcpEnvironment
@@ -67,6 +84,19 @@ type SessionEntry = {
   library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
   literature?: { handler: LiteratureMcpHandler; token: symbol }
 }
+
+const RECEIPT_AUTHORITY_KEYS = {
+  artifact: 'artifact',
+  notebook: 'notebook',
+  'skill-import': 'skillImport',
+  skills: 'skills',
+  plan: 'planRouteToken',
+  'host-message': 'hostMessage',
+  library: 'library',
+  literature: 'literature'
+} as const
+const receiptAuthority = (entry: SessionEntry | undefined, kind: ServerKind): unknown =>
+  entry?.[RECEIPT_AUTHORITY_KEYS[kind]]
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
   response.writeHead(statusCode, { 'content-type': 'application/json' })
@@ -79,6 +109,7 @@ const writeJson = (response: ServerResponse, statusCode: number, payload: unknow
 // requests are routed by `/mcp/<kind>/<sessionId>`. Stateless: a fresh MCP server + transport is built
 // per request from the registered environment, mirroring the one-server-per-spawn stdio model.
 class AgentMcpHttpHost {
+  private readonly receipts?: HarnessToolReceipts
   private readonly token: string
   private readonly host: string
   private readonly requestBytes: number
@@ -109,7 +140,15 @@ class AgentMcpHttpHost {
     }
   >()
 
-  constructor(options: { token?: string; host?: string; requestBytes?: number } = {}) {
+  constructor(
+    options: {
+      token?: string
+      host?: string
+      requestBytes?: number
+      receiptDirectory?: string
+    } = {}
+  ) {
+    if (options.receiptDirectory) this.receipts = new HarnessToolReceipts(options.receiptDirectory)
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
     this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
@@ -122,7 +161,10 @@ class AgentMcpHttpHost {
     }
 
     const server = createServer((request, response) => {
-      void this.handleRequest(request, response)
+      void this.handleRequest(request, response).catch(() => {
+        if (response.headersSent) response.destroy()
+        else writeJson(response, 500, { error: 'MCP request failed.' })
+      })
     })
     this.server = server
     this.startPromise = new Promise((resolve, reject) => {
@@ -178,6 +220,39 @@ class AgentMcpHttpHost {
     const entry = this.sessions.get(routingId) ?? {}
     entry.skillImport = environment
     this.sessions.set(routingId, entry)
+  }
+
+  registerReceiptScope(routingId: string, scope: string, kind: ServerKind = 'notebook'): void {
+    // Optional services may be installed after Session commit; a scope alone exposes no endpoint.
+    const entry = this.sessions.get(routingId) ?? {}
+    entry.receiptScopes = { ...entry.receiptScopes, [kind]: scope }
+    this.sessions.set(routingId, entry)
+  }
+
+  registerSkillRuntime(server: McpServer): {
+    server: McpServer
+    routingId: string
+    release(): void
+  } {
+    if (!isOwnedSkillRuntimeAcpServer(server) || !('env' in server))
+      throw new Error('Only host-owned Skill loaders may use the HTTP facade')
+    const environment = environmentFromProcess(
+      Object.fromEntries(server.env.map(({ name, value }) => [name, value]))
+    )
+    // Unique per provision: rollback or a stale generation cannot revoke its successor.
+    const routingId = randomUUID()
+    const url = this.urlFor('skills', routingId)
+    this.sessions.set(routingId, { skills: environment })
+    return {
+      routingId,
+      server: {
+        type: 'http',
+        name: server.name,
+        url,
+        headers: [{ name: 'authorization', value: `Bearer ${this.token}` }]
+      },
+      release: () => this.unregister(routingId)
+    }
   }
 
   registerPlan(routingId: string, environment: PlanMcpEnvironment): () => (() => void) | undefined {
@@ -288,14 +363,16 @@ class AgentMcpHttpHost {
 
   // Constructs a fresh MCP server for one request from the registered environment, or undefined when
   // the routing id / kind was never registered.
-  private buildServer(
+  private async buildServer(
     kind: ServerKind,
     routingId: string,
     routeToken?: string
-  ): ModelContextProtocolServer | undefined {
+  ): Promise<ModelContextProtocolServer | undefined> {
     const entry = this.sessions.get(routingId)
 
     if (!entry) return undefined
+    if (kind === 'skills')
+      return entry.skills ? createSkillRuntimeMcpServer(entry.skills) : undefined
 
     if (kind === 'artifact') {
       if (!entry.artifact) return undefined
@@ -357,18 +434,33 @@ class AgentMcpHttpHost {
 
     const kind = match[1]
     const routingId = decodeURIComponent(match[2])
-    const server = this.buildServer(kind, routingId, url.searchParams.get('token') ?? undefined)
+    const registered = this.sessions.get(routingId)
+    const authority = receiptAuthority(registered, kind)
+    const server = await this.buildServer(
+      kind,
+      routingId,
+      url.searchParams.get('token') ?? undefined
+    )
+
+    if (this.sessions.get(routingId) !== registered) {
+      await server?.close()
+      writeJson(response, 404, { error: 'MCP session was revoked during preparation.' })
+      return
+    }
 
     if (!server) {
       writeJson(response, 404, { error: `No registered ${kind} MCP session: ${routingId}` })
       return
     }
 
-    // Stateless: JSON responses, no persisted transport session. One server+transport per request,
-    // torn down when the response closes.
+    if (this.receipts) {
+      server.server.registerCapabilities({ experimental: { [HARNESS_RECEIPTS]: {} } })
+    }
+    // Long-running Notebook/Plan calls need SSE to deliver progress while execution/review waits.
+    // Transport sessions remain stateless and are torn down when the response closes.
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
-      enableJsonResponse: true
+      enableJsonResponse: kind !== 'notebook' && kind !== 'plan'
     })
     response.on('close', () => {
       void transport.close()
@@ -439,6 +531,39 @@ class AgentMcpHttpHost {
             })
           : undefined
       if (response.destroyed) return
+      if (this.receipts && isJSONRPCRequest(body)) {
+        const scope = registered?.receiptScopes?.[kind]
+        const current = (): boolean =>
+          this.sessions.get(routingId) === registered &&
+          receiptAuthority(registered, kind) === authority &&
+          registered?.receiptScopes?.[kind] === scope
+        if (body.method === HARNESS_RECEIPT_METHOD) {
+          if (!scope) throw new Error('Tool receipt scope is unavailable')
+          const result = await this.receipts.read(scope, receiptQuerySchema.parse(body.params))
+          if (!current()) throw new Error('Tool receipt scope was revoked')
+          writeJson(response, 200, { jsonrpc: '2.0', id: body.id, result })
+          return
+        }
+        const invocationId =
+          body.params?._meta && (body.params._meta as Record<string, unknown>)[HARNESS_INVOCATION]
+        if (body.method === 'tools/call' && invocationId !== undefined) {
+          if (!scope) throw new Error('Tool receipt scope is unavailable')
+          const query = receiptQuerySchema.parse({
+            invocationId,
+            name: body.params?.name,
+            arguments: body.params?.arguments ?? {}
+          })
+          await this.receipts.begin(scope, query)
+          if (!current()) throw new Error('Tool receipt scope was revoked')
+          const send = transport.send.bind(transport)
+          transport.send = async (message, options) => {
+            if ('id' in message && message.id === body.id && 'result' in message) {
+              await this.receipts!.complete(scope, query, message.result)
+            }
+            await send(message, options)
+          }
+        }
+      }
       await transport.handleRequest(request, response, body)
     } catch (error) {
       this.readingToolRequests.delete(response)

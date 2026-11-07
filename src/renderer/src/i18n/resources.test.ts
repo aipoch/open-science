@@ -5018,6 +5018,7 @@ const NOT_TRANSLATABLE = new Set([
   'PubMed',
   'Crossref',
   // Provider brand names rendered inside decorative/internal SVG marks.
+  'AIPOCH',
   'Claude',
   'Codex',
   'opencode',

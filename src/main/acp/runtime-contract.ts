@@ -407,6 +407,11 @@ export type AcpRuntimeNotebookOptions = {
     materializeOnly?: boolean
   }) => Promise<readonly NotebookPromptInput[] | void>
   peekHandoffContext?: (sessionId: string) => NotebookHandoffContext | undefined
+  isReplNamespaceUnavailable?: (
+    projectId: string,
+    sessionId: string,
+    rootFrameId?: string
+  ) => boolean
 }
 
 export type AcpRuntimeSkillImportOptions = {

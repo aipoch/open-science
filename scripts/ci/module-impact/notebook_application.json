@@ -1,5 +1,9 @@
 {
   "ownerPaths": [
+    "src/main/notebook/harness-mcp-turn.ts",
+    "src/main/notebook/harness-mcp-turn.integration.test.ts",
+    "src/main/notebook/harness-tools.ts",
+    "src/main/notebook/harness-tools.integration.test.ts",
     "src/main/notebook/application-commands.test.ts",
     "src/main/notebook/application-commands.ts",
     "src/main/notebook/application.test.ts",
@@ -135,6 +139,8 @@
     "src/main/notebook/authorized-directories.integration.test.ts"
   ],
   "interfacePaths": [
+    "src/main/notebook/harness-mcp-turn.ts",
+    "src/main/notebook/harness-tools.ts",
     "src/main/notebook/application-commands.ts",
     "src/main/notebook/application.ts",
     "src/main/notebook/conditional-restore-script.ts",
@@ -228,6 +234,8 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/notebook/harness-mcp-turn.integration.test.ts",
+      "src/main/notebook/harness-tools.integration.test.ts",
       "src/main/notebook/application-commands.test.ts",
       "src/main/notebook/application.test.ts",
       "src/main/notebook/cell-execution-input.test.ts",

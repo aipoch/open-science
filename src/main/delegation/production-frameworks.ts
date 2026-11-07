@@ -16,6 +16,7 @@ import type {
   AcpDelegateRuntime,
   PreparedDelegateExecution
 } from './acp-execution'
+import { createAcpDelegateExecution } from './acp-execution'
 import { createClaudeCodeDelegateExecution } from './claude-code-execution'
 import {
   createCodexDelegateExecution,
@@ -185,6 +186,25 @@ const createProductionDelegatedFrameworks = (
         frameworkId,
         execution,
         async assertAvailable() {
+          await certification.assertProviderAvailable()
+        }
+      })
+    }
+    if (frameworkId === 'open-science-agent') {
+      const execution = createAcpDelegateExecution({
+        capacity: options.capacity,
+        prepare: (input) => certification.prepare(input),
+        assertFrameworkNativeDelegationDisabled: (scope) => {
+          // The built-in ACP entry injects only host MCP tools, never package delegate_task.
+          if (scope.frameworkId !== 'open-science-agent')
+            throw new Error('Mismatched built-in delegation scope')
+        },
+        createRuntime: (scope, callbacks) => certification.createRuntime(scope, callbacks)
+      })
+      return Object.freeze({
+        frameworkId,
+        execution,
+        assertAvailable: async () => {
           await certification.assertProviderAvailable()
         }
       })

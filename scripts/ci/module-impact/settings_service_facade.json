@@ -1,5 +1,16 @@
 {
   "ownerPaths": [
+    "src/main/settings/harness-turn.ts",
+    "src/main/settings/harness-context.ts",
+    "src/main/settings/harness-turn-journal.ts",
+    "src/main/settings/harness-turn-journal.test.ts",
+    "src/main/settings/harness-turn-usage.ts",
+    "src/main/settings/harness-turn-usage.test.ts",
+    "src/main/settings/harness-model-request.ts",
+    "src/main/settings/harness-model-request.test.ts",
+    "src/main/settings/harness-session-owner.ts",
+    "src/main/settings/harness-session-owner.test.ts",
+    "src/main/settings/harness-session-lifecycle.integration.test.ts",
     "src/main/settings/service.ts",
     "src/main/settings/network-proxy-settings-owner.ts",
     "src/main/settings/settings-snapshot-commit-owner.ts",
@@ -24,6 +35,12 @@
     "src/main/settings/file-commands.test.ts"
   ],
   "interfacePaths": [
+    "src/main/settings/harness-turn.ts",
+    "src/main/settings/harness-context.ts",
+    "src/main/settings/harness-turn-journal.ts",
+    "src/main/settings/harness-turn-usage.ts",
+    "src/main/settings/harness-model-request.ts",
+    "src/main/settings/harness-session-owner.ts",
     "src/main/settings/service.ts",
     "src/main/settings/application-commands.ts",
     "src/main/settings/runtime-application-commands.ts",
@@ -38,6 +55,11 @@
   "consumerModules": ["workspace_runtime"],
   "testFiles": {
     "owner": [
+      "src/main/settings/harness-turn-journal.test.ts",
+      "src/main/settings/harness-turn-usage.test.ts",
+      "src/main/settings/harness-model-request.test.ts",
+      "src/main/settings/harness-session-owner.test.ts",
+      "src/main/settings/harness-session-lifecycle.integration.test.ts",
       "src/main/settings/settings-backend.architecture.test.ts",
       "src/main/settings/settings-snapshot-commit-owner.test.ts",
       "src/main/settings/network-proxy-settings.test.ts",
@@ -64,9 +86,12 @@
       "src/preload/electron-renderer-contract-adapter.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/preload/index.test.ts",
-      "src/main/host-layer-dependencies.architecture.test.ts"
+      "src/main/host-layer-dependencies.architecture.test.ts",
+      "src/renderer/src/stores/session-store-compaction-gate.test.ts"
     ],
     "consumer": [
+      "src/main/notebook/harness-tools.integration.test.ts",
+      "scripts/agent-harness-smoke.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/notebook-environment.test.ts",
       "src/main/web-service/http-server.test.ts",

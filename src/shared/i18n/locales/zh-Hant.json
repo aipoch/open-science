@@ -7877,14 +7877,17 @@
     "{{done}} of {{total}} finished": "已處理 {{done}} / {{total}} 篇",
     "{{count}} failed overviews_other": "{{count}} 篇速覽產生失敗",
     "Could not load the overview. Try again.": "無法載入速覽，請重試。",
-    "Could not save network rules. Reopen this page and try again.": "無法儲存網路規則。請重新開啟此頁面後再試。",
-    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "HTTPS 網域無需審批即可存取，包括 localhost 和私有網路。HTTP 和 IP 位址直接連線需要授權。",
+    "Could not save network rules. Reopen this page and try again.": "無法儲存網路規則。請重新開啟此頁面後重試。",
+    "HTTPS domains are allowed without approval, including localhost and private networks. HTTP and direct IP connections require authorization.": "HTTPS 網域無需核准即可存取，包括 localhost 和私有網路。HTTP 和 IP 位址直連需要授權。",
     "HTTPS domains already work without an exception. Use HTTP or an IP address.": "HTTPS 網域無需例外即可存取。請使用 HTTP 或 IP 位址。",
     "Trusted unsafe networks": "受信任的不安全網路",
-    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "為指定協定、主機和連接埠授權 HTTP 或 IP 位址直接連線存取。",
+    "Authorize HTTP or direct IP access to an exact protocol, host and port.": "為指定通訊協定、主機和連接埠授權 HTTP 或 IP 位址直連存取。",
     "Configure unsafe network exceptions in the local desktop app.": "請在本機桌面應用程式中設定不安全網路例外。",
-    "No trusted unsafe networks.": "尚無受信任的不安全網路。",
-    "Review unsafe network access": "審核不安全網路存取",
-    "Add network exception": "新增網路例外"
+    "No trusted unsafe networks.": "目前沒有受信任的不安全網路。",
+    "Review unsafe network access": "檢閱不安全網路存取",
+    "Add network exception": "新增網路例外",
+    "Built-in experimental agent. Uses your API account and managed tools.": "內建實驗性智能體。使用您的 API 帳戶和受管理工具。",
+    "Check the interrupted tool result": "核對中斷的工具呼叫結果",
+    "The tool may have changed files or an external service. Check its actual result before continuing. Export diagnostics to identify the call, then start a new conversation with the verified state. This conversation will not repeat the uncertain operation.": "工具可能已變更檔案或外部服務。請先核對實際結果。匯出診斷資訊以識別呼叫，然後以已驗證的狀態開始新對話。本對話不會重複執行結果不確定的操作。"
   }
 }

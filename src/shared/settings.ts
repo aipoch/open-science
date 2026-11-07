@@ -229,6 +229,11 @@ export const isProviderUsableByFramework = (
   provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType },
   framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
+  if (
+    framework.id === 'open-science-agent' &&
+    !['custom', 'official', 'xai-subscription'].includes(provider.type)
+  )
+    return false
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
   // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
   // claude-code knows how to read; OpenCode receives neither an endpoint nor a token.
@@ -735,6 +740,7 @@ export type Preflight = {
   codebuddyReady: boolean
   codexReady: boolean
   // Missing on older Main processes; Pi is selectable only when Main reports true.
+  openScienceAgentReady?: boolean
   piReady?: boolean
   // Location of the separately installed Pi ACP adapter, reported while a managed installation exists.
   piRuntimePath?: string

@@ -105,7 +105,7 @@ export function loadModuleImpactManifest(
 // Read candidate blobs as data using trusted code, without checking out or executing them.
 export function loadModuleImpactManifestAtRevision(revision, { cwd = process.cwd() } = {}) {
   const git = (...args) =>
-    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 })
   const entries = git(
     'ls-tree',
     '-r',
@@ -135,7 +135,7 @@ export function loadModuleImpactManifestAtRevision(revision, { cwd = process.cwd
   const batch = execFileSync('git', ['cat-file', '--batch'], {
     cwd,
     input: ids.join('\n') + '\n',
-    maxBuffer: 16 * 1024 * 1024
+    maxBuffer: 128 * 1024 * 1024
   })
   const contents = new Map()
   let offset = 0

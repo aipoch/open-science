@@ -30,10 +30,13 @@ export function sourceSnapshot(revision, cwd) {
         .map(([, entry]) => entry.oid)
     )
   ]
+  // The repository's source snapshot is larger than Node's default child-process
+  // buffer. Keep the explicit bound above the current snapshot size so CI impact
+  // planning does not fail with ENOBUFS as the repository grows.
   const batch = execFileSync('git', ['cat-file', '--batch'], {
     cwd,
     input: ids.join('\n') + '\n',
-    maxBuffer: 128 * 1024 * 1024
+    maxBuffer: 512 * 1024 * 1024
   })
   const contents = new Map()
   let offset = 0

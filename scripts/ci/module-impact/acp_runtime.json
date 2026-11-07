@@ -245,7 +245,9 @@
     "src/main/acp/opencode-service.test.ts",
     "src/main/acp/opencode-store.ts",
     "src/main/acp/opencode-store.test.ts",
-    "src/main/acp/opencode-v2.integration.test.ts"
+    "src/main/acp/opencode-v2.integration.test.ts",
+    "src/main/acp/harness-turn-adapter.ts",
+    "src/main/acp/harness-turn-adapter.test.ts"
   ],
   "interfacePaths": [
     "src/main/acp/agent-process.ts",
@@ -426,7 +428,8 @@
       "src/main/acp/opencode-compaction-stream.test.ts",
       "src/main/acp/opencode-service.test.ts",
       "src/main/acp/opencode-store.test.ts",
-      "src/main/acp/opencode-v2.integration.test.ts"
+      "src/main/acp/opencode-v2.integration.test.ts",
+      "src/main/acp/harness-turn-adapter.test.ts"
     ],
     "contract": [
       "src/main/agent-framework/app-mcp-names.test.ts",

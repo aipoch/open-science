@@ -65,6 +65,7 @@ const expectedFrameworkForReplayTarget = (
     opencode: 'opencode',
     codebuddy: 'codebuddy',
     pi: 'pi',
+    'open-science-agent': 'open-science-agent',
     'codex-response': 'codex',
     'codex-bridge': 'codex'
   }

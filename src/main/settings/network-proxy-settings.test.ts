@@ -171,6 +171,7 @@ describe('Network proxy settings persistence', () => {
   it('keeps persisted and runtime proxy order aligned across concurrent saves', async () => {
     let stored = createEmptySettings()
     const repository = {
+      subscribeProviders: vi.fn(() => () => undefined),
       getSettings: vi.fn(async () => stored),
       setNetworkProxy: vi.fn(async (networkProxy) => {
         stored = { ...stored, networkProxy }

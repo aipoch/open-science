@@ -7,6 +7,8 @@ import {
   inspectOwnedLinuxAppImageLauncher,
   inspectInstallationProcesses,
   inspectInstallationProcessesAsync,
+  inspectProcessNames,
+  inspectProcessNamesAsync,
   parseDarwinProcessNames
 } from './installation-occupancy'
 
@@ -450,6 +452,32 @@ describe('macOS process names', () => {
         [45, 'Example App']
       ])
     )
+  })
+
+  it('looks up names asynchronously without using synchronous ps', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+    const signal = new AbortController().signal
+    mocks.run.mockResolvedValue({
+      stdout: ' 321 /System/Library/Frameworks/StoreKit.framework/Support/storekitagent\n',
+      stderr: ''
+    })
+
+    await expect(inspectProcessNamesAsync([321], signal)).resolves.toEqual(
+      new Map([[321, 'storekitagent']])
+    )
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
+    expect(mocks.run).toHaveBeenCalledWith('/bin/ps', ['-o', 'pid=,comm=', '-p', '321'], {
+      signal,
+      timeoutMs: 5_000,
+      maxBytes: 1024 * 1024
+    })
+  })
+
+  it('does not synchronously query ps on macOS', () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin')
+
+    expect(inspectProcessNames([321])).toEqual(new Map())
+    expect(mocks.spawnSync).not.toHaveBeenCalled()
   })
 })
 

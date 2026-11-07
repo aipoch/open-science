@@ -281,19 +281,11 @@ export function parseDarwinProcessNames(psOutput: string): Map<number, string> {
   return names
 }
 
-/** Best-effort process name lookup for diagnostics only; never used for occupancy determination. */
+/** Synchronous process name lookup for diagnostics only; macOS uses the async variant. */
 export function inspectProcessNames(pids: number[]): Map<number, string> {
   const names = new Map<number, string>()
   if (pids.length === 0) return names
-  if (process.platform === 'darwin') {
-    const result = spawnSync('/bin/ps', ['-o', 'pid=,comm=', '-p', pids.join(',')], {
-      encoding: 'utf8',
-      timeout: 5_000,
-      maxBuffer: 1024 * 1024
-    })
-    if (result.status === 0)
-      for (const [pid, name] of parseDarwinProcessNames(result.stdout)) names.set(pid, name)
-  } else if (process.platform === 'linux') {
+  if (process.platform === 'linux') {
     for (const pid of pids) {
       try {
         const comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
@@ -302,6 +294,28 @@ export function inspectProcessNames(pids: number[]): Map<number, string> {
         // Process exited or inaccessible; diagnostic only, no occupancy impact.
       }
     }
+  }
+  return names
+}
+
+/** Best-effort asynchronous process name lookup for update diagnostics. */
+export async function inspectProcessNamesAsync(
+  pids: number[],
+  signal?: AbortSignal
+): Promise<Map<number, string>> {
+  const names = new Map<number, string>()
+  if (pids.length === 0) return names
+  if (process.platform !== 'darwin') return inspectProcessNames(pids)
+  try {
+    const { runVerificationProcess } = await import('./verification-process')
+    const { stdout } = await runVerificationProcess(
+      '/bin/ps',
+      ['-o', 'pid=,comm=', '-p', pids.join(',')],
+      { signal, timeoutMs: 5_000, maxBytes: 1024 * 1024 }
+    )
+    for (const [pid, name] of parseDarwinProcessNames(stdout)) names.set(pid, name)
+  } catch {
+    signal?.throwIfAborted()
   }
   return names
 }

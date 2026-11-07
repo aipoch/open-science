@@ -285,6 +285,8 @@ const createFakeRuntime = (options: {
         return true
       }
     ),
+    getSessionFramework: (sessionId: string) =>
+      snapshot.sessionIds.includes(sessionId) ? options.frameworkId : undefined,
     getSnapshot: () => snapshot,
     getState: () => toAcpStateCommandResponse({ ...snapshot, revision: 0 }).result,
     getActivePromptSessions: () => options.activePromptSessions ?? [],
@@ -3404,6 +3406,19 @@ describe('AcpRuntimeCoordinator', () => {
     expect(result).toEqual({ contextReset: false })
   })
 
+  it('leaves cold Specialist bindings for durable resume without allocating the default runtime', async () => {
+    const createRuntime = vi.fn(
+      (callbacks: AcpRuntimeCallbacks) =>
+        createFakeRuntime({ frameworkId: 'claude-code', sessionIds: [], callbacks }).runtime
+    )
+    const coordinator = new AcpRuntimeCoordinator(createRuntime)
+    createRuntime.mockClear()
+    await expect(coordinator.switchSpecialist('cold-session', 'specialist')).resolves.toEqual({
+      contextReset: false
+    })
+    expect(createRuntime).not.toHaveBeenCalled()
+  })
+
   it('retains unattended policy only for continuations of the same originating user prompt', async () => {
     let fake!: ReturnType<typeof createFakeRuntime>
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -3415,7 +3430,12 @@ describe('AcpRuntimeCoordinator', () => {
       sessionId,
       text: 'Unattended',
       permissionPrompts: 'none',
-      provenanceContext: { promptMessageId: 'original' }
+      provenanceContext: {
+        promptMessageId: 'original',
+        agentFrameId: 'frame',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment'
+      }
     })
     await coordinator.sendAppContinuation({
       sessionId,
@@ -3423,7 +3443,13 @@ describe('AcpRuntimeCoordinator', () => {
       provenanceContext: { promptMessageId: 'original' }
     })
     expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
-      permissionPrompts: 'none'
+      permissionPrompts: 'none',
+      provenanceContext: {
+        promptMessageId: 'original',
+        agentFrameId: 'frame',
+        messageBranchId: 'branch',
+        runtimeSegmentId: 'segment'
+      }
     })
     await coordinator.sendAppContinuation({
       sessionId,
@@ -3441,6 +3467,9 @@ describe('AcpRuntimeCoordinator', () => {
       provenanceContext: { promptMessageId: 'other' }
     })
     expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+    expect(
+      fake.sendAppContinuation.mock.calls.at(-1)?.[0].provenanceContext?.agentFrameId
+    ).toBeUndefined()
     await coordinator.sendPrompt({
       sessionId,
       text: 'Interactive',
@@ -8300,4 +8329,59 @@ it('reports a failed cold create before cleanup while retaining the enclosing wo
   retirement.resolve()
   await vi.waitFor(() => expect(writerActive).toBe(false))
   expect(release).toHaveBeenCalledOnce()
+})
+
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy', 'pi', 'open-science-agent'] as const)(
+  'retries only uncommitted Skill reload admission after releasing its writer (%s)',
+  async (frameworkId) => {
+    const attached = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId,
+        callbacks,
+        sessionIds: [],
+        ...(created.length === 1 ? { afterResumeAttached: () => attached.promise } : {})
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    await coordinator.requestSkillsReload()
+    const resume = coordinator.resumeSession({
+      sessionId: session.sessionId,
+      cwd: '/workspace',
+      previousFrameworkId: frameworkId
+    })
+    await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledOnce())
+    await coordinator.requestSkillsReload()
+    attached.resolve()
+    await expect(resume).resolves.toMatchObject({ sessionId: session.sessionId })
+    expect(created[1].runtime.captureSessionResumeCleanup).toHaveBeenCalledOnce()
+    expect(created[2].resumeSession).toHaveBeenCalledOnce()
+    expect(created.every((runtime) => runtime.sendPrompt.mock.calls.length === 0)).toBe(true)
+    await coordinator.disconnect()
+  }
+)
+
+it('bounds repeated Skill invalidation during admission without sending a prompt', async () => {
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({
+      frameworkId: 'open-science-agent',
+      callbacks,
+      sessionIds: [],
+      ...(created.length ? { afterResumeAttached: () => coordinator.requestSkillsReload() } : {})
+    })
+    created.push(fake)
+    return fake.runtime
+  })
+  const session = await coordinator.createSession()
+  await coordinator.requestSkillsReload()
+  await expect(
+    coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+  ).rejects.toThrow('superseded')
+  expect(created.reduce((sum, runtime) => sum + runtime.resumeSession.mock.calls.length, 0)).toBe(3)
+  expect(created.every((runtime) => runtime.sendPrompt.mock.calls.length === 0)).toBe(true)
+  await coordinator.disconnect()
 })

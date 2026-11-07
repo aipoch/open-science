@@ -402,6 +402,7 @@ describe('history replay target resolution', () => {
   it('uses the provider endpoint contract to distinguish direct Responses and bridge Codex', () => {
     expect(resolveHistoryReplayTarget('claude-code')).toBe('claude-code')
     expect(resolveHistoryReplayTarget('opencode')).toBe('opencode')
+    expect(resolveHistoryReplayTarget('open-science-agent')).toBe('open-science-agent')
     expect(resolveHistoryReplayTarget('codex', provider(['responses']), codex)).toBe(
       'codex-response'
     )

@@ -130,7 +130,8 @@ describe('HostViewImageService', () => {
     ['codex', 'codex-responses'],
     ['codex', 'codex-responses-compatibility'],
     ['codex', 'codex-bridge'],
-    ['codebuddy', 'codebuddy-openai']
+    ['codebuddy', 'codebuddy-openai'],
+    ['open-science-agent', 'open-science-agent']
   ] as const)('certifies the visual %s/%s route', (frameworkId, modelRoute) => {
     expect(
       isHostViewImageBackendCertified(
@@ -151,6 +152,12 @@ describe('HostViewImageService', () => {
 
   it.each([
     visualBackend({ supportsImageInput: false }),
+    visualBackend({
+      frameworkId: 'open-science-agent',
+      modelRoute: 'open-science-agent',
+      supportsImageInput: false
+    }),
+    visualBackend({ frameworkId: 'open-science-agent', modelRoute: 'opencode-openai' }),
     visualBackend({ frameworkId: 'codex', modelRoute: 'codex-bridge', supportsImageInput: false }),
     visualBackend({ frameworkId: 'claude-code', modelRoute: 'opencode-openai' }),
     visualBackend({ frameworkId: 'unknown', modelRoute: undefined })

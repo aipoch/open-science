@@ -7,6 +7,118 @@ import {
   QUIT_SHUTDOWN_BUDGET_MS,
   type BackendShutdownDeps
 } from './lifecycle-shutdown'
+import { createQuitPreparation, AUTHENTICATION_QUIT_BUDGET_MS } from './lifecycle-shutdown'
+
+describe('authentication-aware quit preparation', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('coalesces preparation and drains authentication concurrently with producers', async () => {
+    let finish!: () => void
+    const settled = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const release = vi.fn()
+    const prepareAgent = vi.fn(async () => 'completed' as const)
+    const prepareBackends = vi.fn(async () => 'completed' as const)
+    const owner = createQuitPreparation({
+      quiesceAuthentication: () => ({ settled, release }),
+      prepareAgent,
+      prepareBackends,
+      abortAgent: vi.fn(),
+      resumeSideChat: vi.fn()
+    })
+    const pending = owner.prepareForQuit()
+    expect(owner.prepareForQuit()).toBe(pending)
+    await vi.waitFor(() => expect(prepareBackends).toHaveBeenCalledOnce())
+    expect(release).not.toHaveBeenCalled()
+    finish()
+    await expect(pending).resolves.toBe('completed')
+    expect(release).not.toHaveBeenCalled()
+    owner.abortQuitPreparation()
+    owner.abortQuitPreparation()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('aborts the wait promptly and fences late producer completion from a subsequent attempt', async () => {
+    vi.useFakeTimers()
+    let finishOld!: (result: 'completed') => void
+    const prepareAgent = vi
+      .fn<() => Promise<'completed'>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve
+          })
+      )
+      .mockResolvedValue('completed')
+    const prepareBackends = vi.fn(async () => 'completed' as const)
+    const release = vi.fn()
+    const owner = createQuitPreparation({
+      quiesceAuthentication: () => ({ settled: Promise.resolve(), release }),
+      prepareAgent,
+      prepareBackends,
+      abortAgent: vi.fn(),
+      resumeSideChat: vi.fn()
+    })
+    const old = owner.prepareForQuit()
+    await vi.advanceTimersByTimeAsync(0)
+    owner.abortQuitPreparation()
+    await expect(old).resolves.toBe('failed')
+    expect(vi.getTimerCount()).toBe(0)
+    const current = owner.prepareForQuit()
+    finishOld('completed')
+    await expect(current).resolves.toBe('completed')
+    expect(prepareBackends).toHaveBeenCalledOnce()
+    expect(release).toHaveBeenCalledOnce()
+    owner.abortQuitPreparation()
+  })
+
+  it('drains credential writes even when producer preparation rejects', async () => {
+    const write = Promise.withResolvers<void>()
+    const done = vi.fn()
+    const owner = createQuitPreparation({
+      quiesceAuthentication: () => ({ settled: write.promise, release: vi.fn() }),
+      prepareAgent: async () => {
+        throw new Error('producer failed')
+      },
+      prepareBackends: vi.fn(),
+      abortAgent: vi.fn(),
+      resumeSideChat: vi.fn()
+    })
+    const ready = owner.prepareForQuit().then(done)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(done).not.toHaveBeenCalled()
+    write.resolve()
+    await ready
+    expect(done).toHaveBeenCalledWith('failed')
+    owner.abortQuitPreparation()
+  })
+
+  it.each(['failed', 'timeout'] as const)(
+    'does not call an unfinished authentication drain completed: %s',
+    async (result) => {
+      vi.useFakeTimers()
+      const release = vi.fn()
+      const owner = createQuitPreparation({
+        quiesceAuthentication: () => ({
+          settled:
+            result === 'failed' ? Promise.reject(new Error('write failed')) : new Promise(() => {}),
+          release
+        }),
+        prepareAgent: async () => 'completed',
+        prepareBackends: async () => 'completed',
+        abortAgent: vi.fn(),
+        resumeSideChat: vi.fn()
+      })
+      const ready = owner.prepareForQuit()
+      await vi.advanceTimersByTimeAsync(AUTHENTICATION_QUIT_BUDGET_MS)
+      await expect(ready).resolves.toBe(result)
+      expect(release).not.toHaveBeenCalled()
+      owner.abortQuitPreparation()
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
+})
 
 // Builds a fresh set of injectable fakes; individual tests override behavior as needed. Both teardowns
 // default to a clean reaped result.

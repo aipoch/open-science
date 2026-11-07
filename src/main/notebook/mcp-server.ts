@@ -40,7 +40,7 @@ const NOTEBOOK_MCP_PROGRESS_HEARTBEAT_MS = 30_000
 const MAX_RUNTIME_RESULTS = 40
 const MAX_ENVIRONMENT_RESULTS = 30
 const HOST_SDK_DISCOVERY_GUIDANCE =
-  "`await host.help()` in `repl_execute`: role-aware catalog with field descriptions; query needed topics only. Main/root agents: `await host.help('delegate')`; do not prefetch all topics. Delegate agents should use the same catalog; unavailable root-only topics remain visible."
+  "Use documented calls directly. Unknown options: `return JSON.stringify(await host.help('topic'))` gives field descriptions; `host.help()` is the role-aware catalog. Do not guess or inspect function source; do not prefetch topics. Check availability: catalog visibility does not grant access."
 const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
   'Save runId. Query background_run with action:"query" and the exact runId when relevant. It is a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means the query prevented fallback; "committed" means fallback crossed the dispatch fence. Unread results arrive in a follow-up Turn.'
 
@@ -51,10 +51,9 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Guidance only applies when using open-science-notebook tools.',
   'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
-  'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
-  HOST_SDK_DISCOVERY_GUIDANCE,
+  'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Connectors require `repl_execute`; respect `host.capabilities()`.',
+  'Use the call forms in `repl_execute`; batch known independent operations when safe.',
   'Connector documents: use loaded text or the framework Skill loader, never Shell/REPL. `host.skills` manages authored Skills. If neither is available, stop and report.',
-  '`manage_environments` creates separate runtimes and returns `created.runtimeId`; bind/switch them and move data with files.',
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
@@ -266,12 +265,14 @@ const SWITCH_RUNTIME_DOC = [
 const REPL_EXECUTE_DOC = [
   'Run JavaScript in the persistent control-plane REPL, separate from notebook_execute Python/R data kernels.',
   "This is a CommonJS REPL: load Node modules with `require('node:fs')`, not dynamic `import()`.",
-  'Gate optional namespaces with `await host.capabilities()`; `self-awareness` documents its boolean contract and capability map.',
-  'Only this kernel supports temporary tool-less inference via `await host.llm(prompt)` or bounded batches, connectors via `await host.mcp(server, method, args)`, remote compute via `host.compute`, and Specialists via `host.agents`. Discover namespaces with `host.help()`.',
-  'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
+  'Gate optional namespaces with `await host.capabilities()`; see `self-awareness`.',
+  'Host SDK: `host.llm(prompt)` for tool-less inference; `host.mcp(server, method, args)` for connectors; `host.compute` for jobs; `host.agents` for Specialists.',
+  'Load Remote Compute (SSH) for jobs; Compute Environment Setup for environment setup/repair.',
   HOST_SDK_DISCOVERY_GUIDANCE,
-  'Use foreground for results needed now, background:true for longer independent work. Background-safe: host.mcp, host.compute, host.llm, host.delegate and read-only Host SDK calls. host.viewImage, host.agents.switch and live user input are unsafe in background; use foreground. Save runId; avoid frequent polling. Turn end/MCP disconnect leaves accepted Runs active; cancel via background_run. On BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Declarations/globals persist until restart/process loss; top-level return/await and redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
+  'Images: `await host.viewImage({ path: "plot.png" })` or `{ versionId: "..." }`, never a string.',
+  'Main/root agents: `await host.delegate({ name: "Check", task: "Self-contained assignment" }, { wait: true })`. Omit profile to inherit the parent; "Main Agent" is not a profile. Other profiles: exact id/name from host.agents.list(). Options/results: `host.help(\'delegate\')`. Delegate agents cannot delegate.',
+  'Foreground for results needed now, host.viewImage, host.agents.switch and user input. background:true supports host.mcp, host.compute, host.llm, host.delegate and read-only calls. Save runId; query/cancel via background_run, without frequent polling. Accepted Runs survive turn end/disconnect. BACKGROUND_HOST_METHOD_UNSAFE requires foreground.',
+  'Restored conversation history does not restore variables after app/process restart. Reconstruct values from verified history/files; never probe old variable names or replay side-effecting calls. Within a live process, globals persist; top-level return/await and redeclaration work. Return JSON.stringify(value) for objects. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.

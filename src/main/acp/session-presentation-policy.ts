@@ -219,7 +219,7 @@ class AcpSessionPresentationPolicy {
       ],
       turnPromptReminders: input.tooling.notebook
         ? [
-            'Before the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules.'
+            'Before the first local file operation after session creation or resume, call list_authorized_directories again; lists from restored history are not current. After that, follow its reuse rules. Pure in-memory computation needs no directory query.'
           ]
         : [],
       sessionOptions: input.sessionOptions,
@@ -304,9 +304,12 @@ class AcpSessionPresentationPolicy {
 
   private systemPromptAppends(input: AcpSessionSetupPresentationInput): string[] {
     if (input.persistentSystemPrompt) return [...(input.extraSystemPromptAppends ?? [])]
+    const application = this.applicationSystemPromptAppends(input.tooling, input.role)
+    // Some backends carry the same stable appends from connection setup. Emit each only once;
+    // leave session-specific instructions untouched, including their deliberate ordering.
     return [
-      ...this.applicationSystemPromptAppends(input.tooling, input.role),
-      ...(input.backendSystemPromptAppends ?? []),
+      ...application,
+      ...(input.backendSystemPromptAppends ?? []).filter((append) => !application.includes(append)),
       ...(input.extraSystemPromptAppends ?? [])
     ]
   }

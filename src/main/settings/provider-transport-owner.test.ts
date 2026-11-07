@@ -11,7 +11,7 @@ import {
   ProtocolForwardingBridge,
   type ProtocolForwardingBridgeTarget
 } from './protocol-forwarding-bridge'
-import type { MessagesBridgeTarget } from './messages-bridge'
+import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
 import type { ChatCompletionsCompatibilityTarget } from './chat-completions-compatibility'
 
 type ResponsesToChatCompletionsBridgeStub = ReturnType<
@@ -136,6 +136,306 @@ const makePlan = (transport: BackendTransportPlan): BackendRoutePlan => ({
   sessionEffort: 'high',
   providerModelCatalog: [],
   transport
+})
+
+describe('ProviderTransportOwner harness leases', () => {
+  const makeHarnessTarget = (): ProviderRuntimeTarget => ({ ...makeTarget(), configRevision: 3 })
+
+  it.each(['responses', 'messages'] as const)(
+    'forwards native %s without conversion and revokes the lease',
+    async (wire) => {
+      const upstream = vi.fn<typeof fetch>(
+        async () =>
+          new Response('data: {"native":true}\n\n', {
+            headers: { 'content-type': 'text/event-stream' }
+          })
+      )
+      const owner = new ProviderTransportOwner({
+        createProtocolForwardingBridge: (targets, id, options) =>
+          new ProtocolForwardingBridge(targets, id, upstream, options),
+        createMessagesBridge: (targets, id, options) =>
+          new MessagesBridge(targets, id, upstream, undefined, options)
+      })
+      const target = makeHarnessTarget()
+      target.apiEndpoints = [wire]
+      target.provider = { ...target.provider, vendorId: 'anthropic', apiEndpoints: [wire] }
+      const lease = await owner.acquireHarness(target, new AbortController().signal)
+      try {
+        expect(lease.route.protocol).toBe(wire)
+        const path = `${lease.connection.baseUrl}/v1/${wire}`
+        expect(
+          (
+            await fetch(path, {
+              method: 'POST',
+              headers: { authorization: 'Bearer wrong' },
+              body: '{}'
+            })
+          ).status
+        ).toBe(401)
+        expect(upstream).not.toHaveBeenCalled()
+        const image = {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'AA==' }
+        }
+        const native =
+          wire === 'messages'
+            ? { messages: [{ role: 'user', content: [image] }], max_tokens: 64 }
+            : {
+                input: [
+                  {
+                    role: 'user',
+                    content: [{ type: 'input_image', image_url: 'data:image/png;base64,AA==' }]
+                  }
+                ]
+              }
+        const result = await fetch(path, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${lease.connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({ ...native, model: 'override', stream: true })
+        })
+        expect(await result.text()).toBe('data: {"native":true}\n\n')
+        const [url, init] = upstream.mock.calls[0]
+        expect(String(url)).toBe(`https://provider.example/v1/${wire}`)
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          ...native,
+          model: 'model-a',
+          stream: true
+        })
+        const headers = new Headers(init?.headers)
+        expect(headers.get(wire === 'messages' ? 'x-api-key' : 'authorization')).toBe(
+          wire === 'messages' ? 'plain-provider-key' : 'Bearer plain-provider-key'
+        )
+      } finally {
+        await lease.release()
+      }
+      await expect(fetch(`${lease.connection.baseUrl}/v1/${wire}`)).rejects.toThrow()
+    }
+  )
+
+  it('selects native Responses with the host-owned xAI OAuth owner', async () => {
+    const bridge = { ...makeOpenAiBridge(0), clearErrorReplay: vi.fn() }
+    const createXaiOAuthProviderBridge = vi.fn(
+      () =>
+        bridge as unknown as ReturnType<
+          NonNullable<ProviderTransportOwnerOptions['createXaiOAuthProviderBridge']>
+        >
+    )
+    const getXaiOAuthAccessToken = vi.fn(async () => 'private')
+    const owner = new ProviderTransportOwner({
+      createXaiOAuthProviderBridge,
+      getXaiOAuthAccessToken
+    })
+    const target = makeHarnessTarget()
+    target.providerType = 'xai-subscription'
+    target.provider = { ...target.provider, type: 'xai-subscription', key: undefined }
+    target.apiEndpoints = ['messages', 'chat-completions', 'responses']
+    const lease = await owner.acquireHarness(target, new AbortController().signal)
+    expect(lease.route.protocol).toBe('responses')
+    expect(createXaiOAuthProviderBridge).toHaveBeenCalledWith(
+      [{ id: lease.route.id, model: 'model-a' }],
+      lease.route.id,
+      'responses',
+      getXaiOAuthAccessToken
+    )
+    await lease.release()
+    expect(bridge.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    { providerType: 'claude-subscription' },
+    { disconnectedAt: 1 },
+    { configRevision: undefined },
+    { configRevision: -1 },
+    { configRevision: 1.5 },
+    { providerId: '' },
+    { apiEndpoints: [] },
+    { effectiveModel: ' ' },
+    { provider: { ...makeTarget().provider, type: 'xai-subscription' } },
+    { provider: { ...makeTarget().provider, baseUrl: '', chatCompletionsBaseUrl: '' } },
+    { provider: { ...makeTarget().provider, chatCompletionsBaseUrl: 'file:///tmp/model' } },
+    {
+      provider: {
+        ...makeTarget().provider,
+        chatCompletionsBaseUrl: 'https://user:secret@example.test'
+      }
+    }
+  ])(
+    'rejects unsupported or incomplete targets before opening a connection: %j',
+    async (override) => {
+      const createBridge = vi.fn(() => makeOpenAiBridge(0))
+      const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: createBridge })
+      await expect(
+        owner.acquireHarness(
+          { ...makeHarnessTarget(), ...override } as ProviderRuntimeTarget,
+          new AbortController().signal
+        )
+      ).rejects.toThrow()
+      expect(createBridge).not.toHaveBeenCalled()
+    }
+  )
+
+  it('snapshots the route and health target without exposing upstream credentials', async () => {
+    const bridge = makeOpenAiBridge(0)
+    const observe = vi.fn()
+    let targets: readonly ProtocolForwardingBridgeTarget[] = []
+    const owner = new ProviderTransportOwner({
+      createProtocolForwardingBridge: (value) => {
+        targets = value
+        return bridge
+      },
+      onProviderFailure: observe,
+      nextGenerationId: () => 'harness-generation'
+    })
+    const target = makeHarnessTarget()
+    const acquiring = owner.acquireHarness(target, new AbortController().signal)
+    target.configRevision = 4
+    target.provider.key = 'new-key'
+    const lease = await acquiring
+    expect(lease.route).toEqual({
+      id: 'harness-generation',
+      providerId: 'provider-a',
+      configRevision: 3,
+      model: 'model-a',
+      protocol: 'chat-completions'
+    })
+    expect(targets[0]).toMatchObject({
+      endpoint: 'https://provider.example/v1/chat/completions',
+      model: 'model-a',
+      key: 'plain-provider-key'
+    })
+    expect(JSON.stringify(lease)).not.toMatch(/plain-provider-key|new-key|provider\.example/)
+    expect(Object.isFrozen(lease.route)).toBe(true)
+    expect(Object.isFrozen(lease.connection)).toBe(true)
+    const failure = {
+      category: 'auth' as const,
+      status: 401,
+      startedAt: 1,
+      endpoint: 'chat-completions' as const,
+      model: 'model-a'
+    }
+    await targets[0]?.onProviderFailure?.(failure)
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configRevision: 3,
+        provider: expect.objectContaining({ key: 'plain-provider-key' })
+      }),
+      failure
+    )
+    const firstRelease = lease.release()
+    expect(lease.release()).toBe(firstRelease)
+    await firstRelease
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects pre-cancelled acquisition and cleans up a start cancelled before it resolves', async () => {
+    const controller = new AbortController()
+    const bridge = makeOpenAiBridge(0)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    controller.abort()
+    await expect(owner.acquireHarness(makeHarnessTarget(), controller.signal)).rejects.toThrow()
+    expect(bridge.start).not.toHaveBeenCalled()
+    const duringStart = new AbortController()
+    let finish!: (value: { baseUrl: string; token: string }) => void
+    vi.mocked(bridge.start).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const acquiring = owner.acquireHarness(makeHarnessTarget(), duringStart.signal)
+    duringStart.abort()
+    finish({ baseUrl: 'http://127.0.0.1:44000', token: 'local' })
+    await expect(acquiring).rejects.toThrow()
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves both startup and cleanup errors', async () => {
+    const startError = new Error('start failed')
+    const closeError = new Error('close failed')
+    const bridge = makeOpenAiBridge(0, startError)
+    vi.mocked(bridge.close).mockRejectedValue(closeError)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    await expect(
+      owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    ).rejects.toMatchObject({ errors: [startError, closeError] })
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps release failures observable to every caller', async () => {
+    const bridge = makeOpenAiBridge(0)
+    const closeError = new Error('close failed')
+    vi.mocked(bridge.close).mockRejectedValue(closeError)
+    const owner = new ProviderTransportOwner({ createProtocolForwardingBridge: () => bridge })
+    const lease = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    await expect(lease.release()).rejects.toBe(closeError)
+    await expect(lease.release()).rejects.toBe(closeError)
+    expect(bridge.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('authenticates loopback tool exchanges, pins the model, and isolates generations', async () => {
+    const upstreamFetch = vi.fn(async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer plain-provider-key')
+      const request = JSON.parse(String(init?.body))
+      expect(request.model).toBe('model-a')
+      if (request.messages.at(-1)?.role === 'tool') {
+        expect(request.messages.at(-1)).toMatchObject({ tool_call_id: 'call-1', content: '42' })
+        return Response.json({
+          choices: [{ message: { role: 'assistant', content: '42 rows' } }],
+          usage: { prompt_tokens: 20, completion_tokens: 3, total_tokens: 23 }
+        })
+      }
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'call-1',
+                  type: 'function',
+                  function: { name: 'count_rows', arguments: '{}' }
+                }
+              ]
+            }
+          }
+        ]
+      })
+    })
+    const owner = new ProviderTransportOwner({
+      createProtocolForwardingBridge: (targets, id) =>
+        new ProtocolForwardingBridge(targets, id, upstreamFetch)
+    })
+    const first = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    const second = await owner.acquireHarness(makeHarnessTarget(), new AbortController().signal)
+    const send = (token: string, messages: unknown[]): Promise<Response> =>
+      fetch(`${second.connection.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'caller-cannot-switch-model', messages })
+      })
+    try {
+      expect(first.route.id).not.toBe(second.route.id)
+      expect((await send(first.connection.token, [])).status).toBe(401)
+      expect(upstreamFetch).not.toHaveBeenCalled()
+      await first.release()
+      const messages: unknown[] = [{ role: 'user', content: 'Count the rows' }]
+      const response = await send(second.connection.token, messages)
+      const toolCall = (await response.json()).choices[0].message
+      expect(toolCall.tool_calls[0].function.name).toBe('count_rows')
+      messages.push(toolCall, { role: 'tool', tool_call_id: 'call-1', content: '42' })
+      const result = await (await send(second.connection.token, messages)).json()
+      expect(result.choices[0].message.content).toBe('42 rows')
+      expect(result.usage.total_tokens).toBe(23)
+      expect(upstreamFetch).toHaveBeenCalledTimes(2)
+    } finally {
+      await Promise.all([first.release(), second.release()])
+    }
+    await expect(send(second.connection.token, [])).rejects.toThrow()
+  })
 })
 
 describe('ProviderTransportOwner generations', () => {

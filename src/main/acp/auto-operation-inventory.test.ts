@@ -172,11 +172,9 @@ describe('Auto operation completeness against real tool registrations', () => {
         // single-use authorization are unchanged.
         'literature/mcp-server.ts':
           '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
-        // Reviewed: the runtime descriptions explain default selection, and failed foreground
-        // Shell executions set the MCP error flag. Network recovery requires a trusted block record;
-        // it cannot add trust settings or replay code. Auto dispositions are unchanged.
+        // Reviewed: retain managed-default selection and foreground Shell error flags, compact Notebook/REPL guidance, and network recovery wording. Schemas and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '71e92e3d69280a0a725023e7093eb152377cee3343a11bdd15f03b044229f22d',
+          '5fc7298339992d2210dac2b286d70ecbea06a3cdafbc932ed2142fcfe2b3b128',
         // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
         // call, its result and the Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':

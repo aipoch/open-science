@@ -18,13 +18,14 @@ import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 import { packageTestSelectedRoots, createPackageTestPlan } from './package-test-impact.mjs'
 import { resolveModuleImpactInputs } from './module-impact-inputs.mjs'
 import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
-
 import {
   derivedConsumersPath,
   loadDerivedConsumers,
   withDerivedConsumers,
   usesReviewedBoundary
 } from './module-graph/policy.mjs'
+
+const GIT_OUTPUT_MAX_BUFFER = 128 * 1024 * 1024
 
 // When the committed index is absent (runtime-generated), generate it lazily so preflight
 // (git-archived code without node_modules) never imports the typescript dependency.
@@ -39,7 +40,8 @@ async function loadOrGenerateDerivedConsumers(
     revision &&
     execFileSync('git', ['ls-tree', '--name-only', revision, '--', derivedConsumersPath], {
       cwd,
-      encoding: 'utf8'
+      encoding: 'utf8',
+      maxBuffer: GIT_OUTPUT_MAX_BUFFER
     }).trim() === derivedConsumersPath
   if (!revision || committedAtRevision) {
     const loaded = loadDerivedConsumers()
@@ -455,8 +457,15 @@ export function collectCodeGraphTests(
 }
 
 function changesFromGit(base, head, { cwd = process.cwd(), execute = execFileSync } = {}) {
-  const mergeBase = execute('git', ['merge-base', base, head], { cwd, encoding: 'utf8' }).trim()
-  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], { cwd })
+  const mergeBase = execute('git', ['merge-base', base, head], {
+    cwd,
+    encoding: 'utf8',
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  }).trim()
+  const diff = execute('git', ['diff', '--name-status', '-z', mergeBase, head], {
+    cwd,
+    maxBuffer: GIT_OUTPUT_MAX_BUFFER
+  })
   return parseNameStatus(diff.toString('utf8'))
 }
 

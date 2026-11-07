@@ -4,7 +4,8 @@ export const AGENT_FRAMEWORK_ID_VALUES = Object.freeze([
   'opencode',
   'codex',
   'codebuddy',
-  'pi'
+  'pi',
+  'open-science-agent'
 ] as const)
 
 export type AgentFrameworkId = (typeof AGENT_FRAMEWORK_ID_VALUES)[number]

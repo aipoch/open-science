@@ -1,6 +1,9 @@
 import { CREDENTIAL_AUTHORIZATION_TIMEOUT_MS } from './credential-identity/identity-contract'
 import {
   readServiceLifetime,
+  serviceStopDeadline,
+  LOCAL_SERVICE_STOP_ESCALATION_MS,
+  LOCAL_SERVICE_STOP_BUDGET_MS,
   serviceLifetimeRecordSchema,
   type ServiceLifetimeRecord
 } from './local-service-lifetime'
@@ -196,6 +199,7 @@ export async function discoverDesktopBackend(
       if (startupOptions) verifyStartupOptions?.(startupOptions)
       let probe: Awaited<ReturnType<typeof connectDesktopRuntime>> | undefined
       let retirementTimer: ReturnType<typeof setTimeout> | undefined
+      const retirementDeadline = legacy ? Date.now() + 12_000 : serviceStopDeadline()
       const retirement = new AbortController()
       const retirementSignal = signal
         ? AbortSignal.any([signal, retirement.signal])
@@ -223,7 +227,7 @@ export async function discoverDesktopBackend(
                 await probe.lifecycle({
                   operation: 'prepare',
                   fingerprint: work.fingerprint,
-                  deadlineAt: Date.now() + 10_000
+                  deadlineAt: legacy ? Date.now() + 10_000 : retirementDeadline
                 })
                 await probe.refreshControl()
                 const finalInfo = probe.runtimeInfo()
@@ -235,7 +239,10 @@ export async function discoverDesktopBackend(
                   return false
                 }
                 retirementSignal.throwIfAborted()
-                const lease = await probe.stopRuntime('restart', { requireCleanExit: false })
+                const lease = await probe.stopRuntime('restart', {
+                  requireCleanExit: false,
+                  ...(!legacy ? { deadlineAt: retirementDeadline } : {})
+                })
                 lease.release()
                 const intent = await readServiceLifetime(configRoot)
                 if (
@@ -250,11 +257,14 @@ export async function discoverDesktopBackend(
             return false
           })(),
           new Promise<never>((_, reject) => {
-            retirementTimer = setTimeout(() => {
-              retirement.abort()
-              probe?.close()
-              reject(new Error('Abandoned desktop service retirement timed out.'))
-            }, 12_000)
+            retirementTimer = setTimeout(
+              () => {
+                retirement.abort()
+                probe?.close()
+                reject(new Error('Abandoned desktop service retirement timed out.'))
+              },
+              Math.max(1, retirementDeadline - Date.now())
+            )
           })
         ])
         if (retired) return undefined
@@ -293,6 +303,7 @@ export async function discoverDesktopBackend(
                 throw new Error('The service retirement still has connected Apps.')
               onRetired?.(intent, startupOptions)
               signal?.throwIfAborted()
+              const stopDeadline = serviceStopDeadline()
               let lease
               try {
                 lease = await waitForRuntimeStopped({
@@ -300,7 +311,10 @@ export async function discoverDesktopBackend(
                   generation: owner.desktop.generation,
                   pid: owner.pid,
                   requireCleanExit: false,
-                  timeoutMs: 1500,
+                  timeoutMs: Math.max(
+                    1,
+                    stopDeadline - Date.now() - LOCAL_SERVICE_STOP_ESCALATION_MS
+                  ),
                   signal
                 })
               } catch (error) {
@@ -312,7 +326,7 @@ export async function discoverDesktopBackend(
                     generation: owner.desktop.generation,
                     pid: owner.pid,
                     birthToken: owner.birthToken,
-                    deadlineAt: Date.now() + 5000
+                    deadlineAt: stopDeadline
                   })
                 } catch (terminationError) {
                   // The graceful stop may finish during the asynchronous identity read.
@@ -323,7 +337,7 @@ export async function discoverDesktopBackend(
                   generation: owner.desktop.generation,
                   pid: owner.pid,
                   requireCleanExit: false,
-                  timeoutMs: 5000,
+                  timeoutMs: Math.max(1, stopDeadline - Date.now()),
                   signal
                 })
               }
@@ -495,7 +509,7 @@ export function desktopBackendPaths(options: {
       }
 }
 
-const OWNERSHIP_RELEASE_WAIT_MS = 20_000
+const OWNERSHIP_RELEASE_WAIT_MS = LOCAL_SERVICE_STOP_BUDGET_MS
 const MAX_OWNERSHIP_RESPAWNS = 2
 
 // A stopping runtime is waited out; if it does not exit, only an identity-verified runtime is stopped.

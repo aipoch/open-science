@@ -658,7 +658,9 @@ service token.
 
 ## Agent routing settings
 
-Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing:
+Inspect or atomically update the global Agent framework plus Reviewer and Subagent model routing.
+Supported framework IDs are `open-science-agent` (built in), `claude-code`, `opencode`, `codex`,
+`codebuddy`, and `pi`:
 
 ```bash
 open-science settings agent-routing show --json

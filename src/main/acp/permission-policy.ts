@@ -464,6 +464,7 @@ const isManagedSkillPermission = (
   isOpenCodeNativeSkillPermission(params, context) ||
   ((context?.frameworkId === 'claude-code' ||
     context?.frameworkId === 'codex' ||
+    context?.frameworkId === 'open-science-agent' ||
     String(context?.frameworkId) === 'pi') &&
     context?.mcpServerNames?.includes('skills') === true &&
     trustedMcpToolIdentity(params) === 'skills/load_skill')

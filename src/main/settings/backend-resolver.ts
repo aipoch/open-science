@@ -339,6 +339,80 @@ export class AgentBackendResolver {
     if (framework.id === 'codex' && !target.modelBridgeSupported) {
       throw new Error(CODEX_BRIDGE_UNSUPPORTED_MESSAGE)
     }
+    if (framework.id === 'open-science-agent') {
+      // The host owns credential revocation and process lifetime; the child receives only a bridge token.
+      const lease = await this.transports.acquireHarness(target, new AbortController().signal)
+      try {
+        const includeSkills = context.includeSkillAndConnectorContext !== false
+        const skillRoot = join(this.storageRoot, 'open-science-agent', 'skill-runtime')
+        const discovery = includeSkills
+          ? await this.runtime.prepareAgentSkillDiscovery(
+              settings,
+              skillRoot,
+              new Set(context.forcedSkillIds ?? []),
+              context.skillWhitelist
+            )
+          : undefined
+        const provider = {
+          ...target.provider,
+          apiEndpoints: [lease.route.protocol],
+          model: lease.route.model,
+          agentProviderId: JSON.stringify([
+            'open-science-agent',
+            target.providerId,
+            target.configRevision,
+            lease.route.model
+          ])
+        }
+        const executablePath = this.skillRuntimeMcpEntryPath
+        const effort =
+          resolvedEffort ??
+          this.planner.projectModelChange({ settings, frameworkId, target, effortIntent })
+            ?.reasoningEffort
+        const config = framework.prepareModelConfig(provider, {
+          storageRoot: this.storageRoot,
+          executablePath,
+          responsesConnection: lease.connection,
+          reasoningEffort: effort === 'default' ? undefined : effort
+        })
+        return {
+          framework,
+          providerId: target.providerId,
+          backendId: `open-science-agent:${target.providerId}`,
+          modelRoute: 'open-science-agent',
+          executablePath,
+          env: config.env ?? {},
+          args: config.args,
+          authentication: config.authentication,
+          sessionModel: config.sessionModel,
+          sessionEffort: effort === 'default' ? undefined : effort,
+          contextWindow: provider.contextWindow ?? 32_768,
+          contextUsageModel: provider.model,
+          supportsImageInput: provider.supportsImageInput === true,
+          systemPromptAppends: [
+            ...(context.systemPromptAppends ?? []),
+            ...(includeSkills ? [renderConnectorInstructions()] : [])
+          ],
+          ...(discovery
+            ? {
+                sessionOptions: {
+                  [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
+                    command: process.execPath,
+                    entryPath: executablePath,
+                    root: skillRoot,
+                    skillsDirectory: join(skillRoot, 'skills'),
+                    mainAllowedNames: discovery.mainAllowedNames
+                  }
+                }
+              }
+            : {}),
+          providerTransportLease: { setTarget: () => false, release: lease.release }
+        }
+      } catch (error) {
+        await lease.release()
+        throw error
+      }
+    }
     const forceNativeResponsesCompatibility =
       context.forceCodexNativeResponsesCompatibility === true &&
       framework.id === 'codex' &&

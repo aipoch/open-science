@@ -3,6 +3,8 @@ import { CODEX_CLI_INCOMPATIBLE_MESSAGE, MINIMUM_CODEX_ACP_VERSION } from '../..
 import type { Recognizer } from '../contract'
 
 export const recognizeAgentRuntime: Recognizer = ({ text = '', code, origin }) => {
+  if (text.includes('Built-in Agent tool outcome is unknown:'))
+    return { category: 'session', reason: 'session/tool-outcome-unknown', diagnostics: {} }
   if (code === 'specialist-reconfigure-failed')
     return { category: 'internal', reason: 'internal/reconfigure', diagnostics: {} }
   const message = text.trim()

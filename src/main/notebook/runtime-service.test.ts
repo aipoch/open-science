@@ -1415,6 +1415,81 @@ describe('notebook runtime service', () => {
     expect(service.peekHandoffContext('session-1')).toBeUndefined()
   })
 
+  it('peeks REPL continuity without loading history and isolates project, session and child ownership', async () => {
+    const root = await createStorageRoot()
+    const { service, lifecycles } = lifecycleCallbackHarness(root)
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1'
+    }
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    expect(lifecycles).toHaveLength(0)
+    expect(existsSync(join(root, 'notebooks'))).toBe(false)
+
+    await service.executeControl({
+      ...request,
+      provenanceContext: {
+        rootFrameId: 'custom-root',
+        agentFrameId: 'child-frame',
+        messageBranchId: 'branch-1',
+        runtimeSegmentId: 'segment-1',
+        promptMessageId: 'prompt-1'
+      }
+    })
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    await service.executeControl(request)
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(false)
+    expect(service.isReplNamespaceUnavailable('other-project', request.sessionId)).toBe(true)
+    expect(service.isReplNamespaceUnavailable(request.projectId, 'other-session')).toBe(true)
+
+    const restored = lifecycleCallbackHarness(root)
+    expect(restored.service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(
+      true
+    )
+    expect(restored.lifecycles).toHaveLength(0)
+    await restored.service.dispose()
+    await lifecycles[1].onTerminated('repl', '')
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(true)
+    await service.dispose()
+  })
+
+  it('shares provisional root aliases and retires continuity on restart and shutdown', async () => {
+    const root = await createStorageRoot()
+    const { service } = lifecycleCallbackHarness(root)
+    const provenanceContext = {
+      rootFrameId: 'custom-root',
+      agentFrameId: 'custom-root',
+      messageBranchId: 'branch-1',
+      runtimeSegmentId: 'segment-1',
+      promptMessageId: 'prompt-1'
+    }
+    const request = {
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      code: '1',
+      provenanceContext
+    }
+    const unavailable = (): boolean =>
+      service.isReplNamespaceUnavailable(
+        request.projectId,
+        request.sessionId,
+        provenanceContext.rootFrameId
+      )
+    await service.executeControl(request)
+    expect(unavailable()).toBe(false)
+    expect(service.isReplNamespaceUnavailable(request.projectId, request.sessionId)).toBe(false)
+    await service.restart({ ...request, kernel: 'repl' })
+    expect(unavailable()).toBe(true)
+    await service.executeControl(request)
+    expect(unavailable()).toBe(false)
+    await service.shutdownSession(request.sessionId)
+    expect(unavailable()).toBe(true)
+    await service.dispose()
+  })
+
   it('scopes explicit write cancellation and isolates later writes from stale producers', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
