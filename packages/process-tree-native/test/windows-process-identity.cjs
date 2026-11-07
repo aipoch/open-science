@@ -81,6 +81,8 @@ test('waits for an owned process exit without polling', windows, async () => {
   try {
     const wait = native.windowsOwnedProcessExitCodeAsync(launched.handle)
     native.windowsOwnedProcessExitCodeUnref(launched.handle)
+    native.windowsOwnedProcessExitCodeUnref(launched.handle)
+    native.windowsOwnedProcessExitCodeRef(launched.handle)
     native.windowsOwnedProcessExitCodeRef(launched.handle)
     assert.equal(await wait, 7)
   } finally {

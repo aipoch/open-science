@@ -149,7 +149,11 @@ export const spawnWindowsOwnedProcess = (
   let fallbackPoll: NodeJS.Timeout | undefined
   const waitForExit = (): Promise<number> => {
     if (typeof native.windowsOwnedProcessExitCodeAsync === 'function') {
-      return Promise.resolve().then(() => native.windowsOwnedProcessExitCodeAsync(launched.handle))
+      try {
+        return native.windowsOwnedProcessExitCodeAsync(launched.handle)
+      } catch (error) {
+        return Promise.reject(error)
+      }
     }
     return new Promise((resolve) => {
       fallbackPoll = setInterval(() => {
@@ -161,6 +165,7 @@ export const spawnWindowsOwnedProcess = (
       }, 25)
     })
   }
+  let referenced = true
   void waitForExit().then(
     (code) => {
       Object.assign(child, { exitCode: code })
@@ -172,11 +177,15 @@ export const spawnWindowsOwnedProcess = (
     (error: unknown) => child.emit('error', error)
   )
   child.unref = () => {
+    if (!referenced) return
+    referenced = false
     native.windowsOwnedProcessExitCodeUnref?.(launched.handle)
     fallbackPoll?.unref()
     streams.forEach((stream) => stream.unref())
   }
   child.ref = () => {
+    if (referenced) return
+    referenced = true
     native.windowsOwnedProcessExitCodeRef?.(launched.handle)
     fallbackPoll?.ref()
     streams.forEach((stream) => stream.ref())
