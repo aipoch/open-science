@@ -1112,6 +1112,7 @@ class NotebookNetworkSandboxOwner implements NotebookProcessSandbox {
       executable,
       args,
       env: wrapped.env,
+      ...(wrapped.processTreeProof ? { processTreeProof: wrapped.processTreeProof } : {}),
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),

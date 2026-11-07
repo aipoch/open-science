@@ -119,6 +119,12 @@ export type NotebookSandboxCommand = Readonly<{
 export type NotebookSandboxedProcess = Readonly<{
   argv: readonly string[]
   env: NodeJS.ProcessEnv
+  /** Durable proof files for a Windows supervisor Job Object, when one owns this process tree. */
+  processTreeProof?: Readonly<{
+    path: string
+    token: string
+    requestPath: string
+  }>
   // Only launchers backed by a kill-on-close Job Object may provide this proof check.
   confirmProcessTreeTermination?: () => Promise<boolean>
   requestProcessTreeTermination?: () => Promise<boolean>

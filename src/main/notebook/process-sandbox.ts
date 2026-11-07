@@ -90,6 +90,12 @@ export type NotebookSandboxedSpawn = Readonly<{
   executable: string
   args: readonly string[]
   env: NodeJS.ProcessEnv
+  /** Durable proof files for a Windows supervisor Job Object, when one owns this process tree. */
+  processTreeProof?: Readonly<{
+    path: string
+    token: string
+    requestPath: string
+  }>
   // Validates launch-bound evidence that no workload remains: never started or Job Object empty.
   confirmProcessTreeTermination?: () => Promise<boolean>
   requestProcessTreeTermination?: () => Promise<boolean>

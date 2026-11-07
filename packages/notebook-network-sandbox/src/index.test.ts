@@ -353,9 +353,15 @@ describe('NotebookNetworkSandbox', () => {
     vi.spyOn(second, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
     const spawnLease = { started: vi.fn(), notStarted: vi.fn() }
     const beginSpawn = vi.fn(() => spawnLease)
+    const processTreeProof = {
+      path: '/tmp/.open-science-process-tree-terminated-proof.proof',
+      token: 'proof-token',
+      requestPath: '/tmp/.open-science-process-tree-terminated-proof.proof.request'
+    }
     backend.wrap.mockResolvedValue({
       argv: ['/bin/sh', '-c', 'sandboxed'],
       env: { HTTPS_PROXY: 'http://127.0.0.1:4123' },
+      processTreeProof,
       confirmProcessTreeTermination: async () => true,
       beginSpawn
     })
@@ -373,7 +379,8 @@ describe('NotebookNetworkSandbox', () => {
     })
     expect(wrapped).toMatchObject({
       argv: ['/bin/sh', '-c', 'sandboxed'],
-      env: { HTTPS_PROXY: 'http://127.0.0.1:4123' }
+      env: { HTTPS_PROXY: 'http://127.0.0.1:4123' },
+      processTreeProof
     })
     expect(wrapped.annotateStderr).toBeTypeOf('function')
     expect(wrapped.resetNetworkConnections).toBeTypeOf('function')

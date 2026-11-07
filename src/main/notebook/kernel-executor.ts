@@ -1425,7 +1425,8 @@ class NotebookKernelExecutor implements NotebookExecutor {
           processKey: kind === 'repl' ? 'repl' : `${kind}:${env}`,
           kernelEpochId
         },
-        ownerToken
+        ownerToken,
+        sandboxed?.processTreeProof
       )
     }
     const kernelExecutable = sandboxed?.executable ?? invocation.executable
