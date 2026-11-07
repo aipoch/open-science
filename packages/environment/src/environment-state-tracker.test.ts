@@ -576,7 +576,7 @@ describe('EnvironmentStateTracker', () => {
         execFile: probe,
         inspectInstalled: async () => ({ packages: [] })
       })
-      const probeTarget = { ...target, language }
+      const probeTarget = { ...target, language, command: join(dataRoot, 'bin', 'interpreter') }
       const fingerprints = []
       for (let run = 0; run < 4; run++) {
         fingerprints.push((await tracker.prepareRun(probeTarget)).fingerprint)
@@ -591,6 +591,12 @@ describe('EnvironmentStateTracker', () => {
       await mkdir(userLibrary)
       await tracker.prepareRun(probeTarget)
       expect(probe).toHaveBeenCalledTimes(5)
+
+      // A PATH-resolved command can select another interpreter without any observed path changing.
+      const bareTarget = { ...probeTarget, command: language === 'r' ? 'Rscript' : 'python' }
+      for (let run = 0; run < 3; run++) await tracker.prepareRun(bareTarget)
+      // First run probes before and after its inventory scan; later runs probe once each.
+      expect(probe).toHaveBeenCalledTimes(9)
     }
   )
 
