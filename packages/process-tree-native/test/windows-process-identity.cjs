@@ -79,7 +79,10 @@ test('waits for an owned process exit without polling', windows, async () => {
     false
   )
   try {
-    assert.equal(await native.windowsOwnedProcessExitCodeAsync(launched.handle), 7)
+    const wait = native.windowsOwnedProcessExitCodeAsync(launched.handle)
+    native.windowsOwnedProcessExitCodeUnref(launched.handle)
+    native.windowsOwnedProcessExitCodeRef(launched.handle)
+    assert.equal(await wait, 7)
   } finally {
     native.reapWindowsOwnedJob(jobName)
     for (const fd of launched.fds) closeSync(fd)

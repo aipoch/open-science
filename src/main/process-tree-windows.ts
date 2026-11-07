@@ -172,10 +172,12 @@ export const spawnWindowsOwnedProcess = (
     (error: unknown) => child.emit('error', error)
   )
   child.unref = () => {
+    native.windowsOwnedProcessExitCodeUnref?.(launched.handle)
     fallbackPoll?.unref()
     streams.forEach((stream) => stream.unref())
   }
   child.ref = () => {
+    native.windowsOwnedProcessExitCodeRef?.(launched.handle)
     fallbackPoll?.ref()
     streams.forEach((stream) => stream.ref())
   }

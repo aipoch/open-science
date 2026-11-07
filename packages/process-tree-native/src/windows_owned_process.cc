@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <unordered_map>
 
 #ifdef _WIN32
 // libuv includes Winsock 2; load it before windows.h can pull in legacy Winsock.
@@ -197,13 +198,22 @@ napi_value ExitCode(napi_env env, napi_callback_info info) {
   napi_value result; napi_get_null(env, &result); return result;
 }
 struct ProcessWait {
+  Process* owner = nullptr;
   HANDLE process = INVALID_HANDLE_VALUE;
   HANDLE registration = nullptr;
   napi_deferred deferred = nullptr;
   napi_threadsafe_function function = nullptr;
 };
+std::unordered_map<Process*, ProcessWait*> processWaits;
+void RemoveProcessWait(ProcessWait* wait) {
+  if (!wait->owner) return;
+  const auto found = processWaits.find(wait->owner);
+  if (found != processWaits.end() && found->second == wait) processWaits.erase(found);
+  wait->owner = nullptr;
+}
 void FinalizeProcessWait(napi_env, void* data, void*) {
   auto wait = static_cast<ProcessWait*>(data);
+  RemoveProcessWait(wait);
   if (wait->registration) {
     UnregisterWaitEx(wait->registration, INVALID_HANDLE_VALUE);
     wait->registration = nullptr;
@@ -213,6 +223,7 @@ void FinalizeProcessWait(napi_env, void* data, void*) {
 }
 void CompleteProcessWait(napi_env env, napi_value, void* context, void*) {
   auto wait = static_cast<ProcessWait*>(context);
+  RemoveProcessWait(wait);
   DWORD code = STILL_ACTIVE;
   if (GetExitCodeProcess(wait->process, &code)) {
     napi_value value = Number(env, code);
@@ -235,6 +246,32 @@ void ProcessWaitCallback(void* context, BOOLEAN) {
   auto wait = static_cast<ProcessWait*>(context);
   napi_call_threadsafe_function(wait->function, wait, napi_tsfn_nonblocking);
 }
+napi_value ProcessWaitControl(napi_env env, napi_callback_info info, bool reference) {
+  napi_value args[1]; void* external = nullptr;
+  if (!Arguments(env, info, 1, args) || napi_get_value_external(env, args[0], &external) != napi_ok || !external) {
+    napi_throw_type_error(env, nullptr, "Invalid owned process handle"); return nullptr;
+  }
+  auto process = static_cast<Process*>(external);
+  const auto found = processWaits.find(process);
+  if (found != processWaits.end() && found->second->function) {
+    const napi_status status = reference
+      ? napi_ref_threadsafe_function(env, found->second->function)
+      : napi_unref_threadsafe_function(env, found->second->function);
+    if (status != napi_ok) {
+      napi_throw_error(env, nullptr, reference ? "Reference process wait" : "Unreference process wait");
+      return nullptr;
+    }
+  }
+  napi_value result;
+  napi_get_undefined(env, &result);
+  return result;
+}
+napi_value ProcessWaitRef(napi_env env, napi_callback_info info) {
+  return ProcessWaitControl(env, info, true);
+}
+napi_value ProcessWaitUnref(napi_env env, napi_callback_info info) {
+  return ProcessWaitControl(env, info, false);
+}
 napi_value ProcessWaitFunction(napi_env env, napi_callback_info) {
   napi_value result;
   napi_get_undefined(env, &result);
@@ -246,6 +283,9 @@ napi_value ExitCodeAsync(napi_env env, napi_callback_info info) {
     napi_throw_type_error(env, nullptr, "Invalid owned process handle"); return nullptr;
   }
   auto process = static_cast<Process*>(external);
+  if (processWaits.find(process) != processWaits.end()) {
+    napi_throw_error(env, nullptr, "Owned process exit wait already exists"); return nullptr;
+  }
   auto wait = new ProcessWait();
   if (!DuplicateHandle(GetCurrentProcess(), process->process.value, GetCurrentProcess(), &wait->process,
                        0, FALSE, DUPLICATE_SAME_ACCESS)) {
@@ -270,6 +310,8 @@ napi_value ExitCodeAsync(napi_env env, napi_callback_info info) {
                                     std::to_string(error) + ")").c_str());
     return nullptr;
   }
+  wait->owner = process;
+  processWaits.emplace(process, wait);
   return promise;
 }
 bool ProcessParents(std::map<DWORD, DWORD>& parents) {
@@ -643,6 +685,8 @@ void RegisterWindowsOwnedProcess(napi_env env, napi_value exports) {
     {"spawnWindowsOwnedProcess", nullptr, Spawn, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsOwnedProcessExitCode", nullptr, ExitCode, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsOwnedProcessExitCodeAsync", nullptr, ExitCodeAsync, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"windowsOwnedProcessExitCodeRef", nullptr, ProcessWaitRef, nullptr, nullptr, nullptr, napi_default, nullptr},
+    {"windowsOwnedProcessExitCodeUnref", nullptr, ProcessWaitUnref, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsOwnedJobProcessIds", nullptr, Members, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"windowsCurrentProcessDescendants", nullptr, Descendants, nullptr, nullptr, nullptr, napi_default, nullptr},
     {"reapWindowsOwnedJob", nullptr, Reap, nullptr, nullptr, nullptr, napi_default, nullptr},
