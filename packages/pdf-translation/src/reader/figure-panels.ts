@@ -138,7 +138,9 @@ export async function nativeFigurePanels(
 ): Promise<{ ids: ReadonlySet<string>; regions: Rect[]; current: () => boolean } | undefined> {
   try {
     const captions = units.filter(
-      (u) => /^(?:Figure|Fig\.)\s*\d/iu.test(u.source) && isPdfTranslationCaption(u.source)
+      (u) =>
+        /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(u.source) &&
+        isPdfTranslationCaption(u.source)
     )
     if (!captions.length) return
     const sourceKey = JSON.stringify(units),
@@ -387,7 +389,9 @@ export async function retainNativeFigurePanels({
       const units = source.units.filter((u) => u.fragments.some((f) => f.pageNumber === number))
       if (
         !units.some(
-          (u) => /^(?:Figure|Fig\.)\s*\d/iu.test(u.source) && isPdfTranslationCaption(u.source)
+          (u) =>
+            /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(u.source) &&
+            isPdfTranslationCaption(u.source)
         )
       )
         continue

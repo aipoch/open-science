@@ -22,6 +22,7 @@ type Content = Awaited<ReturnType<PDFPageProxy['getTextContent']>>
 type Viewport = ReturnType<PDFPageProxy['getViewport']>
 
 const stable = (x: unknown): string => JSON.stringify(x),
+  referenceFigureCaption = /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s+[1-9]\d*:\s+[A-Z]/u,
   finite = (x: unknown, n: number): x is number[] =>
     Array.isArray(x) && x.length === n && x.every(Number.isFinite),
   valid = (r: Region): boolean =>
@@ -81,9 +82,7 @@ export async function restoreReferenceFigureCaptions(input: Input): Promise<Inpu
   if (
     !source.units.some(
       (u) =>
-        u.sourceOnly === true &&
-        u.preserve === 'reference' &&
-        /^Figure\s+[1-9]\d*:\s+[A-Z]/u.test(u.source)
+        u.sourceOnly === true && u.preserve === 'reference' && referenceFigureCaption.test(u.source)
     )
   )
     return extraction
@@ -130,7 +129,7 @@ export async function restoreReferenceFigureCaptions(input: Input): Promise<Inpu
       u.preserve === 'reference' &&
       u.fragments.length === 1 &&
       u.fragments[0].items.length === 2 &&
-      /^Figure\s+[1-9]\d*:\s+[A-Z]/u.test(u.source)
+      referenceFigureCaption.test(u.source)
   )
   if (!candidates.length) return extraction
   const aux = createAuxiliaryNativeCaptionInkReader({

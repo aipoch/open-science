@@ -314,9 +314,14 @@ export async function nativeFigureVariableKeys(
     const captionEntries = entries.filter((e) => overlaps(toBox(ink.get(e.index)!), caption))
     if (
       !captionEntries.length ||
-      !captionEntries.some((e) => /^(?:Figure|Fig\.)\s*\d/iu.test(e.item.str.trim())) ||
+      !captionEntries.some((e) =>
+        /^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(e.item.str.trim())
+      ) ||
       captionEntries.some(
-        (e) => !/^(?:Figure|Fig\.)\s*\d/iu.test(owners.get(e.index)!.source.trim())
+        (e) =>
+          !/^(?:(?:Extended Data\s+)?(?:Figure|Fig\.))\s*\d/iu.test(
+            owners.get(e.index)!.source.trim()
+          )
       )
     )
       return empty
