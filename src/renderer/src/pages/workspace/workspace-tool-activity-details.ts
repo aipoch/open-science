@@ -20,6 +20,7 @@ import {
   getNotebookMemoryToolDisplayName,
   isAuthorizedDirectoryTool,
   isNotebookManagePackagesToolName,
+  matchNotebookControlTool,
   matchNotebookMemoryTool,
   resolveNotebookLanguage,
   resolveNotebookRunToolName
@@ -1368,9 +1369,22 @@ const buildToolActivityDetails = (
         .map((value) => readNotebookToolResult(value))
         .find(Boolean)
     : undefined
+  const notebookControlTool = notebookIdentity
+    ? matchNotebookControlTool(notebookIdentity)
+    : undefined
   const confirmedNotebookResult =
-    activity.status === 'failed' && notebookResult?.status === 'restarted'
-      ? { ...notebookResult, status: undefined }
+    activity.status === 'failed' && notebookResult
+      ? {
+          ...notebookResult,
+          ...((notebookControlTool === 'notebook_restart' &&
+            notebookResult.status === 'restarted') ||
+          (notebookControlTool === 'notebook_shutdown' && notebookResult.status === 'shutdown')
+            ? { status: undefined }
+            : {}),
+          ...(notebookControlTool === 'manage_environments'
+            ? { created: undefined, removed: undefined }
+            : {})
+        }
       : notebookResult
   const notebookSummary = buildNotebookToolSummary(
     notebookIdentity,

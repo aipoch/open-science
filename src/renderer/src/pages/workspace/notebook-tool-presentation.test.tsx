@@ -201,6 +201,37 @@ it('does not invent a successful restart from malformed or failed output', () =>
   expect(JSON.stringify(details)).not.toContain('Run history preserved')
 })
 
+it.each([
+  {
+    identity: 'open-science-notebook/notebook_shutdown',
+    result: { status: 'shutdown' },
+    forbidden: 'Notebook shut down.'
+  },
+  {
+    identity: 'open-science-notebook/manage_environments',
+    result: { created: { name: 'analysis', language: 'python', runnable: true } },
+    forbidden: 'analysis'
+  }
+])(
+  'does not show a successful mutation receipt for failed tool %s',
+  ({ identity, result, forbidden }) => {
+    const details = buildToolActivityDetails(
+      activity({
+        title: identity,
+        status: 'failed',
+        rawOutput: {
+          result: { content: [{ type: 'text', text: JSON.stringify(result) }] }
+        }
+      })
+    )!
+    const section = details.sections.find((candidate) => candidate.kind === 'summary')
+    expect(section).toMatchObject({ kind: 'summary', summary: { error: 'Failed' } })
+    if (!section || section.kind !== 'summary') throw new Error('Expected a summary')
+    expect(section.summary.note).toBeUndefined()
+    expect(JSON.stringify(section.summary)).not.toContain(forbidden)
+  }
+)
+
 it('shows runtime pagination, bindings and availability without fetching more results', () => {
   const summary = buildNotebookToolSummary(
     'open-science-notebook/list_notebook_runtimes',
