@@ -19,6 +19,7 @@ import { type ReasoningEffort } from './model-preference-contract'
 import { customProviderRequiresKey } from './provider-url-policy'
 import { type ReasoningEffortPresetSetting } from './reasoning-effort'
 import type { AgentFrameworkId } from './agent-framework-id'
+export { DEFAULT_AGENT_FRAMEWORK_ID } from './agent-framework-id'
 export type { AgentFrameworkId } from './agent-framework-id'
 export type { ModelProtocol } from '@aipoch/providers'
 export type { ReasoningEffort } from './model-preference-contract'
@@ -600,8 +601,6 @@ export type SettingsSnapshot = {
   providers: ProviderView[]
   // The selected agent backend, and the frameworks available to choose from.
   agentFrameworkId: AgentFrameworkId
-  /** The first-run wizard may choose a runtime until the user has a stored selection. */
-  needsInitialAgentSelection?: boolean
   agentFrameworks: AgentFrameworkView[]
   // Whether each framework's detected runtime is the app-managed install (binary in the app's data
   // dir), which is the only case an in-app uninstall is offered — a PATH/npm binary we didn't install

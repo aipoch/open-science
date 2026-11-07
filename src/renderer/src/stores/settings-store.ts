@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_FRAMEWORK_ID } from '../../../shared/settings'
 import { ApplicationCommandError } from '../../../shared/application-command-contract'
 import { projectRendererFailure } from '../renderer-diagnostics'
 import {
@@ -119,7 +120,6 @@ type SettingsStoreData = RuntimeSetupState &
     providers: ProviderView[]
     // Selected agent backend and the frameworks available to choose from.
     agentFrameworkId: AgentFrameworkId
-    needsInitialAgentSelection?: boolean
     agentFrameworks: AgentFrameworkView[]
     // Detected opencode executable, for the framework-aware detection card.
     opencode: OpencodeInfo
@@ -198,7 +198,7 @@ export const createInitialSettingsState = (): SettingsStoreData => ({
   claudeSubscriptionProviderId: undefined,
   activeModel: undefined,
   providers: [],
-  agentFrameworkId: 'claude-code',
+  agentFrameworkId: DEFAULT_AGENT_FRAMEWORK_ID,
   agentFrameworks: [],
   opencode: {},
   codex: {},
@@ -261,7 +261,6 @@ const applySnapshot = (snapshot: SettingsSnapshot): Partial<SettingsStoreData> =
   defaultPermissionProfile: getDefaultPermissionProfile(snapshot),
 
   agentFrameworkId: snapshot.agentFrameworkId,
-  needsInitialAgentSelection: snapshot.needsInitialAgentSelection === true,
   agentFrameworks: snapshot.agentFrameworks,
   opencode: snapshot.opencode,
   codex: snapshot.codex ?? {},
