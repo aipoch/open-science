@@ -1,0 +1,38 @@
+name: Signed shared-service upgrade acceptance
+on:
+  push:
+    branches: [test/shared-service-update-acceptance]
+permissions:
+  contents: read
+jobs:
+  exercise:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Stage signed release pair and isolated driver
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/source" "$RUNNER_TEMP/feed" "$HOME/Applications" evidence
+          gh release download v1.0.8 -p '*-mac-arm64.zip' -D "$RUNNER_TEMP/source"
+          gh release download v1.1.0 -p '*-mac-arm64.zip' -p 'arm64-mac.yml' -D "$RUNNER_TEMP/feed"
+          ditto -x -k "$RUNNER_TEMP"/source/*.zip "$HOME/Applications"
+          codesign --verify --deep --strict "$HOME/Applications/Open-Science.app"
+          npm install --prefix scripts/shared-service-acceptance --no-save playwright@$(node -p 'require("./package-lock.json").packages["node_modules/playwright"].version')
+          cp "$RUNNER_TEMP/feed/arm64-mac.yml" "$RUNNER_TEMP/feed/latest-mac.yml"
+      - name: Exercise Desktop, CLI, Web and native update
+        run: |
+          python3 -m http.server 18765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/feed" >/tmp/feed.log 2>&1 &
+          node scripts/shared-service-acceptance/verify.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-service-evidence
+          path: evidence
