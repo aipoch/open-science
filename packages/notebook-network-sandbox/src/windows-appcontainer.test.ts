@@ -332,6 +332,7 @@ describe('Windows AppContainer launch', () => {
       command: 'Write-Output ready',
       cwd: 'C:\\workspace',
       hostPath: 'C:\\resources\\notebook-sandbox-host.exe',
+      ownershipRoot: 'C:\\ownership',
       gatewayPort: 49700,
       gatewayCredentials: { username: 'command', password: 'secret' },
       env: {}
@@ -355,7 +356,7 @@ describe('Windows AppContainer launch', () => {
       executable: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
       arguments: ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', request.command],
       cwd: request.cwd,
-      terminationProofPath: expect.stringContaining('.open-science-process-tree-terminated-'),
+      terminationProofPath: expect.stringContaining('C:\\ownership'),
       terminationProofToken: expect.any(String)
     })
   })

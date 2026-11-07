@@ -99,7 +99,9 @@ type WindowsStandardLaunchRequest = Readonly<
 >
 
 type WindowsSupervisedLaunchRequest = Readonly<
-  WindowsStandardLaunchRequest & Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'>
+  WindowsStandardLaunchRequest &
+    Pick<WindowsLaunchRequest, 'cwd' | 'hostPath'> &
+    Partial<Pick<WindowsLaunchRequest, 'ownershipRoot'>>
 >
 
 type ProcessTreeTerminationProof = Readonly<{
@@ -854,7 +856,10 @@ const windowsSupervisedLaunch = (
   const direct = windowsStandardLaunch(request)
   const [executable, ...args] = direct.argv
   if (!executable) throw new Error('Windows supervisor received an empty command.')
-  const proof = createProcessTreeTerminationProof(direct.env, request.cwd)
+  const proof = createProcessTreeTerminationProof(
+    request.ownershipRoot ? { ...direct.env, TEMP: request.ownershipRoot } : direct.env,
+    request.cwd
+  )
   const specification = Buffer.from(
     JSON.stringify({
       executable,

@@ -28,7 +28,8 @@ const adapter = new NotebookShellProcessAdapter(
         env: { ...invocation.env, TEMP: root, ELECTRON_RUN_AS_NODE: '1' },
         gatewayPort: 1,
         gatewayCredentials: { username: 'unused', password: 'unused' },
-        hostPath
+        hostPath,
+        ownershipRoot: root
       })
       return {
         executable: launch.argv[0],
