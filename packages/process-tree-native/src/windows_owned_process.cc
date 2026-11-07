@@ -418,16 +418,27 @@ void QueryOccupants(OccupancyQuery& query) {
     query.code = RmRegisterResources(session, static_cast<UINT>(batch.size()), batch.data(), 0, nullptr, 0, nullptr);
     if (query.code != ERROR_SUCCESS) query.failure = "Register installation resources";
   }
-  UINT needed = 0, count = 0;
+  // Avoid the size-only RmGetList call on the common small-installation case. The capacity is
+  // only an allocation hint: ERROR_MORE_DATA below still expands the buffer to the complete list.
+  constexpr UINT kInitialOccupantCapacity = 32;
+  UINT needed = 0, count = kInitialOccupantCapacity;
   DWORD reasons = 0;
-  std::vector<RM_PROCESS_INFO> rows;
+  std::vector<RM_PROCESS_INFO> rows(kInitialOccupantCapacity);
   bool complete = false;
   for (int retry = 0; retry < 3 && !query.failure && !complete; ++retry) {
     rows.resize(count);
-    query.code = RmGetList(session, &needed, &count, count ? rows.data() : nullptr, &reasons);
-    if (query.code == ERROR_MORE_DATA) { count = needed; continue; }
+    query.code = RmGetList(session, &needed, &count, rows.data(), &reasons);
+    if (query.code == ERROR_MORE_DATA) {
+      if (needed <= count) {
+        query.failure = "List installation resource users";
+        break;
+      }
+      count = needed;
+      continue;
+    }
     if (query.code != ERROR_SUCCESS) query.failure = "List installation resource users";
-    else complete = true;
+    else if (count <= rows.size()) complete = true;
+    else query.failure = "List installation resource users";
   }
   if (!query.failure && !complete) { query.failure = "List installation resource users"; query.code = ERROR_MORE_DATA; }
   const DWORD ended = RmEndSession(session);

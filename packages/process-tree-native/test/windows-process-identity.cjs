@@ -103,6 +103,42 @@ test(
   }
 )
 
+test(
+  'returns every Restart Manager occupant after the initial result capacity is exceeded',
+  windows,
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'process-tree-native-many-occupants-'))
+    const file = join(root, 'data.json')
+    writeFileSync(file, '{}')
+    const holders = []
+    try {
+      for (let index = 0; index < 33; index++) {
+        const holder = spawn(
+          process.execPath,
+          [
+            '-e',
+            `require('node:fs').openSync(${JSON.stringify(file)}, 'r');process.stdout.write('ready');process.stdin.resume()`
+          ],
+          { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }
+        )
+        holders.push(holder)
+        await once(holder.stdout, 'data')
+      }
+
+      const occupants = native.listWindowsInstallationOccupants([file])
+      assert.equal(
+        holders.every((holder) => occupants.includes(holder.pid)),
+        true,
+        JSON.stringify({ expected: holders.map((holder) => holder.pid), occupants })
+      )
+    } finally {
+      for (const holder of holders) holder.stdin.end()
+      await Promise.all(holders.map((holder) => once(holder, 'exit')))
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
+
 test('splits command lines with the Windows argv rules', windows, () => {
   assert.deepEqual(
     native.splitWindowsCommandLine(
