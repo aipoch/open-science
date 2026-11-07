@@ -20,6 +20,7 @@ import {
   usePackageOperationStore
 } from '../../stores/package-operation-store'
 
+import { parseApplicationCommandError } from '../../../../shared/application-command-contract'
 import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest,
@@ -1549,10 +1550,16 @@ const createOrderedSessionPersistence = (
 // The Store saver and Artifact finalization share this instance in production. Its adapters resolve
 // window.api lazily, keeping module import safe in tests before the preload bridge is installed.
 const liveSessionPersistence = createOrderedSessionPersistence({
-  saveSession: (session, options) =>
-    options
-      ? window.api.sessions.saveSession(session, options)
-      : window.api.sessions.saveSession(session),
+  saveSession: async (session, options) => {
+    try {
+      return options
+        ? await window.api.sessions.saveSession(session, options)
+        : await window.api.sessions.saveSession(session)
+    } catch (error) {
+      // Electron preserves the public command envelope across contextBridge.
+      throw error instanceof Error ? error : (parseApplicationCommandError(error) ?? error)
+    }
+  },
   saveManifest: (request) => window.api.sessions.saveManifest(request)
 })
 

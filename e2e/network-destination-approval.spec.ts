@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { realpath } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -26,32 +27,32 @@ test('persists project destination consent, retries explicitly, and revokes afte
   try {
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('Missing fixture port')
+    const python = execFileSync(
+      process.env.OPEN_SCIENCE_TEST_PY_ENV ?? 'python3',
+      ['-c', 'import sys; print(sys.executable)'],
+      { encoding: 'utf8' }
+    ).trim()
     await app.completeOnboarding()
     let page = await app.configureFakeAgent()
-    await page.evaluate(
-      async (path) => {
-        await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
-        await window.api.runtime.registerInterpreter('python', path)
-        const { python } = await window.api.runtime.listEnvironments()
-        const runtime = python.find(
-          (entry) => entry.interpreterPath === path || entry.envId === path
-        )
-        if (!runtime) throw new Error('Registered Python was not found')
-        await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
-        const enabled = (await window.api.runtime.listEnvironments()).python.find(
-          (entry) => entry.envId === runtime.envId
-        )
-        if (!enabled?.runnable)
-          throw new Error(`Registered Python is not runnable: ${JSON.stringify(enabled)}`)
-      },
-      await realpath(process.env.OPEN_SCIENCE_TEST_PY_ENV ?? '/usr/bin/python3')
-    )
+    await page.evaluate(async (path) => {
+      await window.api.settings.setDefaultPermissionProfile({ profile: 'auto' })
+      await window.api.runtime.registerInterpreter('python', path)
+      const { python } = await window.api.runtime.listEnvironments()
+      const runtime = python.find((entry) => entry.interpreterPath === path || entry.envId === path)
+      if (!runtime) throw new Error('Registered Python was not found')
+      await window.api.runtime.setEnvironmentEnabled('python', runtime.envId, true)
+      const enabled = (await window.api.runtime.listEnvironments()).python.find(
+        (entry) => entry.envId === runtime.envId
+      )
+      if (!enabled?.runnable)
+        throw new Error(`Registered Python is not runnable: ${JSON.stringify(enabled)}`)
+    }, python)
     const info = await page.evaluate(() => window.api.storage.getInfo())
     expect(await realpath(info.dataRoot)).toContain(await realpath(tmpdir()))
     await testInfo.attach('isolation-self-check', {
       body: JSON.stringify({
         dataRoot: await realpath(info.dataRoot),
-        python: await realpath(process.env.OPEN_SCIENCE_TEST_PY_ENV ?? '/usr/bin/python3'),
+        python,
         micromamba: process.env.OPEN_SCIENCE_MICROMAMBA_BIN
       }),
       contentType: 'application/json'

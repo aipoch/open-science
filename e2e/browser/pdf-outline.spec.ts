@@ -80,6 +80,7 @@ test('PDF note markers appear on hover, selection and keyboard focus without cov
   await page.mouse.move(0, 0)
   await expect(marker).toHaveCSS('opacity', '1')
   await page.keyboard.press('Escape')
+  await expect(note).toHaveCount(0)
   await highlight.click()
   await page.mouse.move(0, 0)
   await expect(highlight).toHaveAttribute('aria-pressed', 'true')
