@@ -509,7 +509,14 @@ const notebookRpcErrorGuidance = (status: number, error: unknown): string | unde
   if (status === 400) return TOOL_ARGUMENT_RECOVERY
   if (status === 401 || status === 403 || status === 404)
     return 'This operation is not available to this Session. Do not retry it or route around it; report the limitation to the user.'
-  if (status === 409) return 'Refresh the relevant state with a read-only tool, then retry once.'
+  if (status === 409) {
+    const text = typeof error === 'string' ? error : JSON.stringify(error ?? '')
+    if (text.includes('turn ended'))
+      return 'This turn has ended. Do not retry in this turn; continue after the next user message.'
+    if (text.includes('DIAGNOSTICS_STALE'))
+      return 'Refresh the relevant state with a read-only tool, then retry once.'
+    return 'Do not retry this call; report the conflict to the user.'
+  }
   if (status === 413) return 'Reduce the request size, then call the same tool again.'
   if (status === 429) return 'Wait for in-flight Notebook calls to finish, then retry once.'
   if (status >= 500)

@@ -988,6 +988,40 @@ describe('notebook_execute tool', () => {
     }
   })
 
+  it.each([
+    ['Notebook execution turn ended before request admission.', 'Do not retry in this turn'],
+    ['WSL_SETUP_DIAGNOSTICS_STALE', 'then retry once'],
+    ['Notebook Runtime binding does not match its pending host admission.', 'Do not retry']
+  ])('chooses the 409 next step from the conflict: %s', async (error, nextStep) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'conflict-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 409 }))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      const text = (result.content as { text: string }[])[0]!.text
+      expect(text).toContain(`${error}\n`)
+      expect(text).toContain(nextStep)
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('reports failed foreground cells and failed background Runs as tool errors', async () => {
     const server = createNotebookMcpServer({
       endpoint: 'http://127.0.0.1:4567',
