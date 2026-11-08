@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, win32, posix } from 'node:path'
+import { delimiter, dirname, join, win32, posix } from 'node:path'
 import { promisify } from 'node:util'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -18,6 +18,7 @@ import {
 let dataRoot: string | undefined
 
 afterEach(async () => {
+  vi.unstubAllEnvs()
   if (dataRoot) await rm(dataRoot, { recursive: true, force: true })
   dataRoot = undefined
 })
@@ -694,24 +695,10 @@ describe('EnvironmentStateTracker', () => {
         const second = join(dataRoot, 'second')
         await mkdir(first)
         await mkdir(second)
-        let libraries = [first, second]
+        const variable = language === 'python' ? 'PYTHONPATH' : 'R_LIBS'
+        vi.stubEnv(variable, [first, second].join(delimiter))
         const inspectInstalled = vi.fn(async () => ({ packages: [] }))
-        const execute = promisify(execFile)
-        const tracker = new EnvironmentStateTracker({
-          dataRoot,
-          inspectInstalled,
-          execFile: async (executable, args, options) => {
-            const setup =
-              language === 'python'
-                ? `import sys\nsys.path[:0] = ${JSON.stringify(libraries)}\n`
-                : `.libPaths(c(${libraries.map((path) => JSON.stringify(path)).join(',')}, .libPaths()))\n`
-            return execute(
-              executable,
-              [...args.slice(0, -1), setup + args[args.length - 1]],
-              options
-            )
-          }
-        })
+        const tracker = new EnvironmentStateTracker({ dataRoot, inspectInstalled })
         const probeTarget = {
           ...target,
           language,
@@ -724,7 +711,7 @@ describe('EnvironmentStateTracker', () => {
         expect(unchanged.fingerprint).toBe(initial.fingerprint)
         expect(unchanged.inventoryRefreshed).toBe(false)
 
-        libraries = [second, first]
+        vi.stubEnv(variable, [second, first].join(delimiter))
         const reordered = await tracker.prepareRun(probeTarget)
         expect(reordered.fingerprint).not.toBe(initial.fingerprint)
         expect(reordered.inventoryRefreshed).toBe(true)

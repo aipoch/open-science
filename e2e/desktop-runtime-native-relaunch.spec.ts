@@ -1,3 +1,4 @@
+import { LOCAL_SERVICE_STOP_BUDGET_MS } from '../src/main/local-service-lifetime'
 import {
   captureFixtureProcess,
   captureFixtureService,
@@ -155,7 +156,9 @@ for (const stalled of [false, true]) {
             { timeout: 10000 }
           )
           .toBe('stalled')
-        await expect.poll(() => desktop.exitCode, { timeout: 27000 }).toBe(0)
+        await expect
+          .poll(() => desktop.exitCode, { timeout: LOCAL_SERVICE_STOP_BUDGET_MS + 7_000 })
+          .toBe(0)
         const desktopExitObservedAt = Date.now()
         await expect.poll(() => server.exitCode !== null || server.signalCode !== null).toBe(true)
         const serviceExitObservedAt = Date.now()
@@ -165,7 +168,7 @@ for (const stalled of [false, true]) {
         )
         acquireRuntimeDirectorySync(roots.storageRoot).release()
         const lockReleasedAt = Date.now()
-        expect(lockReleasedAt - started).toBeLessThan(28000)
+        expect(lockReleasedAt - started).toBeLessThan(LOCAL_SERVICE_STOP_BUDGET_MS + 8_000)
         await testInfo.attach('stalled-native-relaunch-evidence', {
           body: JSON.stringify(
             {

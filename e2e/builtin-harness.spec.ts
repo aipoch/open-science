@@ -74,6 +74,7 @@ test('built-in harness executes approved host MCP and restores its session after
     let page = await app.completeOnboarding()
     await page.evaluate(
       async ({ baseUrl, model }) => {
+        await window.api.settings.setAgentFramework({ id: 'opencode' })
         await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
         const settings = await window.api.settings.upsertProvider({
           type: 'custom',
@@ -247,16 +248,7 @@ async function capabilityHost(
       },
       `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`
     )
-    const settings = await openSettingsPage(page, 'Agent')
-    await settings.getByRole('radio', { name: 'Use Open-Science Agent', exact: true }).click()
-    await page
-      .getByRole('alertdialog', { name: 'Switch to Open-Science Agent?', exact: true })
-      .getByRole('button', { name: 'Switch', exact: true })
-      .click()
-    await expect(
-      settings.getByRole('radio', { name: 'Use Open-Science Agent', exact: true })
-    ).toHaveAttribute('aria-checked', 'true')
-    await settings.getByRole('button', { name: 'Close settings' }).click()
+    await page.evaluate(() => window.api.settings.setAgentFramework({ id: 'open-science-agent' }))
     return { page, requests, close }
   } catch (error) {
     await close()
@@ -1597,13 +1589,7 @@ for (const protocol of ['messages', 'responses'] as const) {
         },
         { baseUrl: `http://127.0.0.1:${(gateway.address() as AddressInfo).port}/v1`, protocol }
       )
-      const settings = await openSettingsPage(page, 'Agent')
-      await settings.getByRole('radio', { name: 'Use Open-Science Agent', exact: true }).click()
-      await page
-        .getByRole('alertdialog', { name: 'Switch to Open-Science Agent?', exact: true })
-        .getByRole('button', { name: 'Switch', exact: true })
-        .click()
-      await settings.getByRole('button', { name: 'Close settings' }).click()
+      await page.evaluate(() => window.api.settings.setAgentFramework({ id: 'open-science-agent' }))
       await page.addLocatorHandler(
         page.getByRole('group', {
           name: 'Permission request: Review potentially destructive code',

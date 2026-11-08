@@ -397,7 +397,7 @@ test('exports selected diagnostics without changing the persisted session', asyn
   await executionFiles.locator('summary').click()
   await expect(executionFiles).toContainText('notebook/run.json')
   await expect(executionFiles).toContainText('notebook/frames/diagnostic-frame/run.json')
-  await expect(dialog.getByText(/Review for sensitive content before sharing/)).toBeVisible()
+  await expect(dialog.getByText(/Review the exported files before sharing/)).toBeVisible()
   await dialog.getByRole('button', { name: 'Export', exact: true }).click()
   await expect(
     dialog.getByText(/^Diagnostic package (exported successfully|partially exported)/)

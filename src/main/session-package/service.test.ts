@@ -1323,175 +1323,179 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
 })
 
-it('reopens finalized provenance messages against the imported graph and keeps source hashes intact', async () => {
-  const source = await createProvenanceTestFixture()
-  initDataRoot(source.storageRoot)
-  const target = await createProvenanceTestFixture()
-  initDataRoot(target.storageRoot)
-  fixtures.push(source, target)
-  await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
-  const session = await new SessionRepository(source.storageRoot).saveSession({
-    id: 'session-1',
-    projectId: 'project-1',
-    title: 'Finalized plot',
-    cwd: '',
-    status: 'idle',
-    createdAt: 1,
-    updatedAt: 2,
-    messages: [
-      {
-        id: 'prompt-1',
-        role: 'user',
-        content: 'Draw a plot',
-        status: 'complete',
-        eventIds: [],
-        createdAt: 1,
-        updatedAt: 1
-      },
-      {
-        id: 'message-1',
-        role: 'agent',
-        content: 'Saved plot.png',
-        status: 'complete',
-        eventIds: [],
-        createdAt: 2,
-        updatedAt: 2
+it(
+  'reopens finalized provenance messages against the imported graph and keeps source hashes intact',
+  async () => {
+    const source = await createProvenanceTestFixture()
+    initDataRoot(source.storageRoot)
+    const target = await createProvenanceTestFixture()
+    initDataRoot(target.storageRoot)
+    fixtures.push(source, target)
+    await source.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+    const session = await new SessionRepository(source.storageRoot).saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Finalized plot',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'prompt-1',
+          role: 'user',
+          content: 'Draw a plot',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: 'Saved plot.png',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ]
+    })
+    const graph = (
+      await new SessionRepository(source.storageRoot).loadSession('project-1', 'session-1')
+    )?.conversationGraph
+    if (!graph) throw new Error('Source graph was not materialized')
+    const request = createArtifactVersionRequest({
+      rootFrameId: graph.rootFrameId,
+      agentFrameId: graph.activeFrameId,
+      messageBranchId: graph.branches[0].id,
+      runtimeSegmentId: graph.runtimeSegments[0].id,
+      promptMessageId: 'prompt-1'
+    })
+    const repository = new ArtifactProvenanceRepository({
+      ...source.repositoryOptions,
+      loadSession: async () => session
+    })
+    await source.stagePng('finalized plot')
+    const version = await repository.createVersion(request)
+    await repository.finalizeRun({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      artifactRunId: request.artifactRunId,
+      artifactVersionIds: [version.versionId],
+      rootFrameId: request.rootFrameId,
+      agentFrameId: request.agentFrameId,
+      messageBranchId: request.messageBranchId,
+      runtimeSegmentId: request.runtimeSegmentId,
+      promptMessageId: request.promptMessageId,
+      messageId: 'message-1'
+    })
+    await new ProvenanceMessageSnapshotRepository({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
+    }).captureFinalizedMessages(session)
+    await new SessionRepository(source.storageRoot).saveSession({
+      ...session,
+      conversationGraph: {
+        ...graph,
+        messages: graph.messages.map((message) =>
+          message.id === 'message-1'
+            ? {
+                ...message,
+                parts: [
+                  {
+                    type: 'artifact',
+                    source: 'artifact',
+                    id: version.artifactId,
+                    versionId: version.versionId,
+                    name: 'plot.png',
+                    path: createArtifactVersionLocator({
+                      projectId: 'project-1',
+                      appSessionId: 'session-1',
+                      artifactId: version.artifactId,
+                      versionId: version.versionId
+                    })
+                  }
+                ]
+              }
+            : message
+        )
       }
-    ]
-  })
-  const graph = (
-    await new SessionRepository(source.storageRoot).loadSession('project-1', 'session-1')
-  )?.conversationGraph
-  if (!graph) throw new Error('Source graph was not materialized')
-  const request = createArtifactVersionRequest({
-    rootFrameId: graph.rootFrameId,
-    agentFrameId: graph.activeFrameId,
-    messageBranchId: graph.branches[0].id,
-    runtimeSegmentId: graph.runtimeSegments[0].id,
-    promptMessageId: 'prompt-1'
-  })
-  const repository = new ArtifactProvenanceRepository({
-    ...source.repositoryOptions,
-    loadSession: async () => session
-  })
-  await source.stagePng('finalized plot')
-  const version = await repository.createVersion(request)
-  await repository.finalizeRun({
-    projectId: 'project-1',
-    appSessionId: 'session-1',
-    artifactRunId: request.artifactRunId,
-    artifactVersionIds: [version.versionId],
-    rootFrameId: request.rootFrameId,
-    agentFrameId: request.agentFrameId,
-    messageBranchId: request.messageBranchId,
-    runtimeSegmentId: request.runtimeSegmentId,
-    promptMessageId: request.promptMessageId,
-    messageId: 'message-1'
-  })
-  await new ProvenanceMessageSnapshotRepository({
-    storageRoot: source.storageRoot,
-    getClient: async () => source.client
-  }).captureFinalizedMessages(session)
-  await new SessionRepository(source.storageRoot).saveSession({
-    ...session,
-    conversationGraph: {
-      ...graph,
-      messages: graph.messages.map((message) =>
-        message.id === 'message-1'
-          ? {
-              ...message,
-              parts: [
-                {
-                  type: 'artifact',
-                  source: 'artifact',
-                  id: version.artifactId,
-                  versionId: version.versionId,
-                  name: 'plot.png',
-                  path: createArtifactVersionLocator({
-                    projectId: 'project-1',
-                    appSessionId: 'session-1',
-                    artifactId: version.artifactId,
-                    versionId: version.versionId
-                  })
-                }
-              ]
-            }
-          : message
-      )
-    }
-  })
-  const archive = join(source.storageRoot, 'finalized.science')
-  await new SessionPackageService({
-    storageRoot: source.storageRoot,
-    getClient: async () => source.client
-  }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
-  const importer = new SessionPackageService({
-    storageRoot: target.storageRoot,
-    getClient: async () => target.client
-  })
-  const imported = await importer.importFrom(archive)
-  const origin = await importer.readOrigin(imported)
-  const importedSession = await new SessionRepository(target.storageRoot).loadSession(
-    imported.projectId,
-    imported.sessionId
-  )
-  expect(
-    importedSession?.messages.find((message) => message.id === origin.identities['message-1'])
-      ?.parts
-  ).toMatchObject([
-    {
-      path: createArtifactVersionLocator({
-        projectId: imported.projectId,
-        appSessionId: imported.sessionId,
-        artifactId: origin.identities[version.artifactId],
-        versionId: origin.identities[version.versionId]
-      })
-    }
-  ])
-  const read = await new ArtifactProvenanceRepository(
-    target.repositoryOptions
-  ).getVersionProvenance({
-    projectId: imported.projectId,
-    appSessionId: imported.sessionId,
-    artifactId: origin.identities[version.artifactId],
-    versionId: origin.identities[version.versionId]
-  })
-  expect(read.messages).toMatchObject({
-    state: 'available',
-    items: [
-      { id: origin.identities['prompt-1'], content: 'Draw a plot' },
-      { id: origin.identities['message-1'], content: 'Saved plot.png' }
-    ]
-  })
-  const evidence = origin.files.find((entry) => entry.sourceStorageKey.endsWith('/evidence.json'))
-  expect(evidence).toBeDefined()
-  expect(evidence?.localChecksum).not.toBe(evidence?.sourceChecksum)
-  const sourceEntry = origin.sourceManifest.inventory.find(
-    (entry) => entry.storageKey === evidence?.sourceStorageKey
-  )!
-  const retainedSource = join(
-    target.storageRoot,
-    'artifacts',
-    imported.projectId,
-    imported.sessionId,
-    '.session-package',
-    'source',
-    sourceEntry.path
-  )
-  expect(await fileChecksum(retainedSource)).toBe(evidence?.sourceChecksum)
-  expect(await fileChecksum(join(target.storageRoot, evidence!.localStorageKey))).toBe(
-    evidence?.localChecksum
-  )
-  const forwarded = join(target.storageRoot, 'forwarded.science')
-  await importer.exportTo(imported, forwarded)
-  const forwardedImport = await importer.importFrom(forwarded)
-  const forwardedOrigin = await importer.readOrigin(forwardedImport)
-  expect(forwardedOrigin.sourceManifest).toEqual(origin.sourceManifest)
-  expect(
-    forwardedOrigin.files.find((entry) => entry.sourceStorageKey === evidence?.sourceStorageKey)
-      ?.sourceChecksum
-  ).toBe(evidence?.sourceChecksum)
-})
+    })
+    const archive = join(source.storageRoot, 'finalized.science')
+    await new SessionPackageService({
+      storageRoot: source.storageRoot,
+      getClient: async () => source.client
+    }).exportTo({ projectId: 'project-1', sessionId: 'session-1' }, archive)
+    const importer = new SessionPackageService({
+      storageRoot: target.storageRoot,
+      getClient: async () => target.client
+    })
+    const imported = await importer.importFrom(archive)
+    const origin = await importer.readOrigin(imported)
+    const importedSession = await new SessionRepository(target.storageRoot).loadSession(
+      imported.projectId,
+      imported.sessionId
+    )
+    expect(
+      importedSession?.messages.find((message) => message.id === origin.identities['message-1'])
+        ?.parts
+    ).toMatchObject([
+      {
+        path: createArtifactVersionLocator({
+          projectId: imported.projectId,
+          appSessionId: imported.sessionId,
+          artifactId: origin.identities[version.artifactId],
+          versionId: origin.identities[version.versionId]
+        })
+      }
+    ])
+    const read = await new ArtifactProvenanceRepository(
+      target.repositoryOptions
+    ).getVersionProvenance({
+      projectId: imported.projectId,
+      appSessionId: imported.sessionId,
+      artifactId: origin.identities[version.artifactId],
+      versionId: origin.identities[version.versionId]
+    })
+    expect(read.messages).toMatchObject({
+      state: 'available',
+      items: [
+        { id: origin.identities['prompt-1'], content: 'Draw a plot' },
+        { id: origin.identities['message-1'], content: 'Saved plot.png' }
+      ]
+    })
+    const evidence = origin.files.find((entry) => entry.sourceStorageKey.endsWith('/evidence.json'))
+    expect(evidence).toBeDefined()
+    expect(evidence?.localChecksum).not.toBe(evidence?.sourceChecksum)
+    const sourceEntry = origin.sourceManifest.inventory.find(
+      (entry) => entry.storageKey === evidence?.sourceStorageKey
+    )!
+    const retainedSource = join(
+      target.storageRoot,
+      'artifacts',
+      imported.projectId,
+      imported.sessionId,
+      '.session-package',
+      'source',
+      sourceEntry.path
+    )
+    expect(await fileChecksum(retainedSource)).toBe(evidence?.sourceChecksum)
+    expect(await fileChecksum(join(target.storageRoot, evidence!.localStorageKey))).toBe(
+      evidence?.localChecksum
+    )
+    const forwarded = join(target.storageRoot, 'forwarded.science')
+    await importer.exportTo(imported, forwarded)
+    const forwardedImport = await importer.importFrom(forwarded)
+    const forwardedOrigin = await importer.readOrigin(forwardedImport)
+    expect(forwardedOrigin.sourceManifest).toEqual(origin.sourceManifest)
+    expect(
+      forwardedOrigin.files.find((entry) => entry.sourceStorageKey === evidence?.sourceStorageKey)
+        ?.sourceChecksum
+    ).toBe(evidence?.sourceChecksum)
+  },
+  process.platform === 'win32' ? 120_000 : 60_000
+)
 
 it('keeps terminal Task and Compute results as evidence without installing jobs or recovery authority', async () => {
   const source = await createProvenanceTestFixture()

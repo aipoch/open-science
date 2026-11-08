@@ -224,12 +224,12 @@ const stringEnvironment = (overrides = []) => {
   return environment
 }
 
-const toolResult = (name, result) => {
+const toolResult = (name, result, { allowToolError = false } = {}) => {
   const text = result.content
     .filter((item) => item.type === 'text')
     .map((item) => item.text)
     .join('\n')
-  if (result.isError) throw new Error(`${name} failed: ${text}`)
+  if (result.isError && !allowToolError) throw new Error(`${name} failed: ${text}`)
   return JSON.parse(text)
 }
 
@@ -2224,12 +2224,14 @@ if (process.argv.includes('--version')) {
           const command = `/usr/bin/curl --noproxy '' --max-time 10 --silent --show-error --fail -X POST http://127.0.0.1:${port}/`
           let retried = false
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) => {
-            const run = async () =>
+            const run = async (options) =>
               toolResult(
                 'bash_execute',
-                await client.callTool({ name: 'bash_execute', arguments: { command } })
+                await client.callTool({ name: 'bash_execute', arguments: { command } }),
+                options
               )
-            const first = await run()
+            // A blocked curl exits nonzero. Its structured stderr carries the trusted record.
+            const first = await run({ allowToolError: true })
             if (first.exitCode === 0) return
             const recordId = /OPEN_SCIENCE_NETWORK_BLOCK_RECORD: ([^\s]+)/u.exec(
               first.stderr ?? ''
