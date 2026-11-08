@@ -2942,6 +2942,38 @@ function associateNativeFigures(
           : figure
       })
   const result = finalizeFigures(completed)
+  // A composite figure can contain an internal prose label such as
+  // "Figure 1. The main idea in [9]".  When that label has no independently
+  // associated crop and is wholly enclosed by an already resolved figure,
+  // keep the outer owner as the sole source owner.  Preserve unresolved
+  // captions outside resolved crops (and captions with independent graphic
+  // or table evidence) for diagnostics and later recovery.
+  const filterNestedCaptionReferences = (figures) =>
+    figures.filter((figure, index, all) => {
+      if (figure.issue !== 'no-unambiguous-adjacent-graphics') return true
+      const captionRect = figure.caption?.rect
+      if (!captionRect) return true
+      const enclosed = all.some(
+        (other, otherIndex) =>
+          otherIndex !== index &&
+          other.rect &&
+          other.caption?.page === figure.caption?.page &&
+          other.rect[0] <= captionRect[0] &&
+          other.rect[1] <= captionRect[1] &&
+          other.rect[2] >= captionRect[2] &&
+          other.rect[3] >= captionRect[3]
+      )
+      if (!enclosed) return true
+      if (tableRects.some((rect) => intersection(rect, captionRect) > 0)) return true
+      if (
+        (page.graphicsBounds ?? []).some((graphic) => {
+          const rect = figureGraphicRect(page, graphic)
+          return rect && intersection(rect, captionRect) > 0
+        })
+      )
+        return true
+      return false
+    })
   const independentRasters = (figures) =>
     figures.map((figure, index) => {
       const symbolAxis = nativeGroupedSymbolAxisCrop(
@@ -2972,13 +3004,16 @@ function associateNativeFigures(
         ? { ...figure, ...proof, fallbackFigure: figure }
         : figure
     })
-  if (!completed.some((figure) => figure.fallbackFigure)) return independentRasters(result)
+  if (!completed.some((figure) => figure.fallbackFigure))
+    return filterNestedCaptionReferences(independentRasters(result))
   // Complete the ordinary alternatives together, preserving all peer checks.
   // Scope admission is disabled explicitly on the single bounded retry above.
   const fallback = finalizeFigures(completed.map((figure) => figure.fallbackFigure ?? figure))
-  return independentRasters(
-    result.map((figure, index) =>
-      completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+  return filterNestedCaptionReferences(
+    independentRasters(
+      result.map((figure, index) =>
+        completed[index].fallbackFigure ? { ...figure, fallbackFigure: fallback[index] } : figure
+      )
     )
   )
 }
