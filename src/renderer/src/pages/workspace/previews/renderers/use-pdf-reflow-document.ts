@@ -50,6 +50,7 @@ export function usePdfReflowDocument(
     results: PdfTranslationResults
     structureContext?: PdfTranslationStructureContext
   }
+  const [recovery, setRecovery] = useState<Snapshot & { revision: number; pages: Set<number> }>()
   const [selection, setSelection] = useState<Snapshot>()
   const [displayed, setDisplayed] = useState<
     Snapshot & {
@@ -153,14 +154,25 @@ export function usePdfReflowDocument(
             .filter((entry) => entry.reason === 'unsupported-orientation')
             .flatMap((entry) => entry.items.map((item) => item.pageNumber))
         )
+        const recoveryPages =
+          recovery?.original === original &&
+          recovery.results === results &&
+          recovery.structureContext === structureContext &&
+          recovery.revision === revision
+            ? recovery.pages
+            : undefined
+        for (const page of recoveryPages ?? []) retainedPages.add(page)
         // Keep a cross-page paragraph whole when any of its pages needs an original-page fallback.
-        let previousSize: number
-        do {
-          previousSize = retainedPages.size
-          for (const unit of units)
-            if (unit.fragments.some((fragment) => retainedPages.has(fragment.pageNumber)))
-              for (const fragment of unit.fragments) retainedPages.add(fragment.pageNumber)
-        } while (retainedPages.size !== previousSize)
+        const includeJoinedPages = (pages: Set<number>): void => {
+          let previousSize: number
+          do {
+            previousSize = pages.size
+            for (const unit of units)
+              if (unit.fragments.some((fragment) => pages.has(fragment.pageNumber)))
+                for (const fragment of unit.fragments) pages.add(fragment.pageNumber)
+          } while (pages.size !== previousSize)
+        }
+        includeJoinedPages(retainedPages)
         // Verified native ownership can suppress historical table/figure label
         // translations without rewriting the edition's source IDs or saved text.
         const structure = await preparePdfTranslationStructure({
@@ -198,13 +210,15 @@ export function usePdfReflowDocument(
               ? result.translation
               : u.source
           const retain = u.fragments.some((fragment) => retainedPages.has(fragment.pageNumber))
-          if (retain && translation !== u.source)
+          if (retain && translation !== u.source) {
+            const recovered = u.fragments.some((f) => recoveryPages?.has(f.pageNumber))
             failures[u.id] = {
-              code: 'unsupported-layout',
-              phase: 'planning',
+              code: recovered ? 'validation-failed' : 'unsupported-layout',
+              phase: recovered ? 'verification' : 'planning',
               pageNumbers: [...new Set(u.fragments.map((fragment) => fragment.pageNumber))],
               fragmentCount: u.fragments.length
             }
+          }
           return {
             source: u.source,
             kind: kinds.get(u.id),
@@ -271,6 +285,12 @@ export function usePdfReflowDocument(
           }
         }
         const unitFragments: Record<string, readonly PdfTranslationFragment[]> = {}
+        const invalidPages = new Set<number>()
+        let validationDetail: string | undefined
+        const rejectUnit = (index: number, detail: string): void => {
+          validationDetail ??= detail
+          for (const fragment of units[index].fragments) invalidPages.add(fragment.pageNumber)
+        }
         for (const [index, fragments] of placements) {
           const unit = units[index]
           if (!unit) throw new Error('Unknown reflow unit')
@@ -279,12 +299,17 @@ export function usePdfReflowDocument(
             rect: f.rect,
             items: []
           }))
-          if (retained.has(unit.id) || !fragments.some((fragment) => fragment.text)) continue
+          if (retained.has(unit.id)) continue
+          if (!fragments.some((fragment) => fragment.text)) {
+            if (requestUnits[index].translation !== unit.source)
+              rejectUnit(index, 'Reflow translation missing')
+            continue
+          }
           if (
             textKey(fragments.map((f) => f.text).join('')) !==
             textKey(requestUnits[index].translation)
           )
-            throw new Error('Reflow translation incomplete')
+            rejectUnit(index, 'Reflow translation incomplete')
           for (const fragment of fragments) {
             const geometry = pages[fragment.pageNumber - 1]
             if (!geometry) throw new Error('Invalid reflow placement')
@@ -303,7 +328,7 @@ export function usePdfReflowDocument(
               .map((item) => item.str)
               .join('')
             if (textKey(extracted) !== textKey(fragment.text))
-              throw new Error('Reflow PDF text changed')
+              rejectUnit(index, 'Reflow PDF text changed')
           }
         }
         for (const [index, unit] of units.entries()) {
@@ -312,7 +337,54 @@ export function usePdfReflowDocument(
             requestUnits[index].translation !== unit.source &&
             !placements.has(index)
           )
-            throw new Error('Reflow translation missing')
+            rejectUnit(index, 'Reflow translation missing')
+        }
+        if (cancelled) return
+        if (validationDetail) {
+          // Retry the snapshot once if a translated page can survive. A global
+          // mapping error or a second failed verification never reaches display.
+          includeJoinedPages(invalidPages)
+          if (
+            !recoveryPages &&
+            requestUnits.some(
+              (u) =>
+                u.translation !== u.source &&
+                !u.fragments.some((f) => invalidPages.has(f.pageNumber))
+            )
+          ) {
+            release()
+            setRecovery({ original, results, structureContext, revision, pages: invalidPages })
+            return
+          }
+          throw new Error(validationDetail)
+        }
+        if (recoveryPages) {
+          const copied = new Set(output.reflow.originalPageNumbers)
+          for (const sourcePage of recoveryPages) {
+            const outputIndex = output.reflow.sourcePageNumbers.indexOf(sourcePage)
+            if (!copied.has(outputIndex + 1)) throw new Error('Reflow original page missing')
+            const page = await original.getPage(sourcePage)
+            const viewport = page.getViewport({ scale: 1 })
+            const targetPage = pages[outputIndex]
+            if (
+              viewport.width !== targetPage.width ||
+              viewport.height !== targetPage.height ||
+              viewport.rotation !== targetPage.rotation
+            )
+              throw new Error('Reflow original page geometry changed')
+            const sourceText = await page.getTextContent()
+            const items = sourceText.items.flatMap((item) => ('str' in item ? [item] : []))
+            const target = pageText.get(outputIndex + 1)!
+            if (
+              items.length !== target.length ||
+              items.some(
+                (item, i) =>
+                  item.str !== target[i].str ||
+                  item.transform.some((v, j) => v !== target[i].transform[j])
+              )
+            )
+              throw new Error('Reflow original page changed')
+          }
         }
         if (cancelled) return
         const checkpoint = results.checkpoint
@@ -380,7 +452,16 @@ export function usePdfReflowDocument(
       void api.cancelPdf(id).catch(() => undefined)
       if (live.current?.release !== release) release()
     }
-  }, [admitted, original, results, revision, beforeReady, resourceRequestKey, structureContext])
+  }, [
+    admitted,
+    original,
+    results,
+    revision,
+    recovery,
+    beforeReady,
+    resourceRequestKey,
+    structureContext
+  ])
   const current =
     admitted &&
     stored?.original === original &&
