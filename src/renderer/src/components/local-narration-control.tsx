@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AudioLines, Trash2 } from 'lucide-react'
+import { AudioLines, Download, Trash2 } from 'lucide-react'
 import type { LocalModelSnapshot } from '../../../shared/local-models'
 import { localModelDownloadProgress } from '../../../shared/local-models'
 import { Button } from './ui/button'
@@ -60,10 +60,13 @@ export function LocalNarrationControl(): React.JSX.Element {
   const installed = snapshot?.availability === 'ready'
   const installing = snapshot?.availability === 'installing'
   return (
-    <div className="space-y-3 rounded-lg border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <AudioLines className="mr-1 size-5 shrink-0 text-primary" aria-hidden="true" />
+    <div
+      data-slot="local-model-card"
+      className="space-y-3 rounded-xl border border-border bg-card p-4"
+    >
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <AudioLines className="size-5 shrink-0 text-primary" aria-hidden="true" />
           <span className="text-sm font-semibold">{t('Research narration')}</span>
           {snapshot && (
             <span
@@ -74,7 +77,7 @@ export function LocalNarrationControl(): React.JSX.Element {
             </span>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+        <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
           {snapshot && (
             <span>{size(installed ? snapshot.installedBytes : snapshot.downloadBytes)}</span>
           )}
@@ -109,6 +112,7 @@ export function LocalNarrationControl(): React.JSX.Element {
               }
               onClick={() => void run('install')}
             >
+              <Download className="size-4" aria-hidden="true" />
               {snapshot?.error
                 ? t('Retry')
                 : snapshot?.updateAvailable
@@ -119,9 +123,11 @@ export function LocalNarrationControl(): React.JSX.Element {
         </div>
       </div>
       {installing && snapshot && (
-        <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
+        <div className="border-t border-border pt-4">
+          <DownloadProgressLine progress={localModelDownloadProgress(snapshot)} />
+        </div>
       )}
-      <p className="text-sm text-muted-foreground">
+      <p className="border-t border-border pt-4 text-sm text-muted-foreground">
         {t('English narration. Downloads the speech engine and model only when installed.')}
       </p>
       {failed || snapshot?.error ? (
