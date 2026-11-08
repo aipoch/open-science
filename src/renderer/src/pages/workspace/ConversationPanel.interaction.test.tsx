@@ -10016,7 +10016,7 @@ it.each(['question', 'delegated question', 'plan', 'permission', 'delegated perm
   async (kind) => {
     window.api.researchVideo = {
       status: vi.fn().mockResolvedValue({})
-    } as typeof window.api.researchVideo
+    } as unknown as typeof window.api.researchVideo
     const activeSession: ChatSession = {
       ...delegatedQuestionSession(),
       packageOrigin: {
