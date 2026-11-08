@@ -108,18 +108,55 @@ const stringArray = (value: unknown): readonly string[] => {
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' ? value : undefined
 
-const parseEvidence = (raw: string): ImageEvidence => {
-  const trimmed = raw.trim()
-  const json = trimmed.startsWith('```')
-    ? trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-    : trimmed
-  let value: unknown
-  try {
-    value = JSON.parse(json)
-  } catch {
-    throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
+const balancedJsonObject = (raw: string, start: number): string | undefined => {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < raw.length; index += 1) {
+    const character = raw[index]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      continue
+    }
+    if (character === '"') {
+      inString = true
+      continue
+    }
+    if (character === '{') depth += 1
+    else if (character === '}') {
+      depth -= 1
+      if (depth === 0) return raw.slice(start, index + 1)
+      if (depth < 0) return undefined
+    }
   }
-  if (!isRecord(value)) {
+  return undefined
+}
+
+const parseJsonRecord = (raw: string): Record<string, unknown> | undefined => {
+  const trimmed = raw.trim().replace(/^\uFEFF/u, '')
+  const candidates = new Set<string>([trimmed])
+  const fenced = /```(?:json)?\s*([\s\S]*?)\s*```/iu.exec(trimmed)?.[1]
+  if (fenced) candidates.add(fenced.trim())
+  for (let start = trimmed.indexOf('{'); start >= 0; start = trimmed.indexOf('{', start + 1)) {
+    const candidate = balancedJsonObject(trimmed, start)
+    if (candidate) candidates.add(candidate)
+  }
+  for (const candidate of candidates) {
+    try {
+      const value: unknown = JSON.parse(candidate)
+      if (isRecord(value)) return value
+    } catch {
+      // Try the next well-formed JSON object in a provider-wrapped response.
+    }
+  }
+  return undefined
+}
+
+const parseEvidence = (raw: string): ImageEvidence => {
+  const value = parseJsonRecord(raw)
+  if (!value) {
     throw new ImageInputCompatibilityError('invalid-evidence', VISION_EVIDENCE_INVALID_MESSAGE)
   }
 

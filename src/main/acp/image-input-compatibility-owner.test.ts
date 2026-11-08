@@ -199,6 +199,36 @@ describe('ImageInputCompatibilityOwner', () => {
     ])
   })
 
+  it('accepts provider-wrapped JSON evidence', async () => {
+    const evidence = {
+      summary: 'A clear screenshot.',
+      findings: [],
+      transcription: '',
+      regions: [],
+      entities: [],
+      relations: [],
+      uncertainty: []
+    }
+    const owner = new ImageInputCompatibilityOwner({
+      captureTarget: vi.fn(async () => target),
+      runner: {
+        run: vi.fn(async () => ({
+          text: `Here is the extracted evidence:\n\n\`\`\`json\n${JSON.stringify(evidence)}\n\`\`\``,
+          frameworkId: 'opencode' as const,
+          model: 'vision-model',
+          stopReason: 'end_turn' as const
+        }))
+      }
+    })
+
+    await expect(owner.prepare({ content: [image], supportsImageInput: false })).resolves.toEqual([
+      expect.objectContaining({
+        type: 'text',
+        text: expect.stringContaining('A clear screenshot.')
+      })
+    ])
+  })
+
   it('rejects Vision evidence with a missing uncertainty field', async () => {
     const owner = new ImageInputCompatibilityOwner({
       captureTarget: vi.fn(async () => target),
