@@ -485,7 +485,11 @@ for (const { count, contextLines } of [
         await app.markResourceProfilePhase('four-branch-switches')
         await captureHeap('four-branch-switches')
         const restartAt = performance.now()
-        page = await app.restart({ resourceProfilePhase: 'restart' })
+        // Flushing the 26 MB capacity fixture can take longer than an ordinary restart.
+        page = await app.restart({
+          resourceProfilePhase: 'restart',
+          gracefulTimeoutMs: count === 1000 ? 90_000 : undefined
+        })
         metrics.restartToReadyMs = performance.now() - restartAt
         const restoredAt = performance.now()
         await openProjectSession(page, projectName, session.title)

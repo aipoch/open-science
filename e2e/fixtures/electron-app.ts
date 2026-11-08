@@ -408,7 +408,10 @@ type ElectronApp = {
   restoreDelegatedHandoffCleanup: (childName: string) => Promise<void>
   emitPreviewContextMenuAtCssPoint: (point: { x: number; y: number }) => Promise<void>
   showMainWindow: () => Promise<void>
-  restart: (options?: { resourceProfilePhase?: string }) => Promise<Page>
+  restart: (options?: {
+    resourceProfilePhase?: string
+    gracefulTimeoutMs?: number
+  }) => Promise<Page>
   restartAfterCrash: (options?: { force?: boolean }) => Promise<Page>
   restartWithCorruptHistoricalSessionFile: (projectId: string) => Promise<Page>
   restartWithSessionFixture: (
@@ -1823,8 +1826,10 @@ class ElectronAppHarness implements ElectronApp {
     return this.page
   }
 
-  async restart(options: { resourceProfilePhase?: string } = {}): Promise<Page> {
-    await this.close()
+  async restart(
+    options: { resourceProfilePhase?: string; gracefulTimeoutMs?: number } = {}
+  ): Promise<Page> {
+    await this.closeForCleanup(true, options.gracefulTimeoutMs)
     if (options.resourceProfilePhase) {
       if (!this.resourceProfiler) throw new Error('Runtime resource profiling is not active.')
       this.resourceProfiler.markPhase(options.resourceProfilePhase)
@@ -2121,7 +2126,10 @@ class ElectronAppHarness implements ElectronApp {
     await this.closeForCleanup(true)
   }
 
-  private async closeForCleanup(requireGraceful = false): Promise<void> {
+  private async closeForCleanup(
+    requireGraceful = false,
+    gracefulTimeoutMs = CLEANUP_GRACEFUL_TIMEOUT_MS
+  ): Promise<void> {
     if (!this.application) return
 
     const application = this.application
@@ -2158,7 +2166,13 @@ class ElectronAppHarness implements ElectronApp {
                       throw error
                     windowId = await readWindowId()
                   }
-                  await installRestartPersistenceRetry(application, windowId, 5_000)
+                  await installRestartPersistenceRetry(
+                    application,
+                    windowId,
+                    gracefulTimeoutMs === CLEANUP_GRACEFUL_TIMEOUT_MS
+                      ? 5_000
+                      : gracefulTimeoutMs / 2
+                  )
                 }
                 await application.close()
               },
@@ -2169,7 +2183,7 @@ class ElectronAppHarness implements ElectronApp {
               }
             },
             {
-              gracefulTimeoutMs: CLEANUP_GRACEFUL_TIMEOUT_MS,
+              gracefulTimeoutMs,
               forcedTimeoutMs: CLEANUP_FORCED_TIMEOUT_MS,
               requireGraceful
             }

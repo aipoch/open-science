@@ -2007,8 +2007,11 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'workspace-paired.pdf',
                     mimeType: 'application/pdf',
-                    content,
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content,
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2607,10 +2610,13 @@ if (process.argv.includes('--version')) {
                   arguments: {
                     filename: 'sanitized-performance.png',
                     mimeType: 'image/png',
-                    content: (
-                      await readFile(new URL('./sanitized-performance.png', import.meta.url))
-                    ).toString('base64'),
-                    encoding: 'base64'
+                    source: {
+                      kind: 'inline',
+                      content: (
+                        await readFile(new URL('./sanitized-performance.png', import.meta.url))
+                      ).toString('base64'),
+                      encoding: 'base64'
+                    }
                   }
                 })
               )
@@ -2929,9 +2935,12 @@ if (process.argv.includes('--version')) {
                       // Fixed 160 × 112 chart makes manual full-preview acceptance visible.
                       filename: 'resumed-figure.png',
                       mimeType: 'image/png',
-                      content:
-                        'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
-                      encoding: 'base64'
+                      source: {
+                        kind: 'inline',
+                        content:
+                          'iVBORw0KGgoAAAANSUhEUgAAAKAAAABwCAIAAAAWk+xVAAABGUlEQVR42u3RsQmAMBRAwfTiRA7gBA7hGlYOYO2WikgKXcBCviAJB2+Cd+k4syouWQBYgAVYgAVYgAUYsAALsAALsAALMOBX9cN4Zx9gARZgARZgwIABA35sW5t4gAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAGXCtxNezzAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOCPgdtljgcYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMOBKgPVXgAHHgFVKgAELsAALsAALsAADFmABFmABFmABBizAKrALzKf11GbKuOoAAAAASUVORK5CYII=',
+                        encoding: 'base64'
+                      }
                     }
                   })
                 )

@@ -9,15 +9,17 @@ export const GITHUB_ELECTRON_MIRROR = 'https://github.com/electron/electron/rele
 export const GITHUB_ELECTRON_BUILDER_BINARIES_MIRROR =
   'https://github.com/electron-userland/electron-builder-binaries/releases/download/'
 export const DEFAULT_NPM_CI_ARGS = ['--no-audit']
-export const WINDOWS_CI_RETRY_DELAY_MS = 5_000
-export const WINDOWS_CI_ATTEMPTS = 2
+export const CI_RETRY_DELAY_MS = 5_000
+export const CI_ATTEMPTS = 2
 
 export function shouldForceGitHubElectronMirrors(env = process.env) {
   return env.GITHUB_ACTIONS === 'true'
 }
 
 export function npmCiAttemptCount({ platform = process.platform, env = process.env } = {}) {
-  return platform === 'win32' && env.GITHUB_ACTIONS === 'true' ? WINDOWS_CI_ATTEMPTS : 1
+  return (platform === 'win32' || platform === 'linux') && env.GITHUB_ACTIONS === 'true'
+    ? CI_ATTEMPTS
+    : 1
 }
 
 const defaultSleep = (ms) => {
@@ -62,9 +64,9 @@ export function runNpmCi({
     if (status === 0) return 0
     if (attempt < attempts) {
       console.error(
-        `npm-ci: Windows GitHub Actions install failed (attempt ${attempt}/${attempts}); retrying after ${WINDOWS_CI_RETRY_DELAY_MS}ms`
+        `npm-ci: GitHub Actions install failed (attempt ${attempt}/${attempts}); retrying after ${CI_RETRY_DELAY_MS}ms`
       )
-      sleep(WINDOWS_CI_RETRY_DELAY_MS)
+      sleep(CI_RETRY_DELAY_MS)
     }
   }
   return status

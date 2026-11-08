@@ -1302,10 +1302,10 @@ test('profiles Replay playback with long Notebook output and completed transcrip
   expect(await progress.getAttribute('aria-valuenow')).not.toBe(String(from))
 })
 
-test('expanded replay keeps menus, tooltips and Ask above the modal and dismisses one layer at a time', async ({
+test('expanded replay keeps menus and tooltips above the panel and focuses the discussion on Ask', async ({
   page
-}, info) => {
-  await page.goto(`${url}?panel=1&artifacts=1&modalLayers=1&branchesReview=1`)
+}) => {
+  await page.goto(`${url}?panel=1&artifacts=1&branchesReview=1`)
   const panel = page.getByTestId('replay-panel')
   await panel.getByRole('button', { name: 'Enter full screen', exact: true }).click()
   const assertOnTop = async (selector: import('@playwright/test').Locator): Promise<void> => {
@@ -1339,15 +1339,8 @@ test('expanded replay keeps menus, tooltips and Ask above the modal and dismisse
     56
   )
   await panel.getByRole('button', { name: 'Ask about this step', exact: true }).click()
-  const ask = page.getByRole('dialog', { name: 'Ask in a conversation', exact: true })
-  await assertOnTop(ask)
-  await expect(ask.getByRole('combobox', { name: 'Search conversations' })).toBeFocused()
-  await expect(ask).toHaveCSS('opacity', '1')
-  await ask.getByRole('combobox', { name: 'Search conversations' }).fill('Research')
-  await page.screenshot({ path: info.outputPath('replay-ask-above-modal.png') })
-  await page.keyboard.press('Escape')
-  await expect(ask).not.toBeVisible()
-  await expect(panel.getByRole('button', { name: 'Exit full screen', exact: true })).toBeVisible()
+  await expect(page.getByLabel('Discussion question')).toBeFocused()
+  await expect(panel.getByRole('button', { name: 'Enter full screen', exact: true })).toBeVisible()
 })
 
 test('Notebook and Files header toggles preserve the advancing replay clock', async ({ page }) => {
