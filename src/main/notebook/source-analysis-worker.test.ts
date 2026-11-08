@@ -60,3 +60,21 @@ it('runs large sources in the worker with the same results as the main thread', 
   await analyzeNotebookCodeRiskOffMainThread('python', cell(1024), context)
   expect(worker.created).toBe(1)
 })
+
+it('rejects a cancelled worker analysis without waiting for the worker', async () => {
+  const controller = new AbortController()
+  const analysis = analyzeNotebookCodeRiskOffMainThread(
+    'python',
+    cell(4 * SOURCE_ANALYSIS_WORKER_MIN_BYTES),
+    { workingDirectory: resolve('.') },
+    undefined,
+    controller.signal
+  )
+  controller.abort()
+  // The worker cannot reply before the next macrotask, so only a cancelled request settles first.
+  const settled = await Promise.race([
+    analysis.catch((error: Error) => error.name),
+    new Promise((resolve) => setImmediate(() => resolve('pending')))
+  ])
+  expect(settled).toBe('AbortError')
+})

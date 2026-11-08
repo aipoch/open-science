@@ -55,7 +55,10 @@ const residentWorker = (): Worker => {
   return created
 }
 
-const runInWorker = <Result>(request: SourceAnalysisRequest): Promise<Result> => {
+const runInWorker = <Result>(
+  request: SourceAnalysisRequest,
+  signal?: AbortSignal
+): Promise<Result> => {
   clearTimeout(idleTimer)
   const active = residentWorker()
   active.ref()
@@ -66,16 +69,27 @@ const runInWorker = <Result>(request: SourceAnalysisRequest): Promise<Result> =>
       WORKER_TIMEOUT_MS
     )
     timeout.unref()
+    const settle = (): void => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', abort)
+    }
+    // The worker finishes the walk; its late result has no pending entry and is dropped.
+    const abort = (): void => {
+      pending.delete(id)
+      settle()
+      reject(signal!.reason)
+    }
     pending.set(id, {
       resolve: (value) => {
-        clearTimeout(timeout)
+        settle()
         resolve(value as Result)
       },
       reject: (error) => {
-        clearTimeout(timeout)
+        settle()
         reject(error)
       }
     })
+    signal?.addEventListener('abort', abort, { once: true })
     active.postMessage({ id, request })
   }).finally(() => {
     if (worker !== active || pending.size > 0) return
@@ -100,8 +114,9 @@ const analyze = async <Result>(
 ): Promise<Result> => {
   if (offloaded(request)) {
     try {
-      return await runInWorker<Result>(request)
+      return await runInWorker<Result>(request, signal)
     } catch (error) {
+      if (signal?.aborted) throw error
       log.warn('source analysis worker unavailable; analyzing in-process', {
         kind: request.kind,
         language: request.language,
