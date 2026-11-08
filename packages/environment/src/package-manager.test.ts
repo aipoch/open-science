@@ -26,6 +26,7 @@ import { micromambaCacheLockKey } from './micromamba-cache'
 import { withExclusiveCacheLock } from './pkgs-cache-lock'
 import { CHILD_UNCONFIRMED } from './provisioner-runtime'
 import {
+  condaActivatedPath,
   envPrefix,
   pipBin,
   rLibraryDir,
@@ -1460,6 +1461,21 @@ describe('installPackages', () => {
     expect(env.REQUESTS_CA_BUNDLE).toBe('/etc/corp-ca.pem')
     expect(env.PIP_CERT).toBe('/etc/corp-ca.pem')
     expect(env.CURL_CA_BUNDLE).toBe('/etc/corp-ca.pem')
+  })
+
+  it('activates the managed R environment for source installers on Windows', async () => {
+    const { spawn, calls } = scriptedSpawn([ok])
+    await installPackages(
+      { language: 'r', packages: ['DESeq2'], installer: 'biocmanager' },
+      {
+        spawn,
+        ...base,
+        micromambaEnv: { platform: 'win32', env: { PATH: 'C:\\Windows' } }
+      }
+    )
+
+    const prefix = envPrefix(runtimeRoot(base.storageRoot), DEFAULT_R_ENV, 'win32')
+    expect(calls[0]?.[2]?.PATH).toBe(condaActivatedPath(prefix, process.env.PATH, 'win32'))
   })
 
   it('routes pip and R workload caches under the configured data storage runtime', async () => {
