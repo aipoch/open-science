@@ -68,12 +68,13 @@ const podLogPath = (namespace: string, podName: string, tailLines: number): stri
   `/api/v1/namespaces/${encodePath(namespace)}/pods/${encodePath(podName)}/log?tailLines=${tailLines}`
 
 const safeJobName = (jobId: string): string => {
-  const normalized = jobId
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, '-')
-    .replace(/^-+|-+$/g, '')
-  const suffix = normalized.slice(0, 48) || 'job'
-  return `open-science-${suffix}`.slice(0, 63).replace(/-+$/g, '')
+  const lower = jobId.toLowerCase()
+  const start = lower.search(/[a-z0-9]/)
+  if (start === -1) return 'open-science-job'
+  const suffix = lower.slice(start, start + 48).replace(/[^a-z0-9-]/g, '-')
+  let end = suffix.length
+  while (suffix[end - 1] === '-') end--
+  return `open-science-${suffix.slice(0, end)}`
 }
 
 const asJob = (value: unknown): KubernetesJob =>
