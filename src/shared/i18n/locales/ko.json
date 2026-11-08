@@ -6485,6 +6485,7 @@
     "Some metadata could not be retrieved. Review the available details before importing.": "일부 메타데이터를 가져오지 못했습니다. 가져오기 전에 확인 가능한 정보를 검토하세요.",
     "Running": "실행 중",
     "Pinned": "고정됨",
+    "Recents": "최근",
     "Recent sessions": "최근 세션",
     "More": "더보기",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 이상이 필요합니다. 사용하기 전에 Codex를 업데이트하거나 복구하세요.",

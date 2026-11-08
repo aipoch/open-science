@@ -11,6 +11,7 @@ import {
   BookOpen,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   Download,
   Files,
   Cpu,
@@ -67,6 +68,7 @@ import {
   SESSION_ACTION_CATALOG,
   SESSION_ACTION_RECIPE,
   createSessionActionBindings,
+  isImportedSession,
   type SessionActionId,
   type SessionActionInvocation
 } from './session-action-menu'
@@ -280,20 +282,9 @@ const isLiveSession = (
 // is read rather than here. Keeping the union closed means a section added upstream fails typecheck
 // until its text is added, instead of silently rendering untranslated.
 type SidebarSessionSection = {
-  label: 'Imported research' | 'Pinned' | 'Active' | 'Today' | 'Yesterday' | 'This week' | 'Older'
+  label: 'Pinned' | 'Imported research' | 'Active' | 'Recents'
   items: ChatSession[]
 }
-
-const startOfLocalDay = (timestamp: number): number => {
-  const date = new Date(timestamp)
-  date.setHours(0, 0, 0, 0)
-  return date.getTime()
-}
-
-const isImportedSessionRow = (session: ChatSession): boolean =>
-  session.contentLoaded === false
-    ? session.id.startsWith('import-')
-    : Boolean(session.packageOrigin)
 
 const getSessionSections = (
   sessions: ChatSession[],
@@ -301,25 +292,14 @@ const getSessionSections = (
   credentialPendingSessionIds: ReadonlySet<string>,
   pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
 ): SidebarSessionSection[] => {
-  const todayStartedAt = startOfLocalDay(now)
-  const yesterday = new Date(todayStartedAt)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayStartedAt = yesterday.getTime()
-  const week = new Date(todayStartedAt)
-  week.setDate(week.getDate() - ((week.getDay() + 6) % 7))
-  const weekStartedAt = week.getTime()
-
-  const imports = sessions.filter(isImportedSessionRow)
+  const imports = sessions.filter(isImportedSession)
   const children = new Map(imports.map((source) => [source.id, [] as ChatSession[]]))
   const pinned: ChatSession[] = []
   const active: ChatSession[] = []
-  const today: ChatSession[] = []
-  const yesterdaySessions: ChatSession[] = []
-  const thisWeek: ChatSession[] = []
-  const older: ChatSession[] = []
+  const recents: ChatSession[] = []
 
   sessions.forEach((session) => {
-    if (isImportedSessionRow(session)) return
+    if (isImportedSession(session)) return
     const siblings = session.parentSessionId && children.get(session.parentSessionId)
     if (siblings) {
       siblings.push(session)
@@ -332,41 +312,33 @@ const getSessionSections = (
       (session.status === 'idle' && now - session.updatedAt < ACTIVE_SESSION_GRACE_MS)
     ) {
       active.push(session)
-    } else if (session.updatedAt >= todayStartedAt) {
-      today.push(session)
-    } else if (session.updatedAt >= yesterdayStartedAt) {
-      yesterdaySessions.push(session)
-    } else if (session.updatedAt >= weekStartedAt) {
-      thisWeek.push(session)
     } else {
-      older.push(session)
+      recents.push(session)
     }
   })
 
   const sections: SidebarSessionSection[] = [
+    { label: 'Pinned', items: pinned },
     {
       label: 'Imported research',
       items: imports.flatMap((source) => [source, ...children.get(source.id)!])
     },
-    { label: 'Pinned', items: pinned },
     { label: 'Active', items: active },
-    { label: 'Today', items: today },
-    { label: 'Yesterday', items: yesterdaySessions },
-    { label: 'This week', items: thisWeek },
-    { label: 'Older', items: older }
+    { label: 'Recents', items: recents }
   ]
   return sections.filter((section) => section.items.length > 0)
 }
 
-const getNextSessionSectionRefreshAt = (sessions: ChatSession[], now: number): number => {
-  const tomorrow = new Date(now)
-  tomorrow.setHours(24, 0, 0, 0)
-
-  return sessions.reduce((nextRefreshAt, session) => {
+const getNextSessionSectionRefreshAt = (
+  sessions: ChatSession[],
+  now: number
+): number | undefined => {
+  return sessions.reduce<number | undefined>((nextRefreshAt, session) => {
     if (session.pinned || session.status !== 'idle') return nextRefreshAt
     const activeUntil = session.updatedAt + ACTIVE_SESSION_GRACE_MS
-    return activeUntil > now ? Math.min(nextRefreshAt, activeUntil) : nextRefreshAt
-  }, tomorrow.getTime())
+    if (activeUntil <= now) return nextRefreshAt
+    return nextRefreshAt === undefined ? activeUntil : Math.min(nextRefreshAt, activeUntil)
+  }, undefined)
 }
 
 const sidebarInteractiveTransitionClassName = 'transition-none'
@@ -571,6 +543,7 @@ const SessionRow = memo(function SessionRow({
     canDeleteConversations,
     canDownloadArtifacts,
     canArchiveSession: () => archiveAvailable,
+    canTogglePin: !imported,
     onTogglePin: (target) => actions.onTogglePin(target),
     onRenameSession: (target) => actions.onRenameSession(target),
     onDownloadArtifacts: (target) => actions.onDownloadArtifacts(target),
@@ -711,7 +684,7 @@ const SessionRow = memo(function SessionRow({
           sessionRowClassName,
           sectionLabel === 'Imported research' &&
             session.parentSessionId &&
-            'ms-6 border-s border-border-200',
+            'ms-5 ps-3 before:absolute before:-start-2 before:inset-y-0 before:border-s before:border-border-200/70 after:absolute after:start-[-8px] after:top-1/2 after:w-2 after:border-t after:border-border-200/70',
           isActive && 'bg-bg-300 text-text-000'
         )}
         title={mobileMode ? session.title : undefined}
@@ -758,10 +731,12 @@ const SessionRow = memo(function SessionRow({
 
 const SessionList = ({
   activeSessionId,
+  activeSectionLabel,
   visible,
   children
 }: {
   activeSessionId: string | undefined
+  activeSectionLabel: SidebarSessionSection['label'] | undefined
   visible: boolean
   children: React.ReactNode
 }): React.JSX.Element => {
@@ -772,6 +747,13 @@ const SessionList = ({
       ?.querySelector<HTMLElement>('[aria-current="page"]')
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }, [activeSessionId, visible])
+  useLayoutEffect(() => {
+    if (!activeSectionLabel) return
+    const section = Array.from(
+      listRef.current?.querySelectorAll<HTMLDetailsElement>('details[data-section]') ?? []
+    ).find((details) => details.dataset.section === activeSectionLabel)
+    if (section && !section.open) section.open = true
+  }, [activeSectionLabel, activeSessionId])
   return (
     <div ref={listRef} className="scrollbar-auto-hide min-h-0 flex-1 overflow-y-auto py-1">
       {children}
@@ -843,6 +825,9 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
     credentialPendingSessionIds,
     pendingInteractionFactsBySession
   )
+  const activeSectionLabel = sections.find((section) =>
+    section.items.some((session) => session.id === activeSessionId)
+  )?.label
   const shortcutNumberBySessionId = new Map(
     sections
       .flatMap((section) => section.items)
@@ -1331,18 +1316,30 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
             >
               <SessionList
                 activeSessionId={activeSessionId}
+                activeSectionLabel={activeSectionLabel}
                 visible={
                   (!mobileMode || isMobileOpen) &&
                   sessions.some((session) => session.id === activeSessionId)
                 }
               >
                 {sections.map((section) => (
-                  <div key={section.label}>
-                    <div className="px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground">
-                      {section.label === 'Imported research'
-                        ? t('Imported research')
-                        : t(section.label)}
-                    </div>
+                  <details
+                    key={section.label}
+                    open
+                    data-section={section.label}
+                    className="group/section"
+                  >
+                    <summary className="flex cursor-pointer list-none items-center gap-1 px-2 pb-[5px] pt-3.5 text-[11px] font-medium text-muted-foreground outline-none [&::-webkit-details-marker]:hidden focus-visible:text-text-000">
+                      <ChevronRight
+                        className="size-3 shrink-0 transition-transform group-open/section:rotate-90 motion-reduce:transition-none"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        {section.label === 'Imported research'
+                          ? t('Imported research')
+                          : t(section.label)}
+                      </span>
+                    </summary>
                     {section.items.map((session) => {
                       const presentedStatus = getPresentedSessionStatus(
                         session,
@@ -1356,7 +1353,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                           session={session}
                           sectionLabel={section.label}
                           isActive={session.id === activeSessionId}
-                          imported={isImportedSessionRow(session)}
+                          imported={isImportedSession(session)}
                           shortcutNumber={shortcutNumberBySessionId.get(session.id)}
                           presentedStatus={presentedStatus}
                           archiveAvailable={canArchiveSession?.(session) ?? false}
@@ -1380,7 +1377,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                         />
                       )
                     })}
-                  </div>
+                  </details>
                 ))}
               </SessionList>
             </ActionMenuProvider>
@@ -1554,9 +1551,10 @@ const WorkspaceSidebar = (props: WorkspaceSidebarProps): React.JSX.Element => {
   const nextSectionRefreshAt = getNextSessionSectionRefreshAt(sessions, now)
   const isMac = window.api?.platform === 'darwin'
 
-  // Reclassify recent completions at 15 minutes and date groups at local midnight without waiting
-  // for unrelated Session activity to trigger a render.
+  // Reclassify recent completions after their 15-minute grace period without waiting for unrelated
+  // Session activity to trigger a render.
   useEffect(() => {
+    if (nextSectionRefreshAt === undefined) return
     const timeoutId = window.setTimeout(
       () => setNow(Date.now()),
       Math.max(1, nextSectionRefreshAt - Date.now() + 1)

@@ -6647,6 +6647,7 @@
     "Some metadata could not be retrieved. Review the available details before importing.": "Einige Metadaten konnten nicht abgerufen werden. Prüfen Sie die verfügbaren Angaben vor dem Import.",
     "Running": "Wird ausgeführt",
     "Pinned": "Angeheftet",
+    "Recents": "Zuletzt",
     "Recent sessions": "Letzte Sitzungen",
     "More": "Mehr",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} oder neuer ist erforderlich. Aktualisieren oder reparieren Sie Codex vor der Verwendung.",

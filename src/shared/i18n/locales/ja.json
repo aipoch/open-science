@@ -6487,6 +6487,7 @@
     "Some metadata could not be retrieved. Review the available details before importing.": "一部のメタデータを取得できませんでした。インポート前に取得済みの情報を確認してください。",
     "Running": "実行中",
     "Pinned": "固定済み",
+    "Recents": "最近",
     "Recent sessions": "最近のセッション",
     "More": "多い",
     "Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.": "Codex CLI v{{minimumVersion}} 以降が必要です。使用する前に Codex を更新または修復してください。",
