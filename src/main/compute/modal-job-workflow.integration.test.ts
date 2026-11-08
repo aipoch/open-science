@@ -235,8 +235,12 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
   }
 }, 30_000)
 
-it('retries owned-volume cleanup after a pre-launch cancellation and database restart', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'modal-cancel-'))
+it.each(['cancellation', 'timeout'])(
+  'recovers the owned volume after pre-launch %s and database restart',
+  exerciseVolumeCleanup
+)
+async function exerciseVolumeCleanup(reason: string): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), 'modal-cleanup-'))
   let client = createProjectDbClient(root)
   const jobs = new ComputeJobRepository(async () => client)
   const operations = new ComputeJobOperationRepository(async () => client)
@@ -250,7 +254,11 @@ it('retries owned-volume cleanup after a pre-launch cancellation and database re
       harvest
     })
   let runtime = newRuntime()
-  const scope = { providerId: 'modal:' + randomUUID(), projectId: 'project', sessionId: 'session' }
+  const scope = {
+    providerId: 'modal:' + randomUUID(),
+    projectId: 'project',
+    sessionId: 'session'
+  }
   const target = {
     environmentName: 'dev',
     appName: 'research',
@@ -283,25 +291,40 @@ it('retries owned-volume cleanup after a pre-launch cancellation and database re
     runtime.start()
     await runtime.tick()
     expect(sdk.createModalVolume).toHaveBeenCalledTimes(1)
-    await operations.request(id, 'cancel', scope, new Date())
+    if (reason === 'timeout') {
+      await client.computeJob.update({
+        where: { id },
+        data: { submittedAt: new Date(Date.now() - 180_000) }
+      })
+    } else {
+      await operations.request(id, 'cancel', scope, new Date())
+    }
     await runtime.tick()
-    expect(cleanup).toHaveBeenCalledTimes(1)
+    expect(cleanup).toHaveBeenCalledTimes(reason === 'timeout' ? 0 : 1)
     await runtime.stop()
     await client.$disconnect()
     client = createProjectDbClient(root)
     expect(await jobs.get(id)).toMatchObject({
-      status: 'failed',
-      error_code: 'job_cancelled',
+      status: reason === 'timeout' ? 'timeout' : 'failed',
+      error_code: reason === 'timeout' ? 'timeout' : 'job_cancelled',
       harvested_at: expect.any(Number),
       remote_cleanup_disposition: 'pending'
     })
-    expect(await operations.get(id, 'cancel')).toMatchObject({
-      phase: 'settled',
-      outcome: 'fulfilled'
-    })
+    if (reason === 'cancellation')
+      expect(await operations.get(id, 'cancel')).toMatchObject({
+        phase: 'settled',
+        outcome: 'fulfilled'
+      })
     runtime = newRuntime()
     runtime.start()
     await runtime.tick()
+    if (reason === 'timeout') {
+      expect(cleanup).not.toHaveBeenCalled()
+      const job = (await jobs.get(id))!
+      await expect(runtime.manualCleanup(job)).rejects.toThrow('Temporary cleanup failure')
+      expect((await jobs.get(id))?.remote_cleanup_disposition).toBe('pending')
+      await runtime.manualCleanup(job)
+    }
     expect(cleanup).toHaveBeenCalledTimes(2)
     expect(cleanup.mock.calls.map(([ref]) => [ref.runId, ref.appId, ref.volumeId])).toEqual([
       [id, target.appId, 'vo-cancel'],
@@ -316,4 +339,4 @@ it('retries owned-volume cleanup after a pre-launch cancellation and database re
     await releaseLocks()
     await rm(root, { recursive: true, force: true })
   }
-})
+}

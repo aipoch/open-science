@@ -18,6 +18,7 @@
     "src/main/compute/kubernetes-kubeconfig.ts",
     "src/main/compute/kubernetes-target-catalog.ts",
     "src/main/compute/kubernetes-workspace.real-cluster.integration.test.ts",
+    "src/main/compute/manual-staged-cleanup.ts",
     "src/main/compute/modal-job-journal.ts",
     "src/main/compute/modal-job-runtime.ts",
     "src/main/compute/modal-job-workflow.integration.test.ts",
@@ -31,6 +32,7 @@
     "src/main/compute/ray-target-catalog.ts"
   ],
   "interfacePaths": [
+    "src/main/compute/manual-staged-cleanup.ts",
     "src/main/compute/external-job-submission.ts",
     "src/main/compute/hosted-target-catalog.ts",
     "src/main/compute/hugging-face-job-runtime.ts",

@@ -190,6 +190,7 @@ export type SetComputeJobRemoteCleanupRequest = Readonly<{
   projectId: string
   sessionId: string
   disposition: Exclude<ComputeJobRemoteCleanupDisposition, 'pending'>
+  manualStagedCleanup?: true
 }>
 
 // Matches the UI character counter and the compute_details cap (32 KiB) in later issues.

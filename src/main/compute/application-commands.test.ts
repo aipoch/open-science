@@ -439,6 +439,24 @@ describe('Compute application commands', () => {
         )
       )
     ).rejects.toThrow('Channel only available from the local app: compute:jobs:set-remote-cleanup')
+    await expect(
+      router.dispatcher.invoke(
+        computeApplicationCommands.jobsSetRemoteCleanup,
+        invocation(
+          [
+            {
+              jobId: 'j',
+              providerId: 'modal:lab',
+              projectId: 'p',
+              sessionId: 's',
+              disposition: 'cleaned',
+              manualStagedCleanup: true
+            }
+          ],
+          createTaskCallerContext()
+        )
+      )
+    ).rejects.toThrow('requires a current local user')
     expect(dependencies.compute.jobsSetRemoteCleanup).not.toHaveBeenCalled()
 
     await expect(

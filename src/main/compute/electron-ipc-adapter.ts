@@ -153,7 +153,8 @@ const setComputeJobRemoteCleanupRequestSchema = z
     providerId: z.string(),
     sessionId: z.string(),
     projectId: z.string(),
-    disposition: z.enum(['cleaned', 'abandoned'])
+    disposition: z.enum(['cleaned', 'abandoned']),
+    manualStagedCleanup: z.literal(true).optional()
   })
   .strict() satisfies z.ZodType<SetComputeJobRemoteCleanupRequest>
 

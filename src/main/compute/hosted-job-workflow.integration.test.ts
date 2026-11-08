@@ -45,7 +45,7 @@ it(
   60_000
 )
 it(
-  'retains staged files after a quota rejection without looking for or creating another Job on restart',
+  'retains quota-rejected inputs on restart until manual cleanup verifies the original bucket',
   () => exerciseSubmission('quota-rejected'),
   60_000
 )
@@ -311,12 +311,23 @@ async function exerciseSubmission(
       expect(archiveAttempts).toBe(0)
       expect(computePackage.cleanupHuggingFaceBucketFiles).not.toHaveBeenCalled()
       await expect(jobs.deleteByOwner({ projectId: scope.projectId })).rejects.toThrow('cleanup')
-      await jobs.settleRemoteCleanup({
-        ...scope,
-        providerId: target.providerId,
-        jobId: job_id,
-        disposition: 'abandoned'
-      })
+      const pending = (await jobs.get(job_id))!
+      const cleanup = vi.mocked(computePackage.cleanupHuggingFaceBucketFiles)
+      cleanup.mockRejectedValueOnce(new Error('Unexpected input')).mockResolvedValue(undefined)
+      await expect(runtime.manualCleanup(pending)).rejects.toThrow('Unexpected input')
+      expect((await jobs.get(job_id))?.remote_cleanup_disposition).toBe('pending')
+      await runtime.manualCleanup(pending)
+      expect(cleanup).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          bucket: 'lab/private',
+          runId: job_id,
+          expectedOutputs: [],
+          expectedInputs: [{ path: 'input.bin', bytes: input.length, sha256 }]
+        })
+      )
+      expect((await jobs.get(job_id))?.remote_cleanup_disposition).toBe('cleaned')
+      expect(creates).toBe(1)
+      expect(lookups).toBe(0)
       await jobs.deleteByOwner({ projectId: scope.projectId })
       return
     }

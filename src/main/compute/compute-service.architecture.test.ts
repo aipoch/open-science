@@ -394,6 +394,7 @@ describe('Compute service architecture', () => {
         'appendDetails',
         'bindJobHarvestRetry',
         'bindExternalJobRuntime',
+        'cleanStagedJob',
         'callCommand',
         'cancelJob',
         'clearScratchRoot',

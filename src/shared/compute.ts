@@ -167,7 +167,12 @@ export type DeleteComputeHostRequest = {
   providerId: string
 }
 
+export type ManualStagedCleanup =
+  | Readonly<{ kind: 'hugging_face_jobs'; bucket: string; prefix: string }>
+  | Readonly<{ kind: 'modal_sandbox'; environmentName: string; volumeId: string }>
+
 export type ComputeHostDeletionBlocker = Readonly<{
+  manualStagedCleanup?: ManualStagedCleanup
   modalCreationUnconfirmed?: true
   jobId: string
   projectId: string
@@ -366,6 +371,7 @@ export type JobResult = {
 // Phase 3b: notification payload fields (spec §11.3) are embedded here so the renderer can
 // display the done card and decide whether to trigger an analysis turn (issue 05/07).
 export type JobSummary = {
+  manualStagedCleanup?: ManualStagedCleanup
   // Read-side scheduling diagnostics; never persisted as a Job status.
   queue_blocked_reason?: ComputeQueueBlockedReason
   job_id: string

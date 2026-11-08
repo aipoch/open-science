@@ -28,6 +28,7 @@ const journal = z.strictObject({
   // An empty receipt means the create may have reached the service; never repeat such a POST.
   volume: z.strictObject({ id: z.string().min(1).optional() }).optional(),
   sandbox: z.strictObject({ id: z.string().min(1).optional() }).optional(),
+  launchNotStarted: z.literal(true).optional(),
   published: z.array(file).optional()
 })
 export type ModalJobJournal = z.infer<typeof journal>

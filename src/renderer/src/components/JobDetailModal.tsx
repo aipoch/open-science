@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next'
 import type { JobSummary } from '../../../shared/compute'
 import { isComputeJobCancelled } from '@aipoch/compute'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { StagedResourceCleanupButton } from '@/components/StagedResourceCleanupButton'
 import { Button } from '@/components/ui/button'
 import {
   dialogOverlayClassName,
@@ -291,6 +292,19 @@ function JobDetailView({
             {isCancelling || isCancellingRequest ? t('Cancelling') : t('Cancel')}
           </Button>
         ) : null}
+        {latestJob.manualStagedCleanup && latestJob.project_id && (
+          <StagedResourceCleanupButton
+            key={latestJob.job_id}
+            scope={{
+              jobId: latestJob.job_id,
+              providerId,
+              projectId: latestJob.project_id,
+              sessionId: latestJob.session_id
+            }}
+            resource={latestJob.manualStagedCleanup}
+            onCleaned={() => void refreshJob()}
+          />
+        )}
         <JobStatusBadge
           status={latestJob.status}
           cancellationStatus={latestJob.cancellation_status}

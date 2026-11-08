@@ -131,22 +131,36 @@ export class ComputeService {
         : undefined
   }
 
-  private readonly externalTicks = new Map<ExternalComputeMode, () => Promise<void>>()
-  bindExternalJobRuntime(mode: ExternalComputeMode, tick: () => Promise<void>): () => void {
-    this.externalTicks.set(mode, tick)
+  private readonly externalRuntimes = new Map<
+    ExternalComputeMode,
+    { tick: () => Promise<void>; manualCleanup?: (job: ComputeJob) => Promise<void> }
+  >()
+  bindExternalJobRuntime(
+    mode: ExternalComputeMode,
+    tick: () => Promise<void>,
+    manualCleanup?: (job: ComputeJob) => Promise<void>
+  ): () => void {
+    const runtime = { tick, manualCleanup }
+    this.externalRuntimes.set(mode, runtime)
     return () => {
-      if (this.externalTicks.get(mode) === tick) this.externalTicks.delete(mode)
+      if (this.externalRuntimes.get(mode) === runtime) this.externalRuntimes.delete(mode)
     }
   }
+  async cleanStagedJob(mode: ExternalComputeMode, job: ComputeJob): Promise<void> {
+    const clean = this.externalRuntimes.get(mode)?.manualCleanup
+    if (!clean) throw new Error('Staged resource cleanup is unavailable.')
+    await clean(job)
+  }
   wakeExternalJobs(mode: ExternalComputeMode): void {
-    void this.externalTicks
-      .get(mode)?.()
+    void this.externalRuntimes
+      .get(mode)
+      ?.tick()
       .catch((error) =>
         log.warn('Compute reconciliation deferred to the next poll.', errorLogFields(error))
       )
   }
   async reconcileExternalJobs(mode: ExternalComputeMode): Promise<void> {
-    const tick = this.externalTicks.get(mode)
+    const tick = this.externalRuntimes.get(mode)?.tick
     if (!tick) throw new Error('Compute recovery is unavailable.')
     await tick()
   }
