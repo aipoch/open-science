@@ -77,6 +77,37 @@ it('recovers a uniquely aligned prose continuation inside a native cell', () => 
   expect(repairs).toContain('prose-continuation-recovered')
 })
 
+it('does not recover prose that starts in the next physical row', () => {
+  const rows = [{ rect: [0, 0, 300, 45] }, { rect: [0, 45, 300, 90] }]
+  const cells = [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [100, 0, 300, 45] }]
+  const prefix: SourceToken = {
+    text: 'The proof is established by following the deferred parts',
+    rect: [110, 5, 260, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const nextRow: SourceToken = {
+    text: 'A separate row begins with an independent narrative value.',
+    rect: [110, 46, 280, 56],
+    baseline: 56,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[prefix, cells[0]]])
+  expect(
+    recoverNativeProseContinuation({
+      items: [prefix, nextRow],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs: []
+    })
+  ).toBe(false)
+  expect(assignments.has(nextRow)).toBe(false)
+})
+
 it('recovers short math fragments that straddle a native cell edge', () => {
   const rows = [{ rect: [0, 0, 200, 20] }]
   const cells = [
@@ -119,6 +150,40 @@ it('recovers short math fragments that straddle a native cell edge', () => {
   expect(assignments.get(fragment)).toBe(cells[1])
   expect(assignments.get(sibling)).toBe(cells[1])
   expect(repairs).toContain('native-math-fragments-recovered')
+})
+
+it('does not recover a short math token from the next physical row', () => {
+  const rows = [{ rect: [0, 0, 200, 20] }, { rect: [0, 20, 200, 40] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [0, 0, 100, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, origin: 'model-grid', rect: [100, 0, 200, 20] }
+  ]
+  const anchor: SourceToken = {
+    text: '√',
+    rect: [120, 8, 128, 18],
+    baseline: 18,
+    height: 10,
+    horizontal: true
+  }
+  const nextRow: SourceToken = {
+    text: '4',
+    rect: [130, 21, 138, 31],
+    baseline: 31,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[anchor, cells[1]]])
+  expect(
+    recoverNativeMathCellFragments({
+      items: [anchor, nextRow],
+      cells,
+      rows,
+      rules: [],
+      assignments,
+      repairs: []
+    })
+  ).toBe(0)
+  expect(assignments.has(nextRow)).toBe(false)
 })
 
 it('recovers only a uniquely supported Route header gap', () => {
