@@ -28,6 +28,7 @@ const journal = z.strictObject({
   launch: z
     .strictObject({ inputs: mount, outputs: mount, remoteId: z.string().min(1).optional() })
     .optional(),
+  launchNotStarted: z.literal(true).optional(),
   published: z.array(file).optional(),
   discardedOutputs: z.array(discardedFile).optional()
 })

@@ -136,6 +136,7 @@ export function createModalJobRuntime(deps: Deps): {
   pause(): Promise<void>
   stop(): Promise<void>
   tick(): Promise<void>
+  manualCleanup(job: ComputeJob): Promise<void>
   retry(jobId: string): Promise<void>
 } {
   const repo = deps.jobRepository
@@ -376,6 +377,14 @@ export function createModalJobRuntime(deps: Deps): {
     resume: start,
     pause,
     tick,
+    manualCleanup: async (job) => {
+      if (!controller) throw new Error('Compute recovery is paused.')
+      const journal = readModalJournal(job)
+      if (!journal.volume?.id || !repo.getManualStagedCleanup(job))
+        throw new Error('Cannot verify staged resources.')
+      await cleanupModalVolume({ ...base(journal), volumeId: journal.volume.id }, controller.signal)
+      await deps.onJobUpdated(await repo.confirmManualStagedCleanup(job))
+    },
     retry: async (jobId: string) => {
       await active
       failures.delete(jobId)

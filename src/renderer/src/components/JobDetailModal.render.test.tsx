@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 // Tests for JobDetailModal — tab switching, Back navigation, and session jobs list.
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../shared/web-caller-location'
 import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -412,6 +413,69 @@ describe('JobDetailModal — detail view', () => {
       (container.querySelector('[data-testid="job-cancel"]') as HTMLButtonElement).disabled
     ).toBe(true)
     expect(container.textContent).toContain('Cancelling')
+  })
+
+  it('confirms the exact staged prefix and retries cleanup for the same job', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      provider_id: 'hf-jobs:target',
+      status: 'error',
+      manualStagedCleanup: {
+        kind: 'hugging_face_jobs',
+        bucket: 'lab/files',
+        prefix: 'open-science/job-abc'
+      }
+    })
+    const jobsSetRemoteCleanup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValue(undefined)
+    const jobsList = vi.fn(async () => [{ ...job, manualStagedCleanup: undefined }])
+    Object.assign(window, { api: { compute: { jobsSetRemoteCleanup, jobsList } } })
+    useSessionJobStore.getState().applyUpdate(job)
+    act(() =>
+      root.render(
+        <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+      )
+    )
+    const button = (label: string): HTMLButtonElement =>
+      Array.from(document.body.querySelectorAll('button')).find((b) => b.textContent === label)!
+    act(() => button('Clean up staged resources').click())
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain(
+      'open-science/job-abc'
+    )
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('lab/files')
+    expect(jobsSetRemoteCleanup).not.toHaveBeenCalled()
+    await act(async () => button('Delete').click())
+    expect(document.querySelector('[role="alertdialog"] [role="alert"]')).not.toBeNull()
+    await act(async () => button('Delete').click())
+    expect(jobsSetRemoteCleanup).toHaveBeenLastCalledWith({
+      providerId: job.provider_id,
+      jobId: job.job_id,
+      sessionId: job.session_id,
+      projectId: job.project_id,
+      disposition: 'cleaned',
+      manualStagedCleanup: true
+    })
+    expect(button('Clean up staged resources')).toBeUndefined()
+  })
+
+  it('hides local staged cleanup controls on the remote Web surface', async () => {
+    const { JobDetailModal } = await import('./JobDetailModal')
+    const job = makeJob({
+      manualStagedCleanup: { kind: 'modal_sandbox', environmentName: 'dev', volumeId: 'vo-demo' }
+    })
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    try {
+      act(() =>
+        root.render(
+          <JobDetailModal open sessionId={job.session_id} initialJob={job} onClose={vi.fn()} />
+        )
+      )
+      expect(container.textContent).not.toContain('Clean up staged resources')
+    } finally {
+      document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    }
   })
 
   it('refreshes details by fetching the Session job list', async () => {

@@ -1263,6 +1263,63 @@ describe('host delete guard', () => {
     expect(settleRemoteCleanup).toHaveBeenCalledWith(request)
   })
 
+  it('requires a scoped per-job confirmation before releasing a retained staging volume', async () => {
+    const providerId = 'modal:1589d23b-2d88-4223-a35a-005ec18f0f8b'
+    const job: ComputeJob = {
+      ...blockingJob,
+      provider_id: providerId,
+      execution_mode: 'modal_sandbox',
+      status: 'timeout',
+      error_code: 'timeout',
+      harvested_at: 100,
+      remote_cleanup_disposition: 'pending',
+      remote_handle: JSON.stringify({
+        version: 1,
+        providerId,
+        jobId: blockingJob.job_id,
+        target: {
+          environmentName: 'dev',
+          appName: 'lab',
+          appId: 'ap-lab',
+          image: 'python',
+          cpus: 1,
+          memoryMiB: 512
+        },
+        nonce: '7b01acb0-176b-46a3-9488-8382d357ef52',
+        volume: { id: 'vo-staged' }
+      })
+    }
+    const cleanStagedJob = vi.fn(async () => undefined)
+    const reconcileExternalJobs = vi.fn(async () => undefined)
+    const handlers = createComputeHandlers(
+      mockRepository({}),
+      undefined,
+      mockService({ cleanStagedJob, reconcileExternalJobs }),
+      undefined,
+      undefined,
+      mockJobRepo({ get: async () => job })
+    )
+    const request = {
+      jobId: job.job_id,
+      providerId,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      disposition: 'cleaned' as const
+    }
+    await expect(handlers.jobsSetRemoteCleanup(request)).rejects.toThrow('Confirm cleanup')
+    await expect(
+      handlers.jobsSetRemoteCleanup({
+        ...request,
+        manualStagedCleanup: true,
+        sessionId: 'another-session'
+      })
+    ).rejects.toThrow('scope')
+    expect(cleanStagedJob).not.toHaveBeenCalled()
+    await handlers.jobsSetRemoteCleanup({ ...request, manualStagedCleanup: true })
+    expect(cleanStagedJob).toHaveBeenCalledWith('modal_sandbox', job)
+    expect(reconcileExternalJobs).not.toHaveBeenCalled()
+  })
+
   it('rejects password Credential deletion when the application caller is not local', async () => {
     const del = vi.fn(async () => undefined)
     const passwordHost = sampleHost({
@@ -2879,6 +2936,22 @@ describe('installComputeIpcHandlers', () => {
 
     expect(handlers.has('compute:list')).toBe(true)
     expect(module.computeService).toBeDefined()
+  })
+
+  it('preserves the manual cleanup confirmation at the Electron boundary', async () => {
+    const module = createComputeIpcModule(mockRepository({}), mockJobRepo({}))
+    const owner = vi.spyOn(module.handlers, 'jobsSetRemoteCleanup').mockResolvedValue(undefined)
+    installComputeModule(module)
+    const request = {
+      jobId: 'job-1',
+      providerId: 'modal:lab',
+      projectId: 'p',
+      sessionId: 's',
+      disposition: 'cleaned',
+      manualStagedCleanup: true
+    }
+    await invokeHandler('compute:jobs:set-remote-cleanup', request)
+    expect(owner).toHaveBeenCalledWith(request)
   })
 
   it('accepts a project overview jobs list request at the Electron boundary', async () => {

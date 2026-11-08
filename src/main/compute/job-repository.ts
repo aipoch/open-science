@@ -14,11 +14,13 @@ import {
   type HostedJobJournal,
   type HostedJobTarget
 } from './hugging-face-job-journal'
+import { getManualStagedCleanup } from './manual-staged-cleanup'
 import { initialRayJournal, type RayJobTarget } from './ray-job-journal'
 import {
   initialModalJournal,
   MODAL_CREATION_UNCONFIRMED,
   readModalJournal,
+  withUnstartedModalLaunch,
   type ModalJobJournal,
   type ModalJobTarget
 } from './modal-job-journal'
@@ -955,6 +957,14 @@ export class ComputeJobRepository {
     )
   }
 
+  getManualStagedCleanup = getManualStagedCleanup
+
+  confirmManualStagedCleanup(job: ComputeJob): Promise<ComputeJob> {
+    if (job.execution_mode !== 'hugging_face_jobs' && job.execution_mode !== 'modal_sandbox')
+      throw new Error('Staged resource cleanup is unavailable.')
+    return this.confirmJournalCleanup(job, job.execution_mode, true)
+  }
+
   confirmModalCleanup(job: ComputeJob): Promise<ComputeJob> {
     return this.confirmJournalCleanup(job, 'modal_sandbox')
   }
@@ -963,7 +973,8 @@ export class ComputeJobRepository {
   }
   private async confirmJournalCleanup(
     job: ComputeJob,
-    mode: 'hugging_face_jobs' | 'modal_sandbox'
+    mode: 'hugging_face_jobs' | 'modal_sandbox',
+    manual = false
   ): Promise<ComputeJob> {
     const client = await this.getClient()
     return client.$transaction(async (tx) => {
@@ -979,17 +990,30 @@ export class ComputeJobRepository {
         include: { operations: { where: { kind: 'cancel' } } }
       })
       const current = this.toJob(row)
-      const journal =
-        mode === 'modal_sandbox' ? readModalJournal(current) : readHostedJournal(current)
-      if (
-        current.remote_handle !== job.remote_handle ||
-        !this.canCleanJournalResources(current, journal)
-      )
+      if (current.remote_handle !== job.remote_handle)
         throw new Error('Remote resource cleanup could not be confirmed.')
-      await tx.computeJob.updateMany({
-        where: { ...where, remoteHandle: row.remoteHandle, remoteCleanupDisposition: 'pending' },
-        data: { remoteCleanupDisposition: 'cleaned', lastPollError: null }
+      if (current.remote_cleanup_disposition === 'cleaned') return current
+      const eligible = manual
+        ? getManualStagedCleanup(current)
+        : this.canCleanJournalResources(
+            current,
+            mode === 'modal_sandbox' ? readModalJournal(current) : readHostedJournal(current)
+          )
+      if (!eligible) throw new Error('Remote resource cleanup could not be confirmed.')
+      const result = await tx.computeJob.updateMany({
+        where: {
+          ...where,
+          status: row.status,
+          remoteHandle: row.remoteHandle,
+          remoteCleanupDisposition: 'pending'
+        },
+        data: {
+          remoteCleanupDisposition: 'cleaned',
+          lastPollError: null,
+          ...(manual && mode === 'modal_sandbox' && { harvestError: null })
+        }
       })
+      if (result.count !== 1) throw new Error('Remote resource cleanup disposition changed.')
       return this.toJob(
         await tx.computeJob.findFirstOrThrow({
           where,
@@ -1325,7 +1349,8 @@ export class ComputeJobRepository {
       {
         status: 'error',
         errorCode: 'dispatch_failed',
-        errorMessage: `Hugging Face rejected job creation (HTTP ${status}). Staged inputs are retained; review the account or job configuration before submitting again.`,
+        remoteHandle: JSON.stringify({ ...readHostedJournal(job), launchNotStarted: true }),
+        errorMessage: `Hugging Face rejected job creation (HTTP ${status}). Review the account or job configuration before submitting again.`,
         lastPollError: null,
         finishedAt: new Date()
       },
@@ -1373,6 +1398,7 @@ export class ComputeJobRepository {
     )
   }
   async expireUnlaunchedModalJob(job: ComputeJob, noVolume: boolean): Promise<boolean> {
+    const journal = readModalJournal(job)
     return this.updateFencedJob(
       'modal_sandbox',
       job,
@@ -1381,6 +1407,7 @@ export class ComputeJobRepository {
         errorCode: 'timeout',
         finishedAt: new Date(),
         harvestedAt: new Date(),
+        remoteHandle: withUnstartedModalLaunch(journal),
         harvestError: noVolume
           ? null
           : 'Deadline elapsed before launch; staged files are retained.',
@@ -1391,6 +1418,7 @@ export class ComputeJobRepository {
     )
   }
   async rejectModalSubmission(job: ComputeJob, message: string): Promise<boolean> {
+    const journal = readModalJournal(job)
     return this.updateFencedJob(
       'modal_sandbox',
       job,
@@ -1398,11 +1426,12 @@ export class ComputeJobRepository {
         status: 'error',
         errorCode: 'dispatch_failed',
         errorMessage: message,
+        remoteHandle: withUnstartedModalLaunch(journal),
         lastPollError: null,
         finishedAt: new Date()
       },
       false,
-      !readModalJournal(job).volume?.id
+      !journal.volume?.id
     )
   }
 

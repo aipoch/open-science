@@ -29,6 +29,15 @@ const inputs = z.array(
     checksum: z.string().regex(/^[0-9a-f]{64}$/)
   })
 )
+function frozenInputReceipts(
+  job: ComputeJob
+): Array<{ path: string; bytes: number; sha256: string }> {
+  return inputs.parse(JSON.parse(job.input_manifest ?? '[]')).map((file) => ({
+    path: file.dstFilename,
+    bytes: file.sizeBytes,
+    sha256: file.checksum
+  }))
+}
 type Dependencies = {
   jobRepository: ComputeJobRepository
   operationRepository?: ComputeJobOperationRepository
@@ -124,6 +133,7 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
   pause(): Promise<void>
   stop(): Promise<void>
   tick(): Promise<void>
+  manualCleanup(job: ComputeJob): Promise<void>
 } {
   const repo = deps.jobRepository
   const cancel = deps.operationRepository
@@ -221,13 +231,7 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
       ...bucket,
       signal,
       expectedOutputs: journal.published ?? [],
-      expectedInputs: journal.launch
-        ? undefined
-        : inputs.parse(JSON.parse(job.input_manifest ?? '[]')).map((file) => ({
-            path: file.dstFilename,
-            bytes: file.sizeBytes,
-            sha256: file.checksum
-          })),
+      expectedInputs: journal.launch ? undefined : frozenInputReceipts(job),
       discardedOutputs: journal.discardedOutputs
     })
     await deps.onJobUpdated(await repo.confirmHostedCleanup(job))
@@ -331,6 +335,22 @@ export function createHuggingFaceJobRuntime(deps: Dependencies): {
     resume: start,
     pause,
     tick,
+    manualCleanup: async (job) => {
+      if (!controller) throw new Error('Compute recovery is paused.')
+      if (!repo.getManualStagedCleanup(job)) throw new Error('Cannot verify staged resources.')
+      const journal = readHostedJournal(job)
+      const signal = controller.signal
+      const connection = await access(job, journal, signal)
+      await cleanupHuggingFaceBucketFiles({
+        bucket: journal.target.bucket,
+        runId: job.job_id,
+        token: connection.token,
+        signal,
+        expectedOutputs: [],
+        expectedInputs: frozenInputReceipts(job)
+      })
+      await deps.onJobUpdated(await repo.confirmManualStagedCleanup(job))
+    },
     stop: async () => {
       stopped = true
       await pause()

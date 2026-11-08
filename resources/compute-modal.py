@@ -8,6 +8,7 @@ import stat
 import sys
 import tempfile
 from contextlib import redirect_stdout
+from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -161,21 +162,67 @@ def download(vol, req):
     return results
 
 
-def main(action, req):
+def lookup_app(req, verify_id):
     # Image and anonymous Secret resolution also consult the environment default.
     os.environ["MODAL_ENVIRONMENT"] = req["environmentName"]
     import modal
     from modal.config import DEFAULT_SERVER_URL, config
     if any(url not in DEFAULT_SERVER_URL.split(",") for url in config["server_url"].split(",")):
         raise ValueError("untrusted Modal endpoint")
-    from modal_proto import api_pb2
-    from modal.client import _Client
 
     app = modal.App.lookup(req["appName"], environment_name=req["environmentName"], create_if_missing=False)
+    if verify_id and app.app_id != req["appId"]:
+        raise ValueError("approved app changed")
+
+    return app
+
+
+class SandboxLaunchNotStarted(Exception):
+    pass
+
+
+def prepare_sandbox(req):
+    app = lookup_app(req, verify_id=True)
+    import modal
+    vol = modal.Volume.from_id(req["volumeId"])
+    check_owner(vol, req["nonce"])
+    script = """set -eu
+umask 077
+work=$(mktemp -d)
+if [ -d /mnt/openscience/inputs ]; then cp -R /mnt/openscience/inputs/. "$work/"; fi
+mkdir -p "$MODAL_JOB_OUTPUT_DIR"
+cd "$work"
+status=0
+/bin/sh -c "$1" || status=$?
+cd "$MODAL_JOB_OUTPUT_DIR"
+receipt=$(mktemp /mnt/openscience/.complete-XXXXXXXX)
+(ulimit -f 8192 && find . -type f -exec sha256sum {} +) > "$receipt"
+printf 'complete %s\\n' "$2" >> "$receipt"
+mv "$receipt" /mnt/openscience/.open-science-complete
+exit "$status" """
+    return partial(modal.Sandbox.create, "/bin/sh", "-c", script, "job", req["command"], req["nonce"],
+            name="os-" + req["nonce"], app=app,
+            image=modal.Image.from_registry(req["image"]), volumes={MOUNT: vol},
+            cpu=req["cpus"], memory=req["memoryMiB"], gpu=req.get("gpu"), timeout=req["timeoutSeconds"],
+            env={"MODAL_JOB_OUTPUT_DIR": MOUNT + "/outputs", "OUTPUT_DIR": MOUNT + "/outputs"},
+            tags={"reservation": req["nonce"], "volume": req["volumeId"]})
+
+
+def main(action, req):
+    if action == "launch":
+        try:
+            create = prepare_sandbox(req)
+        except Exception:
+            raise SandboxLaunchNotStarted() from None
+        # Even an authentication error raised by create() may follow a successful remote launch.
+        return {"sandboxId": create().object_id}
+
+    app = lookup_app(req, verify_id=action != "target")
     if action == "target":
         return {"appId": app.app_id}
-    if app.app_id != req["appId"]:
-        raise ValueError("approved app changed")
+    import modal
+    from modal_proto import api_pb2
+    from modal.client import _Client
 
     # The public Volume manager discards the create receipt and resolves a name again
     # when deleting. Use the pinned SDK's ID-based RPCs for these two operations.
@@ -200,34 +247,11 @@ def main(action, req):
     vol = modal.Volume.from_id(req["volumeId"])
     if action == "stage":
         upload(vol, req)
-    elif action in ("list", "download", "launch"):
+    elif action in ("list", "download"):
         check_owner(vol, req["nonce"])
         if action == "list":
             return list_outputs(vol, completed_outputs(vol, req["nonce"]))
-        if action == "download":
-            return download(vol, req)
-        # The paid entrypoint starts only after the local host verifies and stages its inputs.
-        script = """set -eu
-umask 077
-work=$(mktemp -d)
-if [ -d /mnt/openscience/inputs ]; then cp -R /mnt/openscience/inputs/. "$work/"; fi
-mkdir -p "$MODAL_JOB_OUTPUT_DIR"
-cd "$work"
-status=0
-/bin/sh -c "$1" || status=$?
-cd "$MODAL_JOB_OUTPUT_DIR"
-receipt=$(mktemp /mnt/openscience/.complete-XXXXXXXX)
-(ulimit -f 8192 && find . -type f -exec sha256sum {} +) > "$receipt"
-printf 'complete %s\\n' "$2" >> "$receipt"
-mv "$receipt" /mnt/openscience/.open-science-complete
-exit "$status" """
-        sb = modal.Sandbox.create("/bin/sh", "-c", script, "job", req["command"], req["nonce"],
-            name="os-" + req["nonce"], app=app,
-            image=modal.Image.from_registry(req["image"]), volumes={MOUNT: vol},
-            cpu=req["cpus"], memory=req["memoryMiB"], gpu=req.get("gpu"), timeout=req["timeoutSeconds"],
-            env={"MODAL_JOB_OUTPUT_DIR": MOUNT + "/outputs", "OUTPUT_DIR": MOUNT + "/outputs"},
-            tags={"reservation": req["nonce"], "volume": req["volumeId"]})
-        return {"sandboxId": sb.object_id}
+        return download(vol, req)
     elif action in ("inspect", "terminate"):
         sb = modal.Sandbox.from_id(req["sandboxId"])
         # from_id already ran SandboxWait(timeout=0). Preserve the provider status:
@@ -285,6 +309,8 @@ if __name__ == "__main__":
                 os.environ["MODAL_TOKEN_SECRET"] = material["tokenSecret"]
             result = main(sys.argv[1], envelope["request"])
         print(json.dumps({"result": result}, separators=(",", ":")))
+    except SandboxLaunchNotStarted:
+        print(json.dumps({"error": "sandbox-not-started"}))
     except PackageNotFoundError:
         print(json.dumps({"error": "sdk-version"}))
     except Exception as error:

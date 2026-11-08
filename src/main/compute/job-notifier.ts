@@ -1,3 +1,4 @@
+import { getManualStagedCleanup } from './manual-staged-cleanup'
 import { createComputeExecution, parseSlurmSchedulerJobId } from '@aipoch/compute/node'
 /**
  * job-notifier.ts — emits compute_done notifications for finished jobs.
@@ -96,6 +97,7 @@ export const toJobSummary = async (
   const payload = await buildComputeDonePayload(job, storageRoot)
   const schedulerId = parseSlurmSchedulerJobId(job.remote_handle, job.remote_workdir)
   return {
+    manualStagedCleanup: getManualStagedCleanup(job),
     job_id: job.job_id,
     provider_id: job.provider_id,
     display_name: displayName,

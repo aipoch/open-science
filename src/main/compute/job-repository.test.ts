@@ -549,6 +549,66 @@ describe('ComputeJob repository (SQLite integration)', () => {
     expect(await repo.findModalWork()).toEqual([])
     await repo.deleteByOwner({ projectId: 'p' })
   })
+  it('confirms legacy Modal staging only while the original pre-launch volume is still bound', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'modal-legacy-cleanup-'))
+    const client = createProjectDbClient(storageRoot)
+    disconnect = () => client.$disconnect()
+    await migrateApplicationDatabase(client)
+    const repo = makeJobRepository(client)
+    const job = await repo.createApprovedModalJob(
+      {
+        id: 'job',
+        providerId: 'modal:test',
+        projectId: 'p',
+        sessionId: 's',
+        shape: 'bridge_runner',
+        intent: 'test',
+        command: 'true',
+        commandHash: 'hash',
+        timeoutSeconds: 60
+      },
+      {
+        appName: 'lab',
+        environmentName: 'dev',
+        appId: 'app',
+        cpus: 1,
+        memoryMiB: 512,
+        image: 'ubuntu'
+      }
+    )
+    const journal = { ...JSON.parse(job.remote_handle!), volume: { id: 'original' } }
+    const attempted = await repo.update(job.job_id, {
+      remoteHandle: JSON.stringify({ ...journal, sandbox: {} })
+    })
+    expect(await repo.rejectModalSubmission(attempted, 'Launch preflight failed')).toBe(true)
+    const rejected = (await repo.get(job.job_id))!
+    expect(JSON.parse(rejected.remote_handle!)).toEqual({ ...journal, launchNotStarted: true })
+    expect(repo.getManualStagedCleanup(rejected)?.kind).toBe('modal_sandbox')
+    expect(
+      repo.getManualStagedCleanup({ ...rejected, remote_handle: JSON.stringify(journal) })
+    ).toBeUndefined()
+    const expired = await repo.update(job.job_id, {
+      status: 'timeout',
+      errorCode: 'timeout',
+      finishedAt: new Date(),
+      harvestedAt: new Date(),
+      harvestError: 'Deadline elapsed before launch; staged files are retained.',
+      remoteHandle: JSON.stringify(journal)
+    })
+    expect(repo.getManualStagedCleanup(expired)).toEqual({
+      kind: 'modal_sandbox',
+      environmentName: 'dev',
+      volumeId: 'original'
+    })
+    const fenced = await repo.update(job.job_id, {
+      remoteHandle: JSON.stringify({ ...journal, sandbox: {} })
+    })
+    expect(repo.getManualStagedCleanup(fenced)).toBeUndefined()
+    expect(repo.getManualStagedCleanup({ ...expired, remote_handle: '{' })).toBeUndefined()
+    await expect(repo.confirmManualStagedCleanup(expired)).rejects.toThrow('confirmed')
+    expect((await repo.get(job.job_id))?.remote_cleanup_disposition).toBe('pending')
+  })
+
   it('PERF-04 returns status without decrypting historical payloads', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'concurrency-projection-'))
     const client = createProjectDbClient(storageRoot)

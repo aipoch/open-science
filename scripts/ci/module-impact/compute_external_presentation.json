@@ -5,6 +5,7 @@
     "src/renderer/src/assets/provider-icons/modal.svg",
     "src/renderer/src/assets/provider-icons/ray.svg",
     "src/renderer/src/components/ComputeJobOutputs.tsx",
+    "src/renderer/src/components/StagedResourceCleanupButton.tsx",
     "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
     "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
     "src/renderer/src/pages/settings/RayCredentials.tsx",
@@ -12,6 +13,7 @@
   ],
   "interfacePaths": [
     "src/renderer/src/components/ComputeJobOutputs.tsx",
+    "src/renderer/src/components/StagedResourceCleanupButton.tsx",
     "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
     "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
     "src/renderer/src/pages/settings/RayCredentials.tsx"

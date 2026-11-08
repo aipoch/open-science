@@ -644,6 +644,8 @@ const registerComputeApplicationCommands = (
       'compute:jobs:retry-harvest': ({ args }) => dependencies.compute.jobsRetryHarvest(args[0]),
       'compute:jobs:set-remote-cleanup': ({ args, callerContext }) => {
         assertLocalCommand(callerContext, 'compute:jobs:set-remote-cleanup')
+        if (args[0].manualStagedCleanup && !canSatisfyHumanApproval(callerContext))
+          throw new Error('Staged resource cleanup requires a current local user.')
         return dependencies.compute.jobsSetRemoteCleanup(args[0])
       },
       'compute:jobs:pending-notification': ({ args }) =>

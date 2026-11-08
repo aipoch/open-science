@@ -1,3 +1,4 @@
+import { getManualStagedCleanup } from './manual-staged-cleanup'
 import { getRayToken, rayTokens } from './ray-token'
 import { computeAccounts } from './compute-account-service'
 import { getHuggingFaceJobAccess } from './hugging-face-job-access'
@@ -461,6 +462,7 @@ const createComputeHandlers = (
       return {
         blockedByJobs: jobs.length > 0,
         blockingJobs: jobs.map((job) => ({
+          manualStagedCleanup: getManualStagedCleanup(job),
           ...(job.execution_mode === 'modal_sandbox' &&
             job.last_poll_error === MODAL_CREATION_UNCONFIRMED && {
               modalCreationUnconfirmed: true as const
@@ -557,6 +559,13 @@ const createComputeHandlers = (
     jobsSetRemoteCleanup: async (request) => {
       if (!jobDeletionOwner) throw new Error('Compute Job cleanup owner is unavailable.')
       const mode = externalComputeMode(request.providerId)
+      if (
+        request.manualStagedCleanup &&
+        (request.manualStagedCleanup !== true ||
+          request.disposition !== 'cleaned' ||
+          (mode !== 'hugging_face_jobs' && mode !== 'modal_sandbox'))
+      )
+        throw new Error('Invalid staged resource cleanup request.')
       if (mode && request.disposition === 'cleaned') {
         const job = await jobRepository?.get(request.jobId)
         if (
@@ -568,6 +577,13 @@ const createComputeHandlers = (
         )
           throw new Error('Compute Job cleanup scope does not match.')
         if (job.remote_cleanup_disposition === 'cleaned') return
+        const staged = getManualStagedCleanup(job)
+        if (request.manualStagedCleanup) {
+          if (!staged) throw new Error('Staged resource cleanup is unavailable.')
+          await service.cleanStagedJob(mode, job)
+          return
+        }
+        if (staged) throw new Error('Confirm cleanup of this job’s staged resources first.')
         if (mode === 'ray_jobs')
           throw new Error('Ray output files are retained on the shared filesystem.')
         await service.reconcileExternalJobs(mode)

@@ -11,6 +11,7 @@ import type {
   ComputeHostDeletionStatus
 } from '../../../../shared/compute'
 
+import { StagedResourceCleanupButton } from '@/components/StagedResourceCleanupButton'
 import { JobStatusBadge } from '@/components/JobStatusBadge'
 import { Button } from '@/components/ui/button'
 import {
@@ -65,6 +66,15 @@ export function ComputeHostRemovalDialog({
       .catch(() => setError(t('Could not check whether this Host can be removed.')))
   }
 
+  const removeBlocker = (jobId: string): void => {
+    setDeletionStatus((current) => {
+      const blockingJobs = (current?.blockingJobs ?? []).filter(
+        (candidate) => candidate.jobId !== jobId
+      )
+      return { blockedByJobs: blockingJobs.length > 0, blockingJobs }
+    })
+  }
+
   const settleRemoteCleanup = async (
     job: ComputeHostDeletionBlocker,
     disposition: 'cleaned' | 'abandoned'
@@ -79,12 +89,7 @@ export function ComputeHostRemovalDialog({
         sessionId: job.sessionId,
         disposition
       })
-      setDeletionStatus((current) => {
-        const blockingJobs = (current?.blockingJobs ?? []).filter(
-          (candidate) => candidate.jobId !== job.jobId
-        )
-        return { blockedByJobs: blockingJobs.length > 0, blockingJobs }
-      })
+      removeBlocker(job.jobId)
     } catch {
       setError(t('Could not update remote cleanup for this Compute Job.'))
     } finally {
@@ -221,19 +226,33 @@ export function ComputeHostRemovalDialog({
                           />
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {mode !== 'ray_jobs' && (
-                            <Button
-                              type="button"
-                              size="sm"
-                              disabled={
-                                busy ||
-                                !canCleanRemoteFiles(job) ||
-                                (modal && ACTIVE_JOB_STATUSES.has(job.status))
-                              }
-                              onClick={() => cleanJob(job)}
-                            >
-                              {t('Clean up remote files')}
-                            </Button>
+                          {job.manualStagedCleanup ? (
+                            <StagedResourceCleanupButton
+                              disabled={busy}
+                              scope={{
+                                jobId: job.jobId,
+                                providerId: host.providerId,
+                                projectId: job.projectId,
+                                sessionId: job.sessionId
+                              }}
+                              resource={job.manualStagedCleanup}
+                              onCleaned={() => removeBlocker(job.jobId)}
+                            />
+                          ) : (
+                            mode !== 'ray_jobs' && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                disabled={
+                                  busy ||
+                                  !canCleanRemoteFiles(job) ||
+                                  (modal && ACTIVE_JOB_STATUSES.has(job.status))
+                                }
+                                onClick={() => cleanJob(job)}
+                              >
+                                {t('Clean up remote files')}
+                              </Button>
+                            )
                           )}
                           {!ACTIVE_JOB_STATUSES.has(job.status) || job.modalCreationUnconfirmed ? (
                             <Button
@@ -247,31 +266,34 @@ export function ComputeHostRemovalDialog({
                             </Button>
                           ) : null}
                         </div>
-                        {mode !== 'ray_jobs' && !canCleanRemoteFiles(job) ? (
+                        {mode !== 'ray_jobs' &&
+                        !job.manualStagedCleanup &&
+                        !canCleanRemoteFiles(job) ? (
                           <p className="mt-2 text-xs text-muted-foreground">
                             {t('Finish harvesting before cleaning up remote files.')}
                           </p>
                         ) : null}
                       </div>
                     ))}
-                    {mode !== 'ray_jobs' && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={
-                          busy ||
-                          blockingJobs.some(
-                            (job) =>
-                              !canCleanRemoteFiles(job) ||
-                              (modal && ACTIVE_JOB_STATUSES.has(job.status))
-                          )
-                        }
-                        onClick={() => void cleanAllJobs()}
-                      >
-                        {t('Clean up all remote files')}
-                      </Button>
-                    )}
+                    {mode !== 'ray_jobs' &&
+                      blockingJobs.every((job) => !job.manualStagedCleanup) && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={
+                            busy ||
+                            blockingJobs.some(
+                              (job) =>
+                                !canCleanRemoteFiles(job) ||
+                                (modal && ACTIVE_JOB_STATUSES.has(job.status))
+                            )
+                          }
+                          onClick={() => void cleanAllJobs()}
+                        >
+                          {t('Clean up all remote files')}
+                        </Button>
+                      )}
                   </div>
                 ) : null}
               </div>

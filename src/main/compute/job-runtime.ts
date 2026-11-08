@@ -102,6 +102,7 @@ export const createComputeJobRuntime = (
 
   type ExternalRuntime = ReturnType<typeof createKubernetesJobRuntime> & {
     retry?(jobId: string): Promise<void>
+    manualCleanup?(job: ComputeJob): Promise<void>
   }
   const external = new Map<ExternalComputeMode, ExternalRuntime>()
   if (deps.computeService.bindExternalJobRuntime && deps.operationRepository) {
@@ -161,9 +162,41 @@ export const createComputeJobRuntime = (
       })
     )
   }
-  const unbindExternal = Array.from(external, ([mode, runtime]) =>
-    deps.computeService.bindExternalJobRuntime!(mode, () => runtime.tick())
-  )
+  const activeCleanups = new Map<string, Promise<void>>()
+  const unbindExternal = Array.from(external, ([mode, runtime]) => {
+    const cleanup = runtime.manualCleanup
+    return deps.computeService.bindExternalJobRuntime!(
+      mode,
+      () => runtime.tick(),
+      cleanup &&
+        ((job) => {
+          if (stopRequested || harvestAbortController.signal.aborted)
+            throw new Error('Compute recovery is paused.')
+          const active = activeCleanups.get(job.job_id)
+          if (active) return active
+          const task = resourceActivity
+            .run(async () => {
+              const current = await deps.jobRepository.get(job.job_id)
+              if (
+                !current ||
+                current.project_id !== job.project_id ||
+                current.session_id !== job.session_id ||
+                current.provider_id !== job.provider_id ||
+                current.execution_mode !== mode
+              )
+                throw new Error('Compute Job cleanup scope does not match.')
+              if (current.remote_cleanup_disposition === 'cleaned') return
+              if (current.remote_handle !== job.remote_handle)
+                throw new Error('Compute Job cleanup information has changed.')
+              harvestAbortController.signal.throwIfAborted()
+              await cleanup(current)
+            })
+            .finally(() => activeCleanups.delete(job.job_id))
+          activeCleanups.set(job.job_id, task)
+          return task
+        })
+    )
+  })
   const runtimes = Array.from(external.values())
   const harvestScheduler = createHarvestScheduler(pollerDeps.harvestFn!)
   pollerDeps.harvestScheduler = harvestScheduler
@@ -253,6 +286,7 @@ export const createComputeJobRuntime = (
         cancellationReaper?.pause(),
         ...runtimes.map((r) => r.pause())
       ])
+      await Promise.allSettled(activeCleanups.values())
       await harvestScheduler.waitForIdle()
     },
     resume: (): void => {
@@ -309,6 +343,7 @@ export const createComputeJobRuntime = (
           attempt(() => cancellationReaper?.stop()),
           ...runtimes.map((r) => attempt(() => r.stop()))
         ])
+        await Promise.allSettled(activeCleanups.values())
         await attempt(() => harvestScheduler.waitForIdle())
         if (failures.length === 1) throw failures[0]
         if (failures.length) throw new AggregateError(failures, 'Compute runtime cleanup failed.')
