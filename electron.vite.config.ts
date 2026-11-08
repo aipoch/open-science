@@ -39,7 +39,12 @@ export default defineConfig(({ command }) => ({
       // This workspace package is TypeScript source, not a separately built runtime dependency.
       // Bundle it into the Electron main process so development and packaged builds never ask
       // Electron's CommonJS loader to resolve the package directly.
-      externalizeDeps: { exclude: ['@aipoch/notebook-network-sandbox', '@aipoch/research-film'] }
+      externalizeDeps: {
+        // The recovery diagnostics worker runs in the Electron-owned bundle while the backend is
+        // unavailable. Keep its archive writer inside the emitted worker chunk instead of making
+        // the Electron host depend on the backend-only tar package at runtime.
+        exclude: ['@aipoch/notebook-network-sandbox', '@aipoch/research-film', 'tar']
+      }
     }
   },
   preload: {

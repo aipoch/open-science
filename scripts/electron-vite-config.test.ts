@@ -17,7 +17,7 @@ describe('electron-vite main process dependencies', () => {
       main: {
         build: {
           externalizeDeps: {
-            exclude: ['@aipoch/notebook-network-sandbox', '@aipoch/research-film']
+            exclude: ['@aipoch/notebook-network-sandbox', '@aipoch/research-film', 'tar']
           }
         }
       },

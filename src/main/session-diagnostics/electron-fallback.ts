@@ -1,5 +1,4 @@
 import { getLogFilePath } from '@aipoch/diagnostics/node'
-import { desktopFileInteraction } from '../desktop-interaction'
 import { runtimeMetadata } from '../runtime-metadata'
 import { resolveDesktopLogPaths } from './desktop-log-paths'
 import { createSessionDiagnosticsDesktop, type SessionDiagnosticsDesktop } from './desktop'
@@ -12,6 +11,7 @@ import createDiagnosticsWorker from './worker-entry?nodeWorker'
 export function createElectronSessionDiagnosticsFallback(options: {
   configRoot: string
   dataRoot: string
+  chooseDestination: (defaultName: string) => Promise<string | undefined>
 }): SessionDiagnosticsDesktop {
   return createSessionDiagnosticsDesktop({
     createWorker: createDiagnosticsWorker,
@@ -26,9 +26,6 @@ export function createElectronSessionDiagnosticsFallback(options: {
       }),
       appVersion: runtimeMetadata().version
     }),
-    chooseDestination: async (defaultName) => {
-      const result = await desktopFileInteraction().chooseSavePath({ defaultPath: defaultName })
-      return result.canceled ? undefined : result.filePath
-    }
+    chooseDestination: options.chooseDestination
   })
 }

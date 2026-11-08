@@ -774,7 +774,11 @@ async function startDesktop(): Promise<void> {
           return undefined
         recoveryDiagnosticsFallback ??= createElectronSessionDiagnosticsFallback({
           configRoot,
-          dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot()
+          dataRoot: client?.runtimeInfo().startupOptions.dataRoot ?? resolveDataRoot(),
+          chooseDestination: async (defaultName) => {
+            const result = await dialog.showSaveDialog({ defaultPath: defaultName })
+            return result.canceled ? undefined : result.filePath
+          }
         })
         switch (channel) {
           case 'sessions:inspect-diagnostics':
