@@ -22835,16 +22835,20 @@ function recoverGroupedHeaderTiers(table, items, rules, runs, result) {
           ? (line.items.at(-1).rect[3] + body[index + 1].items[0].rect[1]) / 2
           : line.items.at(-1).rect[3] + height * 0.4
     }))
-    const cell = (row, column, text, tokens, rect, colSpan = 1, rowSpan = 1) => ({
-      row,
-      column,
-      colSpan,
-      rowSpan,
-      text,
-      rect,
-      sourceTokens: tokens,
-      sourceRects: tokens.map((token) => token.rect)
-    })
+    const cell = (row, column, text, tokens, rect, colSpan = 1, rowSpan = 1) => {
+      const origins = nativeWholeFontOrigins(tokens)
+      return {
+        row,
+        column,
+        colSpan,
+        rowSpan,
+        text,
+        rect,
+        sourceTokens: tokens,
+        sourceRects: tokens.map((token) => token.rect),
+        ...(origins?.length === tokens.length ? { sourceItems: origins } : {})
+      }
+    }
     const headerCells = [
       cell(
         0,
@@ -22901,6 +22905,11 @@ function recoverGroupedHeaderTiers(table, items, rules, runs, result) {
     ]
     for (const header of headerCells) grid[header.row][header.column] = header.text
     const unassigned = result.unassigned.slice()
+    for (const key of ['sourceItems', 'reconciliationItems']) {
+      const values = result.unassigned?.[key]
+      if (Array.isArray(values))
+        Object.defineProperty(unassigned, key, { value: values.slice(), enumerable: false })
+    }
     for (const item of used) {
       const index = unassigned.indexOf(item.text)
       if (index >= 0) unassigned.splice(index, 1)
