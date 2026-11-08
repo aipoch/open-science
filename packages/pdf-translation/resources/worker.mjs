@@ -631,6 +631,12 @@ async function generate({
           }
         }
       }
+    } catch (error) {
+      // Only this original-page preflight proves locality. Other checks may still
+      // carry the last visited page, or refer to a temporary Form-label page.
+      if (preserveUnmatched && data === workerData.data && error.failure)
+        error.failure.pageLocal = true
+      throw error
     } finally {
       e.free(box)
       p.FPDF_ClosePage(page)
