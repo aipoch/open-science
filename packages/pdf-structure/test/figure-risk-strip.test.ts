@@ -107,6 +107,21 @@ it('rejects a captionless upper panel table inside a resolved two-panel figure',
   expect(isFigureOwnedCaptionlessPanelTable({ ...table, unassigned: [] }, figures)).toBe(false)
 })
 
+it('keeps an unresolved table whose detector crop extends outside the figure', () => {
+  const table = {
+    cropRect: [88, 269, 900, 423],
+    issues: ['text-crosses-crop-boundary', 'unassigned-source-text'],
+    unassigned: ['adjacent table content']
+  }
+  const figures = [
+    {
+      rect: [58, 82, 561, 652],
+      caption: { lines: ['Figure 9: (a) first panel and (b) second panel.'] }
+    }
+  ]
+  expect(isFigureOwnedCaptionlessPanelTable(table, figures)).toBe(false)
+})
+
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function assignedPartialPanel() {
   const items = ['First label', '12', 'Second label', '24'].map((text, index) => ({

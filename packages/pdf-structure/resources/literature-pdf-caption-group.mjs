@@ -327,7 +327,7 @@ export function captionKind(text) {
     /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+\(Section\s+[^)]+\)\.\s+(?:The|This|These|Those|Our|Their|It|They)\b/i.test(
       text ?? ''
     ) ||
-    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:The|This|These|Those|Our|Their|It|They)\b[^.!?]{0,180}\b(?:in|from|of|after)\s+\[\d+\]\s+(?:is|are|was|were)\s+(?:to|a|an|the)\b/i.test(
+    /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*[.:]\s+(?:The|This|These|Those|Our|Their|It|They)\b[^.!?]{0,180}\b(?:in|from|of|after)\s+\[\d+\]\s+(?:is|are|was|were)\s+to\b/i.test(
       text ?? ''
     ) ||
     /^(?:Fig\.?|Figure)\s+[A-Z]?\d+(?:\.\d+)*\s+(?:all|both|each)\b/i.test(text ?? '')

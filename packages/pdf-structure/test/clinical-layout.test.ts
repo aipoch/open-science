@@ -132,6 +132,21 @@ it.each([
     expect(
       recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, recovered, [], f.paint)
     ).toEqual([])
+    const rawDetector = {
+      ...structuredClone(recovered[0]),
+      cells: [],
+      structure: {
+        objects: [
+          { label: 'table row', rect: [30, 50, 240, 64] },
+          { label: 'table row', rect: [30, 64, 240, 78] },
+          { label: 'table column', rect: [30, 50, 135, 104] },
+          { label: 'table column', rect: [135, 50, 240, 104] }
+        ]
+      }
+    }
+    expect(
+      recoverCaptionedRuledTables(f.items, f.rules, f.captions, 1, [rawDetector], [], f.paint)
+    ).toEqual([])
     expect(
       recoverCaptionedRuledTables(
         f.items,

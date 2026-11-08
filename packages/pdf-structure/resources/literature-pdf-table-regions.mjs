@@ -2730,7 +2730,6 @@ export function recoverCaptionedRuledTables(
       existing.length > 0 &&
       (completeCaptionedTables.some(
         (table) =>
-          (table.cells ?? []).some((cell) => (cell.sourceRects ?? []).length > 0) &&
           validRect(table.cropRect) &&
           intersect(table.cropRect, openRuleCandidate.cropRect) > area(table.cropRect) * 0.5
       ) ||

@@ -3395,19 +3395,31 @@ export function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) 
         Math.max(upper[3], figure.rect[3])
       ]
       const nearbyGraphics = page.graphicsBounds
-        .map((graphic) => ({
-          ...graphic,
-          rect: (graphic.paintedNormalizedRect ?? graphic.normalizedRect).map(
-            (value, index) => value * (index % 2 ? page.height : page.width)
+        .map((graphic) => {
+          const normalizedRect = graphic.paintedNormalizedRect ?? graphic.normalizedRect
+          if (
+            !Array.isArray(normalizedRect) ||
+            normalizedRect.length !== 4 ||
+            !normalizedRect.every(Number.isFinite) ||
+            normalizedRect[2] <= normalizedRect[0] ||
+            normalizedRect[3] <= normalizedRect[1]
           )
-        }))
+            return undefined
+          return {
+            ...graphic,
+            rect: normalizedRect.map(
+              (value, index) => value * (index % 2 ? page.height : page.width)
+            )
+          }
+        })
         .filter(
-          ({ rect }) =>
-            rect.every(Number.isFinite) &&
-            rect[2] > band[0] &&
-            rect[0] < band[2] &&
-            rect[3] > band[1] &&
-            rect[1] < band[3]
+          (entry) =>
+            entry &&
+            entry.rect.every(Number.isFinite) &&
+            entry.rect[2] > band[0] &&
+            entry.rect[0] < band[2] &&
+            entry.rect[3] > band[1] &&
+            entry.rect[1] < band[3]
         )
         .map(({ rect }) => rect)
       const textRects = (page.lines ?? [])

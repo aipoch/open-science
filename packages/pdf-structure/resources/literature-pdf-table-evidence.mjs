@@ -2424,7 +2424,12 @@ export function isFigureOwnedCaptionlessPanelTable(table, figures, scale = 1.5) 
     if (!Array.isArray(figureRect) || !caption) return false
     const text = [caption.text, ...(caption.lines ?? [])].filter(Boolean).join(' ')
     if (!/\(a\)/iu.test(text) || !/\(b\)/iu.test(text)) return false
-    return intersection(rect, figureRect) / candidateArea >= 0.8
+    const contained =
+      rect[0] >= figureRect[0] &&
+      rect[1] >= figureRect[1] &&
+      rect[2] <= figureRect[2] &&
+      rect[3] <= figureRect[3]
+    return contained && intersection(rect, figureRect) / candidateArea >= 0.8
   })
 }
 

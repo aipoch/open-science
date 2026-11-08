@@ -53,3 +53,31 @@ it('joins a captioned two-panel figure when the upper panel was table-shaped', (
   expect(result?.rect[2]).toBeGreaterThanOrEqual(500)
   expect(result?.rect[3]).toBeGreaterThanOrEqual(680)
 })
+
+it('ignores malformed graphics while recovering a table-shaped upper panel', () => {
+  const page = {
+    width: 600,
+    height: 800,
+    lines: [
+      { text: '(a) first panel', x: 110, y: 130, width: 140, height: 12 },
+      { text: 'upper panel details', x: 110, y: 200, width: 180, height: 12 }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: null },
+      { kind: 'image', normalizedRect: [120 / 600, 420 / 800, 480 / 600, 680 / 800] }
+    ]
+  }
+  const caption = {
+    page: 1,
+    lines: ['Figure 9: (a) first panel and (b) second panel.'],
+    rect: [80, 720, 520, 750]
+  }
+  expect(() =>
+    recoverCaptionedPanelGrid(
+      page,
+      { caption, rect: [120, 420, 480, 680] },
+      [caption],
+      [[100, 170, 500, 360]]
+    )
+  ).not.toThrow()
+})

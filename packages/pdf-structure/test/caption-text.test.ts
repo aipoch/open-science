@@ -79,6 +79,7 @@ it('rejects figure score sentences that start with an unpunctuated label', () =>
 
 it('keeps a normal cited figure caption when the citation describes the source', () => {
   expect(captionKind('Figure 1. The architecture from [9] is shown in blue.')).toBe('figure')
+  expect(captionKind('Figure 1. The architecture from [9] is a directed graph.')).toBe('figure')
 })
 
 function coordinatedTableReferenceCaption(): {
