@@ -21,6 +21,19 @@ import {
 } from './mcp-server'
 
 const owners = new WeakMap<object, Set<string>>()
+
+// A failed cell or non-zero shell exit is a known outcome: its result carries the Run identity or
+// exit code. Transport and RPC errors carry neither, so their effects stay unknown.
+const reportsRunOutcome = (content: unknown): boolean => {
+  const first = Array.isArray(content) ? (content[0] as { type?: unknown; text?: unknown }) : null
+  if (first?.type !== 'text' || typeof first.text !== 'string') return false
+  try {
+    const parsed = JSON.parse(first.text) as Record<string, unknown> | null
+    return typeof parsed?.runId === 'string' || typeof parsed?.exitCode === 'number'
+  } catch {
+    return false
+  }
+}
 type Authority = Pick<
   NotebookLocalRpcServer,
   'authorizeExecution' | 'clearArtifactTurnBinding' | 'getArtifactTurnScope'
@@ -145,7 +158,11 @@ export async function openNotebookHarnessTurn(input: {
                 if (progress.message) context.update([{ type: 'text', text: progress.message }])
               }
             })
-            if (name !== 'list_authorized_directories' && result.isError)
+            if (
+              name !== 'list_authorized_directories' &&
+              result.isError &&
+              !reportsRunOutcome(result.content)
+            )
               throw new Error('Notebook MCP execution outcome is unknown')
             return result
           } catch (error) {
@@ -159,27 +176,9 @@ export async function openNotebookHarnessTurn(input: {
         const tool = byName.get(definition.name)
         if (!tool) return undefined
         const output = definitions.find((candidate) => candidate.name === tool.name)?.outputSchema
-        const description =
-          tool.name === 'notebook_execute'
-            ? 'Execute foreground Python/R in the managed Notebook. Read authorized data in the kernel; return only necessary results. Preserve runId and artifactVersionInputs for provenance. Background execution is unavailable.'
-            : tool.name === 'bash_execute'
-              ? tool.description
-                  .split('\n')
-                  .filter(
-                    (line) =>
-                      !line.includes('background') &&
-                      !line.includes('Background') &&
-                      !line.includes('write_artifact_file') &&
-                      !line.includes('repl_execute')
-                  )
-                  .join('\n') +
-                '\nForeground only. Never detach processes or run analysis scripts/installers. ' +
-                (byName.has('notebook_execute') ? 'Use notebook_execute for Python/R. ' : '') +
-                'Artifact publishing is not exposed here.'
-              : tool.description
         return {
           parameters: tool.parameters as Json,
-          description,
+          description: tool.description,
           validate: (args) => tool.validate(args) as Json,
           authorize: (args, context) =>
             tool.authorize(args as Record<string, unknown>, context.signal),

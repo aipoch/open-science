@@ -13,6 +13,32 @@ import {
 
 const SUPPORTED = new Set(['list_authorized_directories', 'notebook_execute', 'bash_execute'])
 
+// The shared descriptions teach background:true and background_run, which this subset rejects and
+// does not register. Artifact publishing and the REPL are not exposed here either.
+export const foregroundHarnessDescription = (
+  name: string,
+  description: string,
+  names: ReadonlySet<string>
+): string => {
+  if (name === 'notebook_execute')
+    return 'Run foreground Python/R code as a persistent notebook cell. Read authorized data in the kernel; return only necessary results. Save runId; pass artifactVersionInputs for provenance.'
+  if (name !== 'bash_execute') return description
+  return (
+    description
+      .split('\n')
+      .filter(
+        (line) =>
+          !/background/iu.test(line) &&
+          !line.includes('write_artifact_file') &&
+          !line.includes('repl_execute')
+      )
+      .join('\n') +
+    '\nForeground only. Never detach processes or run analysis scripts/installers. ' +
+    (names.has('notebook_execute') ? 'Use notebook_execute for Python/R. ' : '') +
+    'Artifact publishing is not exposed here.'
+  )
+}
+
 /** Reuses managed schemas/RPC and explicit one-call approval, without exposing routing credentials. */
 export function createHarnessNotebookTools(
   environment: NotebookMcpEnvironment,
@@ -26,6 +52,7 @@ export function createHarnessNotebookTools(
   const bound = structuredClone({ ...environment, release: undefined })
   const definitions = notebookRpcToolsForEnvironment(bound)
   if (new Set(allowedNames).size !== allowedNames.length) throw new Error('Duplicate harness tool')
+  const names = new Set(allowedNames)
   return allowedNames.map((name) => {
     const definition = definitions.find((tool) => tool.name === name)
     if (!SUPPORTED.has(name) || !definition) throw new Error('Unsupported harness Notebook tool')
@@ -44,10 +71,7 @@ export function createHarnessNotebookTools(
       .strict()
     return {
       name,
-      description:
-        name === 'list_authorized_directories'
-          ? definition.description
-          : `${definition.description}\nOnly foreground execution is available in this harness session.`,
+      description: foregroundHarnessDescription(name, definition.description, names),
       parameters: z.toJSONSchema(schema, { target: 'draft-7' }),
       validate: (input) => {
         const parsed = schema.safeParse(input)

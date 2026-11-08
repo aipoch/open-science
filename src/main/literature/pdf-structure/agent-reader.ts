@@ -14,8 +14,16 @@ import type { PdfStructureSourceAuthority, PdfStructureSourceRequest } from './s
 const token = z.string().min(1).max(8192)
 export const listPdfElementsInput = z
   .object({
-    documentId: z.string().trim().min(1).max(512).optional(),
-    cursor: token.optional()
+    documentId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(512)
+      .optional()
+      .describe(
+        'documentId of a PDF linked to the current message. Required when more than one is linked.'
+      ),
+    cursor: token.optional().describe('nextCursor from the previous result, passed unchanged.')
   })
   .strict()
   .refine(
@@ -23,7 +31,10 @@ export const listPdfElementsInput = z
     'Use documentId for selection or cursor for continuation, never both.'
   )
 export const readPdfElementInput = z
-  .object({ elementRef: token, cursor: token.optional() })
+  .object({
+    elementRef: token.describe('elementRef returned by list_pdf_elements, passed unchanged.'),
+    cursor: token.optional().describe('nextCursor from the previous read of this element.')
+  })
   .strict()
 export type ListPdfElementsInput = z.infer<typeof listPdfElementsInput>
 export type ReadPdfElementInput = z.infer<typeof readPdfElementInput>

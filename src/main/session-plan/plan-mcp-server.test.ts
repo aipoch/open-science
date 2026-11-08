@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import {
+  INVALID_PLAN_GUIDANCE,
   callPlanRpc,
   createPlanMcpServer,
   createPlanMcpServerForEnvironment
@@ -1501,7 +1502,8 @@ describe('Session Plan MCP server', () => {
     expect(JSON.parse(malformedContent[0].text)).toEqual({
       error: {
         code: 'invalid-plan',
-        message: 'task_summary must be non-empty.'
+        message: 'task_summary must be non-empty.',
+        guidance: INVALID_PLAN_GUIDANCE
       }
     })
     expect(generate).toHaveBeenCalledOnce()
@@ -1550,7 +1552,8 @@ describe('Session Plan MCP server', () => {
     expect(JSON.parse((mixed as { content: Array<{ text: string }> }).content[0].text)).toEqual({
       error: {
         code: 'invalid-plan',
-        message: 'A Plan decision cannot be combined with Plan content.'
+        message: 'A Plan decision cannot be combined with Plan content.',
+        guidance: INVALID_PLAN_GUIDANCE
       }
     })
 

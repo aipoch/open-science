@@ -1840,7 +1840,7 @@ class NotebookLocalRpcServer {
     if (method !== 'artifactSaveVersion') {
       throw new RpcHttpError(
         409,
-        'Artifact save protocol changed. Restart the Agent MCP connection.'
+        'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact save protocol changed. Do not retry this turn; tell the user to start a new conversation turn.'
       )
     }
     if (!capability.sourceScope)

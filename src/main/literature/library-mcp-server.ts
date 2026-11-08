@@ -1,4 +1,5 @@
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { z } from 'zod'
 import { withDataRootWrite } from '../storage/migration-state'
 import type { LiteratureLibraryDiscovery } from './discovery-contract'
@@ -27,8 +28,7 @@ const LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME = 'format_references'
 const LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME = 'format_citation_document'
 const LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME = 'prepare_latex_bundle'
 const LITERATURE_LIBRARY_SAVE_TOOL_NAME = 'save_to_inbox'
-const LITERATURE_SAVE_ARGUMENT_RECOVERY =
-  'Correct the reported input and retry save_to_inbox; do not repeat unchanged arguments. Reuse retrieved metadata rather than re-extracting PDFs or troubleshooting runtimes to fix argument formatting.'
+const LITERATURE_SAVE_ARGUMENT_RECOVERY = `${TOOL_ARGUMENT_RECOVERY} Reuse retrieved metadata rather than re-extracting PDFs or troubleshooting runtimes to fix argument formatting.`
 const LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT = 20
 const LITERATURE_LIBRARY_SEARCH_OUTPUT_MAX_CHARACTERS = 38_000
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS = 1_200
@@ -36,8 +36,29 @@ const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS = 200
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT = 5
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_MAX_CHARACTERS = 5_000
 export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
+// Reads name their record directly, so `items` has no selection to apply there.
+export const LITERATURE_LIBRARY_READ_SCOPES = ['library', 'project', 'collection'] as const
 
 type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
+
+const argumentError = (code: string, message: string): Error =>
+  new Error(`${code}: ${message} ${TOOL_ARGUMENT_RECOVERY}`)
+
+const scopeDescription =
+  'project (default): records linked to the current Project. library: the whole Library, only when the user asks for it. collection: requires collectionId.'
+
+const itemNotFound = (): Error =>
+  new Error(
+    'LITERATURE_ITEM_NOT_FOUND: No record with this itemId exists in this scope. Use an itemId returned by search_library with the same scope and collectionId as that search (use library after an items search); do not guess itemIds.'
+  )
+
+// Rejects scope combinations that the JSON schema cannot express.
+const assertCollectionScope = (scope: LiteratureLibraryScope, collectionId?: string): void => {
+  if (scope === 'collection' && !collectionId)
+    throw argumentError('COLLECTION_ID_REQUIRED', 'scope "collection" requires collectionId.')
+  if (scope !== 'collection' && collectionId)
+    throw argumentError('COLLECTION_SCOPE_REQUIRED', 'collectionId requires scope "collection".')
+}
 
 const literatureDiscoveryBatchSchema = z
   .object({ candidates: z.array(literatureDiscoverySchema).min(1).max(10) })
@@ -333,7 +354,7 @@ const compactSearchResult = (
       itemCount--
     } else {
       throw new Error(
-        'SEARCH_RESULT_TOO_LARGE: A record exceeds the search response budget. Narrow the query; exact identifiers have not been truncated.'
+        'SEARCH_RESULT_TOO_LARGE: A single record exceeds the search response budget. Call search_library again with a narrower query; exact identifiers were not truncated.'
       )
     }
   }
@@ -384,13 +405,17 @@ const resolveSaveCandidates = async (
   }
   if (request.refs) {
     if (!handler.resolveSaveReferences) {
-      throw new Error('REFERENCE_RESOLUTION_UNAVAILABLE: Identifier lookup is not configured.')
+      throw new Error(
+        'REFERENCE_RESOLUTION_UNAVAILABLE: Identifier lookup is not available in this session, so DOI/PMID refs cannot be resolved. Call the same tool again with candidate metadata you already retrieved instead of refs or ref.'
+      )
     }
     return handler.resolveSaveReferences(request.refs, signal)
   }
   if (request.candidates) return request.candidates
   if (!handler.readCandidateFile) {
-    throw new Error('CANDIDATE_FILE_UNAVAILABLE: Candidate file loading is not configured.')
+    throw new Error(
+      'CANDIDATE_FILE_UNAVAILABLE: Candidate files cannot be read in this session, so filename cannot be used. Call the same tool again with refs or candidates.'
+    )
   }
 
   let content: string
@@ -440,23 +465,39 @@ const resolveSaveCandidates = async (
 const createLiteratureLibraryMcpServer = (
   handler: LiteratureLibraryMcpHandler
 ): ModelContextProtocolServer => {
-  const server = new ModelContextProtocolServer({
-    name: LITERATURE_LIBRARY_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: LITERATURE_LIBRARY_MCP_SERVER_NAME, version: '1.0.0' })
+  )
 
   server.registerTool(
     LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
     {
       title: 'Search literature library',
       description:
-        "Browse or search the user's Open-Science literature metadata library. Results use a compact projection with abstractPreview, abstractLength, and abstractTruncated so a 20-record page stays within the Agent response budget. authors lists only authors; creatorCount counts all contributors. This does not search external providers or read PDF full text. Omit query to browse records. Scope defaults to project and only returns records linked to the trusted current Project. Use library only when the user explicitly requests their global Library, collection with collectionId for an explicitly selected Collection, or items with the exact itemIds explicitly selected by the user. Each page defaults to 20 records, which is also the maximum. When nextOffset is returned, pass it as offset to continue.",
+        "Browse or search metadata records in the user's Open-Science Literature Library. Does not search external providers or read PDF full text. Omit query to browse. scope: project (default) returns records linked to the current Project; library searches the whole Library, only when the user asks for it; collection requires collectionId for a Collection the user selected; items requires itemIds the user selected. collectionId and itemIds are rejected with any other scope. Pages hold at most 20 records (also the default), and fewer when the response would exceed about 38,000 characters, so abstractPreview may be shortened (abstractTruncated). Continue while hasMore is true by passing nextOffset as offset. authors lists only authors; creatorCount counts all contributors.",
       inputSchema: {
-        query: z.string().trim().min(1).max(2_000).optional(),
+        query: z
+          .string()
+          .trim()
+          .min(1)
+          .max(2_000)
+          .optional()
+          .describe('Search text. Omit to browse.'),
         scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
-        collectionId: z.string().trim().min(1).max(512).optional(),
-        itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(200).optional(),
-        offset: z.number().int().min(0).optional(),
+        collectionId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(512)
+          .optional()
+          .describe('Required with, and only with, scope "collection".'),
+        itemIds: z
+          .array(z.string().trim().min(1).max(512))
+          .min(1)
+          .max(200)
+          .optional()
+          .describe('Unique Library itemIds. Required with, and only with, scope "items".'),
+        offset: z.number().int().min(0).optional().describe('nextOffset from the previous page.'),
         limit: z.number().int().min(1).max(LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT).optional()
       }
     },
@@ -464,20 +505,15 @@ const createLiteratureLibraryMcpServer = (
       withDataRootWrite(async () => {
         const scope = request.scope ?? 'project'
         const limit = request.limit ?? LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT
-        if (scope === 'collection' && !request.collectionId) {
-          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-        }
-        if (scope !== 'collection' && request.collectionId) {
-          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-        }
+        assertCollectionScope(scope, request.collectionId)
         if (scope === 'items' && !request.itemIds) {
-          throw new Error('ITEM_IDS_REQUIRED: Items scope requires itemIds.')
+          throw argumentError('ITEM_IDS_REQUIRED', 'scope "items" requires itemIds.')
         }
         if (scope !== 'items' && request.itemIds) {
-          throw new Error('ITEMS_SCOPE_REQUIRED: itemIds requires Items scope.')
+          throw argumentError('ITEMS_SCOPE_REQUIRED', 'itemIds requires scope "items".')
         }
         if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
-          throw new Error('DUPLICATE_ITEM_IDS: Items scope does not accept duplicate itemIds.')
+          throw argumentError('DUPLICATE_ITEM_IDS', 'itemIds contains duplicates.')
         }
         const result = await handler.searchLibrary({ ...request, scope, limit })
         return compactSearchResult(result, { ...request, scope, limit })
@@ -490,9 +526,13 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Format literature references',
         description:
-          'Format trusted Literature Library records for Markdown, plain text, or chat output. Pass only exact itemIds plus the requested CSL style and locale. Use the returned inText and reference strings verbatim; do not hand-format or invent citation metadata. For DOCX use format_citation_document instead.',
+          'Format trusted Literature Library records for Markdown, plain text, or chat output. Pass the exact itemIds; styleId and locale default to apa and en-US, so set them when the user names a style or language. Use the returned inText and reference strings verbatim; do not hand-format or invent citation metadata. For DOCX use format_citation_document instead.',
         inputSchema: {
-          itemIds: z.array(z.string().trim().min(1).max(512)).min(1).max(20),
+          itemIds: z
+            .array(z.string().trim().min(1).max(512))
+            .min(1)
+            .max(20)
+            .describe('Library itemIds returned by search_library.'),
           styleId: z.enum(LITERATURE_CITATION_STYLES).default('apa'),
           locale: z.enum(LITERATURE_CITATION_LOCALES).default('en-US')
         }
@@ -595,33 +635,35 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Read literature abstracts',
       description:
-        'Read the complete abstract for one Literature Library record, or bounded abstracts for up to five records in one call. Prefer itemIds for a small group of records whose search previews are insufficient; batch abstracts over 5,000 characters are compacted and marked abstractTruncated. Do not batch-read every search result. This reads metadata only, not PDF full text. Use the same scope as the originating search; scope defaults to the trusted current Project.',
+        'Read the complete abstract of one Literature Library record (itemId), or bounded abstracts of up to five records (itemIds); pass exactly one of the two. Use it when search previews are insufficient, not for every search result. Batch abstracts over 5,000 characters are compacted and marked abstractTruncated. Reads metadata only, not PDF full text. Pass the same scope and collectionId as the search that returned the records; after an items search, use library.',
       inputSchema: {
-        itemId: z.string().trim().min(1).max(512).optional(),
+        itemId: z.string().trim().min(1).max(512).optional().describe('One Library itemId.'),
         itemIds: z
           .array(z.string().trim().min(1).max(512))
           .min(1)
           .max(LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT)
-          .optional(),
-        scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
-        collectionId: z.string().trim().min(1).max(512).optional()
+          .optional()
+          .describe('Up to five unique Library itemIds.'),
+        scope: z.enum(LITERATURE_LIBRARY_READ_SCOPES).optional().describe(scopeDescription),
+        collectionId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(512)
+          .optional()
+          .describe('Required with, and only with, scope "collection".')
       }
     },
     async (request) =>
       withDataRootWrite(async () => {
         const scope = request.scope ?? 'project'
         if ((request.itemId ? 1 : 0) + (request.itemIds ? 1 : 0) !== 1) {
-          throw new Error('ABSTRACT_INPUT_REQUIRED: Pass exactly one of itemId or itemIds.')
+          throw argumentError('ABSTRACT_INPUT_REQUIRED', 'Pass exactly one of itemId or itemIds.')
         }
         if (request.itemIds && new Set(request.itemIds).size !== request.itemIds.length) {
-          throw new Error('DUPLICATE_ITEM_IDS: Abstract reading does not accept duplicate itemIds.')
+          throw argumentError('DUPLICATE_ITEM_IDS', 'itemIds contains duplicates.')
         }
-        if (scope === 'collection' && !request.collectionId) {
-          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-        }
-        if (scope !== 'collection' && request.collectionId) {
-          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-        }
+        assertCollectionScope(scope, request.collectionId)
         if (request.itemIds) {
           const resolved = await Promise.all(
             request.itemIds.map((itemId) =>
@@ -650,11 +692,7 @@ const createLiteratureLibraryMcpServer = (
           scope,
           collectionId: request.collectionId
         })
-        if (!result) {
-          throw new Error(
-            'LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.'
-          )
-        }
+        if (!result) throw itemNotFound()
         return {
           structuredContent: result,
           content: [
@@ -675,30 +713,35 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Read literature PDF evidence',
       description:
-        'Retrieve relevant passages with page numbers from one PDF attached to a Literature Library record. Use this only when the PDF could materially affect the answer, after finding the item with search_library. Each call reads one item on demand and reuses extraction and search data for the same immutable file version; it does not index the whole Library. Scope defaults to the trusted current Project. Returns prose, not verified table cells or images. Do not infer visual evidence from these passages. itemId is a Library record identifier, not a linked-PDF documentId for list_pdf_elements.',
+        'Retrieve relevant passages with page numbers from the PDF attached to one Literature Library record. Use it only when full text could materially affect the answer, after finding the record with search_library (hasPdf: true). Each call reads one record on demand and reuses extraction for the same file version; it does not index the whole Library. Returns prose, not verified table cells or images; do not infer visual evidence from these passages. Pass the same scope and collectionId as the search that returned the record; after an items search, use library. itemId is a Library record identifier, not a linked-PDF documentId for list_pdf_elements.',
       inputSchema: {
-        itemId: z.string().trim().min(1).max(512),
-        attachmentId: z.string().trim().min(1).max(512).optional(),
-        query: z.string().trim().min(1).max(2_000),
-        scope: z.enum(LITERATURE_LIBRARY_SCOPES).optional(),
-        collectionId: z.string().trim().min(1).max(512).optional()
+        itemId: z.string().trim().min(1).max(512).describe('Library itemId from search_library.'),
+        attachmentId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(512)
+          .optional()
+          .describe(
+            'Omit to read the first PDF attachment. No tool returns attachment ids; pass one only if the user supplied it.'
+          ),
+        query: z.string().trim().min(1).max(2_000).describe('What to find in the full text.'),
+        scope: z.enum(LITERATURE_LIBRARY_READ_SCOPES).optional().describe(scopeDescription),
+        collectionId: z
+          .string()
+          .trim()
+          .min(1)
+          .max(512)
+          .optional()
+          .describe('Required with, and only with, scope "collection".')
       }
     },
     async (request) =>
       withDataRootWrite(async () => {
         const scope = request.scope ?? 'project'
-        if (scope === 'collection' && !request.collectionId) {
-          throw new Error('COLLECTION_ID_REQUIRED: Collection scope requires collectionId.')
-        }
-        if (scope !== 'collection' && request.collectionId) {
-          throw new Error('COLLECTION_SCOPE_REQUIRED: collectionId requires Collection scope.')
-        }
+        assertCollectionScope(scope, request.collectionId)
         const result = await handler.readPdf({ ...request, scope })
-        if (!result) {
-          throw new Error(
-            'LITERATURE_ITEM_NOT_FOUND: Literature Item is unavailable in this scope.'
-          )
-        }
+        if (!result) throw itemNotFound()
         const evidencePresentation = literatureReadPresentation(result.evidence)
         return {
           structuredContent: result.evidence,
@@ -720,9 +763,7 @@ const createLiteratureLibraryMcpServer = (
     {
       title: 'Save literature discoveries',
       description:
-        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Open-Science supplies the trusted current Project and Session origin; do not include origin fields. Pass exactly one of refs, candidates, or filename. Prefer refs with pmid:<id> or doi:<id> so Open-Science can retrieve the metadata without Notebook execution. Use candidates only for records without a supported identifier. filename accepts a prepared candidate JSON batch, not a PDF or ZIP. For input validation errors: ' +
-        LITERATURE_SAVE_ARGUMENT_RECOVERY +
-        ' Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows.',
+        'Save one to ten literature records discovered by the Agent to the user-level Literature Inbox for review. Pass exactly one of refs, candidates, or filename. Prefer refs (pmid:<id> or doi:<id>) so Open-Science retrieves the metadata itself; use candidates only for records without a supported identifier; use filename only for a prepared candidate JSON batch. Open-Science supplies the current Project and Session origin; do not include origin fields. Each receipt in results corresponds to the completed input prefix; failure.inputIndex is zero-based and later inputs were not attempted. Reused receipts are not newly created rows.',
       inputSchema: {
         refs: z
           .array(z.string().trim().min(1).max(512))
@@ -730,7 +771,7 @@ const createLiteratureLibraryMcpServer = (
           .max(10)
           .optional()
           .describe(
-            'An array of 1–10 DOI/PMID references, not a single string. For example ["pmid:35486828", "doi:10.1016/j.cell.2011.03.019"]. Do not also pass candidates or filename.'
+            'An array of 1–10 DOI/PMID references, not a single string. For example ["pmid:35486828", "doi:10.1016/j.cell.2011.03.019"].'
           ),
         candidates: z
           .array(literatureDiscoverySchema)
@@ -738,7 +779,7 @@ const createLiteratureLibraryMcpServer = (
           .max(10)
           .optional()
           .describe(
-            'An array of 1–10 records, each with item (bibliographic metadata, including itemType and title) and source (provider and rawMetadata). Reuse retrieved metadata; do not invent missing fields. Do not also pass refs or filename.'
+            'An array of 1–10 records, each with item (bibliographic metadata, including itemType and title) and source (provider and rawMetadata). Reuse retrieved metadata; do not invent missing fields.'
           ),
         filename: z
           .string()
@@ -747,7 +788,7 @@ const createLiteratureLibraryMcpServer = (
           .max(2_000)
           .optional()
           .describe(
-            'Filename of an existing Notebook-owned JSON file containing {"candidates":[...]}, using the same record schema as candidates. Not a PDF, ZIP, bare array, or JSON string passed inline. Do not also pass refs or candidates, and do not construct a workspace prefix.'
+            'Filename of an existing Notebook-owned JSON file containing {"candidates":[...]} with the same record schema as candidates. Not a PDF, ZIP, bare array, or inline JSON string; do not construct a workspace prefix.'
           )
       }
     },
@@ -780,25 +821,44 @@ const createLiteratureLibraryMcpServer = (
       {
         title: 'Acquire literature PDF',
         description:
-          'Find and download one publicly accessible full-text PDF into Literature Inbox for user review. Supply either ref (DOI or PMID) or candidate metadata and its source. Omit pdfUrl to search the configured open full-text providers; supply pdfUrl only for a discovered public HTTPS PDF link. The PDF and metadata are kept in Inbox until the user accepts them. Existing library references are reused on acceptance. Downloads are limited to 50 MB; private network addresses, sign-in sessions and local file paths are not supported. Do not describe pending-review results as already added to the Library.',
+          'Find and download one publicly accessible full-text PDF into Literature Inbox for user review. Pass exactly one of ref (DOI or PMID) or candidate (metadata with its source). Omit pdfUrl to search the configured open full-text providers; pass pdfUrl only for a discovered public HTTPS PDF link. The PDF and metadata stay in Inbox until the user accepts them; existing Library records are reused on acceptance. Downloads are limited to 50 MB; private network addresses, sign-in sessions and local file paths are not supported. Do not describe pending-review results as already added to the Library.',
         inputSchema: {
-          ref: z.string().trim().min(1).max(512).optional(),
-          candidate: literatureDiscoverySchema.optional(),
-          pdfUrl: z.string().url().max(4096).optional()
+          ref: z
+            .string()
+            .trim()
+            .min(1)
+            .max(512)
+            .optional()
+            .describe('One DOI or PMID, for example "doi:10.1016/j.cell.2011.03.019".'),
+          candidate: literatureDiscoverySchema
+            .optional()
+            .describe('One record with item and source, for a work without a DOI or PMID.'),
+          pdfUrl: z
+            .string()
+            .url()
+            .max(4096)
+            .optional()
+            .describe('Public HTTPS URL of the PDF itself.')
         }
       },
       async ({ ref, candidate, pdfUrl }, { signal }) =>
         withDataRootWrite(async () => {
           signal.throwIfAborted()
           if (Boolean(ref) === Boolean(candidate)) {
-            throw new Error('ACQUIRE_PDF_INPUT_REQUIRED: Pass exactly one of ref or candidate.')
+            throw argumentError(
+              'ACQUIRE_PDF_INPUT_REQUIRED',
+              'Pass exactly one of ref or candidate.'
+            )
           }
           const candidates = await resolveSaveCandidates(
             { refs: ref ? [ref] : undefined, candidates: candidate ? [candidate] : undefined },
             handler,
             signal
           )
-          if (candidates.length !== 1) throw new Error('Exactly one reference must be resolved.')
+          if (candidates.length !== 1)
+            throw new Error(
+              'REFERENCE_NOT_RESOLVED: ref did not resolve to exactly one record. Call acquire_pdf again with candidate metadata you already retrieved, or ask the user for a more specific identifier.'
+            )
           signal.throwIfAborted()
           const result = await handler.acquirePdf!({ candidate: candidates[0]!, pdfUrl, signal })
           return {

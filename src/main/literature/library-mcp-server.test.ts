@@ -124,7 +124,7 @@ describe('Literature Library MCP server', () => {
     ])
     const saveTool = tools.find((tool) => tool.name === 'save_to_inbox')!
     expect(saveTool.description).toContain('Pass exactly one of refs, candidates, or filename')
-    expect(saveTool.description).toContain('retry save_to_inbox')
+    expect(saveTool.description).not.toContain('Do not also pass')
     expect(Object.keys(saveTool.inputSchema.properties!)).toEqual([
       'refs',
       'candidates',
@@ -406,7 +406,7 @@ describe('Literature Library MCP server', () => {
     })
     expect(ambiguous.isError).toBe(true)
     expect(JSON.stringify(ambiguous.content)).toContain('No records were saved by this call')
-    expect(JSON.stringify(ambiguous.content)).toContain('retry save_to_inbox')
+    expect(JSON.stringify(ambiguous.content)).toContain('call the same tool again')
     expect(resolveSaveReferences).toHaveBeenCalledTimes(1)
 
     await client.close()
@@ -441,7 +441,7 @@ describe('Literature Library MCP server', () => {
       expect(feedback).toContain('INVALID_CANDIDATE_FILE')
       expect(feedback).toContain(detail)
       expect(feedback).toContain('No records were saved by this call')
-      expect(feedback).toContain('retry save_to_inbox')
+      expect(feedback).toContain('call the same tool again')
       expect(saveToInbox).not.toHaveBeenCalled()
 
       readCandidateFile.mockResolvedValueOnce(JSON.stringify({ candidates: [discovery] }))
@@ -820,6 +820,30 @@ describe('Literature Library MCP server', () => {
       itemIds: ['item-1', 'item-2'],
       limit: 20
     })
+    await client.close()
+    await server.close()
+  })
+
+  it('keeps the items scope on search only', async () => {
+    const readAbstract = vi.fn(async () => undefined)
+    const readPdf = vi.fn(async () => undefined)
+    const server = createLiteratureLibraryMcpServer({
+      searchLibrary: vi.fn(),
+      readAbstract,
+      readPdf,
+      saveToInbox: vi.fn(async () => ({ results: [] }))
+    })
+    const client = await connect(server)
+
+    for (const [name, args] of [
+      ['read_library_abstract', { itemId: 'item-1' }],
+      ['read_library_pdf', { itemId: 'item-1', query: 'cohort' }]
+    ] as const) {
+      const result = await client.callTool({ name, arguments: { ...args, scope: 'items' } })
+      expect(result.isError).toBe(true)
+    }
+    expect(readAbstract).not.toHaveBeenCalled()
+    expect(readPdf).not.toHaveBeenCalled()
     await client.close()
     await server.close()
   })

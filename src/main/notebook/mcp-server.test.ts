@@ -300,8 +300,6 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain(
       '`write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })`'
     )
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/validation errors.*correct once/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/never repeat.*identical.*failed arguments/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('use an ABSOLUTE path')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
@@ -990,6 +988,79 @@ describe('notebook_execute tool', () => {
     }
   })
 
+  it.each([
+    ['Notebook execution turn ended before request admission.', 'Do not retry in this turn'],
+    ['WSL_SETUP_DIAGNOSTICS_STALE', 'then retry once'],
+    ['Notebook Runtime binding does not match its pending host admission.', 'Do not retry']
+  ])('chooses the 409 next step from the conflict: %s', async (error, nextStep) => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'conflict-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(JSON.stringify({ error }), { status: 409 }))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const result = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      const text = (result.content as { text: string }[])[0]!.text
+      expect(text).toContain(`${error}\n`)
+      expect(text).toContain(nextStep)
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it('reports failed foreground cells and failed background Runs as tool errors', async () => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'run-failure', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const results = [
+      { runId: 'run-1', kernelKind: 'python', status: 'failed', text: { traceback: 'boom' } },
+      { receipt: {}, run: { runId: 'run-2', kernelKind: 'python', status: 'failed' } },
+      {
+        receipt: {},
+        run: { runId: 'run-3', kernelKind: 'bash', status: 'completed', exitCode: 2 }
+      },
+      { runId: 'run-4', kernelKind: 'python', status: 'completed' }
+    ]
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async () => new Response(JSON.stringify({ result: results.shift() })))
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const call = (name: string, args: Record<string, unknown>): Promise<unknown> =>
+        client.callTool({ name, arguments: args }).then((result) => result.isError)
+
+      expect(await call('notebook_execute', { code: 'raise' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-2' })).toBe(true)
+      expect(await call('background_run', { action: 'query', runId: 'run-3' })).toBe(true)
+      expect(await call('notebook_execute', { code: 'ok' })).not.toBe(true)
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('accepts an explicit background mode and documents its durable receipt lifecycle', () => {
     const schema = z.object(tool?.inputSchema ?? {})
 
@@ -1291,14 +1362,14 @@ describe('background_run tool', () => {
       runId: 'run-1'
     })
     expect(() => schema.parse({ action: 'retry', runId: 'run-1' })).toThrow()
-    expect(tool?.description).toMatch(/query a saved runId.*non-blocking/i)
+    expect(tool?.description).toMatch(/query or cancel the saved runId/i)
     expect(tool?.description).toMatch(/non-blocking snapshot/i)
     expect(tool?.description).toMatch(/never scan Run history/i)
     expect(tool?.description).not.toMatch(/once|never.*poll|do not poll/i)
     expect(tool?.description).toContain('followUpDelivery:"suppressed"')
     expect(tool?.description).toContain('"committed"')
     expect(tool?.description).toContain('follow-up Turn')
-    expect(tool?.description).toMatch(/submissionIdentity.*recovers only a missing receipt/i)
+    expect(tool?.description).toMatch(/submissionIdentity only recovers a missing receipt/i)
   })
 
   it('preserves the durable receipt internally and flattens compact query output', () => {

@@ -689,7 +689,7 @@ const createAcpRuntime = ({
                   if (!item || !isLiteratureItemInScope(item, request)) return undefined
                   if (!literatureReader) {
                     throw new Error(
-                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable.'
+                      'PDF_READER_UNAVAILABLE: Literature PDF reading is unavailable in this session. Do not retry; use read_library_abstract or tell the user full text cannot be read.'
                     )
                   }
                   const selected = item.attachments
@@ -704,7 +704,7 @@ const createAcpRuntime = ({
                     )[0]
                   if (!selected) {
                     throw new Error(
-                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment.'
+                      'PDF_ATTACHMENT_NOT_FOUND: This Literature Item has no matching PDF attachment. Omit attachmentId to read the first PDF; if hasPdf is false, use read_library_abstract or acquire_pdf instead.'
                     )
                   }
                   const evidence = await literatureReader.searchAttachment({

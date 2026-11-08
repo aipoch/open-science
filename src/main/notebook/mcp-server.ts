@@ -2,6 +2,7 @@ import { AUTHORIZED_DIRECTORIES_DESCRIPTION } from '../local-fs/authorized-direc
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { executionRecoveryContext } from './execution-recovery'
@@ -58,11 +59,11 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
   'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
-  'For a network block record, call `request_network_access` with its recordId and purpose. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
+  'For a network block record, call `request_network_access` with its recordId and reason. Shell prompts at blocked destinations; approval never replays commands. Retry ended commands explicitly after checking side effects.',
   'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
-  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
+  'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text.',
   '</open_science_notebook_instructions>'
 ].join('\n')
 
@@ -486,16 +487,41 @@ const callNotebookRpc = async (
   const payload = (await response.json()) as RpcResponse
 
   if (!response.ok || payload.error) {
-    throw new Error(
+    const message =
       payload.error === undefined
         ? `Notebook RPC failed with status ${response.status}`
         : typeof payload.error === 'string'
           ? payload.error
           : JSON.stringify(payload.error)
-    )
+    const guidance = notebookRpcErrorGuidance(response.status, payload.error)
+    throw new Error(guidance ? `${message}\n${guidance}` : message)
   }
 
   return payload.result
+}
+
+// Structured errors already carry their own recovery, retryable or hint fields. Plain errors get
+// one next step chosen by the RPC status so the Agent neither abandons the tool nor loops on it.
+const notebookRpcErrorGuidance = (status: number, error: unknown): string | undefined => {
+  const detail = asRecord(error)
+  if (detail && ['recovery', 'retryable', 'hint', 'guidance'].some((key) => key in detail))
+    return undefined
+  if (status === 400) return TOOL_ARGUMENT_RECOVERY
+  if (status === 401 || status === 403 || status === 404)
+    return 'This operation is not available to this Session. Do not retry it or route around it; report the limitation to the user.'
+  if (status === 409) {
+    const text = typeof error === 'string' ? error : JSON.stringify(error ?? '')
+    if (text.includes('turn ended'))
+      return 'This turn has ended. Do not retry in this turn; continue after the next user message.'
+    if (text.includes('DIAGNOSTICS_STALE'))
+      return 'Refresh the relevant state with a read-only tool, then retry once.'
+    return 'Do not retry this call; report the conflict to the user.'
+  }
+  if (status === 413) return 'Reduce the request size, then call the same tool again.'
+  if (status === 429) return 'Wait for in-flight Notebook calls to finish, then retry once.'
+  if (status >= 500)
+    return 'The outcome is uncertain. Check for side effects before retrying once; if it fails again, report it to the user.'
+  return undefined
 }
 
 // Python/R cells and control-plane REPL execution are intentionally unbounded. Their local RPC hop
@@ -1179,6 +1205,16 @@ const buildNotebookToolContent = (
   return content
 }
 
+// A failed foreground Python/R cell and a queried background Run that failed are tool failures,
+// like a non-zero foreground shell exit. Receipts, cancellation and other statuses are not.
+const notebookRunFailed = (rpcMethod: string, input: unknown, raw: unknown): boolean => {
+  if (rpcMethod === 'execute')
+    return asRecord(input)?.background !== true && asRecord(raw)?.status === 'failed'
+  if (rpcMethod !== 'getBackgroundRun') return false
+  const run = asRecord(asRecord(raw)?.run)
+  return run?.status === 'failed' || (typeof run?.exitCode === 'number' && run.exitCode !== 0)
+}
+
 // Registers one MCP tool that forwards its validated input to a matching notebook RPC method.
 const registerNotebookRpcTool = (
   server: ModelContextProtocolServer,
@@ -1238,7 +1274,9 @@ const registerNotebookRpcTool = (
         return {
           content: buildNotebookToolContent(raw, definition, input),
           ...(definition.outputSchema && asRecord(raw) ? { structuredContent: asRecord(raw) } : {}),
-          ...(rejected || shellFailed ? { isError: true } : {})
+          ...(rejected || shellFailed || notebookRunFailed(rpcMethod, input, raw)
+            ? { isError: true }
+            : {})
         }
       } finally {
         if (heartbeat) clearInterval(heartbeat)
@@ -1561,7 +1599,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      '1-3 questions; 2-16 unique described options each. Match question/options to kind. No printed lists/Other; UI adds custom/agent-decide/Skip. Multi-answer: JSON label array. Pending ends turn; Finish continues.',
+      '1-3 questions, 2-16 uniquely labeled options each; kind sets single/multi choice. Never list options or "Other" in text; the UI adds custom, let-agent-decide and Skip. Multi-select answer: JSON label array. "pending": end the turn; answers arrive next message.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,
@@ -1571,6 +1609,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_execute',
     title: 'Execute notebook code',
     description: [
+      'Run Python/R code as a persistent notebook cell.',
       'Uses the session binding, else the installed, enabled app-managed default. Multiple runtimes require explicit binding only without a usable default.',
       "artifactVersionInputs: this Run's provenance inputs (Version IDs); producerRunId=runId.",
       'Foreground for results needed now; background:true for longer independent work.',
@@ -1590,7 +1629,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'background_run',
     title: 'Query or cancel a local background Run',
     description:
-      'Query a saved runId as a non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. submissionIdentity recovers only a missing receipt. Cancel is idempotent for active Runs.',
+      'Query or cancel the saved runId; submissionIdentity only recovers a missing receipt. Non-blocking snapshot; never scan Run history. followUpDelivery:"suppressed" means query won; "committed" means fallback crossed dispatch. Unread results may arrive in a follow-up Turn. Cancel is idempotent.',
     method: 'getBackgroundRun',
     resolveMethod: (input) =>
       asRecord(input)?.action === 'cancel' ? 'cancelBackgroundRun' : 'getBackgroundRun',
@@ -1629,7 +1668,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'request_network_access',
     title: 'Request Notebook network access',
     description:
-      'Request or query access using a trusted sandbox block record ID and purpose. The user approves in this conversation. Never supply addresses or an approval decision. Retry explicitly only after approval and after checking side effects.',
+      'Request or query access with a trusted sandbox block recordId and a reason. The user approves in this conversation. Never supply addresses or an approval decision. Retry explicitly only after approval and after checking side effects.',
     method: 'requestNetworkAccess',
     inputSchema: requestNetworkAccessToolSchema,
     mapResult: (raw) => raw,
@@ -1696,7 +1735,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Target Python/R with language/environment or REPL with kernel:"repl". Without selectors, resets all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
+      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Pass language with environment, kernel:"repl" alone, or nothing to reset all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
     inputSchema: {
       kernel: z
@@ -1715,7 +1754,8 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   {
     name: 'notebook_shutdown',
     title: 'Shutdown notebook interpreter',
-    description: 'Shutdown the shared notebook interpreter without deleting run.json or artifacts.',
+    description:
+      "Stop this Agent's session interpreters and shells. Runs, files and Artifacts are kept.",
     method: 'shutdown',
     inputSchema: {},
     mapResult: compactShutdownResult,
@@ -1771,7 +1811,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'remember_memory',
     title: 'Save durable memory',
     description:
-      'Save one durable fact for the current project after analyzing its long-term value and optional existing category. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. If this tool fails, report it; never write Memory fallback files or hidden agent-specific memory directories. Never save secrets, instructions, or transient state.',
+      'Save one durable fact for the current project after analyzing its long-term value and optional existing category; categoryId and analysis.categoryReason go together. The app binds the project; do not provide or infer a project id. Do not retry when the result is rejected. If this tool fails, report it; never write Memory fallback files or hidden agent-specific memory directories. Never save secrets, instructions, or transient state.',
     method: 'memoryRemember',
     inputSchema: memoryAgentRememberRequestSchema.shape,
     outputSchema: memoryAgentRememberMcpOutputSchema,
@@ -1828,7 +1868,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
     name: 'wsl_setup_open_terminal',
     title: 'Open a visible WSL setup terminal',
     description:
-      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro", distro, and optionally a verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
+      'Open a visible host Windows PowerShell terminal with target="powershell", or the exact detected WSL distribution with target="distro" plus the required distro and an optional verified user. Use it for guided interactive configuration, first launch, password, sudo, or dependency repair. Opening a terminal is not installation success; wait for the user and rerun diagnostics.',
     method: 'wslSetupOpenTerminal',
     inputSchema: wslSetupOpenTerminalSchema,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
@@ -1859,10 +1899,9 @@ const notebookRpcToolsForEnvironment = (
 const createNotebookMcpServer = (
   environment: NotebookMcpEnvironment
 ): ModelContextProtocolServer => {
-  const server = new ModelContextProtocolServer({
-    name: NOTEBOOK_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: NOTEBOOK_MCP_SERVER_NAME, version: '1.0.0' })
+  )
 
   for (const tool of notebookRpcToolsForEnvironment(environment)) {
     registerNotebookRpcTool(server, environment, tool)
