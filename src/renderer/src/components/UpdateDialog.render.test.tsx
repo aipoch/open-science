@@ -232,8 +232,9 @@ describe('UpdateDialog', () => {
     expect(
       [...document.querySelectorAll('button')].some((button) => button.textContent === 'Update')
     ).toBe(true)
+    expect(document.body.textContent).toContain('temporarily disconnects CLI and web clients')
     expect(document.body.textContent).toContain(
-      'save your changes and stop those tasks after you confirm'
+      'save your changes and stop affected tasks after you confirm'
     )
     expect(document.body.textContent).not.toContain('Open installer')
   })

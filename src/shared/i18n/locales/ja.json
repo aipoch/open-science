@@ -7564,7 +7564,7 @@
     "Network protection error": "ネットワーク保護エラー",
     "Automatic recovery has paused. Your drafts, projects and saved records are kept. You can retry now.": "自動復旧を一時停止しました。下書き、プロジェクト、保存済みの記録は保持されています。今すぐ再試行できます。",
     "Saving changes and closing the app…": "変更を保存してアプリを終了しています…",
-    "Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.": "更新によりアプリが再起動し、対象のタスクが中断されます。確認後、Open-Science が変更を保存して対象のタスクを停止します。",
+    "Updating restarts the app and temporarily disconnects CLI and web clients. Open-Science will save your changes and stop affected tasks after you confirm.": "更新時にアプリが再起動し、CLI と Web クライアントの接続が一時的に切断されます。確認後、Open-Science が変更を保存し、対象のタスクを停止します。",
     "Updating restarts the app and interrupts affected tasks, including work using this service through other connections. Open-Science will save your changes and stop those tasks. Interrupted tasks will not restart automatically.": "更新によりアプリが再起動し、他の接続からこのサービスを使用しているものを含む対象のタスクが中断されます。Open-Science が変更を保存して対象のタスクを停止します。中断されたタスクは自動的に再開されません。",
     "Continuing in a new context using your saved conversation history.": "保存済みの会話履歴をもとに、新しいコンテキストで続けます。",
     "The previous execution is still using this conversation. Retry to stop it before continuing.": "前の実行がまだこの会話を使用しています。再試行して前の実行を停止してから続けてください。",

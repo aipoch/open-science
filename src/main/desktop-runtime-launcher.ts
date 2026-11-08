@@ -490,9 +490,9 @@ export function desktopBackendPaths(options: {
   applicationPath: string
   resourcesPath: string
   packaged: boolean
-}): { command: string; entry: string } {
+}): { command: string; entry: string; serviceLauncher?: string } {
   const executable = process.platform === 'win32' ? 'node.exe' : 'node'
-  return options.packaged
+  const paths = options.packaged
     ? {
         command: join(options.resourcesPath, 'node-runtime', executable),
         entry: join(options.resourcesPath, 'backend', 'out', 'backend', 'index.cjs')
@@ -507,6 +507,11 @@ export function desktopBackendPaths(options: {
         ),
         entry: join(options.applicationPath, 'out', 'backend', 'index.cjs')
       }
+  if (process.platform !== 'darwin') return paths
+  const directory = options.packaged
+    ? join(options.resourcesPath, 'backend')
+    : join(options.applicationPath, 'out')
+  return { ...paths, serviceLauncher: join(directory, 'desktop-service-launcher') }
 }
 
 const OWNERSHIP_RELEASE_WAIT_MS = LOCAL_SERVICE_STOP_BUDGET_MS
@@ -573,6 +578,7 @@ export async function startOrAttachDesktopBackend(options: {
   profilePath: string
   version: string
   command: string
+  serviceLauncher?: string
   entry: string
   packaged: boolean
   args?: readonly string[]
@@ -667,8 +673,9 @@ export async function startOrAttachDesktopBackend(options: {
     await options.beforeLaunch?.()
     options.signal?.throwIfAborted()
     child = spawn(
-      options.command,
+      options.serviceLauncher ?? options.command,
       [
+        ...(options.serviceLauncher ? [options.command] : []),
         options.entry,
         ...(!options.packaged ? ['--development'] : []),
         ...(options.args ?? []),

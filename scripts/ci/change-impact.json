@@ -125,7 +125,8 @@
         "scripts/test-runtime-archive.mjs",
         "scripts/test-backend-installed.mjs",
         "scripts/stage-node-runtime.mjs",
-        "build/node-runtime.json"
+        "build/node-runtime.json",
+        "build/macos-service-launcher.c"
       ],
       "mode": "full",
       "capabilities": []

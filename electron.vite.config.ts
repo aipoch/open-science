@@ -1,3 +1,4 @@
+import { buildMacosServiceLauncher } from './scripts/build-macos-service-launcher.mjs'
 import { windowsSigningBuildDefines } from './scripts/windows-signing-policy.mjs'
 import { createRequire } from 'node:module'
 import { resolve } from 'path'
@@ -18,7 +19,17 @@ export { resolveWsl2BashPreviewBuildEnabled } from './scripts/wsl2-build-flags.m
 
 export default defineConfig(({ command }) => ({
   main: {
-    plugins: [nativeLocaleAssets(), electronHostDependencyGuard(process.cwd())],
+    plugins: [
+      nativeLocaleAssets(),
+      electronHostDependencyGuard(process.cwd()),
+      process.platform === 'darwin' && {
+        name: 'macos-service-launcher',
+        buildStart() {
+          this.addWatchFile(resolve('build/macos-service-launcher.c'))
+          buildMacosServiceLauncher(resolve('out/desktop-service-launcher'))
+        }
+      }
+    ],
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
       ...windowsSigningBuildDefines(process.env),

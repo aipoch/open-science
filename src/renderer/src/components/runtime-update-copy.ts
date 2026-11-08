@@ -17,7 +17,7 @@ export const runtimeUpdateCopy = (
       return {
         title: t('Tasks are still running'),
         description: t(
-          'Updating restarts the app and interrupts affected tasks. Open-Science will save your changes and stop those tasks after you confirm.'
+          'Updating restarts the app and temporarily disconnects CLI and web clients. Open-Science will save your changes and stop affected tasks after you confirm.'
         )
       }
     case 'S06':

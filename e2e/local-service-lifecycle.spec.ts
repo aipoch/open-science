@@ -1008,6 +1008,20 @@ test('App-only quit releases its retained socket hold after the desktop exits', 
       await readFile(join(f.roots.storageRoot, 'runtime-owner.json'), 'utf8')
     )
     const token = (await readFile(join(f.roots.storageRoot, 'web-token'), 'utf8')).trim()
+    // A service promoted to persistent running must not retain this Desktop's crash handler.
+    const crashDumps = await f.app.evaluate(({ app }) => app.getPath('crashDumps'))
+    const fixtureCrashpads = async (): Promise<string[]> => {
+      const { stdout } = await promisify(execFile)('/bin/ps', ['-axo', 'command='], {
+        maxBuffer: 16 * 1024 * 1024
+      })
+      return stdout
+        .split('\n')
+        .filter(
+          (line) =>
+            line.includes('/chrome_crashpad_handler ') && line.includes(`--database=${crashDumps} `)
+        )
+    }
+    if (process.platform === 'darwin') expect(await fixtureCrashpads()).toHaveLength(1)
     await f.app.evaluate(({ app }) => app.quit())
     await expect
       .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
@@ -1026,6 +1040,7 @@ test('App-only quit releases its retained socket hold after the desktop exits', 
       })
       .toMatchObject({ apps: 0, explicit: true, stopping: false })
     expect(isRuntimeProcessAlive(f.target.pid)).toBe(true)
+    if (process.platform === 'darwin') await expect.poll(fixtureCrashpads).toHaveLength(0)
     await f.cli('stop', '--json')
     await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
     acquireRuntimeDirectorySync(f.roots.storageRoot).release()
