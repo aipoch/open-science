@@ -178,6 +178,48 @@ describe('kubernetes compute backend', () => {
     await expect(adapter.observe(makeHandle())).resolves.toMatchObject({ phase: 'running' })
   })
 
+  it.each(['controller-uid', 'batch.kubernetes.io/controller-uid'])(
+    'checks owned, live Ready Pods with %s when Job.ready is absent',
+    async (label) => {
+      const owned = { ownerReferences: [{ kind: 'Job', uid: 'uid-1', controller: true }] }
+      const ready = { conditions: [{ type: 'Ready', status: 'True' }] }
+      const pods = [
+        {
+          metadata: { ownerReferences: [{ kind: 'Job', uid: 'other', controller: true }] },
+          status: ready
+        },
+        { metadata: { ...owned, deletionTimestamp: '2026-01-01T00:00:00Z' }, status: ready },
+        { metadata: owned, status: { conditions: [{ type: 'Ready', status: 'False' }] } }
+      ]
+      const adapter = createKubernetesBackendAdapter({
+        endpoint: 'https://cluster.example',
+        namespace: 'science',
+        image: 'worker',
+        fetch: async (url) => {
+          const path = new URL(url)
+          if (path.pathname.endsWith('/pods')) {
+            expect(path.searchParams.get('labelSelector')).toBe(label + '=uid-1')
+            return jsonResponse({ items: pods })
+          }
+          return jsonResponse({
+            metadata: { uid: 'uid-1' },
+            spec: { selector: { matchLabels: { [label]: 'uid-1' } } },
+            status: { active: 1 }
+          })
+        }
+      })
+      await expect(adapter.observe(makeHandle())).resolves.toMatchObject({
+        phase: 'starting',
+        contact: 'live'
+      })
+      pods.push({ metadata: owned, status: ready })
+      await expect(adapter.observe(makeHandle())).resolves.toMatchObject({
+        phase: 'running',
+        contact: 'live'
+      })
+    }
+  )
+
   it('maps Job conditions and authentication failures to provider observations', async () => {
     const responses = [
       jsonResponse({
@@ -212,13 +254,34 @@ describe('kubernetes compute backend', () => {
 
   it('collects bounded pod logs and treats an already deleted Job as cancelled', async () => {
     const responses = [
-      jsonResponse({ items: [{ metadata: { name: 'pod-1' } }] }),
+      jsonResponse({
+        items: [
+          {
+            metadata: {
+              name: 'foreign',
+              ownerReferences: [{ kind: 'Job', uid: 'foreign', controller: true }]
+            }
+          }
+        ]
+      }),
+      jsonResponse({
+        items: [
+          {
+            metadata: {
+              name: 'pod-1',
+              ownerReferences: [{ kind: 'Job', uid: 'uid-1', controller: true }]
+            }
+          }
+        ]
+      }),
       new Response('stdout\n'),
       jsonResponse({ message: 'not found' }, 404),
+      jsonResponse({ items: [] }),
       jsonResponse({ items: [] })
     ]
     const fetch: KubernetesFetch = async (url, init) => {
       if (new URL(url).pathname.endsWith('/log')) {
+        expect(new URL(url).pathname).toBe('/api/v1/namespaces/science/pods/pod-1/log')
         expect(new Headers(init?.headers).get('Accept')).toBe('*/*')
       }
       return responses.shift()!
@@ -305,6 +368,7 @@ describe('kubernetes recovery boundaries', () => {
       jsonResponse({}, 409),
       jsonResponse({}, 202),
       jsonResponse({}, 404),
+      jsonResponse({ items: [] }),
       jsonResponse({ items: [{}] })
     ]
     const adapter = createKubernetesBackendAdapter({
@@ -317,6 +381,8 @@ describe('kubernetes recovery boundaries', () => {
           expect(new URL(url).searchParams.get('labelSelector')).toBe(
             'batch.kubernetes.io/controller-uid=uid-1'
           )
+        if (seen.length === 5)
+          expect(new URL(url).searchParams.get('labelSelector')).toBe('controller-uid=uid-1')
         return responses.shift()!
       }
     })

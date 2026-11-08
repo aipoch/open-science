@@ -31,6 +31,7 @@ type KubernetesMetadata = Readonly<{
 
 type KubernetesJob = Readonly<{
   metadata?: KubernetesMetadata
+  spec?: { selector?: { matchLabels?: Record<string, string> } }
   status?: Readonly<{
     ready?: number
     succeeded?: number
@@ -39,9 +40,19 @@ type KubernetesJob = Readonly<{
   }>
 }>
 
-type KubernetesPodList = Readonly<{
-  items?: ReadonlyArray<Readonly<{ metadata?: KubernetesMetadata }>>
+type KubernetesPod = Readonly<{
+  metadata?: KubernetesMetadata & {
+    deletionTimestamp?: string
+    ownerReferences?: ReadonlyArray<{ kind: string; uid: string; controller?: boolean }>
+  }
+  status?: { conditions?: ReadonlyArray<{ type: string; status: string }> }
 }>
+const controllerLabels = ['batch.kubernetes.io/controller-uid', 'controller-uid'] as const
+
+const ownedByJob = (pod: KubernetesPod, uid: string): boolean =>
+  pod.metadata?.ownerReferences?.some(
+    (ref) => ref.kind === 'Job' && ref.uid === uid && ref.controller === true
+  ) === true
 
 export type KubernetesFetch = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -60,9 +71,6 @@ const jobPath = (namespace: string, name?: string): string =>
   `/apis/batch/v1/namespaces/${encodePath(namespace)}/jobs${name ? `/${encodePath(name)}` : ''}`
 
 const namespacePath = (namespace: string): string => `/api/v1/namespaces/${encodePath(namespace)}`
-
-const podListPath = (namespace: string, uid: string): string =>
-  `/api/v1/namespaces/${encodePath(namespace)}/pods?limit=1&labelSelector=${encodeURIComponent(`batch.kubernetes.io/controller-uid=${uid}`)}`
 
 const podLogPath = (namespace: string, podName: string, tailLines: number): string =>
   `/api/v1/namespaces/${encodePath(namespace)}/pods/${encodePath(podName)}/log?tailLines=${tailLines}`
@@ -185,6 +193,27 @@ export const createKubernetesBackendAdapter = (
 
   const request = createKubernetesRequest(endpoint, fetchImpl, options.headers)
 
+  // Handles outlive Jobs, so logs and cleanup must also recognize the legacy controller label.
+  const findPod = async (
+    uid: string,
+    matches: ((pod: KubernetesPod) => boolean) | undefined,
+    signal?: AbortSignal,
+    job?: KubernetesJob
+  ): Promise<KubernetesPod | undefined> => {
+    const selected = controllerLabels.find((key) => job?.spec?.selector?.matchLabels?.[key] === uid)
+    for (const label of selected ? [selected] : controllerLabels) {
+      const path = `/api/v1/namespaces/${encodePath(namespace)}/pods`
+      const query = new URLSearchParams({ labelSelector: label + '=' + uid })
+      if (!matches) query.set('limit', '1')
+      const response = await request(path + '?' + query, { signal })
+      const list = (await response.json()) as { items?: KubernetesPod[] }
+      if (!Array.isArray(list.items)) throw new Error('Invalid Kubernetes Pod list.')
+      const pod = matches ? list.items.find(matches) : list.items[0]
+      if (pod) return pod
+    }
+    return undefined
+  }
+
   const deleteJob = async (
     handle: ComputeBackendHandle,
     signal?: AbortSignal
@@ -208,10 +237,7 @@ export const createKubernetesBackendAdapter = (
         if (!(error instanceof KubernetesBackendError && error.status === 404)) throw error
       }
       // A Job can disappear before its Pods when another client deletes it in the background.
-      const response = await request(podListPath(namespace, parsed.uid), { signal })
-      const pods = (await response.json()) as KubernetesPodList
-      if (!Array.isArray(pods.items)) throw new Error('Invalid Kubernetes Pod list.')
-      if (pods.items.length)
+      if (await findPod(parsed.uid, undefined, signal))
         return { outcome: 'unknown', message: 'Kubernetes Job Pods still exist.' }
       return { outcome: 'confirmed' }
     } catch (error) {
@@ -410,9 +436,11 @@ export const createKubernetesBackendAdapter = (
       handle: ComputeBackendHandle,
       signal?: AbortSignal
     ): Promise<ComputeBackendObservation> {
+      let jobFound = false
       try {
         const parsed = parseHandle(handle, namespace)
         const response = await request(jobPath(parsed.namespace, parsed.name), { signal })
+        jobFound = true
         const job = asJob(await response.json())
         if (parsed.uid !== job.metadata?.uid) {
           return {
@@ -421,9 +449,22 @@ export const createKubernetesBackendAdapter = (
             message: 'Kubernetes Job identity no longer matches the saved handle.'
           }
         }
-        return observationFromJob(job)
+        const observation = observationFromJob(job)
+        if (observation.phase !== 'starting' || job.status?.ready !== undefined) return observation
+        const readyPod = await findPod(
+          parsed.uid,
+          (pod) =>
+            ownedByJob(pod, parsed.uid) &&
+            !pod.metadata?.deletionTimestamp &&
+            pod.status?.conditions?.some(
+              (condition) => condition.type === 'Ready' && condition.status === 'True'
+            ) === true,
+          signal,
+          job
+        )
+        return readyPod ? { phase: 'running', contact: 'live' } : observation
       } catch (error) {
-        if (error instanceof KubernetesBackendError && error.status === 404) {
+        if (!jobFound && error instanceof KubernetesBackendError && error.status === 404) {
           return { phase: 'lost', contact: 'live', message: 'Kubernetes Job no longer exists.' }
         }
         return {
@@ -440,9 +481,12 @@ export const createKubernetesBackendAdapter = (
       signal?: AbortSignal
     ): Promise<ComputeBackendLogChunk> {
       const parsed = parseHandle(handle, namespace)
-      const podsResponse = await request(podListPath(namespace, parsed.uid), { signal })
-      const pods = (await podsResponse.json()) as KubernetesPodList
-      const podName = pods.items?.find((pod) => pod.metadata?.name)?.metadata?.name
+      const pod = await findPod(
+        parsed.uid,
+        (item) => ownedByJob(item, parsed.uid) && !!item.metadata?.name,
+        signal
+      )
+      const podName = pod?.metadata?.name
       if (!podName) return { cursor, stdout: '', stderr: '', complete: false }
       const logsResponse = await request(podLogPath(parsed.namespace, podName, logTailLines), {
         signal,
