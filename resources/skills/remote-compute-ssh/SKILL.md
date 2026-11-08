@@ -55,7 +55,10 @@ Only Compute Hosts enabled for this Session are visible or callable. Discover th
 each entry has role `selected` or `available`. A non-empty selected pool is an execution instruction:
 run tool-backed task work on one or more selected hosts as the task requires. The pool has no
 priority and does not imply automatic multi-host scheduling. If no host is selected, choose from the
-available entries. Read `details()` only for candidates that need closer evaluation.
+available entries. For `direct_ssh` and `slurm`, read `details()` when you need saved instructions
+or the last resource probe. For Kubernetes, Hugging Face, Ray, and Modal, create a handle with
+`host.compute.create(provider_id)` and use `submitJob()` to start a job or `attachJob()` to resume
+tracking an existing job.
 
 Never guess or reuse a provider id absent from the catalog. A user naming a disabled host does not
 make it callable; explain that it must first be enabled for this Session. If no eligible host is
@@ -495,7 +498,7 @@ try {
 }
 ```
 
-## Typical first-contact workflow
+## First contact with an SSH or Slurm host
 
 1. `await host.compute.details(provider_id, { mode: 'read' })` — read saved operation instructions
    from `doc` and inspect the separate, dated `probe` observation. An empty `doc` means no

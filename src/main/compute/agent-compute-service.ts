@@ -165,8 +165,17 @@ export class AgentComputeService {
     return this.enabledIds(sessionId)
   }
 
-  async getDetails(sessionId: string, providerId: string): Promise<ComputeHostDetails> {
+  private async requireDetailsHost(sessionId: string, providerId: string): Promise<void> {
     await this.requireEnabled(sessionId, providerId)
+    if (externalComputeMode(providerId)) {
+      throw new Error(
+        'Host details are available only for SSH hosts. Use host.compute.create(providerId).submitJob() for this target.'
+      )
+    }
+  }
+
+  async getDetails(sessionId: string, providerId: string): Promise<ComputeHostDetails> {
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.getDetails(providerId)
   }
 
@@ -175,7 +184,7 @@ export class AgentComputeService {
     providerId: string,
     request: { text: string; author: DetailsAuthor }
   ): Promise<void> {
-    await this.requireEnabled(sessionId, providerId)
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.appendDetails(providerId, request)
   }
 
@@ -184,7 +193,7 @@ export class AgentComputeService {
     providerId: string,
     request: { text: string; oldText: string; author: DetailsAuthor }
   ): Promise<void> {
-    await this.requireEnabled(sessionId, providerId)
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.replaceDetails(providerId, request)
   }
 

@@ -118,6 +118,34 @@ describe('AgentComputeService', () => {
     ])
   })
 
+  it('directs external target details to job submission only after session admission', async () => {
+    const providerId = 'ray:205e1449-7f3c-46b4-b218-5ed529e9e9ba'
+    const { raw, registry, service } = createHarness({ enabled: [providerId], selected: [] })
+    raw.listRayTargets.mockResolvedValue([{ providerId }])
+    const note = { text: 'note', oldText: '', author: 'agent' as const }
+    for (const operation of [
+      () => service.getDetails('session', providerId),
+      () => service.appendDetails('session', providerId, note),
+      () => service.replaceDetails('session', providerId, note)
+    ]) {
+      await expect(operation()).rejects.toThrow(/SSH.*submitJob/)
+    }
+    expect(raw.getDetails).not.toHaveBeenCalled()
+    expect(raw.appendDetails).not.toHaveBeenCalled()
+    expect(raw.replaceDetails).not.toHaveBeenCalled()
+
+    raw.listRayTargets.mockResolvedValue([])
+    await expect(service.getDetails('session', providerId)).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+    registry.getEnabled.mockReturnValue([])
+    raw.listRayTargets.mockClear()
+    await expect(service.getDetails('session', providerId)).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+    expect(raw.listRayTargets).not.toHaveBeenCalled()
+  })
+
   it('reports a successful Probe as historical evidence rather than a live connection', async () => {
     const { raw, service } = createHarness({
       enabled: ['ssh:selected'],

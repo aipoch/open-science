@@ -55,9 +55,10 @@ const REMOTE_COMPUTE_AWARENESS_APPEND = [
   '<open_science_remote_compute_awareness>',
   'Before starting GPU, high-memory, parallel, batch, model-inference, bioinformatics, or potentially long-running scientific work locally, consider Remote Compute.',
   'When remote execution may fit, load the Remote Compute (SSH) Skill and discover the available hosts at runtime before choosing where the work should run.',
-  "Before dispatch, read the chosen host with `host.compute.details(..., { mode: 'read' })`: `doc` contains saved host instructions and `probe` contains resource observations with their timestamp and success state. Apply the saved instructions alongside the user request and configured execution mode. Detecting a scheduler does not authorize its use.",
-  "Details contract: `host.compute.details(providerId, { mode: 'read' })` → `{ doc, probe }`; `host.compute.details(providerId, { mode: 'append', text })` → `{ ok: true }`; `host.compute.details(providerId, { mode: 'replace', text, oldText: latest.doc })` → `{ ok: true }`, where `latest` comes from a fresh `details(providerId, { mode: 'read' })`. Write results contain no `doc` or `probe`. After append or replace, read again to verify the exact persisted `doc` before using it.",
-  'When the chosen host lacks a repeatable software activation, load the Compute Environment Setup Skill rather than installing packages inside the science job.',
+  "For direct_ssh and slurm, read the chosen SSH host before dispatch with `host.compute.details(..., { mode: 'read' })`: `doc` contains saved host instructions and `probe` contains resource observations with their timestamp and success state. Apply the saved instructions alongside the user request and configured execution mode. Detecting a scheduler does not authorize its use.",
+  "SSH host details contract: `host.compute.details(providerId, { mode: 'read' })` → `{ doc, probe }`; `host.compute.details(providerId, { mode: 'append', text })` → `{ ok: true }`; `host.compute.details(providerId, { mode: 'replace', text, oldText: latest.doc })` → `{ ok: true }`, where `latest` comes from a fresh `details(providerId, { mode: 'read' })`. Write results contain no `doc` or `probe`. After append or replace, read again to verify the exact persisted `doc` before using it.",
+  'When an SSH host lacks a repeatable software activation, load the Compute Environment Setup Skill rather than installing packages inside the science job.',
+  'For kubernetes, hugging_face_jobs, ray_jobs, and modal_sandbox, call `submitJob()` or `attachJob(job_id)` directly on the target handle.',
   'After submitting a Compute Job, retain the exact `job_id`. Query it with `attachJob(job_id).status()` or `.result()` when relevant; calls are non-blocking snapshots and never scan Job history.',
   'Treat only result_final:true as complete; provider-terminal may precede harvest. A final .result() reports follow_up_delivery:"suppressed" if it wins, or "committed" if fallback crossed its dispatch fence. .status() does not consume the full result. Unread final results arrive in a later Agent Turn.',
   '</open_science_remote_compute_awareness>'
@@ -378,7 +379,8 @@ describe('ACP Session presentation policy', () => {
     expect(oneTarget).toBe(twoTargets)
     expect(oneTarget).toContain('execution-target pool')
     expect(oneTarget).toContain('host.compute.listHosts()')
-    expect(oneTarget).toContain('configured direct SSH or Slurm execution mode')
+    expect(oneTarget).toContain('For direct_ssh and slurm')
+    expect(oneTarget).toContain('use `submitJob()` or `attachJob(job_id)` directly')
     expect(oneTarget).toContain('Compute Environment Setup Skill')
     expect(oneTarget).toContain('one or more catalog entries')
     expect(oneTarget).toContain('Do not run task work in the local Notebook or shell')
