@@ -340,19 +340,33 @@ describe('renderer contract catalog', () => {
     const compute = RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>
       publicPath.startsWith('compute.')
     )
-    expect(compute).toHaveLength(39)
+    expect(compute).toHaveLength(58)
     expect(
       compute
         .filter(({ surfaceInstallation }) => surfaceInstallation.remoteWeb === 'rejecting-stub')
         .map(({ publicPath }) => publicPath)
     ).toEqual([
+      'compute.accountStatus',
+      'compute.cancelAccountConnection',
       'compute.changeAuthentication',
+      'compute.connectAccount',
+      'compute.createHostedTarget',
+      'compute.createKubernetesTarget',
+      'compute.createModalTarget',
       'compute.createPassword',
+      'compute.createRayTarget',
+      'compute.disconnectAccount',
       'compute.download',
       'compute.jobsSetRemoteCleanup',
+      'compute.listRayTokens',
       'compute.passwordCapability',
+      'compute.removeRayToken',
       'compute.resetPassword',
-      'compute.revealInFolder'
+      'compute.revealInFolder',
+      'compute.setRayToken',
+      'compute.updateTarget',
+      'compute.useLocalAccount',
+      'compute.verifyTarget'
     ])
   })
 

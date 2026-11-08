@@ -1,6 +1,6 @@
 ---
 name: remote-compute-ssh
-description: Evaluate and use SSH Remote Compute before choosing where to run GPU, high-memory, parallel, batch, model-inference, bioinformatics, or other long-running scientific work; supports short remote commands and asynchronous jobs with automatic harvest and analysis.
+description: Evaluate and use Remote Compute before choosing where to run GPU, high-memory, parallel, batch, model-inference, bioinformatics, or other long-running scientific work; supports short remote commands and asynchronous jobs with automatic harvest and analysis.
 license: Apache-2.0
 ---
 
@@ -15,13 +15,50 @@ every example below with the `repl_execute` tool (JavaScript), the same kernel t
 `host.mcp`. The `python`/`r` data kernels have NO `host.compute` (SSH and approvals stay outside
 the sandbox workspace); calling it from a python/r cell will fail with `host.compute is undefined`.
 
+## External compute targets
+
+Use the execution mode returned by `host.compute.listHosts()` to select the file layout and launch options. Each external job requires its own approval, including the bound target, resource request and frozen inputs. SSH-only remote paths and named SSH environments do not apply.
+
+- `kubernetes`: The user configures the context, namespace, workload image and transfer image. The command runs in `/workspace`, where frozen inputs appear under their `dstFilename`. The app collects outputs from the job volume.
+- `hugging_face_jobs`: The target supplies the billing namespace, flavor and image. Inputs are mounted read-only at `/inputs/<dstFilename>`. The command starts in `/outputs`. Declare the output globs there. After verified publication the app cleans the job's bucket prefix.
+- `ray_jobs`: The driver starts in the uploaded working directory with each frozen input available by its `dstFilename`. Write output files under `$RAY_JOB_OUTPUT_DIR` and declare globs relative to that directory. Originals stay on the shared filesystem after collection.
+
+## Modal Sandboxes
+
+When a selected target has `execution_mode` equal to `modal_sandbox`, use `submitJob` and `attachJob`. The host authenticates with its local Modal profile or token and submits to the approved App and environment. The target selects the image, CPU, memory and GPU requests. Approval is required for each submission before any remote upload or Sandbox creation.
+
+The host needs Python with `modal==1.6.3` and a configured Modal identity. Set `OPEN_SCIENCE_MODAL_PYTHON` to the absolute path of the virtual environment’s Python interpreter if needed. The named App must already exist in the configured Modal environment. The workload image needs `/bin/sh`, `cp`, `mkdir`, `mktemp`, `find`, `sha256sum`, and `mv`.
+
+The command starts with the frozen uploads in its working directory under their `dstFilename` names. Write results under `$MODAL_JOB_OUTPUT_DIR` and declare globs relative to that directory. An empty declaration archives no files. After verified publication, deleting the job volume also deletes undeclared scratch files. Incomplete collection retains the volume for recovery. If termination interrupts the final checksum inventory, inspect the retained volume in Modal.
+
+```javascript
+const target = (await host.compute.listHosts()).find(
+  (entry) => entry.execution_mode === 'modal_sandbox' && entry.role === 'selected'
+)
+if (target) {
+  const c = host.compute.create(target.provider_id)
+  const job = await c.submitJob(
+    'Copy an input',
+    'cp table.csv "$MODAL_JOB_OUTPUT_DIR/result.csv"',
+    {
+      inputs: [{ src: 'table.csv', dstFilename: 'table.csv' }],
+      outputs: ['result.csv']
+    }
+  )
+  console.log(job.job_id)
+}
+```
+
 ## Choose an execution location
 
 Only Compute Hosts enabled for this Session are visible or callable. Discover them in one catalog;
 each entry has role `selected` or `available`. A non-empty selected pool is an execution instruction:
 run tool-backed task work on one or more selected hosts as the task requires. The pool has no
 priority and does not imply automatic multi-host scheduling. If no host is selected, choose from the
-available entries. Read `details()` only for candidates that need closer evaluation.
+available entries. For `direct_ssh` and `slurm`, read `details()` when you need saved instructions
+or the last resource probe. For Kubernetes, Hugging Face, Ray, and Modal, create a handle with
+`host.compute.create(provider_id)` and use `submitJob()` to start a job or `attachJob()` to resume
+tracking an existing job.
 
 Never guess or reuse a provider id absent from the catalog. A user naming a disabled host does not
 make it callable; explain that it must first be enabled for this Session. If no eligible host is
@@ -461,7 +498,7 @@ try {
 }
 ```
 
-## Typical first-contact workflow
+## First contact with an SSH or Slurm host
 
 1. `await host.compute.details(provider_id, { mode: 'read' })` — read saved operation instructions
    from `doc` and inspect the separate, dated `probe` observation. An empty `doc` means no

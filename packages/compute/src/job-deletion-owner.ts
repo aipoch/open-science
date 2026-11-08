@@ -333,7 +333,11 @@ class ComputeJobDeletionOwner {
       ) {
         throw new Error('Compute Job cleanup scope does not match.')
       }
-      if (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') {
+      // A submitted Modal creation may have no receipt. Its repository checks the durable fence before allowing abandonment.
+      if (
+        (ACTIVE_STATUSES.has(job.status) || job.status === 'queued') &&
+        job.execution_mode !== 'modal_sandbox'
+      ) {
         throw new Error('Active Compute Jobs must be cancelled and cleaned remotely.')
       }
       return this.deps.jobRepository.settleRemoteCleanup(request)

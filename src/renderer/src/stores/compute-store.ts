@@ -1,3 +1,10 @@
+import {
+  externalComputeMode,
+  type ModalTarget,
+  type KubernetesTarget,
+  type HostedTarget,
+  type RayTarget
+} from '../../../shared/compute'
 import { create } from 'zustand'
 
 import type { ComputeExecutionMode, ComputeHost, ProbeResult } from '@aipoch/compute'
@@ -29,6 +36,10 @@ export type ComputeApproval = ComputeApprovalBase &
         operation: 'submit_job'
         commandPreview: string
         commandFull: string
+        kubernetes?: Extract<ComputeApprovalRequest, { operation: 'submit_job' }>['kubernetes']
+        hosted?: Extract<ComputeApprovalRequest, { operation: 'submit_job' }>['hosted']
+        ray?: Extract<ComputeApprovalRequest, { operation: 'submit_job' }>['ray']
+        modal?: Extract<ComputeApprovalRequest, { operation: 'submit_job' }>['modal']
         executionMode?: ComputeExecutionMode
         environment?: string
         inputsSummary?: string
@@ -64,6 +75,10 @@ const projectComputeApprovalRequest = (request: ComputeApprovalRequest): Compute
     operation: request.operation,
     commandPreview: request.command_preview,
     commandFull: request.command_full,
+    ...(request.kubernetes ? { kubernetes: request.kubernetes } : {}),
+    ...(request.hosted ? { hosted: request.hosted } : {}),
+    ...(request.ray ? { ray: request.ray } : {}),
+    ...(request.modal ? { modal: request.modal } : {}),
     ...(request.execution_mode ? { executionMode: request.execution_mode } : {}),
     ...(request.environment ? { environment: request.environment } : {}),
     ...(request.inputs_summary ? { inputsSummary: request.inputs_summary } : {}),
@@ -74,6 +89,14 @@ const projectComputeApprovalRequest = (request: ComputeApprovalRequest): Compute
 }
 
 type ComputeStoreData = {
+  kubernetesLoadError?: string
+  kubernetesTargets: KubernetesTarget[]
+  hostedLoadError?: string
+  hostedTargets: HostedTarget[]
+  rayLoadError?: string
+  rayTargets: RayTarget[]
+  modalLoadError?: string
+  modalTargets: ModalTarget[]
   hosts: ComputeHost[]
   isLoaded: boolean
   loadError: string | undefined
@@ -148,6 +171,14 @@ const supersedeHostProjection = (providerId: string): void => {
 }
 
 export const createInitialComputeState = (): ComputeStoreData => ({
+  kubernetesLoadError: undefined,
+  kubernetesTargets: [],
+  hostedLoadError: undefined,
+  hostedTargets: [],
+  rayLoadError: undefined,
+  rayTargets: [],
+  modalLoadError: undefined,
+  modalTargets: [],
   hosts: [],
   isLoaded: false,
   loadError: undefined,
@@ -167,22 +198,36 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
   loadHosts: () => {
     if (loadHostsRequest) return loadHostsRequest
     const mutationSequence = hostMutationSequence
-    const request = window.api.compute.list().then(
-      (hosts) => {
-        if (mutationSequence !== hostMutationSequence) {
-          set({ isLoaded: true })
-          return
-        }
-        set({ hosts: sortByCreatedDesc(hosts), isLoaded: true, loadError: undefined })
-      },
-      (error: unknown) => {
-        if (mutationSequence !== hostMutationSequence) {
-          set({ isLoaded: true })
-          return
-        }
-        set({ isLoaded: true, loadError: describeError(error) })
+    const request = Promise.allSettled([
+      window.api.compute.list(),
+      window.api.compute.listKubernetesTargets?.() ?? Promise.resolve([]),
+      window.api.compute.listHostedTargets?.() ?? Promise.resolve([]),
+      window.api.compute.listRayTargets?.() ?? Promise.resolve([]),
+      window.api.compute.listModalTargets?.() ?? Promise.resolve([])
+    ]).then(([hosts, kubernetes, hosted, ray, modal]) => {
+      if (mutationSequence !== hostMutationSequence) {
+        set({ isLoaded: true })
+        return
       }
-    )
+      set({
+        ...(kubernetes.status === 'fulfilled'
+          ? { kubernetesTargets: kubernetes.value, kubernetesLoadError: undefined }
+          : { kubernetesLoadError: describeError(kubernetes.reason) }),
+        ...(hosted.status === 'fulfilled'
+          ? { hostedTargets: hosted.value, hostedLoadError: undefined }
+          : { hostedLoadError: describeError(hosted.reason) }),
+        ...(ray.status === 'fulfilled'
+          ? { rayTargets: ray.value, rayLoadError: undefined }
+          : { rayLoadError: describeError(ray.reason) }),
+        ...(modal.status === 'fulfilled'
+          ? { modalTargets: modal.value, modalLoadError: undefined }
+          : { modalLoadError: describeError(modal.reason) }),
+        ...(hosts.status === 'fulfilled'
+          ? { hosts: sortByCreatedDesc(hosts.value), loadError: undefined }
+          : { loadError: describeError(hosts.reason) }),
+        isLoaded: true
+      })
+    })
     const trackedRequest = request.finally(() => {
       if (loadHostsRequest === trackedRequest) loadHostsRequest = undefined
     })
@@ -301,18 +346,37 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     try {
       await window.api.compute.delete(request)
     } catch (error) {
-      let host: ComputeHost | null
+      let exists: boolean
       try {
-        host = await window.api.compute.get(providerId)
+        const mode = externalComputeMode(providerId)
+        const read =
+          mode &&
+          {
+            kubernetes: window.api.compute.listKubernetesTargets,
+            hugging_face_jobs: window.api.compute.listHostedTargets,
+            ray_jobs: window.api.compute.listRayTargets,
+            modal_sandbox: window.api.compute.listModalTargets
+          }[mode]
+        exists = read
+          ? (await read()).some((target) => target.providerId === providerId)
+          : !!(await window.api.compute.get(providerId))
       } catch {
         throw error
       }
-      if (host) throw error
+      if (exists) throw error
     }
 
     hostMutationSequence += 1
     if (commitHostProjection(providerId, generation)) {
-      set((state) => ({ hosts: state.hosts.filter((host) => host.providerId !== providerId) }))
+      set((state) => ({
+        hosts: state.hosts.filter((host) => host.providerId !== providerId),
+        kubernetesTargets: state.kubernetesTargets.filter(
+          (target) => target.providerId !== providerId
+        ),
+        hostedTargets: state.hostedTargets.filter((target) => target.providerId !== providerId),
+        rayTargets: state.rayTargets.filter((target) => target.providerId !== providerId),
+        modalTargets: state.modalTargets.filter((target) => target.providerId !== providerId)
+      }))
     }
   },
 

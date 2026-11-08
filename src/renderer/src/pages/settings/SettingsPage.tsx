@@ -96,7 +96,7 @@ import type { ConnectorsView } from '@/lib/settings-navigation'
 import type { SpecialistsView } from '@/lib/settings-navigation'
 import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorsNavIcon } from './connector-icons'
-import type { ComputeView } from '@/lib/settings-navigation'
+import { computeTargetAddLabels, type ComputeView } from '@/lib/settings-navigation'
 import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
@@ -215,6 +215,9 @@ const ComputePanel = lazy(async () => {
 })
 const ComputeAddForm = lazy(async () => ({
   default: (await import('./ComputeAddForm')).ComputeAddForm
+}))
+const ComputeTargetEditor = lazy(async () => ({
+  default: (await import('./ComputeTargetEditor')).ComputeTargetEditor
 }))
 const ComputeHostDetail = lazy(async () => ({
   default: (await import('./ComputeHostDetail')).ComputeHostDetail
@@ -773,6 +776,13 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       : { kind: 'list' }
   const computeView: ComputeView =
     currentRoute.panel === 'compute' ? currentRoute.view : { kind: 'list' }
+  const editingComputeTarget = useComputeStore((state) =>
+    computeView.kind === 'target-editor' && computeView.providerId
+      ? state[`${computeView.backend}Targets`].find(
+          (target) => target.providerId === computeView.providerId
+        )
+      : undefined
+  )
   const specialistsView: SpecialistsView =
     currentRoute.panel === 'specialists' ? currentRoute.view : { kind: 'list' }
   const archivedView: ArchivedView =
@@ -1051,8 +1061,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         computeView.kind === 'add'
           ? t('Add SSH host')
-          : (computeHosts.find((host) => host.providerId === computeView.providerId)?.displayName ??
-            computeView.providerId)
+          : computeView.kind === 'target-editor'
+            ? computeView.providerId
+              ? editingComputeTarget
+                ? t('Edit {{name}}', { name: editingComputeTarget.displayName })
+                : t('Edit')
+              : t(computeTargetAddLabels[computeView.backend])
+            : (computeHosts.find((host) => host.providerId === computeView.providerId)
+                ?.displayName ?? computeView.providerId)
       return {
         rootLabelKey: 'Compute',
         rootTo: { panel: 'compute', view: { kind: 'list' } },
@@ -1134,15 +1150,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           : credentialsView.kind === 'credential'
             ? (deviceCredentials.find(({ id }) => id === credentialsView.id)?.displayName ??
               t('Credential'))
-            : credentialsView.serviceId === 'github'
-              ? t('GitHub')
-              : credentialsView.serviceId === 'semantic-scholar'
-                ? t('Semantic Scholar')
-                : credentialsView.serviceId === 'openalex'
-                  ? t('OpenAlex')
-                  : credentialsView.serviceId === 'unpaywall'
-                    ? t('Unpaywall')
-                    : t('Literature access')
+            : credentialsView.serviceId === 'hugging-face'
+              ? 'Hugging Face'
+              : credentialsView.serviceId === 'modal'
+                ? 'Modal'
+                : credentialsView.serviceId === 'ray'
+                  ? t('Ray Jobs')
+                  : credentialsView.serviceId === 'github'
+                    ? t('GitHub')
+                    : credentialsView.serviceId === 'semantic-scholar'
+                      ? t('Semantic Scholar')
+                      : credentialsView.serviceId === 'openalex'
+                        ? t('OpenAlex')
+                        : credentialsView.serviceId === 'unpaywall'
+                          ? t('Unpaywall')
+                          : t('Literature access')
       return {
         rootLabelKey: 'Credentials',
         rootTo: { panel: 'credentials', view: { kind: 'list' } },
@@ -2132,6 +2154,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               navigateCompute({ kind: 'detail', providerId })
                             }
                             onCancel={() => navigateCompute({ kind: 'list' })}
+                          />
+                        )
+                      ) : computeView.kind === 'target-editor' ? (
+                        open && (
+                          <ComputeTargetEditor
+                            key={`${computeView.backend}:${computeView.providerId ?? 'new'}:${connectionDraftGeneration}`}
+                            view={computeView}
+                            target={editingComputeTarget}
+                            onLeaveStateChange={onConnectionEditorLeaveStateChange}
+                            onBack={() => navigateCompute({ kind: 'list' })}
                           />
                         )
                       ) : computeView.kind === 'detail' ? (

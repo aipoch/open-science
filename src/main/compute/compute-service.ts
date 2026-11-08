@@ -1,3 +1,11 @@
+import {
+  externalComputeMode,
+  type ExternalComputeMode,
+  type KubernetesTarget,
+  type HostedTarget,
+  type RayTarget,
+  type ModalTarget
+} from '../../shared/compute'
 import type {
   ComputeExecutionMode,
   ComputeHost,
@@ -114,12 +122,33 @@ export class ComputeService {
       storageRoot,
       concurrencyManager,
       undefined,
-      this.execution
+      this.execution,
+      (mode) => this.wakeExternalJobs(mode)
     )
     this.jobCancellation =
       operationRepository && jobRepository
         ? createJobCancellation(operationRepository, jobRepository)
         : undefined
+  }
+
+  private readonly externalTicks = new Map<ExternalComputeMode, () => Promise<void>>()
+  bindExternalJobRuntime(mode: ExternalComputeMode, tick: () => Promise<void>): () => void {
+    this.externalTicks.set(mode, tick)
+    return () => {
+      if (this.externalTicks.get(mode) === tick) this.externalTicks.delete(mode)
+    }
+  }
+  wakeExternalJobs(mode: ExternalComputeMode): void {
+    void this.externalTicks
+      .get(mode)?.()
+      .catch((error) =>
+        log.warn('Compute reconciliation deferred to the next poll.', errorLogFields(error))
+      )
+  }
+  async reconcileExternalJobs(mode: ExternalComputeMode): Promise<void> {
+    const tick = this.externalTicks.get(mode)
+    if (!tick) throw new Error('Compute recovery is unavailable.')
+    await tick()
   }
 
   private harvestRetry?: (request: RetryComputeJobHarvestRequest) => Promise<void>
@@ -140,6 +169,19 @@ export class ComputeService {
 
   async probe(providerId: string, signal?: AbortSignal): Promise<ProbeResult> {
     return this.hostProfiles.probe(providerId, signal)
+  }
+
+  listKubernetesTargets(): Promise<KubernetesTarget[]> {
+    return this.repository.listKubernetesTargets()
+  }
+  listHostedTargets(): Promise<HostedTarget[]> {
+    return this.repository.listHostedTargets()
+  }
+  listRayTargets(): Promise<RayTarget[]> {
+    return this.repository.listRayTargets()
+  }
+  listModalTargets(): Promise<ModalTarget[]> {
+    return this.repository.listModalTargets()
   }
 
   async list(): Promise<ComputeHost[]> {
@@ -234,11 +276,20 @@ export class ComputeService {
       workspaceCwd?: string
     },
     context: { sessionId: string; projectId: string; producerRunId?: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    assertTargetEnabled?: () => Promise<void>
   ): Promise<SubmitJobResult> {
     const release = this.dependencies.admitSessionWork?.(context.projectId, context.sessionId)
     try {
-      return await this.jobWorkflow.submitJob(providerId, intent, command, options, context, signal)
+      return await this.jobWorkflow.submitJob(
+        providerId,
+        intent,
+        command,
+        options,
+        context,
+        signal,
+        assertTargetEnabled
+      )
     } finally {
       release?.()
     }
@@ -278,6 +329,8 @@ export class ComputeService {
       )
     }
     this.handleJobUpdated(job)
+    const mode = externalComputeMode(job.provider_id)
+    if (mode && mode === job.execution_mode) this.wakeExternalJobs(mode)
     if (result.status === 'cancelled') {
       await this.concurrencyManager?.onJobCompleted()
     }

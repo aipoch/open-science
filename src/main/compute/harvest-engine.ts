@@ -1,23 +1,8 @@
-import { RetryableHarvestError } from '@aipoch/compute/node'
 /**
- * harvest-engine.ts — downloads a finished job's output files from the remote workdir.
- *
- * Three phases (design.md §6):
- *  1. Remote enumeration: single SSH round-trip using `find -printf '%P\t%s\n'`.
- *  2. Classification: delegates to harvest-classifier (pure, no I/O).
- *  3. Download: scp each file to the session workspace under hpc/<jobId>/.
- *
- * Final failures set harvestError + harvestedAt; transient failures keep harvestedAt unset for retry.
- * The remote workdir is never deleted here (retained for manual recovery, design §7).
- *
- * Security: only files beneath the remote_workdir are downloaded (enumeration is scoped
- * to that directory). Paths are validated before scp via scp-runner's GLOB_CHARS /
- * SHELL_UNSAFE_CHARS checks (design §8.2 / issue 02 security requirement).
- *
- * Approval: harvest does NOT go through the download approval gate (design §12).
- * The submit_job approval covers the full submit→harvest lifecycle.
+ * Publish a finished job's selected outputs and their evidence as one local generation.
+ * SSH and Kubernetes enumerate a workdir through a connection lease; other backends read an output volume.
+ * Both use the submission's declarations and the same disk budget.
  */
-
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, realpath, rename, rm, stat, statfs, unlink } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -40,6 +25,8 @@ import type { ComputeHostRepository } from './repository'
 
 import {
   classifyFiles,
+  hasAllDeclaredOutputs,
+  RetryableHarvestError,
   HARVEST_MAX_FILE_MB,
   normalizeHarvestConfig,
   normalizeRemoteMtimeToken,
@@ -63,6 +50,14 @@ import {
   settleComputeJobFileEvidence
 } from '../notebook/working-file-observer'
 import { withDataRootWrite } from '../storage/migration-state'
+import {
+  resolveHarvestVolume,
+  type HarvestVolume,
+  type HarvestSources,
+  type VolumeFile,
+  type PublishedFile,
+  type DiscardedFile
+} from './harvest-output-volume'
 import { emitJobNotification } from './job-notifier'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
@@ -282,7 +277,7 @@ const downloadFile = async (
 // HarvestDeps: the injectable seam for tests
 // ---------------------------------------------------------------------------
 
-export type HarvestDeps = {
+export type HarvestDeps = HarvestSources & {
   connectionBroker: ComputeConnectionBrokerAcquirer
   hostRepository: Pick<ComputeHostRepository, 'get'>
   jobRepository: Pick<ComputeJobRepository, 'update' | 'claimNotification'>
@@ -343,6 +338,7 @@ const buildLeftOnRemoteUri = (
  */
 export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<void> => {
   deps.signal?.throwIfAborted()
+  const volume = resolveHarvestVolume(job, deps)
   return withDataRootWrite(async () => {
     deps.signal?.throwIfAborted()
     const harvestDir = getJobHarvestDir(
@@ -365,7 +361,12 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
       }
       await rm(attemptDir, { recursive: true, force: true })
 
-      await harvestJobUnchecked(job, deps, { harvestDir, attemptDir, backupDir, renamePath })
+      await harvestJobUnchecked(job, deps, volume, {
+        harvestDir,
+        attemptDir,
+        backupDir,
+        renamePath
+      })
     } catch (caught) {
       const error =
         (caught as NodeJS.ErrnoException)?.code === 'ENOSPC'
@@ -374,10 +375,11 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
       if (error instanceof ComputeConnectionError || error instanceof RetryableHarvestError) {
         // Keep harvestedAt unset so restart/tick recovery retries. Persist only a safe error class;
         // never persist connection output or credentials.
-        const pendingJob = await deps.jobRepository.update(job.job_id, {
-          harvestError: `harvest pending: ${error instanceof ComputeConnectionError ? error.code : error.message}`
-        })
-        deps.publishJobUpdated?.(pendingJob)
+        const harvestError = `harvest pending: ${error instanceof ComputeConnectionError ? error.code : error.message}`
+        if (job.harvest_error !== harvestError) {
+          const pendingJob = await deps.jobRepository.update(job.job_id, { harvestError })
+          deps.publishJobUpdated?.(pendingJob)
+        }
       }
       throw error
     } finally {
@@ -389,6 +391,7 @@ export const harvestJob = async (job: ComputeJob, deps: HarvestDeps): Promise<vo
 const harvestJobUnchecked = async (
   job: ComputeJob,
   deps: HarvestDeps,
+  volume: HarvestVolume | undefined,
   publication: {
     harvestDir: string
     attemptDir: string
@@ -407,6 +410,8 @@ const harvestJobUnchecked = async (
     publishedPath: string
     relativePath: string
   }> = []
+  const archived: PublishedFile[] = []
+  const discarded: DiscardedFile[] = []
   const remoteInputPaths: string[] = []
   if (job.input_manifest) {
     try {
@@ -470,6 +475,8 @@ const harvestJobUnchecked = async (
         })
         publishedEvidence = true
       } catch {
+        if (volume || deps.workspaceConnection)
+          throw new RetryableHarvestError('Compute output evidence publication failed.')
         evidencePublicationFailed = true
         fileEvidence = {
           schemaVersion: 1,
@@ -496,7 +503,13 @@ const harvestJobUnchecked = async (
       harvestedAt: new Date(),
       harvestError,
       leftOnRemote: leftOnRemoteJson,
-      fileEvidence
+      fileEvidence,
+      ...(volume &&
+        !harvestError &&
+        hasImmutableExecutionFileEvidenceReference(fileEvidence) && {
+          remoteHandle: volume.publication(archived, discarded),
+          lastPollError: null
+        })
     })
     if (
       evidencePublicationFailed &&
@@ -559,60 +572,84 @@ const harvestJobUnchecked = async (
     }
   }
 
-  // ── 1. Look up host ─────────────────────────────────────────────────────────
-  let host: Awaited<ReturnType<typeof hostRepository.get>>
-  try {
-    host = await hostRepository.get(job.provider_id)
-  } catch (err) {
-    if (deps.signal?.aborted) throw err
-    throw new RetryableHarvestError('Host lookup failed.')
+  const remoteWorkdir = deps.workspaceConnection
+    ? '/workspace'
+    : (job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`)
+  let remoteFiles: VolumeFile[]
+  let leftOnRemoteUri: (path: string) => string
+  let download:
+    ((entry: FileEntry, localPath: string, maxBytes: number) => Promise<number>) | undefined
+  if (volume) {
+    remoteFiles = await volume.list(deps.signal)
+    leftOnRemoteUri = volume.uri
+  } else {
+    let connection = deps.workspaceConnection
+    let alias: string | undefined
+    if (!connection) {
+      let host: Awaited<ReturnType<typeof hostRepository.get>>
+      try {
+        host = await hostRepository.get(job.provider_id)
+      } catch (err) {
+        if (deps.signal?.aborted) throw err
+        throw new RetryableHarvestError('Host lookup failed.')
+      }
+      deps.signal?.throwIfAborted()
+      if (!host) {
+        await finalizeAndReturn(`host not found: ${job.provider_id}`, '[]')
+        return
+      }
+      alias = host.sshAlias
+      connection = await connectionBroker.acquire(job.provider_id, {
+        intent: 'job_harvest',
+        signal: deps.signal
+      })
+    }
+    const tails = await readSlurmJobTails(job, connection)
+    deps.signal?.throwIfAborted()
+    if (tails.stdoutTail !== undefined || tails.stderrTail !== undefined)
+      await jobRepository.update(job.job_id, tails)
+    let entries: HarvestFileEntry[]
+    try {
+      entries = await enumerateRemoteFiles(connection, remoteWorkdir)
+    } catch (err) {
+      if (deps.signal?.aborted || err instanceof ComputeConnectionError) throw err
+      throw new RetryableHarvestError('Remote file enumeration failed.')
+    }
+    remoteFiles = entries
+    const snapshots = new Map(entries.map((entry) => [entry.path, entry.snapshot]))
+    download = (entry, localPath, maxBytes) =>
+      downloadFile(
+        connection,
+        remoteWorkdir,
+        entry.path,
+        localPath,
+        maxBytes,
+        snapshots.get(entry.path)!
+      )
+    leftOnRemoteUri = (path) =>
+      alias !== undefined
+        ? buildLeftOnRemoteUri(alias, remoteWorkdir, path)
+        : 'kubernetes://workspace/' +
+          encodeURIComponent(job.provider_id) +
+          '/' +
+          encodeURIComponent(job.job_id) +
+          '/' +
+          path.split('/').map(encodeURIComponent).join('/')
   }
-
-  deps.signal?.throwIfAborted()
-
-  if (!host) {
-    await finalizeAndReturn(`host not found: ${job.provider_id}`, '[]')
-    return
-  }
-
-  // ── 2. Acquire one Host/revision-scoped connection lease ────────────────────
-  const connection: ComputeConnectionLease = await connectionBroker.acquire(job.provider_id, {
-    intent: 'job_harvest',
-    signal: deps.signal
-  })
-
-  // Keep log I/O inside the existing bounded harvest scheduler rather than the scheduler poll.
-  // Tails use their own byte bound even when the output-file download budget is zero.
-  const tails = await readSlurmJobTails(job, connection)
-  deps.signal?.throwIfAborted()
-  if (tails.stdoutTail !== undefined || tails.stderrTail !== undefined) {
-    await jobRepository.update(job.job_id, tails)
-  }
-
-  const remoteWorkdir = job.remote_workdir ?? `~/.openscience/jobs/${job.job_id}`
-
-  // ── 3. Enumerate remote files ───────────────────────────────────────────────
-  let remoteFiles: HarvestFileEntry[]
-  try {
-    remoteFiles = await enumerateRemoteFiles(connection, remoteWorkdir)
-  } catch (err) {
-    if (deps.signal?.aborted) throw err
-    if (err instanceof ComputeConnectionError) throw err
-    throw new RetryableHarvestError('Remote file enumeration failed.')
-  }
-
-  deps.signal?.throwIfAborted()
-
-  // ── 4. Classify files ───────────────────────────────────────────────────────
   let outputs: OutputDeclaration[] = []
   if (job.output_manifest) {
     try {
       outputs = JSON.parse(job.output_manifest) as OutputDeclaration[]
     } catch {
-      // Malformed manifest — treat as no outputs (default hidden for everything).
+      if (volume) throw new Error('Invalid Compute output declarations.')
+      // Historical SSH manifests default to hidden.
     }
   }
 
+  if (volume && !hasAllDeclaredOutputs(remoteFiles, outputs))
+    throw new RetryableHarvestError(
+      'Declared Compute outputs are not available for collection yet.'
+    )
   let harvestConfig: HarvestConfig = {}
   if (job.harvest_config) {
     try {
@@ -644,7 +681,8 @@ const harvestJobUnchecked = async (
     remoteFiles,
     outputs,
     normalizedHarvestConfig,
-    stagedInputs
+    stagedInputs,
+    volume ? 'outputs-volume' : 'workdir'
   )
   const remoteFileByPath = new Map(remoteFiles.map((entry) => [entry.path, entry]))
   const plannedPaths = new Set([
@@ -675,7 +713,13 @@ const harvestJobUnchecked = async (
     ...normalizedHarvestConfig,
     max_total_mb: reservation.bytes / MIB_BYTES
   }
-  const classification = classifyFiles(remoteFiles, outputs, effectiveHarvestConfig, stagedInputs)
+  const classification = classifyFiles(
+    remoteFiles,
+    outputs,
+    effectiveHarvestConfig,
+    stagedInputs,
+    volume ? 'outputs-volume' : 'workdir'
+  )
   let remainingBudgetBytes = reservation.bytes
 
   // ── 5. Download files ───────────────────────────────────────────────────────
@@ -732,14 +776,7 @@ const harvestJobUnchecked = async (
 
     const temporaryPath = `${localPath}.${randomUUID()}.partial`
     try {
-      const bytesWritten = await downloadFile(
-        connection,
-        remoteWorkdir,
-        relativePath,
-        temporaryPath,
-        maxBytes,
-        remoteFile.snapshot
-      )
+      const bytesWritten = await download!(remoteFile, temporaryPath, maxBytes)
       deps.signal?.throwIfAborted()
       await rename(temporaryPath, localPath)
       remainingBudgetBytes = Math.max(0, remainingBudgetBytes - bytesWritten)
@@ -776,34 +813,99 @@ const harvestJobUnchecked = async (
   }
 
   try {
-    // Download featured files.
-    for (const relativePath of classification.featured) {
-      deps.signal?.throwIfAborted()
-      const localPath = join(featuredDir, relativePath)
-      await mkdir(dirname(localPath), { recursive: true })
-      await safeDownload(relativePath, localPath)
-    }
+    if (volume) {
+      const plan = new Map<string, string>([
+        ...classification.featured.map((path) => [path, featuredDir] as const),
+        ...classification.hidden.map((path) => [path, hiddenDir] as const)
+      ])
+      if (deps.hostedOutputs) {
+        const retained = new Set(classification.left_on_remote.map((f) => f.path))
+        for (const file of remoteFiles) {
+          if (plan.has(file.path) || retained.has(file.path)) continue
+          if (!file.xetHash)
+            throw new RetryableHarvestError(
+              'HF Bucket did not supply an object hash for an unplanned output.'
+            )
+          discarded.push({ path: file.path, bytes: file.size_bytes, xetHash: file.xetHash })
+        }
+      }
+      if (plan.size) {
+        const stagingDirectory = join(attemptDir, '.volume-staging')
+        await mkdir(stagingDirectory, { mode: 0o700 })
+        const staged = await volume
+          .stage({
+            files: [...plan.keys()].map((path) => ({
+              path,
+              bytes: remoteFileByPath.get(path)!.size_bytes,
+              xetHash: remoteFileByPath.get(path)?.xetHash
+            })),
+            signal: deps.signal,
+            stagingDirectory,
+            maxBytes: reservation.bytes
+          })
+          .catch((error: unknown) => {
+            deps.signal?.throwIfAborted()
+            if (
+              !(deps.hostedOutputs || deps.modalOutputs) ||
+              (error as NodeJS.ErrnoException)?.code === 'ENOSPC'
+            )
+              throw error
+            throw new RetryableHarvestError('Cloud output download failed.')
+          })
+        for (const file of staged) {
+          const directory = plan.get(file.path)
+          if (!directory || file.bytes !== remoteFileByPath.get(file.path)?.size_bytes)
+            throw new Error('Unexpected file in compute archive.')
+          const localPath = join(directory, file.path)
+          await mkdir(dirname(localPath), { recursive: true })
+          await rename(file.localPath, localPath)
+          const publishedPath = join(harvestDir, relative(attemptDir, localPath))
+          downloadedOutputs.push({
+            attemptPath: localPath,
+            publishedPath,
+            relativePath: workspaceRelativePath(workspaceCwd, publishedPath)
+          })
+          archived.push({
+            path: file.path,
+            bytes: file.bytes,
+            sha256: file.sha256,
+            ...(file.xetHash && { xetHash: file.xetHash })
+          })
+          plan.delete(file.path)
+        }
+        if (plan.size) throw new Error('Incomplete compute archive.')
+        await rm(stagingDirectory, { recursive: true, force: true })
+      }
+    } else {
+      // Download featured files.
+      for (const relativePath of classification.featured) {
+        deps.signal?.throwIfAborted()
+        const localPath = join(featuredDir, relativePath)
+        await mkdir(dirname(localPath), { recursive: true })
+        await safeDownload(relativePath, localPath)
+      }
 
-    // Download hidden files.
-    for (const relativePath of classification.hidden) {
-      deps.signal?.throwIfAborted()
-      const localPath = join(hiddenDir, relativePath)
-      await mkdir(dirname(localPath), { recursive: true })
-      await safeDownload(relativePath, localPath)
-    }
+      // Download hidden files.
+      for (const relativePath of classification.hidden) {
+        deps.signal?.throwIfAborted()
+        const localPath = join(hiddenDir, relativePath)
+        await mkdir(dirname(localPath), { recursive: true })
+        await safeDownload(relativePath, localPath)
+      }
 
-    // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
-    // Download full logs last; bounded tails remain available when the budget excludes them.
-    for (const relativePath of classification.logs) {
-      deps.signal?.throwIfAborted()
-      await safeDownload(relativePath, join(attemptDir, relativePath), false)
+      // ── 6. Build left_on_remote JSON and finalize ────────────────────────────────
+      // Download full logs last; bounded tails remain available when the budget excludes them.
+      for (const relativePath of classification.logs) {
+        deps.signal?.throwIfAborted()
+        await safeDownload(relativePath, join(attemptDir, relativePath), false)
+      }
     }
   } finally {
     await reservation.release()
   }
 
   const leftOnRemote = classification.left_on_remote.map((entry) => ({
-    uri: buildLeftOnRemoteUri(host.sshAlias, remoteWorkdir, entry.path),
+    uri: leftOnRemoteUri(entry.path),
     size_mb: entry.size_mb,
     reason: entry.reason
   }))

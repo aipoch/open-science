@@ -83,6 +83,8 @@ describe('emitJobNotification', () => {
     await mkdir(featuredDir, { recursive: true })
     await writeFile(join(featuredDir, 'result.csv'), 'col1,col2\n1,2')
     await writeFile(join(featuredDir, 'fig1.png'), 'PNG data')
+    await mkdir(join(harvestDir, 'hidden'))
+    await writeFile(join(harvestDir, 'hidden', 'run.log'), 'logs')
 
     const job = makeJob({
       status: 'success',
@@ -126,6 +128,8 @@ describe('emitJobNotification', () => {
     expect(summary.featured_files).toEqual(
       expect.arrayContaining(['hpc/job-1/featured/result.csv', 'hpc/job-1/featured/fig1.png'])
     )
+    expect(summary.hidden_files).toEqual(['hpc/job-1/hidden/run.log'])
+    expect(summary.harvested_at).toBe(job.harvested_at)
     expect(summary.featured_file_count).toBe(2)
     expect(summary.left_on_remote_count).toBe(1)
     expect(summary.left_on_remote).toHaveLength(1)

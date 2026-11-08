@@ -1,3 +1,4 @@
+import { externalComputeMode } from '../../../shared/compute'
 import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
 
 import {
@@ -96,7 +97,10 @@ export const createSettingsNavigationSlice = ({
     openSettingsToCompute: () => openTo({ panel: 'compute', view: { kind: 'list' } }),
 
     openSettingsToComputeHost: (providerId) =>
-      openTo({ panel: 'compute', view: { kind: 'detail', providerId } }),
+      openTo({
+        panel: 'compute',
+        view: externalComputeMode(providerId) ? { kind: 'list' } : { kind: 'detail', providerId }
+      }),
 
     openSettingsToComputeAuthentication: (providerId, errorCode) => {
       rememberSettingsReturnFocusTarget(getState().isSettingsOpen)

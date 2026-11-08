@@ -1,3 +1,4 @@
+import { externalComputeMode } from '../../shared/compute'
 import type {
   ComputeApprovalDecision,
   ComputeApprovalOperation,
@@ -199,7 +200,19 @@ export class ComputeApprovalBroker {
   ): Promise<ComputeApprovalDecision> {
     const { sessionId, projectId, operation } = ctx
     const providerId = info.provider_id
-    const requiresExplicitApproval = info.willPersistUnencrypted === true
+    // External submissions approve a specific target, resources and set of files.
+    const mode = info.operation === 'submit_job' ? externalComputeMode(providerId) : undefined
+    const externalJob = mode !== undefined
+    if (mode && info.operation === 'submit_job') {
+      const disclosures = {
+        kubernetes: info.kubernetes,
+        hugging_face_jobs: info.hosted,
+        ray_jobs: info.ray,
+        modal_sandbox: info.modal
+      }
+      if (info.execution_mode !== mode || !disclosures[mode]) return 'deny'
+    }
+    const requiresExplicitApproval = info.willPersistUnencrypted === true || externalJob
     const providerGeneration = this.providerGenerations.get(providerId) ?? 0
     const requestWasCancelled = (): boolean => {
       signal?.throwIfAborted()
@@ -277,6 +290,8 @@ export class ComputeApprovalBroker {
       )
       if (requestWasCancelled() || !providerIsCurrent) return 'deny'
     }
+
+    if (externalJob) return decision === 'once' ? 'once' : 'deny'
 
     // Record the scope the user already selected. A later request/Session cancellation still stops
     // this operation at the final check below, but must not revoke an approved Project/Global grant.

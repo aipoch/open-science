@@ -1,10 +1,16 @@
+import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
-import { readdir, realpath } from 'node:fs/promises'
-import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { realpath } from 'node:fs/promises'
+import { basename, isAbsolute, relative, resolve } from 'node:path'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 
 import type { JobStatusResult, SubmitJobResult } from '@aipoch/compute'
-import type { ComputeCallError, ComputeJob, JobResult } from '../../shared/compute'
+import type {
+  ComputeCallError,
+  ComputeJob,
+  JobResult,
+  ExternalComputeMode
+} from '../../shared/compute'
 
 import { ComputeHostUnavailableError } from '@aipoch/compute'
 
@@ -25,6 +31,7 @@ import {
   createComputeExecution,
   GLOB_CHARS,
   hashCommand,
+  parseKubernetesResourceRequest,
   hasLeadingSlurmDirective,
   projectJobStatus,
   SHELL_UNSAFE_CHARS,
@@ -37,14 +44,18 @@ import {
 import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
 import {
   UnencryptedComputeJobPersistenceApprovalRequiredError,
+  type CreateJobRequest,
   type ComputeJobRepository
 } from './job-repository'
+import { bindExternalJob, findExternalJobConfig } from './external-job-submission'
 import type { ComputeHostRepository } from './repository'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
+import { listArchivedJobFiles } from './workspace-path'
 
 const COMMAND_PREVIEW_MAX_LEN = 120
 const JOB_MAX_TIMEOUT_SECONDS = 7 * 24 * 3600
 const JOB_DEFAULT_TIMEOUT_SECONDS = 24 * 3600
+const MODAL_DEFAULT_TIMEOUT_SECONDS = 4 * 3600
+const MODAL_MAX_TIMEOUT_SECONDS = 24 * 3600
 const TERMINAL_JOB_STATUSES: ReadonlySet<ComputeJob['status']> = new Set([
   'success',
   'failed',
@@ -186,6 +197,23 @@ const queueFullError = (): Error & { computeCallError: ComputeCallError } => {
   return error
 }
 
+const externalOutputGlob = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => value.trim().length > 0 && !value.startsWith('/') && !value.split('/').includes('..')
+  )
+const externalOutputs = z.array(
+  z.union([
+    externalOutputGlob,
+    z.strictObject({
+      glob: externalOutputGlob,
+      visibility: z.enum(['featured', 'hidden']).optional(),
+      residency: z.literal('remote').optional()
+    })
+  ])
+)
+
 export class ComputeJobWorkflowOwner {
   constructor(
     private readonly connectionBroker: ComputeConnectionBrokerAcquirer,
@@ -197,7 +225,8 @@ export class ComputeJobWorkflowOwner {
     private readonly storageRoot: string | undefined,
     private readonly concurrencyManager: ConcurrencyManager | undefined,
     private readonly observeBackgroundDispatch?: (dispatch: Promise<void>) => void,
-    private readonly execution: ComputeExecution = createComputeExecution()
+    private readonly execution: ComputeExecution = createComputeExecution(),
+    private readonly wakeExternalJobs?: (mode: ExternalComputeMode) => void
   ) {}
 
   async submitJob(
@@ -214,7 +243,8 @@ export class ComputeJobWorkflowOwner {
       workspaceCwd?: string
     },
     context: { sessionId: string; projectId: string; producerRunId?: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    assertTargetEnabled?: () => Promise<void>
   ): Promise<SubmitJobResult> {
     if (this.storageRoot)
       await assertResearchSessionWritable(this.storageRoot, context.projectId, context.sessionId)
@@ -236,11 +266,35 @@ export class ComputeJobWorkflowOwner {
       validateHarvestConfig(harvestConfig)
     }
 
-    const host = await this.hostRepository.get(providerId)
+    const configured = await findExternalJobConfig(this.hostRepository, providerId)
+    const host = configured
+      ? {
+          ...configured.settings,
+          shape: 'bridge_runner' as const,
+          executionMode: configured.mode,
+          scratchRoot: undefined
+        }
+      : await this.hostRepository.get(providerId)
     if (!host) {
       throw new Error(`No compute host found with provider id "${providerId}".`)
     }
-    if (host.executionMode === 'slurm') {
+    if (configured) {
+      if (
+        options.environment ||
+        (configured.mode !== 'kubernetes' && options.resourceRequest !== undefined) ||
+        hasLeadingSlurmDirective(command)
+      )
+        throw new Error('This target uses its configured execution environment and resources.')
+      if (configured.mode === 'kubernetes') parseKubernetesResourceRequest(options.resourceRequest)
+      if (options.inputs?.some((entry) => 'remote_path' in entry))
+        throw new Error('Remote inputs must refer to workspace files or artifacts.')
+      if (
+        options.outputManifest !== undefined &&
+        !externalOutputs.safeParse(JSON.parse(options.outputManifest)).success
+      )
+        throw new Error('Outputs require relative glob declarations.')
+      if (!this.storageRoot) throw new Error('Remote jobs require local artifact storage.')
+    } else if (host.executionMode === 'slurm') {
       try {
         validateSlurmCommand(command)
       } catch (error) {
@@ -289,6 +343,12 @@ export class ComputeJobWorkflowOwner {
         }
         throw error
       }
+      if (configured?.mode === 'modal_sandbox' && rawTimeout > MODAL_MAX_TIMEOUT_SECONDS) {
+        const message = 'Modal Sandboxes support a maximum timeout of 24 hours.'
+        throw Object.assign(new Error(message), {
+          computeCallError: { error_code: 'timeout', message, retry_after_user_action: false }
+        })
+      }
       if (rawTimeout > JOB_MAX_TIMEOUT_SECONDS) {
         const error = new Error(
           `timeoutSeconds ${rawTimeout} exceeds the 7-day maximum. The Compute Job was not submitted.`
@@ -301,7 +361,13 @@ export class ComputeJobWorkflowOwner {
         throw error
       }
     }
-    const timeoutSeconds = rawTimeout ?? JOB_DEFAULT_TIMEOUT_SECONDS
+    const timeoutSeconds =
+      rawTimeout ??
+      (configured?.mode === 'hugging_face_jobs'
+        ? configured.settings.timeoutSeconds
+        : configured?.mode === 'modal_sandbox'
+          ? MODAL_DEFAULT_TIMEOUT_SECONDS
+          : JOB_DEFAULT_TIMEOUT_SECONDS)
 
     let stagedEntries: StagedInputEntry[] = []
     let inputsSummary = ''
@@ -317,7 +383,8 @@ export class ComputeJobWorkflowOwner {
     }
 
     const jobId = randomUUID()
-    const remoteWorkdir = computeRemoteWorkdir(host.scratchRoot, jobId)
+    const target = configured ? await bindExternalJob(configured, jobId, signal) : undefined
+    const remoteWorkdir = target?.workdir ?? computeRemoteWorkdir(host.scratchRoot, jobId)
     if (this.concurrencyManager) {
       const preview = await this.concurrencyManager.enqueue({
         jobId,
@@ -336,57 +403,13 @@ export class ComputeJobWorkflowOwner {
       command.length > COMMAND_PREVIEW_MAX_LEN
         ? `${command.slice(0, COMMAND_PREVIEW_MAX_LEN)}…`
         : command
-    const approvalInfo = {
-      operation: 'submit_job' as const,
-      provider_id: host.providerId,
-      provider_name: host.displayName,
-      shape: host.shape,
-      intent,
-      command_preview: commandPreview,
-      command_full: command,
-      execution_mode: host.executionMode ?? 'direct_ssh',
-      environment: options.environment,
-      inputs_summary: inputsSummary || undefined,
-      resources: options.resourceRequest,
-      timeout_seconds: timeoutSeconds,
-      remote_workdir: remoteWorkdir
-    }
-    const approvalContext = {
-      sessionId: context.sessionId,
-      projectId: context.projectId,
-      operation: 'submit_job' as const,
-      ownerId: host.id
-    }
-
-    const requestApproval = async (willPersistUnencrypted: boolean): Promise<void> => {
-      const decision = await approvalBroker.requestWithContext(
-        {
-          ...approvalInfo,
-          ...(willPersistUnencrypted ? { willPersistUnencrypted: true } : {})
-        },
-        approvalContext,
-        signal
-      )
-
-      if (decision === 'deny') {
-        const error = new Error(
-          `Job submission approval was denied for host "${host.displayName}".`
-        ) as Error & { computeCallError: ComputeCallError }
-        error.computeCallError = {
-          error_code: 'approval_denied',
-          message: `Approval denied for submit_job on ${host.displayName}.`,
-          retry_after_user_action: false
-        }
-        throw error
-      }
-    }
-
-    let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
-    await requestApproval(allowUnencryptedPersistence)
-    signal?.throwIfAborted()
-
-    let evidenceCaptureStarted = false
-    if (this.storageRoot) {
+    const jobRepository = this.jobRepository
+    let evidenceCaptured = false
+    let rowCreated = false
+    let rowCreationAttempted = false
+    let initialStatus: 'submitted' | 'queued' = 'submitted'
+    const freezeInputs = async (): Promise<void> => {
+      if (!this.storageRoot) return
       const uploads = stagedEntries.filter(
         (entry): entry is Extract<StagedInputEntry, { kind: 'upload' }> => entry.kind === 'upload'
       )
@@ -403,6 +426,7 @@ export class ComputeJobWorkflowOwner {
         })),
         signal
       })
+      evidenceCaptured = true
       const frozenByDestination = new Map(frozen.map((entry) => [entry.dstFilename, entry]))
       const evidenceStorageRoot = await realpath(this.storageRoot)
       stagedEntries = stagedEntries.map((entry) => {
@@ -417,65 +441,133 @@ export class ComputeJobWorkflowOwner {
           sizeBytes: generation.sizeBytes
         }
       })
-      evidenceCaptureStarted = true
     }
 
-    const commandHash = hashCommand(command)
-    const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
-    const jobRepository = this.jobRepository
-    let releaseDispatchHandoff: (() => void) | undefined
-    let rowCreated = false
-    const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
-      signal?.throwIfAborted()
-      if (initialStatus === 'submitted') {
-        releaseDispatchHandoff = this.execution.holdDispatch(jobId)
-      }
-      const created = await jobRepository.create({
-        id: jobId,
-        providerId: host.providerId,
+    try {
+      if (target) await freezeInputs()
+      const approvalInfo = {
+        operation: 'submit_job' as const,
+        provider_id: host.providerId,
+        provider_name: host.displayName,
         shape: host.shape,
-        // Snapshot execution semantics so later Host edits cannot move an active Job between drivers.
-        executionMode: host.executionMode ?? 'direct_ssh',
+        intent,
+        command_preview: commandPreview,
+        command_full: command,
+        execution_mode: host.executionMode ?? 'direct_ssh',
+        environment: options.environment,
+        inputs_summary: inputsSummary || undefined,
+        resources: options.resourceRequest,
+        timeout_seconds: timeoutSeconds,
+        remote_workdir: remoteWorkdir,
+        ...target?.disclosure({
+          inputFiles: stagedEntries.map((entry) => {
+            if (entry.kind !== 'upload' || !entry.checksum || entry.sizeBytes === undefined)
+              throw new Error('Submission requires a frozen generation for each input.')
+            return {
+              source: entry.label,
+              destination: entry.dstFilename,
+              sizeBytes: entry.sizeBytes,
+              sha256: entry.checksum
+            }
+          }),
+          outputManifest: options.outputManifest,
+          harvestConfig: options.harvestConfig
+        })
+      }
+      const approvalContext = {
         sessionId: context.sessionId,
         projectId: context.projectId,
-        intent,
-        command,
-        commandHash,
-        environment: options.environment,
-        resourceRequest: options.resourceRequest,
-        inputManifest,
-        producerRunId: context.producerRunId,
-        fileEvidence: {
-          schemaVersion: 1,
-          activityId: jobId,
-          activityKind: 'compute-job',
-          ...(context.producerRunId ? { parentActivityId: context.producerRunId } : {}),
-          state: 'unavailable',
-          scientificOutputCount: 0,
-          initialViewState: evidenceCaptureStarted ? 'complete' : 'unavailable',
-          managedRootsFinalState: 'unavailable',
-          scientificOutputAnalysis: 'unavailable',
-          fileReads: 'unavailable',
-          externalPaths: 'unavailable',
-          writerAttribution: context.producerRunId ? 'complete' : 'unavailable',
-          reasonCodes: [
-            ...(context.producerRunId ? [] : ['compute-activity-lineage-missing' as const]),
-            'remote-output-not-harvested'
-          ]
-        },
-        outputManifest: options.outputManifest,
-        harvestConfig: options.harvestConfig,
-        timeoutSeconds,
-        remoteWorkdir,
-        initialStatus,
-        allowUnencryptedPersistence
-      })
-      rowCreated = true
-      this.handleJobUpdated(created)
-    }
+        operation: 'submit_job' as const,
+        ownerId: host.id
+      }
 
-    let initialStatus: 'submitted' | 'queued' = 'submitted'
-    try {
+      const requestApproval = async (willPersistUnencrypted: boolean): Promise<void> => {
+        const decision = await approvalBroker.requestWithContext(
+          {
+            ...approvalInfo,
+            ...(willPersistUnencrypted ? { willPersistUnencrypted: true } : {})
+          },
+          approvalContext,
+          signal
+        )
+
+        if (decision === 'deny') {
+          const error = new Error(
+            `Job submission approval was denied for host "${host.displayName}".`
+          ) as Error & { computeCallError: ComputeCallError }
+          error.computeCallError = {
+            error_code: 'approval_denied',
+            message: `Approval denied for submit_job on ${host.displayName}.`,
+            retry_after_user_action: false
+          }
+          throw error
+        }
+      }
+
+      let allowUnencryptedPersistence = !this.jobRepository.isFieldProtectionAvailable()
+      await requestApproval(allowUnencryptedPersistence)
+      signal?.throwIfAborted()
+
+      if (!target) await freezeInputs()
+
+      const commandHash = hashCommand(command)
+      const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
+      let releaseDispatchHandoff: (() => void) | undefined
+      const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
+        signal?.throwIfAborted()
+        if (initialStatus === 'submitted') {
+          releaseDispatchHandoff = this.execution.holdDispatch(jobId)
+        }
+        const request: CreateJobRequest = {
+          id: jobId,
+          providerId: host.providerId,
+          shape: host.shape,
+          // Snapshot execution semantics so later Host edits cannot move an active Job between drivers.
+          executionMode: host.executionMode ?? 'direct_ssh',
+          sessionId: context.sessionId,
+          projectId: context.projectId,
+          intent,
+          command,
+          commandHash,
+          environment: options.environment,
+          resourceRequest: options.resourceRequest,
+          inputManifest,
+          producerRunId: context.producerRunId,
+          fileEvidence: {
+            schemaVersion: 1,
+            activityId: jobId,
+            activityKind: 'compute-job',
+            ...(context.producerRunId ? { parentActivityId: context.producerRunId } : {}),
+            state: 'unavailable',
+            scientificOutputCount: 0,
+            initialViewState: evidenceCaptured ? 'complete' : 'unavailable',
+            managedRootsFinalState: 'unavailable',
+            scientificOutputAnalysis: 'unavailable',
+            fileReads: 'unavailable',
+            externalPaths: 'unavailable',
+            writerAttribution: context.producerRunId ? 'complete' : 'unavailable',
+            reasonCodes: [
+              ...(context.producerRunId ? [] : ['compute-activity-lineage-missing' as const]),
+              'remote-output-not-harvested'
+            ]
+          },
+          outputManifest: options.outputManifest,
+          harvestConfig: options.harvestConfig,
+          timeoutSeconds,
+          remoteWorkdir,
+          initialStatus,
+          allowUnencryptedPersistence
+        }
+        if (target) await assertTargetEnabled?.()
+        signal?.throwIfAborted()
+        rowCreationAttempted = true
+        const created = target
+          ? await target.create(jobRepository, request)
+          : await jobRepository.create(request)
+        rowCreated = true
+        if (created) this.handleJobUpdated(created)
+      }
+
       while (true) {
         try {
           if (this.concurrencyManager) {
@@ -489,7 +581,8 @@ export class ComputeJobWorkflowOwner {
             await createRow('submitted')
           }
 
-          if (initialStatus === 'submitted') {
+          if (initialStatus === 'submitted' && target) this.wakeExternalJobs?.(target.mode)
+          if (initialStatus === 'submitted' && !target) {
             const dispatch = dispatchJob(jobId, {
               connectionBroker: this.connectionBroker,
               hostRepository: this.hostRepository,
@@ -517,11 +610,13 @@ export class ComputeJobWorkflowOwner {
         }
       }
     } catch (error) {
-      if (evidenceCaptureStarted && !rowCreated && this.storageRoot) {
-        const rowDefinitelyAbsent = await jobRepository
-          .get(jobId)
-          .then((job) => job === null)
-          .catch(() => false)
+      if (evidenceCaptured && !rowCreated && this.storageRoot) {
+        const rowDefinitelyAbsent =
+          !rowCreationAttempted ||
+          (await jobRepository
+            .get(jobId)
+            .then((job) => job === null)
+            .catch(() => false))
         if (rowDefinitelyAbsent) {
           await cleanupComputeJobFileEvidence({
             storageRoot: this.storageRoot,
@@ -611,16 +706,8 @@ export class ComputeJobWorkflowOwner {
       return jobResultWithFiles(job, localOutputRoot, [], [], leftOnRemote)
     }
 
-    const harvestDir = getJobHarvestDir(
-      this.storageRoot,
-      job.project_id,
-      job.session_id,
-      job.job_id
-    )
-    const workspaceCwd = getNotebookSessionRoot(this.storageRoot, job.project_id, job.session_id)
-    const featuredFiles = await scanDirRelative(join(harvestDir, 'featured'), workspaceCwd)
-    const hiddenFiles = await scanDirRelative(join(harvestDir, 'hidden'), workspaceCwd)
-    return jobResultWithFiles(job, localOutputRoot, featuredFiles, hiddenFiles, leftOnRemote)
+    const { featured_files, hidden_files } = await listArchivedJobFiles(job, this.storageRoot)
+    return jobResultWithFiles(job, localOutputRoot, featured_files, hidden_files, leftOnRemote)
   }
 
   async setSessionConcurrencyLimit(sessionId: string, limit: number): Promise<void> {
@@ -674,31 +761,3 @@ const jobResultWithFiles = (
   stderr_tail: job.stderr_tail,
   harvest_error: job.harvest_error
 })
-
-async function scanDirRelative(dir: string, workspaceCwd: string): Promise<string[]> {
-  const results: string[] = []
-  try {
-    await collectFiles(dir, workspaceCwd, results)
-  } catch {
-    // Missing or unreadable harvest directories project as empty file lists.
-  }
-  return results
-}
-
-async function collectFiles(
-  currentDir: string,
-  workspaceCwd: string,
-  results: string[]
-): Promise<void> {
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await readdir(currentDir, { withFileTypes: true })
-  } catch {
-    return
-  }
-  for (const entry of entries) {
-    const fullPath = join(currentDir, entry.name)
-    if (entry.isDirectory()) await collectFiles(fullPath, workspaceCwd, results)
-    else if (entry.isFile()) results.push(workspaceRelativePath(workspaceCwd, fullPath))
-  }
-}

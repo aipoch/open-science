@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { fireEvent, screen } from '@testing-library/react'
+import { WEB_CALLER_LOCATION_ATTRIBUTE } from '../../../../shared/web-caller-location'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -315,6 +316,208 @@ describe('CredentialsPanel', () => {
     const customRow = customLabel?.parentElement?.parentElement
     act(() => customRow?.querySelector<HTMLButtonElement>('button')?.click())
     expect(onOpenConnector).toHaveBeenCalledWith('custom-search')
+  })
+
+  it('cancels browser sign-in without restoring a stale pending response, and confirms local disconnect', async () => {
+    const disconnected = { provider: 'hugging-face', state: 'disconnected', localAvailable: true }
+    const pending = { ...disconnected, state: 'pending', userCode: 'ABCD-EFGH' }
+    const connected = { ...disconnected, state: 'connected', identity: 'lab', source: 'local' }
+    let finishPoll: (status: typeof pending) => void = () => undefined
+    const accountStatus = vi
+      .fn()
+      .mockResolvedValueOnce(disconnected)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishPoll = resolve
+          })
+      )
+    const disconnectAccount = vi.fn().mockResolvedValue(disconnected)
+    const connectAccount = vi.fn().mockResolvedValue(pending)
+    const cancelAccountConnection = vi.fn().mockResolvedValue(disconnected)
+    const useLocalAccount = vi
+      .fn()
+      .mockResolvedValue({ provider: 'hugging-face', state: 'pending', source: 'local' })
+    Object.assign(window.api, {
+      compute: {
+        accountStatus,
+        disconnectAccount,
+        connectAccount,
+        cancelAccountConnection,
+        useLocalAccount
+      }
+    })
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId: 'hugging-face' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+    )
+    await act(async () => screen.getByRole('button', { name: 'Connect' }).click())
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Connect in browser' }))
+    await act(async () => screen.getByRole('button', { name: 'Connect in browser' }).click())
+    expect(connectAccount).toHaveBeenCalledWith('hugging-face')
+    expect(screen.getByText('ABCD-EFGH')).toBeTruthy()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    try {
+      await act(async () => screen.getByRole('button', { name: 'Copy code' }).click())
+      expect(writeText).toHaveBeenCalledWith('ABCD-EFGH')
+      expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy()
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+    }
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await act(async () => screen.getByRole('button', { name: 'Cancel' }).click())
+    await act(async () => finishPoll(pending))
+    expect(cancelAccountConnection).toHaveBeenCalledWith('hugging-face')
+    expect(screen.queryByText('ABCD-EFGH')).toBeNull()
+    await act(async () => screen.getByRole('button', { name: 'Connect' }).click())
+    await act(async () => screen.getByRole('button', { name: 'Use local sign-in' }).click())
+    expect(within(screen.getByRole('alertdialog')).getByRole('status').textContent).toBe(
+      'Checking…'
+    )
+    expect(screen.queryByRole('button', { name: 'Copy code' })).toBeNull()
+    accountStatus.mockResolvedValueOnce(connected)
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Local CLI')
+    await act(async () => screen.getByRole('button', { name: 'Disconnect' }).click())
+    expect(disconnectAccount).not.toHaveBeenCalled()
+    expect(screen.getByRole('alertdialog').textContent).toContain(
+      'Remote jobs may continue running'
+    )
+    await act(async () =>
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Disconnect' }).click()
+    )
+    expect(disconnectAccount).toHaveBeenCalledWith('hugging-face')
+    expect(screen.queryByText('lab')).toBeNull()
+  })
+
+  it('keeps the dialog open for a failed account switch and cancels an outstanding browser start on close', async () => {
+    const current = { provider: 'modal', state: 'connected', source: 'managed', identity: 'lab' }
+    let finish!: (status: unknown) => void
+    const cancelAccountConnection = vi.fn().mockResolvedValue(current)
+    const connectAccount = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    const useLocalAccount = vi.fn().mockResolvedValue({ ...current, reason: 'authorization' })
+    Object.assign(window.api, {
+      compute: {
+        accountStatus: vi.fn().mockResolvedValue(current),
+        useLocalAccount,
+        connectAccount,
+        cancelAccountConnection
+      }
+    })
+    await act(async () =>
+      root.render(
+        <CredentialsPanel
+          view={{ kind: 'service', serviceId: 'modal' }}
+          onNavigate={vi.fn()}
+          onOpenConnector={vi.fn()}
+          onOpenProvider={vi.fn()}
+        />
+      )
+    )
+    await act(async () => screen.getByRole('button', { name: 'Reconnect' }).click())
+    const dialog = within(screen.getByRole('alertdialog'))
+    await act(async () => dialog.getByRole('button', { name: 'Use local sign-in' }).click())
+    expect(dialog.getByRole('alert').textContent).toContain('Authorization was not completed')
+    await act(async () => dialog.getByRole('button', { name: 'Retry' }).click())
+    expect(useLocalAccount).toHaveBeenCalledTimes(2)
+    act(() => dialog.getByRole('button', { name: 'Connect in browser' }).click())
+    await act(async () => dialog.getByRole('button', { name: 'Close' }).click())
+    expect(cancelAccountConnection).toHaveBeenCalledOnce()
+    await act(async () => finish({ ...current, state: 'pending', userCode: 'LATE-CODE' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('lab')
+    expect(screen.queryByText('LATE-CODE')).toBeNull()
+    await act(async () => screen.getByRole('button', { name: 'Reconnect' }).click())
+    act(() => screen.getByRole('button', { name: 'Connect in browser' }).click())
+    await act(async () => finish({ ...current, state: 'pending', userCode: 'NEW-CODE' }))
+    expect(screen.getByText('NEW-CODE')).toBeTruthy()
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(cancelAccountConnection).toHaveBeenCalledOnce()
+  })
+
+  it('manages Ray tokens by Dashboard address without reading their material into an editor', async () => {
+    const endpoint = 'https://compute.example.test'
+    const listRayTokens = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([endpoint])
+      .mockResolvedValueOnce([endpoint])
+      .mockResolvedValue([])
+    const setRayToken = vi.fn().mockResolvedValue(undefined)
+    const removeRayToken = vi.fn().mockResolvedValue(undefined)
+    Object.assign(window.api, { compute: { listRayTokens, setRayToken, removeRayToken } })
+    const props = { onNavigate: vi.fn(), onOpenConnector: vi.fn(), onOpenProvider: vi.fn() }
+    await act(async () => root.render(<CredentialsPanel {...props} view={{ kind: 'list' }} />))
+    const ray = screen.getByText('Ray Jobs').parentElement!
+    await act(async () => within(ray).getByRole('button', { name: 'Manage' }).click())
+    expect(props.onNavigate).toHaveBeenCalledWith({ kind: 'service', serviceId: 'ray' })
+    await act(async () =>
+      root.render(<CredentialsPanel {...props} view={{ kind: 'service', serviceId: 'ray' }} />)
+    )
+    expect(screen.getByText('No saved tokens.')).toBeTruthy()
+    await act(async () => screen.getByRole('button', { name: 'Add access token' }).click())
+    function enterToken(value: string): HTMLInputElement {
+      const input = screen.getByLabelText<HTMLInputElement>('Access token')
+      const paste = new Event('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', { value: { getData: () => value } })
+      act(() => input.dispatchEvent(paste))
+      expect(input.value).toBe('•'.repeat(value.length))
+      return input
+    }
+    act(() =>
+      fireEvent.change(screen.getByLabelText('Ray Dashboard URL'), { target: { value: endpoint } })
+    )
+    enterToken('test-original')
+    await act(async () => screen.getByRole('button', { name: 'Save' }).click())
+    expect(setRayToken).toHaveBeenLastCalledWith(endpoint, 'test-original')
+    await act(async () => screen.getByRole('button', { name: 'Replace access token' }).click())
+    expect(screen.getByLabelText('Ray Dashboard URL')).toHaveProperty('readOnly', true)
+    expect(screen.getByLabelText('Access token')).toHaveProperty('value', '')
+    enterToken('test-replacement')
+    await act(async () => screen.getByRole('button', { name: 'Save' }).click())
+    expect(setRayToken).toHaveBeenLastCalledWith(endpoint, 'test-replacement')
+    await act(async () => screen.getByRole('button', { name: 'Remove ' + endpoint }).click())
+    expect(removeRayToken).not.toHaveBeenCalled()
+    await act(async () =>
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Remove' }).click()
+    )
+    expect(removeRayToken).toHaveBeenCalledExactlyOnceWith(endpoint)
+    expect(screen.getByText('No saved tokens.')).toBeTruthy()
+    listRayTokens.mockClear()
+    document.documentElement.setAttribute(WEB_CALLER_LOCATION_ATTRIBUTE, 'remote')
+    try {
+      await act(async () => root.render(<CredentialsPanel {...props} view={{ kind: 'list' }} />))
+      expect(screen.queryByText('Ray Jobs')).toBeNull()
+      await act(async () =>
+        root.render(<CredentialsPanel {...props} view={{ kind: 'service', serviceId: 'ray' }} />)
+      )
+      expect(screen.getByText('Desktop only')).toBeTruthy()
+      expect(listRayTokens).not.toHaveBeenCalled()
+    } finally {
+      document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
+    }
   })
 
   it('keeps credential drafts isolated between service forms', async () => {

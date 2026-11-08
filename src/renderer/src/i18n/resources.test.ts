@@ -2920,8 +2920,8 @@ describe('Russian catalog quality', () => {
     ['{{count}} more messages_many', 'Ещё {{count}} сообщений'],
     ['{{count}} more messages_other', 'Ещё {{count}} сообщения'],
     [
-      'Run jobs on a remote SSH host, or manage hosts.',
-      'Выполнять задания на удалённом узле по SSH или управлять узлами.'
+      'This removes the target from Compute settings and all sessions.',
+      'Цель будет удалена из настроек вычислений и из всех сеансов.'
     ],
     ['Enable {{name}}', 'Включить {{name}}'],
     ['Disable {{name}}', 'Отключить {{name}}'],

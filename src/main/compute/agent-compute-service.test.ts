@@ -37,6 +37,10 @@ const createHarness = (
   onFinalJobObserved = vi.fn(async () => 'suppressed' as const)
 ): AgentComputeHarness => {
   const raw = {
+    listKubernetesTargets: vi.fn(async () => []),
+    listHostedTargets: vi.fn(async () => []),
+    listRayTargets: vi.fn(async () => []),
+    listModalTargets: vi.fn(async () => []),
     list: vi.fn(async () => [host('ssh:available'), host('ssh:selected'), host('ssh:hidden')]),
     getDetails: vi.fn(async () => ({ doc: '', probeResult: undefined })),
     appendDetails: vi.fn(async () => undefined),
@@ -72,6 +76,35 @@ const createHarness = (
 }
 
 describe('AgentComputeService', () => {
+  it('lists enabled targets from each catalog with the correct mode and session role', async () => {
+    const uuid = '205e1449-7f3c-46b4-b218-5ed529e9e9ba'
+    const catalogs = [
+      ['kubernetes', 'listKubernetesTargets', 'kubernetes'],
+      ['hf-jobs', 'listHostedTargets', 'hugging_face_jobs'],
+      ['ray', 'listRayTargets', 'ray_jobs'],
+      ['modal', 'listModalTargets', 'modal_sandbox']
+    ] as const
+    const enabled = catalogs.map(([prefix]) => prefix + ':' + uuid)
+    const { raw, service } = createHarness({ enabled, selected: [enabled[1]] })
+    for (const [index, [prefix, method]] of catalogs.entries()) {
+      raw[method].mockResolvedValue([
+        { providerId: enabled[index], displayName: prefix, privateConfig: 'secret' },
+        { providerId: prefix + ':hidden', displayName: 'hidden' }
+      ])
+    }
+    expect(await service.listHosts('session')).toEqual(
+      catalogs.map(([prefix, , mode], i) => ({
+        provider_id: enabled[i],
+        display_name: prefix,
+        shape: 'bridge_runner',
+        execution_mode: mode,
+        status: 'not_probed',
+        role: i === 1 ? 'selected' : 'available'
+      }))
+    )
+    expect(await service.list('session')).toEqual([])
+  })
+
   it('returns only enabled hosts and projects selected or available roles', async () => {
     const { service } = createHarness()
 
@@ -83,6 +116,34 @@ describe('AgentComputeService', () => {
       expect.objectContaining({ providerId: 'ssh:available' }),
       expect.objectContaining({ providerId: 'ssh:selected' })
     ])
+  })
+
+  it('directs external target details to job submission only after session admission', async () => {
+    const providerId = 'ray:205e1449-7f3c-46b4-b218-5ed529e9e9ba'
+    const { raw, registry, service } = createHarness({ enabled: [providerId], selected: [] })
+    raw.listRayTargets.mockResolvedValue([{ providerId }])
+    const note = { text: 'note', oldText: '', author: 'agent' as const }
+    for (const operation of [
+      () => service.getDetails('session', providerId),
+      () => service.appendDetails('session', providerId, note),
+      () => service.replaceDetails('session', providerId, note)
+    ]) {
+      await expect(operation()).rejects.toThrow(/SSH.*submitJob/)
+    }
+    expect(raw.getDetails).not.toHaveBeenCalled()
+    expect(raw.appendDetails).not.toHaveBeenCalled()
+    expect(raw.replaceDetails).not.toHaveBeenCalled()
+
+    raw.listRayTargets.mockResolvedValue([])
+    await expect(service.getDetails('session', providerId)).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+    registry.getEnabled.mockReturnValue([])
+    raw.listRayTargets.mockClear()
+    await expect(service.getDetails('session', providerId)).rejects.toMatchObject({
+      code: 'host_unavailable'
+    })
+    expect(raw.listRayTargets).not.toHaveBeenCalled()
   })
 
   it('reports a successful Probe as historical evidence rather than a live connection', async () => {

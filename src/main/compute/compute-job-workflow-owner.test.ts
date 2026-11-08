@@ -16,7 +16,13 @@ import type {
 import { writeArtifactFileForCurrentRun } from '../artifacts/mcp-server'
 import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { decodeDataPath } from '../storage/data-path'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
+import * as modalAccess from './modal-sdk'
+import * as rayAccess from './ray-shared-outputs'
+import * as hostedAccess from './hugging-face-job-access'
+import * as kubeAccess from './kubernetes-kubeconfig'
+import * as evidence from '../notebook/working-file-observer'
+import { createHash } from 'node:crypto'
+import { ComputeApprovalBroker } from './compute-approval-broker'
 import {
   ComputeJobWorkflowOwner,
   createComputeArtifactResolver,
@@ -251,6 +257,186 @@ const makeJobRepo = (
 }
 
 describe('ComputeJobWorkflowOwner.submitJob', () => {
+  it('requires fresh approval of each external target and its frozen inputs within one session', async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'modal-approval-'))
+    const config = {
+      id: 'target',
+      providerId: 'modal:target',
+      displayName: 'Test Modal',
+      environmentName: 'testing',
+      appName: 'research',
+      image: 'python:3.12',
+      cpus: 1,
+      memoryMiB: 512,
+      gpu: 'L4'
+    }
+    const localInput = join(storageRoot, 'input.csv')
+    await writeFile(localInput, 'original')
+    const freeze = vi.spyOn(evidence, 'beginComputeJobFileEvidence')
+    const access = vi
+      .spyOn(modalAccess, 'inspectModalTarget')
+      .mockResolvedValue({ appId: 'ap-123' })
+    const ray = vi
+      .spyOn(rayAccess, 'inspectRayDashboard')
+      .mockResolvedValue({ sessionName: 'lab-session', rayVersion: '2.52' })
+    const hosted = vi
+      .spyOn(hostedAccess, 'getHuggingFaceJobAccess')
+      .mockResolvedValue({ account: 'payer', rateMicroUsdPerMinute: 17, token: 'synthetic-secret' })
+    const kube = vi.spyOn(kubeAccess, 'resolveKubernetesJobTarget').mockResolvedValue({
+      context: 'lab',
+      endpoint: 'https://cluster.example',
+      namespace: 'ns',
+      image: 'worker'
+    })
+    try {
+      const { repo: hostRepo } = makeRepo()
+      hostRepo.getModalTarget = vi.fn().mockResolvedValue(config)
+      hostRepo.getKubernetesTarget = vi.fn().mockResolvedValue({
+        providerId: 'kubernetes:target',
+        id: 'kube',
+        displayName: 'Kubernetes',
+        context: 'lab',
+        namespace: 'ns',
+        image: 'worker',
+        transferImage: 'files',
+        sizeMiB: 32
+      })
+      hostRepo.getRayTarget = vi.fn().mockResolvedValue({
+        providerId: 'ray:target',
+        id: 'ray',
+        displayName: 'Ray',
+        endpoint: 'http://127.0.0.1:8265',
+        sharedRoot: storageRoot,
+        remoteRoot: '/shared',
+        cpus: 1,
+        gpus: 0
+      })
+      hostRepo.getHostedTarget = vi.fn().mockResolvedValue({
+        providerId: 'hf-jobs:target',
+        id: 'hosted',
+        displayName: 'HF',
+        namespace: 'lab',
+        flavor: 'cpu-basic',
+        bucket: 'lab/private',
+        image: 'worker',
+        timeoutSeconds: 30
+      })
+      const { repo: jobRepo } = makeJobRepo()
+      jobRepo.createApprovedModalJob = vi.fn()
+      const broadcast = vi.fn((request: { id: string }) => {
+        void writeFile(localInput, 'changed while dialog open').then(() =>
+          approval.respond(request.id, 'deny')
+        )
+      })
+      const approval = new ComputeApprovalBroker({
+        generateId: () => 'approval',
+        broadcast,
+        checkProjectGrant: async () => true
+      })
+      const runner = makeFakeRunner({
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+        truncated: false,
+        timedOut: false
+      })
+      const workflow = makeOwner(
+        runner,
+        hostRepo,
+        approval,
+        jobRepo,
+        undefined,
+        undefined,
+        storageRoot
+      )
+      await expect(
+        workflow.submitJob(
+          config.providerId,
+          'test',
+          'true',
+          { timeoutSeconds: 86401 },
+          { sessionId: 's1', projectId: 'p1' }
+        )
+      ).rejects.toThrow('24 hours')
+      expect(access).not.toHaveBeenCalled()
+      const cases = [
+        {
+          providerId: config.providerId,
+          mode: 'modal_sandbox',
+          field: 'modal',
+          timeout: 14400,
+          details: { appId: 'ap-123', appName: 'research', gpu: 'L4' }
+        },
+        {
+          providerId: 'kubernetes:target',
+          mode: 'kubernetes',
+          field: 'kubernetes',
+          timeout: 86400,
+          details: { namespace: 'ns', endpoint: 'https://cluster.example', transferImage: 'files' }
+        },
+        {
+          providerId: 'hf-jobs:target',
+          mode: 'hugging_face_jobs',
+          field: 'hosted',
+          timeout: 30,
+          details: { namespace: 'lab', bucket: 'lab/private', rateMicroUsdPerMinute: 17 }
+        },
+        {
+          providerId: 'ray:target',
+          mode: 'ray_jobs',
+          field: 'ray',
+          timeout: 86400,
+          details: { sessionName: 'lab-session', remoteRoot: '/shared' }
+        }
+      ]
+      for (const [index, row] of cases.entries()) {
+        await writeFile(localInput, 'original')
+        await expect(
+          workflow.submitJob(
+            row.providerId,
+            'trial',
+            'true',
+            {
+              outputManifest: '["result.csv"]',
+              workspaceCwd: storageRoot,
+              inputs: [{ src: 'input.csv', dst_filename: 'data.csv' }]
+            },
+            { sessionId: 's1', projectId: 'p1' }
+          )
+        ).rejects.toThrow('denied')
+        const payload = broadcast.mock.calls[index][0]
+        expect(payload).toMatchObject({
+          provider_id: row.providerId,
+          execution_mode: row.mode,
+          timeout_seconds: row.timeout,
+          [row.field]: {
+            ...row.details,
+            outputManifest: '["result.csv"]',
+            inputFiles: [
+              {
+                source: 'input.csv',
+                destination: 'data.csv',
+                sizeBytes: 8,
+                sha256: createHash('sha256').update('original').digest('hex')
+              }
+            ]
+          }
+        })
+        expect(JSON.stringify(payload)).not.toContain('synthetic-secret')
+        const [generation] = await freeze.mock.results[index].value
+        await expect(readFile(generation.frozenPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      }
+      expect(jobRepo.createApprovedModalJob).not.toHaveBeenCalled()
+      expect(runner.run).not.toHaveBeenCalled()
+    } finally {
+      ray.mockRestore()
+      hosted.mockRestore()
+      kube.mockRestore()
+      freeze.mockRestore()
+      access.mockRestore()
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  })
   it('guides Direct SSH users who submit a Slurm directive before approval', async () => {
     const runner = makeFakeRunner({
       exitCode: 0,

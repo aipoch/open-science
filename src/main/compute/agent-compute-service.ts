@@ -1,3 +1,4 @@
+import { externalComputeMode, type ExternalComputeTarget } from '../../shared/compute'
 import type {
   ComputeHost,
   ComputeHostDetails,
@@ -37,6 +38,10 @@ type AgentComputeLifecycle = Readonly<{
 
 type RawComputeService = Pick<
   ComputeService,
+  | 'listKubernetesTargets'
+  | 'listHostedTargets'
+  | 'listRayTargets'
+  | 'listModalTargets'
   | 'list'
   | 'getDetails'
   | 'appendDetails'
@@ -64,10 +69,25 @@ export class AgentComputeService {
     return this.registry.getEnabled(sessionId)
   }
 
+  private targets(
+    mode: NonNullable<ReturnType<typeof externalComputeMode>>
+  ): Promise<ExternalComputeTarget[]> {
+    switch (mode) {
+      case 'kubernetes':
+        return this.compute.listKubernetesTargets()
+      case 'hugging_face_jobs':
+        return this.compute.listHostedTargets()
+      case 'ray_jobs':
+        return this.compute.listRayTargets()
+      case 'modal_sandbox':
+        return this.compute.listModalTargets()
+    }
+  }
   private async requireEnabled(sessionId: string, providerId: string): Promise<void> {
     if (!this.enabledIds(sessionId).includes(providerId)) throw new ComputeHostUnavailableError()
     // A stale Session projection must not turn a removed global host into a distinguishable error.
-    const configured = await this.compute.list()
+    const mode = externalComputeMode(providerId)
+    const configured = mode ? await this.targets(mode) : await this.compute.list()
     if (!configured.some((host) => host.providerId === providerId)) {
       throw new ComputeHostUnavailableError()
     }
@@ -108,9 +128,27 @@ export class AgentComputeService {
       this.registry.getSelected(sessionId).filter((providerId) => enabled.has(providerId))
     )
     const hosts = await this.list(sessionId)
-    return hosts.map((host) => ({
-      ...computeHostSummary(host),
-      role: selected.has(host.providerId) ? 'selected' : 'available'
+    const modes = new Set(
+      [...enabled].map(externalComputeMode).filter((mode) => mode !== undefined)
+    )
+    const targets = (
+      await Promise.all(
+        [...modes].map(async (mode) =>
+          (await this.targets(mode))
+            .filter((t) => enabled.has(t.providerId))
+            .map((t) => ({
+              provider_id: t.providerId,
+              display_name: t.displayName,
+              shape: 'bridge_runner' as const,
+              execution_mode: mode,
+              status: 'not_probed' as const
+            }))
+        )
+      )
+    ).flat()
+    return [...hosts.map(computeHostSummary), ...targets].map((host) => ({
+      ...host,
+      role: selected.has(host.provider_id) ? 'selected' : 'available'
     }))
   }
 
@@ -127,8 +165,17 @@ export class AgentComputeService {
     return this.enabledIds(sessionId)
   }
 
-  async getDetails(sessionId: string, providerId: string): Promise<ComputeHostDetails> {
+  private async requireDetailsHost(sessionId: string, providerId: string): Promise<void> {
     await this.requireEnabled(sessionId, providerId)
+    if (externalComputeMode(providerId)) {
+      throw new Error(
+        'Host details are available only for SSH hosts. Use host.compute.create(providerId).submitJob() for this target.'
+      )
+    }
+  }
+
+  async getDetails(sessionId: string, providerId: string): Promise<ComputeHostDetails> {
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.getDetails(providerId)
   }
 
@@ -137,7 +184,7 @@ export class AgentComputeService {
     providerId: string,
     request: { text: string; author: DetailsAuthor }
   ): Promise<void> {
-    await this.requireEnabled(sessionId, providerId)
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.appendDetails(providerId, request)
   }
 
@@ -146,7 +193,7 @@ export class AgentComputeService {
     providerId: string,
     request: { text: string; oldText: string; author: DetailsAuthor }
   ): Promise<void> {
-    await this.requireEnabled(sessionId, providerId)
+    await this.requireDetailsHost(sessionId, providerId)
     return this.compute.replaceDetails(providerId, request)
   }
 
@@ -191,6 +238,10 @@ export class AgentComputeService {
     signal?: AbortSignal
   ): Promise<SubmitJobResult> {
     await this.requireEnabled(context.sessionId, providerId)
+    if (externalComputeMode(providerId))
+      return this.compute.submitJob(providerId, intent, command, options, context, signal, () =>
+        this.requireEnabled(context.sessionId, providerId)
+      )
     return this.compute.submitJob(providerId, intent, command, options, context, signal)
   }
 

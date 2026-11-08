@@ -194,10 +194,11 @@ describe('database JSON constraints migration', () => {
           '0052_literature_personal_note_search',
           '0053_literature_doi_identity',
           '0054_slurm_job_reliability',
-          '0055_session_discussion_parent'
+          '0055_session_discussion_parent',
+          '0056_compute_kubernetes_workspace'
         ],
         from: '0007_notification_attention_metadata',
-        to: '0055_session_discussion_parent'
+        to: '0056_compute_kubernetes_workspace'
       })
       await expect(access(`${databasePath}.before-${MIGRATION_ID}.backup`)).resolves.toBeUndefined()
       await expect(

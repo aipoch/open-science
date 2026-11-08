@@ -8,7 +8,7 @@
 // also marks the trigger as non-default. Picking a
 // level lives in a submenu. Specialist and Compute are hover-expanded submenus below
 // auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
-// the SSH host list and "Manage compute…" together. Both read from global stores.
+// the compute target list and "Manage compute…" together. Both read from global stores.
 
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
@@ -56,7 +56,6 @@ import {
   DropdownMenu,
   DropdownMenuGroup,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -104,7 +103,7 @@ type ComposerAgentControlsMenuProps = {
   onDelegationChange?: (enabled: boolean) => void
   onRevokeGrant?: (categoryKey: string) => void
   onClearGrants?: () => void
-  // Compute hosts: the SSH section is appended below auto-review. Optional so the menu still
+  // Compute hosts: the target list is appended below auto-review. Optional so the menu still
   // renders without a compute binding (e.g. in isolation tests); the composer passes both.
   enabledComputeHosts?: string[]
   selectedComputeHosts?: string[]
@@ -253,11 +252,21 @@ const ComposerAgentControlsMenu = ({
   const loadHosts = useComputeStore((state) => state.loadHosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
 
-  const sshHosts = hosts.filter((host) => host.sshAlias)
+  const kubernetesTargets = useComputeStore((state) => state.kubernetesTargets)
+  const hostedTargets = useComputeStore((state) => state.hostedTargets)
+  const rayTargets = useComputeStore((state) => state.rayTargets)
+  const modalTargets = useComputeStore((state) => state.modalTargets)
+  const computeTargets = [
+    ...hosts.filter((host) => host.sshAlias),
+    ...kubernetesTargets,
+    ...hostedTargets,
+    ...rayTargets,
+    ...modalTargets
+  ]
   const selectedHostNames =
     selectedComputeHosts?.map(
       (providerId) =>
-        hosts.find((host) => host.providerId === providerId)?.displayName ?? providerId
+        computeTargets.find((host) => host.providerId === providerId)?.displayName ?? providerId
     ) ?? []
   const additionalSelectedHosts = Math.max(0, selectedHostNames.length - 1)
   const computeStatusLabel =
@@ -265,7 +274,7 @@ const ComposerAgentControlsMenu = ({
     (loadError
       ? t('Unavailable')
       : isLoaded
-        ? t('{{count}} hosts', { count: sshHosts.length, defaultValue_one: '{{count}} host' })
+        ? t('{{count}} hosts', { count: computeTargets.length, defaultValue_one: '{{count}} host' })
         : t('Loading…'))
   const computeTooltipDescription =
     selectedHostNames.length === 1
@@ -274,7 +283,7 @@ const ComposerAgentControlsMenu = ({
         ? t('Compute execution targets: {{names}}', { names: selectedHostNames.join(', ') })
         : loadError
           ? t('Unavailable')
-          : t('Run jobs on a remote SSH host, or manage hosts.')
+          : t('Compute')
 
   useEffect(() => {
     if (
@@ -694,101 +703,95 @@ const ComposerAgentControlsMenu = ({
                   collisionPadding={8}
                   className="max-h-[calc(100dvh-1rem)] w-72 max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
                 >
-                  {sshHosts.length > 0 ? (
-                    <>
-                      <DropdownMenuLabel className="text-[10.5px] font-normal uppercase tracking-wide text-text-300">
-                        {t('SSH')}
-                      </DropdownMenuLabel>
-                      <DropdownMenuGroup>
-                        {sshHosts.map((host) => {
-                          const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
-                          const isSelected =
-                            selectedComputeHosts?.includes(host.providerId) ?? false
-                          return (
-                            <div
-                              key={host.providerId}
-                              className="flex min-h-8 items-center gap-0.5 rounded-lg px-2 py-0.5"
+                  {computeTargets.length > 0 ? (
+                    <DropdownMenuGroup>
+                      {computeTargets.map((host) => {
+                        const isEnabled = enabledComputeHosts?.includes(host.providerId) ?? false
+                        const isSelected = selectedComputeHosts?.includes(host.providerId) ?? false
+                        return (
+                          <div
+                            key={host.providerId}
+                            className="flex min-h-8 items-center gap-0.5 rounded-lg px-2 py-0.5"
+                          >
+                            <span className="min-w-0 flex-1 truncate text-[13px] text-text-100">
+                              {host.displayName}
+                            </span>
+                            <DropdownMenuItem
+                              disabled={readOnly}
+                              role="menuitemcheckbox"
+                              aria-checked={isEnabled}
+                              aria-label={
+                                isEnabled
+                                  ? t('Disable {{name}}', { name: host.displayName })
+                                  : t('Enable {{name}}', { name: host.displayName })
+                              }
+                              data-testid={`compute-host-enabled-${host.providerId}`}
+                              onSelect={(event) => {
+                                event.preventDefault()
+                                onComputeHostEnabledChange?.(host.providerId, !isEnabled)
+                              }}
+                              className="min-h-6 shrink-0 rounded-md px-1 py-0.5"
                             >
-                              <span className="min-w-0 flex-1 truncate text-[13px] text-text-100">
-                                {host.displayName}
-                              </span>
-                              <DropdownMenuItem
-                                disabled={readOnly}
-                                role="menuitemcheckbox"
-                                aria-checked={isEnabled}
-                                aria-label={
-                                  isEnabled
-                                    ? t('Disable {{name}}', { name: host.displayName })
-                                    : t('Enable {{name}}', { name: host.displayName })
-                                }
-                                data-testid={`compute-host-enabled-${host.providerId}`}
-                                onSelect={(event) => {
-                                  event.preventDefault()
-                                  onComputeHostEnabledChange?.(host.providerId, !isEnabled)
-                                }}
-                                className="min-h-6 shrink-0 rounded-md px-1 py-0.5"
-                              >
-                                <Switch
-                                  size="sm"
-                                  checked={isEnabled}
-                                  tabIndex={-1}
-                                  aria-hidden="true"
-                                  className="pointer-events-none"
-                                />
-                              </DropdownMenuItem>
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <DropdownMenuItem
-                                      disabled={readOnly}
-                                      role="menuitemcheckbox"
-                                      aria-checked={isSelected}
-                                      aria-label={
-                                        isSelected
-                                          ? t('Remove {{name}} from run targets', {
-                                              name: host.displayName
-                                            })
-                                          : t('Add {{name}} to run targets', {
-                                              name: host.displayName
-                                            })
-                                      }
-                                      data-testid={`compute-host-selected-${host.providerId}`}
-                                      onSelect={(event) => {
-                                        event.preventDefault()
-                                        onComputeHostSelectedChange?.(host.providerId, !isSelected)
-                                      }}
-                                      className={cn(
-                                        'size-6 min-h-6 shrink-0 justify-center rounded-md p-0',
-                                        isSelected
-                                          ? 'bg-primary/10 text-primary hover:bg-primary/15 data-[highlighted]:bg-primary/15 data-[highlighted]:text-primary'
-                                          : 'text-text-300'
-                                      )}
-                                    >
-                                      <ArrowRight
-                                        className="size-2.5"
-                                        strokeWidth={2.25}
-                                        aria-hidden="true"
-                                      />
-                                    </DropdownMenuItem>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="text-[11px]">
-                                    {isSelected
-                                      ? t('Remove from target hosts')
-                                      : t('Select as target host to run jobs')}
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            </div>
-                          )
-                        })}
-                      </DropdownMenuGroup>
-                    </>
+                              <Switch
+                                size="sm"
+                                checked={isEnabled}
+                                tabIndex={-1}
+                                aria-hidden="true"
+                                className="pointer-events-none"
+                              />
+                            </DropdownMenuItem>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <DropdownMenuItem
+                                    disabled={readOnly}
+                                    role="menuitemcheckbox"
+                                    aria-checked={isSelected}
+                                    aria-label={
+                                      isSelected
+                                        ? t('Remove {{name}} from run targets', {
+                                            name: host.displayName
+                                          })
+                                        : t('Add {{name}} to run targets', {
+                                            name: host.displayName
+                                          })
+                                    }
+                                    data-testid={`compute-host-selected-${host.providerId}`}
+                                    onSelect={(event) => {
+                                      event.preventDefault()
+                                      onComputeHostSelectedChange?.(host.providerId, !isSelected)
+                                    }}
+                                    className={cn(
+                                      'size-6 min-h-6 shrink-0 justify-center rounded-md p-0',
+                                      isSelected
+                                        ? 'bg-primary/10 text-primary hover:bg-primary/15 data-[highlighted]:bg-primary/15 data-[highlighted]:text-primary'
+                                        : 'text-text-300'
+                                    )}
+                                  >
+                                    <ArrowRight
+                                      className="size-2.5"
+                                      strokeWidth={2.25}
+                                      aria-hidden="true"
+                                    />
+                                  </DropdownMenuItem>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" className="text-[11px]">
+                                  {isSelected
+                                    ? t('Remove from target hosts')
+                                    : t('Select as target host to run jobs')}
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
+                        )
+                      })}
+                    </DropdownMenuGroup>
                   ) : (
                     <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
                       {loadError
                         ? t('Unavailable')
                         : isLoaded
-                          ? t('No SSH hosts registered')
+                          ? t('No compute targets')
                           : t('Loading…')}
                     </DropdownMenuItem>
                   )}

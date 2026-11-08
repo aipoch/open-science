@@ -1,3 +1,4 @@
+import { externalComputeMode } from '../../shared/compute'
 import { ComputeConnectionError } from '@aipoch/compute/node'
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
@@ -42,7 +43,10 @@ const deleteComputeHost = async (
   let committed = false
   try {
     const host = await repository.get?.(providerId)
-    if (host?.authentication?.mode === 'password' && !options.allowPasswordCredentialDeletion) {
+    if (
+      (externalComputeMode(providerId) || host?.authentication?.mode === 'password') &&
+      !options.allowPasswordCredentialDeletion
+    ) {
       throw new Error('Channel only available from the local app: compute:delete')
     }
     if (jobRepository && (await jobRepository.hasDeletionBlockingJobsForProvider(providerId))) {

@@ -12,12 +12,12 @@ import { createOfficePreviewRuntimeUrl } from './office-preview-runtime-protocol
 import {
   isOfficePreviewRuntimeState,
   isOfficePreviewOpenRequest,
+  getOfficeManagedPreviewRequest,
   type OfficePreviewOpenRequest,
   type OfficePreviewOpenResult,
   type OfficePreviewAttachResult,
   type OfficePreviewRuntimeState
 } from '../../shared/office-preview'
-import type { AcquireManagedPreviewRequest } from '../../shared/preview-resources'
 import { DesktopCapabilityUnavailable } from '../desktop-interaction'
 import type { DesktopNativeOperation } from '../desktop-native-contract'
 
@@ -76,19 +76,10 @@ export function createOfficePreviewCommands(
     number,
     { clientId: string; lease: ApplicationCallerLease; release(): void }
   >()
-  const toRequest = (request: OfficePreviewOpenRequest): AcquireManagedPreviewRequest =>
-    request.source === 'notebook-input' || request.source === 'literature'
-      ? { source: request.source, path: request.path }
-      : {
-          source: request.source,
-          projectId: request.projectId,
-          fileId: request.fileId,
-          ...(request.versionId ? { versionId: request.versionId } : {})
-        }
   const supervisor = new OfficePreviewSupervisor({
-    inspectResource: (request) => resources.inspect(toRequest(request)),
+    inspectResource: (request) => resources.inspect(getOfficeManagedPreviewRequest(request)),
     acquireResource: (ownerId, request, snapshot, maxBytes) =>
-      resources.acquire(ownerId, toRequest(request), { snapshot, maxBytes }),
+      resources.acquire(ownerId, getOfficeManagedPreviewRequest(request), { snapshot, maxBytes }),
     releaseResource: (ownerId, resourceId) => {
       if (callers.has(ownerId)) resources.release(ownerId, { resourceId })
       else resources.releaseOwner(ownerId)

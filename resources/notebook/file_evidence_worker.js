@@ -924,27 +924,28 @@ const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
   return activityBlobPath
 }
 
-const releaseUnusedInitialBlobs = (initialRelations, retainedGenerations, blobPool, request) => {
-  const retainedChecksums = new Set(retainedGenerations.map((generation) => generation.checksum))
-  const unused = new Map(
-    initialRelations.flatMap(({ generation }) =>
-      generation && !retainedChecksums.has(generation.checksum)
-        ? [[generation.checksum, generation]]
-        : []
-    )
-  )
-  if (unused.size === 0) return
+const releaseUnusedActivityBlobs = (retainedGenerations, blobPool, receipt) => {
+  if (!entryExists(ACTIVITY_BLOBS_DIRECTORY)) return
   const directoryIdentity = entryIdentity(ACTIVITY_BLOBS_DIRECTORY)
   if (!directoryIdentity) throw new Error('File-evidence Activity blob directory is unsafe.')
-  for (const generation of unused.values()) {
+  const retained = new Set()
+  for (const generation of retainedGenerations) {
     const name = `sha256-${generation.checksum}`
     if (
       !BLOB_NAME.test(name) ||
       generation.contentStorageKey !==
-        `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${name}`
-    ) {
-      throw new Error('Unused file-evidence generation has an invalid storage key.')
-    }
+        `${receipt.storageKeyPrefix}/${receipt.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${name}`
+    )
+      throw new Error('Retained file-evidence generation has an invalid storage key.')
+    retained.add(name)
+  }
+  // Failed publication attempts can leave output generations as well as initial input generations.
+  // Unlink only canonical CAS links inside this Activity, after checking both filesystem identities.
+  const unused = readdirSync(ACTIVITY_BLOBS_DIRECTORY).filter(
+    (name) => BLOB_NAME.test(name) && !retained.has(name)
+  )
+  if (!unused.length) return
+  for (const name of unused) {
     const path = join(ACTIVITY_BLOBS_DIRECTORY, name)
     const metadata = lstatSync(path)
     const pooled = lstatSync(join(blobPool.path, name))
@@ -1611,6 +1612,125 @@ const ensureCapture = (request) => {
   return { ok: true, captureReady: true, initialized: true }
 }
 
+const readCapture = (receipt) => {
+  if (!lstatSync(CAPTURE_FILE).isFile()) throw new Error('Invalid file-evidence capture type.')
+  const captureBytes = readRegularFile(CAPTURE_FILE, MAX_INTERNAL_JSON_BYTES)
+  if (createHash('sha256').update(captureBytes).digest('hex') !== receipt.captureChecksum) {
+    throw new Error('File-evidence initial capture checksum mismatch.')
+  }
+  const capture = JSON.parse(captureBytes.toString('utf8'))
+  if (
+    capture.schemaVersion !== 1 ||
+    capture.activityId !== receipt.activityId ||
+    capture.activityKind !== receipt.activityKind ||
+    capture.parentActivityId !== receipt.parentActivityId ||
+    !Array.isArray(capture.relations)
+  ) {
+    throw new Error('Invalid file-evidence initial capture.')
+  }
+
+  return capture
+}
+
+const readPublication = (receipt) => {
+  if (!lstatSync('evidence.json').isFile()) throw new Error('Invalid file-evidence sidecar type.')
+  const serialized = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
+  const sidecar = JSON.parse(serialized.toString('utf8'))
+  if (
+    sidecar.schemaVersion !== 1 ||
+    sidecar.activityId !== receipt.activityId ||
+    sidecar.activityKind !== receipt.activityKind ||
+    sidecar.parentActivityId !== receipt.parentActivityId ||
+    sidecar.evidenceId !== receipt.evidenceId ||
+    !Array.isArray(sidecar.relations) ||
+    !Array.isArray(sidecar.scientificOutputs) ||
+    !Array.isArray(sidecar.reasonCodes)
+  ) {
+    throw new Error('Invalid published file-evidence sidecar.')
+  }
+
+  return { serialized, sidecar }
+}
+
+const finishPublished = (request, receipt, blobPool, generations = []) => {
+  const expected = receipt.finalIdentity ?? receipt.stagingIdentity
+  if (!sameIdentity(entryIdentity(receipt.finalName), expected))
+    throw new Error('Published file-evidence directory identity mismatch.')
+  process.chdir(receipt.finalName)
+  let result
+  try {
+    assertBoundRoot(expected)
+    verifyOwnershipMarker('.', receipt.ownershipToken, 'File-evidence Activity')
+    const { serialized, sidecar } = readPublication(receipt)
+    if (receipt.phase === 'capturing' && entryExists(CAPTURE_FILE)) {
+      readCapture(receipt)
+      releaseUnusedActivityBlobs(
+        [
+          ...(sidecar.predecessorGenerations ?? []),
+          ...sidecar.relations.flatMap(({ generation }) => (generation ? [generation] : []))
+        ],
+        blobPool,
+        receipt
+      )
+      rmSync(CAPTURE_FILE)
+      syncDirectory()
+    }
+    result = {
+      ok: true,
+      generations,
+      fileEvidence: {
+        schemaVersion: 1,
+        activityId: request.activityId,
+        activityKind: request.activityKind,
+        ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
+        evidenceId: request.evidenceId,
+        state: sidecar.state,
+        checksum: createHash('sha256').update(serialized).digest('hex'),
+        storageKey: `${request.storageKeyPrefix}/${receipt.finalName}/evidence.json`,
+        relationCount: sidecar.relations.length,
+        generationCount: sidecar.relations.filter((relation) => relation.generation).length,
+        scientificOutputCount: sidecar.scientificOutputs.length,
+        initialViewState: sidecar.initialViewState,
+        managedRootsFinalState: sidecar.managedRootsFinalState,
+        scientificOutputAnalysis:
+          sidecar.state === 'available'
+            ? 'complete'
+            : sidecar.managedRootsFinalState === 'unavailable'
+              ? 'unavailable'
+              : 'partial',
+        fileReads: sidecar.fileReads,
+        externalPaths: sidecar.externalPaths,
+        writerAttribution: sidecar.writerAttribution,
+        reasonCodes: sidecar.reasonCodes
+      }
+    }
+  } finally {
+    process.chdir('..')
+    assertBoundRoot(request.expectedRootIdentity)
+  }
+  if (receipt.phase === 'capturing') {
+    if (!sameIdentity(entryIdentity(receipt.finalName), expected))
+      throw new Error('Published file-evidence directory identity mismatch.')
+    replaceJson(receipt.receiptName, { ...receipt, phase: 'published', finalIdentity: expected })
+  }
+  return result
+}
+
+const captureMoved = (receipt) =>
+  receipt.phase === 'capturing' &&
+  !entryExists(receipt.stagingName) &&
+  sameIdentity(entryIdentity(receipt.finalName), receipt.stagingIdentity)
+
+const moveCapture = (request, receipt) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  if (!sameIdentity(entryIdentity(receipt.stagingName), receipt.stagingIdentity))
+    throw new Error('File-evidence staging directory identity changed before rename.')
+  verifyOwnershipMarker(receipt.stagingName, receipt.ownershipToken, 'File-evidence staging')
+  if (entryExists(receipt.finalName)) throw new Error('File-evidence Activity already exists.')
+  renameSync(receipt.stagingName, receipt.finalName)
+  syncDirectory()
+}
+
 const persist = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
@@ -1631,63 +1751,10 @@ const persist = (request) => {
   ) {
     throw new Error('File-evidence persistence does not match its recovery receipt.')
   }
-  if (receipt.phase === 'published') {
-    const expectedIdentity = receipt.finalIdentity ?? receipt.stagingIdentity
-    const actualIdentity = entryIdentity(receipt.finalName)
-    if (!actualIdentity || !expectedIdentity || !sameIdentity(actualIdentity, expectedIdentity)) {
-      throw new Error('Published file-evidence directory identity mismatch.')
-    }
-    verifyOwnershipMarker(receipt.finalName, receipt.ownershipToken, 'File-evidence Activity')
-    process.chdir(receipt.finalName)
-    try {
-      const serialized = readRegularFile('evidence.json', MAX_INTERNAL_JSON_BYTES)
-      const sidecar = JSON.parse(serialized.toString('utf8'))
-      if (
-        sidecar.schemaVersion !== 1 ||
-        sidecar.activityId !== request.activityId ||
-        sidecar.activityKind !== request.activityKind ||
-        sidecar.parentActivityId !== request.parentActivityId ||
-        sidecar.evidenceId !== request.evidenceId ||
-        !Array.isArray(sidecar.relations) ||
-        !Array.isArray(sidecar.scientificOutputs) ||
-        !Array.isArray(sidecar.reasonCodes)
-      ) {
-        throw new Error('Invalid published file-evidence sidecar.')
-      }
-      return {
-        ok: true,
-        generations: [],
-        fileEvidence: {
-          schemaVersion: 1,
-          activityId: request.activityId,
-          activityKind: request.activityKind,
-          ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
-          evidenceId: request.evidenceId,
-          state: sidecar.state,
-          checksum: createHash('sha256').update(serialized).digest('hex'),
-          storageKey: `${request.storageKeyPrefix}/${receipt.finalName}/evidence.json`,
-          relationCount: sidecar.relations.length,
-          generationCount: sidecar.relations.filter((relation) => relation.generation).length,
-          scientificOutputCount: sidecar.scientificOutputs.length,
-          initialViewState: sidecar.initialViewState,
-          managedRootsFinalState: sidecar.managedRootsFinalState,
-          scientificOutputAnalysis:
-            sidecar.state === 'available'
-              ? 'complete'
-              : sidecar.managedRootsFinalState === 'unavailable'
-                ? 'unavailable'
-                : 'partial',
-          fileReads: sidecar.fileReads,
-          externalPaths: sidecar.externalPaths,
-          writerAttribution: sidecar.writerAttribution,
-          reasonCodes: sidecar.reasonCodes
-        }
-      }
-    } finally {
-      process.chdir('..')
-      assertBoundRoot(request.expectedRootIdentity)
-    }
+  if (receipt.phase === 'published' || captureMoved(receipt)) {
+    return finishPublished(request, receipt, blobPool)
   }
+  if (entryExists(receipt.finalName)) throw new Error('File-evidence Activity already exists.')
   const stagingIdentity = entryIdentity(receipt.stagingName)
   if (!stagingIdentity || !sameIdentity(stagingIdentity, receipt.stagingIdentity)) {
     throw new Error('File-evidence staging directory identity changed.')
@@ -1698,20 +1765,10 @@ const persist = (request) => {
   }
 
   try {
-    const captureBytes = readRegularFile(CAPTURE_FILE, MAX_INTERNAL_JSON_BYTES)
-    if (createHash('sha256').update(captureBytes).digest('hex') !== receipt.captureChecksum) {
-      throw new Error('File-evidence initial capture checksum mismatch.')
-    }
-    const capture = JSON.parse(captureBytes.toString('utf8'))
-    if (
-      capture.schemaVersion !== 1 ||
-      capture.activityId !== request.activityId ||
-      capture.activityKind !== request.activityKind ||
-      capture.parentActivityId !== request.parentActivityId ||
-      !Array.isArray(capture.relations)
-    ) {
-      throw new Error('Invalid file-evidence initial capture.')
-    }
+    verifyOwnershipMarker('.', receipt.ownershipToken, 'File-evidence staging')
+    // An old unfinished staging directory may contain only a sidecar. It cannot prove that
+    // newly downloaded output still matches, so keep it intact rather than adopting it.
+    const capture = readCapture(receipt)
     const baselineByPath = new Map(
       capture.relations
         .filter((relation) => relation.generation)
@@ -1854,68 +1911,24 @@ const persist = (request) => {
     }
     const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
     if (
+      Buffer.byteLength(serialized) > MAX_INTERNAL_JSON_BYTES ||
       bytesUsed + Buffer.byteLength(serialized) > request.maxActivityBytes ||
       request.availableBytes - newBytesUsed - Buffer.byteLength(serialized) <
         request.diskReserveBytes
     ) {
       throw new Error('File-evidence sidecar exceeds the reserved storage budget.')
     }
-    rmSync(CAPTURE_FILE, { force: true })
-    writeExclusiveFile('evidence.json', serialized)
-    syncDirectory()
-
-    releaseUnusedInitialBlobs(
-      capture.relations,
-      [
-        ...retainedInitialGenerations,
-        ...relations.flatMap(({ generation }) => (generation ? [generation] : []))
-      ],
-      blobPool,
-      request
-    )
-
+    // Preserve the initial capture until the complete directory has moved. Failed renames
+    // can be retried with newly observed outputs, without pruning their predecessors.
+    if (entryExists('evidence.json')) {
+      readPublication(receipt)
+      replaceJson('evidence.json', sidecar)
+    } else {
+      publishExclusiveFile('evidence.json', serialized)
+    }
     process.chdir('..')
-    assertBoundRoot(request.expectedRootIdentity)
-    if (!sameIdentity(entryIdentity(receipt.stagingName), receipt.stagingIdentity)) {
-      throw new Error('File-evidence staging directory identity changed before rename.')
-    }
-    if (existsSync(receipt.finalName)) throw new Error('File-evidence Activity already exists.')
-    renameSync(receipt.stagingName, receipt.finalName)
-    syncDirectory()
-    replaceJson(receipt.receiptName, {
-      ...receipt,
-      phase: 'published',
-      finalIdentity: receipt.stagingIdentity
-    })
-    return {
-      ok: true,
-      generations,
-      fileEvidence: {
-        schemaVersion: 1,
-        activityId: request.activityId,
-        activityKind: request.activityKind,
-        ...(request.parentActivityId ? { parentActivityId: request.parentActivityId } : {}),
-        evidenceId: request.evidenceId,
-        state: sidecar.state,
-        checksum: createHash('sha256').update(serialized).digest('hex'),
-        storageKey: `${request.storageKeyPrefix}/${receipt.finalName}/evidence.json`,
-        relationCount: relations.length,
-        generationCount: relations.filter((relation) => relation.generation).length,
-        scientificOutputCount: request.scientificOutputs.length,
-        initialViewState: sidecar.initialViewState,
-        managedRootsFinalState: sidecar.managedRootsFinalState,
-        scientificOutputAnalysis:
-          evidenceState === 'available'
-            ? 'complete'
-            : request.rootsAvailable
-              ? 'partial'
-              : 'unavailable',
-        fileReads: sidecar.fileReads,
-        externalPaths: sidecar.externalPaths,
-        writerAttribution: sidecar.writerAttribution,
-        reasonCodes
-      }
-    }
+    moveCapture(request, receipt)
+    return finishPublished(request, receipt, blobPool, generations)
   } catch (error) {
     if (sameIdentity(identity(statSync('.')), receipt.stagingIdentity)) process.chdir('..')
     throw error
@@ -1929,7 +1942,7 @@ const recoverPublished = (request) => {
     return { ok: true, recoveredFileEvidence: null }
   }
   const receipt = readReceipt(receiptName)
-  if (receipt.phase !== 'published') {
+  if (receipt.phase !== 'published' && !captureMoved(receipt)) {
     return { ok: true, recoveredFileEvidence: null }
   }
   const result = persist({ ...request, operation: 'persist' })
