@@ -1,5 +1,10 @@
 import { lookup } from 'node:dns/promises'
 import { get } from 'node:https'
+import type { Socket } from 'node:net'
+import { connect as connectTls } from 'node:tls'
+import { aborted } from 'node:util'
+import { runtimeNetwork } from '../runtime-network'
+import { parseSystemProxyRules } from './system-proxy'
 import type { IncomingMessage } from 'node:http'
 import ipaddr from 'ipaddr.js'
 import { parse, type DefaultTreeAdapterTypes } from 'parse5'
@@ -27,39 +32,54 @@ const readResource = async (
   )
     throw new Error('Destination unavailable')
 
-  const response = await new Promise<IncomingMessage>((resolve, reject) => {
-    get(
-      url,
-      {
-        signal,
-        agent: false,
-        headers: { Accept: kind === 'page' ? 'text/html' : 'image/png,image/jpeg,image/webp' },
-        lookup(host, options, callback) {
-          void lookup(host, { all: true }).then(
-            (addresses) => {
-              const first = addresses[0]
-              if (
-                !first ||
-                addresses.some(({ address }) => {
-                  const ip = ipaddr.parse(address)
-                  return (
-                    ip.range() !== 'unicast' ||
-                    /^198\.(18|19)\./.test(address) ||
-                    (ip.kind() === 'ipv6' && !/^[23]/.test(address))
-                  )
-                })
-              ) {
-                callback(new Error('Destination unavailable'), '', 4)
-              } else callback(null, options.all ? addresses : first.address, first.family)
-            },
-            (error: Error) => callback(error, '', 4)
-          )
-        }
-      },
-      resolve
-    ).on('error', reject)
-  })
+  // Pin the address for both direct connections and proxy CONNECT. Preserve the
+  // original hostname for certificate verification and TLS server selection.
+  const [rules, addresses] = await Promise.race([
+    Promise.all([runtimeNetwork().resolveProxy(url.href), lookup(url.hostname, { all: true })]),
+    aborted(signal, url).then((): never => {
+      throw signal.reason
+    })
+  ])
+  signal.throwIfAborted()
+  const target = addresses[0]
+  if (
+    !target ||
+    addresses.some(({ address }) => {
+      const ip = ipaddr.parse(address)
+      return (
+        ip.range() !== 'unicast' ||
+        /^198\.(18|19)\./.test(address) ||
+        (ip.kind() === 'ipv6' && !/^[23]/.test(address))
+      )
+    })
+  )
+    throw new Error('Destination unavailable')
+  const environment = parseSystemProxyRules(rules)
+  const proxy = environment.HTTPS_PROXY ?? environment.ALL_PROXY
+  if (!proxy && !rules.split(';').some((rule) => rule.trim().toUpperCase() === 'DIRECT'))
+    throw new Error('Proxy unavailable')
+  let socket: Socket | undefined
+  if (proxy) {
+    const { tunnelThroughProxy } = await import('@aipoch/notebook-network-sandbox')
+    socket = await tunnelThroughProxy(new URL(proxy), target.address, 443, undefined, signal)
+  }
+  const connection = socket ? { socket } : { host: target.address, port: 443 }
+  let response: IncomingMessage | undefined
   try {
+    response = await new Promise<IncomingMessage>((resolve, reject) => {
+      get(
+        url,
+        {
+          signal,
+          createConnection: () => connectTls({ ...connection, servername: url.hostname }),
+          headers: {
+            Host: url.host,
+            Accept: kind === 'page' ? 'text/html' : 'image/png,image/jpeg,image/webp'
+          }
+        },
+        resolve
+      ).on('error', reject)
+    })
     const status = response.statusCode ?? 0
     if ([301, 302, 303, 307, 308].includes(status) && redirects < 3 && response.headers.location) {
       return readResource(
@@ -89,7 +109,8 @@ const readResource = async (
     }
     return { bytes: Buffer.concat(chunks), mime, url }
   } finally {
-    response.destroy()
+    response?.destroy()
+    socket?.destroy()
   }
 }
 

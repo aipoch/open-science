@@ -1,10 +1,16 @@
 import { EventEmitter } from 'node:events'
-import type { LookupFunction } from 'node:net'
 import { Readable } from 'node:stream'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { readSourceLinkMetadata } from './source-link-metadata'
 
-const { get, lookup } = vi.hoisted(() => ({ get: vi.fn(), lookup: vi.fn() }))
+const { get, lookup, resolveProxy, tunnelThroughProxy } = vi.hoisted(() => ({
+  get: vi.fn(),
+  lookup: vi.fn(),
+  resolveProxy: vi.fn(),
+  tunnelThroughProxy: vi.fn()
+}))
+vi.mock('../runtime-network', () => ({ runtimeNetwork: () => ({ resolveProxy }) }))
+vi.mock('@aipoch/notebook-network-sandbox', () => ({ tunnelThroughProxy }))
 vi.mock('node:https', () => ({ get }))
 vi.mock('node:dns/promises', () => ({ lookup }))
 
@@ -23,7 +29,9 @@ function reply(body: string, headers: Record<string, string>, statusCode = 200):
 }
 beforeEach(() => {
   get.mockReset()
-  lookup.mockReset()
+  lookup.mockReset().mockResolvedValue([{ address: '1.1.1.1', family: 4 }])
+  resolveProxy.mockReset().mockResolvedValue('DIRECT')
+  tunnelThroughProxy.mockReset()
 })
 
 it('extracts head metadata and keeps text when artwork redirects outside policy', async () => {
@@ -47,15 +55,20 @@ it('rejects disallowed destinations and mixed public/private DNS before connecti
     { address: '1.1.1.1', family: 4 },
     { address: '127.0.0.1', family: 4 }
   ])
-  const resolved = vi.fn()
-  get.mockImplementationOnce((_url, options: { lookup: LookupFunction }) => {
-    const request = new EventEmitter()
-    options.lookup('paper.example', {}, (error, address) => {
-      resolved(error, address)
-      request.emit('error', error)
-    })
-    return request
-  })
   await expect(readSourceLinkMetadata(page, settings)).resolves.toEqual({})
-  expect(resolved).toHaveBeenCalledWith(expect.any(Error), '')
+  expect(get).not.toHaveBeenCalled()
+})
+
+it('uses the configured proxy for the validated address and fails closed when the tunnel fails', async () => {
+  resolveProxy.mockResolvedValue('PROXY localhost:8123')
+  tunnelThroughProxy.mockRejectedValue(new Error('Proxy unavailable'))
+  await expect(readSourceLinkMetadata(page, settings)).resolves.toEqual({})
+  expect(tunnelThroughProxy).toHaveBeenCalledWith(
+    new URL('http://localhost:8123'),
+    '1.1.1.1',
+    443,
+    undefined,
+    expect.any(AbortSignal)
+  )
+  expect(get).not.toHaveBeenCalled()
 })
