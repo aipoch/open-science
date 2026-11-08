@@ -6,7 +6,15 @@ const { refineTable } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
 )
 
-const token = (text: string, x: number, y: number, width = 70, height = 10) => ({
+type Token = {
+  text: string
+  rect: [number, number, number, number]
+  baseline: number
+  height: number
+  horizontal: boolean
+}
+
+const token = (text: string, x: number, y: number, width = 70, height = 10): Token => ({
   text,
   rect: [x, y, x + width, y + height],
   baseline: y + height,
