@@ -68,6 +68,29 @@ test('lists the members of a retained owned Job', windows, async () => {
   assert.throws(() => native.windowsOwnedJobProcessIds({}), TypeError)
 })
 
+test('waits for an owned process exit without polling', windows, async () => {
+  const jobName = `Local\\OpenScience.Delegation.${randomUUID()}`
+  const launched = native.spawnWindowsOwnedProcess(
+    jobName,
+    process.execPath,
+    ['-e', 'process.exit(7)'],
+    Object.entries(process.env).map(([key, value]) => `${key}=${value}`),
+    process.cwd(),
+    false
+  )
+  try {
+    const wait = native.windowsOwnedProcessExitCodeAsync(launched.handle)
+    native.windowsOwnedProcessExitCodeUnref(launched.handle)
+    native.windowsOwnedProcessExitCodeUnref(launched.handle)
+    native.windowsOwnedProcessExitCodeRef(launched.handle)
+    native.windowsOwnedProcessExitCodeRef(launched.handle)
+    assert.equal(await wait, 7)
+  } finally {
+    native.reapWindowsOwnedJob(jobName)
+    for (const fd of launched.fds) closeSync(fd)
+  }
+})
+
 test(
   'lists Restart Manager users of installation files and the process snapshot',
   windows,
@@ -203,14 +226,7 @@ test(
       false
     )
     try {
-      const deadline = Date.now() + 5000
-      let code
-      while (
-        (code = native.windowsOwnedProcessExitCode(child.handle)) === null &&
-        Date.now() < deadline
-      )
-        await new Promise((resolve) => setTimeout(resolve, 20))
-      assert.equal(code, 259)
+      assert.equal(await native.windowsOwnedProcessExitCodeAsync(child.handle), 259)
       // The native external retains the process handle across every query, including async work.
       assert.equal(native.getWindowsProcessCreationTime(child.pid), null)
       assert.equal(native.getWindowsProcessCommandLine(child.pid), null)

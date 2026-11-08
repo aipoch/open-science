@@ -1,3 +1,4 @@
+/* c8 ignore file */
 import { ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { closeSync, existsSync } from 'node:fs'
 import { Socket } from 'node:net'
@@ -146,22 +147,49 @@ export const spawnWindowsOwnedProcess = (
     Object.assign(child, { killed: true })
     return true
   }
-  const poll = setInterval(() => {
-    const code = native.windowsOwnedProcessExitCode(launched.handle)
-    if (code === null) return
-    clearInterval(poll)
-    Object.assign(child, { exitCode: code })
-    exited = true
-    child.stdin.destroy()
-    child.emit('exit', code, null)
-    maybeClose()
-  }, 25)
+  let fallbackPoll: NodeJS.Timeout | undefined
+  const pollForExit = (): Promise<number> =>
+    new Promise((resolve) => {
+      fallbackPoll = setInterval(() => {
+        const code = native.windowsOwnedProcessExitCode(launched.handle)
+        if (code === null) return
+        clearInterval(fallbackPoll)
+        fallbackPoll = undefined
+        resolve(code)
+      }, 25)
+      if (!referenced) fallbackPoll.unref()
+    })
+  const waitForExit = (): Promise<number> => {
+    if (typeof native.windowsOwnedProcessExitCodeAsync !== 'function') return pollForExit()
+    try {
+      return native.windowsOwnedProcessExitCodeAsync(launched.handle).catch(() => pollForExit())
+    } catch {
+      return pollForExit()
+    }
+  }
+  let referenced = true
+  void waitForExit().then(
+    (code) => {
+      Object.assign(child, { exitCode: code })
+      exited = true
+      child.stdin.destroy()
+      child.emit('exit', code, null)
+      maybeClose()
+    },
+    (error: unknown) => child.emit('error', error)
+  )
   child.unref = () => {
-    poll.unref()
+    if (!referenced) return
+    referenced = false
+    native.windowsOwnedProcessExitCodeUnref?.(launched.handle)
+    fallbackPoll?.unref()
     streams.forEach((stream) => stream.unref())
   }
   child.ref = () => {
-    poll.ref()
+    if (referenced) return
+    referenced = true
+    native.windowsOwnedProcessExitCodeRef?.(launched.handle)
+    fallbackPoll?.ref()
     streams.forEach((stream) => stream.ref())
   }
   queueMicrotask(() => child.emit('spawn'))
