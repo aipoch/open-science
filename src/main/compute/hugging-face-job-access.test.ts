@@ -1,10 +1,19 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, expect, it, vi } from 'vitest'
-import { getHuggingFaceJobAccess } from './hugging-face-job-access'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { computeAccounts } from './compute-account-service'
+import { getHuggingFaceJobAccess, resolveHuggingFaceJobIdentity } from './hugging-face-job-access'
 
-afterEach(() => {
+import { resolveConfigRoot } from '../storage-root'
+vi.mock('../storage-root', () => ({ resolveConfigRoot: vi.fn() }))
+let configRoot: string
+beforeEach(async () => {
+  configRoot = await mkdtemp(join(tmpdir(), 'hf-account-config-'))
+  vi.mocked(resolveConfigRoot).mockReturnValue(configRoot)
+})
+afterEach(async () => {
+  await rm(configRoot, { recursive: true, force: true })
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
 })
@@ -60,5 +69,31 @@ it('reads the active CLI token from HF_HOME and stops a read-only identity befor
     expect(fetch).toHaveBeenCalledTimes(1)
   } finally {
     await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('keeps managed identity checks on the official Hub when the local CLI uses a mirror', async () => {
+  vi.stubEnv('HF_ENDPOINT', 'https://mirror.example')
+  vi.stubEnv('HF_TOKEN', 'local-example')
+  const fetch = vi.fn(async (url: string) => {
+    expect(new URL(url).origin).toBe('https://huggingface.co')
+    return Response.json({ id: 'user', name: 'alice' })
+  })
+  vi.stubGlobal('fetch', fetch)
+  await expect(resolveHuggingFaceJobIdentity('alice')).rejects.toMatchObject({
+    reason: 'authorization'
+  })
+  vi.stubEnv('HF_ENDPOINT', 'https://huggingface.co')
+  vi.stubEnv('HUGGINGFACE_CO_STAGING', '1')
+  await expect(resolveHuggingFaceJobIdentity('alice')).rejects.toMatchObject({
+    reason: 'authorization'
+  })
+  expect(fetch).not.toHaveBeenCalled()
+  vi.stubEnv('HF_ENDPOINT', 'https://mirror.example')
+  const managed = vi.spyOn(computeAccounts, 'hfToken').mockResolvedValue('managed-example')
+  try {
+    expect(await resolveHuggingFaceJobIdentity('alice')).toMatchObject({ token: 'managed-example' })
+  } finally {
+    managed.mockRestore()
   }
 })

@@ -120,7 +120,18 @@
     "src/main/compute/modal-job-workflow.integration.test.ts",
     "resources/compute-modal.py",
     "src/main/compute/harvest-output-volume.ts",
-    "src/main/compute/external-job-submission.ts"
+    "src/main/compute/external-job-submission.ts",
+    "src/main/compute/compute-accounts.ts",
+    "src/main/compute/compute-account-adapter.ts",
+    "src/main/compute/compute-account-service.ts",
+    "src/main/compute/compute-account-hf.ts",
+    "src/main/compute/modal-account-auth.ts",
+    "src/main/compute/compute-accounts.test.ts",
+    "src/main/compute/modal-account-auth.test.ts",
+    "resources/compute-hf-auth.py",
+    "resources/compute-modal-auth.py",
+    "src/main/compute/ray-token.ts",
+    "src/main/compute/ray-token.test.ts"
   ],
   "interfacePaths": [
     "src/main/compute/job-output-preview.ts",
@@ -205,7 +216,10 @@
       "src/main/compute/hugging-face-job-access.test.ts",
       "src/main/compute/ray-job-workflow.integration.test.ts",
       "src/main/compute/ray-shared-outputs.test.ts",
-      "src/main/compute/modal-job-workflow.integration.test.ts"
+      "src/main/compute/modal-job-workflow.integration.test.ts",
+      "src/main/compute/compute-accounts.test.ts",
+      "src/main/compute/modal-account-auth.test.ts",
+      "src/main/compute/ray-token.test.ts"
     ],
     "contract": [
       "src/main/application-command-composition.test.ts",

@@ -1,6 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { computeAccounts } from './compute-account-service'
 import { z } from 'zod'
 
 const hub = 'https://huggingface.co'
@@ -9,25 +7,6 @@ const identity = account.extend({
   orgs: z.array(account).optional(),
   auth: z.object({ accessToken: z.object({ role: z.string().optional() }).optional() }).optional()
 })
-
-async function localToken(): Promise<string> {
-  if (process.env.HF_ENDPOINT && process.env.HF_ENDPOINT.replace(/\/$/, '') !== hub)
-    throw new Error('Hosted Jobs require credentials for the official Hugging Face Hub.')
-  let token = process.env.HF_TOKEN?.trim()
-  if (!token) {
-    const home = homedir()
-    const cache =
-      process.env.HF_HOME || join(process.env.XDG_CACHE_HOME || join(home, '.cache'), 'huggingface')
-    const path = (process.env.HF_TOKEN_PATH || join(cache, 'token')).replace(/^~(?=[/\\])/, home)
-    try {
-      token = (await readFile(path, 'utf8')).trim()
-    } catch {
-      throw new Error('Set HF_TOKEN or sign in locally using hf auth login.')
-    }
-  }
-  if (!/^[!-~]+$/.test(token)) throw new Error('The local Hugging Face token is invalid.')
-  return token
-}
 
 async function readHub(
   path: string,
@@ -52,13 +31,11 @@ export async function resolveHuggingFaceJobIdentity(
   signal?: AbortSignal
 ): Promise<{ token: string; account: string; readOnly: boolean }> {
   if (!/^[\w-]+$/.test(namespace)) throw new Error('Invalid Hugging Face payer namespace.')
-  const token = await localToken()
+  const token = await computeAccounts.hfToken(signal)
   const who = identity.parse(await readHub('/api/whoami-v2', signal, token))
   const payer = [who, ...(who.orgs ?? [])].find((entry) => entry.name === namespace)
   if (!payer)
-    throw new Error(
-      'The local Hugging Face account does not own or belong to the selected namespace.'
-    )
+    throw new Error('The Hugging Face account does not own or belong to the selected namespace.')
   // Stable across token refresh, different when either the principal or the payer is replaced.
   return {
     token,
@@ -79,7 +56,7 @@ export async function getHuggingFaceJobAccess(
   )
     throw new Error('Choose a private Hugging Face Bucket in the paying namespace.')
   const access = await resolveHuggingFaceJobIdentity(namespace, signal)
-  if (access.readOnly) throw new Error('The local Hugging Face token is read-only.')
+  if (access.readOnly) throw new Error('The Hugging Face token is read-only.')
   const [info, catalog] = await Promise.all([
     readHub('/api/buckets/' + bucket, signal, access.token),
     readHub('/api/jobs/hardware', signal)

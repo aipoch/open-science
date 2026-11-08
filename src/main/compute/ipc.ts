@@ -1,3 +1,7 @@
+import { getRayToken, rayTokens } from './ray-token'
+import { computeAccounts } from './compute-account-service'
+import { getHuggingFaceJobAccess } from './hugging-face-job-access'
+import { inspectModalTarget } from './modal-sdk'
 import { readComputeOutputPreview } from './job-output-preview'
 import { externalComputeMode } from '../../shared/compute'
 import { MODAL_CREATION_UNCONFIRMED } from './modal-job-journal'
@@ -5,7 +9,7 @@ import { KubernetesTargetCatalog } from './kubernetes-target-catalog'
 import { HostedTargetCatalog } from './hosted-target-catalog'
 import { RayTargetCatalog } from './ray-target-catalog'
 import { ModalTargetCatalog } from './modal-target-catalog'
-import { createComputeExecution } from '@aipoch/compute/node'
+import { createComputeExecution, verifyRayJobsAccess } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { desktopShellInteraction } from '../desktop-interaction'
 import type { ArtifactResolver } from './compute-job-workflow-owner'
@@ -333,6 +337,57 @@ const createComputeHandlers = (
 
   return {
     list: () => service.list(),
+    accountStatus: (provider, force) => computeAccounts.status(provider, force),
+    connectAccount: (provider) => computeAccounts.connect(provider),
+    useLocalAccount: (provider) => computeAccounts.useLocal(provider),
+    cancelAccountConnection: (provider) => computeAccounts.cancel(provider),
+    disconnectAccount: (provider) => computeAccounts.disconnect(provider),
+    listRayTokens: () => rayTokens.list(),
+    setRayToken: (endpoint, token) => rayTokens.set(endpoint, token),
+    removeRayToken: (endpoint) => rayTokens.remove(endpoint),
+    verifyTarget: async (providerId) => {
+      switch (externalComputeMode(providerId)) {
+        case 'hugging_face_jobs': {
+          const target = await repository.getHostedTarget(providerId)
+          if (target) {
+            await getHuggingFaceJobAccess(target)
+            return
+          }
+          break
+        }
+        case 'ray_jobs': {
+          const target = await repository.getRayTarget(providerId)
+          if (target) {
+            await verifyRayJobsAccess({ endpoint: target.endpoint, getToken: getRayToken })
+            return
+          }
+          break
+        }
+        case 'modal_sandbox': {
+          const target = await repository.getModalTarget(providerId)
+          if (target) {
+            await inspectModalTarget(target)
+            return
+          }
+          break
+        }
+      }
+      throw new Error('Unknown compute account target.')
+    },
+    updateTarget: (providerId, config) =>
+      runHostLifecycleMutation(async () => {
+        const mode = externalComputeMode(providerId)
+        const catalog =
+          mode &&
+          {
+            kubernetes: repository.kubernetesTargets,
+            hugging_face_jobs: repository.hostedTargets,
+            ray_jobs: repository.rayTargets,
+            modal_sandbox: repository.modalTargets
+          }[mode]
+        if (!catalog) throw new Error('Unknown compute target.')
+        await catalog.update(providerId, config)
+      }),
     listKubernetesTargets: () => repository.listKubernetesTargets(),
     createKubernetesTarget: (config) =>
       runHostLifecycleMutation(async () => {
@@ -340,11 +395,13 @@ const createComputeHandlers = (
         return repository.kubernetesTargets.create(config)
       }),
     listHostedTargets: () => repository.listHostedTargets(),
-    createHostedTarget: (config) =>
-      runHostLifecycleMutation(async () => {
-        if (!repository.hostedTargets) throw new Error('Compute settings unavailable.')
-        return repository.hostedTargets.create(config)
-      }),
+    createHostedTarget: async (config) => {
+      const catalog = repository.hostedTargets
+      if (!catalog) throw new Error('Compute settings unavailable.')
+      return computeAccounts.withConnectedAccount('hugging-face', () =>
+        runHostLifecycleMutation(() => catalog.create(config))
+      )
+    },
     listRayTargets: () => repository.listRayTargets(),
     createRayTarget: (config) =>
       runHostLifecycleMutation(async () => {
@@ -353,11 +410,13 @@ const createComputeHandlers = (
       }),
     readOutputPreview: readComputeOutputPreview,
     listModalTargets: () => repository.listModalTargets(),
-    createModalTarget: (config) =>
-      runHostLifecycleMutation(async () => {
-        if (!repository.modalTargets) throw new Error('Compute settings unavailable.')
-        return repository.modalTargets.create(config)
-      }),
+    createModalTarget: async (config) => {
+      const catalog = repository.modalTargets
+      if (!catalog) throw new Error('Compute settings unavailable.')
+      return computeAccounts.withConnectedAccount('modal', () =>
+        runHostLifecycleMutation(() => catalog.create(config))
+      )
+    },
     get: async (providerId) => {
       const host = await repository.get(providerId)
       return host ? projectComputeCredentialStatus(host, credentialVault) : null

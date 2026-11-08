@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process'
-import { basename, join, isAbsolute } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { z } from 'zod'
-import { runtimeMetadata } from '../runtime-metadata'
+import { computeAccounts } from './compute-account-service'
+import { modalPythonCommand } from './modal-account-auth'
 
 type App = { environmentName: string; appName: string }
 type Binding = App & { appId: string; nonce: string; volumeName: string }
@@ -18,26 +19,17 @@ const observation = z.object({
 })
 export class ModalCreateRejectedError extends Error {}
 
-/** Use the host interpreter's Modal identity. Only the fixed JSON request crosses into the helper. */
-function invoke(action: string, request: object, signal?: AbortSignal): Promise<unknown> {
+async function invoke(action: string, request: object, signal?: AbortSignal): Promise<unknown> {
   signal?.throwIfAborted()
-  const python = process.env.OPEN_SCIENCE_MODAL_PYTHON
-  if (python && !isAbsolute(python))
-    throw new Error('OPEN_SCIENCE_MODAL_PYTHON must be an absolute path.')
-  const meta = runtimeMetadata()
-  // Electron unpacks resources next to the ASAR. The standalone backend stages them under its root.
-  const root =
-    basename(meta.applicationPath) === 'app.asar'
-      ? meta.applicationPath + '.unpacked'
-      : meta.applicationPath
-  const script = join(root, 'resources', 'compute-modal.py')
-  const data = JSON.stringify(request)
+  const { python, args } = modalPythonCommand('compute-modal.py')
+  const managedIdentity = await computeAccounts.modalIdentity(signal)
+  const data = JSON.stringify({ request, managedIdentity })
   if (Buffer.byteLength(data) > 2 * 1024 * 1024)
     throw new Error('Modal request exceeds its byte limit.')
   return new Promise((resolve, reject) => {
     const child = execFile(
-      python || (process.platform === 'win32' ? 'python' : 'python3'),
-      ['-I', script, action],
+      python,
+      [...args, action],
       {
         encoding: 'utf8',
         signal,

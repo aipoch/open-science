@@ -1,5 +1,10 @@
+import type { ComputeAccountProvider, ComputeAccountStatus } from '../compute-accounts'
 import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../artifacts'
-import type { KubernetesTarget, KubernetesTargetConfig } from '../compute'
+import type {
+  KubernetesTarget,
+  KubernetesTargetConfig,
+  ExternalComputeTargetConfig
+} from '../compute'
 import type { HostedTarget, HostedTargetConfig } from '../compute'
 import type { RayTarget, RayTargetConfig } from '../compute'
 import type { ModalTarget, ModalTargetConfig } from '../compute'
@@ -38,6 +43,40 @@ import type { PersistedChatSession } from '../session-persistence'
 import { callable, EVENT, LOCAL } from './definition'
 
 export const contracts = {
+  'compute.accountStatus': callable<
+    (provider: ComputeAccountProvider, force?: boolean) => Promise<ComputeAccountStatus>
+  >()('compute', ['compute:account-status', LOCAL]),
+  'compute.connectAccount': callable<
+    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  >()('compute', ['compute:connect-account', LOCAL]),
+  'compute.useLocalAccount': callable<
+    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  >()('compute', ['compute:use-local-account', LOCAL]),
+  'compute.cancelAccountConnection': callable<
+    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  >()('compute', ['compute:cancel-account-connection', LOCAL]),
+  'compute.disconnectAccount': callable<
+    (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  >()('compute', ['compute:disconnect-account', LOCAL]),
+  'compute.listRayTokens': callable<() => Promise<string[]>>()('compute', [
+    'compute:list-ray-tokens',
+    LOCAL
+  ]),
+  'compute.setRayToken': callable<(endpoint: string, token: string) => Promise<void>>()('compute', [
+    'compute:set-ray-token',
+    LOCAL
+  ]),
+  'compute.removeRayToken': callable<(endpoint: string) => Promise<void>>()('compute', [
+    'compute:remove-ray-token',
+    LOCAL
+  ]),
+  'compute.verifyTarget': callable<(providerId: string) => Promise<void>>()('compute', [
+    'compute:verify-target',
+    LOCAL
+  ]),
+  'compute.updateTarget': callable<
+    (providerId: string, config: ExternalComputeTargetConfig) => Promise<void>
+  >()('compute', ['compute:update-target', LOCAL]),
   'compute.listKubernetesTargets': callable<() => Promise<KubernetesTarget[]>>()('compute', [
     'compute:list-kubernetes-targets'
   ]),

@@ -1,6 +1,14 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { isIPv4 } from 'node:net'
 import { Readable } from 'node:stream'
+
+export interface RayJobsTarget {
+  endpoint: string
+  fetch?: typeof fetch
+  /** Resolve credentials for this exact canonical Dashboard, including its gateway path. */
+  getToken?: (endpoint: string) => Promise<string | undefined>
+}
 
 function dashboard(endpoint: string): URL {
   let base: URL
@@ -17,6 +25,9 @@ function dashboard(endpoint: string): URL {
     base.hash
   )
     throw new Error('Invalid Ray Dashboard endpoint.')
+  // URL keeps a bare '?' or '#' in href even though its search/hash accessor is empty.
+  base.search = ''
+  base.hash = ''
   return base
 }
 
@@ -30,9 +41,24 @@ export function resolveRayJobsEndpoint(explicit?: string, saved?: string): strin
   return dashboard(address).href.replace(/\/+$/, '')
 }
 
+function allowsBearer(base: URL): boolean {
+  return (
+    base.protocol === 'https:' ||
+    base.hostname === '[::1]' ||
+    (isIPv4(base.hostname) && base.hostname.startsWith('127.'))
+  )
+}
+
+export function isRayBearerEndpoint(endpoint: string): boolean {
+  try {
+    return allowsBearer(dashboard(endpoint))
+  } catch {
+    return false
+  }
+}
+
 /** Preserve a configured gateway path when addressing the Jobs API. */
-export function rayJobsUrl(endpoint: string, path: string): URL {
-  const base = dashboard(endpoint)
+function rayJobsUrl(base: URL, path: string): URL {
   if (
     !path.startsWith('/api/') ||
     /[?#\\]/.test(path) ||
@@ -43,6 +69,61 @@ export function rayJobsUrl(endpoint: string, path: string): URL {
     throw new Error('Invalid Ray Dashboard endpoint or API path.')
   base.pathname = base.pathname.replace(/\/+$/, '') + path
   return base
+}
+
+/** These failures occur before the request reaches the Dashboard. */
+export class RayRequestCredentialError extends Error {}
+
+/** Resolve the token before each request so a rotation takes effect without changing the approved target. */
+export async function requestRayDashboard(
+  target: RayJobsTarget,
+  path: string,
+  init: RequestInit & { signal: AbortSignal },
+  onDispatch?: () => void
+): Promise<Response> {
+  const base = dashboard(target.endpoint)
+  const endpoint = base.href.replace(/\/+$/, '')
+  const url = rayJobsUrl(base, path)
+  const { signal } = init
+  signal.throwIfAborted()
+  const transport = target.fetch ?? rayNodeRequest
+  const send = (options: RequestInit): Promise<Response> => {
+    onDispatch?.()
+    return transport(url, options)
+  }
+  const options = { ...init, redirect: 'error' } as const
+  if (!target.getToken) return send(options)
+
+  let rejectLookup!: () => void
+  const interrupted = new Promise<never>((_, reject) => {
+    rejectLookup = () => reject(signal.reason)
+  })
+  signal.addEventListener('abort', rejectLookup, { once: true })
+  let token: string | undefined
+  try {
+    token = await Promise.race([target.getToken(endpoint), interrupted])
+  } catch {
+    signal.throwIfAborted()
+    throw new RayRequestCredentialError('Unable to read the Ray Dashboard access token.')
+  } finally {
+    signal.removeEventListener('abort', rejectLookup)
+  }
+  signal.throwIfAborted()
+  if (token === undefined) return send(options)
+  if (!allowsBearer(url))
+    throw new RayRequestCredentialError(
+      'Ray Dashboard tokens require HTTPS or a loopback IP address.'
+    )
+  if (!/^[A-Za-z0-9._~+/-]+=*$/.test(token))
+    throw new RayRequestCredentialError('Invalid Ray Dashboard access token.')
+  const headers = new Headers(init.headers)
+  headers.set('authorization', 'Bearer ' + token)
+  try {
+    return await send({ ...options, headers })
+  } catch {
+    signal.throwIfAborted()
+    throw new Error('Authenticated Ray Dashboard request failed.')
+  }
 }
 
 /** Ray refuses browser-tagged writes. Use a server-side HTTP client; never follow redirects. */

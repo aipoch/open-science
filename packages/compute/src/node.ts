@@ -158,16 +158,17 @@ export {
 
 export { HuggingFaceJobCreationRejectedError } from './hugging-face-jobs-http'
 
-export { resolveRayJobsEndpoint } from './ray-jobs-http'
+export { resolveRayJobsEndpoint, isRayBearerEndpoint, type RayJobsTarget } from './ray-jobs-http'
 export { prepareRayJobInputs, uploadRayWorkingDirectory } from './ray-job-inputs'
 export {
   inspectRayJob,
   inspectRayDashboard,
+  verifyRayJobsAccess,
   submitRayJob,
   RayJobCreationRejectedError,
+  RayJobCreationNotSentError,
   stopRayJob,
   readRayJobLogs,
-  type RayJobsTarget,
   type RayJobClaim,
   type RayJobStatus,
   type RayJobObservation

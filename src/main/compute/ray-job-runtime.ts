@@ -1,7 +1,9 @@
+import { getRayToken } from './ray-token'
 import { randomUUID } from 'node:crypto'
 import { posix } from 'node:path'
 import { createLogger } from '@aipoch/diagnostics/node'
 import {
+  RayJobCreationNotSentError,
   RayJobCreationRejectedError,
   inspectRayJob,
   submitRayJob,
@@ -10,6 +12,7 @@ import {
   readRayJobLogs,
   stopRayJob,
   shellSingleQuote,
+  type RayJobsTarget,
   type RayJobClaim,
   type RayJobObservation
 } from '@aipoch/compute/node'
@@ -93,9 +96,12 @@ type Dependencies = {
     signal: AbortSignal
   ): Promise<void>
 }
-async function verifyDashboard(journal: RayJobJournal, signal: AbortSignal): Promise<void> {
-  const version = await inspectRayDashboard(journal.target.endpoint, signal)
-  if (version.sessionName !== journal.target.sessionName)
+async function verifyDashboard(
+  target: RayJobsTarget & { sessionName: string },
+  signal: AbortSignal
+): Promise<void> {
+  const version = await inspectRayDashboard(target, signal)
+  if (version.sessionName !== target.sessionName)
     throw new Error('Ray cluster identity changed after approval.')
 }
 function terminal(observed: RayJobObservation, timedOut: boolean): UpdateJobRequest | undefined {
@@ -134,7 +140,7 @@ export function createRayJobRuntime(deps: Dependencies): {
   const reconcile = async (job: ComputeJob, signal: AbortSignal): Promise<void> => {
     const journal = readRayJournal(job)
     if (job.harvested_at || journal.published) return
-    const { target } = journal
+    const target = { ...journal.target, getToken: getRayToken }
     if (job.status !== 'submitted' && job.status !== 'running') {
       if (journal.directory)
         await deps.harvest(
@@ -155,7 +161,7 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (updated) await deps.onJobUpdated(updated)
       return
     }
-    await verifyDashboard(journal, signal)
+    await verifyDashboard(target, signal)
     if (!journal.launch) {
       const scope = { sharedRoot: target.sharedRoot, runId: job.job_id }
       const directory = await reserveRayOutputDirectory(scope, journal.nonce, signal)
@@ -181,15 +187,22 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (journal.packageSha256 !== pkg.sha256)
         throw new Error('Ray package differs from the approved snapshot.')
       await uploadRayWorkingDirectory({ ...target, signal }, pkg)
-      await verifyDashboard(journal, signal)
+      await verifyDashboard(target, signal)
       if (expired(job)) return
+      const claim = claimFor(job, journal)
       const fenced = JSON.stringify({ ...journal, launch: true })
       if (!(await repo.replaceRayJournal(job, fenced, true))) return
       try {
-        await submitRayJob(target, claimFor(job, journal), signal)
+        await submitRayJob(target, claim, signal)
       } catch (error) {
+        const fencedJob = { ...job, remote_handle: fenced }
+        if (error instanceof RayJobCreationNotSentError) {
+          // No remote job can exist from this POST. Let a pending cancellation see that too.
+          await repo.replaceRayJournal(fencedJob, JSON.stringify(journal), false)
+          throw error
+        }
         if (!(error instanceof RayJobCreationRejectedError)) throw error
-        if (await repo.rejectRayCreation({ ...job, remote_handle: fenced }, error.status)) {
+        if (await repo.rejectRayCreation(fencedJob, error.status)) {
           const updated = await repo.get(job.job_id)
           if (updated) await deps.onJobUpdated(updated)
         }
@@ -244,8 +257,9 @@ export function createRayJobRuntime(deps: Dependencies): {
       if (!job) throw new Error('Ray job unavailable.')
       const journal = readRayJournal(job)
       if (journal.launch) {
-        await verifyDashboard(journal, signal)
-        const result = await stopRayJob(journal.target, claimFor(job, journal), signal)
+        const target = { ...journal.target, getToken: getRayToken }
+        await verifyDashboard(target, signal)
+        const result = await stopRayJob(target, claimFor(job, journal), signal)
         if (result.status !== 'STOPPED' || journal.timedOut) {
           const settled = terminal(result, result.status === 'STOPPED' && !!journal.timedOut)
           if (!settled) throw new Error('Ray stop not confirmed.')

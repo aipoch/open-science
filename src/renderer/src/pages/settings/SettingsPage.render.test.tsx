@@ -86,6 +86,7 @@ beforeAll(async () => {
     import('./ArchivedPanel'),
     import('./ComputeAddForm'),
     import('./ComputeHostDetail'),
+    import('./ComputeTargetEditor'),
     import('./ComputePanel'),
     import('./ConnectorAddForm'),
     import('./ConnectorDetailView'),
@@ -6855,7 +6856,7 @@ describe('Settings Compute completion navigation', () => {
         root.render(<SettingsPage open={open} onClose={onClose} />)
       const click = async (label: string): Promise<void> => {
         const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-          (item) => item.textContent?.trim() === label
+          (item) => item.getAttribute('aria-label') === label || item.textContent?.trim() === label
         )!
         expect(button, label).toBeDefined()
         await act(async () => button.click())
@@ -7105,11 +7106,73 @@ it('dismisses a network leave request when the pending save succeeds', async () 
 describe('Connection editor shared leave protection', () => {
   const click = async (label: string): Promise<void> => {
     const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-      (item) => item.textContent?.trim() === label
+      (item) => item.getAttribute('aria-label') === label || item.textContent?.trim() === label
     )!
     expect(button, label).toBeDefined()
     await act(async () => button.click())
   }
+  it('creates and edits a hosted configuration from the Compute breadcrumb', async () => {
+    const config = {
+      displayName: 'CPU workspace',
+      namespace: 'lab',
+      bucket: 'lab/private',
+      image: 'ubuntu:24.04',
+      flavor: 'cpu-basic',
+      timeoutSeconds: 14400
+    }
+    const saved = { ...config, id: 'test', providerId: 'hf-jobs:test' }
+    const create = vi
+      .fn(async () => saved)
+      .mockRejectedValueOnce(new Error('Connect the account before adding this configuration.'))
+    const signIn = vi.fn(async (provider: string) => ({
+      provider,
+      state: 'connected',
+      source: 'local'
+    }))
+    const update = vi.fn(async () => undefined)
+    Object.assign(window.api.compute, {
+      accountStatus: vi.fn(async (provider: string) => ({ provider, state: 'connected' })),
+      useLocalAccount: signIn,
+      createHostedTarget: create,
+      updateTarget: update,
+      listHostedTargets: vi.fn(async () => (create.mock.calls.length ? [saved] : []))
+    })
+    await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
+    await act(async () => navButton('Compute')!.click())
+    await click('Add Hugging Face Jobs target')
+    expect(document.querySelector('[aria-label="Back to compute"]')).not.toBeNull()
+    const field = (name: string): HTMLInputElement =>
+      document.querySelector(`input[name="${name}"]`)!
+    const change = (name: string, value: string): void =>
+      act(() => {
+        fireEvent.change(field(name), { target: { value } })
+      })
+    expect(field('timeoutSeconds').value).toBe('14400')
+    for (const [name, value] of Object.entries(config)) change(name, String(value))
+    await click('Save')
+    expect(document.querySelector('[role="alertdialog"]')).not.toBeNull()
+    await click('Use local sign-in')
+    expect(signIn).toHaveBeenCalledWith('hugging-face')
+    expect(field('bucket').value).toBe(config.bucket)
+    await click('Save')
+    expect(create).toHaveBeenLastCalledWith(config)
+    await click('Edit CPU workspace')
+    expect(field('bucket').value).toBe('lab/private')
+    change('bucket', 'lab/discard')
+    await click('Cancel')
+    expect(document.querySelector('[data-testid="skill-discard-confirmation"]')).not.toBeNull()
+    await click('Discard changes')
+    expect(update).not.toHaveBeenCalled()
+    await click('Edit CPU workspace')
+    expect(field('bucket').value).toBe('lab/private')
+    change('flavor', 't4-small')
+    await click('Save')
+    expect(update).toHaveBeenCalledExactlyOnceWith(saved.providerId, {
+      ...config,
+      flavor: 't4-small'
+    })
+    expect(document.querySelector('input[name="flavor"]')).toBeNull()
+  })
   it.each(['Connectors', 'Compute'] as const)(
     'protects %s drafts through panel, breadcrumb, back and close',
     async (panel) => {

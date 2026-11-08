@@ -4,7 +4,7 @@ import { lstat, open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { isPortableComputeFileName } from './remote-path-security'
 import JSZip from 'jszip'
-import { rayJobsUrl, rayNodeRequest } from './ray-jobs-http'
+import { requestRayDashboard, type RayJobsTarget } from './ray-jobs-http'
 
 type FrozenInput = Readonly<{
   localPath: string
@@ -97,7 +97,7 @@ export async function prepareRayJobInputs(
 
 /** Pin an existing content-addressed package, or upload it before submitting the job. */
 export async function uploadRayWorkingDirectory(
-  connection: { endpoint: string; fetch?: typeof fetch; signal?: AbortSignal },
+  connection: RayJobsTarget & { signal?: AbortSignal },
   inputs: PreparedInputs
 ): Promise<string> {
   const timeout = AbortSignal.timeout(120_000)
@@ -108,12 +108,12 @@ export async function uploadRayWorkingDirectory(
   const sha256 = inputs.sha256
   if (digest(bytes) !== sha256) throw new Error('Ray package checksum mismatch.')
   const name = '_ray_pkg_' + sha256 + '.zip'
-  const url = rayJobsUrl(connection.endpoint, '/api/packages/gcs/' + name)
-  const send = connection.fetch ?? rayNodeRequest
-  const get = await send(url, { method: 'GET', redirect: 'error', signal })
+  const path = '/api/packages/gcs/' + name
+  const target = { ...connection }
+  const get = await requestRayDashboard(target, path, { method: 'GET', signal })
   await get.body?.cancel()
   if (get.status === 404) {
-    const put = await send(url, { method: 'PUT', body: bytes, redirect: 'error', signal })
+    const put = await requestRayDashboard(target, path, { method: 'PUT', body: bytes, signal })
     await put.body?.cancel()
     if (!put.ok) throw new Error(`Ray package upload failed (HTTP ${put.status}).`)
   } else if (get.status !== 200) throw new Error(`Ray package lookup failed (HTTP ${get.status}).`)

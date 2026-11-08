@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -19,6 +19,9 @@ import { harvestJob } from './harvest-engine'
 import { ComputeJobRepository } from './job-repository'
 import { readRayJournal } from './ray-job-journal'
 import { createRayJobRuntime } from './ray-job-runtime'
+import { rayTokens } from './ray-token'
+import { createNodeSecureStorageCipher } from '../credential-identity/node-cipher'
+import { configureSecureStorageCipher } from '../secure-storage'
 import { RayTargetCatalog } from './ray-target-catalog'
 import { ComputeHostRepository } from './repository'
 import { getJobHarvestDir } from './workspace-path'
@@ -29,13 +32,19 @@ const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).dig
 // The regular suite replaces only the Dashboard. Both modes use the real ZIP, SQLite,
 // permission broker, runtime, filesystem publication and project evidence machinery.
 async function dashboard(
-  sharedRoot: string
+  sharedRoot: string,
+  token: string
 ): Promise<{ endpoint: string; creates(): number; close(): Promise<void> }> {
   const packages = new Map<string, Buffer>()
   const jobs = new Map<string, Record<string, unknown>>()
   let creates = 0
   const server = createServer(async (req, res) => {
     try {
+      if (req.headers.authorization !== 'Bearer ' + token) {
+        res.writeHead(401)
+        res.end()
+        return
+      }
       const url = req.url!
       let status = 200
       let data: unknown
@@ -98,6 +107,21 @@ async function dashboard(
 it('recovers an approved Ray job from SQLite and publishes the output and Project evidence', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ray-workflow-'))
   const live = process.env.RUN_REAL_RAY_JOBS === '1'
+  const tokenFile = live && process.env.RAY_TEST_TOKEN_PATH
+  const testToken = tokenFile ? (await readFile(tokenFile, 'utf8')).trim() : 'ray-' + randomUUID()
+  vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+  const key = randomBytes(32)
+  const cipher = createNodeSecureStorageCipher(
+    { backend: 'mac-keychain', appName: 'Ray test', exists: true },
+    root,
+    {
+      readPassword: () => Buffer.from(key),
+      unprotect: () => {
+        throw new Error('Unexpected DPAPI call')
+      }
+    }
+  )
+  configureSecureStorageCipher(cipher)
   const sharedRoot = live ? process.env.RAY_TEST_SHARED_ROOT! : join(root, 'share')
   const remoteRoot = '/ray-output'
   const input = Buffer.from(Array.from({ length: 65536 }, (_, index) => index % 256))
@@ -155,10 +179,11 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     await mkdir(workspace, { recursive: true })
     if (!live) {
       await mkdir(sharedRoot)
-      fake = await dashboard(sharedRoot)
+      fake = await dashboard(sharedRoot, testToken)
     }
     const endpoint = live ? process.env.RAY_TEST_ENDPOINT! : fake!.endpoint
     expect(new URL(endpoint).hostname).toBe('127.0.0.1')
+    if (!live || tokenFile) await rayTokens.set(endpoint, testToken)
     const target = await catalog.create({
       displayName: 'Ray acceptance',
       endpoint,
@@ -203,6 +228,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     const submitted = await submit()
     expect(broadcast).toHaveBeenCalledTimes(2)
     for (const [request] of broadcast.mock.calls) {
+      expect(JSON.stringify(request).includes(testToken)).toBe(false)
       expect(request).toMatchObject({
         operation: 'submit_job',
         provider_id: target.providerId,
@@ -216,11 +242,27 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     expect(await readFile(file)).toEqual(replacement)
     await client.$disconnect()
     client = createProjectDbClient(root)
+    // Exercise both sides of the durable launch fence against the loopback Dashboard.
+    const interrupted = new Set<number>()
+    if (fake) {
+      const server = fake
+      const get = rayTokens.get.bind(rayTokens)
+      vi.spyOn(rayTokens, 'get').mockImplementation(async (address) => {
+        const row = await jobs.get(jobId)
+        const posts = server.creates()
+        if (row && readRayJournal(row).launch && !interrupted.has(posts)) {
+          interrupted.add(posts)
+          throw new Error('Test credential temporarily locked.')
+        }
+        return get(address)
+      })
+    }
     runtime = makeRuntime()
     runtime.start()
     await vi.waitFor(
       async () => {
-        await runtime!.tick()
+        if (fake) await runtime!.retry(jobId)
+        else await runtime!.tick()
         const row = await jobs.get(jobId)
         expect(
           row,
@@ -248,6 +290,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
       )
     )
     expect(sha256(published)).toBe(sha256(expected))
+    expect(JSON.stringify(row).includes(testToken)).toBe(false)
     const evidence = row!.file_evidence!
     expect(evidence.parentActivityId).toBe(scope.producerRunId)
     expect(evidence.storageKey).toBe(
@@ -257,7 +300,10 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     expect(sha256(record)).toBe(evidence.checksum)
     expect(record.toString()).toContain(sha256(input))
     expect(record.toString()).toContain(sha256(expected))
-    if (fake) expect(fake.creates()).toBe(1)
+    if (fake) {
+      expect(interrupted).toEqual(new Set([0, 1]))
+      expect(fake.creates()).toBe(1)
+    }
     if (live) {
       // Keep the host offline until the remote driver enforces its own deadline.
       const timeoutJob = await agent.submitJob(
@@ -268,10 +314,14 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
         { timeoutSeconds: 8 }
       )
       const detailsUrl = new URL('/api/jobs/' + timeoutJob.job_id, endpoint)
+      const providerRead = {
+        redirect: 'error' as const,
+        headers: tokenFile ? { authorization: 'Bearer ' + testToken } : undefined
+      }
       await vi.waitFor(
         async () => {
           await runtime!.tick()
-          const response = await fetch(detailsUrl, { redirect: 'error' })
+          const response = await fetch(detailsUrl, providerRead)
           expect(response.status).toBe(200)
         },
         { timeout: 8000, interval: 50 }
@@ -280,7 +330,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
       let providerExitCode: number | undefined
       await vi.waitFor(
         async () => {
-          const response = await fetch(detailsUrl, { redirect: 'error' })
+          const response = await fetch(detailsUrl, providerRead)
           const details = await response.json()
           expect(details.status).toBe('FAILED')
           expect([-9, 137]).toContain(details.driver_exit_code)
@@ -288,9 +338,7 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
         },
         { timeout: 30000, interval: 500 }
       )
-      const logs = await fetch(new URL(detailsUrl.pathname + '/logs', endpoint), {
-        redirect: 'error'
-      })
+      const logs = await fetch(new URL(detailsUrl.pathname + '/logs', endpoint), providerRead)
       expect(logs.status).toBe(200)
       const logBytes = Buffer.byteLength((await logs.json()).logs)
       expect(logBytes).toBeGreaterThan(300 * 1024)
@@ -319,8 +367,12 @@ it('recovers an approved Ray job from SQLite and publishes the output and Projec
     }
   } finally {
     await runtime?.stop()
+    vi.restoreAllMocks()
     await client.$disconnect()
     await fake?.close()
+    cipher.dispose()
+    key.fill(0)
+    vi.unstubAllEnvs()
     await releaseLocks()
     await rm(root, { recursive: true, force: true })
   }

@@ -1,5 +1,10 @@
+import type { ComputeAccountProvider, ComputeAccountStatus } from '../../shared/compute-accounts'
 import type { ReadArtifactPreviewRequest, ArtifactPreviewResult } from '../../shared/artifacts'
-import type { KubernetesTarget, KubernetesTargetConfig } from '../../shared/compute'
+import type {
+  KubernetesTarget,
+  KubernetesTargetConfig,
+  ExternalComputeTargetConfig
+} from '../../shared/compute'
 import type { HostedTarget, HostedTargetConfig } from '../../shared/compute'
 import type { RayTarget, RayTargetConfig } from '../../shared/compute'
 import type { ModalTarget, ModalTargetConfig } from '../../shared/compute'
@@ -36,6 +41,19 @@ import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
 
 export type ComputeHandlers = {
+  accountStatus: (
+    provider: ComputeAccountProvider,
+    force?: boolean
+  ) => Promise<ComputeAccountStatus>
+  connectAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  useLocalAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  cancelAccountConnection: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  disconnectAccount: (provider: ComputeAccountProvider) => Promise<ComputeAccountStatus>
+  listRayTokens: () => Promise<string[]>
+  setRayToken: (endpoint: string, token: string) => Promise<void>
+  removeRayToken: (endpoint: string) => Promise<void>
+  verifyTarget: (providerId: string) => Promise<void>
+  updateTarget: (providerId: string, config: ExternalComputeTargetConfig) => Promise<void>
   listKubernetesTargets: () => Promise<KubernetesTarget[]>
   createKubernetesTarget: (config: KubernetesTargetConfig) => Promise<KubernetesTarget>
   listHostedTargets: () => Promise<HostedTarget[]>

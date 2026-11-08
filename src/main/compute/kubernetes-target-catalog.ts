@@ -66,6 +66,14 @@ export class KubernetesTargetCatalog {
       return project(entry)
     })
   }
+  update(providerId: string, request: unknown): Promise<void> {
+    const config = kubernetesTargetConfigSchema.parse(request)
+    return this.mutate((entries) => {
+      const index = entries.findIndex((entry) => project(entry).providerId === providerId)
+      if (index < 0) throw new Error('Compute target no longer exists.')
+      entries[index] = { ...config, id: entries[index].id }
+    })
+  }
   remove(providerId: string): Promise<void> {
     return this.mutate((entries) => {
       const index = entries.findIndex((entry) => project(entry).providerId === providerId)

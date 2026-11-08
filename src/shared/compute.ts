@@ -90,6 +90,9 @@ export type ModalTargetConfig = Readonly<{
 }>
 export type ModalTarget = ModalTargetConfig & Readonly<{ id: string; providerId: string }>
 export type ExternalComputeTarget = KubernetesTarget | HostedTarget | RayTarget | ModalTarget
+export type ExternalComputeTargetConfig =
+  KubernetesTargetConfig | HostedTargetConfig | RayTargetConfig | ModalTargetConfig
+
 export type ExternalComputeMode = Exclude<ComputeExecutionMode, 'direct_ssh' | 'slurm'>
 
 export const externalComputeMode = (providerId: string): ExternalComputeMode | undefined => {

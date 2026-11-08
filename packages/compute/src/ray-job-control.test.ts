@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { inspectRayJob, readRayJobLogs, stopRayJob, submitRayJob } from './ray-job-control'
+import {
+  verifyRayJobsAccess,
+  inspectRayDashboard,
+  inspectRayJob,
+  readRayJobLogs,
+  stopRayJob,
+  submitRayJob
+} from './ray-job-control'
 
 const claim = {
   submissionId: 'test-attempt-1',
@@ -33,11 +40,72 @@ function target(...responses: (Response | Error)[]): {
 }
 
 describe('Ray job control', () => {
+  it('resolves a fresh token for the canonical Dashboard on version and control requests', async () => {
+    const server = target(
+      Response.json({ session_name: 'cluster', ray_version: '2' }),
+      Response.json({ submission_id: claim.submissionId }),
+      Response.json(record)
+    )
+    const connection = {
+      ...server,
+      endpoint: 'https://LAB.example:443/gateway/',
+      getToken: vi
+        .fn<(endpoint: string) => Promise<string>>()
+        .mockResolvedValueOnce('first-token')
+        .mockResolvedValue('rotated-token')
+    }
+    await expect(inspectRayDashboard(connection)).resolves.toEqual({
+      sessionName: 'cluster',
+      rayVersion: '2'
+    })
+    await submitRayJob(connection, claim)
+    expect(connection.getToken.mock.calls.flat()).toEqual(
+      Array(3).fill('https://lab.example/gateway')
+    )
+    expect(
+      server.fetch.mock.calls.map(([url, init]) => [
+        String(url),
+        new Headers(init?.headers).get('authorization'),
+        init?.redirect
+      ])
+    ).toEqual([
+      ['https://lab.example/gateway/api/version', 'Bearer first-token', 'error'],
+      ['https://lab.example/gateway/api/jobs/', 'Bearer rotated-token', 'error'],
+      ['https://lab.example/gateway/api/jobs/test-attempt-1', 'Bearer rotated-token', 'error']
+    ])
+    expect(server.fetch.mock.calls[1][1]?.body).not.toContain('rotated-token')
+  })
+
+  it('blocks tokens on plaintext DNS destinations before sending and allows anonymous access', async () => {
+    const server = target(Response.json(record))
+    const getToken = vi.fn(async () => 'test-token')
+    for (const endpoint of ['http://localhost', 'http://127.0.0.1.example', 'http://192.0.2.1']) {
+      await expect(submitRayJob({ ...server, endpoint, getToken }, claim)).rejects.toThrow(
+        'require HTTPS'
+      )
+    }
+    expect(server.fetch).not.toHaveBeenCalled()
+    await inspectRayJob(
+      { ...server, endpoint: 'http://lab.example', getToken: async () => undefined },
+      claim
+    )
+    expect(new Headers(server.fetch.mock.calls[0][1]?.headers).has('authorization')).toBe(false)
+  })
+
   it('distinguishes an explicitly rejected creation from a lost reply', async () => {
     const server = target(new Response(null, { status: 422 }), new Response(null, { status: 404 }))
     await expect(submitRayJob(server, claim)).rejects.toMatchObject({ name: 'Error', status: 422 })
     expect(server.fetch).toHaveBeenCalledTimes(2)
   })
+
+  it.each([401, 403])(
+    'treats a denied creation (HTTP %i) as final without another authenticated request',
+    async (status) => {
+      const server = target(new Response(null, { status }))
+      await expect(submitRayJob(server, claim)).rejects.toMatchObject({ status })
+      expect(server.fetch.mock.calls.map(([, init]) => init?.method)).toEqual(['POST'])
+    }
+  )
 
   it('reconciles a lost create response with one GET and no second POST', async () => {
     const server = target(new TypeError('connection lost'), Response.json(record))
@@ -139,4 +207,19 @@ describe('Ray job control', () => {
     await expect(submitRayJob(server, claim, signal)).rejects.toThrow('cancelled')
     expect(server.fetch.mock.calls.length).toBeLessThanOrEqual(1)
   })
+})
+
+it('requires access to the Jobs API even when Dashboard version metadata is public', async () => {
+  const version = (): Response => Response.json({ session_name: 'cluster', ray_version: '2.52.0' })
+  const server = target(
+    version(),
+    new Response(null, { status: 403 }),
+    version(),
+    new Response('<html>Sign in</html>'),
+    version(),
+    Response.json([])
+  )
+  await expect(verifyRayJobsAccess(server)).rejects.toThrow('403')
+  await expect(verifyRayJobsAccess(server)).rejects.toThrow('Ray Jobs API')
+  await expect(verifyRayJobsAccess(server)).resolves.toBeUndefined()
 })

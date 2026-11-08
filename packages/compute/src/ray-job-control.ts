@@ -1,12 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDeepStrictEqual } from 'node:util'
 
-import { rayJobsUrl, rayNodeRequest } from './ray-jobs-http'
-
-export interface RayJobsTarget {
-  endpoint: string
-  fetch?: typeof fetch
-}
+import { RayRequestCredentialError, requestRayDashboard, type RayJobsTarget } from './ray-jobs-http'
 
 export interface RayJobClaim {
   submissionId: string
@@ -26,13 +21,13 @@ export interface RayJobObservation {
 function rayJobsRequest(
   target: RayJobsTarget,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  onDispatch?: () => void
 ): Promise<Response> {
-  const url = rayJobsUrl(target.endpoint, path)
   init.signal?.throwIfAborted()
   const deadline = AbortSignal.timeout(30_000)
   const signal = init.signal ? AbortSignal.any([init.signal, deadline]) : deadline
-  return (target.fetch ?? rayNodeRequest)(url, { ...init, signal, redirect: 'error' })
+  return requestRayDashboard(target, path, { ...init, signal }, onDispatch)
 }
 
 const jsonBudget = 256 * 1024
@@ -42,6 +37,9 @@ class RayJobsHttpError extends Error {
     super(`Ray Jobs HTTP ${status}`)
   }
 }
+/** Only the initial POST can produce this result. No request was handed to the transport. */
+export class RayJobCreationNotSentError extends Error {}
+
 export class RayJobCreationRejectedError extends Error {
   constructor(readonly status: number) {
     super(`Ray rejected job creation (HTTP ${status}).`)
@@ -53,7 +51,7 @@ async function readJson(
   byteLimit = jsonBudget
 ): Promise<Record<string, unknown>> {
   if (!response.ok) {
-    await response.body?.cancel()
+    await response.body?.cancel().catch(() => {})
     throw new RayJobsHttpError(response.status)
   }
   if (!response.body) throw new Error('Missing Ray Jobs response')
@@ -74,7 +72,12 @@ async function readJson(
   } finally {
     reader.releaseLock()
   }
-  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  } catch {
+    throw new Error('Invalid Ray Jobs response')
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     throw new Error('Invalid Ray Jobs response')
   return parsed as Record<string, unknown>
@@ -82,14 +85,18 @@ async function readJson(
 
 /** Bind approved submissions to the current head session across application restarts. */
 export async function inspectRayDashboard(
-  endpoint: string,
+  target: string | RayJobsTarget,
   signal?: AbortSignal
 ): Promise<{ sessionName: string; rayVersion: string }> {
   const timeout = AbortSignal.timeout(15_000)
   const info = await readJson(
-    await rayJobsRequest({ endpoint }, '/api/version', {
-      signal: signal ? AbortSignal.any([signal, timeout]) : timeout
-    }),
+    await rayJobsRequest(
+      typeof target === 'string' ? { endpoint: target } : target,
+      '/api/version',
+      {
+        signal: signal ? AbortSignal.any([signal, timeout]) : timeout
+      }
+    ),
     16 * 1024
   )
   const { session_name: sessionName, ray_version: rayVersion } = info
@@ -101,6 +108,19 @@ export async function inspectRayDashboard(
   )
     throw new Error('Invalid Ray Dashboard session identity.')
   return { sessionName, rayVersion }
+}
+
+export async function verifyRayJobsAccess(target: RayJobsTarget): Promise<void> {
+  await inspectRayDashboard(target)
+  // Some gateways expose version metadata while protecting the Jobs API.
+  const response = await rayJobsRequest(target, '/api/jobs/')
+  await response.body?.cancel()
+  if (!response.ok) throw new RayJobsHttpError(response.status)
+  if (
+    response.status !== 200 ||
+    response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json'
+  )
+    throw new Error('Unexpected response from the Ray Jobs API.')
 }
 
 function jobPath(claim: RayJobClaim): string {
@@ -174,18 +194,37 @@ export async function submitRayJob(
   if (!claim.entrypoint.trim() || !/^gcs:\/\/_ray_pkg_[0-9a-f]{64}\.zip$/.test(claim.workingDir))
     throw new Error('Invalid Ray submission')
   const body = JSON.stringify(declaration(claim))
+  let dispatched = false
   try {
     const receipt = await readJson(
-      await rayJobsRequest(target, '/api/jobs/', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body,
-        signal
-      })
+      await rayJobsRequest(
+        target,
+        '/api/jobs/',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body,
+          signal
+        },
+        () => {
+          dispatched = true
+        }
+      )
     )
     if (receipt.submission_id !== claim.submissionId)
       throw new Error('Ray submission receipt mismatch')
   } catch (error) {
+    if (!dispatched)
+      throw new RayJobCreationNotSentError(
+        error instanceof RayRequestCredentialError
+          ? error.message
+          : signal?.aborted
+            ? 'Ray submission cancelled before dispatch.'
+            : 'Ray submission was not sent.'
+      )
+    // A gateway can reject both POST and GET. Its explicit denial of this POST is definitive.
+    if (error instanceof RayJobsHttpError && (error.status === 401 || error.status === 403))
+      throw new RayJobCreationRejectedError(error.status)
     signal?.throwIfAborted()
     // The server may have committed before the response was lost.
     try {
@@ -194,7 +233,7 @@ export async function submitRayJob(
       signal?.throwIfAborted()
       if (
         error instanceof RayJobsHttpError &&
-        [400, 401, 402, 403, 404, 413, 415, 422].includes(error.status) &&
+        [400, 402, 404, 413, 415, 422].includes(error.status) &&
         recoveryError instanceof RayJobsHttpError &&
         recoveryError.status === 404
       )

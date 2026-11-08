@@ -1,7 +1,7 @@
 import { externalComputeMode } from '../../../../shared/compute'
 import * as AlertDialog from '@/components/ui/alert-dialog'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { X } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -28,6 +28,7 @@ import { useComputeStore } from '@/stores/compute-store'
 type ComputeHostRemovalDialogProps = {
   host: Pick<ComputeHost, 'providerId' | 'displayName' | 'authentication'>
   onRemoved: () => void
+  triggerVariant?: 'ghost' | 'outline'
 }
 
 const ACTIVE_JOB_STATUSES = new Set(['queued', 'submitted', 'running'])
@@ -39,7 +40,8 @@ const canCleanRemoteFiles = (job: ComputeHostDeletionBlocker): boolean =>
 
 export function ComputeHostRemovalDialog({
   host,
-  onRemoved
+  onRemoved,
+  triggerVariant = 'ghost'
 }: ComputeHostRemovalDialogProps): React.JSX.Element {
   const { t } = useTranslation()
   const mode = externalComputeMode(host.providerId)
@@ -154,13 +156,13 @@ export function ComputeHostRemovalDialog({
           <AlertDialog.Trigger asChild>
             <Button
               type="button"
-              variant="ghost"
+              variant={triggerVariant}
               size="icon-sm"
               onClick={openConfirmation}
               aria-label={t('Remove {{name}}', { name: host.displayName })}
               className="shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             >
-              <X className="size-4" aria-hidden="true" />
+              <Trash2 className="size-4" aria-hidden="true" />
             </Button>
           </AlertDialog.Trigger>
         </TooltipTrigger>
@@ -206,7 +208,7 @@ export function ComputeHostRemovalDialog({
                 {showJobs ? (
                   <div className="max-h-64 space-y-2 overflow-y-auto">
                     {(deletionStatus.blockingJobs ?? []).map((job) => (
-                      <div key={job.jobId} className="rounded-md border p-3 text-sm">
+                      <div key={job.jobId} className="rounded-md border border-border p-3 text-sm">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="truncate font-medium">{job.intent || job.jobId}</p>

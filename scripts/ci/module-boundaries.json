@@ -303,7 +303,13 @@
         "src/main/compute/modal-sdk.ts",
         "src/main/compute/modal-target-catalog.ts",
         "src/main/compute/harvest-output-volume.ts",
-        "src/main/compute/external-job-submission.ts"
+        "src/main/compute/external-job-submission.ts",
+        "src/main/compute/compute-accounts.ts",
+        "src/main/compute/compute-account-adapter.ts",
+        "src/main/compute/compute-account-service.ts",
+        "src/main/compute/compute-account-hf.ts",
+        "src/main/compute/modal-account-auth.ts",
+        "src/main/compute/ray-token.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -377,7 +383,10 @@
         "src/main/compute/hugging-face-job-access.test.ts",
         "src/main/compute/ray-job-workflow.integration.test.ts",
         "src/main/compute/ray-shared-outputs.test.ts",
-        "src/main/compute/modal-job-workflow.integration.test.ts"
+        "src/main/compute/modal-job-workflow.integration.test.ts",
+        "src/main/compute/compute-accounts.test.ts",
+        "src/main/compute/modal-account-auth.test.ts",
+        "src/main/compute/ray-token.test.ts"
       ],
       "externalImports": [
         "@aipoch/compute",
@@ -395,14 +404,22 @@
         "vitest",
         "zod",
         "@aipoch/durable-files",
-        "node:stream/promises"
+        "node:stream/promises",
+        "node:events"
       ],
       "resourcePaths": [
         "resources/skills/remote-compute-ssh/SKILL.md",
         "resources/compute-askpass.sh",
-        "resources/compute-modal.py"
+        "resources/compute-modal.py",
+        "resources/compute-hf-auth.py",
+        "resources/compute-modal-auth.py"
       ],
-      "resourceImports": ["resources/compute-askpass.sh", "resources/compute-modal.py"],
+      "resourceImports": [
+        "resources/compute-askpass.sh",
+        "resources/compute-modal.py",
+        "resources/compute-hf-auth.py",
+        "resources/compute-modal-auth.py"
+      ],
       "resourceTests": [
         "src/main/compute/approval-session-lifecycle.test.ts",
         "src/main/compute/agent-compute-service.test.ts",
@@ -463,7 +480,9 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/compute/modal-job-workflow.integration.test.ts"
+        "src/main/compute/modal-job-workflow.integration.test.ts",
+        "src/main/compute/compute-accounts.test.ts",
+        "src/main/compute/modal-account-auth.test.ts"
       ]
     },
     "connector_builtins": {
@@ -4847,6 +4866,10 @@
         "src/renderer/src/assets/provider-icons/codebuddy.svg",
         "src/renderer/src/assets/provider-icons/deepseek.svg",
         "src/renderer/src/assets/provider-icons/grok.svg",
+        "src/renderer/src/assets/provider-icons/huggingface.svg",
+        "src/renderer/src/assets/provider-icons/kubernetes.svg",
+        "src/renderer/src/assets/provider-icons/modal.svg",
+        "src/renderer/src/assets/provider-icons/ray.svg",
         "src/renderer/src/assets/provider-icons/kimi.svg",
         "src/renderer/src/assets/provider-icons/minimax.svg",
         "src/renderer/src/assets/provider-icons/openai.svg",
@@ -5874,6 +5897,8 @@
         "src/renderer/src/pages/settings/ComputeHostDetail.tsx",
         "src/renderer/src/pages/settings/ComputeHostRemovalDialog.tsx",
         "src/renderer/src/pages/settings/ComputePanel.tsx",
+        "src/renderer/src/pages/settings/ComputeTargetGroup.tsx",
+        "src/renderer/src/pages/settings/ComputeTargetEditor.tsx",
         "src/renderer/src/pages/settings/ComputePasswordResetSection.tsx",
         "src/renderer/src/pages/settings/CredentialsPanel.tsx",
         "src/renderer/src/pages/settings/GeneralPanel.tsx",
@@ -5918,7 +5943,9 @@
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx",
         "src/renderer/src/pages/settings/TrustedPrivateServices.tsx",
         "src/renderer/src/pages/settings/RayTargets.tsx",
-        "src/renderer/src/pages/settings/ModalTargets.tsx"
+        "src/renderer/src/pages/settings/ModalTargets.tsx",
+        "src/renderer/src/pages/settings/ComputeAccountControls.tsx",
+        "src/renderer/src/pages/settings/use-compute-account.ts"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -5936,6 +5963,8 @@
         "src/renderer/src/pages/settings/ComputeHostDetail.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ComputeHostRemovalDialog.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ComputePanel.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/ComputeTargetGroup.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/ComputeTargetEditor.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/ComputePasswordResetSection.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/CredentialsPanel.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/GeneralPanel.tsx": "presentation-adapter",
@@ -5980,7 +6009,9 @@
         "src/renderer/src/pages/settings/ProviderTestResultCard.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/TrustedPrivateServices.tsx": "presentation-adapter",
         "src/renderer/src/pages/settings/RayTargets.tsx": "presentation-adapter",
-        "src/renderer/src/pages/settings/ModalTargets.tsx": "presentation-adapter"
+        "src/renderer/src/pages/settings/ModalTargets.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/ComputeAccountControls.tsx": "presentation-adapter",
+        "src/renderer/src/pages/settings/use-compute-account.ts": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -6040,6 +6071,12 @@
         "src/renderer/src/pages/settings/validation-message.test.ts",
         "src/renderer/src/pages/settings/ProviderTestResultCard.test.tsx",
         "src/main/host-layer-dependencies.architecture.test.ts"
+      ],
+      "resourceImports": [
+        "src/renderer/src/assets/provider-icons/huggingface.svg",
+        "src/renderer/src/assets/provider-icons/kubernetes.svg",
+        "src/renderer/src/assets/provider-icons/modal.svg",
+        "src/renderer/src/assets/provider-icons/ray.svg"
       ],
       "externalImports": [
         "@aipoch/compute",
@@ -10288,7 +10325,10 @@
       "externalImports": ["node:buffer", "node:crypto", "node:fs/promises", "node:path", "zod"]
     },
     "settings_credentials_presentation": {
-      "sources": ["src/renderer/src/pages/settings/UnpaywallCredentialForm.tsx"],
+      "sources": [
+        "src/renderer/src/pages/settings/UnpaywallCredentialForm.tsx",
+        "src/renderer/src/pages/settings/RayCredentials.tsx"
+      ],
       "layer": "presentation-adapter",
       "sourceLayers": {},
       "consumerModules": [],
@@ -10297,7 +10337,7 @@
         "src/renderer/src/pages/settings/CredentialsPanel.render.test.tsx",
         "src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx"
       ],
-      "externalImports": ["react", "react-i18next"]
+      "externalImports": ["react", "react-i18next", "lucide-react"]
     },
     "settings_file_browser": {
       "sources": [
@@ -10519,7 +10559,9 @@
         "src/main/credential-identity/sqlite-snapshot.ts",
         "src/main/credential-identity/windows-profile-key.ts",
         "src/main/secure-storage.ts",
-        "src/main/credential-identity/identity-contract.ts"
+        "src/main/credential-identity/identity-contract.ts",
+        "src/main/credential-identity/compute-account-document.ts",
+        "src/main/credential-identity/ray-token-document.ts"
       ],
       "layer": "application-service",
       "sourceLayers": {

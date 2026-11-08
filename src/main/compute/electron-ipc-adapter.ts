@@ -1,3 +1,4 @@
+import { computeAccountProviders } from '../../shared/compute-accounts'
 import { kubernetesTargetConfigSchema } from './kubernetes-target-catalog'
 import { hostedTargetConfigSchema } from './hosted-target-catalog'
 import { rayTargetConfigSchema } from './ray-target-catalog'
@@ -161,6 +162,24 @@ const computeIpcArgumentSchemas = Object.freeze({
   'compute:list-kubernetes-targets': z.tuple([]),
   'compute:create-kubernetes-target': z.tuple([kubernetesTargetConfigSchema]),
   'compute:list-hosted-targets': z.tuple([]),
+  'compute:account-status': z.tuple([z.enum(computeAccountProviders), z.boolean().optional()]),
+  'compute:connect-account': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:use-local-account': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:cancel-account-connection': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:disconnect-account': z.tuple([z.enum(computeAccountProviders)]),
+  'compute:list-ray-tokens': z.tuple([]),
+  'compute:set-ray-token': z.tuple([z.string().min(1).max(2048), z.string().min(1).max(16384)]),
+  'compute:remove-ray-token': z.tuple([z.string().min(1).max(2048)]),
+  'compute:verify-target': z.tuple([z.string()]),
+  'compute:update-target': z.tuple([
+    z.string(),
+    z.union([
+      kubernetesTargetConfigSchema,
+      hostedTargetConfigSchema,
+      rayTargetConfigSchema,
+      modalTargetConfigSchema
+    ])
+  ]),
   'compute:create-hosted-target': z.tuple([hostedTargetConfigSchema]),
   'compute:list-ray-targets': z.tuple([]),
   'compute:create-ray-target': z.tuple([rayTargetConfigSchema]),
@@ -256,6 +275,28 @@ const registerComputeIpcHandlerSet = ({ handlers, enabledHosts }: ComputeIpcAdap
     handlers.createKubernetesTarget(config)
   )
   handleComputeIpc('compute:list-hosted-targets', () => handlers.listHostedTargets())
+  handleComputeIpc('compute:account-status', (_event, provider, force) =>
+    handlers.accountStatus(provider, force)
+  )
+  handleComputeIpc('compute:connect-account', (_event, value) => handlers.connectAccount(value))
+  handleComputeIpc('compute:use-local-account', (_event, value) => handlers.useLocalAccount(value))
+  handleComputeIpc('compute:cancel-account-connection', (_event, value) =>
+    handlers.cancelAccountConnection(value)
+  )
+  handleComputeIpc('compute:disconnect-account', (_event, value) =>
+    handlers.disconnectAccount(value)
+  )
+  handleComputeIpc('compute:list-ray-tokens', () => handlers.listRayTokens())
+  handleComputeIpc('compute:set-ray-token', (_event, endpoint, token) =>
+    handlers.setRayToken(endpoint, token)
+  )
+  handleComputeIpc('compute:remove-ray-token', (_event, endpoint) =>
+    handlers.removeRayToken(endpoint)
+  )
+  handleComputeIpc('compute:verify-target', (_event, value) => handlers.verifyTarget(value))
+  handleComputeIpc('compute:update-target', (_event, providerId, config) =>
+    handlers.updateTarget(providerId, config)
+  )
   handleComputeIpc('compute:create-hosted-target', (_event, config) =>
     handlers.createHostedTarget(config)
   )

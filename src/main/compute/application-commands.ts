@@ -1,3 +1,4 @@
+import { computeAccountProviders } from '../../shared/compute-accounts'
 import { type SetComputeJobRemoteCleanupRequest } from '@aipoch/compute'
 import {
   normalizeComputeApprovalDecision,
@@ -27,6 +28,16 @@ type ComputeCommandOwner = Pick<
   | 'listKubernetesTargets'
   | 'createKubernetesTarget'
   | 'listHostedTargets'
+  | 'accountStatus'
+  | 'connectAccount'
+  | 'useLocalAccount'
+  | 'cancelAccountConnection'
+  | 'disconnectAccount'
+  | 'listRayTokens'
+  | 'setRayToken'
+  | 'removeRayToken'
+  | 'verifyTarget'
+  | 'updateTarget'
   | 'createHostedTarget'
   | 'listRayTargets'
   | 'createRayTarget'
@@ -112,6 +123,56 @@ const computeApplicationCommands = Object.freeze({
     OwnerArgs<ComputeCommandOwner, 'listHostedTargets'>,
     OwnerResult<ComputeCommandOwner, 'listHostedTargets'>
   >('compute:list-hosted-targets'),
+  accountStatus: defineApplicationCommand<
+    'compute:account-status',
+    OwnerArgs<ComputeCommandOwner, 'accountStatus'>,
+    OwnerResult<ComputeCommandOwner, 'accountStatus'>
+  >('compute:account-status'),
+  connectAccount: defineApplicationCommand<
+    'compute:connect-account',
+    OwnerArgs<ComputeCommandOwner, 'connectAccount'>,
+    OwnerResult<ComputeCommandOwner, 'connectAccount'>
+  >('compute:connect-account'),
+  useLocalAccount: defineApplicationCommand<
+    'compute:use-local-account',
+    OwnerArgs<ComputeCommandOwner, 'useLocalAccount'>,
+    OwnerResult<ComputeCommandOwner, 'useLocalAccount'>
+  >('compute:use-local-account'),
+  cancelAccountConnection: defineApplicationCommand<
+    'compute:cancel-account-connection',
+    OwnerArgs<ComputeCommandOwner, 'cancelAccountConnection'>,
+    OwnerResult<ComputeCommandOwner, 'cancelAccountConnection'>
+  >('compute:cancel-account-connection'),
+  disconnectAccount: defineApplicationCommand<
+    'compute:disconnect-account',
+    OwnerArgs<ComputeCommandOwner, 'disconnectAccount'>,
+    OwnerResult<ComputeCommandOwner, 'disconnectAccount'>
+  >('compute:disconnect-account'),
+  listRayTokens: defineApplicationCommand<
+    'compute:list-ray-tokens',
+    OwnerArgs<ComputeCommandOwner, 'listRayTokens'>,
+    OwnerResult<ComputeCommandOwner, 'listRayTokens'>
+  >('compute:list-ray-tokens'),
+  setRayToken: defineApplicationCommand<
+    'compute:set-ray-token',
+    OwnerArgs<ComputeCommandOwner, 'setRayToken'>,
+    OwnerResult<ComputeCommandOwner, 'setRayToken'>
+  >('compute:set-ray-token'),
+  removeRayToken: defineApplicationCommand<
+    'compute:remove-ray-token',
+    OwnerArgs<ComputeCommandOwner, 'removeRayToken'>,
+    OwnerResult<ComputeCommandOwner, 'removeRayToken'>
+  >('compute:remove-ray-token'),
+  verifyTarget: defineApplicationCommand<
+    'compute:verify-target',
+    OwnerArgs<ComputeCommandOwner, 'verifyTarget'>,
+    OwnerResult<ComputeCommandOwner, 'verifyTarget'>
+  >('compute:verify-target'),
+  updateTarget: defineApplicationCommand<
+    'compute:update-target',
+    OwnerArgs<ComputeCommandOwner, 'updateTarget'>,
+    OwnerResult<ComputeCommandOwner, 'updateTarget'>
+  >('compute:update-target'),
   createHostedTarget: defineApplicationCommand<
     'compute:create-hosted-target',
     OwnerArgs<ComputeCommandOwner, 'createHostedTarget'>,
@@ -325,6 +386,16 @@ const computeApplicationCommands = Object.freeze({
 })
 
 const computeApplicationCommandGroup = defineApplicationCommandGroup('compute', [
+  computeApplicationCommands.accountStatus,
+  computeApplicationCommands.connectAccount,
+  computeApplicationCommands.useLocalAccount,
+  computeApplicationCommands.cancelAccountConnection,
+  computeApplicationCommands.disconnectAccount,
+  computeApplicationCommands.listRayTokens,
+  computeApplicationCommands.setRayToken,
+  computeApplicationCommands.removeRayToken,
+  computeApplicationCommands.verifyTarget,
+  computeApplicationCommands.updateTarget,
   computeApplicationCommands.listKubernetesTargets,
   computeApplicationCommands.createKubernetesTarget,
   computeApplicationCommands.listHostedTargets,
@@ -393,10 +464,20 @@ const withSerializedRemoteFsError = async <Result>(
   }
 }
 
+function assertAccountProvider(provider: (typeof computeAccountProviders)[number]): void {
+  if (!computeAccountProviders.includes(provider))
+    throw new Error('Unknown compute account provider.')
+}
+
 const assertLocalCommand = (context: CallerContext, channel: string): void => {
   if (context.location !== 'local') {
     throw new Error(`Channel only available from the local app: ${channel}`)
   }
+}
+
+function assertAccountSettingsCaller(context: CallerContext, channel: string): void {
+  assertLocalCommand(context, channel)
+  if (!canSatisfyHumanApproval(context)) throw new Error('Account settings require a local user.')
 }
 
 const registerComputeApplicationCommands = (
@@ -426,6 +507,54 @@ const registerComputeApplicationCommands = (
         return dependencies.compute.createKubernetesTarget(args[0])
       },
       'compute:list-hosted-targets': () => dependencies.compute.listHostedTargets(),
+      'compute:account-status': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:account-status')
+        assertAccountProvider(args[0])
+        if (args[1] !== undefined && typeof args[1] !== 'boolean')
+          throw new Error('Invalid refresh option.')
+        return dependencies.compute.accountStatus(...args)
+      },
+      'compute:connect-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:connect-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.connectAccount(args[0])
+      },
+      'compute:use-local-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:use-local-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.useLocalAccount(args[0])
+      },
+      'compute:cancel-account-connection': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:cancel-account-connection')
+        assertAccountProvider(args[0])
+        return dependencies.compute.cancelAccountConnection(args[0])
+      },
+      'compute:disconnect-account': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:disconnect-account')
+        assertAccountProvider(args[0])
+        return dependencies.compute.disconnectAccount(args[0])
+      },
+      'compute:list-ray-tokens': ({ callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:list-ray-tokens')
+        return dependencies.compute.listRayTokens()
+      },
+      'compute:set-ray-token': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:set-ray-token')
+        return dependencies.compute.setRayToken(...args)
+      },
+      'compute:remove-ray-token': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:remove-ray-token')
+        return dependencies.compute.removeRayToken(...args)
+      },
+      'compute:verify-target': ({ args, callerContext }) => {
+        assertAccountSettingsCaller(callerContext, 'compute:verify-target')
+        if (typeof args[0] !== 'string') throw new Error('Invalid compute target.')
+        return dependencies.compute.verifyTarget(args[0])
+      },
+      'compute:update-target': ({ args, callerContext }) => {
+        assertLocalCommand(callerContext, 'compute:update-target')
+        return dependencies.compute.updateTarget(...args)
+      },
       'compute:create-hosted-target': ({ args, callerContext }) => {
         assertLocalCommand(callerContext, 'compute:create-hosted-target')
         return dependencies.compute.createHostedTarget(args[0])

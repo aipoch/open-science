@@ -19,6 +19,12 @@ import { ComputeJobRepository } from './job-repository'
 import { ComputeHostRepository } from './repository'
 import { getJobHarvestDir } from './workspace-path'
 
+import { resolveConfigRoot } from '../storage-root'
+vi.mock('../storage-root', async (load) => ({
+  ...(await load<typeof import('../storage-root')>()),
+  resolveConfigRoot: vi.fn()
+}))
+
 vi.mock('@aipoch/compute/node', async (load) => ({
   ...(await load<typeof import('@aipoch/compute/node')>()),
   stageHuggingFaceInputs: vi.fn(),
@@ -46,6 +52,7 @@ it(
 
 async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), 'hf-host-integration-'))
+  vi.mocked(resolveConfigRoot).mockReturnValue(root)
   let client = createProjectDbClient(root)
   const getClient = async (): Promise<typeof client> => client
   const catalog = new HostedTargetCatalog(() => root)

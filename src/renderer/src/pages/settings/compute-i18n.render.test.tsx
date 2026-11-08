@@ -129,33 +129,25 @@ describe('ComputePanel i18n', () => {
   it('translates the target sections and the add action', () => {
     act(() => root.render(<ComputePanel onNavigate={vi.fn()} />))
 
-    expect(container.textContent).toContain('Modal Sandbox targets')
-    expect(container.textContent).toContain('SSH hosts')
-    expect(container.textContent).toContain('Add SSH host')
-    expect(container.textContent).toContain('No SSH hosts yet')
+    const add = (name: string): string | undefined =>
+      container
+        .querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)
+        ?.textContent?.trim()
+
+    expect(container.textContent).toContain('Modal Sandboxes')
+    expect(add('Add SSH host')).toBe('Add')
 
     switchTo('zh-Hans')
-    expect(container.textContent).toContain('Modal Sandbox 目标')
+    expect(container.textContent).toContain('Modal 沙箱')
     expect(container.textContent).toContain('SSH 主机')
-    expect(container.textContent).toContain('添加 SSH 主机')
-    expect(container.textContent).toContain('还没有 SSH 主机')
-    expect(container.textContent).not.toContain('Modal Sandbox targets')
-    expect(container.textContent).not.toContain('No SSH hosts yet')
-
-    const addCluster = Array.from(container.querySelectorAll('button')).find(
-      (button) => button.textContent === '添加 Kubernetes 目标'
-    )
-    expect(addCluster).toBeDefined()
-    act(() => addCluster!.click())
-    expect(container.querySelector('input[name="image"]')?.closest('label')?.textContent).toBe(
-      '容器镜像'
-    )
+    expect(container.textContent).toContain('未配置')
+    expect(add('添加 SSH 主机')).toBe('添加')
 
     switchTo('zh-Hant')
-    expect(container.textContent).toContain('Modal Sandbox 目標')
+    expect(container.textContent).toContain('Modal 沙箱')
     expect(container.textContent).toContain('SSH 主機')
-    expect(container.textContent).toContain('新增 SSH 主機')
-    expect(container.textContent).toContain('還沒有 SSH 主機')
+    expect(container.textContent).toContain('未設定')
+    expect(add('新增 SSH 主機')).toBe('加入')
     expect(container.textContent).not.toContain('{{')
   })
 

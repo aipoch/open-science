@@ -21,6 +21,11 @@ import { SshConfigComputeConnectionBroker } from './connection-broker'
 
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
 import { addRendererBroadcastSink } from '../renderer-broadcast'
+import { AccountAuthError } from './compute-account-adapter'
+import { computeAccounts } from './compute-account-service'
+import { ComputeAccounts } from './compute-accounts'
+import { HostedTargetCatalog } from './hosted-target-catalog'
+import { ModalTargetCatalog } from './modal-target-catalog'
 import { ComputeApprovalBroker } from './compute-approval-broker'
 import type { CredentialVault } from './credential-vault'
 import { COMPUTE_IPC_CHANNELS } from './electron-ipc-adapter'
@@ -103,6 +108,59 @@ const approvalBrokerFrom = (service: ComputeService): ComputeApprovalBroker =>
   ).remoteOperations.approvalBroker
 
 describe('compute handlers', () => {
+  it('rechecks account access before adding hosted configurations and keeps saved ones editable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'compute-account-gate-'))
+    const configRoot = (): string => root
+    const adapter = { probe: vi.fn(async () => 'test-user'), authorize: vi.fn() }
+    const accounts = new ComputeAccounts({
+      configRoot,
+      adapters: { 'hugging-face': adapter, modal: adapter },
+      openExternal: vi.fn()
+    })
+    const gate = vi
+      .spyOn(computeAccounts, 'withConnectedAccount')
+      .mockImplementation(accounts.withConnectedAccount.bind(accounts))
+    try {
+      const hostedTargets = new HostedTargetCatalog(configRoot)
+      const modalTargets = new ModalTargetCatalog(configRoot)
+      const api = createComputeHandlers(mockRepository({ hostedTargets, modalTargets }))
+      const hf = {
+        displayName: 'HF',
+        namespace: 'lab',
+        bucket: 'lab/jobs',
+        image: 'python',
+        flavor: 'cpu-basic',
+        timeoutSeconds: 60
+      }
+      const modal = {
+        displayName: 'Modal',
+        environmentName: 'main',
+        appName: 'lab',
+        image: 'python',
+        cpus: 1,
+        memoryMiB: 512
+      }
+      const savedHf = await api.createHostedTarget(hf)
+      const savedModal = await api.createModalTarget(modal)
+      adapter.probe.mockRejectedValue(new AccountAuthError('network'))
+      const message = 'Connect the account before adding this configuration.'
+      await expect(api.createHostedTarget(hf)).rejects.toThrow(message)
+      await expect(api.createModalTarget(modal)).rejects.toThrow(message)
+      for (const provider of ['hugging-face', 'modal'] as const) {
+        expect(await accounts.status(provider)).toMatchObject({
+          state: 'unavailable',
+          reason: 'network'
+        })
+      }
+      await api.updateTarget(savedHf.providerId, { ...hf, displayName: 'Updated' })
+      expect(await hostedTargets.list()).toEqual([{ ...savedHf, displayName: 'Updated' }])
+      expect(await modalTargets.list()).toEqual([savedModal])
+    } finally {
+      gate.mockRestore()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('round-trips host instructions separately from probed resources through renderer handlers', async () => {
     const host = sampleHost({
       probeResult: {
@@ -2672,6 +2730,16 @@ describe('installComputeIpcHandlers', () => {
       'compute:get',
       'compute:create',
       'compute:create-kubernetes-target',
+      'compute:account-status',
+      'compute:connect-account',
+      'compute:use-local-account',
+      'compute:cancel-account-connection',
+      'compute:disconnect-account',
+      'compute:list-ray-tokens',
+      'compute:set-ray-token',
+      'compute:remove-ray-token',
+      'compute:verify-target',
+      'compute:update-target',
       'compute:create-hosted-target',
       'compute:create-ray-target',
       'compute:create-modal-target',

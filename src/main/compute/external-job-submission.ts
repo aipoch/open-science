@@ -1,3 +1,4 @@
+import { getRayToken } from './ray-token'
 import { posix } from 'node:path'
 import { ComputeHostUnavailableError, type ComputeJob } from '@aipoch/compute'
 import { resolveRayJobsEndpoint } from '@aipoch/compute/node'
@@ -95,7 +96,7 @@ export async function bindExternalJob(
     case 'ray_jobs': {
       const { sharedRoot, remoteRoot, cpus, gpus } = settings
       const endpoint = resolveRayJobsEndpoint(settings.endpoint)
-      const { sessionName } = await inspectRayDashboard(endpoint, signal)
+      const { sessionName } = await inspectRayDashboard({ endpoint, getToken: getRayToken }, signal)
       const binding = { endpoint, sessionName, sharedRoot, remoteRoot, cpus, gpus }
       return {
         mode,

@@ -28,10 +28,18 @@ it('uploads exactly the approved bytes, then pins the same package on retry', as
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
       .mockResolvedValueOnce(new Response())
       .mockResolvedValueOnce(new Response())
-    const target = { endpoint: 'http://127.0.0.1:8265', fetch }
+    const target = {
+      endpoint: 'http://127.0.0.1:8265',
+      fetch,
+      getToken: vi.fn(async () => 'local-token')
+    }
     const uri = await uploadRayWorkingDirectory(target, packed)
     expect(await uploadRayWorkingDirectory(target, packed)).toBe(uri)
     expect(fetch.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'PUT', 'GET'])
+    expect(target.getToken.mock.calls).toEqual(Array(3).fill([target.endpoint]))
+    expect(
+      fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('authorization'))
+    ).toEqual(Array(3).fill('Bearer local-token'))
     const [[url], [, put]] = fetch.mock.calls
     expect(String(url)).toBe(
       target.endpoint + '/api/packages/gcs/_ray_pkg_' + packed.sha256 + '.zip'
@@ -55,6 +63,9 @@ it('pins the explicitly selected Dashboard ahead of saved and environment settin
     )
     expect(resolveRayJobsEndpoint(undefined, 'http://localhost:9001')).toBe('http://localhost:9001')
     expect(resolveRayJobsEndpoint()).toBe('http://localhost:9000')
+    expect(resolveRayJobsEndpoint('https://lab.example/gateway/?#')).toBe(
+      'https://lab.example/gateway'
+    )
     expect(() => resolveRayJobsEndpoint('https://user:secret@lab.example')).toThrow(
       'Invalid Ray Dashboard'
     )

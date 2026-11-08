@@ -165,6 +165,9 @@ def main(action, req):
     # Image and anonymous Secret resolution also consult the environment default.
     os.environ["MODAL_ENVIRONMENT"] = req["environmentName"]
     import modal
+    from modal.config import DEFAULT_SERVER_URL, config
+    if any(url not in DEFAULT_SERVER_URL.split(",") for url in config["server_url"].split(",")):
+        raise ValueError("untrusted Modal endpoint")
     from modal_proto import api_pb2
     from modal.client import _Client
 
@@ -271,7 +274,16 @@ if __name__ == "__main__":
         if version("modal") != SDK_VERSION:
             raise PackageNotFoundError()
         with redirect_stdout(sys.stderr):
-            result = main(sys.argv[1], json.load(sys.stdin))
+            envelope = json.load(sys.stdin)
+            material = envelope.get("managedIdentity")
+            if material is not None:
+                for key in list(os.environ):
+                    if key.startswith("MODAL_"):
+                        del os.environ[key]
+                os.environ["MODAL_CONFIG_PATH"] = os.devnull
+                os.environ["MODAL_TOKEN_ID"] = material["tokenId"]
+                os.environ["MODAL_TOKEN_SECRET"] = material["tokenSecret"]
+            result = main(sys.argv[1], envelope["request"])
         print(json.dumps({"result": result}, separators=(",", ":")))
     except PackageNotFoundError:
         print(json.dumps({"error": "sdk-version"}))

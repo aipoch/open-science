@@ -168,6 +168,14 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
       inputs: [{ src: 'source.bin', dst_filename: 'input.bin' }],
       outputManifest: JSON.stringify(['result.bin'])
     })
+    await catalog.update(target.providerId, {
+      displayName: 'Changed after approval',
+      environmentName: 'other',
+      appName: 'other',
+      image: 'other',
+      cpus: 2,
+      memoryMiB: 2048
+    })
     expect(sdk.createModalVolume).not.toHaveBeenCalled()
     await writeFile(source, 'changed after approval')
     runtime.start()

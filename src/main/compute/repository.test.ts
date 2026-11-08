@@ -63,8 +63,15 @@ describe('compute host repository', () => {
       ])
       const restarted = new ModalTargetCatalog(() => root)
       expect(await restarted.list()).toEqual([first, second])
+      const edited = { ...config, displayName: 'Edited' }
+      await restarted.update(second.providerId, edited)
+      expect(await catalog.list()).toEqual([
+        first,
+        { ...edited, id: second.id, providerId: second.providerId }
+      ])
       await restarted.remove(first.providerId)
-      expect(await catalog.list()).toEqual([second])
+      await expect(restarted.update(first.providerId, config)).rejects.toThrow('no longer exists')
+      expect((await catalog.list()).map((entry) => entry.providerId)).toEqual([second.providerId])
       await writeFile(join(root, 'compute-modal-targets.json'), '{')
       await expect(restarted.create(config)).rejects.toThrow()
     } finally {
