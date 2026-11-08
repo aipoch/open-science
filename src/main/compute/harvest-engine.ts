@@ -475,7 +475,8 @@ const harvestJobUnchecked = async (
         })
         publishedEvidence = true
       } catch {
-        if (volume) throw new RetryableHarvestError('Compute output evidence publication failed.')
+        if (volume || deps.workspaceConnection)
+          throw new RetryableHarvestError('Compute output evidence publication failed.')
         evidencePublicationFailed = true
         fileEvidence = {
           schemaVersion: 1,
@@ -825,16 +826,26 @@ const harvestJobUnchecked = async (
       if (plan.size) {
         const stagingDirectory = join(attemptDir, '.volume-staging')
         await mkdir(stagingDirectory, { mode: 0o700 })
-        const staged = await volume.stage({
-          files: [...plan.keys()].map((path) => ({
-            path,
-            bytes: remoteFileByPath.get(path)!.size_bytes,
-            xetHash: remoteFileByPath.get(path)?.xetHash
-          })),
-          signal: deps.signal,
-          stagingDirectory,
-          maxBytes: reservation.bytes
-        })
+        const staged = await volume
+          .stage({
+            files: [...plan.keys()].map((path) => ({
+              path,
+              bytes: remoteFileByPath.get(path)!.size_bytes,
+              xetHash: remoteFileByPath.get(path)?.xetHash
+            })),
+            signal: deps.signal,
+            stagingDirectory,
+            maxBytes: reservation.bytes
+          })
+          .catch((error: unknown) => {
+            deps.signal?.throwIfAborted()
+            if (
+              !(deps.hostedOutputs || deps.modalOutputs) ||
+              (error as NodeJS.ErrnoException)?.code === 'ENOSPC'
+            )
+              throw error
+            throw new RetryableHarvestError('Cloud output download failed.')
+          })
         for (const file of staged) {
           const directory = plan.get(file.path)
           if (!directory || file.bytes !== remoteFileByPath.get(file.path)?.size_bytes)

@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises'
 import {
   assertSafeInputDestination,
   createKubernetesBackendAdapter,
+  RetryableHarvestError,
   validateRelativeTransferPath,
   type ComputeConnectionLease,
   type KubernetesWorkspace
@@ -182,6 +183,46 @@ export async function uploadKubernetesJobInputs(
 
 const readScript = 'set -eu; test "$(realpath -e -- "$1")" = "$1"; test -f "$1"; exec cat -- "$1"'
 
+// A nonzero kubectl exec can mean a rejected file or a vanished transfer Pod. Only the
+// latter needs a fresh lease. Check the Pod on failure without exposing kubectl stderr.
+async function checkArchivePod(
+  target: KubernetesJobTarget,
+  workspace: KubernetesWorkspace,
+  pod: string,
+  signal?: AbortSignal
+): Promise<void> {
+  signal?.throwIfAborted()
+  try {
+    const path =
+      '/api/v1/namespaces/' +
+      encodeURIComponent(target.namespace) +
+      '/pods/' +
+      encodeURIComponent(pod)
+    const response = await target.fetch!(target.endpoint + path, {
+      signal: withDeadline(signal, 10_000)
+    })
+    if (response.ok) {
+      const current = await response.json()
+      if (
+        !current.metadata?.deletionTimestamp &&
+        current.metadata?.ownerReferences?.some(
+          (owner: { uid?: string }) => owner.uid === workspace.uid
+        ) &&
+        current.status?.conditions?.some(
+          (condition: { type?: string; status?: string }) =>
+            condition.type === 'Ready' && condition.status === 'True'
+        )
+      )
+        return
+    } else {
+      await response.body?.cancel()
+    }
+  } catch {
+    signal?.throwIfAborted()
+  }
+  throw new RetryableHarvestError('Kubernetes archive Pod is unavailable.')
+}
+
 /** The harvest engine enumerates and reads a terminal job through a read-only PVC mount. */
 export async function withKubernetesArchiveConnection<T>(
   target: KubernetesJobTarget,
@@ -202,31 +243,34 @@ export async function withKubernetesArchiveConnection<T>(
           )
           const deadline = withDeadline(AbortSignal.any(signals), options.timeoutMs)
           const args = await execArgs(target, pod, deadline)
-          return new Promise((resolve, reject) =>
-            execFile(
-              'kubectl',
-              [...args, '--', 'sh', '-c', command],
-              {
-                windowsHide: true,
-                encoding: 'utf8',
-                signal: deadline,
-                killSignal: 'SIGKILL',
-                maxBuffer: options.maxOutputBytes ?? 65_536
-              },
-              (error, stdout) => {
-                if (deadline.aborted) return reject(deadline.reason)
-                if (error && typeof error.code !== 'number')
-                  return reject(new Error('Kubernetes archive command failed.'))
-                resolve({
-                  stdout,
-                  stderr: '',
-                  truncated: false,
-                  timedOut: false,
-                  exitCode: error ? Number(error.code) : 0
-                })
-              }
-            )
+          const result = await new Promise<Awaited<ReturnType<ComputeConnectionLease['run']>>>(
+            (resolve, reject) =>
+              execFile(
+                'kubectl',
+                [...args, '--', 'sh', '-c', command],
+                {
+                  windowsHide: true,
+                  encoding: 'utf8',
+                  signal: deadline,
+                  killSignal: 'SIGKILL',
+                  maxBuffer: options.maxOutputBytes ?? 65_536
+                },
+                (error, stdout) => {
+                  if (deadline.aborted) return reject(deadline.reason)
+                  if (error && typeof error.code !== 'number')
+                    return reject(new Error('Kubernetes archive command failed.'))
+                  resolve({
+                    stdout,
+                    stderr: '',
+                    truncated: false,
+                    timedOut: false,
+                    exitCode: error ? Number(error.code) : 0
+                  })
+                }
+              )
           )
+          if (result.exitCode !== 0) await checkArchivePod(target, workspace, pod, signal)
+          return result
         },
         async download(remotePath, localPath, maxBytes) {
           const path = remotePath.slice('/workspace/'.length)
@@ -243,7 +287,10 @@ export async function withKubernetesArchiveConnection<T>(
             localPath,
             maxBytes,
             signal
-          )
+          ).catch(async (error: unknown) => {
+            await checkArchivePod(target, workspace, pod, signal)
+            throw error
+          })
           return {
             exitCode: exceeded ? 1 : 0,
             stderr: '',

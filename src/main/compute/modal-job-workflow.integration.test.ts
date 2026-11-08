@@ -194,7 +194,10 @@ it('resumes the approved sandbox and publishes frozen-file output before deletin
       await runtime.tick()
     expect(sdk.stageModalJobOutputs).toHaveBeenCalledTimes(1)
     expect(sdk.cleanupModalVolume).not.toHaveBeenCalled()
-    expect((await jobs.get(job_id))?.remote_cleanup_disposition).toBe('pending')
+    expect(await jobs.get(job_id)).toMatchObject({
+      remote_cleanup_disposition: 'pending',
+      harvest_error: 'harvest pending: Cloud output download failed.'
+    })
     await runtime.retry(job_id)
     for (let n = 0; n < 8; n++) {
       await runtime.tick()

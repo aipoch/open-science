@@ -280,7 +280,11 @@ export class ComputeJobRepository {
     if (result === 'confirmed') {
       await client.computeJob.updateMany({
         where: { ...where, kubernetesWorkspace: row.kubernetesWorkspace },
-        data: { kubernetesWorkspace: null, remoteCleanupDisposition: 'cleaned' }
+        data: {
+          kubernetesWorkspace: null,
+          remoteCleanupDisposition: 'cleaned',
+          lastPollError: null
+        }
       })
     }
     return result
@@ -957,7 +961,7 @@ export class ComputeJobRepository {
         throw new Error('Files have not been durably published.')
       await tx.computeJob.updateMany({
         where: { ...where, remoteHandle: row.remoteHandle, remoteCleanupDisposition: 'pending' },
-        data: { remoteCleanupDisposition: 'cleaned' }
+        data: { remoteCleanupDisposition: 'cleaned', lastPollError: null }
       })
       return this.toJob(
         await tx.computeJob.findFirstOrThrow({

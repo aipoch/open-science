@@ -275,6 +275,9 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
       await jobs.deleteByOwner({ projectId: scope.projectId })
       return
     }
+    vi.mocked(computePackage.cleanupHuggingFaceBucketFiles).mockRejectedValueOnce(
+      new Error('Temporary cleanup failure')
+    )
     for (let n = 0; n < 8; n++) {
       await runtime.tick()
       if ((await jobs.get(job_id))?.remote_cleanup_disposition === 'cleaned') break
@@ -288,8 +291,9 @@ async function exerciseSubmission(quotaRejected: boolean): Promise<void> {
     expect((await agent.getJobStatus(scope, target.providerId, job_id)).status).toBe('success')
     expect(creates).toBe(1)
     expect(archiveAttempts).toBe(2)
+    expect(job?.last_poll_error).toBeUndefined()
     expect(computePackage.stageHuggingFaceInputs).toHaveBeenCalledTimes(1)
-    expect(computePackage.cleanupHuggingFaceBucketFiles).toHaveBeenCalledTimes(1)
+    expect(computePackage.cleanupHuggingFaceBucketFiles).toHaveBeenCalledTimes(2)
     await expect(stat(outputs)).rejects.toMatchObject({ code: 'ENOENT' })
   } finally {
     await runtime.stop()

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -195,6 +196,165 @@ const exercisePublication = async (
     await rm(root, { recursive: true, force: true })
   }
 }
+
+it(
+  'retains captured inputs across a failed directory rename and recovers a crash before the published receipt',
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), 'evidence-rename-retry-'))
+    try {
+      const pool = join(root, 'blobs')
+      await mkdir(pool)
+      const snapshot = async (
+        path: string
+      ): Promise<{ dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }> => {
+        const { dev, ino, size, mtimeMs, ctimeMs } = await stat(path)
+        return { dev, ino, size, mtimeMs, ctimeMs }
+      }
+      const request = {
+        expectedRootIdentity: await snapshot(root),
+        blobRoot: pool,
+        expectedBlobRootIdentity: await snapshot(pool),
+        blobStorageKeyPrefix: 'project/blobs',
+        activityId: 'run',
+        activityKind: 'notebook-run',
+        evidenceId: 'evidence-run',
+        receiptName: 'receipt-run.json',
+        stagingName: 'staging-run',
+        finalName: 'activity-run',
+        storageKeyPrefix: 'project/session',
+        maxEvidenceBytes: 65536,
+        maxActivityBytes: 65536,
+        maxGenerationBytes: 1024,
+        availableBytes: 1048576,
+        diskReserveBytes: 0,
+        rootKinds: ['data'],
+        rootsAvailable: true,
+        reasonCodes: [],
+        readPaths: [],
+        changes: [],
+        scientificOutputs: []
+      }
+      const run = (extra: Record<string, unknown>, hook?: string): Promise<ChildResult> =>
+        runChild(
+          process.execPath,
+          [...(hook ? ['--require', hook] : []), workerPath],
+          root,
+          JSON.stringify({ ...request, ...extra })
+        )
+      const input = join(root, 'input.csv')
+      await writeFile(input, 'capture these bytes')
+      expect(
+        (
+          await run({
+            operation: 'begin',
+            initialViewState: 'complete',
+            initialFiles: [
+              {
+                file: {
+                  physicalPath: input,
+                  path: input,
+                  relativePath: 'data/input.csv',
+                  kind: 'other',
+                  ...(await snapshot(input))
+                },
+                generation: {
+                  generationId: 'input-generation',
+                  capturedAt: '2026-10-20T00:00:00.000Z'
+                }
+              }
+            ]
+          })
+        ).code
+      ).toBe(0)
+
+      // Create a real non-empty destination immediately before the OS rename. On retry terminate the
+      // worker just after the OS rename, before it can touch the capture or its durable receipt.
+      const hook = join(root, 'interrupt.cjs')
+      await writeFile(
+        hook,
+        `
+const fs = require('node:fs')
+const rename = fs.renameSync
+fs.renameSync = (from, to) => {
+  if (from !== 'staging-run' || to !== 'activity-run') return rename(from, to)
+  if (!fs.existsSync('stop-after-rename')) {
+    fs.mkdirSync(to)
+    fs.writeFileSync(to + '/foreign', 'keep')
+  }
+  rename(from, to)
+  process.exit(42)
+}
+`
+      )
+      const digestName = (bytes: string): string =>
+        'sha256-' + createHash('sha256').update(bytes).digest('hex')
+      const persistOutput = async (bytes: string): Promise<ChildResult> => {
+        const output = join(root, 'output.csv')
+        await writeFile(output, bytes)
+        const after = {
+          physicalPath: output,
+          path: output,
+          relativePath: 'data/output.csv',
+          kind: 'other',
+          ...(await snapshot(output))
+        }
+        return run(
+          {
+            operation: 'persist',
+            changes: [
+              {
+                change: { relation: 'created', relativePath: after.relativePath, after },
+                generation: {
+                  generationId: 'output-generation',
+                  capturedAt: '2026-10-20T00:00:01.000Z'
+                }
+              }
+            ]
+          },
+          hook
+        )
+      }
+      const capture = join(root, request.stagingName, 'capture.json')
+      const original = await readFile(capture)
+      expect((await persistOutput('first output')).code).toBe(1)
+      expect(await readFile(capture)).toEqual(original)
+      const links = await readdir(join(root, request.stagingName, 'blobs'))
+      expect(links.sort()).toEqual(
+        [digestName('capture these bytes'), digestName('first output')].sort()
+      )
+      expect(
+        await readFile(
+          join(root, request.stagingName, 'blobs', digestName('capture these bytes')),
+          'utf8'
+        )
+      ).toBe('capture these bytes')
+      expect(await readFile(join(root, request.finalName, 'foreign'), 'utf8')).toBe('keep')
+      await rm(join(root, request.finalName), { recursive: true })
+      // Historical workers could leave a staged sidecar with no capture. Do not adopt it.
+      await rm(capture)
+      expect((await run({ operation: 'persist' })).code).toBe(1)
+      expect(await readdir(root)).not.toContain(request.finalName)
+      await writeFile(capture, original)
+      await writeFile(join(root, 'stop-after-rename'), '')
+      expect((await persistOutput('retried output')).code).toBe(42)
+      const recovered = await run({ operation: 'recover-published' })
+      expect(JSON.parse(recovered.stdout)).toMatchObject({
+        ok: true,
+        recoveredFileEvidence: { activityId: 'run', generationCount: 1 }
+      })
+      expect(await readdir(join(root, request.finalName, 'blobs'))).toEqual([
+        digestName('retried output')
+      ])
+      expect(await readdir(join(root, request.finalName))).not.toContain('capture.json')
+      expect(JSON.parse(await readFile(join(root, request.receiptName), 'utf8'))).toMatchObject({
+        phase: 'published'
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  },
+  publicationTimeoutMs
+)
 
 describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publication', () => {
   describe.each(['source Node', 'packaged Electron'] as const)('%s', (mode) => {

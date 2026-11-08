@@ -11,7 +11,17 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, readdir, realpath, rename, symlink, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  rmdir,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
@@ -965,6 +975,64 @@ describe('harvestJob — data-root migration gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('harvestJob — harvest_failed', () => {
+  it('retries Kubernetes evidence publication when the destination is unblocked', async ({
+    onTestFinished
+  }) => {
+    const storageRoot = await mkTmp()
+    onTestFinished(() => rm(storageRoot, { recursive: true, force: true }))
+    const job = makeJob({
+      provider_id: 'kubernetes:cluster',
+      execution_mode: 'kubernetes',
+      output_manifest: JSON.stringify(['result.bin'])
+    })
+    const scope = {
+      storageRoot,
+      projectId: job.project_id,
+      sessionId: job.session_id,
+      jobId: job.job_id
+    }
+    await beginComputeJobFileEvidence({ ...scope, inputs: [] })
+    const evidenceDir = join(
+      storageRoot,
+      'execution-file-evidence',
+      job.project_id,
+      job.session_id,
+      `activity-${job.job_id}`
+    )
+    await mkdir(evidenceDir)
+    const connectionBroker = brokerFromRunners(
+      makeSshRunner(findOutput([{ path: 'result.bin', size_bytes: 10 }])),
+      makeWritingScpRunner()
+    )
+    const { repo, updates } = makeJobRepo(job)
+    const deps = {
+      storageRoot,
+      connectionBroker,
+      workspaceConnection: await connectionBroker.acquire(job.provider_id, {
+        intent: 'job_harvest'
+      }),
+      jobRepository: repo,
+      hostRepository: makeHostRepo(null)
+    }
+
+    await expect(harvestJob(job, deps)).rejects.toThrow(
+      'Compute output evidence publication failed.'
+    )
+    expect(updates).toEqual([
+      {
+        jobId: job.job_id,
+        data: { harvestError: 'harvest pending: Compute output evidence publication failed.' }
+      }
+    ])
+    await rmdir(evidenceDir)
+    await harvestJob(job, deps)
+    expect(updates.at(-1)?.data).toMatchObject({
+      harvestedAt: expect.any(Date),
+      harvestError: null,
+      fileEvidence: { checksum: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    })
+  })
+
   it('cleans unpublished Compute evidence after output snapshot failure', async () => {
     const storageRoot = await mkTmp()
     const job = makeJob({ output_manifest: JSON.stringify(['*.result']) })

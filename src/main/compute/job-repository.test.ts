@@ -130,6 +130,7 @@ describe('ComputeJob repository (SQLite integration)', () => {
         status: 'success',
         harvestedAt: new Date(),
         leftOnRemote: protectedFields().protectJson('[]', 'array'),
+        lastPollError: 'Kubernetes job recovery is pending.',
         fileEvidence: JSON.stringify({
           schemaVersion: 1,
           activityId: 'job',
@@ -159,6 +160,9 @@ describe('ComputeJob repository (SQLite integration)', () => {
     ).toBe(row.kubernetesWorkspace)
     fetch.mockResolvedValueOnce(Response.json({}, { status: 404 }))
     expect(await reopened.releasePublishedKubernetesWorkspace(owner)).toBe('confirmed')
+    expect(
+      (await client.computeJob.findUniqueOrThrow({ where: { id: 'job' } })).lastPollError
+    ).toBeNull()
     expect(await reopened.findByOwner({ projectId: 'p' })).toEqual([])
     await reopened.deleteByOwner({ projectId: 'p' })
   })
