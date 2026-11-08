@@ -1215,7 +1215,7 @@ async function genericFigureWithoutSourceItems(captionText = 'Figure 1: Generic 
       signal: new AbortController().signal,
       readCached: async () => cached
     }
-  return { loading, args, extraction }
+  return { loading, native, args, extraction }
 }
 
 it('retains complete generic figure labels only when the crop owns every native text item', async () => {

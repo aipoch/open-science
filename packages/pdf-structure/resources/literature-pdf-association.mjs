@@ -2950,7 +2950,7 @@ function associateNativeFigures(
   // or table evidence) for diagnostics and later recovery.
   const filterNestedCaptionReferences = (figures) =>
     figures.filter((figure, index, all) => {
-      if (figure.issue !== 'no-unambiguous-adjacent-graphics') return true
+      if ((figure.issue ?? figure.reason) !== 'no-unambiguous-adjacent-graphics') return true
       const captionRect = figure.caption?.rect
       if (!captionRect) return true
       const enclosed = all.some(
