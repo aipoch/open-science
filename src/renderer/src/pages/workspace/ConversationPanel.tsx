@@ -940,7 +940,10 @@ const ConversationPanel = ({
     !preparationNoticeBaseline.promptMessageId
       ? preparationNoticeBaseline.state
       : activeSession
-  const sessionRecovery = resolveSessionRecoveryPresentation(activeSession)
+  const sessionRecovery = resolveSessionRecoveryPresentation(
+    activeSession,
+    persistenceIssue?.terminalScopes
+  )
   const showSessionRecovery = Boolean(sessionRecovery || isResuming)
   const resolvedRunError = resolveRunError(legacyDisplayState?.error)
   // Anchorless legacy diagnostics remain readable. A hidden or historical turn is still an anchor,

@@ -3186,7 +3186,8 @@ const useSessionPersistence = (): SessionPersistenceState => {
             title: useSessionStore.getState().sessions.find(({ id }) => id === event.sessionId)
               ?.title,
             state: 'failed',
-            kind: 'storage'
+            kind: 'storage',
+            terminalScopes: [event.terminalScope]
           }
         ]
       })
@@ -4005,6 +4006,21 @@ const useSessionPersistence = (): SessionPersistenceState => {
     }
   }, [loadAttempt, presentOutstandingWriteFailures, recoveryLoadEpoch])
 
+  // A retained edit and a failed terminal commit can share a target. Keep the edit's
+  // recovery controls while exposing the executions owned by global Retry.
+  const writeIssues = new Map(retainedWriteIssues.map((issue) => [issue.target, issue]))
+  for (const issue of terminalWriteIssues) {
+    const existing = writeIssues.get(issue.target)
+    writeIssues.set(
+      issue.target,
+      existing
+        ? {
+            ...existing,
+            terminalScopes: [...(existing.terminalScopes ?? []), ...(issue.terminalScopes ?? [])]
+          }
+        : issue
+    )
+  }
   return {
     isHydrated,
     isLoading,
@@ -4018,9 +4034,7 @@ const useSessionPersistence = (): SessionPersistenceState => {
     writeErrorRetryable,
     isCheckingWrites: retainedWriteIssues.some(({ state }) => state === 'checking'),
     isRetryingWrites,
-    writeIssues: [...retainedWriteIssues, ...terminalWriteIssues].filter(
-      (issue, index, all) => all.findIndex(({ target }) => target === issue.target) === index
-    ),
+    writeIssues: [...writeIssues.values()],
     persistenceBlockedSessionIds: [
       ...new Set([
         ...persistenceBlockedSessionIds,

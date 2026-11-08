@@ -1,3 +1,4 @@
+import type { SessionWriteIssue } from '@/lib/session-persistence/session-write-recovery'
 import type { ChatSession } from '@/stores/session-store-contract'
 import { resolvePreparationNoticeBaseline } from '../../../../shared/session-persistence'
 
@@ -10,7 +11,8 @@ type SessionRecoveryPresentation = {
 // timeline; they cannot hide the recovery target held by the Session. Preparations retain their
 // prior recovery until Main admits the replacement execution or rolls the preparation back.
 const resolveSessionRecoveryPresentation = (
-  session: ChatSession | undefined
+  session: ChatSession | undefined,
+  terminalScopes?: SessionWriteIssue['terminalScopes']
 ): SessionRecoveryPresentation | undefined => {
   if (!session || session.packageOrigin) return undefined
   const preparation = session.promptPreparation
@@ -22,6 +24,23 @@ const resolveSessionRecoveryPresentation = (
   const state = session.resumeRecovery ? session : (preparationState ?? session)
   const recovery = state.resumeRecovery
   if (!recovery) return undefined
+  if (terminalScopes?.length && recovery.promptMessageId) {
+    const admission = session.runtimeSessionAdmissions?.findLast(
+      ({ promptMessageId }) => promptMessageId === recovery.promptMessageId
+    )
+    if (
+      admission &&
+      terminalScopes.some(
+        (scope) =>
+          scope.projectId === session.projectId &&
+          scope.executionId === admission.executionId &&
+          scope.agentFrameId === admission.agentFrameId &&
+          scope.messageBranchId === admission.messageBranchId &&
+          scope.runtimeSegmentId === admission.runtimeSegmentId
+      )
+    )
+      return undefined
+  }
   const recoveryOutcome = (session.conversationGraph?.messages ?? session.messages).find(
     ({ id }) => id === recovery.promptMessageId
   )?.turnOutcome
