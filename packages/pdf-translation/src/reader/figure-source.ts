@@ -1,5 +1,6 @@
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
-import { OPS, type PDFDocumentProxy, type PDFPageProxy } from 'pdfjs-dist'
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PdfTranslationExtraction } from './extraction.js'
 import { isPdfTranslationCaption } from './layout.js'
 import { createPdfTranslationSource, type PdfTranslationFragment } from './source.js'
