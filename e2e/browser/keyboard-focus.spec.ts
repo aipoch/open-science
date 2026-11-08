@@ -312,13 +312,13 @@ for (const dark of [false, true]) {
 test('skips Settings content wrappers without changing tab activation', async ({ page }) => {
   await page.goto('/tab-motion.html')
   const models = page.locator('[data-models]')
-  await models.getByRole('tab', { name: 'Local parsing models', exact: true }).click()
+  await models.getByRole('tab', { name: 'Local capabilities', exact: true }).click()
   await page.keyboard.press('Tab')
   await expect(
     models.getByRole('link', { name: 'microsoft/table-transformer', exact: true })
   ).toBeFocused()
   await page.keyboard.press('Tab')
-  const tableModel = models.locator('div.grid').filter({
+  const tableModel = models.locator('[data-slot="local-model-card"]').filter({
     has: page.getByRole('heading', { name: 'PDF figures and tables', exact: true })
   })
   await expect(tableModel.getByRole('button', { name: 'Install', exact: true })).toBeFocused()
