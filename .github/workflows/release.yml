@@ -290,7 +290,7 @@ jobs:
       # `*-mac.yml` covers the merged latest-mac.yml (the file the app polls) plus the per-arch
       # arm64/x64-mac.yml intermediates it was built from. ZIP blockmaps accompany both macOS architectures.
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: false
           prerelease: false
