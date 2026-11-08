@@ -159,27 +159,28 @@ describe('Auto operation completeness against real tool registrations', () => {
     }
     expect({ definitions, notebookSchemas, sharedContracts }).toEqual({
       definitions: {
-        // Reviewed: 401 publication errors now explain recovery without dropping provenance.
-        // Strict inputs, allow-once disposition and owner-checked source access are unchanged.
+        // Reviewed: errors name a code and next step, and legacy top-level content/encoding is
+        // rejected in favor of source. Allow-once disposition and owner-checked source access are unchanged.
         'artifacts/mcp-server.ts':
-          'f44800f59957041e1004ce93a039e47a3c491f958fe429ef5b3fa49ae472b2f0',
-        // Reviewed: Inbox input descriptions and file-validation errors explain correction/retry.
-        // Accepted inputs, pre-save validation, trusted origin and allow-once disposition are unchanged.
+          '9e0e7684e9ce91f56ba4e6bfc49bcd2a1bb97bf6dd2a22bd686307c9d634dde2',
+        // Reviewed: descriptions and argument errors state one next step; abstract/PDF reads drop
+        // scope "items". Save validation, trusted origin and allow-once disposition are unchanged.
         'literature/library-mcp-server.ts':
-          'b50bd708d22d75792dc680915d1b78ea7f8a61b005289497969e21bc62d2b4f8',
-        // Reviewed: linked-PDF reading order is resolved automatically from logical structure
-        // or layout, with OCR guidance and coverage presentation. Strict inputs, mounted-server checks and
-        // single-use authorization are unchanged.
+          '69ec7871599cb7005e6738ac66f9c25cf044c74f95716208da463c326baf3b68',
+        // Reviewed: errors keep specific codes with a next step and annotation cursors are opaque
+        // strings. Strict inputs, mounted-server checks and single-use authorization are unchanged.
         'literature/mcp-server.ts':
-          '7d285b27718e63d53e028b873f6391da842f44acb118fd2c10b80963be5a71eb',
-        // Reviewed: retain managed-default selection and foreground Shell error flags, compact Notebook/REPL guidance, and network recovery wording. Schemas and Auto dispositions are unchanged.
+          '561a62c02556d3677874d524dd7c9433b3131a42eda21f526d8684888a673cd9',
+        // Reviewed: failed cells and background Runs set isError, RPC errors gain a status-based
+        // next step, and descriptions are clarified. Schemas and Auto dispositions are unchanged.
         'notebook/mcp-server.ts':
-          '5fc7298339992d2210dac2b286d70ecbea06a3cdafbc932ed2142fcfe2b3b128',
-        // Reviewed: generate_plan sends progress notifications while awaiting review; the handler
-        // call, its result and the Plan operation dispositions are unchanged.
+          '5e1e1a43b45176218fea7610a0680c54d57619730ffa5e97e8621c959ffe7ba7',
+        // Reviewed: invalid-plan errors carry repair guidance; the handler call, its result and the
+        // Plan operation dispositions are unchanged.
         'session-plan/plan-mcp-server.ts':
-          'fd75f9cb577deef4abb70925b4d059497dca57a6a7d42d2d9826fb8bcdfd4d02',
-        'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'
+          '1451e969ed1af4ddea333c4005f11713d39f8590083099c0ce3c73b47937d326',
+        // Reviewed: import errors carry codes and next steps; the schema and preview handoff are unchanged.
+        'skills/mcp-server.ts': '75e23698e0b11be9919ae224e1516ba82241aa703a20ae29c50448c35ce1d8da'
       },
       notebookSchemas: {
         // Reviewed: required question and option label strings must contain non-whitespace.
