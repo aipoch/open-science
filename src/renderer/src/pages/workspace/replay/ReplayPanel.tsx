@@ -428,7 +428,10 @@ const ReplayPanelContent = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runKey, runCache])
 
-  const pause = useCallback(() => setPlaying(false), [setPlaying])
+  const pause = useCallback(() => {
+    setPlaying(false)
+    scheduleAskPrompt()
+  }, [scheduleAskPrompt, setPlaying])
   const selectResource = useCallback(
     (id?: string): void => {
       if (id && !materialCatalog.files.some((resource) => resource.id === id)) return
@@ -459,8 +462,7 @@ const ReplayPanelContent = ({
   )
   const seek = useCallback(
     (position: number) => {
-      setPlaying(false)
-      scheduleAskPrompt()
+      pause()
       setSelectedResourceId(undefined)
       setPositionMs(position)
       setConversationFocusRequest((request) => request + 1)
@@ -469,7 +471,7 @@ const ReplayPanelContent = ({
       setNotebookLimit(undefined)
       setFilePage(0)
     },
-    [scheduleAskPrompt, setPlaying, setPositionMs, setSelectedResourceId]
+    [pause, setPositionMs, setSelectedResourceId]
   )
   useEffect(() => {
     const receive = (target: ReplaySeekTarget): void => {
@@ -502,11 +504,12 @@ const ReplayPanelContent = ({
 
   const ask = (): void => {
     cancelAskPrompt()
-    pause()
+    setPlaying(false)
     if (scene.step) onAskStep?.(captureDiscussionStep(replayDocument, scene, runDetails, resources))
   }
   const askSession = (): void => {
-    pause()
+    cancelAskPrompt()
+    setPlaying(false)
     const context = captureDiscussionSession(replayDocument)
     if (context) onAskStep?.({ ...context, stepTitle: t('Entire research') })
   }

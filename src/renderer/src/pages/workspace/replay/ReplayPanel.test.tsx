@@ -399,6 +399,13 @@ describe('research replay interaction', () => {
       act(() => vi.advanceTimersByTime(800))
       expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
       expect(screen.getAllByRole('button', { name: 'Ask about this step' })).toHaveLength(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Play replay' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Browse steps' }))
+      expect(screen.getByRole('dialog', { name: 'Browse steps' })).toBeTruthy()
+      expect(screen.queryByTestId('replay-ask-step-prompt')).toBeNull()
+      act(() => vi.advanceTimersByTime(800))
+      expect(screen.getByTestId('replay-ask-step-prompt')).toBeTruthy()
     } finally {
       vi.useRealTimers()
     }
