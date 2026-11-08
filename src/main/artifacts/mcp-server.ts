@@ -1,16 +1,13 @@
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery, TOOL_ARGUMENT_RECOVERY } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { z } from 'zod'
 
-import type {
-  ArtifactFile,
-  ArtifactWriteEncoding,
-  ArtifactWriteSource
-} from '../../shared/artifacts'
+import type { ArtifactFile, ArtifactWriteSource } from '../../shared/artifacts'
 import type {
   ArtifactVersionFile,
   SaveArtifactVersionRequest
@@ -70,8 +67,6 @@ type ArtifactToolWriteInput = {
   filename: string
   mimeType?: string
   source?: ArtifactWriteSource
-  content?: string
-  encoding?: ArtifactWriteEncoding
   producerRunId?: string
   literature?: ArtifactLiteratureRequest
 }
@@ -99,7 +94,11 @@ const writeArtifactFileToolSchema = {
     .string()
     .min(1)
     .describe('Display filename for the artifact, e.g. "sine_wave.png" or "report.pdf".'),
-  mimeType: z.string().min(1).optional(),
+  mimeType: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('MIME type, e.g. "image/png". Omit to infer it from the filename extension.'),
   source: z
     .preprocess(
       parseJsonString,
@@ -124,9 +123,10 @@ const writeArtifactFileToolSchema = {
         })
       ])
     )
-    .optional(),
-  content: z.string().optional(),
-  encoding: z.enum(['utf8', 'base64']).default('utf8'),
+    .optional()
+    .describe(
+      'Where the bytes come from: {kind:"localPath", path} or {kind:"inline", content, encoding?}. Omit to use filename as a localPath. A JSON-encoded string of this object is also accepted.'
+    ),
   producerRunId: z
     .string()
     .min(1)
@@ -142,10 +142,24 @@ const writeArtifactFileToolSchema = {
     )
 }
 
+const LEGACY_INLINE_INPUT_ERROR =
+  'Top-level content and encoding were removed. Pass source: {kind:"inline", content, encoding?} for inline text, or source: {kind:"localPath", path} for a saved file.'
+
+// The registered schema keeps unknown keys long enough to reject the removed top-level inline input
+// with a corrective message; stripping it would silently turn the call into a bare-filename lookup.
+const writeArtifactFileInputSchema = z
+  .looseObject(writeArtifactFileToolSchema)
+  .superRefine((input, context) => {
+    for (const key of ['content', 'encoding'] as const) {
+      if (key in input)
+        context.addIssue({ code: 'custom', path: [key], message: LEGACY_INLINE_INPUT_ERROR })
+    }
+  })
+
 const writeArtifactFileToolDefinition = {
   title: 'Write artifact file',
   description:
-    'Attach a generated file or import an existing file from a user-authorized folder as a downloadable artifact (chart, image, report, CSV, archive, …). For small generated text such as Markdown or plain text, pass inline content directly; do not use Notebook, REPL, shell, or workspace file tools merely to create an intermediate file. For binary or otherwise disk-generated output, the file must already exist before this call. Simplest use inside a notebook: save with a relative name (e.g. plt.savefig("plot.png") / R png("plot.png")) then call this with just `filename: "plot.png"` — the app resolves it against the notebook session data dir (the kernel cwd) and copies it. Literature formatting tools attach their prepared DOCX and LaTeX outputs themselves; do not write those files again. You may also pass an explicit `source`: {kind:"localPath", path} where path is a bare filename, a path relative to the notebook data dir or session workspace, the session-relative `data/plot.png` returned by Notebook `workingFiles`, or an absolute path on this host to an already-saved file in a user-authorized folder (read-only access suffices; use list_authorized_directories to discover grants); or {kind:"inline", content} for small in-memory text. The app assigns session/message ownership; do not call this before the file is written.',
+    'Save a generated or existing file as a downloadable Artifact (chart, image, report, CSV, archive, …). After a Notebook run saved "plot.png", pass just filename:"plot.png" plus that run\'s producerRunId; the app resolves it against the kernel cwd and copies it. Otherwise pass source: {kind:"localPath", path} for a file already on disk (a relative name, the Notebook workingFiles `data/…` path, or an absolute path on this host in the workspace, Notebook, or a user-authorized folder; read-only access suffices; use list_authorized_directories to discover grants), or {kind:"inline", content} for small generated text such as Markdown or plain text, so no intermediate file is needed. Binary output must already exist on disk. Literature formatting tools attach their prepared DOCX and LaTeX outputs themselves; do not write those again. The app assigns session and message ownership.',
   inputSchema: writeArtifactFileToolSchema
 }
 
@@ -165,7 +179,9 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
         : ''
 
   if (!artifactRunId.trim()) {
-    throw new Error('No active artifact run is available.')
+    throw new Error(
+      'ARTIFACT_RUN_UNAVAILABLE: No active Artifact run is available for this turn. Do not retry in this turn; tell the user the file was not saved as an Artifact and publish the existing file again in a later turn.'
+    )
   }
 
   const notebookDataDir =
@@ -212,6 +228,10 @@ const readCurrentRunContext = async (currentRunFile: string): Promise<ArtifactRu
 
 type ArtifactRpcResponse<Result> = { result?: Result | null; error?: string }
 
+// The model cannot repair the app-owned run capability or RPC wiring, so it must not loop on them.
+const ARTIFACT_PUBLICATION_UNAVAILABLE =
+  'ARTIFACT_PUBLICATION_UNAVAILABLE: Artifact publication is not available in this turn. Do not retry in this turn; tell the user the file was not saved as an Artifact and publish the existing file again in a later turn, preserving any producerRunId.'
+
 const serializeArtifactSaveRequest = (request: SaveArtifactVersionRequest): string => {
   const body = JSON.stringify({ method: 'artifactSaveVersion', params: request })
   assertWithinResourceBudget(
@@ -229,7 +249,7 @@ const callArtifactRpc = async (
   signal?: AbortSignal
 ): Promise<ArtifactVersionFile> => {
   if (!environment.rpcEndpoint) {
-    throw new Error('Artifact Provenance RPC connection is not configured.')
+    throw new Error(ARTIFACT_PUBLICATION_UNAVAILABLE)
   }
 
   const response = await fetchLocalRpc(
@@ -265,7 +285,7 @@ const callArtifactRpc = async (
   return payload.result
 }
 
-// Normalizes the legacy content/encoding shape and the new source shape into one repository input.
+// Normalizes the explicit source and the bare-filename default into one repository input.
 // hasRelativeBase only gates whether the bare-filename convenience default is meaningful; the
 // actual relative-path resolution (the ordered multi-base probe) happens exclusively in the
 // repository layer.
@@ -279,22 +299,14 @@ const normalizeArtifactToolWriteInput = (
   // spurious not-found from the wrong cwd.
   if (input.source) return input.source
 
-  if (typeof input.content === 'string') {
-    return {
-      kind: 'inline',
-      content: input.content,
-      encoding: input.encoding ?? 'utf8'
-    }
-  }
-
-  // Neither source nor inline content. The bare-filename default only makes sense when there is a
+  // No source. The bare-filename default only makes sense when there is a
   // base dir to resolve it against (kernel cwd or session workspace): `write_artifact_file(filename:
   // "plot.png")` right after `plt.savefig("plot.png")` just works. With no base at all a bare
   // filename would silently resolve against the MCP process cwd and fail the allow-root check —
   // keep the explicit contract error instead so the caller learns what to pass.
   if (!hasRelativeBase) {
     throw new Error(
-      'write_artifact_file requires source or content: no notebook session data dir or allowed import root to resolve a bare filename against.'
+      `ARTIFACT_SOURCE_REQUIRED: write_artifact_file requires source here: this turn has no Notebook data dir or session workspace to resolve a bare filename against. Pass source: {kind:"localPath", path:"<absolute path>"} or source: {kind:"inline", content}. ${TOOL_ARGUMENT_RECOVERY}`
     )
   }
 
@@ -330,9 +342,7 @@ const writeArtifactFileForCurrentRun = async (
     !context.runtimeSegmentId ||
     !context.promptMessageId
   ) {
-    throw new Error(
-      'Artifact save protocol requires a complete active run capability. Restart the Agent MCP connection.'
-    )
+    throw new Error(ARTIFACT_PUBLICATION_UNAVAILABLE)
   }
   const appSessionId = context.appSessionId
   const writeOperationId =
@@ -414,14 +424,13 @@ const createArtifactMcpServer = (
   repository: ArtifactRepository,
   environment: ArtifactMcpEnvironment
 ): ModelContextProtocolServer => {
-  const server = new ModelContextProtocolServer({
-    name: ARTIFACT_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: ARTIFACT_MCP_SERVER_NAME, version: '1.0.0' })
+  )
 
   server.registerTool(
     'write_artifact_file',
-    writeArtifactFileToolDefinition,
+    { ...writeArtifactFileToolDefinition, inputSchema: writeArtifactFileInputSchema },
     async (input, extra) => {
       // Echo the stored artifact metadata so the model can mention filenames without inventing paths.
       const artifact = await writeArtifactFileForCurrentRun(repository, environment, input, {
@@ -532,6 +541,7 @@ export {
   runArtifactMcpServer,
   callArtifactRpc,
   toWriteArtifactToolResult,
+  writeArtifactFileInputSchema,
   writeArtifactFileToolDefinition,
   writeArtifactFileToolSchema,
   writeArtifactFileForCurrentRun

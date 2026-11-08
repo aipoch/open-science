@@ -171,12 +171,11 @@ describe('optional MCP adapter', () => {
         ]
       )
       await agent.prompt([{ type: 'text', text: 'run' }])
+      const invalid =
+        'Invalid tool arguments: $.groups: expected array\nCorrect only the reported arguments and call the same tool again. Do not switch to another tool or route because of this error.'
       expect(
         (await agent.snapshot()).messages.filter((m) => m.role === 'tool').map((m) => m.content)
-      ).toEqual([
-        [{ type: 'text', text: 'Invalid tool arguments: $.groups: expected array' }],
-        [{ type: 'text', text: 'Invalid tool arguments: $.groups: expected array' }]
-      ])
+      ).toEqual([[{ type: 'text', text: invalid }], [{ type: 'text', text: invalid }]])
       expect(authorize).not.toHaveBeenCalled()
       expect(transport.callTool).not.toHaveBeenCalled()
       await agent.dispose()

@@ -12,6 +12,10 @@ export class ToolValidationError extends Error {
   }
 }
 
+const ARGUMENT_RECOVERY =
+  'Correct only the reported arguments and call the same tool again. Do not switch to another tool or route because of this error.'
+
 export function toolValidationMessage(error: unknown): string {
-  return error instanceof ToolValidationError ? error.message : 'Invalid tool arguments'
+  const message = error instanceof ToolValidationError ? error.message : 'Invalid tool arguments'
+  return `${message}\n${ARGUMENT_RECOVERY}`
 }

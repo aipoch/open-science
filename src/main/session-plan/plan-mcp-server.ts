@@ -1,6 +1,7 @@
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { installToolErrorRecovery } from '../../shared/tool-error-recovery'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 
@@ -133,6 +134,8 @@ const OUTCOME_UNCONFIRMED_GUIDANCE =
   'Stop automatic retries. Do not assume the operation failed or repeat it until later Session Plan context confirms whether it took effect. Do not repeat confirmed writes; report unresolved state for application recovery.'
 const AUTHENTICATION_REJECTED_GUIDANCE =
   "Do not retry automatically or bypass the rejection. Report it so Open-Science can refresh this Session's Plan capability; retry only after the application provides a fresh capability."
+const INVALID_PLAN_GUIDANCE =
+  'When the message names a field or shape, correct only that and call generate_plan again with complete Plan content or decision alone. Otherwise do not retry; follow the message.'
 
 const boundedRedactedMessage = (message: string): string => {
   const redacted = redactSensitiveText(message)
@@ -141,7 +144,7 @@ const boundedRedactedMessage = (message: string): string => {
 
 const guidanceForPlanError = (error: PlanCommandError): string | undefined => {
   if (error.code === 'invalid-backend-result') return OUTCOME_UNCONFIRMED_GUIDANCE
-  if (error.code === 'invalid-plan') return undefined
+  if (error.code === 'invalid-plan') return INVALID_PLAN_GUIDANCE
   if (error.code === 'plan-unavailable') {
     return 'The operation was not attempted. Do not rebuild or resubmit the Plan. Open-Science must provide the Session Plan capability before another Plan call.'
   }
@@ -380,10 +383,9 @@ const projectionVersionId = (result: unknown): string | undefined => {
 
 const createPlanMcpServer = (handler: PlanMcpHandler): ModelContextProtocolServer => {
   let executionArtifactVersionId: string | undefined
-  const server = new ModelContextProtocolServer({
-    name: PLAN_MCP_SERVER_NAME,
-    version: '1.0.0'
-  })
+  const server = installToolErrorRecovery(
+    new ModelContextProtocolServer({ name: PLAN_MCP_SERVER_NAME, version: '1.0.0' })
+  )
   server.registerTool(
     'generate_plan',
     {
@@ -638,6 +640,7 @@ const runPlanMcpServer = async (): Promise<void> => {
 }
 
 export {
+  INVALID_PLAN_GUIDANCE,
   PLAN_MCP_SERVER_NAME,
   callPlanRpc,
   createPlanMcpServer,

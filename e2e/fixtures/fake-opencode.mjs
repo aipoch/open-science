@@ -1367,10 +1367,13 @@ const createProvenanceArtifact = async (sessionId, markdown = false, withoutExec
         arguments: {
           filename: markdown ? 'publication-policy.md' : 'provenance-evidence.txt',
           mimeType: markdown ? 'text/markdown' : 'text/plain',
-          content: markdown
-            ? '# Publication report\n\nOriginal result.\n'
-            : 'artifact provenance e2e',
-          encoding: 'utf8',
+          source: {
+            kind: 'inline',
+            content: markdown
+              ? '# Publication report\n\nOriginal result.\n'
+              : 'artifact provenance e2e',
+            encoding: 'utf8'
+          },
           producerRunId
         }
       })
@@ -1394,9 +1397,12 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.html',
           mimeType: 'text/html',
-          content:
-            '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
-          encoding: 'utf8'
+          source: {
+            kind: 'inline',
+            content:
+              '<!doctype html><html><body><main><h1>HTML context menu fixture</h1><p data-preview-context-menu-passthrough>Managed native context area</p><p>Managed frame content.</p></main></body></html>',
+            encoding: 'utf8'
+          }
         }
       })
     )
@@ -1407,8 +1413,7 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.docx',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-          content: PREVIEW_CONTEXT_MENU_DOCX_BASE64,
-          encoding: 'base64'
+          source: { kind: 'inline', content: PREVIEW_CONTEXT_MENU_DOCX_BASE64, encoding: 'base64' }
         }
       })
     )
@@ -1419,8 +1424,11 @@ const createPreviewContextMenuArtifacts = async (sessionId) => {
         arguments: {
           filename: 'context-menu.xlsx',
           mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          content: await createPreviewContextMenuXlsxBase64(),
-          encoding: 'base64'
+          source: {
+            kind: 'inline',
+            content: await createPreviewContextMenuXlsxBase64(),
+            encoding: 'base64'
+          }
         }
       })
     )
@@ -1480,8 +1488,7 @@ const createSpreadsheetSearchArtifacts = async (sessionId) => {
             arguments: {
               filename: file.filename,
               mimeType: file.mimeType,
-              content,
-              encoding: 'base64'
+              source: { kind: 'inline', content, encoding: 'base64' }
             }
           })
         )

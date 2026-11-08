@@ -20,15 +20,47 @@ import type {
 import type { PdfAnnotationService } from './service'
 import { locatePdfAnnotationGeometryInWorker } from './agent-geometry'
 
-const documentId = z.string().trim().min(1).max(512).optional()
-const pageNumber = z.number().int().positive().max(100_000)
+const documentId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(512)
+  .optional()
+  .describe(
+    'documentId of a PDF linked to the current message. Required when more than one is linked.'
+  )
+const pageNumber = z
+  .number()
+  .int()
+  .positive()
+  .max(100_000)
+  .describe('Physical PDF page number, from 1.')
+// The service pages by (createdAt, id). Agents receive it as one opaque string so they copy it
+// unchanged instead of editing or reconstructing its fields.
+const annotationCursor = z
+  .object({ createdAt: z.iso.datetime(), id: z.string().min(1).max(1024) })
+  .strict()
+type AnnotationCursor = z.infer<typeof annotationCursor>
+const encodeAnnotationCursor = (cursor: AnnotationCursor): string =>
+  Buffer.from(JSON.stringify(cursor)).toString('base64url')
+const decodeAnnotationCursor = (cursor: string): AnnotationCursor => {
+  try {
+    return annotationCursor.parse(JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')))
+  } catch {
+    throw new Error(
+      'PDF_ANNOTATION_CURSOR_INVALID: cursor is not a nextCursor from list_pdf_annotations. Pass nextCursor unchanged, or omit cursor to start from the first page.'
+    )
+  }
+}
 export const listPdfAnnotationsInput = z
   .object({
     documentId,
     cursor: z
-      .object({ createdAt: z.iso.datetime(), id: z.string().min(1).max(1024) })
-      .strict()
+      .string()
+      .min(1)
+      .max(2048)
       .optional()
+      .describe('nextCursor from the previous list_pdf_annotations result, passed unchanged.')
   })
   .strict()
 export const locatePdfAnnotationInput = z
@@ -46,18 +78,28 @@ export const locatePdfAnnotationInput = z
           suffix: z.string().trim().min(1).max(200).optional()
         })
         .strict(),
-      z.object({ kind: z.literal('element'), elementRef: z.string().min(1).max(8192) }).strict()
+      z
+        .object({
+          kind: z.literal('element'),
+          elementRef: z
+            .string()
+            .min(1)
+            .max(8192)
+            .describe('elementRef returned by list_pdf_elements, passed unchanged.')
+        })
+        .strict()
     ])
   })
   .strict()
 export const createPdfAnnotationInput = z
   .object({
-    targetRef: z.string().uuid(),
+    targetRef: z.string().uuid().describe('targetRef returned by locate_pdf_annotation_target.'),
     requestId: z
       .string()
       .min(1)
       .max(128)
-      .regex(/^[a-zA-Z0-9_-]+$/),
+      .regex(/^[a-zA-Z0-9_-]+$/)
+      .describe('Your idempotency key for this mark: letters, digits, _ or -. Reuse it on retry.'),
     note: z.string().max(20_000),
     color: z.enum(PDF_MARK_COLORS).optional()
   })
@@ -68,7 +110,9 @@ export type LocatePdfAnnotationInput = z.infer<typeof locatePdfAnnotationInput>
 export type CreatePdfAnnotationInput = z.infer<typeof createPdfAnnotationInput>
 export type PdfAnnotationAgentTools = Pick<PdfAnnotationAgent, 'list' | 'locate' | 'create'>
 const stale = (): Error =>
-  new Error('PDF_ANNOTATION_TARGET_STALE: Resolve a fresh target in the current Reading message.')
+  new Error(
+    'PDF_ANNOTATION_TARGET_STALE: The target or linked PDF changed. Call the same tool again; for create_pdf_annotation, first call locate_pdf_annotation_target for a new targetRef.'
+  )
 const key = (context: PdfElementContext): string =>
   JSON.stringify([context.projectId, context.sessionId, context.promptMessageId])
 const bindingKey = (binding: SessionPdfBinding): string =>
@@ -128,7 +172,14 @@ function bindingFor(
   const bindings = prompt?.pdfContext?.bindings ?? []
   if (!document && bindings.length !== 1)
     throw new Error(
-      'PDF_DOCUMENT_SELECTION_REQUIRED: Select one documentId from the current Reading message.'
+      bindings.length
+        ? `PDF_DOCUMENT_SELECTION_REQUIRED: Pass documentId from these linked PDFs: ${JSON.stringify(
+            bindings.map((binding) => ({
+              documentId: binding.bindingId,
+              name: binding.name.slice(0, 256)
+            }))
+          )}`
+        : 'NO_LINKED_PDF_CONTEXT: The current Reading message has no linked PDFs.'
     )
   const binding = bindings.find(
     (binding) => binding.bindingId === (document ?? bindings[0]?.bindingId)
@@ -213,7 +264,7 @@ export class PdfAnnotationAgent {
       ...(source.kind !== 'literature-attachment-version' ? { sessionId: context.sessionId } : {}),
       sourceFileId: source.sourceFileId,
       versionId: source.versionId,
-      cursor: input.cursor,
+      cursor: input.cursor ? decodeAnnotationCursor(input.cursor) : undefined,
       limit: 20
     })
     const current = await this.binding(context, binding.bindingId)
@@ -222,7 +273,7 @@ export class PdfAnnotationAgent {
       documentId: binding.bindingId,
       readOnly: result.readOnly ?? false,
       total: result.total,
-      nextCursor: result.nextCursor ?? null,
+      nextCursor: result.nextCursor ? encodeAnnotationCursor(result.nextCursor) : null,
       annotations: result.items.map((item) => ({
         id: item.id,
         kind: item.kind,
@@ -348,11 +399,15 @@ export class PdfAnnotationAgent {
       (target.selector.kind === 'page-note' || target.selector.kind === 'document-note') &&
       !input.note.trim()
     )
-      throw new Error('PDF_ANNOTATION_NOTE_REQUIRED: A document or page note must contain text.')
+      throw new Error(
+        'PDF_ANNOTATION_NOTE_REQUIRED: A document or page note must contain text. Call create_pdf_annotation again with the same targetRef and non-empty note.'
+      )
     return this.options.withSession(context, async (session) => {
       context.check()
       if (session.packageOrigin)
-        throw new Error('PDF_ANNOTATION_READ_ONLY: Imported Sessions are read-only.')
+        throw new Error(
+          'PDF_ANNOTATION_READ_ONLY: Imported Sessions are read-only. Do not retry; tell the user marks cannot be added here.'
+        )
       const binding = bindingFor(session, context, target.binding.bindingId)
       if (bindingKey(binding) !== bindingKey(target.binding)) throw stale()
       const source = target.source

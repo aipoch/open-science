@@ -46,6 +46,9 @@ const failureResult = (text: string): ToolResult => ({
   content: [{ type: 'text', text }],
   isError: true
 })
+// Reached when a call names a tool missing from the current configuration.
+const TOOL_UNAVAILABLE =
+  'Tool is unavailable. Call only tools listed in your current tool list, using their exact names. Do not guess a different name.'
 const configuration = (input: AgentConfiguration): Required<AgentConfiguration> => {
   if (!input.model.id.trim()) throw new Error('Missing adapter identity')
   const names = new Set<string>()
@@ -475,7 +478,7 @@ export async function openAgentSession(options: AgentSessionOptions): Promise<Ag
       signal.throwIfAborted()
       const tool = config.tools.find((candidate) => candidate.name === pending.call.name)
       if (!tool || !pending.definition) {
-        await finishTool(pending.invocationId, failureResult('Tool is unavailable'))
+        await finishTool(pending.invocationId, failureResult(TOOL_UNAVAILABLE))
         continue
       }
       if (JSON.stringify(definition(tool)) !== JSON.stringify(pending.definition))
