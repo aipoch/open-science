@@ -273,11 +273,11 @@ const defaultController = (
             ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
               ? 'dead'
               : 'unknown'
-            : 'dead'
+            : 'unknown'
         }
       } catch {
-        // Fall back to the portable PID probe. A proofless standard-mode receipt remains eligible
-        // for the relaxed PID recovery policy when that probe also confirms the host is gone.
+        // Fall back to the portable PID probe. An unreadable native query must not authorize
+        // clearing or killing a receipt that may still refer to a live process.
       }
     }
     const alive = pidIsAlive(record.pid)
@@ -287,7 +287,7 @@ const defaultController = (
           ? (await requestWindowsProcessTreeReap(record.windowsProcessTreeProof))
             ? 'dead'
             : 'unknown'
-          : 'dead'
+          : 'unknown'
       }
     }
     if (platform !== 'win32') {

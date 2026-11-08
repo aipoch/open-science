@@ -351,7 +351,11 @@ describe('Windows AppContainer launch', () => {
     }
 
     expect(launch.argv.slice(0, 2)).toEqual([request.hostPath, 'supervise'])
-    expect('processTreeProof' in launch).toBe(false)
+    expect(launch.processTreeProof).toMatchObject({
+      path: expect.stringContaining('.open-science-process-tree-terminated-'),
+      token: expect.any(String),
+      requestPath: expect.stringContaining('.request')
+    })
     expect(launch.confirmProcessTreeTermination).toBeTypeOf('function')
     expect(launch.requestProcessTreeTermination).toBeTypeOf('function')
     expect(specification).toMatchObject({
