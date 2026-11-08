@@ -697,6 +697,7 @@ const runShellCommand = (
         ownershipHost ? process.execPath : (sandboxed?.executable ?? invocation.executable),
         ownershipHost
           ? [
+              '--disable-warning=UNDICI-EHPA',
               ownershipHost.path,
               ownershipHost.pendingPath,
               ownershipHost.receiptId,
