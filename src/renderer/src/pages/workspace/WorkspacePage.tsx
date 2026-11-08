@@ -31,7 +31,7 @@ import {
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
 import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
-import { createSessionActionBindings } from './session-action-menu'
+import { createSessionActionBindings, isImportedSession } from './session-action-menu'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -1958,7 +1958,7 @@ const WorkspacePage = ({
                     canMutateConversations: isSessionPersistenceReady,
                     canDeleteConversations: false,
                     canDownloadArtifacts: false,
-                    canTogglePin: !activeSession?.packageOrigin,
+                    canTogglePin: !activeSession || !isImportedSession(activeSession),
                     canArchiveSession,
                     packageBusy,
                     onTogglePin: sessionController.actions.togglePin,

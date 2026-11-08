@@ -68,6 +68,7 @@ import {
   SESSION_ACTION_CATALOG,
   SESSION_ACTION_RECIPE,
   createSessionActionBindings,
+  isImportedSession,
   type SessionActionId,
   type SessionActionInvocation
 } from './session-action-menu'
@@ -285,25 +286,20 @@ type SidebarSessionSection = {
   items: ChatSession[]
 }
 
-const isImportedSessionRow = (session: ChatSession): boolean =>
-  session.contentLoaded === false
-    ? session.id.startsWith('import-')
-    : Boolean(session.packageOrigin)
-
 const getSessionSections = (
   sessions: ChatSession[],
   now: number,
   credentialPendingSessionIds: ReadonlySet<string>,
   pendingInteractionFactsBySession: ReadonlyMap<string, SessionPendingInteractionFacts>
 ): SidebarSessionSection[] => {
-  const imports = sessions.filter(isImportedSessionRow)
+  const imports = sessions.filter(isImportedSession)
   const children = new Map(imports.map((source) => [source.id, [] as ChatSession[]]))
   const pinned: ChatSession[] = []
   const active: ChatSession[] = []
   const recents: ChatSession[] = []
 
   sessions.forEach((session) => {
-    if (isImportedSessionRow(session)) return
+    if (isImportedSession(session)) return
     const siblings = session.parentSessionId && children.get(session.parentSessionId)
     if (siblings) {
       siblings.push(session)
@@ -1357,7 +1353,7 @@ const WorkspaceSidebarView = (props: WorkspaceSidebarViewProps): React.JSX.Eleme
                           session={session}
                           sectionLabel={section.label}
                           isActive={session.id === activeSessionId}
-                          imported={isImportedSessionRow(session)}
+                          imported={isImportedSession(session)}
                           shortcutNumber={shortcutNumberBySessionId.get(session.id)}
                           presentedStatus={presentedStatus}
                           archiveAvailable={canArchiveSession?.(session) ?? false}

@@ -44,6 +44,11 @@ export type SessionActionInvocation = Readonly<{
   presentedStatus: SessionStatus
 }>
 
+export const isImportedSession = (session: ChatSession): boolean =>
+  session.contentLoaded === false
+    ? session.id.startsWith('import-')
+    : Boolean(session.packageOrigin)
+
 export const SESSION_ACTION_CATALOG = {
   'toggle-pin': { labelKey: 'Pin', icon: Pin },
   edit: { labelKey: 'Edit…', icon: Pencil },

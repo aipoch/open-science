@@ -8,6 +8,7 @@ import {
   SESSION_ACTION_CATALOG,
   SESSION_ACTION_RECIPE,
   createSessionActionBindings,
+  isImportedSession,
   type SessionActionInvocation
 } from './session-action-menu'
 
@@ -39,6 +40,21 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it.each([
+    createSession({
+      packageOrigin: {
+        importId: 'import',
+        sourceProjectId: 'project',
+        sourceSessionId: 'source',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    }),
+    createSession({ id: 'import-lazy', contentLoaded: false })
+  ])('recognizes imported sessions before and after hydration', (session) => {
+    expect(isImportedSession(session)).toBe(true)
+  })
+
   it.each([true, false])(
     'allows deletion of a stopped first-prompt draft with pending=%s',
     (isPending) => {

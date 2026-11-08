@@ -36,6 +36,7 @@ import { discussionDraftAnnotations } from './discussion-send-context'
 import { SessionDiscussionSource } from './SessionDiscussionSource'
 import { SessionHeaderMenu } from './SessionHeaderMenu'
 import { SessionInfoPopover } from './SessionInfoPopover'
+import { isImportedSession } from './session-action-menu'
 import { AnnotationTransferSource } from './annotations/AnnotationTransferSource'
 import { useAnnotationDrop } from './annotations/use-annotation-drop'
 import { mentionProjectFile } from './project-file-mention'
@@ -1614,7 +1615,7 @@ const ConversationPanel = ({
                 sourceSession={sourceSession}
                 onOpenSession={sessionTools.openSession}
                 onEdit={sessionTools.editSession}
-                canTogglePin={!isImported}
+                canTogglePin={!isImportedSession(activeSession)}
                 onTogglePin={sessionTools.togglePin}
               />
             ) : (
