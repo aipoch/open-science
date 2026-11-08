@@ -406,7 +406,7 @@ export function captionKind(text) {
   // Keep "score" as a noun in titles such as "Figure 2 score distributions";
   // reject only the finite-verb form when a following object establishes prose.
   const scoredReference = new RegExp(
-    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+scores?\\s+\\p{L}{2,}(?:\\s+(?:by|on|across|over|for|using|with|from)\\b|\\s+\\p{L}{2,}\\b)`,
+    `^${narrativeReferenceLabel}${narrativeReferencePanel}\\s+scores\\b\\s+\\p{L}{2,}(?:\\s+(?:by|on|across|over|for|using|with|from)\\b|\\s+\\p{L}{2,}\\b)`,
     'iu'
   )
   if (scoredReference.test(text)) return undefined
