@@ -542,7 +542,24 @@ class SessionRepository {
   async reconcilePendingSessionProjection(): Promise<void> {
     await this.operationScheduler.runGlobal(async () => {
       if (!this.projection || !(await this.projection.isInitialized())) return
-      for (const pending of await this.projection.pending()) {
+      let work = await this.projection.pending()
+      const parentDeletes = work.filter(
+        ({ operation, sessionId }) => operation === 'delete' && sessionId.startsWith('import-')
+      )
+      if (parentDeletes.length) {
+        // Detaching a child can itself finish its pending save. Refresh before replaying the rest.
+        for (const { projectId, sessionId } of parentDeletes) {
+          if (await this.projection.isDeleted(projectId, sessionId)) {
+            await this.retryDeletedDiscussionChildren(projectId, sessionId)
+          } else {
+            await this.deleteSessionNow(projectId, sessionId)
+          }
+        }
+        work = (await this.projection.pending()).filter(
+          ({ operation, sessionId }) => operation !== 'delete' || !sessionId.startsWith('import-')
+        )
+      }
+      for (const pending of work) {
         if (pending.operation === 'delete') {
           await this.deleteSessionNow(pending.projectId, pending.sessionId)
           continue
@@ -550,7 +567,7 @@ class SessionRepository {
         const loaded = await this.loadSessionWithDiagnostics(pending.projectId, pending.sessionId, {
           mode: 'read-only'
         })
-        if (loaded.status === 'unreadable') break
+        if (loaded.status === 'unreadable') continue
         if (loaded.status === 'found') {
           // The global barrier keeps the authority read and replay ahead of every later save. Call
           // the unscheduled implementation to avoid nesting the same repository scheduler.
@@ -1274,55 +1291,75 @@ class SessionRepository {
   async recoverDeletedDiscussionChildren(projectId: string, sessionId: string): Promise<void> {
     if (!sessionId.startsWith('import-') || !this.projection) return
     await this.operationScheduler.runProject(projectId, async () => {
-      if (!(await this.projection!.isDeleted(projectId, sessionId))) return
-      const parent = await this.loadSessionWithDiagnostics(projectId, sessionId, {
-        mode: 'read-only'
-      })
-      if (parent.status === 'missing') await this.detachDiscussionChildren(projectId, sessionId)
+      if (await this.projection!.isDeleted(projectId, sessionId))
+        await this.retryDeletedDiscussionChildren(projectId, sessionId)
     })
+  }
+
+  private async retryDeletedDiscussionChildren(
+    projectId: string,
+    sessionId: string
+  ): Promise<void> {
+    // After the tombstone commits a retry owns only the children, never a restored parent file.
+    const parent = await this.loadSessionWithDiagnostics(projectId, sessionId, {
+      mode: 'read-only'
+    })
+    if (parent.status !== 'missing') return
+    if (await this.detachDiscussionChildren(projectId, sessionId)) {
+      await this.projection!.clearPendingDelete(projectId, sessionId)
+    } else {
+      await this.projection!.markPending(projectId, sessionId, 'delete')
+    }
   }
 
   // Caller holds the repository's project lane (or startup's global barrier). Keep the
   // parent's pending delete until every child file and summary has committed, so crash
   // recovery retries the remaining children without inferring deletion from absence.
-  private async detachDiscussionChildren(projectId: string, parentId: string): Promise<void> {
-    if (!parentId.startsWith('import-')) return
-    let ids: string[]
+  private async detachDiscussionChildren(projectId: string, parentId: string): Promise<boolean> {
+    if (!parentId.startsWith('import-')) return true
+    let candidates: Array<{ id: string; indexedChild: boolean }>
     if (this.projection && (await this.projection.isInitialized())) {
-      ids = await this.projection.discussionChildren(projectId, parentId)
+      candidates = await this.projection.discussionChildCandidates(projectId, parentId)
     } else {
       const catalog = await this.loadProjectWithDiagnostics(projectId, { mode: 'read-only' })
       if (!catalog.isComplete)
         throw new Error('Cannot verify the child discussions in this Project.')
-      ids = catalog.sessions
+      candidates = catalog.sessions
         .filter((session) => session.parentSessionId === parentId)
-        .map(({ id }) => id)
+        .map(({ id }) => ({ id, indexedChild: true }))
     }
-    for (const id of ids) {
+    let allCandidatesReadable = true
+    for (const { id, indexedChild } of candidates) {
       const loaded = await this.loadSessionWithDiagnostics(projectId, id, {
         mode: 'read-only',
         preserveRuntimeState: true
       })
-      if (loaded.status === 'unreadable') throw new Error('Cannot detach an unreadable discussion.')
+      if (loaded.status === 'unreadable') {
+        if (indexedChild) throw new Error('Cannot detach an unreadable discussion.')
+        allCandidatesReadable = false
+        continue
+      }
       if (loaded.status !== 'found' || loaded.session.parentSessionId !== parentId) continue
+      const child = loaded.session
       await this.saveSessionNow(
         {
-          ...loaded.session,
+          ...child,
           parentSessionId: undefined,
           deletedDiscussionSourceId: parentId,
-          ...(loaded.session.runtimeContext?.sessionContext
+          ...(child.runtimeContext?.sessionContext
             ? {
                 runtimeContext: {
-                  ...loaded.session.runtimeContext,
+                  ...child.runtimeContext,
                   sessionContext: undefined,
-                  revision: loaded.session.runtimeContext.revision + 1
+                  revision: child.runtimeContext.revision + 1
                 }
               }
             : {})
         },
-        sessionRevision(loaded.session)
+        sessionRevision(child)
       )
     }
+    return allCandidatesReadable
   }
 
   private async deleteSessionNow(projectId: string, sessionId: string): Promise<void> {
@@ -1375,14 +1412,16 @@ class SessionRepository {
     }
     this.sessionRevisions.delete(revisionKey)
     try {
-      await this.detachDiscussionChildren(safeProjectId, safeSessionId)
+      const detached = await this.detachDiscussionChildren(safeProjectId, safeSessionId)
       if (this.projectionWritesSuspended) {
         this.suspendedProjectionSessionWrites.set(revisionKey, {
           projectId: safeProjectId,
           sessionId: safeSessionId
         })
       } else {
-        await this.projection?.commitDelete(safeProjectId, safeSessionId)
+        await this.projection?.commitDelete(safeProjectId, safeSessionId, {
+          retainDeleteIntent: !detached
+        })
       }
     } catch (cause) {
       throw new SessionDeletionCommittedError(cause)

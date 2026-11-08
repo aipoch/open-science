@@ -647,7 +647,10 @@ export class SessionProjectionRepository {
     return client.session.findMany({ select: { id: true, number: true } })
   }
 
-  async discussionChildren(projectId: string, parentSessionId: string): Promise<string[]> {
+  async discussionChildCandidates(
+    projectId: string,
+    parentSessionId: string
+  ): Promise<Array<{ id: string; indexedChild: boolean }>> {
     const client = await this.client()
     // An interrupted child save can leave its parent only in JSON until reconciliation.
     const [children, pending] = await Promise.all([
@@ -660,8 +663,12 @@ export class SessionProjectionRepository {
         select: { sessionId: true }
       })
     ])
+    const indexed = new Set(children.map(({ id }) => id))
     return [
-      ...new Set([...children.map(({ id }) => id), ...pending.map(({ sessionId }) => sessionId)])
+      ...children.map(({ id }) => ({ id, indexedChild: true })),
+      ...pending
+        .filter(({ sessionId }) => !indexed.has(sessionId))
+        .map(({ sessionId }) => ({ id: sessionId, indexedChild: false }))
     ]
   }
 
@@ -862,7 +869,18 @@ export class SessionProjectionRepository {
     })
   }
 
-  async commitDelete(projectId: string, sessionId: string): Promise<void> {
+  async clearPendingDelete(projectId: string, sessionId: string): Promise<void> {
+    const client = await this.client()
+    await client.pendingSessionReconciliation.deleteMany({
+      where: { projectId, sessionId, operation: 'delete' }
+    })
+  }
+
+  async commitDelete(
+    projectId: string,
+    sessionId: string,
+    options: { retainDeleteIntent?: boolean } = {}
+  ): Promise<void> {
     const client = await this.client()
     await runProjectionTransaction(client, async (tx) => {
       const existing = await tx.session.findUnique({
@@ -878,10 +896,12 @@ export class SessionProjectionRepository {
       if (pending?.projectId === projectId && pending.operation === 'delete') {
         await tx.bookmark.deleteMany({ where: { projectId, sessionId } })
       }
-      if (!existing) {
+      // Unreadable unindexed saves cannot block the tombstone. Keep the explicit intent
+      // for replay so a repaired child can be detached without inferring deletion from absence.
+      if (!options.retainDeleteIntent || pending?.operation !== 'delete') {
         await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
-        return
       }
+      if (!existing) return
       await tx.sessionTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionAuxiliaryTurnUsage.deleteMany({ where: { sessionId } })
       await tx.sessionRun.deleteMany({ where: { sessionId } })
@@ -890,7 +910,6 @@ export class SessionProjectionRepository {
         where: { id: sessionId, projectId, deletedAtMs: null },
         data: { deletedAtMs: BigInt(Date.now()) }
       })
-      await tx.pendingSessionReconciliation.deleteMany({ where: { projectId, sessionId } })
     })
   }
 

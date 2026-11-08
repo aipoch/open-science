@@ -10,6 +10,7 @@ import {
   revokeComposerDraftStorage
 } from './composer-draft-storage'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
+import { openDiscussionDraft } from './workspace-session-actions'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import {
   createSessionDiscussionAnnotation,
@@ -259,6 +260,50 @@ describe('durable step-scoped Ask snapshots', () => {
       editor.remove()
       timeline.remove()
     }
+  })
+
+  it('opens a project draft when Ask is clicked while the selected child is still pending', () => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((row) => ({
+        ...row,
+        parentSessionId: context.sourceSessionId,
+        isPending: true
+      }))
+    }))
+    const secondStep = { ...context, projectId: destination.projectId, stepId: 'second' }
+    expect(openDiscussionDraft(secondStep, true)).toBe(true)
+    expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+    expect(useSessionReplayStore.getState().discussionDestination?.sessionId).toBeUndefined()
+    expect(useSessionReplayStore.getState().pendingDiscussion?.stepId).toBe('second')
+  })
+
+  it('does not attach a delayed snapshot when its destination is pending at completion', async () => {
+    const gate = deferred<void>()
+    const saveSelectionSnapshot = vi.fn(() => gate.promise)
+    vi.stubGlobal('api', { sessionReplay: { saveSelectionSnapshot } })
+    const actions = { changeDoc: vi.fn(), addAnnotation: vi.fn(), setError: vi.fn() }
+    renderHook(() =>
+      useWorkspaceSessionDiscussion({
+        draftKey: 'target',
+        editable: true,
+        composer: {
+          lifecycle: { discussionDraftConflict: () => false },
+          view: { doc: doc('Keep my question'), annotations: [] },
+          actions
+        }
+      })
+    )
+    act(() => useSessionReplayStore.getState().ask(context, destination))
+    await waitFor(() => expect(saveSelectionSnapshot).toHaveBeenCalledOnce())
+    act(() =>
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((row) => ({ ...row, isPending: true }))
+      }))
+    )
+    await act(async () => gate.resolve())
+    expect(actions.addAnnotation).not.toHaveBeenCalled()
+    expect(actions.changeDoc).not.toHaveBeenCalled()
+    expect(useSessionReplayStore.getState().pendingDiscussion).toBeUndefined()
   })
 
   it('discards a stale insertion without writing into a different draft after navigation', async () => {

@@ -133,7 +133,12 @@ export const useWorkspaceSessionDiscussion = ({
         destination.sessionId !== pending.sourceSessionId &&
         Boolean(project && project.archivedAt === undefined) &&
         (!destination.sessionId ||
-          Boolean(session && !session.packageOrigin && session.archivedAt === undefined)) &&
+          Boolean(
+            session &&
+            !session.isPending &&
+            !session.packageOrigin &&
+            session.archivedAt === undefined
+          )) &&
         selectedFrame() === frameAtStart &&
         (!destination.frameId ||
           frameAtStart === JSON.stringify([destination.frameId, destination.branchId]))

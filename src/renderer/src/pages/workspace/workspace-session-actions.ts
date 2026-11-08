@@ -46,6 +46,7 @@ export const openDiscussionDraft = (
   const child = fromReplay && sessions.find((session) => session.id === selectedSessionId)
   if (
     child &&
+    !child.isPending &&
     navigation.view === 'workspace' &&
     navigation.activeProjectId === context.projectId &&
     child.projectId === context.projectId &&
